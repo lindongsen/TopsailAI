@@ -619,7 +619,11 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	if err := renderInteractiveStartResult(out, action.CommandID, result); err != nil {
 		return err
 	}
-	return refreshAfterStart(parent, api, request.EndpointID, result, out, trustedOut, options)
+	refreshed, err := refreshAfterStart(parent, api, request.EndpointID, result, out, trustedOut, options)
+	if err != nil {
+		return err
+	}
+	return autoFollowAfterStart(parent, api, state, request.EndpointID, refreshed, trustedOut, options)
 }
 
 // refreshAfterStart forces one fresh collection for the Endpoint that accepted the
@@ -633,11 +637,88 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 // layout. Diagnostics stay on out so provider-derived error text is still stripped.
 // The render is informational: it leaves the row-number index untouched so
 // navigation to other Endpoints keeps working.
-func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID string, result map[string]any, out, trustedOut io.Writer, options InteractiveOptions) error {
+//
+// The committed document is returned to the caller, because the automatic tail has
+// to bind the generation that collection minted. A launched session does not exist
+// before the action, so no earlier generation is available to bind.
+func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID string, result map[string]any, out, trustedOut io.Writer, options InteractiveOptions) (StartRefreshResult, error) {
 	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	return runner.RefreshAfterStart(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, false, false, nil))
+	return runner.RefreshAfterStartWithResult(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, false, false, nil))
+}
+
+// autoFollowAfterStart arms the live tail that follows a freshly launched session,
+// so the operator watches the new session without typing logf. It arms the same
+// intent logs -f arms, so the automatic step and the explicit command share one
+// streaming path, one announcement and one capability check.
+//
+// The tail is armed after the collection, not before it, and that order is the
+// opposite of the post-send tail on purpose. A send addresses a session that
+// already exists, so it binds the generation validated before the action and a
+// refresh can only invalidate it. A start creates the session, so its cluster
+// identity and generation are minted by the collection itself; arming earlier
+// would bind an empty generation, which the Endpoint rejects with
+// generation_required.
+//
+// The launched session is identified by diffing the committed document against the
+// pre-collection baseline. The receipt's provider document is never parsed here,
+// because the Server treats it as opaque and the TUI must not invent a second
+// interpretation of it.
+func autoFollowAfterStart(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID string, refreshed StartRefreshResult, trustedOut io.Writer, options InteractiveOptions) error {
+	if !refreshed.Collected || !refreshed.BaselineKnown {
+		// Without a collection there is no committed generation to bind, and without
+		// a baseline there is no evidence of which session appeared. The refresh has
+		// already reported its own failure or its pending-visibility notice.
+		return nil
+	}
+	appeared := appearedSessions(refreshed.Baseline, refreshed.Report)
+	switch len(appeared) {
+	case 0:
+		// The refresh already reported "session submitted but not yet visible", and
+		// polling here would turn one launch into a discovery loop.
+		return nil
+	case 1:
+	default:
+		// More than one session appeared, so the evidence does not identify the
+		// launched one. Following a guess would stream the wrong session, which is
+		// worse than following nothing.
+		return writeAutomaticDiagnostic(trustedOut, "start completed", fmt.Sprintf("automatic follow skipped: %d sessions appeared; run logf <session> to follow one", len(appeared)))
+	}
+	session := appeared[0]
+	if session.Generation == "" {
+		// An empty generation means liveness was never verified, so a stream bound to
+		// it would be refused by the Endpoint. Saying so is better than arming a tail
+		// that fails on the next prompt.
+		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow skipped: the launched session has no verified generation; run logf after the next collection")
+	}
+	if _, ok := api.(OutputFollower); !ok || options.WatchReader == nil {
+		// A client that cannot stream, or a reader that cannot observe a keypress, can
+		// never stop a live tail. That case degrades to one bounded snapshot and says
+		// so, because a snapshot presented as a stream would look complete while
+		// silently missing everything written after it.
+		if err := renderLaunchedSnapshot(parent, api, endpointID, session, trustedOut, options); err != nil {
+			return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic logs failed: "+sanitizeTerminal([]byte(err.Error())))
+		}
+		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
+	}
+	maxBytes, maxLines := interactiveOutputBounds(options)
+	if err := armFollowStream(api, state, endpointID, session, maxBytes, maxLines, trustedOut); err != nil {
+		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
+	}
+	return nil
+}
+
+// renderLaunchedSnapshot renders one bounded snapshot for the launched session.
+// It addresses the session explicitly instead of reading the current selection,
+// because start runs in workspace or endpoint scope and the launched session is
+// not the selected one.
+func renderLaunchedSnapshot(parent context.Context, api InteractiveAPI, endpointID string, session protocol.Session, trustedOut io.Writer, options InteractiveOptions) error {
+	maxBytes, maxLines := interactiveOutputBounds(options)
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	runner := CommandRunner{API: api, Policy: InteractivePolicy}
+	return runner.RenderSessionSnapshot(ctx, trustedOut, endpointID, session.SessionID, session.Generation, maxBytes, maxLines, options.Color)
 }
 
 // sessionIDs reads the committed projection and returns its standard session IDs.
@@ -655,15 +736,19 @@ func sessionIDs(ctx context.Context, api InteractiveAPI, endpointID string) (map
 	return ids, true
 }
 
-// appearedSince reports whether the refreshed document contains a session that the
-// baseline did not, which is the only evidence that the launch became visible.
-func appearedSince(before map[string]struct{}, report protocol.InventoryReport) bool {
+// appearedSessions returns the sessions the refreshed document reports that the
+// baseline did not, which is the only evidence that a launch became visible. It
+// returns the sessions rather than a boolean because the automatic tail has to
+// bind the generation of the session that appeared, and a second scan would be a
+// second interpretation of the same evidence.
+func appearedSessions(before map[string]struct{}, report protocol.InventoryReport) []protocol.Session {
+	var appeared []protocol.Session
 	for _, session := range report.Sessions {
 		if _, known := before[session.SessionID]; !known {
-			return true
+			appeared = append(appeared, session)
 		}
 	}
-	return false
+	return appeared
 }
 
 // startRefreshDiagnostic reports a post-start collection failure without turning a

@@ -56,6 +56,18 @@ func (r CommandRunner) RefreshWithProgress(ctx context.Context, out, errors io.W
 	return renderListRows(out, errors, loaded, filter, jsonMode, options)
 }
 
+// StartRefreshResult carries the evidence a caller needs after a post-start
+// collection: the committed document, the pre-collection baseline and whether the
+// collection actually ran. A caller that only renders the table ignores it. The
+// interactive surface uses it to identify the launched session, because the
+// receipt's provider document is opaque and must never be parsed here.
+type StartRefreshResult struct {
+	Report        protocol.InventoryReport
+	Baseline      map[string]struct{}
+	BaselineKnown bool
+	Collected     bool
+}
+
 // RefreshAfterStart forces one fresh collection for the Endpoint that accepted a
 // start, so the operator's next list already contains the launched session instead
 // of waiting for the periodic collection. The collection is scoped to that single
@@ -68,32 +80,42 @@ func (r CommandRunner) RefreshWithProgress(ctx context.Context, out, errors io.W
 // an error, because the admission already succeeded and reporting a failure would
 // deny a launch that happened.
 func (r CommandRunner) RefreshAfterStart(ctx context.Context, out, diagnostics io.Writer, endpointID string, result map[string]any, jsonMode bool, options TableOptions) error {
+	_, err := r.RefreshAfterStartWithResult(ctx, out, diagnostics, endpointID, result, jsonMode, options)
+	return err
+}
+
+// RefreshAfterStartWithResult is RefreshAfterStart plus the evidence the
+// interactive surface needs to identify the launched session. The two share one
+// implementation, so the rendered table and the automatic follow-up can never
+// disagree about which document they observed.
+func (r CommandRunner) RefreshAfterStartWithResult(ctx context.Context, out, diagnostics io.Writer, endpointID string, result map[string]any, jsonMode bool, options TableOptions) (StartRefreshResult, error) {
 	if ReceiptForStatus(result).EffectCertainty == protocol.EffectNotApplied {
-		return nil
+		return StartRefreshResult{}, nil
 	}
 	if _, ok := r.API.(InventoryRefresher); !ok {
-		return nil
+		return StartRefreshResult{}, nil
 	}
 	// The pre-refresh projection is read from the Server, so it costs no provider
 	// discovery. It is the baseline for deciding whether the launch became visible.
 	before, baselineKnown := sessionIDs(ctx, r.API, endpointID)
 	loaded, err := forceCollection(ctx, r.API, endpointID)
 	if err != nil {
-		return startRefreshDiagnostic(diagnostics, err)
+		return StartRefreshResult{}, startRefreshDiagnostic(diagnostics, err)
 	}
 	if refreshErr, failed := loaded.errors[endpointID]; failed {
-		return startRefreshDiagnostic(diagnostics, refreshErr)
+		return StartRefreshResult{}, startRefreshDiagnostic(diagnostics, refreshErr)
 	}
+	report := loaded.reports[endpointID]
 	// Only the started Endpoint was collected, so the table is filtered to it.
 	// Rendering the whole fleet here would print every other Endpoint as having no
 	// sessions. A JSON caller receives the receipt alone, so the table is skipped
 	// rather than corrupting the machine-readable document.
 	if !jsonMode {
 		if err := renderListRows(out, diagnostics, loaded, endpointID, false, options); err != nil {
-			return startRefreshDiagnostic(diagnostics, err)
+			return StartRefreshResult{}, startRefreshDiagnostic(diagnostics, err)
 		}
 	}
-	if baselineKnown && !appearedSince(before, loaded.reports[endpointID]) {
+	if baselineKnown && len(appearedSessions(before, report)) == 0 {
 		// The provider reports a background launch as submitted, not started, and a
 		// session only becomes routable once its process is observed holding the
 		// output file. A collection issued immediately after start can therefore
@@ -101,7 +123,7 @@ func (r CommandRunner) RefreshAfterStart(ctx context.Context, out, diagnostics i
 		// launch that did happen, so it is reported as pending visibility instead.
 		_, _ = fmt.Fprintf(diagnostics, "session submitted but not yet visible; the next collection will show it\n")
 	}
-	return nil
+	return StartRefreshResult{Report: report, Baseline: before, BaselineKnown: baselineKnown, Collected: true}, nil
 }
 
 // refreshConcurrency bounds how many Endpoints are collected at once. The Server

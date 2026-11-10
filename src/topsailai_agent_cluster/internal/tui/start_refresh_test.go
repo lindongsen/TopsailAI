@@ -210,7 +210,7 @@ func (s *baselineFailureStub) GetInventory(ctx context.Context, endpointID strin
 func TestStartUnreadableBaselineDoesNotClaimNotYetVisible(t *testing.T) {
 	stub := &baselineFailureStub{startRefreshStub: newStartRefreshStub()}
 	var out strings.Builder
-	if err := refreshAfterStart(context.Background(), stub, "endpoint-1", acknowledgedResult(), &out, &out, InteractiveOptions{}); err != nil {
+	if _, err := refreshAfterStart(context.Background(), stub, "endpoint-1", acknowledgedResult(), &out, &out, InteractiveOptions{}); err != nil {
 		t.Fatalf("refreshAfterStart: %v", err)
 	}
 	if strings.Contains(out.String(), "not yet visible") {

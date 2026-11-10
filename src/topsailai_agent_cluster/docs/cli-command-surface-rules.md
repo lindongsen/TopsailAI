@@ -97,6 +97,24 @@ see the effect.
   generation; the stream itself opens on the next prompt, through the same seam
   that starts an explicit `logs -f`. A one-shot snapshot is not used here, because
   it stops at the moment it was read while the agent keeps writing.
+- `start` arms the same live tail as `logs -f` for the session it launched, so the
+  operator watches the new session without typing `logf`. The tail is armed
+  **after** the post-start collection, and that order is the opposite of `send` on
+  purpose. A `send` addresses a session that already exists, so it binds the
+  generation validated before the action. A `start` creates the session, so its
+  cluster identity and generation are minted by the collection itself; arming
+  earlier would bind an empty generation, which the Endpoint rejects with
+  `generation_required`.
+- The launched session is identified by diffing the committed document against the
+  pre-collection baseline, never by parsing the receipt. The receipt's provider
+  document is opaque, and the Server never parses it, so the TUI must not invent a
+  second interpretation of it. Exactly one new session is followed; no new session
+  keeps the existing pending-visibility notice and arms nothing; more than one new
+  session arms nothing and names `logf <session>`, because following a guess would
+  stream the wrong session.
+- A launched session whose generation is empty is not followed, because liveness
+  was never verified and the Endpoint would refuse the stream. The diagnostic names
+  the next collection instead of arming a tail that fails on the next prompt.
 - The automatic tail degrades to one bounded snapshot, with a diagnostic that says
   so, when the client cannot stream or the input mode cannot observe a keypress.
   A live tail that cannot be stopped would be worse than a snapshot, and a

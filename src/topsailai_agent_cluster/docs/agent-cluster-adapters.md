@@ -104,6 +104,18 @@ document is never corrupted by an appended table. The pending-visibility decisio
 compares standard session IDs before and after the collection, so it needs no
 provider-specific parsing and no additional protocol field.
 
+The interactive REPL goes one step further and arms the same live tail as
+`logs -f` for the session that appeared, so the operator watches the new session
+without typing `logf`. The tail is armed after the collection, because the
+launched session's cluster identity and generation are minted by that collection;
+arming earlier would bind an empty generation, which the Endpoint rejects with
+`generation_required`. The launched session is identified by the same
+before-and-after comparison, never by parsing the receipt, because the receipt's
+provider document is opaque to the Server and must stay opaque to the TUI. No
+session appeared, more than one appeared, or the generation is unverified: no tail
+is armed and the reason is reported. The noninteractive CLI keeps its existing
+behaviour and receives no extra output.
+
 ## Questions for the next discussion
 
 ### Scope and topology
