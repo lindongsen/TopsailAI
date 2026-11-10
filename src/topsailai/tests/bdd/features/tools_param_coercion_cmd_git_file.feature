@@ -256,7 +256,7 @@ Feature: Tools accept string-typed parameters from the LLM
       | start_num | end_num |
       | 2         | 4       |
       | <sp>2<sp> | <sp>4<sp> |
-      | 1e1       | 0       |
+      | 1e1       | -1      |
       | int:1     | int:3   |
 
   Scenario Outline: read_file_lines rejects a range that is not a number
@@ -272,7 +272,7 @@ Feature: Tools accept string-typed parameters from the LLM
       | empty     | 4       | start_num |
       | 1         | abc     | end_num   |
       | 1         | -inf    | end_num   |
-      | 1         | null    | end_num   |
+      | 1         | -2      | end_num   |
 
   Scenario: read_file_lines answers an inverted range as a business result
     When the tool read_file_lines is called on the test file with parameters start_num set to 5 and end_num set to 2
@@ -322,7 +322,10 @@ Feature: Tools accept string-typed parameters from the LLM
       | 3         | 4       |
       | <sp>5<sp> | <sp>6<sp> |
       | int:2     | int:2   |
-      | 1e1       | 0       |
+      | 1e1       | -1      |
+      | 3         | 0       |
+      | 3         | null    |
+      | 3         | empty   |
 
   Scenario Outline: overwrite_lines_in_file rejects a text line number as a parameter error
     Given a parameter test file named short.txt containing lines L1 to L10
@@ -334,8 +337,23 @@ Feature: Tools accept string-typed parameters from the LLM
       | start_num | end_num | param     |
       | abc       | 4       | start_num |
       | 3         | NaN     | end_num   |
+      | 3         | -2      | end_num   |
       | empty     | 4       | start_num |
       | null      | 4       | start_num |
+
+  Scenario: overwrite_lines_in_file never deletes the tail when end_num is zero
+    Given a parameter test file named short.txt containing lines L1 to L10
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 3 and end_num set to 0
+    Then the tool call is accepted and produces a result
+    And the numbered test file now contains REPLACED
+    And the numbered test file now contains L10
+
+  Scenario: overwrite_lines_in_file replaces through the end when end_num is minus one
+    Given a parameter test file named short.txt containing lines L1 to L10
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 3 and end_num set to -1
+    Then the tool call is accepted and produces a result
+    And the numbered test file now contains REPLACED
+    And the numbered test file no longer contains L10
 
   # ------------------------------------------------------ container params
   Scenario Outline: read_files accepts native JSON and bare file lists

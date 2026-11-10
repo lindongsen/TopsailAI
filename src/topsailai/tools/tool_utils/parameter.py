@@ -35,6 +35,27 @@ def resolve_finite_int(value: Any, parameter: str) -> tuple[int | None, dict | N
     return int(numeric), None
 
 
+def resolve_end_num(value: Any, parameter: str = "end_num") -> tuple[int | None, dict | None]:
+    """Resolve the shared ``end_num`` sentinel used by every line-range tool.
+
+    ``0``, ``None``, and blank text all mean "no end line", so only the start
+    line is addressed. ``-1`` means "through the end of the file". Any other
+    negative value is rejected instead of being guessed.
+    """
+    if value is None:
+        return 0, None
+    if isinstance(value, str) and not value.strip():
+        return 0, None
+    resolved, error = resolve_finite_int(value, parameter)
+    if error:
+        return None, error
+    if resolved < -1:
+        return None, invalid_request(
+            parameter, value, "must be -1, 0, or a positive line number"
+        )
+    return resolved, None
+
+
 def resolve_int_flag(value: Any, parameter: str) -> tuple[bool | None, dict | None]:
     """Resolve an integer boolean flag, accepting only 1 and 0 or their string forms."""
     if isinstance(value, bool):

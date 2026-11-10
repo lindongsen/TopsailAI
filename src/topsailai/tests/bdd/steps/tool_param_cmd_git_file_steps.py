@@ -347,6 +347,13 @@ def numbered_file_contains(ctx, expected):
     assert expected in content, f"{expected!r} missing from {content!r}"
 
 
+@then(parsers.parse('the numbered test file no longer contains {absent}'))
+def numbered_file_absent(ctx, absent):
+    """A destructive range must actually remove the tail it claims to replace."""
+    content = read_text(ctx["files"]["numbered"])
+    assert absent not in content, f"{absent!r} still present in {content!r}"
+
+
 @then('the tool response carries no raw conversion exception')
 def no_raw_exception(ctx):
     """Reverse guard: the model never sees a bare Python conversion message."""
