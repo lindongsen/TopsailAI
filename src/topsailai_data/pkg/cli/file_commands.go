@@ -17,6 +17,7 @@ import (
 
 	"github.com/topsailai/topsailai_data/pkg/filetool"
 	"github.com/topsailai/topsailai_data/pkg/manager"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,6 +99,8 @@ func printFileUsage(w io.Writer) {
 	fmt.Fprintln(w, "  TOPSAILAI_DATA_FILE_MAX_BYTES (default 30000).")
 	fmt.Fprintln(w, "  --end 0 reads only --start; --end -1 reads through the end of the file.")
 	fmt.Fprintln(w, "  overwrite-lines and insert print a unified diff of the change.")
+	fmt.Fprintln(w, "  write, append, overwrite-lines, and insert read redirected stdin when")
+	fmt.Fprintln(w, "  neither --content nor --from is given.")
 }
 
 // runFileRead implements "file read".
@@ -225,7 +228,7 @@ func runFileReadFiles(_ context.Context, mgr *manager.Manager, args []string) er
 func runFileWrite(_ context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file write")
 	content := fs.String("content", "", "content to write")
-	from := fs.String("from", "", "local file to read content from (use - for stdin)")
+	from := fs.String("from", "", "local file to read content from (use - for stdin; stdin is read when omitted)")
 	seek := fs.Int64("seek", 0, "byte offset where writing starts; negative counts from the end")
 	insert := fs.Bool("insert", false, "insert content instead of overwriting")
 	if err := fs.Parse(args); err != nil {
@@ -236,7 +239,7 @@ func runFileWrite(_ context.Context, mgr *manager.Manager, args []string) error 
 		return fmt.Errorf("file write: %w", err)
 	}
 
-	text, err := resolveContent(*content, *from)
+	text, err := resolveContent(*content, fs.Changed("content"), *from)
 	if err != nil {
 		return fmt.Errorf("file write: %w", err)
 	}
@@ -254,7 +257,7 @@ func runFileWrite(_ context.Context, mgr *manager.Manager, args []string) error 
 func runFileAppend(_ context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file append")
 	content := fs.String("content", "", "content to append")
-	from := fs.String("from", "", "local file to read content from (use - for stdin)")
+	from := fs.String("from", "", "local file to read content from (use - for stdin; stdin is read when omitted)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -263,7 +266,7 @@ func runFileAppend(_ context.Context, mgr *manager.Manager, args []string) error
 		return fmt.Errorf("file append: %w", err)
 	}
 
-	text, err := resolveContent(*content, *from)
+	text, err := resolveContent(*content, fs.Changed("content"), *from)
 	if err != nil {
 		return fmt.Errorf("file append: %w", err)
 	}
@@ -363,7 +366,7 @@ func runFileOverwriteLines(_ context.Context, mgr *manager.Manager, args []strin
 	fs := newFlagSet("file overwrite-lines")
 	end := fs.Int("end", 0, "1-based last line; 0 replaces only start_num, -1 replaces to the end")
 	content := fs.String("content", "", "replacement content")
-	from := fs.String("from", "", "local file to read content from (use - for stdin)")
+	from := fs.String("from", "", "local file to read content from (use - for stdin; stdin is read when omitted)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -376,7 +379,7 @@ func runFileOverwriteLines(_ context.Context, mgr *manager.Manager, args []strin
 	if err != nil {
 		return fmt.Errorf("file overwrite-lines: %w", err)
 	}
-	text, err := resolveContent(*content, *from)
+	text, err := resolveContent(*content, fs.Changed("content"), *from)
 	if err != nil {
 		return fmt.Errorf("file overwrite-lines: %w", err)
 	}
@@ -397,7 +400,7 @@ func runFileOverwriteLines(_ context.Context, mgr *manager.Manager, args []strin
 func runFileInsert(_ context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file insert")
 	content := fs.String("content", "", "content to insert")
-	from := fs.String("from", "", "local file to read content from (use - for stdin)")
+	from := fs.String("from", "", "local file to read content from (use - for stdin; stdin is read when omitted)")
 	before := fs.Bool("before", false, "insert before the line instead of after")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -411,7 +414,7 @@ func runFileInsert(_ context.Context, mgr *manager.Manager, args []string) error
 	if err != nil {
 		return fmt.Errorf("file insert: %w", err)
 	}
-	text, err := resolveContent(*content, *from)
+	text, err := resolveContent(*content, fs.Changed("content"), *from)
 	if err != nil {
 		return fmt.Errorf("file insert: %w", err)
 	}
@@ -430,12 +433,25 @@ func runFileInsert(_ context.Context, mgr *manager.Manager, args []string) error
 
 // resolveContent returns the content for a write command.
 //
-// An explicit --from source wins over --content so a caller can pass a file
-// without quoting its text. When neither flag is set the content is empty,
-// which is a valid request for deleting a line range.
-func resolveContent(content, from string) (string, error) {
+// Precedence: an explicit --content value wins, then --from <path>, then
+// --from -, and finally redirected stdin. Reading stdin when neither flag is
+// set matches the convention already used by create and put, so a caller can
+// pipe content instead of repeating it on the command line. When stdin is an
+// interactive terminal the content stays empty, which is a valid request for
+// deleting a line range.
+//
+// contentSet reports whether --content was passed explicitly, so that
+// an explicit empty --content still means "empty content" rather than "read stdin".
+func resolveContent(content string, contentSet bool, from string) (string, error) {
 	if from == "" {
-		return content, nil
+		if contentSet || stdinIsTerminal() {
+			return content, nil
+		}
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
 	}
 	if from == "-" {
 		data, err := io.ReadAll(os.Stdin)
@@ -449,6 +465,16 @@ func resolveContent(content, from string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// stdinIsTerminal reports whether stdin is an interactive terminal. When stdin
+// is not a terminal the caller has redirected or piped input, so a write
+// command may read its content from it.
+func stdinIsTerminal() bool {
+	if os.Stdin == nil {
+		return false
+	}
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // parseIntArg parses a required integer argument.

@@ -159,6 +159,7 @@ func registerSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a scenario folder "([^"]+)"$`, givenScenarioFolder)
 	ctx.Step(`^a scenario file "([^"]+)" with (\d+) repeated "([^"]*)"$`, givenScenarioRepeatedFile)
 	ctx.Step(`^I run the file command with arguments:$`, runFileArguments)
+	ctx.Step(`^I run the file command with stdin "([^"]*)" and arguments:$`, runFileArgumentsWithStdin)
 	ctx.Step(`^scenario file "([^"]+)" contains "([^"]*)"$`, scenarioFileContains)
 	ctx.Step(`^scenario file "([^"]+)" does not contain "([^"]*)"$`, scenarioFileDoesNotContain)
 	ctx.Step(`^scenario file "([^"]+)" equals "([^"]*)"$`, scenarioFileEquals)

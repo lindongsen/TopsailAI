@@ -781,14 +781,14 @@ outside the topsailai-data store.
 | `read-around` | `file read-around <file_path> <line_number> [--context n]` | Read a line with surrounding context. The target is marked `:` and context lines `-`. |
 | `read-context` | `file read-context <file_path> <pattern> [--context n] [--case-sensitive]` | Read lines matching a regular expression with context. Matching is case-insensitive by default. |
 | `read-files` | `file read-files <file_path...> [--format yaml\|json]` | Read several files into one path-to-content map. |
-| `write` | `file write <file_path> [--content <text>\|--from <path\|->] [--seek n] [--insert]` | Write content. `--insert` inserts at the offset instead of overwriting. |
-| `append` | `file append <file_path> [--content <text>\|--from <path\|->]` | Append content to a file. |
+| `write` | `file write <file_path> [--content <text>\|--from <path\|->] [--seek n] [--insert]` | Write content. `--insert` inserts at the offset instead of overwriting. Redirected standard input is read when neither `--content` nor `--from` is given. |
+| `append` | `file append <file_path> [--content <text>\|--from <path\|->]` | Append content to a file. Redirected standard input is read when neither `--content` nor `--from` is given. |
 | `exists` | `file exists <name=path...> [--format yaml\|json]` | Check several paths for existence. |
 | `mkdirs` | `file mkdirs <absolute_dir...>` | Create folders, including missing parents. Absolute paths are required. |
 | `list-dirs` | `file list-dirs <dir...> [--format yaml\|json]` | List several folders with sorted entries. |
 | `size` | `file size <file_path>` | Report a file size in bytes. |
-| `overwrite-lines` | `file overwrite-lines <file_path> <start_num> [--end n] [--content <text>\|--from <path\|->]` | Replace a line range and print a unified diff. |
-| `insert` | `file insert <file_path> <line_num> [--content <text>\|--from <path\|->] [--before]` | Insert content before or after a line and print a unified diff. |
+| `overwrite-lines` | `file overwrite-lines <file_path> <start_num> [--end n] [--content <text>\|--from <path\|->]` | Replace a line range and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
+| `insert` | `file insert <file_path> <line_num> [--content <text>\|--from <path\|->] [--before]` | Insert content before or after a line and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
 
 ### Examples
 
@@ -809,6 +809,42 @@ bin/topsailai-data file size ./notes/design.md
 bin/topsailai-data file overwrite-lines ./notes/design.md 10 --end 12 --content "replacement"
 bin/topsailai-data file insert ./notes/design.md 5 --content "inserted line"
 ```
+
+### Writing content from standard input
+
+The four content-writing subcommands (`write`, `append`, `overwrite-lines`,
+`insert`) read redirected standard input when neither `--content` nor `--from`
+is given. Piping content is therefore enough; no extra flag is required.
+
+```
+printf 'piped content\n' | bin/topsailai-data file write ./notes/from-stdin.md
+printf 'one more line\n' | bin/topsailai-data file append ./notes/log.md
+printf 'TWO\n' | bin/topsailai-data file overwrite-lines ./notes/design.md 2
+printf 'inserted\n' | bin/topsailai-data file insert ./notes/design.md 5
+```
+
+The explicit `--from -` form keeps working and is equivalent:
+
+```
+printf 'dash content\n' | bin/topsailai-data file write ./notes/from-dash.md --from -
+```
+
+Content sources are resolved in this order:
+
+1. `--from <path>`, which reads a file.
+2. `--from -`, which reads standard input.
+3. An explicit `--content` value, including an explicitly empty value.
+4. Redirected standard input when neither flag is given.
+5. Empty content when standard input is an interactive terminal.
+
+`--from` wins over `--content`, so a caller can pass a file without quoting its
+text.
+
+When `--from` is absent, an explicitly empty `--content ""` wins over piped
+input, because an empty value is a real request: `overwrite-lines` with empty
+content deletes the addressed line range. When standard input is an interactive
+terminal and no content source is given, the content stays empty instead of
+waiting, so an interactive invocation never hangs.
 
 ### Behaviour notes
 

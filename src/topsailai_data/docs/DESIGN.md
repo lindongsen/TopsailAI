@@ -772,7 +772,32 @@ capability is unit tested in isolation.
 - `read-files`, `list-dirs`, and `exists` record a per-item failure instead of
   hiding the other items.
 
-### 20.3 Documented Deviation
+### 20.3 Content Source Precedence
+
+The four content-writing subcommands (`write`, `append`, `overwrite-lines`,
+`insert`) resolve their content from the same ordered sources:
+
+1. `--from <path>`, which reads a file.
+2. `--from -`, which reads standard input.
+3. An explicit `--content` value, including an explicit empty value.
+4. Redirected standard input when neither `--content` nor `--from` is given.
+5. Empty content when standard input is an interactive terminal.
+
+`--from` wins over `--content` so a caller can pass a file without quoting its
+text. This ordering predates the standard-input fallback and is preserved.
+
+The distinction between an absent `--content` and an explicitly empty
+`--content ""` is preserved, because an empty value is a meaningful request:
+`overwrite-lines` with empty content deletes the addressed line range. When
+`--from` is absent, a caller that passes `--content ""` therefore never blocks
+on standard input.
+
+When standard input is an interactive terminal and no content source is given,
+the content stays empty instead of waiting for input, so an interactive
+invocation never hangs. This matches the convention already used by `create`
+and `put`.
+
+### 20.4 Documented Deviation
 
 The TopsailAI file tool counts `seek` and `size` in characters because Python
 strings are character indexed. This implementation counts bytes because Go
@@ -780,7 +805,7 @@ strings are byte indexed. For ASCII and UTF-8 text the two agree; for
 multi-byte characters a byte offset may land inside a character. Callers that
 need character-accurate windows on multi-byte text must account for this.
 
-### 20.4 Configuration Boundary
+### 20.5 Configuration Boundary
 
 `TOPSAILAI_DATA_FILE_MAX_BYTES` and
 `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT` are read once by
@@ -789,7 +814,7 @@ need character-accurate windows on multi-byte text must account for this.
 variables, so tests override behaviour through parameters rather than by
 mutating global state.
 
-### 20.5 Testing
+### 20.6 Testing
 
 - `pkg/filetool` unit tests cover all thirteen capabilities, including
   truncation, whitelist overrides, encoding fallback, line-ending preservation,

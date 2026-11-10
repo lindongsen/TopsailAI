@@ -130,6 +130,32 @@ func runFileArguments(ctx context.Context, table *godog.Table) error {
 	return nil
 }
 
+// runFileArgumentsWithStdin runs the "file" command group with a table of
+// arguments and pipes the given content into stdin. It proves that a write
+// command reads redirected stdin when no --content or --from flag is given.
+func runFileArgumentsWithStdin(ctx context.Context, content string, table *godog.Table) error {
+	state, err := scenarioFrom(ctx)
+	if err != nil {
+		return err
+	}
+
+	args := make([]string, 0, len(table.Rows)+1)
+	args = append(args, "file")
+	for _, row := range table.Rows {
+		if len(row.Cells) != 1 {
+			return fmt.Errorf("each file argument row must contain one cell")
+		}
+		resolved, err := scenarioPath(state, row.Cells[0].Value)
+		if err != nil {
+			return err
+		}
+		args = append(args, resolved)
+	}
+
+	runCLI(ctx, state, args, strings.NewReader(unescapeContent(content)))
+	return nil
+}
+
 // scenarioFileContains verifies that a scenario file contains a fragment.
 func scenarioFileContains(ctx context.Context, relative, fragment string) error {
 	content, err := readScenarioFile(ctx, relative)

@@ -369,3 +369,74 @@ Feature: File and folder capabilities
     When I run the file command with arguments:
       | nope |
     Then the command fails with "unknown file subcommand"
+
+  Scenario: Write a file from redirected stdin
+    Given an isolated topsailai-data store
+    When I run the file command with stdin "piped content\n" and arguments:
+      | write |
+      | @notes/from-stdin.md |
+    Then the command succeeds
+    And scenario file "notes/from-stdin.md" equals "piped content\n"
+
+  Scenario: Append to a file from redirected stdin
+    Given an isolated topsailai-data store
+    And a scenario file "notes/append-stdin.md" with content "one\n"
+    When I run the file command with stdin "two\n" and arguments:
+      | append |
+      | @notes/append-stdin.md |
+    Then the command succeeds
+    And scenario file "notes/append-stdin.md" equals "one\ntwo\n"
+
+  Scenario: Replace a line range from redirected stdin
+    Given an isolated topsailai-data store
+    And a scenario file "notes/overwrite-stdin.md" with content "one\ntwo\nthree\n"
+    When I run the file command with stdin "TWO\n" and arguments:
+      | overwrite-lines |
+      | @notes/overwrite-stdin.md |
+      | 2 |
+    Then the command succeeds
+    And scenario file "notes/overwrite-stdin.md" equals "one\nTWO\nthree\n"
+
+  Scenario: Insert a line from redirected stdin
+    Given an isolated topsailai-data store
+    And a scenario file "notes/insert-stdin.md" with content "one\ntwo\n"
+    When I run the file command with stdin "inserted\n" and arguments:
+      | insert |
+      | @notes/insert-stdin.md |
+      | 1 |
+    Then the command succeeds
+    And scenario file "notes/insert-stdin.md" equals "one\ninserted\ntwo\n"
+
+  Scenario: Write a file from stdin through the from flag
+    Given an isolated topsailai-data store
+    When I run the file command with stdin "dash content\n" and arguments:
+      | write |
+      | @notes/from-dash.md |
+      | --from |
+      | - |
+    Then the command succeeds
+    And scenario file "notes/from-dash.md" equals "dash content\n"
+
+  Scenario: Explicit empty content wins over redirected stdin
+    Given an isolated topsailai-data store
+    And a scenario file "notes/empty-wins.md" with content "existing\n"
+    When I run the file command with stdin "ignored\n" and arguments:
+      | write |
+      | @notes/empty-wins.md |
+      | --content |
+      |  |
+    Then the command succeeds
+    And scenario file "notes/empty-wins.md" equals ""
+
+  Scenario: The from flag wins over inline content
+    Given an isolated topsailai-data store
+    And a scenario file "notes/precedence-src.md" with content "from-file\n"
+    When I run the file command with arguments:
+      | write |
+      | @notes/precedence-out.md |
+      | --content |
+      | inline |
+      | --from |
+      | @notes/precedence-src.md |
+    Then the command succeeds
+    And scenario file "notes/precedence-out.md" equals "from-file\n"

@@ -560,3 +560,157 @@ func TestFileGroupRegisteredInTopLevelUsage(t *testing.T) {
 		t.Fatalf("expected top-level usage to list the file group, got %q", out)
 	}
 }
+
+// withStdin replaces os.Stdin with a pipe carrying content for the duration of
+// fn, so a command that reads stdin can be tested without a real terminal.
+func withStdin(t *testing.T, content string, fn func()) {
+	t.Helper()
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdin = r
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = w.Write([]byte(content))
+		_ = w.Close()
+	}()
+	defer func() {
+		<-done
+		os.Stdin = oldStdin
+		_ = r.Close()
+	}()
+	fn()
+}
+
+func TestFileWriteCommandFromStdinWithoutFromFlag(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out.txt")
+
+	withStdin(t, "piped content\n", func() {
+		runFileCommand(t, ctx, mgr, "write", path)
+	})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read written file: %v", err)
+	}
+	if string(data) != "piped content\n" {
+		t.Fatalf("expected piped content, got %q", string(data))
+	}
+}
+
+func TestFileAppendCommandFromStdinWithoutFromFlag(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	dir := t.TempDir()
+	path := writeTempFile(t, dir, "out.txt", "one\n")
+
+	withStdin(t, "two\n", func() {
+		runFileCommand(t, ctx, mgr, "append", path)
+	})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "one\ntwo\n" {
+		t.Fatalf("expected appended stdin content, got %q", string(data))
+	}
+}
+
+func TestFileOverwriteLinesCommandFromStdinWithoutFromFlag(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	dir := t.TempDir()
+	path := writeTempFile(t, dir, "note.md", "one\ntwo\nthree\n")
+
+	withStdin(t, "TWO\n", func() {
+		runFileCommand(t, ctx, mgr, "overwrite-lines", path, "2")
+	})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "one\nTWO\nthree\n" {
+		t.Fatalf("expected stdin replacement, got %q", string(data))
+	}
+}
+
+func TestFileInsertCommandFromStdinWithoutFromFlag(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	dir := t.TempDir()
+	path := writeTempFile(t, dir, "note.md", "one\ntwo\n")
+
+	withStdin(t, "inserted\n", func() {
+		runFileCommand(t, ctx, mgr, "insert", path, "1")
+	})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "one\ninserted\ntwo\n" {
+		t.Fatalf("expected stdin insertion, got %q", string(data))
+	}
+}
+
+func TestFileWriteCommandExplicitEmptyContentBeatsStdin(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	dir := t.TempDir()
+	path := writeTempFile(t, dir, "out.txt", "existing\n")
+
+	withStdin(t, "should be ignored\n", func() {
+		runFileCommand(t, ctx, mgr, "write", path, "--content", "")
+	})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "" {
+		t.Fatalf("expected explicit empty content to win over stdin, got %q", string(data))
+	}
+}
+
+func TestFileWriteCommandFromDashReadsStdin(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out.txt")
+
+	withStdin(t, "dash content\n", func() {
+		runFileCommand(t, ctx, mgr, "write", path, "--from", "-")
+	})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read written file: %v", err)
+	}
+	if string(data) != "dash content\n" {
+		t.Fatalf("expected stdin content via --from -, got %q", string(data))
+	}
+}
+
+// TestFileWriteCommandFromFileBeatsContent locks the documented precedence:
+// --from wins over --content so a caller can pass a file without quoting text.
+func TestFileWriteCommandFromFileBeatsContent(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	if err := os.WriteFile(src, []byte("from-file\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	path := filepath.Join(dir, "out.txt")
+
+	runFileCommand(t, ctx, mgr, "write", path, "--content", "inline", "--from", src)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read written file: %v", err)
+	}
+	if string(data) != "from-file\n" {
+		t.Fatalf("expected --from to win over --content, got %q", string(data))
+	}
+}
