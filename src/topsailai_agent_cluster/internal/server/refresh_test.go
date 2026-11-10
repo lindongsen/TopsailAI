@@ -59,7 +59,7 @@ func refreshCall(t *testing.T, handler http.Handler, method string) *httptest.Re
 // TestRefreshInventoryReturnsCommittedDocument proves the response is the document
 // re-read from storage, so it always equals a following GET session-state.
 func TestRefreshInventoryReturnsCommittedDocument(t *testing.T) {
-	committed := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: "endpoint-local", SnapshotRevision: 4, ObservedAtMS: 900, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", ProviderType: "fixture", DataKnown: true}}, Sessions: []protocol.Session{{SessionID: "res-1", AdapterID: "adapter-1", Generation: "generation-1", State: "running"}}}
+	committed := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: "endpoint-local", SnapshotRevision: 4, ObservedAtMS: 900, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", ProviderType: "fixture", DataKnown: true}}, Sessions: []protocol.Session{{ClusterSessionID: "res-1", AdapterID: "adapter-1", ProviderGeneration: "generation-1", State: "running"}}}
 	store := refreshStore(t, committed)
 	requester := &refreshRequesterStub{report: committed}
 	handler := NewHandlerWithCommandsAndBrokerAndOutputAndRefresh(store, "secret", &CommandService{Store: store}, nil, nil, requester)
@@ -76,7 +76,7 @@ func TestRefreshInventoryReturnsCommittedDocument(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Data.SnapshotRevision != committed.SnapshotRevision || len(envelope.Data.Sessions) != 1 || envelope.Data.Sessions[0].SessionID != "res-1" {
+	if envelope.Data.SnapshotRevision != committed.SnapshotRevision || len(envelope.Data.Sessions) != 1 || envelope.Data.Sessions[0].ClusterSessionID != "res-1" {
 		t.Fatalf("data=%+v", envelope.Data)
 	}
 	// The response must equal the persisted document, not the submitted report.

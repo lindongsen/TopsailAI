@@ -83,7 +83,7 @@ func TestJournalStagesAreDurableAndConflict(t *testing.T) {
 
 func TestSourceCachePreservesLastSuccessOnFailure(t *testing.T) {
 	store, ctx := openTestStore(t)
-	success := SourceSnapshot{AdapterID: "adapter-a", ProviderType: "fixture", DisplayName: "A", Version: "1", Health: "healthy", Sessions: []protocol.Session{{SessionID: "s1", AdapterID: "adapter-a"}}, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 100, LastSuccessAtMS: ptr(100), DataKnown: true}
+	success := SourceSnapshot{AdapterID: "adapter-a", ProviderType: "fixture", DisplayName: "A", Version: "1", Health: "healthy", Sessions: []protocol.Session{{ClusterSessionID: "s1", AdapterID: "adapter-a"}}, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 100, LastSuccessAtMS: ptr(100), DataKnown: true}
 	if err := store.ApplySourceSnapshot(ctx, success, 100); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestSourceCachePreservesLastSuccessOnFailure(t *testing.T) {
 		t.Fatalf("list: %v %#v", err, items)
 	}
 	item := items[0]
-	if len(item.Sessions) != 1 || item.Sessions[0].SessionID != "s1" {
+	if len(item.Sessions) != 1 || item.Sessions[0].ClusterSessionID != "s1" {
 		t.Fatalf("old sessions lost: %#v", item.Sessions)
 	}
 	if item.LastSuccessAtMS == nil || *item.LastSuccessAtMS != 100 || !item.Stale || item.CollectionStatus != protocol.CollectionFailed {

@@ -21,9 +21,9 @@ type ModelProfile struct {
 	// this provider entry. It is never a provider name, a provider index or a
 	// provider file path, and it is the only addressing key a caller may use.
 	ModelProfileID string `json:"model_profile_id"`
-	// DisplayName is a human-readable label for the operator. Descriptive only:
+	// ProviderDisplayName is the provider's own model label, descriptive only:
 	// the cluster never parses it, and it is never an addressing key.
-	DisplayName string `json:"display_name,omitempty"`
+	ProviderDisplayName string `json:"provider_display_name,omitempty"`
 	// Current reports whether the session is using this profile now. It is an
 	// observation, not a stored fact: the catalog read derives it, so no second
 	// source of truth exists that could disagree with the provider.

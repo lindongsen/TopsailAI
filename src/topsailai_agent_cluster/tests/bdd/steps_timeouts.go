@@ -227,8 +227,8 @@ func tuiGeneration(resourceID string) (string, error) {
 	}
 	for _, raw := range sessions {
 		session, ok := raw.(map[string]any)
-		if ok && session["session_id"] == resourceID {
-			generation, _ := session["generation"].(string)
+		if ok && session["cluster_session_id"] == resourceID {
+			generation, _ := session["provider_generation"].(string)
 			return generation, nil
 		}
 	}

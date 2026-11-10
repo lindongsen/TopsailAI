@@ -14,9 +14,9 @@ import (
 // it. A name never replaces an identifier: it can be empty, duplicated or changed
 // between collections, so the question must stay answerable without it.
 type confirmationTarget struct {
-	DisplayName       string
-	ProviderSessionID string
-	SessionID         string
+	ProviderDisplayName string
+	ProviderSessionID   string
+	ClusterSessionID    string
 }
 
 // label renders one confirmation label as the canonical session identity
@@ -33,17 +33,17 @@ type confirmationTarget struct {
 // to the resource ID alone, and the word "session" is omitted there so the
 // question never reads "session session-1".
 func (t confirmationTarget) label() string {
-	if t.ProviderSessionID == "" && t.DisplayName == "" {
-		return t.SessionID
+	if t.ProviderSessionID == "" && t.ProviderDisplayName == "" {
+		return t.ClusterSessionID
 	}
-	return "session " + sessionIdentityLabel(t.DisplayName, t.ProviderSessionID, t.SessionID)
+	return "session " + sessionIdentityLabel(t.ProviderDisplayName, t.ProviderSessionID, t.ClusterSessionID)
 }
 
 // confirmationTargetFor names one resolved session for a confirmation question.
 func confirmationTargetFor(session protocol.Session) confirmationTarget {
 	return confirmationTarget{
-		DisplayName:       session.DisplayName,
-		ProviderSessionID: session.ProviderSessionID,
-		SessionID:         session.SessionID,
+		ProviderDisplayName: session.ProviderDisplayName,
+		ProviderSessionID:   session.ProviderSessionID,
+		ClusterSessionID:    session.ClusterSessionID,
 	}
 }

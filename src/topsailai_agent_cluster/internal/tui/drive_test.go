@@ -131,7 +131,7 @@ func TestDriveStartInWorkspaceScopeAdmitsTheExactTarget(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentDriveStart {
 		t.Fatalf("operation=%q want %q", intent.Operation, protocol.OperationAgentDriveStart)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.Generation != "generation-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.ProviderGeneration != "generation-1" {
 		t.Fatalf("target=%+v want res-1/generation-1", intent.Target)
 	}
 	if intent.EndpointID != "endpoint-1" {
@@ -268,7 +268,7 @@ func TestDriveStatusJSONCarriesTheRequestIdentity(t *testing.T) {
 	if err := (CommandRunner{API: stub, Policy: LegacyPolicy}).DriveStatus(context.Background(), &out, "endpoint-1", "res-1", true); err != nil {
 		t.Fatalf("DriveStatus: %v", err)
 	}
-	for _, want := range []string{`"endpoint_id": "endpoint-1"`, `"session_id": "res-1"`, `"generation": "generation-1"`, `"state": "running"`, `"verified": true`} {
+	for _, want := range []string{`"endpoint_id": "endpoint-1"`, `"cluster_session_id": "res-1"`, `"provider_generation": "generation-1"`, `"state": "running"`, `"verified": true`} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("drive status JSON missing %q: %q", want, out.String())
 		}
@@ -323,7 +323,7 @@ func TestInteractiveDriveStartAdmitsTheDriveOperation(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentDriveStart {
 		t.Fatalf("operation=%q want %q", intent.Operation, protocol.OperationAgentDriveStart)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.Generation != "generation-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.ProviderGeneration != "generation-1" {
 		t.Fatalf("target=%+v want res-1/generation-1", intent.Target)
 	}
 	if !strings.Contains(output, "CommandID:") {
@@ -383,7 +383,7 @@ func TestInteractiveDriveRejectsUnknownActionsAndOptions(t *testing.T) {
 func namedDriveStub() *interactiveStub {
 	stub := driveStub()
 	report := stub.reports["endpoint-1"]
-	report.Sessions[0].DisplayName = "Daily work"
+	report.Sessions[0].ProviderDisplayName = "Daily work"
 	stub.reports["endpoint-1"] = report
 	return stub
 }
@@ -451,7 +451,7 @@ func TestDriveConfirmationNamesTheProviderIDWithoutAName(t *testing.T) {
 func TestDriveConfirmationSanitizesTheReportedName(t *testing.T) {
 	stub := driveCapabilityStub{interactiveStub: driveStub()}
 	report := stub.reports["endpoint-1"]
-	report.Sessions[0].DisplayName = "evil\x1b[31mname"
+	report.Sessions[0].ProviderDisplayName = "evil\x1b[31mname"
 	stub.reports["endpoint-1"] = report
 	output, diagnostics := runScope(t, stub, "drive start res-1\ny\nquit\n", ColorPolicy{})
 	if diagnostics != "" {

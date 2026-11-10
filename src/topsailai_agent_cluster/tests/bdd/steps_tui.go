@@ -242,7 +242,7 @@ func tuiResourceID() (string, error) {
 	if !ok {
 		return "", fmt.Errorf("TUI inventory contains an invalid session")
 	}
-	resourceID, ok := session["session_id"].(string)
+	resourceID, ok := session["cluster_session_id"].(string)
 	if !ok || resourceID == "" || !strings.HasPrefix(resourceID, "res_") {
 		return "", fmt.Errorf("TUI inventory contains no opaque resource ID")
 	}

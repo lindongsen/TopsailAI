@@ -15,12 +15,12 @@ func scopeInventory(sessionID, generation string) protocol.InventoryReport {
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		Sessions: []protocol.Session{{
-			SessionID:         sessionID,
-			ProviderSessionID: "provider-" + sessionID,
-			AdapterID:         "adapter-1",
-			Generation:        generation,
-			State:             "running",
-			CollectionStatus:  protocol.CollectionSucceeded,
+			ClusterSessionID:   sessionID,
+			ProviderSessionID:  "provider-" + sessionID,
+			AdapterID:          "adapter-1",
+			ProviderGeneration: generation,
+			State:              "running",
+			CollectionStatus:   protocol.CollectionSucceeded,
 		}},
 	}
 }
@@ -43,13 +43,13 @@ func scopeStub() *interactiveStub {
 func siblingStub() *interactiveStub {
 	report := scopeInventory("res-1", "generation-1")
 	report.Sessions = append(report.Sessions, protocol.Session{
-		SessionID:         "res-1b",
-		ProviderSessionID: "provider-1b",
-		DisplayName:       "sibling work",
-		AdapterID:         "adapter-1",
-		Generation:        "generation-1b",
-		State:             "stopped",
-		CollectionStatus:  protocol.CollectionSucceeded,
+		ClusterSessionID:    "res-1b",
+		ProviderSessionID:   "provider-1b",
+		ProviderDisplayName: "sibling work",
+		AdapterID:           "adapter-1",
+		ProviderGeneration:  "generation-1b",
+		State:               "stopped",
+		CollectionStatus:    protocol.CollectionSucceeded,
 	})
 	return &interactiveStub{
 		endpoints: []protocol.Endpoint{
@@ -218,7 +218,7 @@ func TestShowDefaultsToCurrentSession(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	want := "session: res-1 adapter=adapter-1 generation=generation-1 state=running"
+	want := "session: res-1 adapter=adapter-1 provider_generation=generation-1 state=running"
 	if !strings.Contains(output, want) {
 		t.Fatalf("missing session detail %q in %q", want, output)
 	}

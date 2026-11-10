@@ -15,9 +15,9 @@ import (
 // exercises the same map the interactive surface keeps between commands.
 func modelNamespace(sessionID string, rows ...ModelCatalogViewRow) *modelCatalogNamespace {
 	namespace := &modelCatalogNamespace{
-		EndpointID: "endpoint-1",
-		SessionID:  sessionID,
-		Rows:       make(map[int]ModelCatalogViewRow, len(rows)),
+		EndpointID:       "endpoint-1",
+		ClusterSessionID: sessionID,
+		Rows:             make(map[int]ModelCatalogViewRow, len(rows)),
 	}
 	for _, row := range rows {
 		namespace.Rows[row.No] = row
@@ -36,8 +36,8 @@ func modelNamespace(sessionID string, rows ...ModelCatalogViewRow) *modelCatalog
 // report the same recovery hint.
 func TestModelSelectUnmatchedNumberIsNotRetriedAsAnID(t *testing.T) {
 	namespace := modelNamespace("res_1",
-		ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", DisplayName: "claude"},
-		ModelCatalogViewRow{No: 2, ModelProfileID: "7", DisplayName: "seven"},
+		ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", ProviderDisplayName: "claude"},
+		ModelCatalogViewRow{No: 2, ModelProfileID: "7", ProviderDisplayName: "seven"},
 	)
 
 	row, err := resolveModelProfileSelector(namespace, "res_1", "7", "res_1")
@@ -75,11 +75,11 @@ func TestModelSelectRejectsACatalogFromAnotherSession(t *testing.T) {
 // behaviours would produce the same text and the test could not tell them apart.
 func TestModelSelectNamesTheRenderedSessionCanonically(t *testing.T) {
 	namespace := &modelCatalogNamespace{
-		EndpointID:        "endpoint-1",
-		SessionID:         "res-1",
-		ProviderSessionID: "provider-res-1",
-		DisplayName:       "Daily work",
-		Rows:              map[int]ModelCatalogViewRow{1: {No: 1, ModelProfileID: "mp-1"}},
+		EndpointID:          "endpoint-1",
+		ClusterSessionID:    "res-1",
+		ProviderSessionID:   "provider-res-1",
+		ProviderDisplayName: "Daily work",
+		Rows:                map[int]ModelCatalogViewRow{1: {No: 1, ModelProfileID: "mp-1"}},
 	}
 
 	_, err := resolveModelProfileSelector(namespace, "res-2", "1", "(Other work) (provider-res-2)")
@@ -119,8 +119,8 @@ func TestModelSelectWithoutARenderedCatalogAsksForOne(t *testing.T) {
 // Endpoint as a selection key.
 func TestModelSelectResolvesRowNumberToTheOpaqueID(t *testing.T) {
 	namespace := modelNamespace("res_1",
-		ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", DisplayName: "claude"},
-		ModelCatalogViewRow{No: 2, ModelProfileID: "mp-2", DisplayName: "gpt"},
+		ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", ProviderDisplayName: "claude"},
+		ModelCatalogViewRow{No: 2, ModelProfileID: "mp-2", ProviderDisplayName: "gpt"},
 	)
 
 	row, err := resolveModelProfileSelector(namespace, "res_1", "2", "res_1")
@@ -149,7 +149,7 @@ func TestModelSelectResolvesRowNumberToTheOpaqueID(t *testing.T) {
 // Accepting an unseen ID would let a caller bypass the catalog the operator was
 // shown, so the rendered set stays the only authority.
 func TestModelSelectAcceptsTheOpaqueIDAndDisplayName(t *testing.T) {
-	namespace := modelNamespace("res_1", ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", DisplayName: "claude"})
+	namespace := modelNamespace("res_1", ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", ProviderDisplayName: "claude"})
 
 	byID, err := resolveModelProfileSelector(namespace, "res_1", "mp-1", "res_1")
 	if err != nil {
@@ -179,8 +179,8 @@ func TestModelSelectAcceptsTheOpaqueIDAndDisplayName(t *testing.T) {
 // and the two rows are indistinguishable by the token they typed.
 func TestModelSelectRejectsAnAmbiguousDisplayName(t *testing.T) {
 	namespace := modelNamespace("res_1",
-		ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", DisplayName: "claude"},
-		ModelCatalogViewRow{No: 2, ModelProfileID: "mp-2", DisplayName: "claude"},
+		ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", ProviderDisplayName: "claude"},
+		ModelCatalogViewRow{No: 2, ModelProfileID: "mp-2", ProviderDisplayName: "claude"},
 	)
 
 	_, err := resolveModelProfileSelector(namespace, "res_1", "claude", "res_1")
@@ -213,7 +213,7 @@ func TestModelRowNumberDetectionIsShared(t *testing.T) {
 // TestModelProfileLabelNamesTheProfile proves the operator-facing label carries the
 // display name and the opaque ID, so a confirmation names what will be applied.
 func TestModelProfileLabelNamesTheProfile(t *testing.T) {
-	label := ModelProfileLabel(ModelCatalogViewRow{No: 2, ModelProfileID: "mp-2", DisplayName: "gpt"})
+	label := ModelProfileLabel(ModelCatalogViewRow{No: 2, ModelProfileID: "mp-2", ProviderDisplayName: "gpt"})
 	if !strings.Contains(label, "gpt") || !strings.Contains(label, "mp-2") {
 		t.Fatalf("expected the display name and the ID, got %q", label)
 	}
@@ -270,8 +270,8 @@ func modelSelectStubFixture() modelSelectStub {
 		interactiveStub: stub,
 		catalog: protocol.ModelCatalog{
 			Profiles: []protocol.ModelProfile{
-				{ModelProfileID: "mp-1", DisplayName: "claude", Available: true},
-				{ModelProfileID: "mp-2", DisplayName: "gpt", Available: true},
+				{ModelProfileID: "mp-1", ProviderDisplayName: "claude", Available: true},
+				{ModelProfileID: "mp-2", ProviderDisplayName: "gpt", Available: true},
 			},
 			CurrentProfileID: "mp-1",
 			ObservedAtMS:     1700000000000,
@@ -316,8 +316,8 @@ func TestInteractiveModelSelectCarriesTheGeneration(t *testing.T) {
 	if intent.Target == nil || intent.Target.ResourceID != "res-1" {
 		t.Fatalf("target=%+v want res-1", intent.Target)
 	}
-	if intent.Target.Generation != "generation-1" {
-		t.Fatalf("generation=%q want generation-1", intent.Target.Generation)
+	if intent.Target.ProviderGeneration != "generation-1" {
+		t.Fatalf("generation=%q want generation-1", intent.Target.ProviderGeneration)
 	}
 	if !strings.Contains(string(intent.Payload), "mp-2") {
 		t.Fatalf("payload must carry the opaque profile ID, got %s", intent.Payload)

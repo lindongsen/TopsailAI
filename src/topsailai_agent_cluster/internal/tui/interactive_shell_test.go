@@ -43,9 +43,9 @@ func shellStub(command map[string]any) *shellStubAPI {
 func shellState() *interactiveState {
 	state := &interactiveState{}
 	state.interactiveSelection = interactiveSelection{
-		EndpointID: "endpoint-1",
-		SessionID:  "session-1",
-		Generation: "generation-1",
+		EndpointID:         "endpoint-1",
+		ClusterSessionID:   "session-1",
+		ProviderGeneration: "generation-1",
 	}
 	return state
 }
@@ -228,7 +228,7 @@ func TestExecuteInteractiveLineRunsShellCommand(t *testing.T) {
 	if intent.OperationVersion != protocol.CommandExecPayloadVersion {
 		t.Fatalf("operation version = %q, want %q", intent.OperationVersion, protocol.CommandExecPayloadVersion)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "session-1" || intent.Target.Generation != "generation-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "session-1" || intent.Target.ProviderGeneration != "generation-1" {
 		t.Fatalf("target = %+v, want session-1/generation-1", intent.Target)
 	}
 	var request protocol.CommandExecRequest

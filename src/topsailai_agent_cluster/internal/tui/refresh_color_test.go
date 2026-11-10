@@ -53,7 +53,7 @@ func TestRefreshStillFiltersProviderANSI(t *testing.T) {
 	stub := singleHostStub()
 	stub.endpoints[0].DisplayName = "host\x1b[31mRED\x1b[0m"
 	report := navInventory("sess-1", "generation-1")
-	report.Sessions[0].DisplayName = "name\x1b[31mRED\x1b[0m"
+	report.Sessions[0].ProviderDisplayName = "name\x1b[31mRED\x1b[0m"
 	stub.reports["endpoint-1"] = report
 	var out, diagnostics strings.Builder
 	err := RunInteractive(context.Background(), stub, strings.NewReader("refresh\nexit\n"), &out, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}})

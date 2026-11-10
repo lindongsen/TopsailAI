@@ -23,7 +23,7 @@ func TestStopAcceptsRowNumberInWorkspaceScope(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentStop || intent.EndpointID != "endpoint-1" {
 		t.Fatalf("wrong stop intent: %+v", intent)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.Generation != "generation-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.ProviderGeneration != "generation-1" {
 		t.Fatalf("wrong stop target: %+v", intent.Target)
 	}
 	if !strings.Contains(output, "row numbers are stale after stop; run list to refresh") {
@@ -46,7 +46,7 @@ func TestStopAcceptsRowNumberInEndpointScope(t *testing.T) {
 	if intent.EndpointID != "endpoint-1" {
 		t.Fatalf("wrong stop endpoint: %+v", intent)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.Generation != "generation-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.ProviderGeneration != "generation-1" {
 		t.Fatalf("wrong stop target: %+v", intent.Target)
 	}
 }
@@ -57,7 +57,7 @@ func TestStopRejectsForeignRowInEndpointScope(t *testing.T) {
 	stub := scopeStub()
 	state := &interactiveState{}
 	state.enterEndpoint(protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one"})
-	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-2", SessionID: "res-2", Generation: "generation-2"}})
+	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-2", ClusterSessionID: "res-2", ProviderGeneration: "generation-2"}})
 	_, diagnostics := runLine(t, stub, state, "stop 1")
 	assertActionableError(t, diagnostics, `error: row 1 belongs to endpoint "endpoint-2", not the current endpoint "endpoint-1"; run list in that endpoint first`)
 	if stub.admit != 0 {
@@ -80,7 +80,7 @@ func TestStopResolvesSessionIDAcrossEndpoints(t *testing.T) {
 	if intent.EndpointID != "endpoint-2" {
 		t.Fatalf("wrong stop endpoint: %+v", intent)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-2" || intent.Target.Generation != "generation-2" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-2" || intent.Target.ProviderGeneration != "generation-2" {
 		t.Fatalf("wrong stop target: %+v", intent.Target)
 	}
 }

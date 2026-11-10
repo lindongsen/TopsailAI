@@ -21,7 +21,7 @@ func (a timeoutAdapter) Describe(context.Context) (adapter.Descriptor, error) {
 	return adapter.Descriptor{AdapterID: "a1", Capabilities: protocol.CapabilityDescriptor{Revision: "v1", Capabilities: []protocol.Capability{{Name: "agent.start", Version: "v1"}}}}, nil
 }
 func (a timeoutAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
-	return adapter.InspectResult{Found: true, Generation: "g1"}, nil
+	return adapter.InspectResult{Found: true, ProviderGeneration: "g1"}, nil
 }
 func (a timeoutAdapter) Execute(ctx context.Context, _ adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
 	close(a.called)
@@ -94,7 +94,7 @@ type outputTestAdapter struct {
 }
 
 func (a outputTestAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
-	return adapter.InspectResult{Found: true, Generation: "g1"}, nil
+	return adapter.InspectResult{Found: true, ProviderGeneration: "g1"}, nil
 }
 func (a outputTestAdapter) ReadOutput(context.Context, adapter.OutputRequest) (adapter.OutputResult, error) {
 	return a.output, a.err
@@ -160,7 +160,7 @@ func TestReadOutputTruncatesAtMaxBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	e, _ := NewExecutor(store, registry)
-	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: "g1", MaxBytes: 4})
+	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, ProviderGeneration: "g1", MaxBytes: 4})
 	if err != nil || len(response.Data) != 4 || !response.Truncated {
 		t.Fatalf("response=%#v err=%v", response, err)
 	}
@@ -179,7 +179,7 @@ func TestReadOutputUnsupportedReturnsError(t *testing.T) {
 	_, _ = registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"})
 	mapping, _ := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
 	e, _ := NewExecutor(store, registry)
-	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: "g1", MaxBytes: 4})
+	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, ProviderGeneration: "g1", MaxBytes: 4})
 	if err != nil || response.ErrorCode != "unsupported" {
 		t.Fatalf("response=%#v err=%v", response, err)
 	}
@@ -209,7 +209,7 @@ func TestExecutorRejectsUnsupportedCapabilityWithoutCallingAdapter(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "unsupported", EndpointID: "e1", Operation: "missing", OperationVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: "g1"}, ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "unsupported", EndpointID: "e1", Operation: "missing", OperationVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, ProviderGeneration: "g1"}, ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
 	receipt, err := e.Execute(context.Background(), intent, "hash")
 	if err != nil || receipt.ErrorCode != "unsupported" || called {
 		t.Fatalf("receipt=%#v err=%v called=%v", receipt, err, called)
@@ -226,7 +226,7 @@ func (a countingAdapter) Describe(context.Context) (adapter.Descriptor, error) {
 }
 func (a countingAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
 	*a.called = true
-	return adapter.InspectResult{Found: true, Generation: "g1"}, nil
+	return adapter.InspectResult{Found: true, ProviderGeneration: "g1"}, nil
 }
 
 func TestExecutorAdmissionHookRunsAfterDurableAdmission(t *testing.T) {
@@ -296,7 +296,7 @@ func TestResumePreflightRequiresAuthoritativeAbsence(t *testing.T) {
 		wantCode   string
 	}{
 		{name: "absent executes", inspection: adapter.InspectResult{Found: false}, wantCalls: 1},
-		{name: "live rejects", inspection: adapter.InspectResult{Found: true, Live: true, Generation: "g1"}, wantCode: "target_still_active"},
+		{name: "live rejects", inspection: adapter.InspectResult{Found: true, Live: true, ProviderGeneration: "g1"}, wantCode: "target_still_active"},
 		// A record the provider still lists but cannot prove live is exactly the
 		// case resume exists for: the process is gone, the record remains. It must
 		// execute, because refusing on Found would reject every resumable session.
@@ -328,7 +328,7 @@ func TestResumePreflightRequiresAuthoritativeAbsence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "resume-" + testCase.name, EndpointID: "e1", Operation: protocol.OperationAgentResume, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: "g1"}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "resume-" + testCase.name, EndpointID: "e1", Operation: protocol.OperationAgentResume, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, ProviderGeneration: "g1"}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
 			receipt, err := executor.Execute(context.Background(), intent, "hash-"+testCase.name)
 			if err != nil {
 				t.Fatal(err)
@@ -348,7 +348,7 @@ type recordingOutputAdapter struct {
 }
 
 func (a *recordingOutputAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
-	return adapter.InspectResult{Found: true, Generation: "g1"}, nil
+	return adapter.InspectResult{Found: true, ProviderGeneration: "g1"}, nil
 }
 
 func (a *recordingOutputAdapter) ReadOutput(_ context.Context, request adapter.OutputRequest) (adapter.OutputResult, error) {
@@ -398,7 +398,7 @@ func TestReadOutputForwardsBothBudgets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: "g1", MaxBytes: testCase.maxBytes, MaxLines: testCase.maxLines}); err != nil {
+			if _, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, ProviderGeneration: "g1", MaxBytes: testCase.maxBytes, MaxLines: testCase.maxLines}); err != nil {
 				t.Fatal(err)
 			}
 			if recorder.request.MaxBytes != testCase.wantBytes {
@@ -422,7 +422,7 @@ type countingInspectAdapter struct {
 
 func (a *countingInspectAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
 	a.inspections++
-	return adapter.InspectResult{Found: a.found, Generation: a.generation}, nil
+	return adapter.InspectResult{Found: a.found, ProviderGeneration: a.generation}, nil
 }
 
 func (a *countingInspectAdapter) ReadOutput(context.Context, adapter.OutputRequest) (adapter.OutputResult, error) {
@@ -444,32 +444,32 @@ func TestReadOutputSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 	}{
 		{
 			name:            "known fresh snapshot answers without discovery",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: "res_target", ProviderGeneration: "g1"}}},
 			generation:      "g1",
 			wantInspections: 0,
 		},
 		{
 			name:            "known fresh snapshot rejects a mismatched generation without discovery",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: "res_target", ProviderGeneration: "g1"}}},
 			generation:      "g2",
 			wantInspections: 0,
 			wantError:       true,
 		},
 		{
 			name:            "stale snapshot falls back to one live inspection",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Stale: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Stale: true, Sessions: []protocol.Session{{ClusterSessionID: "res_target", ProviderGeneration: "g1"}}},
 			generation:      "g1",
 			wantInspections: 1,
 		},
 		{
 			name:            "unknown data falls back to one live inspection",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionFailed, LastAttemptAtMS: 1, DataKnown: false, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionFailed, LastAttemptAtMS: 1, DataKnown: false, Sessions: []protocol.Session{{ClusterSessionID: "res_target", ProviderGeneration: "g1"}}},
 			generation:      "g1",
 			wantInspections: 1,
 		},
 		{
 			name:            "resource absent from snapshot falls back to one live inspection",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_other", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: "res_other", ProviderGeneration: "g1"}}},
 			generation:      "g1",
 			wantInspections: 1,
 		},
@@ -503,8 +503,8 @@ func TestReadOutputSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 			}
 			if testCase.snapshot != nil {
 				for index := range testCase.snapshot.Sessions {
-					if testCase.snapshot.Sessions[index].SessionID == "res_target" {
-						testCase.snapshot.Sessions[index].SessionID = mapping.ResourceID
+					if testCase.snapshot.Sessions[index].ClusterSessionID == "res_target" {
+						testCase.snapshot.Sessions[index].ClusterSessionID = mapping.ResourceID
 					}
 				}
 				if err := store.ApplySourceSnapshot(context.Background(), *testCase.snapshot, 2); err != nil {
@@ -515,7 +515,7 @@ func TestReadOutputSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, readErr := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: testCase.generation, MaxBytes: 4096})
+			_, readErr := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, ProviderGeneration: testCase.generation, MaxBytes: 4096})
 			if testCase.wantError && readErr == nil {
 				t.Fatal("expected a generation mismatch error")
 			}
@@ -549,7 +549,7 @@ func (a *countingExecuteAdapter) Describe(context.Context) (adapter.Descriptor, 
 
 func (a *countingExecuteAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
 	a.inspections++
-	return adapter.InspectResult{Found: a.found, Generation: a.generation}, nil
+	return adapter.InspectResult{Found: a.found, ProviderGeneration: a.generation}, nil
 }
 
 func (a *countingExecuteAdapter) Execute(_ context.Context, request adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
@@ -574,35 +574,35 @@ func TestExecuteSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 	}{
 		{
 			name:            "known fresh snapshot answers without discovery",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: "res_target", ProviderGeneration: "g1"}}},
 			generation:      "g1",
 			wantInspections: 0,
 			wantExecutions:  1,
 		},
 		{
 			name:            "known fresh snapshot rejects a mismatched generation without discovery",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: "res_target", ProviderGeneration: "g1"}}},
 			generation:      "g2",
 			wantInspections: 0,
 			wantCode:        "target_generation_mismatch",
 		},
 		{
 			name:            "stale snapshot falls back to one live inspection",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Stale: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Stale: true, Sessions: []protocol.Session{{ClusterSessionID: "res_target", ProviderGeneration: "g1"}}},
 			generation:      "g1",
 			wantInspections: 1,
 			wantExecutions:  1,
 		},
 		{
 			name:            "unknown data falls back to one live inspection",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionFailed, LastAttemptAtMS: 1, DataKnown: false, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionFailed, LastAttemptAtMS: 1, DataKnown: false, Sessions: []protocol.Session{{ClusterSessionID: "res_target", ProviderGeneration: "g1"}}},
 			generation:      "g1",
 			wantInspections: 1,
 			wantExecutions:  1,
 		},
 		{
 			name:            "resource absent from snapshot falls back to one live inspection",
-			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_other", Generation: "g1"}}},
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: "res_other", ProviderGeneration: "g1"}}},
 			generation:      "g1",
 			wantInspections: 1,
 			wantExecutions:  1,
@@ -638,8 +638,8 @@ func TestExecuteSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 			}
 			if testCase.snapshot != nil {
 				for index := range testCase.snapshot.Sessions {
-					if testCase.snapshot.Sessions[index].SessionID == "res_target" {
-						testCase.snapshot.Sessions[index].SessionID = mapping.ResourceID
+					if testCase.snapshot.Sessions[index].ClusterSessionID == "res_target" {
+						testCase.snapshot.Sessions[index].ClusterSessionID = mapping.ResourceID
 					}
 				}
 				if err := store.ApplySourceSnapshot(context.Background(), *testCase.snapshot, 2); err != nil {
@@ -650,7 +650,7 @@ func TestExecuteSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "send-" + testCase.name, EndpointID: "e1", Operation: protocol.OperationMessageSend, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: testCase.generation}, Payload: []byte(`{"message":"hi"}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "send-" + testCase.name, EndpointID: "e1", Operation: protocol.OperationMessageSend, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, ProviderGeneration: testCase.generation}, Payload: []byte(`{"message":"hi"}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
 			receipt, err := e.Execute(context.Background(), intent, "hash-"+testCase.name)
 			if err != nil {
 				t.Fatal(err)
@@ -691,7 +691,7 @@ func TestResumeStillInspectsLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: mapping.ResourceID, Generation: "g1"}}}
+	snapshot := endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: mapping.ResourceID, ProviderGeneration: "g1"}}}
 	if err := store.ApplySourceSnapshot(context.Background(), snapshot, 2); err != nil {
 		t.Fatal(err)
 	}
@@ -699,7 +699,7 @@ func TestResumeStillInspectsLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "resume-live", EndpointID: "e1", Operation: protocol.OperationAgentResume, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: "g1"}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "resume-live", EndpointID: "e1", Operation: protocol.OperationAgentResume, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, ProviderGeneration: "g1"}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
 	if _, err := e.Execute(context.Background(), intent, "hash-resume-live"); err != nil {
 		t.Fatal(err)
 	}
@@ -735,7 +735,7 @@ func TestReadOutputTruncatesOnRuneBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	e, _ := NewExecutor(store, registry)
-	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: "g1", MaxBytes: 4})
+	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, ProviderGeneration: "g1", MaxBytes: 4})
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -778,7 +778,7 @@ func TestReadOutputKeepsWholeRunesWhenBudgetFallsInsideARune(t *testing.T) {
 		t.Fatal(err)
 	}
 	e, _ := NewExecutor(store, registry)
-	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: "g1", MaxBytes: 5})
+	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, ProviderGeneration: "g1", MaxBytes: 5})
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -865,7 +865,7 @@ func TestUnverifiedTargetRejectsEveryOperationExceptResume(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "unverified-" + testCase.name, EndpointID: "e1", Operation: testCase.operation, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: ""}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "unverified-" + testCase.name, EndpointID: "e1", Operation: testCase.operation, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, ProviderGeneration: ""}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
 			receipt, err := executor.Execute(context.Background(), intent, "hash-"+testCase.name)
 			if err != nil {
 				t.Fatal(err)

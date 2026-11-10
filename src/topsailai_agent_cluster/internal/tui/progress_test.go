@@ -410,7 +410,7 @@ func TestRefreshWithNilProgressKeepsBehaviour(t *testing.T) {
 // opaque identifier that the interactive table never showed.
 func TestProgressHeaderNamesTheSession(t *testing.T) {
 	out := newProgressStub()
-	request := ActionRequest{Operation: protocol.OperationAgentDriveStart, EndpointID: "ep-1", ResourceID: "s-1", DisplayName: "Daily work"}
+	request := ActionRequest{Operation: protocol.OperationAgentDriveStart, EndpointID: "ep-1", ResourceID: "s-1", ProviderDisplayName: "Daily work"}
 	progress := NewActionProgress(out, request)
 	pastThreshold(progress)
 	progress.Stage("server received")
@@ -444,7 +444,7 @@ func TestProgressHeaderNamesTheProviderIDWithoutAName(t *testing.T) {
 // control sequences through a session name.
 func TestProgressHeaderSanitizesTheReportedName(t *testing.T) {
 	out := newProgressStub()
-	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep-1", ResourceID: "s-1", DisplayName: "evil\x1b[31mname"}
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep-1", ResourceID: "s-1", ProviderDisplayName: "evil\x1b[31mname"}
 	progress := NewActionProgress(out, request)
 	pastThreshold(progress)
 	progress.Stage("server received")

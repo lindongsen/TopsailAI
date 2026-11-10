@@ -22,7 +22,7 @@ type sessionTarget struct {
 
 // confirmationTarget names this target for the confirmation question.
 func (t sessionTarget) confirmationTarget() confirmationTarget {
-	return confirmationTarget{DisplayName: t.displayName, ProviderSessionID: t.providerSessionID, SessionID: t.sessionID}
+	return confirmationTarget{ProviderDisplayName: t.displayName, ProviderSessionID: t.providerSessionID, ClusterSessionID: t.sessionID}
 }
 
 // resolveSessionTarget maps the operator argument to one exact session identity for
@@ -43,7 +43,7 @@ func resolveSessionTarget(ctx context.Context, api InteractiveAPI, state *intera
 		if err != nil {
 			return sessionTarget{}, err
 		}
-		return sessionTarget{endpointID: state.EndpointID, sessionID: session.SessionID, providerSessionID: session.ProviderSessionID, displayName: session.DisplayName, generation: session.Generation}, nil
+		return sessionTarget{endpointID: state.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
 	}
 	var row SessionRow
 	var resolved bool
@@ -57,7 +57,7 @@ func resolveSessionTarget(ctx context.Context, api InteractiveAPI, state *intera
 		return sessionTarget{}, err
 	}
 	if resolved {
-		return validateSessionTarget(ctx, api, row.EndpointID, row.SessionID, row.Generation)
+		return validateSessionTarget(ctx, api, row.EndpointID, row.ClusterSessionID, row.ProviderGeneration)
 	}
 	if state.Scope.Kind == ScopeEndpoint {
 		return resolveSessionTargetInEndpoint(ctx, api, state.Scope.EndpointID, token)
@@ -75,7 +75,7 @@ func resolveSessionTargetInEndpoint(ctx context.Context, api InteractiveAPI, end
 	if err != nil {
 		return sessionTarget{}, numericTokenHint(token, err)
 	}
-	return sessionTargetFromLoaded(loaded, endpointID, session.SessionID, session.Generation)
+	return sessionTargetFromLoaded(loaded, endpointID, session.ClusterSessionID, session.ProviderGeneration)
 }
 
 // resolveSessionTargetAcrossEndpoints resolves a literal session identifier in
@@ -97,7 +97,7 @@ func resolveSessionTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI
 			continue
 		}
 		if _, _, session, findErr := findSessionInEndpoint(loaded, endpoint.EndpointID, token); findErr == nil {
-			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.SessionID, providerSessionID: session.ProviderSessionID, displayName: session.DisplayName, generation: session.Generation})
+			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration})
 		}
 	}
 	switch len(matches) {
@@ -148,7 +148,7 @@ func sessionTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedG
 		return sessionTarget{}, fmt.Errorf("endpoint %q inventory is unavailable", endpointID)
 	}
 	for _, session := range report.Sessions {
-		if session.SessionID != sessionID {
+		if session.ClusterSessionID != sessionID {
 			continue
 		}
 		if err := validateSessionFreshness(report, session); err != nil {
@@ -157,17 +157,17 @@ func sessionTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedG
 		if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
 			return sessionTarget{}, err
 		}
-		if session.Generation == "" {
+		if session.ProviderGeneration == "" {
 			// A session reported without a generation is present but its liveness
 			// was not verified, so it cannot be addressed. Resume is the only
 			// operation that does not need a generation, so name it as the
 			// recovery step instead of asking for a refresh that cannot help.
-			return sessionTarget{}, fmt.Errorf("session %s is unverified on endpoint %q: the session record exists but no process holds it, so it cannot be addressed; use resume to resume it", sessionIdentityLabel(session.DisplayName, session.ProviderSessionID, sessionID), endpointID)
+			return sessionTarget{}, fmt.Errorf("session %s is unverified on endpoint %q: the session record exists but no process holds it, so it cannot be addressed; use resume to resume it", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, sessionID), endpointID)
 		}
-		if expectedGeneration != "" && session.Generation != expectedGeneration {
-			return sessionTarget{}, fmt.Errorf("session %s generation changed; run list again", sessionIdentityLabel(session.DisplayName, session.ProviderSessionID, sessionID))
+		if expectedGeneration != "" && session.ProviderGeneration != expectedGeneration {
+			return sessionTarget{}, fmt.Errorf("session %s generation changed; run list again", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, sessionID))
 		}
-		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, displayName: session.DisplayName, generation: session.Generation}, nil
+		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
 	}
 	return sessionTarget{}, fmt.Errorf("session %q was not found on endpoint %q; run list again", sessionID, endpointID)
 }

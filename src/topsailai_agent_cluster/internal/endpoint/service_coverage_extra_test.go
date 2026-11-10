@@ -68,7 +68,7 @@ func TestServiceOutputFrameReportsUnsupportedAndProviderErrors(t *testing.T) {
 	}
 	provider := coverageExecutor{output: protocol.OutputSnapshotResponse{}, outErr: errors.New("provider unavailable")}
 	service.executor = provider
-	service.outputFrame(context.Background(), channel.Frame{Type: channel.FrameOutputRequest, RequestID: "provider", OutputRequest: &protocol.OutputSnapshotRequest{ResourceID: "r", Generation: "g"}})
+	service.outputFrame(context.Background(), channel.Frame{Type: channel.FrameOutputRequest, RequestID: "provider", OutputRequest: &protocol.OutputSnapshotRequest{ResourceID: "r", ProviderGeneration: "g"}})
 	transport.mu.Lock()
 	last := transport.frames[len(transport.frames)-1]
 	transport.mu.Unlock()
@@ -87,7 +87,7 @@ func TestServiceExecuteFrameRejectsMissingInputsAndPublishesReceipt(t *testing.T
 	}
 	service.executeFrame(context.Background(), channel.Frame{Type: channel.FrameCommand})
 	service.executeFrame(context.Background(), channel.Frame{Type: channel.FrameCommand, Intent: &protocol.ImmutableIntent{CommandID: "bad", Operation: "message.send"}})
-	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd", EndpointID: "e1", Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{}`), Target: &protocol.CommandTarget{ResourceID: "r", Generation: "g"}}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd", EndpointID: "e1", Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{}`), Target: &protocol.CommandTarget{ResourceID: "r", ProviderGeneration: "g"}}
 	service.executeFrame(context.Background(), channel.Frame{Type: channel.FrameCommand, FrameID: "cmd", RequestID: "req", Intent: &intent})
 	if transport.count(channel.FrameReceipt) != 3 {
 		t.Fatalf("receipt count=%d", transport.count(channel.FrameReceipt))

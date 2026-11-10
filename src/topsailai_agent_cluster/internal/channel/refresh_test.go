@@ -21,7 +21,7 @@ func refreshReport(sessionID string, revision int64) protocol.InventoryReport {
 		ReportComplete:   true,
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
-		Sessions:         []protocol.Session{{SessionID: sessionID, AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
+		Sessions:         []protocol.Session{{ClusterSessionID: sessionID, AdapterID: "adapter-1", ProviderGeneration: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
 	}
 }
 
@@ -64,7 +64,7 @@ func TestRequestRefreshAndWaitReturnsCorrelatedReport(t *testing.T) {
 	if err := <-reply; err != nil {
 		t.Fatalf("endpoint reply: %v", err)
 	}
-	if report.SnapshotRevision != 7 || len(report.Sessions) != 1 || report.Sessions[0].SessionID != "res-1" {
+	if report.SnapshotRevision != 7 || len(report.Sessions) != 1 || report.Sessions[0].ClusterSessionID != "res-1" {
 		t.Fatalf("report=%+v", report)
 	}
 	// The persistence hook must run before the waiter is released, otherwise the

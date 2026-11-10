@@ -217,7 +217,7 @@ func progressTarget(request ActionRequest) string {
 	if session == "" && endpoint == "" {
 		return ""
 	}
-	described := sessionIdentityLabel(request.DisplayName, request.ProviderSessionID, request.ResourceID)
+	described := sessionIdentityLabel(request.ProviderDisplayName, request.ProviderSessionID, request.ResourceID)
 	switch {
 	case described == "":
 		return "endpoint " + endpoint

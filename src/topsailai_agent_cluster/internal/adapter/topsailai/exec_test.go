@@ -351,7 +351,7 @@ func commandExecIntent(t *testing.T, adapter *Adapter, argv []string) protocol.I
 		CommandID:        "cmd_1",
 		Operation:        protocol.OperationCommandExec,
 		OperationVersion: protocol.CommandExecPayloadVersion,
-		Target:           &protocol.CommandTarget{Kind: "session", ResourceID: "res_sess1", Generation: "g1"},
+		Target:           &protocol.CommandTarget{Kind: "session", ResourceID: "res_sess1", ProviderGeneration: "g1"},
 		Payload:          payload,
 	}
 }

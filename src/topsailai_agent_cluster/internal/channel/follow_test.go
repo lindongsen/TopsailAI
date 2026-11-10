@@ -13,7 +13,7 @@ import (
 
 // followRequest builds one standard follow request for a resource generation.
 func followRequest(resourceID string) protocol.OutputFollowRequest {
-	return protocol.OutputFollowRequest{EndpointID: "endpoint-1", ResourceID: resourceID, Generation: "generation-1", MaxLines: 20, MaxBytes: 4096}
+	return protocol.OutputFollowRequest{EndpointID: "endpoint-1", ResourceID: resourceID, ProviderGeneration: "generation-1", MaxLines: 20, MaxBytes: 4096}
 }
 
 // dialFollowEndpoint connects one Endpoint client to a test Server and returns
@@ -299,7 +299,7 @@ func TestDisconnectFailsPendingOutput(t *testing.T) {
 	}()
 	result := make(chan protocol.OutputSnapshotResponse, 1)
 	go func() {
-		response, _ := server.RequestOutput(ctx, "endpoint-1", protocol.OutputSnapshotRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"})
+		response, _ := server.RequestOutput(ctx, "endpoint-1", protocol.OutputSnapshotRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"})
 		result <- response
 	}()
 	select {

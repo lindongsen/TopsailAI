@@ -44,12 +44,12 @@ func navInventory(sessionID, generation string) protocol.InventoryReport {
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		Sessions: []protocol.Session{{
-			SessionID:         sessionID,
-			ProviderSessionID: "provider-" + sessionID,
-			AdapterID:         "adapter-1",
-			Generation:        generation,
-			State:             "running",
-			CollectionStatus:  protocol.CollectionSucceeded,
+			ClusterSessionID:   sessionID,
+			ProviderSessionID:  "provider-" + sessionID,
+			AdapterID:          "adapter-1",
+			ProviderGeneration: generation,
+			State:              "running",
+			CollectionStatus:   protocol.CollectionSucceeded,
 		}},
 	}
 }
@@ -391,10 +391,10 @@ func TestCDPromptFillsHostnameFromListRows(t *testing.T) {
 		t.Fatalf("rows = %d, want 1", len(state.Rows))
 	}
 	row := state.Rows[1]
-	if row.EndpointID != "endpoint-1" || row.SessionID != "res-1" || row.Generation != "generation-1" {
+	if row.EndpointID != "endpoint-1" || row.ClusterSessionID != "res-1" || row.ProviderGeneration != "generation-1" {
 		t.Fatalf("row identity = %+v", row)
 	}
-	state.enterSessionDetails(stub.endpoints[0], row.SessionID, row.ProviderSessionID, row.DisplayName, row.AdapterID, row.Generation)
+	state.enterSessionDetails(stub.endpoints[0], row.ClusterSessionID, row.ProviderSessionID, row.ProviderDisplayName, row.AdapterID, row.ProviderGeneration)
 	var prompt strings.Builder
 	if err := RenderPrompt(&prompt, state.Scope, false, ColorPolicy{}); err != nil {
 		t.Fatal(err)
@@ -464,7 +464,7 @@ func TestSessionPromptUsesProviderSessionIDAndSanitizesIt(t *testing.T) {
 		want  string
 	}{
 		{name: "provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "20261027152208", SessionName: "统一Agent管理方案"}, want: "session[ai-dev/20261027152208]> "},
-		{name: "empty provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "", SessionName: "统一Agent管理方案", SessionID: "res_1234567890abcdef"}, want: "session[ai-dev/-]> "},
+		{name: "empty provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "", SessionName: "统一Agent管理方案", ClusterSessionID: "res_1234567890abcdef"}, want: "session[ai-dev/-]> "},
 		{name: "slash in provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "provider/session"}, want: "session[ai-dev/provider∕session]> "},
 	}
 	for _, testCase := range cases {
@@ -496,7 +496,7 @@ func TestSessionPromptKeepsGreenBoldStyle(t *testing.T) {
 
 func TestSessionPromptDoesNotFallBackToDisplayNameOrResourceID(t *testing.T) {
 	var output strings.Builder
-	scope := ScopeState{Kind: ScopeSession, Hostname: "ai-dev", SessionID: "res_1234567890abcdef", SessionName: "display-name"}
+	scope := ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ClusterSessionID: "res_1234567890abcdef", SessionName: "display-name"}
 	if err := RenderPrompt(&output, scope, false, ColorPolicy{}); err != nil {
 		t.Fatal(err)
 	}

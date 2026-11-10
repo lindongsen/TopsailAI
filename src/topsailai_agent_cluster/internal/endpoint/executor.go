@@ -123,7 +123,7 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			if inspection.Live {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_still_active"))
 			}
-		} else if intent.Target.Generation == "" {
+		} else if intent.Target.ProviderGeneration == "" {
 			// Every other operation addresses a live process, so an empty
 			// generation cannot prove which process it would reach. This is
 			// rejected before revalidation, because revalidation compares the
@@ -205,7 +205,7 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 
 // ReadOutput reads a bounded snapshot through the mapped resource adapter.
 func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
-	if request.ResourceID == "" || request.Generation == "" {
+	if request.ResourceID == "" || request.ProviderGeneration == "" {
 		return protocol.OutputSnapshotResponse{ErrorCode: "invalid_target"}, fmt.Errorf("resource ID and generation are required")
 	}
 	mapping, err := e.store.LookupResourceID(ctx, request.ResourceID)
@@ -220,7 +220,7 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	// collection snapshot. A live inspection re-runs the provider's full discovery,
 	// which costs seconds per read, so it is reserved for the cases the snapshot
 	// cannot answer: unknown data, stale data, or a resource absent from it.
-	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}); err != nil {
+	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}); err != nil {
 		return protocol.OutputSnapshotResponse{ErrorCode: "generation_mismatch"}, err
 	}
 	limit := request.MaxBytes
@@ -237,7 +237,7 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	if lines > 10000 {
 		lines = 10000
 	}
-	result, err := instance.ReadOutput(ctx, adapter.OutputRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}, MaxBytes: limit, MaxLines: lines})
+	result, err := instance.ReadOutput(ctx, adapter.OutputRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}, MaxBytes: limit, MaxLines: lines})
 	if errors.Is(err, adapter.ErrUnsupported) {
 		return protocol.OutputSnapshotResponse{ErrorCode: "unsupported"}, nil
 	}
@@ -266,7 +266,7 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 // that cannot stream reports ErrUnsupported, which the Endpoint turns into an
 // honest "unsupported" end frame instead of a provider failure.
 func (e *Executor) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
-	if request.ResourceID == "" || request.Generation == "" {
+	if request.ResourceID == "" || request.ProviderGeneration == "" {
 		return fmt.Errorf("resource ID and generation are required")
 	}
 	mapping, err := e.store.LookupResourceID(ctx, request.ResourceID)
@@ -277,7 +277,7 @@ func (e *Executor) FollowOutput(ctx context.Context, request protocol.OutputFoll
 	if !ok {
 		return fmt.Errorf("adapter %q is not configured", mapping.AdapterID)
 	}
-	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}); err != nil {
+	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}); err != nil {
 		return err
 	}
 	follower, ok := instance.(adapter.OutputFollower)
@@ -295,17 +295,17 @@ func (e *Executor) revalidateGeneration(ctx context.Context, instance adapter.Ad
 	snapshot, found, err := e.store.SourceSnapshot(ctx, adapterID)
 	if err == nil && found && snapshot.DataKnown && !snapshot.Stale {
 		for _, session := range snapshot.Sessions {
-			if session.SessionID != target.ResourceID {
+			if session.ClusterSessionID != target.ResourceID {
 				continue
 			}
-			if session.Generation != target.Generation {
+			if session.ProviderGeneration != target.ProviderGeneration {
 				return fmt.Errorf("resource generation does not match")
 			}
 			return nil
 		}
 	}
 	inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: target})
-	if inspectErr != nil || !inspection.Found || inspection.Generation != target.Generation {
+	if inspectErr != nil || !inspection.Found || inspection.ProviderGeneration != target.ProviderGeneration {
 		return fmt.Errorf("resource generation does not match")
 	}
 	return nil

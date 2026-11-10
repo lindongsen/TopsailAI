@@ -70,10 +70,10 @@ func (s *interactiveStub) GetInventory(_ context.Context, id string) (protocol.I
 			index = len(s.generationSequence) - 1
 		}
 		report.Sessions = append([]protocol.Session(nil), report.Sessions...)
-		report.Sessions[0].Generation = s.generationSequence[index]
+		report.Sessions[0].ProviderGeneration = s.generationSequence[index]
 	} else if len(report.Sessions) > 0 && s.changeAfter > 0 && s.inventoryCalls >= s.changeAfter {
 		report.Sessions = append([]protocol.Session(nil), report.Sessions...)
-		report.Sessions[0].Generation = "generation-2"
+		report.Sessions[0].ProviderGeneration = "generation-2"
 	}
 	return report, nil
 }
@@ -117,7 +117,7 @@ func (s *interactiveStub) AdmitCommand(_ context.Context, intent protocol.Immuta
 }
 
 func testInventory() protocol.InventoryReport {
-	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}, Sessions: []protocol.Session{{SessionID: "session-1", AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}
+	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}, Sessions: []protocol.Session{{ClusterSessionID: "session-1", AdapterID: "adapter-1", ProviderGeneration: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}
 }
 
 func TestInteractiveListUsesTableHeaders(t *testing.T) {
@@ -386,7 +386,7 @@ func TestInteractiveListRowsBindSessionThroughCD(t *testing.T) {
 		reports: map[string]protocol.InventoryReport{"endpoint-1": {
 			ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded,
 			Adapters: []protocol.AdapterSummary{{AdapterID: "topsailai-main", ProviderType: "topsailai", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
-			Sessions: []protocol.Session{{SessionID: "res-1", AdapterID: "topsailai-main", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
+			Sessions: []protocol.Session{{ClusterSessionID: "res-1", AdapterID: "topsailai-main", ProviderGeneration: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
 		}},
 	}
 	var output, errorsOut strings.Builder

@@ -55,8 +55,8 @@ func messagesScenarioStub(rows []protocol.HistoryRow, report protocol.InventoryR
 func TestInteractiveMessagesReadsStoppedRowByNumber(t *testing.T) {
 	stub := messagesScenarioStub(
 		[]protocol.HistoryRow{
-			{ProviderSessionID: "wa-live", DisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
-			{ProviderSessionID: "wa-past", DisplayName: "past work", Resumable: true, ResourceID: "res-past"},
+			{ProviderSessionID: "wa-live", ProviderDisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
+			{ProviderSessionID: "wa-past", ProviderDisplayName: "past work", Resumable: true, ResourceID: "res-past"},
 		},
 		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
 		protocol.MessagesResult{
@@ -96,8 +96,8 @@ func TestInteractiveMessagesReadsStoppedRowByNumber(t *testing.T) {
 func TestInteractiveMessagesKeepsRowNumbers(t *testing.T) {
 	stub := messagesScenarioStub(
 		[]protocol.HistoryRow{
-			{ProviderSessionID: "wa-one", DisplayName: "one", Resumable: true},
-			{ProviderSessionID: "wa-two", DisplayName: "two", Resumable: true},
+			{ProviderSessionID: "wa-one", ProviderDisplayName: "one", Resumable: true},
+			{ProviderSessionID: "wa-two", ProviderDisplayName: "two", Resumable: true},
 		},
 		historyReport(),
 		protocol.MessagesResult{
@@ -124,7 +124,7 @@ func TestInteractiveMessagesKeepsRowNumbers(t *testing.T) {
 // mistake rather than a request to read a different session.
 func TestInteractiveMessagesSessionScopeRejectsArgument(t *testing.T) {
 	stub := messagesScenarioStub(
-		[]protocol.HistoryRow{{ProviderSessionID: "wa-live", DisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning}},
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-live", ProviderDisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning}},
 		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
 		protocol.MessagesResult{ProviderSessionID: "wa-live", MessageCount: 1, Messages: []protocol.Message{{Role: "user", Content: "scoped"}}},
 	)
@@ -145,7 +145,7 @@ func TestInteractiveMessagesSessionScopeRejectsArgument(t *testing.T) {
 // selected session without an argument.
 func TestInteractiveMessagesSessionScopeReadsSelected(t *testing.T) {
 	stub := messagesScenarioStub(
-		[]protocol.HistoryRow{{ProviderSessionID: "wa-live", DisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning}},
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-live", ProviderDisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning}},
 		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
 		protocol.MessagesResult{ProviderSessionID: "wa-live", MessageCount: 1, Messages: []protocol.Message{{Role: "user", Content: "scoped"}}},
 	)
@@ -207,7 +207,7 @@ func TestInteractiveMessagesRequiresHistoryForRowNumber(t *testing.T) {
 // refused with the valid range instead of reading an arbitrary row.
 func TestInteractiveMessagesRejectsOutOfRangeRow(t *testing.T) {
 	stub := messagesScenarioStub(
-		[]protocol.HistoryRow{{ProviderSessionID: "wa-one", DisplayName: "one", Resumable: true}},
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-one", ProviderDisplayName: "one", Resumable: true}},
 		historyReport(),
 		protocol.MessagesResult{},
 	)
@@ -225,7 +225,7 @@ func TestInteractiveMessagesRejectsOutOfRangeRow(t *testing.T) {
 // reported as a failure rather than as an empty conversation.
 func TestInteractiveMessagesReportsProviderFailure(t *testing.T) {
 	stub := messagesScenarioStub(
-		[]protocol.HistoryRow{{ProviderSessionID: "wa-one", DisplayName: "one", Resumable: true}},
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-one", ProviderDisplayName: "one", Resumable: true}},
 		historyReport(),
 		protocol.MessagesResult{ProviderSessionID: "wa-one", ErrorCode: protocol.MessagesSessionNotFound},
 	)

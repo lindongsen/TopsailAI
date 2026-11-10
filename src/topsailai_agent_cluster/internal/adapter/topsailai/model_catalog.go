@@ -98,10 +98,10 @@ func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQ
 		}
 		available, reason := modelProfileAvailability(entry)
 		result.Profiles = append(result.Profiles, protocol.ModelProfile{
-			ModelProfileID:    profileID,
-			DisplayName:       boundedModelDisplayName(entry.Name),
-			Available:         available,
-			UnavailableReason: reason,
+			ModelProfileID:      profileID,
+			ProviderDisplayName: boundedModelDisplayName(entry.Name),
+			Available:           available,
+			UnavailableReason:   reason,
 		})
 	}
 	return result, nil

@@ -16,11 +16,11 @@ import (
 // the exact session the operator selected rather than to whatever the provider
 // reports later.
 type followRequest struct {
-	EndpointID string
-	ResourceID string
-	Generation string
-	MaxBytes   int
-	MaxLines   int
+	EndpointID         string
+	ResourceID         string
+	ProviderGeneration string
+	MaxBytes           int
+	MaxLines           int
 }
 
 // OutputFollower is the optional streaming seam. A client without it keeps the
@@ -182,7 +182,7 @@ func newFollowSession(parent context.Context, api InteractiveAPI, request follow
 		return nil, fmt.Errorf("follow is unavailable: the API client does not support streaming output")
 	}
 	ctx, cancel := context.WithCancel(parent)
-	records, err := follower.FollowOutput(ctx, request.EndpointID, request.ResourceID, request.Generation, request.MaxBytes, request.MaxLines)
+	records, err := follower.FollowOutput(ctx, request.EndpointID, request.ResourceID, request.ProviderGeneration, request.MaxBytes, request.MaxLines)
 	if err != nil {
 		cancel()
 		return nil, err

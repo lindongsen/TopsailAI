@@ -32,12 +32,12 @@ func infoTestServer(t *testing.T) *httptest.Server {
 				ReportComplete:   true,
 				CollectionStatus: protocol.CollectionSucceeded,
 				Sessions: []protocol.Session{{
-					SessionID:         "res-1",
-					ProviderSessionID: "shared-provider",
-					ProviderPID:       4242,
-					ProjectWorkspace:  "/work/project-one",
-					Generation:        "gen-1",
-					State:             "running",
+					ClusterSessionID:         "res-1",
+					ProviderSessionID:        "shared-provider",
+					ProviderPID:              4242,
+					ProviderProjectWorkspace: "/work/project-one",
+					ProviderGeneration:       "gen-1",
+					State:                    "running",
 				}},
 			})
 		case "/api/v1/endpoints/endpoint-2/session-state":
@@ -45,11 +45,11 @@ func infoTestServer(t *testing.T) *httptest.Server {
 				ReportComplete:   true,
 				CollectionStatus: protocol.CollectionSucceeded,
 				Sessions: []protocol.Session{{
-					SessionID:         "res-2",
-					ProviderSessionID: "shared-provider",
-					ProjectWorkspace:  "/work/project-two",
-					Generation:        "gen-2",
-					State:             "idle",
+					ClusterSessionID:         "res-2",
+					ProviderSessionID:        "shared-provider",
+					ProviderProjectWorkspace: "/work/project-two",
+					ProviderGeneration:       "gen-2",
+					State:                    "idle",
 				}},
 			})
 		default:
@@ -149,10 +149,10 @@ func TestInfoJSONEnvelopeCarriesEndpointAndSession(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &info); err != nil {
 		t.Fatalf("output=%q is not JSON: %v", output, err)
 	}
-	if info.EndpointID != "endpoint-1" || info.Session.SessionID != "res-1" {
+	if info.EndpointID != "endpoint-1" || info.Session.ClusterSessionID != "res-1" {
 		t.Fatalf("unexpected info document: %+v", info)
 	}
-	if info.Session.ProjectWorkspace != "/work/project-one" {
+	if info.Session.ProviderProjectWorkspace != "/work/project-one" {
 		t.Fatalf("project workspace was dropped: %+v", info.Session)
 	}
 }

@@ -913,7 +913,7 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 			return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint %q inventory is unavailable", state.EndpointID)
 		}
 		for index := range report.Sessions {
-			if report.Sessions[index].SessionID != state.SessionID {
+			if report.Sessions[index].ClusterSessionID != state.ClusterSessionID {
 				continue
 			}
 			session := &report.Sessions[index]
@@ -923,16 +923,16 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 			if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
 			}
-			if session.Generation == "" {
+			if session.ProviderGeneration == "" {
 				// A session that is still reported but whose liveness was not
 				// verified has no generation, so it cannot be addressed. This is
 				// not a generation change: the operator must leave the scope and
 				// resume the session, because resume is the only operation that
 				// does not need a generation.
 				state.invalidate("selected session liveness is unverified")
-				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %s is no longer verified as running, so it cannot be addressed; use cd .. then resume it", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, state.SessionID))
+				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %s is no longer verified as running, so it cannot be addressed; use cd .. then resume it", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, state.ClusterSessionID))
 			}
-			if session.Generation != state.Generation {
+			if session.ProviderGeneration != state.ProviderGeneration {
 				state.invalidate("selected session generation changed")
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session generation changed; use the session again")
 			}
@@ -941,7 +941,7 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 	}
 	// The endpoint no longer reports the pinned session, so the selection can never be
 	// resolved again; name the recovery step instead of leaving the operator to guess.
-	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %s was not found; use cd .. to leave the session scope", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, state.SessionID))
+	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %s was not found; use cd .. to leave the session scope", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, state.ClusterSessionID))
 }
 
 func validateSessionFreshness(report protocol.InventoryReport, session protocol.Session) error {
@@ -950,7 +950,7 @@ func validateSessionFreshness(report protocol.InventoryReport, session protocol.
 		collectionStatus = report.CollectionStatus
 	}
 	if session.Stale || session.Unknown || collectionStatus != protocol.CollectionSucceeded {
-		return fmt.Errorf("session %s is not fresh: stale=%t unknown=%t collection_status=%s", sessionIdentityLabel(session.DisplayName, session.ProviderSessionID, session.SessionID), session.Stale, session.Unknown, collectionStatus)
+		return fmt.Errorf("session %s is not fresh: stale=%t unknown=%t collection_status=%s", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, session.ClusterSessionID), session.Stale, session.Unknown, collectionStatus)
 	}
 	return nil
 }
@@ -1032,7 +1032,7 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 			if err != nil {
 				return err
 			}
-			id = session.SessionID
+			id = session.ClusterSessionID
 		}
 	} else {
 		row, resolved, err := resolveSessionToken(state, id)
@@ -1040,7 +1040,7 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 			return err
 		}
 		if resolved {
-			id = row.SessionID
+			id = row.ClusterSessionID
 		}
 	}
 	if err := (CommandRunner{API: api, Policy: InteractivePolicy}).Show(ctx, out, id, false); err != nil {

@@ -92,12 +92,12 @@ func TestTableColorsWholeRowFromSessionState(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.state, func(t *testing.T) {
 			rows := []SessionRow{{
-				EndpointID:        "endpoint-1",
-				AdapterID:         "adapter",
-				ProviderSessionID: "provider-42",
-				DisplayName:       "Daily work",
-				State:             testCase.state,
-				CollectionStatus:  protocol.CollectionSucceeded,
+				EndpointID:          "endpoint-1",
+				AdapterID:           "adapter",
+				ProviderSessionID:   "provider-42",
+				ProviderDisplayName: "Daily work",
+				State:               testCase.state,
+				CollectionStatus:    protocol.CollectionSucceeded,
 			}}
 			var colored, plain, errors strings.Builder
 			if err := RenderTable(&colored, &errors, rows, nil, TableOptions{Color: ColorPolicy{Enabled: true}}); err != nil {
@@ -201,8 +201,8 @@ func TestTableRowColorKeepsDataStatusWarning(t *testing.T) {
 // the same row colour while keeping labels as structural bold cyan.
 func TestNarrowTableColorsWholeRow(t *testing.T) {
 	rows := []SessionRow{
-		{No: 1, EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov", DisplayName: "name", State: "running", CollectionStatus: protocol.CollectionSucceeded},
-		{No: 2, EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov2", DisplayName: "other", State: "failed", CollectionStatus: protocol.CollectionSucceeded},
+		{No: 1, EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov", ProviderDisplayName: "name", State: "running", CollectionStatus: protocol.CollectionSucceeded},
+		{No: 2, EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov2", ProviderDisplayName: "other", State: "failed", CollectionStatus: protocol.CollectionSucceeded},
 	}
 	var colored, plain strings.Builder
 	options := TableOptions{Width: narrowProbeWidth()}

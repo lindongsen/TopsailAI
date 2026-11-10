@@ -239,7 +239,7 @@ func TestFollowLogsRefusesClientWithoutStreaming(t *testing.T) {
 // when no record is available, so a keypress is never delayed behind a stream.
 func TestFollowSessionIdleNeverBlocks(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}, ColorPolicy{})
+	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("newFollowSession: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestFollowSessionIdleDrainsAvailableRecords(t *testing.T) {
 		{Lines: []string{"second"}},
 		{End: true},
 	}}
-	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}, ColorPolicy{})
+	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("newFollowSession: %v", err)
 	}
@@ -321,7 +321,7 @@ func waitEnded(t *testing.T, session *followSession) {
 // the same stream without a double-cancel panic.
 func TestFollowSessionStopIsIdempotent(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}, ColorPolicy{})
+	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("newFollowSession: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestFollowSessionStopIsIdempotent(t *testing.T) {
 // message, so the operator is not told an auto-refresh loop ended.
 func TestFollowSessionNamesItsStop(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}, ColorPolicy{})
+	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("newFollowSession: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestWatchStopLabelKeepsAutoRefreshWording(t *testing.T) {
 // keypress that stops the stream cannot silently re-arm it on the next prompt.
 func TestStartFollowConsumesIntent(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}}
+	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}}
 	options := InteractiveOptions{WatchReader: &TerminalEditor{}}
 	session := startFollow(context.Background(), stub, state, options)
 	if session == nil {
@@ -374,7 +374,7 @@ func TestStartFollowConsumesIntent(t *testing.T) {
 // one diagnostic line instead of a prompt that silently does nothing.
 func TestStartFollowReportsStartFailure(t *testing.T) {
 	stub := &followStub{startErr: errors.New("transport unavailable")}
-	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}}
+	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}}
 	session := startFollow(context.Background(), stub, state, InteractiveOptions{WatchReader: &TerminalEditor{}})
 	if session == nil {
 		t.Fatal("startFollow returned nil")
@@ -400,7 +400,7 @@ func TestStartFollowReportsStartFailure(t *testing.T) {
 // keypress never starts a stream it could not stop.
 func TestStartFollowRequiresWatchReader(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}}
+	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}}
 	if session := startFollow(context.Background(), stub, state, InteractiveOptions{}); session != nil {
 		t.Fatal("startFollow started without a watch-capable reader")
 	}

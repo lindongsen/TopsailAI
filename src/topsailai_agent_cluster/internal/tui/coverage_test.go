@@ -27,13 +27,13 @@ func TestListRowsCoversMissingReportEmptyReportAndFilter(t *testing.T) {
 
 func TestFindSessionReturnsEndpointSessionAndError(t *testing.T) {
 	endpoints := []protocol.Endpoint{{EndpointID: "e1"}}
-	reports := map[string]protocol.InventoryReport{"e1": {Sessions: []protocol.Session{{SessionID: "s1"}}}}
+	reports := map[string]protocol.InventoryReport{"e1": {Sessions: []protocol.Session{{ClusterSessionID: "s1"}}}}
 	endpoint, _, session, err := FindSession("e1", endpoints, reports)
 	if err != nil || endpoint.EndpointID != "e1" || session != nil {
 		t.Fatalf("endpoint result=%#v session=%#v err=%v", endpoint, session, err)
 	}
 	_, _, session, err = FindSession("s1", endpoints, reports)
-	if err != nil || session == nil || session.SessionID != "s1" {
+	if err != nil || session == nil || session.ClusterSessionID != "s1" {
 		t.Fatalf("session=%#v err=%v", session, err)
 	}
 	if _, _, _, err = FindSession("missing", endpoints, reports); err == nil {

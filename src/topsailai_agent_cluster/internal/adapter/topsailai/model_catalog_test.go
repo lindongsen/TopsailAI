@@ -29,8 +29,8 @@ func TestModelCatalogListsProfilesWithOpaqueIDs(t *testing.T) {
 	if catalog.Profiles[0].ModelProfileID == "claude" {
 		t.Fatal("the provider name must never be the addressing key")
 	}
-	if catalog.Profiles[0].DisplayName != "claude" {
-		t.Fatalf("expected the display name claude, got %q", catalog.Profiles[0].DisplayName)
+	if catalog.Profiles[0].ProviderDisplayName != "claude" {
+		t.Fatalf("expected the display name claude, got %q", catalog.Profiles[0].ProviderDisplayName)
 	}
 	if !catalog.Profiles[0].Available {
 		t.Fatal("an enabled supported profile must be available")

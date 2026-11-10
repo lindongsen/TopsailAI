@@ -103,7 +103,7 @@ func TestStopScopeRecoveryKeepsTheScopeWhenInventoryIsUnavailable(t *testing.T) 
 	if err := reconcileStoppedSelection(context.Background(), stub, &state, "res-1", &out); err != nil {
 		t.Fatalf("reconciliation returned an error: %v", err)
 	}
-	if state.Scope.Kind != ScopeSession || state.SessionID != "res-1" {
+	if state.Scope.Kind != ScopeSession || state.ClusterSessionID != "res-1" {
 		t.Fatalf("scope changed without proof: %+v", state.Scope)
 	}
 	if !strings.Contains(out.String(), "use cd .. to leave the session scope") {
@@ -124,7 +124,7 @@ func TestStopScopeRecoveryKeepsTheScopeWhenTheSessionIsStillReported(t *testing.
 	if err := reconcileStoppedSelection(context.Background(), stub, &state, "res-1", &out); err != nil {
 		t.Fatalf("reconciliation returned an error: %v", err)
 	}
-	if state.Scope.Kind != ScopeSession || state.SessionID != "res-1" {
+	if state.Scope.Kind != ScopeSession || state.ClusterSessionID != "res-1" {
 		t.Fatalf("scope changed while the session was still reported: %+v", state.Scope)
 	}
 	if out.String() != "" {

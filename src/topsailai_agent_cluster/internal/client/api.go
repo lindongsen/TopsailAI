@@ -71,7 +71,7 @@ type OutputSnapshot = protocol.OutputSnapshotResponse
 // GetOutput retrieves a bounded output snapshot for a resource.
 // maxLines bounds the provider line count and zero keeps the provider default.
 func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
-	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
+	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
 	var result protocol.OutputSnapshotResponse
 	err := c.get(ctx, path, &result)
 	return result, err
@@ -90,7 +90,7 @@ type FollowChunk = protocol.OutputFollowRecord
 // ctx closes the response body, which releases the follow at the Server and stops
 // the provider child.
 func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (<-chan FollowChunk, error) {
-	path := fmt.Sprintf("/api/v1/output/follow?endpoint_id=%s&resource_id=%s&generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
+	path := fmt.Sprintf("/api/v1/output/follow?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
 		return nil, err

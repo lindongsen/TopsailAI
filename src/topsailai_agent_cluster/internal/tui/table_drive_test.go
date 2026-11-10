@@ -109,8 +109,8 @@ func TestDriveColumnFollowsSessionID(t *testing.T) {
 func TestDriveColumnRendersInTable(t *testing.T) {
 	var out, errors strings.Builder
 	rows := []SessionRow{
-		{EndpointID: "endpoint-1", EndpointLabel: "host-1", SessionID: "res_1", ProviderSessionID: "provider-session-1", State: "running", CollectionStatus: protocol.CollectionSucceeded},
-		{EndpointID: "endpoint-1", EndpointLabel: "host-1", SessionID: "res_2", ProviderSessionID: "provider-session-2", State: "running", CollectionStatus: protocol.CollectionSucceeded, Drive: &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true}},
+		{EndpointID: "endpoint-1", EndpointLabel: "host-1", ClusterSessionID: "res_1", ProviderSessionID: "provider-session-1", State: "running", CollectionStatus: protocol.CollectionSucceeded},
+		{EndpointID: "endpoint-1", EndpointLabel: "host-1", ClusterSessionID: "res_2", ProviderSessionID: "provider-session-2", State: "running", CollectionStatus: protocol.CollectionSucceeded, Drive: &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true}},
 	}
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestDriveCellEmphasisesOnlyVerifiedRunning(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.row.EndpointID = "endpoint-1"
 			tc.row.EndpointLabel = "host-1"
-			tc.row.SessionID = "res_1"
+			tc.row.ClusterSessionID = "res_1"
 			tc.row.State = "running"
 			tc.row.CollectionStatus = protocol.CollectionSucceeded
 			rendered := renderDriveRow(t, tc.row, ColorPolicy{Enabled: true})
@@ -216,7 +216,7 @@ func TestDriveEmphasisDoesNotRecolourTheRow(t *testing.T) {
 	row := SessionRow{
 		EndpointID:       "endpoint-1",
 		EndpointLabel:    "host-1",
-		SessionID:        "res_1",
+		ClusterSessionID: "res_1",
 		State:            "running",
 		CollectionStatus: protocol.CollectionSucceeded,
 		Drive:            &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true},
@@ -239,7 +239,7 @@ func TestDriveEmphasisIsAbsentWithoutColour(t *testing.T) {
 	row := SessionRow{
 		EndpointID:       "endpoint-1",
 		EndpointLabel:    "host-1",
-		SessionID:        "res_1",
+		ClusterSessionID: "res_1",
 		State:            "running",
 		CollectionStatus: protocol.CollectionSucceeded,
 		Drive:            &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true},
@@ -260,7 +260,7 @@ func TestDriveEmphasisSurvivesNarrowLayout(t *testing.T) {
 	row := SessionRow{
 		EndpointID:       "endpoint-1",
 		EndpointLabel:    "host-1",
-		SessionID:        "res_1",
+		ClusterSessionID: "res_1",
 		State:            "running",
 		CollectionStatus: protocol.CollectionSucceeded,
 		Drive:            &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true},

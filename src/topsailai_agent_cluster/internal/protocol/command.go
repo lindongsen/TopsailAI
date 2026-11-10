@@ -30,11 +30,11 @@ type ImmutableIntent struct {
 	Budget               Budget          `json:"budget,omitempty"`
 }
 
-// CommandTarget identifies a resource and its expected execution generation.
+// CommandTarget identifies a resource and its expected provider generation.
 type CommandTarget struct {
-	Kind       string `json:"kind"`
-	ResourceID string `json:"resource_id"`
-	Generation string `json:"generation"`
+	Kind               string `json:"kind"`
+	ResourceID         string `json:"resource_id"`
+	ProviderGeneration string `json:"provider_generation"`
 }
 
 // ValidateFolder accepts an omitted folder and rejects unsafe supplied values.
@@ -151,11 +151,11 @@ type Budget struct {
 // MaxBytes bounds the returned payload; MaxLines bounds the provider line count
 // and zero keeps the provider default.
 type OutputSnapshotRequest struct {
-	EndpointID string `json:"endpoint_id"`
-	ResourceID string `json:"resource_id"`
-	Generation string `json:"generation"`
-	MaxBytes   int    `json:"max_bytes"`
-	MaxLines   int    `json:"max_lines"`
+	EndpointID         string `json:"endpoint_id"`
+	ResourceID         string `json:"resource_id"`
+	ProviderGeneration string `json:"provider_generation"`
+	MaxBytes           int    `json:"max_bytes"`
+	MaxLines           int    `json:"max_lines"`
 }
 
 // OutputSnapshotResponse contains a bounded output snapshot or an error code.
@@ -171,11 +171,11 @@ type OutputSnapshotResponse struct {
 // is one bounded read, while a follow stays open and delivers records as they are
 // written. MaxLines bounds the initial tail and MaxBytes bounds one chunk.
 type OutputFollowRequest struct {
-	EndpointID string `json:"endpoint_id"`
-	ResourceID string `json:"resource_id"`
-	Generation string `json:"generation"`
-	MaxLines   int    `json:"max_lines"`
-	MaxBytes   int    `json:"max_bytes"`
+	EndpointID         string `json:"endpoint_id"`
+	ResourceID         string `json:"resource_id"`
+	ProviderGeneration string `json:"provider_generation"`
+	MaxLines           int    `json:"max_lines"`
+	MaxBytes           int    `json:"max_bytes"`
 }
 
 // OutputChunk carries one bounded batch of followed output lines. Lines are

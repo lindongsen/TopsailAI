@@ -28,12 +28,12 @@ type ModelCatalogQuerier interface {
 // is the only addressing key. The two are deliberately separate fields, so a
 // renumbered table can never change which profile a request addresses.
 type ModelCatalogViewRow struct {
-	No                int    `json:"no"`
-	ModelProfileID    string `json:"model_profile_id"`
-	DisplayName       string `json:"display_name,omitempty"`
-	Current           bool   `json:"current"`
-	Available         bool   `json:"available"`
-	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	No                  int    `json:"no"`
+	ModelProfileID      string `json:"model_profile_id"`
+	ProviderDisplayName string `json:"provider_display_name,omitempty"`
+	Current             bool   `json:"current"`
+	Available           bool   `json:"available"`
+	UnavailableReason   string `json:"unavailable_reason,omitempty"`
 }
 
 // ModelCatalogView is one rendered model catalog for one session.
@@ -42,7 +42,7 @@ type ModelCatalogViewRow struct {
 // window is never presented as a complete catalog.
 type ModelCatalogView struct {
 	EndpointID       string                `json:"endpoint_id"`
-	SessionID        string                `json:"session_id"`
+	ClusterSessionID string                `json:"cluster_session_id"`
 	Rows             []ModelCatalogViewRow `json:"rows"`
 	CurrentProfileID string                `json:"current_profile_id,omitempty"`
 	ObservedAtMS     int64                 `json:"observed_at_ms,omitempty"`
@@ -57,7 +57,7 @@ type ModelCatalogView struct {
 func NewModelCatalogView(endpointID, sessionID string, catalog protocol.ModelCatalog) ModelCatalogView {
 	view := ModelCatalogView{
 		EndpointID:       endpointID,
-		SessionID:        sessionID,
+		ClusterSessionID: sessionID,
 		Rows:             make([]ModelCatalogViewRow, 0, len(catalog.Profiles)),
 		CurrentProfileID: catalog.CurrentProfileID,
 		ObservedAtMS:     catalog.ObservedAtMS,
@@ -65,11 +65,11 @@ func NewModelCatalogView(endpointID, sessionID string, catalog protocol.ModelCat
 	}
 	for _, profile := range catalog.Profiles {
 		view.Rows = append(view.Rows, ModelCatalogViewRow{
-			ModelProfileID:    profile.ModelProfileID,
-			DisplayName:       profile.DisplayName,
-			Current:           profile.Current,
-			Available:         profile.Available,
-			UnavailableReason: profile.UnavailableReason,
+			ModelProfileID:      profile.ModelProfileID,
+			ProviderDisplayName: profile.ProviderDisplayName,
+			Current:             profile.Current,
+			Available:           profile.Available,
+			UnavailableReason:   profile.UnavailableReason,
 		})
 	}
 	assignModelCatalogRowNumbers(view.Rows)
@@ -100,7 +100,7 @@ var modelCatalogColumns = []tableColumn{
 func modelCatalogCells(row ModelCatalogViewRow) map[string]string {
 	return map[string]string{
 		columnNo:    strconv.Itoa(row.No),
-		columnName:  escapeCell(row.DisplayName),
+		columnName:  escapeCell(row.ProviderDisplayName),
 		"current":   modelCurrentCell(row),
 		"available": escapeCell(modelAvailableCell(row)),
 		columnID:    escapeCell(row.ModelProfileID),
@@ -283,14 +283,14 @@ func ModelCatalogError(label, code string) error {
 // other message does.
 func ResolveModelProfileSelector(view ModelCatalogView, token, label string) (ModelCatalogViewRow, error) {
 	namespace := &modelCatalogNamespace{
-		EndpointID: view.EndpointID,
-		SessionID:  view.SessionID,
-		Rows:       make(map[int]ModelCatalogViewRow, len(view.Rows)),
+		EndpointID:       view.EndpointID,
+		ClusterSessionID: view.ClusterSessionID,
+		Rows:             make(map[int]ModelCatalogViewRow, len(view.Rows)),
 	}
 	for _, row := range view.Rows {
 		namespace.Rows[row.No] = row
 	}
-	return resolveModelProfileSelector(namespace, view.SessionID, token, label)
+	return resolveModelProfileSelector(namespace, view.ClusterSessionID, token, label)
 }
 
 // ModelProfileLabel names one profile in operator-facing text.

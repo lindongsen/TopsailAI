@@ -163,9 +163,9 @@ func TestModelCatalogRowsAreNumberedFromOne(t *testing.T) {
 	catalog := protocol.ModelCatalog{
 		CurrentProfileID: "mp-2",
 		Profiles: []protocol.ModelProfile{
-			{ModelProfileID: "mp-1", DisplayName: "fast", Available: true},
-			{ModelProfileID: "mp-2", DisplayName: "deep", Available: true, Current: true},
-			{ModelProfileID: "mp-3", DisplayName: "legacy", Available: false, UnavailableReason: protocol.ModelProfileDisabled},
+			{ModelProfileID: "mp-1", ProviderDisplayName: "fast", Available: true},
+			{ModelProfileID: "mp-2", ProviderDisplayName: "deep", Available: true, Current: true},
+			{ModelProfileID: "mp-3", ProviderDisplayName: "legacy", Available: false, UnavailableReason: protocol.ModelProfileDisabled},
 		},
 	}
 	view := NewModelCatalogView("ep-1", "res_1", catalog)
@@ -190,7 +190,7 @@ func TestModelCatalogRowsAreNumberedFromOne(t *testing.T) {
 // hiding one would answer a different question.
 func TestModelCatalogUnavailableProfileStaysVisible(t *testing.T) {
 	catalog := protocol.ModelCatalog{Profiles: []protocol.ModelProfile{
-		{ModelProfileID: "mp-1", DisplayName: "legacy", Available: false, UnavailableReason: protocol.ModelProfileDisabled},
+		{ModelProfileID: "mp-1", ProviderDisplayName: "legacy", Available: false, UnavailableReason: protocol.ModelProfileDisabled},
 	}}
 	view := NewModelCatalogView("ep-1", "res_1", catalog)
 	if len(view.Rows) != 1 {
@@ -257,7 +257,7 @@ func TestModelAliasResolvesButIsNotCompletable(t *testing.T) {
 func TestModelCatalogAcceptsHostnameAndRejectsAmbiguity(t *testing.T) {
 	unique := &modelCatalogStubAPI{
 		endpoints: []protocol.Endpoint{onlineEndpoint("ep-1", "host-1")},
-		catalog:   protocol.ModelCatalog{Profiles: []protocol.ModelProfile{{ModelProfileID: "mp-1", DisplayName: "fast", Available: true}}},
+		catalog:   protocol.ModelCatalog{Profiles: []protocol.ModelProfile{{ModelProfileID: "mp-1", ProviderDisplayName: "fast", Available: true}}},
 	}
 	var out, errOut bytes.Buffer
 	if err := legacyRunnerForTest(unique).ModelCatalog(context.Background(), &out, &errOut, "host-1", "res_1", "", false, TableOptions{}); err != nil {
@@ -290,7 +290,7 @@ func TestModelCatalogAcceptsHostnameAndRejectsAmbiguity(t *testing.T) {
 func TestModelCatalogPassesGenerationThrough(t *testing.T) {
 	api := &modelCatalogStubAPI{
 		endpoints: []protocol.Endpoint{onlineEndpoint("ep-1", "host-1")},
-		catalog:   protocol.ModelCatalog{Profiles: []protocol.ModelProfile{{ModelProfileID: "mp-1", DisplayName: "fast", Available: true}}},
+		catalog:   protocol.ModelCatalog{Profiles: []protocol.ModelProfile{{ModelProfileID: "mp-1", ProviderDisplayName: "fast", Available: true}}},
 	}
 	var out, errOut bytes.Buffer
 	if err := legacyRunnerForTest(api).ModelCatalog(context.Background(), &out, &errOut, "ep-1", "res_1", "gen-9", false, TableOptions{}); err != nil {
@@ -308,7 +308,7 @@ func TestModelCatalogTruncationIsLabelled(t *testing.T) {
 		endpoints: []protocol.Endpoint{onlineEndpoint("ep-1", "host-1")},
 		catalog: protocol.ModelCatalog{
 			Truncated: true,
-			Profiles:  []protocol.ModelProfile{{ModelProfileID: "mp-1", DisplayName: "fast", Available: true}},
+			Profiles:  []protocol.ModelProfile{{ModelProfileID: "mp-1", ProviderDisplayName: "fast", Available: true}},
 		},
 	}
 	var out, errOut bytes.Buffer

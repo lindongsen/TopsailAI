@@ -40,8 +40,8 @@ func interactiveStop(parent context.Context, api InteractiveAPI, state *interact
 	// confirmation path receives a detached copy that pins exactly this target.
 	pinned := *state
 	pinned.EndpointID = target.endpointID
-	pinned.SessionID = target.sessionID
-	pinned.Generation = target.generation
+	pinned.ClusterSessionID = target.sessionID
+	pinned.ProviderGeneration = target.generation
 	pinned.Invalidated = false
 	pinned.InvalidReason = ""
 	revalidate := func(revalidateCtx context.Context) error {

@@ -46,8 +46,8 @@ func SessionIdentityLabelFromInventory(ctx context.Context, api CommandAPI, endp
 		return sessionIdentityLabel("", "", resourceID)
 	}
 	for _, session := range report.Sessions {
-		if session.SessionID == resourceID {
-			return sessionIdentityLabel(session.DisplayName, session.ProviderSessionID, resourceID)
+		if session.ClusterSessionID == resourceID {
+			return sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, resourceID)
 		}
 	}
 	return sessionIdentityLabel("", "", resourceID)

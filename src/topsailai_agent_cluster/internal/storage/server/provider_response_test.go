@@ -27,7 +27,7 @@ func TestProviderResponseRoundTripsThroughStorage(t *testing.T) {
 		Operation:         protocol.OperationMessageSend,
 		OperationVersion:  "v1",
 		ExecuteBeforeAtMS: 5000,
-		Target:            &protocol.CommandTarget{ResourceID: "res-1", Generation: "g1"},
+		Target:            &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "g1"},
 	}
 	if err := store.AdmitCommand(ctx, intent, "hash-provider-response", 1000); err != nil {
 		t.Fatalf("admit command: %v", err)
@@ -85,7 +85,7 @@ func TestProviderResponseTruncationFlagRoundTrips(t *testing.T) {
 		Operation:         protocol.OperationMessageSend,
 		OperationVersion:  "v1",
 		ExecuteBeforeAtMS: 5000,
-		Target:            &protocol.CommandTarget{ResourceID: "res-1", Generation: "g1"},
+		Target:            &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "g1"},
 	}
 	if err := store.AdmitCommand(ctx, intent, "hash-truncated", 1000); err != nil {
 		t.Fatalf("admit command: %v", err)

@@ -38,10 +38,10 @@ func TestUnitBNavigationSpellingsMatchFullStateAndCalls(t *testing.T) {
 	}
 	bare, bareAPI := run("1")
 	explicit, explicitAPI := run("cd 1")
-	if bare.Scope != explicit.Scope || bare.EndpointID != explicit.EndpointID || bare.SessionID != explicit.SessionID || bare.Scope.ProviderSessionID != explicit.Scope.ProviderSessionID || bare.Scope.SessionName != explicit.Scope.SessionName || bare.Generation != explicit.Generation || bare.Invalidated != explicit.Invalidated || bare.InvalidReason != explicit.InvalidReason {
+	if bare.Scope != explicit.Scope || bare.EndpointID != explicit.EndpointID || bare.ClusterSessionID != explicit.ClusterSessionID || bare.Scope.ProviderSessionID != explicit.Scope.ProviderSessionID || bare.Scope.SessionName != explicit.Scope.SessionName || bare.ProviderGeneration != explicit.ProviderGeneration || bare.Invalidated != explicit.Invalidated || bare.InvalidReason != explicit.InvalidReason {
 		t.Fatalf("navigation state differs: bare=%+v explicit=%+v", bare, explicit)
 	}
-	if bare.Scope != explicit.Scope || bare.Scope.EndpointID != explicit.Scope.EndpointID || bare.Scope.SessionID != explicit.Scope.SessionID || bare.Scope.Generation != explicit.Scope.Generation {
+	if bare.Scope != explicit.Scope || bare.Scope.EndpointID != explicit.Scope.EndpointID || bare.Scope.ClusterSessionID != explicit.Scope.ClusterSessionID || bare.Scope.ProviderGeneration != explicit.Scope.ProviderGeneration {
 		t.Fatalf("selected scope identity differs: bare=%+v explicit=%+v", bare.Scope, explicit.Scope)
 	}
 	if bare.Invalidated != explicit.Invalidated || bare.InvalidReason != explicit.InvalidReason {
@@ -142,7 +142,7 @@ func TestUnitBGenerationAndDuplicateIdentityRejectWithoutMutation(t *testing.T) 
 	if err := cdRowNumber(&state, stub, context.Background(), 1); err == nil || !strings.Contains(err.Error(), "generation changed") {
 		t.Fatalf("generation error=%v", err)
 	}
-	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID {
+	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID {
 		t.Fatalf("state changed after generation rejection: before=%+v after=%+v", before, state)
 	}
 
@@ -152,7 +152,7 @@ func TestUnitBGenerationAndDuplicateIdentityRejectWithoutMutation(t *testing.T) 
 	if err := cdRowNumber(&state, stub, context.Background(), 1); err == nil || !strings.Contains(err.Error(), "multiple sessions") {
 		t.Fatalf("duplicate error=%v", err)
 	}
-	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID {
+	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID {
 		t.Fatalf("state changed after duplicate rejection: before=%+v after=%+v", before, state)
 	}
 }
@@ -161,7 +161,7 @@ func TestUnitBGenerationAndDuplicateIdentityRejectWithoutMutation(t *testing.T) 
 func TestUnitBFailedListClearsOldRows(t *testing.T) {
 	stub := scopeStub()
 	state := interactiveState{}
-	state.setRows([]SessionRow{{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}})
+	state.setRows([]SessionRow{{No: 1, EndpointID: "old", ClusterSessionID: "old", ProviderGeneration: "old"}})
 	stub.failList = true
 	var output, diagnostics strings.Builder
 	err := interactiveList(context.Background(), stub, &state, "", false, false, &output, &diagnostics, ColorPolicy{})
@@ -180,7 +180,7 @@ func TestUnitBFailedListClearsOldRows(t *testing.T) {
 func TestUnitBWriterFailureLeavesRowsEmpty(t *testing.T) {
 	stub := scopeStub()
 	state := interactiveState{}
-	state.setRows([]SessionRow{{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}})
+	state.setRows([]SessionRow{{No: 1, EndpointID: "old", ClusterSessionID: "old", ProviderGeneration: "old"}})
 	output := &unitBFailingWriter{}
 	err := interactiveList(context.Background(), stub, &state, "", false, false, output, output, ColorPolicy{})
 	if err == nil || !errors.Is(err, errUnitBWriter) {
@@ -227,31 +227,31 @@ func (w *unitBSuccessfulObservingWriter) Write(data []byte) (int, error) {
 func TestUnitBB1LeadingZeroReorderAndRemovalKeepsPinnedIdentity(t *testing.T) {
 	stub := singleHostStub()
 	state := interactiveState{}
-	rows := []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}}
+	rows := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}}
 	state.setRows(rows)
 	before := state
 	if err := cdRowNumber(&state, stub, context.Background(), 1); err != nil {
 		t.Fatalf("initial row selection: %v", err)
 	}
-	if state.SessionID != "res-1" || state.Generation != "generation-1" {
-		t.Fatalf("initial identity = %q/%q", state.SessionID, state.Generation)
+	if state.ClusterSessionID != "res-1" || state.ProviderGeneration != "generation-1" {
+		t.Fatalf("initial identity = %q/%q", state.ClusterSessionID, state.ProviderGeneration)
 	}
 	state = before
 	reordered := stub.reports["endpoint-1"]
-	reordered.Sessions = append([]protocol.Session{{SessionID: "other", AdapterID: "adapter-1", Generation: "other-generation", CollectionStatus: protocol.CollectionSucceeded}}, reordered.Sessions...)
+	reordered.Sessions = append([]protocol.Session{{ClusterSessionID: "other", AdapterID: "adapter-1", ProviderGeneration: "other-generation", CollectionStatus: protocol.CollectionSucceeded}}, reordered.Sessions...)
 	stub.reports["endpoint-1"] = reordered
 	if err := cdRowNumber(&state, stub, context.Background(), 1); err != nil {
 		t.Fatalf("reordered row selection: %v", err)
 	}
-	if state.SessionID != "res-1" {
-		t.Fatalf("reordered inventory retargeted row: %q", state.SessionID)
+	if state.ClusterSessionID != "res-1" {
+		t.Fatalf("reordered inventory retargeted row: %q", state.ClusterSessionID)
 	}
 	state = before
 	stub.reports["endpoint-1"] = protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}}
 	if err := cdRowNumber(&state, stub, context.Background(), 1); err == nil || !strings.Contains(err.Error(), "no longer identifies") {
 		t.Fatalf("removed row error = %v", err)
 	}
-	if state.Scope != before.Scope || state.SessionID != before.SessionID {
+	if state.Scope != before.Scope || state.ClusterSessionID != before.ClusterSessionID {
 		t.Fatalf("removal mutated state: before=%+v after=%+v", before, state)
 	}
 	if candidate, token, surplus := numericInput("  001  "); !candidate || token != "001" || surplus {
@@ -267,7 +267,7 @@ func TestUnitBB2RejectionsKeepStateAndCalls(t *testing.T) {
 		t.Run(strings.ReplaceAll(input, "\t", "tab"), func(t *testing.T) {
 			stub := scopeStub()
 			state := interactiveState{}
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			before := state
 			listCalls, inventoryCalls := stub.listCalls, stub.inventoryCalls
 			var output, diagnostics strings.Builder
@@ -275,7 +275,7 @@ func TestUnitBB2RejectionsKeepStateAndCalls(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected rejected input")
 			}
-			if state.Scope != before.Scope || state.SessionID != before.SessionID || state.Generation != before.Generation || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
+			if state.Scope != before.Scope || state.ClusterSessionID != before.ClusterSessionID || state.ProviderGeneration != before.ProviderGeneration || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
 				t.Fatalf("rejection mutated state: before=%+v after=%+v", before, state)
 			}
 			if stub.listCalls != listCalls || stub.inventoryCalls != inventoryCalls {
@@ -363,7 +363,7 @@ func TestUnitBB1ScopeMatrixAndLeadingZeroEquivalence(t *testing.T) {
 	}
 	one, oneAPI := run(t, "1")
 	leading, leadingAPI := run(t, "01")
-	if one.Scope != leading.Scope || one.EndpointID != leading.EndpointID || one.SessionID != leading.SessionID || one.Generation != leading.Generation || one.Invalidated != leading.Invalidated || one.InvalidReason != leading.InvalidReason {
+	if one.Scope != leading.Scope || one.EndpointID != leading.EndpointID || one.ClusterSessionID != leading.ClusterSessionID || one.ProviderGeneration != leading.ProviderGeneration || one.Invalidated != leading.Invalidated || one.InvalidReason != leading.InvalidReason {
 		t.Fatalf("leading-zero identity differs: one=%+v leading=%+v", one, leading)
 	}
 	if oneAPI.listCalls != leadingAPI.listCalls || oneAPI.inventoryCalls != leadingAPI.inventoryCalls || oneAPI.outputCalls != leadingAPI.outputCalls || oneAPI.admit != leadingAPI.admit {
@@ -378,8 +378,8 @@ func TestUnitBB2EveryRejectionPreservesStateAndCalls(t *testing.T) {
 	for _, input := range inputs {
 		t.Run(strings.ReplaceAll(strings.TrimSpace(input), "\t", "tab"), func(t *testing.T) {
 			stub := scopeStub()
-			state := interactiveState{Scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1"}, interactiveSelection: interactiveSelection{EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1", InvalidReason: ""}}
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+			state := interactiveState{Scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1"}, interactiveSelection: interactiveSelection{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", InvalidReason: ""}}
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			before := state
 			beforeList, beforeInventory := stub.listCalls, stub.inventoryCalls
 			var output, diagnostics strings.Builder
@@ -387,7 +387,7 @@ func TestUnitBB2EveryRejectionPreservesStateAndCalls(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected rejection")
 			}
-			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID || state.Generation != before.Generation || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
+			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID || state.ProviderGeneration != before.ProviderGeneration || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
 				t.Fatalf("state changed for %q: before=%+v after=%+v", input, before, state)
 			}
 			if stub.listCalls != beforeList || stub.inventoryCalls != beforeInventory {
@@ -406,8 +406,8 @@ func TestUnitBB3ZeroQueryMatrixAcrossScopes(t *testing.T) {
 	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
 		t.Run(kind.String(), func(t *testing.T) {
 			stub := scopeStub()
-			state := interactiveState{Scope: ScopeState{Kind: kind, EndpointID: "endpoint-1", SessionID: "res-1"}}
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+			state := interactiveState{Scope: ScopeState{Kind: kind, EndpointID: "endpoint-1", ClusterSessionID: "res-1"}}
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			var output, diagnostics strings.Builder
 			// The session-scope offer reads its answer from the line source, so a
 			// closed source declines the offer instead of blocking.
@@ -524,7 +524,7 @@ func TestUnitBB1EndpointAndSessionLeadingZeroEquivalence(t *testing.T) {
 
 func assertUnitBSelectionEqual(t *testing.T, left, right interactiveState) {
 	t.Helper()
-	if left.Scope != right.Scope || left.EndpointID != right.EndpointID || left.SessionID != right.SessionID || left.Generation != right.Generation || left.Invalidated != right.Invalidated || left.InvalidReason != right.InvalidReason {
+	if left.Scope != right.Scope || left.EndpointID != right.EndpointID || left.ClusterSessionID != right.ClusterSessionID || left.ProviderGeneration != right.ProviderGeneration || left.Invalidated != right.Invalidated || left.InvalidReason != right.InvalidReason {
 		t.Fatalf("selection identity differs: left=%+v right=%+v", left, right)
 	}
 }
@@ -596,7 +596,7 @@ func TestUnitBB5SessionListThenBareNumberIsMessageText(t *testing.T) {
 	if stub.admit != 0 {
 		t.Fatalf("declined offer admitted %d commands", stub.admit)
 	}
-	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID || state.Generation != before.Generation || stub.listCalls != beforeList || stub.inventoryCalls != beforeInventory {
+	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID || state.ProviderGeneration != before.ProviderGeneration || stub.listCalls != beforeList || stub.inventoryCalls != beforeInventory {
 		t.Fatalf("session bare number changed state/calls: before=%+v after=%+v calls=%d/%d -> %d/%d", before, state, beforeList, beforeInventory, stub.listCalls, stub.inventoryCalls)
 	}
 }
@@ -635,7 +635,7 @@ func TestUnitBB1SessionLeadingZeroPreservesEachRejectedSnapshot(t *testing.T) {
 			if err == nil || err.Error() != "row-number navigation is unavailable in session scope; use cd .. or cd <session>" {
 				t.Fatalf("input=%q error=%v", input, err)
 			}
-			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID || state.Generation != before.Generation || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
+			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID || state.ProviderGeneration != before.ProviderGeneration || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
 				t.Fatalf("input=%q changed state: before=%+v after=%+v", input, before, state)
 			}
 			if stub.listCalls != beforeList || stub.inventoryCalls != beforeInventory {
@@ -654,9 +654,9 @@ func TestUnitBB1ScopeRowsCarryExactCapturedIdentity(t *testing.T) {
 		filter string
 		want   SessionRow
 	}{
-		{name: "workspace", filter: "", want: SessionRow{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}},
-		{name: "filtered", filter: "endpoint-1", want: SessionRow{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}},
-		{name: "endpoint", filter: "", setup: func(state *interactiveState, stub *interactiveStub) { state.enterEndpoint(stub.endpoints[0]) }, want: SessionRow{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}},
+		{name: "workspace", filter: "", want: SessionRow{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}},
+		{name: "filtered", filter: "endpoint-1", want: SessionRow{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}},
+		{name: "endpoint", filter: "", setup: func(state *interactiveState, stub *interactiveStub) { state.enterEndpoint(stub.endpoints[0]) }, want: SessionRow{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := scopeStub()
@@ -669,7 +669,7 @@ func TestUnitBB1ScopeRowsCarryExactCapturedIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			row, ok := state.Rows[1]
-			if !ok || row.EndpointID != tc.want.EndpointID || row.SessionID != tc.want.SessionID || row.Generation != tc.want.Generation {
+			if !ok || row.EndpointID != tc.want.EndpointID || row.ClusterSessionID != tc.want.ClusterSessionID || row.ProviderGeneration != tc.want.ProviderGeneration {
 				t.Fatalf("captured row=%+v exists=%t want=%+v", row, ok, tc.want)
 			}
 		})
@@ -694,7 +694,7 @@ func TestUnitBB2SingleDecimalRejectionFixtures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := scopeStub()
 			state := interactiveState{}
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			before := state
 			beforeList, beforeInventory, beforeOutput, beforeAdmit := stub.listCalls, stub.inventoryCalls, stub.outputCalls, stub.admit
 			var output, diagnostics strings.Builder
@@ -708,7 +708,7 @@ func TestUnitBB2SingleDecimalRejectionFixtures(t *testing.T) {
 			if diagnostics.String() != tc.want {
 				t.Fatalf("diagnostics=%q want=%q", diagnostics.String(), tc.want)
 			}
-			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID || state.Generation != before.Generation || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
+			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID || state.ProviderGeneration != before.ProviderGeneration || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
 				t.Fatalf("state changed: before=%+v after=%+v", before, state)
 			}
 			if stub.listCalls != beforeList || stub.inventoryCalls != beforeInventory || stub.outputCalls != beforeOutput || stub.admit != beforeAdmit {

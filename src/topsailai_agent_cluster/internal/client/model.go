@@ -19,7 +19,7 @@ func (c *APIClient) GetModelCatalog(ctx context.Context, endpointID, resourceID,
 	var result protocol.ModelCatalog
 	path := "/api/v1/model-catalog?endpoint_id=" + url.QueryEscape(endpointID) + "&resource_id=" + url.QueryEscape(resourceID)
 	if generation != "" {
-		path += "&generation=" + url.QueryEscape(generation)
+		path += "&provider_generation=" + url.QueryEscape(generation)
 	}
 	err := c.get(ctx, path, &result)
 	return result, err

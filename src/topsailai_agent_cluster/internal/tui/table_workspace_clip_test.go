@@ -23,7 +23,7 @@ func workspaceCell(t *testing.T, rendered string) string {
 // the left, so the identifying tail survives instead of a shared prefix.
 func TestWorkspaceColumnKeepsItsTail(t *testing.T) {
 	workspace := "/TopsailAI/src/topsailai_agent_cluster/internal/tui"
-	rows := []SessionRow{{EndpointID: "ep", ProjectWorkspace: workspace, State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{EndpointID: "ep", ProviderProjectWorkspace: workspace, State: "running", CollectionStatus: protocol.CollectionSucceeded}}
 	var out strings.Builder
 	if err := RenderTable(&out, io.Discard, rows, nil, TableOptions{}); err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestWorkspaceColumnKeepsItsTail(t *testing.T) {
 
 // TestWorkspaceColumnKeepsShortValue proves a value inside the cap is untouched.
 func TestWorkspaceColumnKeepsShortValue(t *testing.T) {
-	rows := []SessionRow{{EndpointID: "ep", ProjectWorkspace: "/work/project-a", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{EndpointID: "ep", ProviderProjectWorkspace: "/work/project-a", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
 	var out strings.Builder
 	if err := RenderTable(&out, io.Discard, rows, nil, TableOptions{}); err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestWorkspaceLeftClipDegenerateWidths(t *testing.T) {
 // the identifying tail as well, so both layouts share one clipping rule.
 func TestWorkspaceLeftClipInNarrowLayout(t *testing.T) {
 	workspace := "/TopsailAI/src/topsailai_agent_cluster/internal/tui"
-	rows := []SessionRow{{EndpointID: "ep", ProjectWorkspace: workspace, State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{EndpointID: "ep", ProviderProjectWorkspace: workspace, State: "running", CollectionStatus: protocol.CollectionSucceeded}}
 	var out strings.Builder
 	// One column below the plain-layout threshold, so the narrow layout is used
 	// and the value still has room for a tail behind the ellipsis.
@@ -122,7 +122,7 @@ func TestWorkspaceLeftClipInNarrowLayout(t *testing.T) {
 // complete path, so the left clip only applies to a bounded layout.
 func TestWorkspaceLeftClipSkippedInFullLayout(t *testing.T) {
 	workspace := "/TopsailAI/src/topsailai_agent_cluster/internal/tui"
-	rows := []SessionRow{{EndpointID: "ep", ProjectWorkspace: workspace, State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{EndpointID: "ep", ProviderProjectWorkspace: workspace, State: "running", CollectionStatus: protocol.CollectionSucceeded}}
 	var out strings.Builder
 	if err := RenderTable(&out, io.Discard, rows, nil, TableOptions{Width: 40, Full: true}); err != nil {
 		t.Fatal(err)

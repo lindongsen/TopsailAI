@@ -150,7 +150,7 @@ func executeStop(generation string) error {
 	if len(result.Sessions) != 1 {
 		return fmt.Errorf("got %d discovered sessions", len(result.Sessions))
 	}
-	_, activeScenario.capabilityErr = activeScenario.capabilityAdapter.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "bdd-stop", Operation: "agent.stop", Target: &protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID, Generation: generation}}})
+	_, activeScenario.capabilityErr = activeScenario.capabilityAdapter.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "bdd-stop", Operation: "agent.stop", Target: &protocol.CommandTarget{ResourceID: result.Sessions[0].ClusterSessionID, ProviderGeneration: generation}}})
 	return nil
 }
 

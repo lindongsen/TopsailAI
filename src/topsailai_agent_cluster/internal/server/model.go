@@ -46,7 +46,7 @@ func (h *Handler) modelCatalog(w http.ResponseWriter, r *http.Request) {
 	// The target is assembled at the boundary and passed down as an explicit value,
 	// so the transport layer never re-reads the request. A catalog read is
 	// read-only, so the generation is forwarded as evidence but is not required.
-	query := protocol.ModelCatalogQuery{Target: protocol.CommandTarget{Kind: "session", ResourceID: resourceID, Generation: q.Get("generation")}}
+	query := protocol.ModelCatalogQuery{Target: protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: q.Get("provider_generation")}}
 	result, err := requester.RequestModelCatalog(ctx, endpointID, query)
 	if err != nil {
 		h.writeModelCatalogFailure(w, r, endpointID, err)

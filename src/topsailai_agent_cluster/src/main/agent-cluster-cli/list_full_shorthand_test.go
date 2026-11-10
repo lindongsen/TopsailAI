@@ -181,8 +181,8 @@ func TestListFullShorthandKeepsJSONDocument(t *testing.T) {
 	if len(document) != 1 {
 		t.Fatalf("--json output has %d rows, want 1: %q", len(document), output.String())
 	}
-	if got := document[0]["session_id"]; got != sessionID {
-		t.Fatalf("--json session_id=%v want=%q", got, sessionID)
+	if got := document[0]["cluster_session_id"]; got != sessionID {
+		t.Fatalf("--json cluster_session_id=%v want=%q", got, sessionID)
 	}
 }
 

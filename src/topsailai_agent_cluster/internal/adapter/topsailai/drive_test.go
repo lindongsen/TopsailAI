@@ -142,7 +142,7 @@ func TestExecuteDriveUsesProviderDriverSubcommands(t *testing.T) {
 			runner.out = []byte(`{"ok":true,"delivery_state":"launched","response":{"state":"ON"}}`)
 			_, err = a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 				CommandID: "c1", Operation: testCase.operation,
-				Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].SessionID, Generation: "g1"},
+				Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].ClusterSessionID, ProviderGeneration: "g1"},
 			}})
 			if err != nil {
 				t.Fatalf("execute: %v", err)
@@ -211,7 +211,7 @@ func TestExecuteDriveMapsProviderOutcomes(t *testing.T) {
 			}
 			result, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 				CommandID: "c1", Operation: protocol.OperationAgentDriveStop,
-				Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].SessionID, Generation: "g1"},
+				Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].ClusterSessionID, ProviderGeneration: "g1"},
 			}})
 			if testCase.exitError && err == nil {
 				t.Fatal("a non-zero provider exit must still return an error")
@@ -255,7 +255,7 @@ func TestExecuteKeepsStderrWhenStdoutIsNotAProviderDocument(t *testing.T) {
 	runner.err = &exec.ExitError{Stderr: []byte("provider: driver unavailable\n")}
 	result, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 		CommandID: "c1", Operation: protocol.OperationAgentDriveStart,
-		Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].SessionID, Generation: "g1"},
+		Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].ClusterSessionID, ProviderGeneration: "g1"},
 	}})
 	if err == nil {
 		t.Fatal("a failed provider invocation must return an error")

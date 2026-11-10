@@ -85,10 +85,10 @@ func resolveInfoTarget(state *interactiveState, token string) (string, string, e
 		if state.Scope.Kind != ScopeSession {
 			return "", "", fmt.Errorf("info requires a session in %s scope; use info <number> for a session row or info <session-id>", state.Scope.Kind)
 		}
-		if state.Scope.SessionID == "" {
+		if state.Scope.ClusterSessionID == "" {
 			return "", "", fmt.Errorf("no session selected; use cd <number> to select a session row, or cd <hostname>/<endpoint-id>/<session>")
 		}
-		return state.Scope.EndpointID, state.Scope.SessionID, nil
+		return state.Scope.EndpointID, state.Scope.ClusterSessionID, nil
 	}
 	if state.Scope.Kind == ScopeWorkspace {
 		row, resolved, err := resolveSessionToken(state, token)
@@ -96,7 +96,7 @@ func resolveInfoTarget(state *interactiveState, token string) (string, string, e
 			return "", "", err
 		}
 		if resolved {
-			return row.EndpointID, row.SessionID, nil
+			return row.EndpointID, row.ClusterSessionID, nil
 		}
 		return "", token, nil
 	}
@@ -109,7 +109,7 @@ func resolveInfoTarget(state *interactiveState, token string) (string, string, e
 		return "", "", err
 	}
 	if resolved {
-		return endpointID, row.SessionID, nil
+		return endpointID, row.ClusterSessionID, nil
 	}
 	return endpointID, token, nil
 }
@@ -128,13 +128,13 @@ func resolveInfoTarget(state *interactiveState, token string) (string, string, e
 // omitted: an operator reading info must not conclude that no controller exists.
 func RenderSessionInfo(w io.Writer, endpoint protocol.Endpoint, session protocol.Session) error {
 	lines := []detailLine{
-		{"session_id", session.SessionID},
+		{"session_id", session.ClusterSessionID},
 		{"provider_session_id", session.ProviderSessionID},
 		{"provider_pid", providerPIDLabel(session.ProviderPID)},
-		{"display_name", session.DisplayName},
-		{"project_workspace", session.ProjectWorkspace},
-		{"agent_id", session.AgentID},
-		{"generation", session.Generation},
+		{"display_name", session.ProviderDisplayName},
+		{"project_workspace", session.ProviderProjectWorkspace},
+		{"agent_id", session.ProviderAgentID},
+		{"generation", session.ProviderGeneration},
 		{"adapter_id", session.AdapterID},
 		{"state", session.State},
 		{"state_reason", session.StateReason},

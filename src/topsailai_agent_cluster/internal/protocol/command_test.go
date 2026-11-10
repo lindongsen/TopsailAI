@@ -5,7 +5,7 @@ import (
 )
 
 func TestCanonicalHashAndConflictInputs(t *testing.T) {
-	intent := ImmutableIntent{HashVersion: "v1", CommandID: "c1", IssuerID: "u1", Scope: "send", EndpointID: "e1", Target: &CommandTarget{Kind: "session", ResourceID: "s1", Generation: "g1"}, Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "cap1", PayloadSchemaVersion: "v1", Payload: []byte(`{"text":"hello"}`), ExecuteBeforeAtMS: 100}
+	intent := ImmutableIntent{HashVersion: "v1", CommandID: "c1", IssuerID: "u1", Scope: "send", EndpointID: "e1", Target: &CommandTarget{Kind: "session", ResourceID: "s1", ProviderGeneration: "g1"}, Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "cap1", PayloadSchemaVersion: "v1", Payload: []byte(`{"text":"hello"}`), ExecuteBeforeAtMS: 100}
 	first, err := CanonicalHash(intent)
 	if err != nil {
 		t.Fatal(err)

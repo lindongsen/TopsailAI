@@ -54,7 +54,7 @@ func TestStartRefreshesOnlyTheStartedEndpoint(t *testing.T) {
 func TestStartRendersTheFreshlyCollectedSession(t *testing.T) {
 	stub := newStartRefreshStub()
 	fresh := scopeInventory("fresh-session", "fresh-generation")
-	fresh.Sessions[0].DisplayName = "fresh work"
+	fresh.Sessions[0].ProviderDisplayName = "fresh work"
 	stub.fresh["endpoint-1"] = fresh
 	output, diagnostics := runScope(t, stub, startRefreshInput, ColorPolicy{})
 	if diagnostics != "" {
@@ -127,12 +127,12 @@ func inventoryWithSessions(sessionIDs ...string) protocol.InventoryReport {
 	report := scopeInventory(sessionIDs[0], "generation-1")
 	for _, sessionID := range sessionIDs[1:] {
 		report.Sessions = append(report.Sessions, protocol.Session{
-			SessionID:         sessionID,
-			ProviderSessionID: "provider-" + sessionID,
-			AdapterID:         "adapter-1",
-			Generation:        "generation-1",
-			State:             "running",
-			CollectionStatus:  protocol.CollectionSucceeded,
+			ClusterSessionID:   sessionID,
+			ProviderSessionID:  "provider-" + sessionID,
+			AdapterID:          "adapter-1",
+			ProviderGeneration: "generation-1",
+			State:              "running",
+			CollectionStatus:   protocol.CollectionSucceeded,
 		})
 	}
 	return report
@@ -172,7 +172,7 @@ func TestStartReportsSessionNotYetVisible(t *testing.T) {
 func TestStartDoesNotClaimNotYetVisibleWhenSessionAppears(t *testing.T) {
 	stub := newStartRefreshStub()
 	appeared := inventoryWithSessions("res-1", "res-new")
-	appeared.Sessions[1].DisplayName = "launched work"
+	appeared.Sessions[1].ProviderDisplayName = "launched work"
 	stub.fresh["endpoint-1"] = appeared
 	output, diagnostics := runScope(t, stub, startRefreshInput, ColorPolicy{})
 	if diagnostics != "" {

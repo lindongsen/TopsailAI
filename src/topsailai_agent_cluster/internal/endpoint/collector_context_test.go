@@ -18,7 +18,7 @@ func successfulSessionAdapter() fakeAdapter {
 	return fakeAdapter{result: adapter.DiscoverResult{
 		Complete:         true,
 		CollectionStatus: protocol.CollectionSucceeded,
-		Sessions:         []protocol.Session{{SessionID: "provider-session-1"}},
+		Sessions:         []protocol.Session{{ClusterSessionID: "provider-session-1"}},
 	}}
 }
 
@@ -86,8 +86,8 @@ func TestCollectResolvesMappingsOnHealthyCycle(t *testing.T) {
 	if len(report.Sessions) != 1 {
 		t.Fatalf("sessions=%#v, want one session", report.Sessions)
 	}
-	if !strings.HasPrefix(report.Sessions[0].SessionID, "res_") {
-		t.Fatalf("session ID=%q, want an opaque resource ID", report.Sessions[0].SessionID)
+	if !strings.HasPrefix(report.Sessions[0].ClusterSessionID, "res_") {
+		t.Fatalf("session ID=%q, want an opaque resource ID", report.Sessions[0].ClusterSessionID)
 	}
 	if report.Sessions[0].AdapterID != "a" {
 		t.Fatalf("adapter ID=%q, want a", report.Sessions[0].AdapterID)

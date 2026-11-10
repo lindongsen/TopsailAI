@@ -58,7 +58,7 @@ func TestFollowOutputStreamsLinesWithoutJSON(t *testing.T) {
 	runner := &fakeFollowRunner{lines: []string{"first", "second"}}
 	a := mappedFollowAdapter(t, runner)
 	var chunks []protocol.OutputChunk
-	err := a.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: "res_provider-key", Generation: "g", MaxLines: 50}, func(chunk protocol.OutputChunk) error {
+	err := a.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: "res_provider-key", ProviderGeneration: "g", MaxLines: 50}, func(chunk protocol.OutputChunk) error {
 		chunks = append(chunks, chunk)
 		return nil
 	})

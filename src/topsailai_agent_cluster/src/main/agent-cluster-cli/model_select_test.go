@@ -36,11 +36,11 @@ func (s *modelSelectStub) GetInventory(context.Context, string) (protocol.Invent
 		ReportComplete:   true,
 		CollectionStatus: protocol.CollectionSucceeded,
 		Sessions: []protocol.Session{{
-			SessionID:        "session",
-			AdapterID:        "adapter-1",
-			Generation:       s.generation,
-			State:            "running",
-			CollectionStatus: protocol.CollectionSucceeded,
+			ClusterSessionID:   "session",
+			AdapterID:          "adapter-1",
+			ProviderGeneration: s.generation,
+			State:              "running",
+			CollectionStatus:   protocol.CollectionSucceeded,
 		}},
 	}, nil
 }
@@ -85,7 +85,7 @@ func (s *modelSelectStub) GetModelCatalog(_ context.Context, _, _, generation st
 	}
 	profiles := s.profiles
 	if profiles == nil {
-		profiles = []protocol.ModelProfile{{ModelProfileID: "mp-1", DisplayName: "first", Available: true}}
+		profiles = []protocol.ModelProfile{{ModelProfileID: "mp-1", ProviderDisplayName: "first", Available: true}}
 	}
 	return protocol.ModelCatalog{Profiles: profiles, ObservedAtMS: 1700000000000}, nil
 }
@@ -110,7 +110,7 @@ func TestModelSelectResolvesTheGenerationBeforeAskingForConfirmation(t *testing.
 	if len(stub.intents) != 1 {
 		t.Fatalf("expected one admitted intent, got %d", len(stub.intents))
 	}
-	if got := stub.intents[0].Target.Generation; got != "gen-7" {
+	if got := stub.intents[0].Target.ProviderGeneration; got != "gen-7" {
 		t.Fatalf("the admitted intent must carry the resolved generation, got %q", got)
 	}
 }
@@ -150,7 +150,7 @@ func TestModelSelectKeepsAnExplicitGeneration(t *testing.T) {
 	if len(stub.catalogReads) != 1 || stub.catalogReads[0] != "gen-explicit" {
 		t.Fatalf("the explicit generation must be used unchanged, got %v", stub.catalogReads)
 	}
-	if len(stub.intents) != 1 || stub.intents[0].Target.Generation != "gen-explicit" {
+	if len(stub.intents) != 1 || stub.intents[0].Target.ProviderGeneration != "gen-explicit" {
 		t.Fatalf("the admitted intent must carry the explicit generation, got %v", stub.intents)
 	}
 }

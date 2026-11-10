@@ -15,12 +15,12 @@ const growWorkspace = "/TopsailAI/src/topsailai_agent_cluster/internal/tui"
 // growRow returns one row whose workspace exceeds the column cap.
 func growRow() SessionRow {
 	return SessionRow{
-		EndpointID:        "ep",
-		ProviderSessionID: "sess-0123456789abcdef",
-		DisplayName:       "PS11-refactor-auth-service",
-		ProjectWorkspace:  growWorkspace,
-		State:             "running",
-		CollectionStatus:  protocol.CollectionSucceeded,
+		EndpointID:               "ep",
+		ProviderSessionID:        "sess-0123456789abcdef",
+		ProviderDisplayName:      "PS11-refactor-auth-service",
+		ProviderProjectWorkspace: growWorkspace,
+		State:                    "running",
+		CollectionStatus:         protocol.CollectionSucceeded,
 	}
 }
 
@@ -133,11 +133,11 @@ func TestGrowNeverExceedsTheTerminal(t *testing.T) {
 // rule, so the two layouts cannot drift apart.
 func TestGrowAppliesToHistoryLayout(t *testing.T) {
 	view := HistoryView{Rows: []HistoryViewRow{{
-		ProviderSessionID: "sess-0123456789abcdef",
-		DisplayName:       "PS11-refactor-auth-service",
-		ProjectWorkspace:  growWorkspace,
-		ProviderStatus:    "running",
-		Resumable:         true,
+		ProviderSessionID:        "sess-0123456789abcdef",
+		ProviderDisplayName:      "PS11-refactor-auth-service",
+		ProviderProjectWorkspace: growWorkspace,
+		ProviderStatus:           "running",
+		Resumable:                true,
 	}}}
 	var out strings.Builder
 	if err := RenderHistory(&out, view, TableOptions{Width: 200, Grow: true}); err != nil {

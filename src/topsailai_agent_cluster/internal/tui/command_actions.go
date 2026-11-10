@@ -12,21 +12,21 @@ import (
 
 // ActionRequest describes one immutable operator action.
 type ActionRequest struct {
-	Operation       string
-	OperationLabel  string
-	EndpointID      string
-	ResourceID      string
-	Generation      string
-	Payload         json.RawMessage
-	Confirmed       bool
-	WaitTimeoutMS   int64
-	Profile         string
-	ProfileRevision string
-	Folder          string
+	Operation          string
+	OperationLabel     string
+	EndpointID         string
+	ResourceID         string
+	ProviderGeneration string
+	Payload            json.RawMessage
+	Confirmed          bool
+	WaitTimeoutMS      int64
+	Profile            string
+	ProfileRevision    string
+	Folder             string
 	// DisplayName is the reported session name, used only to describe the target
 	// in progress output. It is presentation data: it never participates in
 	// routing, authorization or the immutable intent.
-	DisplayName string
+	ProviderDisplayName string
 	// ProviderSessionID is the provider's own key for the session, used only to
 	// describe the target in progress output. Like DisplayName it is presentation
 	// data and never participates in routing or the immutable intent.
@@ -75,7 +75,7 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 	}
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: id, IssuerID: "operator", Scope: "operator", EndpointID: request.EndpointID, Operation: request.Operation, OperationVersion: operationVersion, CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Folder: request.Folder, Payload: request.Payload, Budget: protocol.Budget{WaitTimeoutMS: request.WaitTimeoutMS}, ExecuteBeforeAtMS: now.UnixMilli() + 5*60*1000}
 	if request.Operation != "agent.start" {
-		intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}
+		intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}
 	}
 	if request.Operation == "agent.start" {
 		if request.Profile == "" || request.ProfileRevision == "" {

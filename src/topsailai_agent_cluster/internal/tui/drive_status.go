@@ -12,11 +12,11 @@ import (
 // It carries the endpoint and session identity so a JSON caller never has to
 // correlate the answer with the request it sent.
 type driveStatusView struct {
-	EndpointID   string                 `json:"endpoint_id"`
-	SessionID    string                 `json:"session_id"`
-	Generation   string                 `json:"generation"`
-	ObservedAtMS int64                  `json:"observed_at_ms"`
-	Drive        *protocol.DriveSummary `json:"drive"`
+	EndpointID         string                 `json:"endpoint_id"`
+	ClusterSessionID   string                 `json:"cluster_session_id"`
+	ProviderGeneration string                 `json:"provider_generation"`
+	ObservedAtMS       int64                  `json:"observed_at_ms"`
+	Drive              *protocol.DriveSummary `json:"drive"`
 }
 
 // DriveStatus renders the standard drive summary of one session from the
@@ -33,10 +33,10 @@ func (r CommandRunner) DriveStatus(ctx context.Context, out io.Writer, endpointI
 		return fmt.Errorf("endpoint %q inventory is incomplete; drive state is unknown", endpointID)
 	}
 	for _, session := range report.Sessions {
-		if session.SessionID != resourceID {
+		if session.ClusterSessionID != resourceID {
 			continue
 		}
-		view := driveStatusView{EndpointID: endpointID, SessionID: session.SessionID, Generation: session.Generation, ObservedAtMS: session.ObservedAtMS, Drive: session.Drive}
+		view := driveStatusView{EndpointID: endpointID, ClusterSessionID: session.ClusterSessionID, ProviderGeneration: session.ProviderGeneration, ObservedAtMS: session.ObservedAtMS, Drive: session.Drive}
 		if jsonMode {
 			return RenderJSON(out, view)
 		}
@@ -85,7 +85,7 @@ func driveDetailLines(drive *protocol.DriveSummary) []detailLine {
 // renderDriveStatus prints the controller summary together with its freshness,
 // so an unverified record is never read as a live controller.
 func renderDriveStatus(out io.Writer, view driveStatusView) error {
-	if _, err := fmt.Fprintf(out, "session: %s\n", view.SessionID); err != nil {
+	if _, err := fmt.Fprintf(out, "session: %s\n", view.ClusterSessionID); err != nil {
 		return err
 	}
 	for _, line := range driveDetailLines(view.Drive) {

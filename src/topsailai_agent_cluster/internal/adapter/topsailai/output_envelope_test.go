@@ -37,7 +37,7 @@ func TestReadOutputEnvelope(t *testing.T) {
 				t.Fatal(err)
 			}
 			runner.out = []byte(c.body)
-			got, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: inventory.Sessions[0].SessionID}})
+			got, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: inventory.Sessions[0].ClusterSessionID}})
 			if (err != nil) != c.bad {
 				t.Fatalf("result=%+v err=%v", got, err)
 			}

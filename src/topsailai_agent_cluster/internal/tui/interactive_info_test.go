@@ -11,8 +11,8 @@ import (
 // so the detail renderer can be checked against a real reported value.
 func infoStub() *interactiveStub {
 	report := scopeInventory("res-1", "generation-1")
-	report.Sessions[0].ProjectWorkspace = "/TopsailAI/src/topsailai_agent_cluster"
-	report.Sessions[0].DisplayName = "cluster work"
+	report.Sessions[0].ProviderProjectWorkspace = "/TopsailAI/src/topsailai_agent_cluster"
+	report.Sessions[0].ProviderDisplayName = "cluster work"
 	return &interactiveStub{
 		endpoints: []protocol.Endpoint{
 			{EndpointID: "endpoint-1", Hostname: "host-one", ConnectionState: "online"},
@@ -127,7 +127,7 @@ func TestInfoRejectsForeignRowInEndpointScope(t *testing.T) {
 	stub := infoStub()
 	state := &interactiveState{}
 	state.enterEndpoint(protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one"})
-	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-2", SessionID: "res-2", Generation: "generation-2"}})
+	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-2", ClusterSessionID: "res-2", ProviderGeneration: "generation-2"}})
 	_, diagnostics := runLine(t, stub, state, "info 1")
 	assertActionableError(t, diagnostics, `error: row 1 belongs to endpoint "endpoint-2", not the current endpoint "endpoint-1"; run list in that endpoint first`)
 }
@@ -145,18 +145,18 @@ func TestInfoIsReadOnly(t *testing.T) {
 	stub := infoStub()
 	report := stub.reports["endpoint-1"]
 	report.Sessions = append(report.Sessions, protocol.Session{
-		SessionID:        "res-1b",
-		AdapterID:        "adapter-1",
-		Generation:       "generation-1b",
-		State:            "stopped",
-		CollectionStatus: protocol.CollectionSucceeded,
+		ClusterSessionID:   "res-1b",
+		AdapterID:          "adapter-1",
+		ProviderGeneration: "generation-1b",
+		State:              "stopped",
+		CollectionStatus:   protocol.CollectionSucceeded,
 	})
 	stub.reports["endpoint-1"] = report
 	state := &interactiveState{}
 	state.enterEndpoint(protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one"})
 	state.setRows([]SessionRow{
-		{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"},
-		{No: 2, EndpointID: "endpoint-1", SessionID: "res-1b", Generation: "generation-1b"},
+		{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"},
+		{No: 2, EndpointID: "endpoint-1", ClusterSessionID: "res-1b", ProviderGeneration: "generation-1b"},
 	})
 	before := state.Scope
 	rowsBefore := make(map[int]SessionRow, len(state.Rows))
@@ -191,8 +191,8 @@ func TestInfoIsReadOnly(t *testing.T) {
 func TestInfoSanitizesProviderValues(t *testing.T) {
 	var out strings.Builder
 	session := protocol.Session{
-		SessionID:        "res-1",
-		ProjectWorkspace: "/tmp/\x1b[31mevil\x1b[0m\nsession_id: forged",
+		ClusterSessionID:         "res-1",
+		ProviderProjectWorkspace: "/tmp/\x1b[31mevil\x1b[0m\nsession_id: forged",
 	}
 	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, session); err != nil {
 		t.Fatalf("RenderSessionInfo: %v", err)
@@ -215,7 +215,7 @@ func TestInfoSanitizesProviderValues(t *testing.T) {
 // stays visibly empty instead of being replaced by a plausible guess.
 func TestInfoRendersEmptyWorkspaceWithoutInventing(t *testing.T) {
 	var out strings.Builder
-	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{SessionID: "res-1"}); err != nil {
+	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{ClusterSessionID: "res-1"}); err != nil {
 		t.Fatalf("RenderSessionInfo: %v", err)
 	}
 	if !strings.Contains(out.String(), "project_workspace: \n") {
@@ -229,7 +229,7 @@ func TestInfoRendersEmptyWorkspaceWithoutInventing(t *testing.T) {
 func TestInfoRendersDriveDetail(t *testing.T) {
 	var out strings.Builder
 	session := protocol.Session{
-		SessionID: "res-1",
+		ClusterSessionID: "res-1",
 		Drive: &protocol.DriveSummary{
 			State:         protocol.DriveStateRunning,
 			Verified:      true,
@@ -260,7 +260,7 @@ func TestInfoRendersDriveDetail(t *testing.T) {
 // line as "no controller exists", which the provider never claimed.
 func TestInfoReportsAbsentDriveAsNotReported(t *testing.T) {
 	var out strings.Builder
-	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{SessionID: "res-1"}); err != nil {
+	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{ClusterSessionID: "res-1"}); err != nil {
 		t.Fatalf("RenderSessionInfo: %v", err)
 	}
 	rendered := out.String()
@@ -285,11 +285,11 @@ func TestInfoAndDriveStatusShareDriveDetail(t *testing.T) {
 		Reason:        "launched",
 	}
 	var info strings.Builder
-	if err := RenderSessionInfo(&info, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{SessionID: "res-1", Drive: drive}); err != nil {
+	if err := RenderSessionInfo(&info, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{ClusterSessionID: "res-1", Drive: drive}); err != nil {
 		t.Fatalf("RenderSessionInfo: %v", err)
 	}
 	var status strings.Builder
-	if err := renderDriveStatus(&status, driveStatusView{SessionID: "res-1", Drive: drive}); err != nil {
+	if err := renderDriveStatus(&status, driveStatusView{ClusterSessionID: "res-1", Drive: drive}); err != nil {
 		t.Fatalf("renderDriveStatus: %v", err)
 	}
 	for _, line := range driveDetailLines(drive) {
@@ -309,7 +309,7 @@ func TestInfoAndDriveStatusShareDriveDetail(t *testing.T) {
 func TestInfoSanitizesDriveValues(t *testing.T) {
 	var out strings.Builder
 	session := protocol.Session{
-		SessionID: "res-1",
+		ClusterSessionID: "res-1",
 		Drive: &protocol.DriveSummary{
 			State:  protocol.DriveStateRunning,
 			Reason: "launched\x1b[31m\nsession_id: forged",

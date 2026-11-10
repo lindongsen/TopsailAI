@@ -638,7 +638,7 @@ func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 	if err != nil {
 		return err
 	}
-	request := tui.ActionRequest{Operation: protocol.OperationAgentModelSelect, OperationLabel: "model select", EndpointID: endpoint.EndpointID, ResourceID: sessionID, Generation: generationFlag, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
+	request := tui.ActionRequest{Operation: protocol.OperationAgentModelSelect, OperationLabel: "model select", EndpointID: endpoint.EndpointID, ResourceID: sessionID, ProviderGeneration: generationFlag, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
 	runner := legacyRunner(api)
 	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)
@@ -744,8 +744,8 @@ func resolveSessionGeneration(ctx context.Context, api tui.CommandAPI, endpointI
 		return "", err
 	}
 	for _, session := range report.Sessions {
-		if session.SessionID == sessionID {
-			return session.Generation, nil
+		if session.ClusterSessionID == sessionID {
+			return session.ProviderGeneration, nil
 		}
 	}
 	return "", nil
@@ -809,7 +809,7 @@ func driveWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnost
 	if generation == "" {
 		return fmt.Errorf("drive %s requires a generation", action)
 	}
-	request := tui.ActionRequest{Operation: operation, OperationLabel: "drive " + action, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: json.RawMessage(`{}`), Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
+	request := tui.ActionRequest{Operation: operation, OperationLabel: "drive " + action, EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, Payload: json.RawMessage(`{}`), Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
 	runner := legacyRunner(api)
 	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)
@@ -995,7 +995,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		}
 		payload = resolved
 	}
-	target := protocol.CommandTarget{Kind: "session", ResourceID: resourceID, Generation: generation}
+	target := protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: generation}
 	if operation == "start" {
 		target = protocol.CommandTarget{}
 	}
@@ -1005,7 +1005,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		}
 	}
 	operationValue := operationName(operation)
-	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
+	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
 	runner := legacyRunner(api)
 	// Progress is created before the capability preflight, because that preflight
 	// is itself a network round trip the operator would otherwise wait through

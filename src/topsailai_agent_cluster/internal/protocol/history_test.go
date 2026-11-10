@@ -12,15 +12,15 @@ import (
 // Inspect, revalidateGeneration or ReadOutput and silently mis-authorize a target.
 func TestHistoryRowCarriesNoRoutingIdentity(t *testing.T) {
 	row := HistoryRow{
-		ProviderSessionID: "wa-6cee12a5f2a0",
-		DisplayName:       "session",
-		ProjectWorkspace:  "/tmp/project",
-		Task:              "task",
-		ProviderStatus:    "Idle",
-		CreatedAtMS:       1,
-		ModifiedAtMS:      2,
-		ProviderNo:        1,
-		Resumable:         true,
+		ProviderSessionID:        "wa-6cee12a5f2a0",
+		ProviderDisplayName:      "session",
+		ProviderProjectWorkspace: "/tmp/project",
+		Task:                     "task",
+		ProviderStatus:           "Idle",
+		CreatedAtMS:              1,
+		ModifiedAtMS:             2,
+		ProviderNo:               1,
+		Resumable:                true,
 	}
 	data, err := json.Marshal(row)
 	if err != nil {

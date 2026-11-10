@@ -133,7 +133,7 @@ func TestCommandAdapterPassesTargetAndPayload(t *testing.T) {
 	argvPath := t.TempDir() + "/argv"
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_ARGV", argvPath)
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", Generation: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
+	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestReadOutputTranslatesOpaqueResourceID(t *testing.T) {
 	argvPath := t.TempDir() + "/argv"
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_ARGV", argvPath)
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-output", ResourceID: "res-output"}})
-	result, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output", Generation: "gen-1"}, MaxBytes: 32})
+	result, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output", ProviderGeneration: "gen-1"}, MaxBytes: 32})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,10 +298,10 @@ func TestCommandAdapterDiscoverAndInspect(t *testing.T) {
 
 func TestCommandAdapterRejectsMapperOwnershipMismatch(t *testing.T) {
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "other", ProviderKey: "native"}})
-	if _, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c", Operation: "send", Target: &protocol.CommandTarget{ResourceID: "r", Generation: "g"}}}); err == nil {
+	if _, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c", Operation: "send", Target: &protocol.CommandTarget{ResourceID: "r", ProviderGeneration: "g"}}}); err == nil {
 		t.Fatal("execute accepted a resource owned by another adapter")
 	}
-	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "r", Generation: "g"}, MaxBytes: 1}); err == nil {
+	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "r", ProviderGeneration: "g"}, MaxBytes: 1}); err == nil {
 		t.Fatal("output accepted a resource owned by another adapter")
 	}
 }

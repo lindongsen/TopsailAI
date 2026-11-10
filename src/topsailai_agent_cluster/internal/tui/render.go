@@ -30,7 +30,7 @@ func RenderRows(w io.Writer, rows []SessionRow) {
 		if row.LastSuccessAtMS != nil {
 			lastSuccess = fmt.Sprint(*row.LastSuccessAtMS)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\tcollection_status=%s\tlast_success_at_ms=%s\t%s\n", row.EndpointID, row.AdapterID, row.SessionID, row.Generation, row.State, row.CollectionStatus, lastSuccess, strings.Join(markers, ","))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\tcollection_status=%s\tlast_success_at_ms=%s\t%s\n", row.EndpointID, row.AdapterID, row.ClusterSessionID, row.ProviderGeneration, row.State, row.CollectionStatus, lastSuccess, strings.Join(markers, ","))
 	}
 }
 
@@ -46,7 +46,7 @@ func RenderDetail(w io.Writer, detail Detail) {
 	}
 	fmt.Fprintf(w, "collection_status: %s\nlast_success_at_ms: %s\n", detail.Inventory.CollectionStatus, lastSuccess)
 	if detail.Session != nil {
-		fmt.Fprintf(w, "session: %s adapter=%s generation=%s state=%s\n", detail.Session.SessionID, detail.Session.AdapterID, detail.Session.Generation, detail.Session.State)
+		fmt.Fprintf(w, "session: %s adapter=%s provider_generation=%s state=%s\n", detail.Session.ClusterSessionID, detail.Session.AdapterID, detail.Session.ProviderGeneration, detail.Session.State)
 	}
 	fmt.Fprintf(w, "capabilities: %d\n", len(detail.Capabilities.Capabilities))
 	for _, capability := range detail.Capabilities.Capabilities {

@@ -13,7 +13,7 @@ import (
 func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 	var out, errors strings.Builder
 	stamp := int64(1700000000000)
-	rows := []SessionRow{{EndpointID: "endpoint-1", AdapterID: "adapter", SessionID: "res_opaque", ProviderSessionID: strings.Repeat("p", 60), Generation: "generation", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{EndpointID: "endpoint-1", AdapterID: "adapter", ClusterSessionID: "res_opaque", ProviderSessionID: strings.Repeat("p", 60), ProviderGeneration: "generation", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
@@ -175,9 +175,9 @@ func TestColorPolicyMatrixAndPrompt(t *testing.T) {
 		{name: "idle", plainWant: "workspace> "},
 		{name: "endpoint", scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1", Hostname: "ai-dev"}, plainWant: "endpoint[ai-dev/endpoint-1]> "},
 		{name: "endpoint fallback", scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1"}, plainWant: "endpoint[endpoint-1]> "},
-		{name: "session fallback", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", SessionID: "session"}, plainWant: "session[endpoint-1/-]> "},
-		{name: "selected", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", SessionID: "session"}, plainWant: "session[endpoint/-]> "},
-		{name: "invalidated", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", SessionID: "session"}, invalid: true, plainWant: "session[endpoint/-!]> "},
+		{name: "session fallback", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", ClusterSessionID: "session"}, plainWant: "session[endpoint-1/-]> "},
+		{name: "selected", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", ClusterSessionID: "session"}, plainWant: "session[endpoint/-]> "},
+		{name: "invalidated", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", ClusterSessionID: "session"}, invalid: true, plainWant: "session[endpoint/-!]> "},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,7 +208,7 @@ func TestColorPolicyMatrixAndPrompt(t *testing.T) {
 
 func TestPromptEscapesUntrustedControlText(t *testing.T) {
 	var out strings.Builder
-	if err := RenderPrompt(&out, ScopeState{Kind: ScopeSession, EndpointID: "ep\n\x1b[31m", Hostname: "ep\n\x1b[31m", SessionID: "session\t1"}, false, ColorPolicy{Enabled: true}); err != nil {
+	if err := RenderPrompt(&out, ScopeState{Kind: ScopeSession, EndpointID: "ep\n\x1b[31m", Hostname: "ep\n\x1b[31m", ClusterSessionID: "session\t1"}, false, ColorPolicy{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.ContainsAny(out.String(), "\n\t") || strings.Contains(out.String(), "\x1b[31mep") {
@@ -219,7 +219,7 @@ func TestPromptEscapesUntrustedControlText(t *testing.T) {
 func TestTableJSONHasNoPresentationBytes(t *testing.T) {
 	var out strings.Builder
 	stamp := int64(1700000000000)
-	rows := []SessionRow{{EndpointID: "ep", SessionID: "session", State: "running", LastSuccessAtMS: &stamp}}
+	rows := []SessionRow{{EndpointID: "ep", ClusterSessionID: "session", State: "running", LastSuccessAtMS: &stamp}}
 	if err := RenderJSON(&out, rows); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestTableJSONHasNoPresentationBytes(t *testing.T) {
 
 func TestTableJSONPreservesMachineFields(t *testing.T) {
 	stamp := int64(1700000000000)
-	rows := []SessionRow{{EndpointID: "ep", SessionID: "res_opaque", ProviderSessionID: "provider-42", Generation: "gen-7", LastSuccessAtMS: &stamp}}
+	rows := []SessionRow{{EndpointID: "ep", ClusterSessionID: "res_opaque", ProviderSessionID: "provider-42", ProviderGeneration: "gen-7", LastSuccessAtMS: &stamp}}
 	var out strings.Builder
 	if err := RenderJSON(&out, rows); err != nil {
 		t.Fatal(err)
@@ -239,8 +239,8 @@ func TestTableJSONPreservesMachineFields(t *testing.T) {
 	if err := json.Unmarshal([]byte(out.String()), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded[0]["generation"] != "gen-7" {
-		t.Fatalf("generation = %#v", decoded[0]["generation"])
+	if decoded[0]["provider_generation"] != "gen-7" {
+		t.Fatalf("generation = %#v", decoded[0]["provider_generation"])
 	}
 	if got, ok := decoded[0]["last_success_at_ms"].(float64); !ok || got != float64(stamp) {
 		t.Fatalf("last_success_at_ms = %#v", decoded[0]["last_success_at_ms"])
@@ -249,7 +249,7 @@ func TestTableJSONPreservesMachineFields(t *testing.T) {
 
 func TestTableUsesSeparateSessionNameAndProviderIDColumns(t *testing.T) {
 	stamp := int64(1700000000000)
-	rows := []SessionRow{{No: 1, EndpointID: "ep", SessionID: "res_opaque", ProviderSessionID: "provider-42", DisplayName: "Daily work", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{No: 1, EndpointID: "ep", ClusterSessionID: "res_opaque", ProviderSessionID: "provider-42", ProviderDisplayName: "Daily work", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
 	var out, errors strings.Builder
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
@@ -258,7 +258,7 @@ func TestTableUsesSeparateSessionNameAndProviderIDColumns(t *testing.T) {
 		t.Fatalf("display name output = %q", out.String())
 	}
 	out.Reset()
-	rows[0].DisplayName = ""
+	rows[0].ProviderDisplayName = ""
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestTableLastSuccessUsesNonUTCOffset(t *testing.T) {
 // reaches the table as a dedicated column and stays sanitized.
 func TestTableRendersProjectWorkspaceInItsOwnColumn(t *testing.T) {
 	var out, errors strings.Builder
-	rows := []SessionRow{{EndpointID: "endpoint-1", SessionID: "res_opaque", ProviderSessionID: "provider-1", ProjectWorkspace: "/work/project-a", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res_opaque", ProviderSessionID: "provider-1", ProviderProjectWorkspace: "/work/project-a", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestTableRendersProjectWorkspaceInItsOwnColumn(t *testing.T) {
 // TestTableSanitizesProjectWorkspace keeps control sequences out of the cell.
 func TestTableSanitizesProjectWorkspace(t *testing.T) {
 	var out, errors strings.Builder
-	rows := []SessionRow{{EndpointID: "endpoint-1", SessionID: "res_opaque", ProjectWorkspace: "/work/\x1b[31mevil", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res_opaque", ProviderProjectWorkspace: "/work/\x1b[31mevil", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}

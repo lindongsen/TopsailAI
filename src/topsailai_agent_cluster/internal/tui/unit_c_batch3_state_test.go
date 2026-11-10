@@ -16,10 +16,10 @@ func unitC3State(scope ScopeKind, rows string) interactiveState {
 	s.InvalidReason = "retained reason"
 	row := s.Rows[1]
 	row.AdapterID, row.EndpointLabel, row.AdapterLabel = "adapter", "endpoint label", "adapter label"
-	row.ProviderSessionID, row.DisplayName, row.State = "provider", "display", "ready"
+	row.ProviderSessionID, row.ProviderDisplayName, row.State = "provider", "display", "ready"
 	row.Stale, row.Unknown, row.CollectionStatus = true, true, "failed"
 	s.Rows[1] = row
-	row.No, row.SessionID = 2, "session-2"
+	row.No, row.ClusterSessionID = 2, "session-2"
 	s.Rows[2] = row
 	if rows == "nil" {
 		s.Rows = nil

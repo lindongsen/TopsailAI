@@ -358,7 +358,7 @@ func interactiveCtl(parent context.Context, api InteractiveAPI, state *interacti
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, ctlOperationPrefix+action, invocation.displayName()+" "+action, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, nil)
+	return interactiveConfirmedAction(parent, api, state, ctlOperationPrefix+action, invocation.displayName()+" "+action, confirmationTargetFor(*session), session.ProviderGeneration, payload, lines, out, trustedOut, options, nil, nil)
 }
 
 // ctlResolveAction returns the action and the payload the command line already

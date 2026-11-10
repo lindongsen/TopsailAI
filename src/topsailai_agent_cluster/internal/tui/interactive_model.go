@@ -20,12 +20,12 @@ import (
 // would let a number silently change meaning depending on which table was rendered
 // last.
 type modelCatalogNamespace struct {
-	EndpointID        string
-	SessionID         string
-	ProviderSessionID string
-	DisplayName       string
-	Generation        string
-	Rows              map[int]ModelCatalogViewRow
+	EndpointID          string
+	ClusterSessionID    string
+	ProviderSessionID   string
+	ProviderDisplayName string
+	ProviderGeneration  string
+	Rows                map[int]ModelCatalogViewRow
 }
 
 // IsRowNumber reports whether token is a rendered row number.
@@ -124,12 +124,12 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 		return err
 	}
 	state.modelCatalog = &modelCatalogNamespace{
-		EndpointID:        target.endpointID,
-		SessionID:         target.sessionID,
-		ProviderSessionID: target.providerSessionID,
-		DisplayName:       target.displayName,
-		Generation:        target.generation,
-		Rows:              make(map[int]ModelCatalogViewRow, len(view.Rows)),
+		EndpointID:          target.endpointID,
+		ClusterSessionID:    target.sessionID,
+		ProviderSessionID:   target.providerSessionID,
+		ProviderDisplayName: target.displayName,
+		ProviderGeneration:  target.generation,
+		Rows:                make(map[int]ModelCatalogViewRow, len(view.Rows)),
 	}
 	for _, row := range view.Rows {
 		state.modelCatalog.Rows[row.No] = row
@@ -181,8 +181,8 @@ func interactiveModelSelect(parent context.Context, api InteractiveAPI, state *i
 	// confirmation path receives a detached copy that pins exactly this target.
 	pinned := *state
 	pinned.EndpointID = target.endpointID
-	pinned.SessionID = target.sessionID
-	pinned.Generation = target.generation
+	pinned.ClusterSessionID = target.sessionID
+	pinned.ProviderGeneration = target.generation
 	pinned.Invalidated = false
 	pinned.InvalidReason = ""
 	revalidate := func(revalidateCtx context.Context) error {
@@ -215,8 +215,8 @@ func resolveModelProfileSelector(namespace *modelCatalogNamespace, sessionID, to
 	if namespace == nil {
 		return ModelCatalogViewRow{}, fmt.Errorf("no model catalog has been rendered for session %s; run model first", requestedLabel)
 	}
-	if namespace.SessionID != sessionID {
-		renderedLabel := sessionIdentityLabel(namespace.DisplayName, namespace.ProviderSessionID, namespace.SessionID)
+	if namespace.ClusterSessionID != sessionID {
+		renderedLabel := sessionIdentityLabel(namespace.ProviderDisplayName, namespace.ProviderSessionID, namespace.ClusterSessionID)
 		return ModelCatalogViewRow{}, fmt.Errorf("the last rendered model catalog belongs to session %s, not %s; run model again", renderedLabel, requestedLabel)
 	}
 	if number, numeric := parseRowNumber(token); numeric {
@@ -231,7 +231,7 @@ func resolveModelProfileSelector(namespace *modelCatalogNamespace, sessionID, to
 		return matches[0], nil
 	}
 	matches := modelCatalogMatches(rows, func(row ModelCatalogViewRow) bool {
-		return row.DisplayName != "" && row.DisplayName == token
+		return row.ProviderDisplayName != "" && row.ProviderDisplayName == token
 	})
 	switch len(matches) {
 	case 1:
@@ -271,8 +271,8 @@ func modelCatalogMatches(rows []ModelCatalogViewRow, accept func(ModelCatalogVie
 
 // modelProfileLabel names one profile in operator-facing text.
 func modelProfileLabel(row ModelCatalogViewRow) string {
-	if row.DisplayName == "" {
+	if row.ProviderDisplayName == "" {
 		return row.ModelProfileID
 	}
-	return fmt.Sprintf("%s (%s)", row.DisplayName, row.ModelProfileID)
+	return fmt.Sprintf("%s (%s)", row.ProviderDisplayName, row.ModelProfileID)
 }

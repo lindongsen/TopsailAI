@@ -15,10 +15,10 @@ import (
 // in the table, in the info detail and in the refusal message.
 func TestStatusSummaryMergesUnverifiedIntoUnknown(t *testing.T) {
 	rows := []SessionRow{
-		{SessionID: "a", State: "running"},
-		{SessionID: "b", State: "unknown", Unverified: true},
-		{SessionID: "c", State: "unknown", Unverified: true},
-		{SessionID: "d", State: "unknown"},
+		{ClusterSessionID: "a", State: "running"},
+		{ClusterSessionID: "b", State: "unknown", Unverified: true},
+		{ClusterSessionID: "c", State: "unknown", Unverified: true},
+		{ClusterSessionID: "d", State: "unknown"},
 	}
 	var out strings.Builder
 	if err := writeStatusSummary(&out, rows, ColorPolicy{}); err != nil {
@@ -40,8 +40,8 @@ func TestStatusSummaryMergesUnverifiedIntoUnknown(t *testing.T) {
 // fleet with no unverified session, so the label never appears as noise.
 func TestStatusSummaryOmitsUnverifiedWhenAbsent(t *testing.T) {
 	rows := []SessionRow{
-		{SessionID: "a", State: "running"},
-		{SessionID: "b", State: "unknown"},
+		{ClusterSessionID: "a", State: "running"},
+		{ClusterSessionID: "b", State: "unknown"},
 	}
 	var out strings.Builder
 	if err := writeStatusSummary(&out, rows, ColorPolicy{}); err != nil {
@@ -62,8 +62,8 @@ func TestListRowsDerivesUnverifiedFromStateReason(t *testing.T) {
 			CollectionStatus: protocol.CollectionSucceeded,
 			Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter", DataKnown: true}},
 			Sessions: []protocol.Session{
-				{SessionID: "unverified", AdapterID: "adapter", State: protocol.SessionStateUnknown, StateReason: protocol.StateReasonLivenessUnverified},
-				{SessionID: "other", AdapterID: "adapter", State: protocol.SessionStateUnknown, StateReason: "provider_reported"},
+				{ClusterSessionID: "unverified", AdapterID: "adapter", State: protocol.SessionStateUnknown, StateReason: protocol.StateReasonLivenessUnverified},
+				{ClusterSessionID: "other", AdapterID: "adapter", State: protocol.SessionStateUnknown, StateReason: "provider_reported"},
 			},
 		},
 	}

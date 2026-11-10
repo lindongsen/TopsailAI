@@ -60,7 +60,7 @@ func matrixInventory(generation string) protocol.InventoryReport {
 	return protocol.InventoryReport{
 		ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded,
 		Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
-		Sessions: []protocol.Session{{SessionID: "session-1", AdapterID: "adapter-1", Generation: generation, State: "running", CollectionStatus: protocol.CollectionSucceeded}},
+		Sessions: []protocol.Session{{ClusterSessionID: "session-1", AdapterID: "adapter-1", ProviderGeneration: generation, State: "running", CollectionStatus: protocol.CollectionSucceeded}},
 	}
 }
 func matrixCapability(revision string) protocol.CapabilityDescriptor {

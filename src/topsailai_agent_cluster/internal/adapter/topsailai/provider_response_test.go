@@ -23,7 +23,7 @@ func TestExecuteCarriesProviderResponseOnSuccess(t *testing.T) {
 	runner.out = []byte(document)
 	result, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 		CommandID: "c1", Operation: protocol.OperationMessageSend,
-		Target: &protocol.CommandTarget{ResourceID: "res_provider-secret", Generation: "g1"}, Payload: []byte(`{"text":"hi"}`),
+		Target: &protocol.CommandTarget{ResourceID: "res_provider-secret", ProviderGeneration: "g1"}, Payload: []byte(`{"text":"hi"}`),
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestExecuteCarriesProviderStderrOnFailure(t *testing.T) {
 	runner.err = &exec.ExitError{Stderr: []byte("provider: session not found\n")}
 	result, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 		CommandID: "c1", Operation: protocol.OperationMessageSend,
-		Target: &protocol.CommandTarget{ResourceID: "res_provider-secret", Generation: "g1"}, Payload: []byte(`{"text":"hi"}`),
+		Target: &protocol.CommandTarget{ResourceID: "res_provider-secret", ProviderGeneration: "g1"}, Payload: []byte(`{"text":"hi"}`),
 	}})
 	if err == nil {
 		t.Fatal("a failed provider invocation must return an error")
@@ -73,7 +73,7 @@ func TestExecuteOmitsProviderResponseWhenProviderReturnsNothing(t *testing.T) {
 	runner.err = &exec.ExitError{}
 	result, _ := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 		CommandID: "c1", Operation: protocol.OperationMessageSend,
-		Target: &protocol.CommandTarget{ResourceID: "res_provider-secret", Generation: "g1"}, Payload: []byte(`{"text":"hi"}`),
+		Target: &protocol.CommandTarget{ResourceID: "res_provider-secret", ProviderGeneration: "g1"}, Payload: []byte(`{"text":"hi"}`),
 	}})
 	if result.Receipt.ProviderResponse != "" {
 		t.Fatalf("provider response = %q, want empty", result.Receipt.ProviderResponse)

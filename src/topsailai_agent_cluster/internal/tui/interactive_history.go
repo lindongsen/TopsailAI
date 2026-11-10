@@ -141,7 +141,7 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 	// sessions for one provider session ID, so the operator must inspect the
 	// endpoint inventory; no client-side retry can resolve contradictory data.
 	if row.Ambiguous {
-		return fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for session %s, so the row cannot be entered; inspect the endpoint inventory", number, namespace.EndpointID, sessionIdentityLabel(row.DisplayName, row.ProviderSessionID, ""))
+		return fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for session %s, so the row cannot be entered; inspect the endpoint inventory", number, namespace.EndpointID, sessionIdentityLabel(row.ProviderDisplayName, row.ProviderSessionID, ""))
 	}
 	if !row.Joined {
 		return fmt.Errorf("history row %d is unjoined: the inventory for endpoint %q is unavailable, so the row cannot be entered; run refresh and history again", number, namespace.EndpointID)
@@ -158,10 +158,10 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 	}
 	// The join supplies the only routable pair. An empty pair means the join
 	// could not prove a live session, so the transition must fail closed.
-	if row.ResourceID == "" || row.Generation == "" {
+	if row.ResourceID == "" || row.ProviderGeneration == "" {
 		return fmt.Errorf("history row %d has no routable identity; run history again", number)
 	}
-	sessionRow := SessionRow{No: row.No, EndpointID: row.EndpointID, SessionID: row.ResourceID, ProviderSessionID: row.ProviderSessionID, Generation: row.Generation, State: row.State}
+	sessionRow := SessionRow{No: row.No, EndpointID: row.EndpointID, ClusterSessionID: row.ResourceID, ProviderSessionID: row.ProviderSessionID, ProviderGeneration: row.ProviderGeneration, State: row.State}
 	if err := cdSessionRow(state, api, parent, number, sessionRow); err != nil {
 		return err
 	}
@@ -187,10 +187,10 @@ const (
 // past provider record, while the live list reports a record whose liveness the
 // provider could not verify.
 type resumeSelection struct {
-	EndpointID        string
-	ProviderSessionID string
-	ResourceID        string
-	DisplayName       string
+	EndpointID          string
+	ProviderSessionID   string
+	ResourceID          string
+	ProviderDisplayName string
 	// Source names the table the row number came from, so the stale-number
 	// notice names the command that refreshes those numbers.
 	Source string
@@ -226,8 +226,8 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 	// that copy, so it is copied back before the caller can query status.
 	pinned := *state
 	pinned.EndpointID = selection.EndpointID
-	pinned.SessionID = selection.ResourceID
-	pinned.Generation = ""
+	pinned.ClusterSessionID = selection.ResourceID
+	pinned.ProviderGeneration = ""
 	pinned.Invalidated = false
 	pinned.InvalidReason = ""
 	revalidate := func(revalidateCtx context.Context) error {
@@ -237,7 +237,7 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 		state.commandID = pinned.commandID
 		return invalidateResumeRowBindings(state, selection.Source, out)
 	}
-	target := confirmationTarget{DisplayName: selection.DisplayName, ProviderSessionID: selection.ProviderSessionID, SessionID: selection.ResourceID}
+	target := confirmationTarget{ProviderDisplayName: selection.ProviderDisplayName, ProviderSessionID: selection.ProviderSessionID, ClusterSessionID: selection.ResourceID}
 	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentResume, "resume", target, "", json.RawMessage(`{}`), lines, out, trustedOut, options, revalidate, postSubmit)
 }
 
@@ -279,7 +279,7 @@ func historyResumeSelection(namespace *historyNamespace, number int) (resumeSele
 	// a session that is already running, so the row is refused before the adapter
 	// verdict is consulted.
 	if row.Ambiguous {
-		return resumeSelection{}, fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for session %s, so it cannot be resumed; inspect the endpoint inventory instead", number, namespace.EndpointID, sessionIdentityLabel(row.DisplayName, row.ProviderSessionID, ""))
+		return resumeSelection{}, fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for session %s, so it cannot be resumed; inspect the endpoint inventory instead", number, namespace.EndpointID, sessionIdentityLabel(row.ProviderDisplayName, row.ProviderSessionID, ""))
 	}
 	if row.Live {
 		return resumeSelection{}, fmt.Errorf("history row %d is live on endpoint %q, so it cannot be resumed; use cd %d to enter it", number, namespace.EndpointID, number)
@@ -294,7 +294,7 @@ func historyResumeSelection(namespace *historyNamespace, number int) (resumeSele
 	if row.ResumeResourceID == "" {
 		return resumeSelection{}, fmt.Errorf("history row %d has no resource handle, so it cannot be resumed; run history again", number)
 	}
-	return resumeSelection{EndpointID: namespace.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.ResumeResourceID, DisplayName: row.DisplayName, Source: resumeSourceHistory}, nil
+	return resumeSelection{EndpointID: namespace.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.ResumeResourceID, ProviderDisplayName: row.ProviderDisplayName, Source: resumeSourceHistory}, nil
 }
 
 // listResumeSelection accepts one live-list row only when the provider reported
@@ -310,16 +310,16 @@ func listResumeSelection(state *interactiveState, number int) (resumeSelection, 
 	if !ok {
 		return resumeSelection{}, fmt.Errorf("row %d is out of range; valid rows are 1-%d", number, len(state.Rows))
 	}
-	if row.SessionID == "" {
+	if row.ClusterSessionID == "" {
 		return resumeSelection{}, fmt.Errorf("row %d does not identify a session; choose a session row", number)
 	}
-	if row.Generation != "" {
+	if row.ProviderGeneration != "" {
 		return resumeSelection{}, fmt.Errorf("row %d is live on endpoint %q, so it cannot be resumed; use cd %d to enter it", number, row.EndpointID, number)
 	}
 	if row.State != protocol.SessionStateUnknown {
 		return resumeSelection{}, fmt.Errorf("row %d is %q on endpoint %q, so it cannot be resumed; only an unknown session can be resumed from the list", number, row.State, row.EndpointID)
 	}
-	return resumeSelection{EndpointID: row.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.SessionID, DisplayName: row.DisplayName, Source: resumeSourceList}, nil
+	return resumeSelection{EndpointID: row.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.ClusterSessionID, ProviderDisplayName: row.ProviderDisplayName, Source: resumeSourceList}, nil
 }
 
 // uniqueUnknownResumeSelection resolves a bare resume to the only unknown session
@@ -336,7 +336,7 @@ func uniqueUnknownResumeSelection(state *interactiveState) (resumeSelection, err
 	}
 	candidates := make([]SessionRow, 0, 2)
 	for _, row := range state.Rows {
-		if row.SessionID == "" || row.Generation != "" || row.State != protocol.SessionStateUnknown {
+		if row.ClusterSessionID == "" || row.ProviderGeneration != "" || row.State != protocol.SessionStateUnknown {
 			continue
 		}
 		candidates = append(candidates, row)
@@ -346,7 +346,7 @@ func uniqueUnknownResumeSelection(state *interactiveState) (resumeSelection, err
 		return resumeSelection{}, fmt.Errorf("no unknown session is listed, so a bare resume has no target; run list and resume <row>")
 	case 1:
 		row := candidates[0]
-		return resumeSelection{EndpointID: row.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.SessionID, DisplayName: row.DisplayName, Source: resumeSourceList}, nil
+		return resumeSelection{EndpointID: row.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.ClusterSessionID, ProviderDisplayName: row.ProviderDisplayName, Source: resumeSourceList}, nil
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].No < candidates[j].No })
 	numbers := make([]string, len(candidates))
@@ -386,10 +386,10 @@ func validateResumeAbsence(ctx context.Context, api InteractiveAPI, endpointID, 
 		if session.ProviderSessionID == "" || session.ProviderSessionID != providerSessionID {
 			continue
 		}
-		if session.Generation == "" {
+		if session.ProviderGeneration == "" {
 			continue
 		}
-		return fmt.Errorf("session %s is live on endpoint %q, so it cannot be resumed; use cd to enter it", sessionIdentityLabel(session.DisplayName, session.ProviderSessionID, session.SessionID), endpointID)
+		return fmt.Errorf("session %s is live on endpoint %q, so it cannot be resumed; use cd to enter it", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, session.ClusterSessionID), endpointID)
 	}
 	return nil
 }

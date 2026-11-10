@@ -708,9 +708,9 @@ func TestInteractiveWatchRequiresTickCapableReader(t *testing.T) {
 // so a row number never changes silently.
 func TestReplWatchPrintsRebindingDiagnostic(t *testing.T) {
 	state := &interactiveState{}
-	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 	controller := &watchController{pending: &watchResult{rows: []SessionRow{
-		{No: 1, EndpointID: "endpoint-1", SessionID: "res-2", Generation: "generation-2"},
+		{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-2", ProviderGeneration: "generation-2"},
 	}}}
 	watch := &replWatch{controller: controller, state: state}
 	payload, err := watch.Idle()
@@ -720,7 +720,7 @@ func TestReplWatchPrintsRebindingDiagnostic(t *testing.T) {
 	if !strings.Contains(string(payload), "row numbers rebound") {
 		t.Fatalf("payload=%q, want a rebinding diagnostic", payload)
 	}
-	if state.Rows[1].SessionID != "res-2" {
+	if state.Rows[1].ClusterSessionID != "res-2" {
 		t.Fatalf("rows were not rebound: %+v", state.Rows)
 	}
 }
@@ -730,7 +730,7 @@ func TestReplWatchPrintsRebindingDiagnostic(t *testing.T) {
 // carries rendered output, because the real success path always populates it;
 // a fixture without output would pass this assertion without exercising it.
 func TestReplWatchStaysSilentForIdenticalRows(t *testing.T) {
-	rows := []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}}
+	rows := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}}
 	state := &interactiveState{}
 	state.setRows(rows)
 	watch := &replWatch{controller: &watchController{}, state: state}
@@ -755,7 +755,7 @@ func TestReplWatchStaysSilentForIdenticalRows(t *testing.T) {
 // TestReplWatchPrintsChangedPayload proves a changed table is printed even when
 // the row identity is unchanged, because a status change must reach the operator.
 func TestReplWatchPrintsChangedPayload(t *testing.T) {
-	rows := []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1", State: "running"}}
+	rows := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}}
 	state := &interactiveState{}
 	state.setRows(rows)
 	watch := &replWatch{controller: &watchController{}, state: state}
@@ -763,7 +763,7 @@ func TestReplWatchPrintsChangedPayload(t *testing.T) {
 	if _, err := watch.Idle(); err != nil {
 		t.Fatalf("Idle: %v", err)
 	}
-	changed := []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1", State: "stopped"}}
+	changed := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "stopped"}}
 	watch.controller.pending = &watchResult{rows: changed, output: []byte("1 | res-1 | stopped\n")}
 	payload, err := watch.Idle()
 	if err != nil {
@@ -780,14 +780,14 @@ func TestReplWatchPrintsChangedPayload(t *testing.T) {
 // number the operator is about to use.
 func TestReplWatchPrintsRebindingForIdenticalBytes(t *testing.T) {
 	state := &interactiveState{}
-	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 	watch := &replWatch{controller: &watchController{}, state: state}
 	payload := []byte("1 | res-1\n")
-	watch.controller.pending = &watchResult{rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}}, output: payload}
+	watch.controller.pending = &watchResult{rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}}, output: payload}
 	if _, err := watch.Idle(); err != nil {
 		t.Fatalf("Idle: %v", err)
 	}
-	watch.controller.pending = &watchResult{rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-2"}}, output: payload}
+	watch.controller.pending = &watchResult{rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-2"}}, output: payload}
 	printed, err := watch.Idle()
 	if err != nil {
 		t.Fatalf("Idle: %v", err)
@@ -801,7 +801,7 @@ func TestReplWatchPrintsRebindingForIdenticalBytes(t *testing.T) {
 // session and never mutates row bindings.
 func TestReplWatchReportsFailureAsDiagnostic(t *testing.T) {
 	state := &interactiveState{}
-	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 	controller := &watchController{pending: &watchResult{err: errors.New("endpoint unreachable")}}
 	watch := &replWatch{controller: controller, state: state}
 	payload, err := watch.Idle()
@@ -811,7 +811,7 @@ func TestReplWatchReportsFailureAsDiagnostic(t *testing.T) {
 	if !strings.Contains(string(payload), "auto-refresh: endpoint unreachable") {
 		t.Fatalf("payload=%q, want a diagnostic line", payload)
 	}
-	if state.Rows[1].SessionID != "res-1" {
+	if state.Rows[1].ClusterSessionID != "res-1" {
 		t.Fatalf("a failed refresh mutated row bindings: %+v", state.Rows)
 	}
 }
@@ -834,15 +834,15 @@ func TestReplWatchSanitizesFailureText(t *testing.T) {
 // TestSameRowIdentityComparesIdentityNotText proves a status change alone is not
 // a rebinding, while a generation change is.
 func TestSameRowIdentityComparesIdentityNotText(t *testing.T) {
-	current := map[int]SessionRow{1: {No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1", State: "running"}}
+	current := map[int]SessionRow{1: {No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}}
 	cases := []struct {
 		name string
 		rows []SessionRow
 		want bool
 	}{
-		{name: "status change only", rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1", State: "stopped"}}, want: true},
-		{name: "generation change", rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-2"}}, want: false},
-		{name: "session change", rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-2", Generation: "generation-1"}}, want: false},
+		{name: "status change only", rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "stopped"}}, want: true},
+		{name: "generation change", rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-2"}}, want: false},
+		{name: "session change", rows: []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-2", ProviderGeneration: "generation-1"}}, want: false},
 		{name: "row count change", rows: nil, want: false},
 	}
 	for _, testCase := range cases {

@@ -17,9 +17,9 @@ func rowSelectionState(rows ...SessionRow) *interactiveState {
 
 // TestResolveRowSelectionRejectsUnusableTokens proves every rejection stays local.
 func TestResolveRowSelectionRejectsUnusableTokens(t *testing.T) {
-	sessionRow := SessionRow{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}
+	sessionRow := SessionRow{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}
 	placeholderRow := SessionRow{No: 2, EndpointID: "endpoint-2", State: "no sessions"}
-	generationlessRow := SessionRow{No: 3, EndpointID: "endpoint-1", SessionID: "res-3"}
+	generationlessRow := SessionRow{No: 3, EndpointID: "endpoint-1", ClusterSessionID: "res-3"}
 	cases := []struct {
 		name  string
 		state *interactiveState
@@ -44,14 +44,14 @@ func TestResolveRowSelectionRejectsUnusableTokens(t *testing.T) {
 // TestResolveRowSelectionInEndpointRejectsForeignRow proves a number rendered for
 // another endpoint is never silently retargeted.
 func TestResolveRowSelectionInEndpointRejectsForeignRow(t *testing.T) {
-	state := rowSelectionState(SessionRow{No: 1, EndpointID: "endpoint-2", SessionID: "res-2", Generation: "generation-2"})
+	state := rowSelectionState(SessionRow{No: 1, EndpointID: "endpoint-2", ClusterSessionID: "res-2", ProviderGeneration: "generation-2"})
 	_, err := resolveRowSelectionInEndpoint(state, "1", "endpoint-1")
 	want := `row 1 belongs to endpoint "endpoint-2", not the current endpoint "endpoint-1"; run list in that endpoint first`
 	if err == nil || err.Error() != want {
 		t.Fatalf("err=%v want=%q", err, want)
 	}
 	row, err := resolveRowSelectionInEndpoint(state, "1", "endpoint-2")
-	if err != nil || row.SessionID != "res-2" {
+	if err != nil || row.ClusterSessionID != "res-2" {
 		t.Fatalf("row=%+v err=%v", row, err)
 	}
 }

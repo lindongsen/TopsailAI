@@ -21,7 +21,7 @@ func TestStoreSchemaInventoryAndCancelCAS(t *testing.T) {
 	if err := store.UpsertEndpoint(ctx, endpoint, 1); err != nil {
 		t.Fatal(err)
 	}
-	report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: "g1", SnapshotRevision: 1, ObservedAtMS: 1, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "a1", ProviderType: "test"}}, Sessions: []protocol.Session{{SessionID: "s1", AdapterID: "a1"}}}
+	report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: "g1", SnapshotRevision: 1, ObservedAtMS: 1, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "a1", ProviderType: "test"}}, Sessions: []protocol.Session{{ClusterSessionID: "s1", AdapterID: "a1"}}}
 	if err := store.ReplaceInventory(ctx, "e1", report, 2); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestCommandQueriesAndManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, item := range []struct{ id, hash, resource string }{{"c1", "h1", "res_1"}, {"c2", "h2", "res_10"}} {
-		target := &protocol.CommandTarget{ResourceID: item.resource, Generation: "g1"}
+		target := &protocol.CommandTarget{ResourceID: item.resource, ProviderGeneration: "g1"}
 		intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: item.id, EndpointID: "e1", Operation: "send", Target: target, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Payload: []byte(`{"x":1}`), ExecuteBeforeAtMS: 100}
 		if err := store.AdmitCommand(ctx, intent, item.hash, 1); err != nil {
 			t.Fatal(err)

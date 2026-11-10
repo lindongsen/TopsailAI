@@ -162,10 +162,10 @@ func TestQuitClearsPinnedSessionSelection(t *testing.T) {
 			if state.Scope.Kind != ScopeWorkspace {
 				t.Fatalf("scope=%v, want workspace", state.Scope.Kind)
 			}
-			if state.Scope.SessionID != "" || state.Scope.EndpointID != "" {
+			if state.Scope.ClusterSessionID != "" || state.Scope.EndpointID != "" {
 				t.Fatalf("%q kept stale scope identity: %+v", spelling, state.Scope)
 			}
-			if state.interactiveSelection.EndpointID != "" || state.interactiveSelection.SessionID != "" {
+			if state.interactiveSelection.EndpointID != "" || state.interactiveSelection.ClusterSessionID != "" {
 				t.Fatalf("%q kept the pinned selection: %+v", spelling, state.interactiveSelection)
 			}
 		})

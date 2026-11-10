@@ -49,11 +49,11 @@ func TestScopeStateFillsHostnameFromEndpoint(t *testing.T) {
 		t.Fatalf("endpoint scope was not filled: %+v", state.Scope)
 	}
 	state.enterSession(endpoint, "session-1", "generation-1")
-	if state.Scope.Kind != ScopeSession || state.Scope.EndpointID != "endpoint-1" || state.Scope.Hostname != "ai-dev" || state.Scope.SessionID != "session-1" || state.Scope.Generation != "generation-1" {
+	if state.Scope.Kind != ScopeSession || state.Scope.EndpointID != "endpoint-1" || state.Scope.Hostname != "ai-dev" || state.Scope.ClusterSessionID != "session-1" || state.Scope.ProviderGeneration != "generation-1" {
 		t.Fatalf("session scope was not filled: %+v", state.Scope)
 	}
 	state.enterWorkspace()
-	if state.Scope.Kind != ScopeWorkspace || state.Scope.EndpointID != "" || state.Scope.SessionID != "" || state.Scope.Hostname != "" {
+	if state.Scope.Kind != ScopeWorkspace || state.Scope.EndpointID != "" || state.Scope.ClusterSessionID != "" || state.Scope.Hostname != "" {
 		t.Fatalf("scope was not cleared: %+v", state.Scope)
 	}
 }

@@ -24,7 +24,7 @@ func (r InventoryReport) Validate() error {
 		seen[adapter.AdapterID] = struct{}{}
 	}
 	for _, session := range r.Sessions {
-		if session.SessionID == "" || session.AdapterID == "" {
+		if session.ClusterSessionID == "" || session.AdapterID == "" {
 			return fmt.Errorf("session identity and adapter are required")
 		}
 		if _, exists := seen[session.AdapterID]; !exists {

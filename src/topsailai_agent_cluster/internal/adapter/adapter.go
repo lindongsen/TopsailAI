@@ -51,9 +51,9 @@ type InspectResult struct {
 	// the target is currently active. It is deliberately separate from Found: a
 	// record can be listed while its liveness is unverified, and an operation that
 	// authorizes on the absence of a live target must read Live, not Found.
-	Live       bool
-	Generation string
-	State      string
+	Live               bool
+	ProviderGeneration string
+	State              string
 }
 
 // ExecuteRequest carries a validated standard operation.

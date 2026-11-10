@@ -26,12 +26,12 @@ func (s *drivePathStub) GetInventory(context.Context, string) (protocol.Inventor
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		Sessions: []protocol.Session{{
-			SessionID:        "session",
-			AdapterID:        "adapter-1",
-			Generation:       "gen",
-			State:            "running",
-			CollectionStatus: protocol.CollectionSucceeded,
-			Drive:            &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true, ControllerPID: 4242, ObservedAtMS: 1700000000000},
+			ClusterSessionID:   "session",
+			AdapterID:          "adapter-1",
+			ProviderGeneration: "gen",
+			State:              "running",
+			CollectionStatus:   protocol.CollectionSucceeded,
+			Drive:              &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true, ControllerPID: 4242, ObservedAtMS: 1700000000000},
 		}},
 	}, nil
 }
@@ -161,7 +161,7 @@ func TestDriveStartAdmitsTheDriveOperation(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentDriveStart {
 		t.Fatalf("operation=%q want %q", intent.Operation, protocol.OperationAgentDriveStart)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "session" || intent.Target.Generation != "gen" {
+	if intent.Target == nil || intent.Target.ResourceID != "session" || intent.Target.ProviderGeneration != "gen" {
 		t.Fatalf("target=%+v want session/gen", intent.Target)
 	}
 	// The standalone surface renders the receipt, so the assertion targets the

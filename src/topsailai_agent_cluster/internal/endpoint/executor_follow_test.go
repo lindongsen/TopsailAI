@@ -24,7 +24,7 @@ type followTestAdapter struct {
 // Inspect reports the resource as present at generation g1, which is the
 // generation every test in this file requests.
 func (a *followTestAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
-	return adapter.InspectResult{Found: true, Generation: "g1"}, nil
+	return adapter.InspectResult{Found: true, ProviderGeneration: "g1"}, nil
 }
 
 // FollowOutput emits the configured chunks and then returns the configured error.
@@ -78,7 +78,7 @@ func TestFollowOutputStreamsChunks(t *testing.T) {
 	}}
 	executor, resourceID := newFollowExecutor(t, instance)
 	var lines []string
-	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, Generation: "g1"}, func(chunk protocol.OutputChunk) error {
+	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, ProviderGeneration: "g1"}, func(chunk protocol.OutputChunk) error {
 		lines = append(lines, chunk.Lines...)
 		return nil
 	})
@@ -97,7 +97,7 @@ func TestFollowOutputForwardsBudgets(t *testing.T) {
 	var received protocol.OutputFollowRequest
 	instance := &followTestAdapter{received: &received}
 	executor, resourceID := newFollowExecutor(t, instance)
-	request := protocol.OutputFollowRequest{ResourceID: resourceID, Generation: "g1", MaxBytes: 4096, MaxLines: 7}
+	request := protocol.OutputFollowRequest{ResourceID: resourceID, ProviderGeneration: "g1", MaxBytes: 4096, MaxLines: 7}
 	if err := executor.FollowOutput(context.Background(), request, func(protocol.OutputChunk) error { return nil }); err != nil {
 		t.Fatalf("follow: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestFollowOutputForwardsBudgets(t *testing.T) {
 // so the Endpoint can answer "unsupported" honestly.
 func TestFollowOutputUnsupportedWhenAdapterCannotStream(t *testing.T) {
 	executor, resourceID := newFollowExecutor(t, outputTestAdapter{})
-	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, Generation: "g1"}, func(protocol.OutputChunk) error { return nil })
+	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, ProviderGeneration: "g1"}, func(protocol.OutputChunk) error { return nil })
 	if !errors.Is(err, adapter.ErrUnsupported) {
 		t.Fatalf("err=%v", err)
 	}
@@ -123,7 +123,7 @@ func TestFollowOutputRejectsIncompleteTarget(t *testing.T) {
 	instance := &followTestAdapter{}
 	executor, resourceID := newFollowExecutor(t, instance)
 	cases := []protocol.OutputFollowRequest{
-		{Generation: "g1"},
+		{ProviderGeneration: "g1"},
 		{ResourceID: resourceID},
 	}
 	for _, request := range cases {
@@ -137,7 +137,7 @@ func TestFollowOutputRejectsIncompleteTarget(t *testing.T) {
 // instead of reaching an arbitrary adapter.
 func TestFollowOutputRejectsUnknownResource(t *testing.T) {
 	executor, _ := newFollowExecutor(t, &followTestAdapter{})
-	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: "res_missing", Generation: "g1"}, func(protocol.OutputChunk) error { return nil })
+	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: "res_missing", ProviderGeneration: "g1"}, func(protocol.OutputChunk) error { return nil })
 	if err == nil {
 		t.Fatal("unknown resource was accepted")
 	}
@@ -148,7 +148,7 @@ func TestFollowOutputRejectsUnknownResource(t *testing.T) {
 // replacement session that reused the resource ID.
 func TestFollowOutputRejectsGenerationMismatch(t *testing.T) {
 	executor, resourceID := newFollowExecutor(t, &followTestAdapter{})
-	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, Generation: "g2"}, func(protocol.OutputChunk) error { return nil })
+	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, ProviderGeneration: "g2"}, func(protocol.OutputChunk) error { return nil })
 	if err == nil {
 		t.Fatal("generation mismatch was accepted")
 	}
@@ -160,7 +160,7 @@ func TestFollowOutputRejectsGenerationMismatch(t *testing.T) {
 func TestFollowOutputPropagatesConsumerStop(t *testing.T) {
 	instance := &followTestAdapter{chunks: []protocol.OutputChunk{{Lines: []string{"first"}}}}
 	executor, resourceID := newFollowExecutor(t, instance)
-	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, Generation: "g1"}, func(protocol.OutputChunk) error {
+	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, ProviderGeneration: "g1"}, func(protocol.OutputChunk) error {
 		return adapter.ErrFollowStopped
 	})
 	if !errors.Is(err, adapter.ErrFollowStopped) {

@@ -9,19 +9,19 @@ import (
 
 // SessionRow is the stable list representation rendered by the TUI.
 type SessionRow struct {
-	No                int    `json:"-"`
-	EndpointID        string `json:"endpoint_id"`
-	AdapterID         string `json:"adapter_id"`
-	EndpointLabel     string `json:"-"`
-	AdapterLabel      string `json:"-"`
-	SessionID         string `json:"session_id"`
-	ProviderSessionID string `json:"provider_session_id,omitempty"`
-	DisplayName       string `json:"display_name,omitempty"`
-	ProjectWorkspace  string `json:"project_workspace,omitempty"`
-	Generation        string `json:"generation"`
-	State             string `json:"state"`
-	Stale             bool   `json:"stale"`
-	Unknown           bool   `json:"unknown"`
+	No                       int    `json:"-"`
+	EndpointID               string `json:"endpoint_id"`
+	AdapterID                string `json:"adapter_id"`
+	EndpointLabel            string `json:"-"`
+	AdapterLabel             string `json:"-"`
+	ClusterSessionID         string `json:"cluster_session_id"`
+	ProviderSessionID        string `json:"provider_session_id,omitempty"`
+	ProviderDisplayName      string `json:"provider_display_name,omitempty"`
+	ProviderProjectWorkspace string `json:"provider_project_workspace,omitempty"`
+	ProviderGeneration       string `json:"provider_generation"`
+	State                    string `json:"state"`
+	Stale                    bool   `json:"stale"`
+	Unknown                  bool   `json:"unknown"`
 	// Unverified marks a session the provider listed but whose liveness it could
 	// not verify, so no generation was reported. Such a session is reported as
 	// unknown rather than dropped, and only resume may address it. The flag is
@@ -62,22 +62,22 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		for _, session := range report.Sessions {
 			adapter := freshness[session.AdapterID]
 			rows = append(rows, SessionRow{
-				EndpointID:        endpoint.EndpointID,
-				EndpointLabel:     endpointLabel(endpoint),
-				AdapterID:         session.AdapterID,
-				AdapterLabel:      adapterLabel(adapter),
-				SessionID:         session.SessionID,
-				ProviderSessionID: session.ProviderSessionID,
-				DisplayName:       session.DisplayName,
-				ProjectWorkspace:  session.ProjectWorkspace,
-				Generation:        session.Generation,
-				State:             session.State,
-				Stale:             adapter.Stale || endpointStale,
-				Unknown:           !adapter.DataKnown,
-				Unverified:        session.StateReason == protocol.StateReasonLivenessUnverified,
-				LastSuccessAtMS:   adapter.LastSuccessAtMS,
-				CollectionStatus:  adapter.CollectionStatus,
-				Drive:             session.Drive,
+				EndpointID:               endpoint.EndpointID,
+				EndpointLabel:            endpointLabel(endpoint),
+				AdapterID:                session.AdapterID,
+				AdapterLabel:             adapterLabel(adapter),
+				ClusterSessionID:         session.ClusterSessionID,
+				ProviderSessionID:        session.ProviderSessionID,
+				ProviderDisplayName:      session.ProviderDisplayName,
+				ProviderProjectWorkspace: session.ProviderProjectWorkspace,
+				ProviderGeneration:       session.ProviderGeneration,
+				State:                    session.State,
+				Stale:                    adapter.Stale || endpointStale,
+				Unknown:                  !adapter.DataKnown,
+				Unverified:               session.StateReason == protocol.StateReasonLivenessUnverified,
+				LastSuccessAtMS:          adapter.LastSuccessAtMS,
+				CollectionStatus:         adapter.CollectionStatus,
+				Drive:                    session.Drive,
 			})
 		}
 	}
@@ -108,7 +108,7 @@ func FindSession(id string, endpoints []protocol.Endpoint, reports map[string]pr
 			return endpoint, report, nil, nil
 		}
 		for index := range report.Sessions {
-			if report.Sessions[index].SessionID == id {
+			if report.Sessions[index].ClusterSessionID == id {
 				return endpoint, report, &report.Sessions[index], nil
 			}
 		}

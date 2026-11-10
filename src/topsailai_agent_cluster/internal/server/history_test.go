@@ -24,7 +24,7 @@ func (historyRequester) RequestOutput(context.Context, string, protocol.OutputSn
 
 // RequestHistory supplies a test history response through the real HTTP/client boundary.
 func (historyRequester) RequestHistory(_ context.Context, endpoint string, _ protocol.HistoryQuery) (protocol.HistoryResult, error) {
-	return protocol.HistoryResult{Rows: []protocol.HistoryRow{{ProviderSessionID: "wa-1", DisplayName: endpoint, Resumable: true}}}, nil
+	return protocol.HistoryResult{Rows: []protocol.HistoryRow{{ProviderSessionID: "wa-1", ProviderDisplayName: endpoint, Resumable: true}}}, nil
 }
 
 // TestHistoryHTTPClient verifies auth, method validation and encoded selectors.
@@ -34,7 +34,7 @@ func TestHistoryHTTPClient(t *testing.T) {
 	defer server.Close()
 	api := client.NewAPIClient(server.URL, "test")
 	result, err := api.GetHistory(context.Background(), "e /1", 0)
-	if err != nil || len(result.Rows) != 1 || result.Rows[0].DisplayName != "e /1" {
+	if err != nil || len(result.Rows) != 1 || result.Rows[0].ProviderDisplayName != "e /1" {
 		t.Fatalf("%#v %v", result, err)
 	}
 	for _, item := range []struct {

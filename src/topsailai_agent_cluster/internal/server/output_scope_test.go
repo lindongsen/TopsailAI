@@ -56,8 +56,8 @@ func callScopedOutput(t *testing.T, h *Handler, path string) *httptest.ResponseR
 // happens before the transport is consulted.
 func TestOutputRoutesRejectCredentialWithoutReadOutput(t *testing.T) {
 	paths := []string{
-		"/api/v1/output?endpoint_id=e1&resource_id=res_1&generation=g1",
-		"/api/v1/output/follow?endpoint_id=e1&resource_id=res_1&generation=g1",
+		"/api/v1/output?endpoint_id=e1&resource_id=res_1&provider_generation=g1",
+		"/api/v1/output/follow?endpoint_id=e1&resource_id=res_1&provider_generation=g1",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -86,7 +86,7 @@ func TestOutputRoutesAdmitCredentialWithReadOutput(t *testing.T) {
 	output := &scopedOutputRequester{}
 	h := scopedOutputHandler([]string{security.ScopeReadOutput}, output)
 
-	snapshot := callScopedOutput(t, h, "/api/v1/output?endpoint_id=e1&resource_id=res_1&generation=g1")
+	snapshot := callScopedOutput(t, h, "/api/v1/output?endpoint_id=e1&resource_id=res_1&provider_generation=g1")
 	if snapshot.Code != http.StatusOK {
 		t.Fatalf("snapshot status %d: %s", snapshot.Code, snapshot.Body.String())
 	}
@@ -94,7 +94,7 @@ func TestOutputRoutesAdmitCredentialWithReadOutput(t *testing.T) {
 		t.Fatal("snapshot request did not reach the transport")
 	}
 
-	follow := callScopedOutput(t, h, "/api/v1/output/follow?endpoint_id=e1&resource_id=res_1&generation=g1")
+	follow := callScopedOutput(t, h, "/api/v1/output/follow?endpoint_id=e1&resource_id=res_1&provider_generation=g1")
 	if follow.Code != http.StatusOK {
 		t.Fatalf("follow status %d: %s", follow.Code, follow.Body.String())
 	}
@@ -108,7 +108,7 @@ func TestOutputRoutesAdmitCredentialWithReadOutput(t *testing.T) {
 func TestOutputRoutesAdmitUnrestrictedCredential(t *testing.T) {
 	output := &scopedOutputRequester{}
 	h := scopedOutputHandler(nil, output)
-	rec := callScopedOutput(t, h, "/api/v1/output?endpoint_id=e1&resource_id=res_1&generation=g1")
+	rec := callScopedOutput(t, h, "/api/v1/output?endpoint_id=e1&resource_id=res_1&provider_generation=g1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}

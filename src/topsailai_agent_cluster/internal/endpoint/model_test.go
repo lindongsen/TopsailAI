@@ -21,7 +21,7 @@ func (a modelCatalogAdapter) ModelCatalog(context.Context, protocol.ModelCatalog
 		return protocol.ModelCatalog{}, errors.New("provider unavailable")
 	}
 	return protocol.ModelCatalog{
-		Profiles:         []protocol.ModelProfile{{ModelProfileID: "mp-1", DisplayName: "fast", Available: true}},
+		Profiles:         []protocol.ModelProfile{{ModelProfileID: "mp-1", ProviderDisplayName: "fast", Available: true}},
 		CurrentProfileID: "mp-1",
 		ObservedAtMS:     1000,
 	}, nil
