@@ -298,6 +298,16 @@ caller unrestricted. The directory reuses the five operator scope names, so an o
 learns one vocabulary rather than two. It reloads on `SIGHUP` and keeps the previous
 policy when a reload fails.
 
+A refused read returns the same `policy_denied` code the command operations already
+return, with the refused operation named in the message, so one refusal has one code
+instead of a vocabulary that grows with every read operation added. The scope
+vocabulary is closed, so `endpoint_admin` stays in it even though no Endpoint
+operation requires it: removing a name would make an existing policy file fail to
+load. A `permissions` entry may name an operation the Endpoint does not serve, and the
+load emits a warning instead of failing, so one file set serves a version-skewed
+fleet; the warning is mandatory because that acceptance is the only place a mistake
+can be silent.
+
 Tokens are provisioned by the operator, not issued by the Server, because a Server that
 held the token table would become a second authorizer. A maintenance script creates,
 lists, edits, removes and rotates token files, and it never signals the Endpoint itself:
