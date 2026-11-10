@@ -268,17 +268,19 @@ class TestFormatHumanResponse:
 
 
 class TestGetParams:
-    def test_control_actions_are_discovered_from_runtime_handlers(self):
-        assert cli_module.get_control_actions() == [
-            "call_instruction",
-            "clear_interrupt",
-            "get_runtime_messages",
-            "get_session_messages",
-            "hard_interrupt",
-            "heartbeat",
-            "llm_control",
-            "soft_interrupt",
-        ]
+    def test_control_actions_match_the_fallback_list(self):
+        """Discovery must agree with the built-in list used when it is unavailable."""
+        from cli_topsailai.runtime_cli import _FALLBACK_CONTROL_ACTIONS
+
+        assert cli_module.get_control_actions() == sorted(_FALLBACK_CONTROL_ACTIONS)
+
+    def test_control_actions_fall_back_when_the_registry_is_unavailable(self):
+        """An unavailable registry must degrade to the built-in list, not crash."""
+        from cli_topsailai import runtime_cli
+
+        with patch("cli_topsailai.runtime_control.get_control_actions",
+                   side_effect=ImportError("registry unavailable")):
+            assert runtime_cli._help_control_actions() == runtime_cli._FALLBACK_CONTROL_ACTIONS
 
     def test_call_instruction_command_is_accepted(self):
         with patch.object(sys, "argv", ["script", "-c", "call_instruction"]):

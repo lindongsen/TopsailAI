@@ -454,3 +454,33 @@ listing. After any multi-line replacement, immediately run `git diff --numstat`
 and treat an unexpected deletion count as a failure, not as formatting noise;
 reading the file back is what caught all four incidents here, so it is not an
 optional courtesy but the actual safety net.
+
+## A snapshot assertion does not test a discovery mechanism
+
+### Trigger
+
+`test_control_actions_are_discovered_from_runtime_handlers` was the only red
+test in the suite, yet the code was correct: the live registry and the built-in
+fallback list both returned the same ten actions. The test hardcoded eight
+actions, so it broke the moment the core added `pause.py` with `pause` and
+`clear_pause`, even though the CLI fallback list had been updated in the same
+release.
+
+### Action taken
+
+Replaced the hardcoded snapshot with two assertions that state the real
+contract: discovery must equal the fallback list, and an unavailable registry
+must degrade to that list instead of raising. Verified both assertions fail
+against the regressed implementations (a stale fallback list, and a lookup
+without the `try/except`), and confirmed the patch target is
+`cli_topsailai.runtime_control.get_control_actions` because the lookup imports
+it inside the function body.
+
+### Why this prevents recurrence
+
+A test named after a mechanism must assert the mechanism's contract, not a
+frozen copy of its current output. A snapshot duplicates the data it claims to
+verify, so every legitimate addition to the source of truth becomes a false
+failure, and the test never exercises the branch it is named after. Assert the
+relationship between the two independent paths instead, and add a case for the
+degraded path, because that branch is exactly where a silent crash hides.
