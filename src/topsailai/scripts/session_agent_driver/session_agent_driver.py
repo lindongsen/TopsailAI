@@ -182,6 +182,7 @@ from cli_topsailai.paths import get_topsailai_home  # noqa: E402
 from cli_topsailai.runtime_logs import resolve_log_target, read_log_tail  # noqa: E402
 from plugins.tools import exit_process, inject_input  # noqa: E402
 from driver_runtime import DriverRuntime  # noqa: E402
+from driver_reaper import register_exit_reaper, track_session  # noqa: E402
 from driver_targets import observe_records, task_log_target  # noqa: E402
 from topsailai.workspace.folder_constants import TOPSAILAI_HOME  # noqa: E402
 
@@ -501,6 +502,10 @@ def _run_analysis_agent(session_id: str) -> None:
         return
     prompt = render_analysis_prompt(session_info)
     analysis_session_id = ANALYSIS_SESSION_PREFIX + uuid.uuid4().hex[:12]
+    # The analysis agent runs in this process, so this session's owner record
+    # carries our own PID and the in-process cleanup below can never be
+    # authorized. Track it so the exit reaper can delete it after we are gone.
+    track_session(analysis_session_id)
     timeout = _read_int_env(TIMEOUT_ENV, DEFAULT_TIMEOUT)
     logger.info(
         "starting analysis agent %s for session %s (status=%s)",
@@ -609,6 +614,9 @@ def main(argv=None, *, record_directory=None) -> int:
     directory = record_directory or Path(TOPSAILAI_HOME) / "workspace" / "task" / "session_agent_driver"
     max_bytes = _read_int_env("TOPSAILAI_SESSION_DRIVER_LOG_MAX_BYTES", 10 * 1024 * 1024)
     backups = _read_int_env("TOPSAILAI_SESSION_DRIVER_LOG_MAX_BACKUPS", 5)
+    # Register before the polling loop so every exit path, including a signal
+    # or an unhandled error, still hands the tracked sessions to the reaper.
+    register_exit_reaper()
     # The driver process itself must carry the target session's workspace so
     # every framework reader sees it from startup, not only during a run.
     previous_workspace = apply_project_workspace(session_id)
