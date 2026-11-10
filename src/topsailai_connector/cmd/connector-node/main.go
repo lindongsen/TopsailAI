@@ -97,17 +97,24 @@ func runNode(arguments []string) error {
 
 	runtime.Report()
 
-	return waitForShutdown(logger)
-}
-
-// waitForShutdown blocks until the process is asked to stop, then returns so the
-// deferred cleanup runs. A Node that exited without releasing its scope handles
-// would leave a directory that cannot be removed on Windows.
-func waitForShutdown(logger *slog.Logger) error {
+	// The signal channel is created here rather than inside waitForShutdown, so
+	// the wait can be tested without sending a signal to the test process.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 
+	return waitForShutdown(logger, signals)
+}
+
+// waitForShutdown blocks until a signal arrives, then returns so the deferred
+// cleanup runs. A Node that exited without releasing its scope handles would
+// leave a directory that cannot be removed on Windows.
+//
+// The channel is a parameter so a test can deliver a signal without signalling
+// the test process: a real signal would make the test depend on the order in
+// which two handlers register, and a mistake there would kill the test binary
+// instead of failing the test.
+func waitForShutdown(logger *slog.Logger, signals <-chan os.Signal) error {
 	received := <-signals
 	logger.Info("connector-node stopping", "signal", received.String())
 	return nil
