@@ -61,10 +61,18 @@ Options: `--json`, `--no-color`, `--db-conn <string>`, `--home <path>`.
 ```bash
 topsailai session list --limit 20
 topsailai session list --has-project --sort desc --json
+topsailai session list --excluded-categories agent_driver
+topsailai session list --excluded-categories agent_driver,agent --limit 5
 ```
 
 Options: `--json`, `--no-color`, `--has-project`, `--category <name>`,
-`--limit <N>`, `--offset <N>`, `--sort asc|desc`, `--db-conn <string>`.
+`--excluded-categories <names>`, `--limit <N>`, `--offset <N>`,
+`--sort asc|desc`, `--db-conn <string>`.
+
+`--excluded-categories` accepts comma-separated names and may be repeated; an
+empty value excludes uncategorized sessions, and an invalid name is rejected with
+exit code `1`. It is applied in the database, so `--offset` and `--limit` select a
+page of surviving rows. See `ai_list_sessions.md` for the full semantics.
 
 ### `status`
 

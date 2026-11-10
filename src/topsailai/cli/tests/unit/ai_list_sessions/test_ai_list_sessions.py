@@ -20,6 +20,7 @@ sys.path.insert(0, SRC_ROOT)
 
 import ai_list_sessions
 import topsailai_session_info
+from sqlalchemy import event
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -716,6 +717,154 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         assert meta_paths_snapshot() == sorted({Path("workspace"), Path("workspace/task"), *before_meta})
         import shutil
         shutil.rmtree(home)
+
+
+class TestExcludedCategories(unittest.TestCase):
+    """Tests for the database-side --excluded-categories filter."""
+
+    def setUp(self):
+        self.db_fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(self.db_fd)
+        self.db_conn = f"sqlite:///{self.db_path}"
+        manager = get_session_manager(self.db_conn)
+        for session_id, category in (
+            ("driver-1", "agent_driver"),
+            ("driver-2", "agent_driver"),
+            ("agent-1", "agent"),
+            ("chat-1", "chat"),
+            ("plain-1", ""),
+        ):
+            manager.create_session(
+                SessionData(session_id=session_id, task="task", category=category)
+            )
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def _run(self, options):
+        """Run main() with *options* and return its stdout."""
+        with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                     "--no-color", *options]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                ai_list_sessions.main()
+                return output.getvalue()
+
+    def test_parse_accepts_comma_separated_and_repeated_values(self):
+        """Comma-separated and repeated options accumulate into one set."""
+        parsed = ai_list_sessions._parse_excluded_categories(
+            ["agent_driver,agent", "chat"]
+        )
+        self.assertEqual(parsed, {"agent_driver", "agent", "chat"})
+
+    def test_parse_returns_empty_set_when_omitted(self):
+        """An omitted option must not change the unfiltered query path."""
+        self.assertEqual(ai_list_sessions._parse_excluded_categories(None), set())
+
+    def test_parse_keeps_empty_value_as_uncategorized(self):
+        """An empty value excludes uncategorized sessions instead of nothing."""
+        self.assertEqual(ai_list_sessions._parse_excluded_categories([""]), {""})
+
+    def test_parse_logs_invalid_name_and_excludes_uncategorized(self):
+        """An invalid name is rejected instead of excluding uncategorized rows."""
+        with self.assertLogs("topsailai.context.session_category", level="ERROR") as logs:
+            with self.assertRaises(ValueError):
+                ai_list_sessions._parse_excluded_categories(["Agent\n"])
+        self.assertTrue(any("Agent\\n" in message for message in logs.output))
+
+    def test_excluded_categories_are_removed_from_json(self):
+        """Every listed category disappears from the JSON output."""
+        data = json.loads(self._run(["--json", "--excluded-categories", "agent_driver,agent"]))
+        self.assertEqual({row["session_id"] for row in data}, {"chat-1", "plain-1"})
+
+    def test_repeated_option_excludes_every_listed_category(self):
+        """A repeated option behaves like one comma-separated value."""
+        data = json.loads(self._run([
+            "--json", "--excluded-categories", "agent_driver", "--excluded-categories", "chat",
+        ]))
+        self.assertEqual({row["session_id"] for row in data}, {"agent-1", "plain-1"})
+
+    def test_empty_value_excludes_uncategorized_sessions(self):
+        """An empty value removes only the uncategorized rows."""
+        data = json.loads(self._run(["--json", "--excluded-categories", ""]))
+        self.assertEqual({row["session_id"] for row in data},
+                         {"driver-1", "driver-2", "agent-1", "chat-1"})
+
+    def test_pagination_applies_after_exclusion(self):
+        """A limit must select a full page of surviving rows, not a short one."""
+        data = json.loads(self._run([
+            "--json", "--excluded-categories", "agent_driver", "--limit", "3",
+        ]))
+        self.assertEqual(len(data), 3)
+        self.assertNotIn("agent_driver", {row["category"] for row in data})
+
+    def test_offset_applies_after_exclusion(self):
+        """Offset counts surviving rows, so no excluded row consumes a slot."""
+        data = json.loads(self._run([
+            "--json", "--excluded-categories", "agent_driver", "--offset", "1",
+        ]))
+        self.assertEqual({row["session_id"] for row in data}, {"chat-1", "plain-1"})
+
+    def test_text_output_reports_matched_total_after_exclusion(self):
+        """Text mode reports the pre-pagination count of surviving rows."""
+        text = self._run(["--excluded-categories", "agent_driver", "--limit", "1"])
+        self.assertIn("Total: 1 session", text)
+        self.assertIn("Matched Total: 3", text)
+
+    def test_exclusion_combines_with_category_inclusion(self):
+        """Inclusion and exclusion compose: the inclusion filter still applies."""
+        data = json.loads(self._run([
+            "--json", "--category", "agent", "--excluded-categories", "agent_driver",
+        ]))
+        self.assertEqual([row["session_id"] for row in data], ["agent-1"])
+
+    def test_omitted_exclusion_keeps_every_row(self):
+        """Without the option the previous unfiltered output is unchanged."""
+        data = json.loads(self._run(["--json"]))
+        self.assertEqual(len(data), 5)
+
+    def test_pagination_is_pushed_down_to_the_database(self):
+        """The requested offset and limit reach the query instead of being rewritten."""
+        manager = get_session_manager(self.db_conn)
+        captured = {}
+
+        original = manager.list_sessions
+
+        def recording_list_sessions(**kwargs):
+            captured.update(kwargs)
+            return original(**kwargs)
+
+        with mock.patch.object(manager, "list_sessions", side_effect=recording_list_sessions):
+            with mock.patch.object(ai_list_sessions, "get_session_manager", return_value=manager):
+                self._run(["--json", "--excluded-categories", "agent_driver",
+                           "--offset", "1", "--limit", "2"])
+
+        self.assertEqual(captured["offset"], 1)
+        self.assertEqual(captured["limit"], 2)
+        self.assertEqual(captured["excluded_categories"], {"agent_driver"})
+
+    def test_exclusion_predicate_reaches_the_sql_statement(self):
+        """The exclusion is a SQL predicate, so no excluded row is ever read."""
+        statements = []
+        manager = get_session_manager(self.db_conn)
+        engine = manager.storage.engine
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            with mock.patch.object(ai_list_sessions, "get_session_manager", return_value=manager):
+                self._run(["--json", "--excluded-categories", "agent_driver", "--limit", "2"])
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+        page_statements = [s for s in statements if "FROM session" in s and "LIMIT" in s.upper()]
+        self.assertTrue(page_statements)
+        self.assertIn("coalesce", page_statements[0].lower())
+        self.assertIn("not in", page_statements[0].lower())
 
 
 if __name__ == "__main__":

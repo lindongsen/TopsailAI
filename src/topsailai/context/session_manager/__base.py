@@ -164,6 +164,7 @@ class SessionStorageBase(object):
         offset: int = 0,
         limit: int = None,
         category: str = None,
+        excluded_categories: set[str] = None,
     ) -> list[SessionData]:
         """
         Retrieve stored sessions, optionally filtered, sorted, and paginated.
@@ -180,6 +181,12 @@ class SessionStorageBase(object):
             offset (int, optional): Number of sessions to skip. Defaults to ``0``.
             limit (int, optional): Maximum number of sessions to return.
                 If ``None``, all matching sessions are returned.
+            category (str, optional): Exact category to include. ``None`` includes
+                every category; an empty string selects uncategorized sessions.
+            excluded_categories (set[str], optional): Categories to exclude. Names
+                are matched exactly and are expected to be already validated; an
+                empty string excludes uncategorized sessions. ``None`` or an empty
+                set excludes nothing.
 
         Returns:
             list[SessionData]: A list of SessionData instances matching the query.
@@ -191,7 +198,8 @@ class SessionStorageBase(object):
         """
         raise NotImplementedError
 
-    def count_sessions(self, sessions: list[str] = None, category: str = None) -> int:
+    def count_sessions(self, sessions: list[str] = None, category: str = None,
+                       excluded_categories: set[str] = None) -> int:
         """Return the number of sessions matching the selection filters."""
         raise NotImplementedError
 

@@ -16,6 +16,8 @@ Arguments:
 
 Options:
     --db-conn: Database connection string. Defaults to 'sqlite:///sessions.db'
+    --category: Exact category to include.
+    --excluded-categories: Comma-separated categories to exclude; repeatable.
 
 Examples:
     ai_list_sessions.py
@@ -24,6 +26,7 @@ Examples:
     ai_list_sessions.py --limit 10 --sort desc
     ai_list_sessions.py --since 2026-07-28T00:00:00 --until 2026-07-28T23:59:59
     ai_list_sessions.py --db-conn sqlite:///custom.db s1 s2 --json
+    ai_list_sessions.py --excluded-categories agent_driver,agent
 
 Author: DawsonLin
 Email: lin_dongsen@126.com
@@ -341,6 +344,32 @@ def _parse_sessions(positional_sessions):
     return [session_id.strip() for session_id in positional_sessions if session_id.strip()]
 
 
+def _parse_excluded_categories(raw_values):
+    """Parse repeated comma-separated exclusion values into a normalized set.
+
+    An exactly empty value is meaningful: it excludes uncategorized sessions.
+    Any other value must pass the same validation as the inclusion filter, and
+    an invalid name is rejected instead of being resolved to the empty
+    category, because silently excluding uncategorized rows would hide data the
+    caller never asked to hide. Returns an empty set when no exclusion was
+    requested, which keeps the unfiltered query path unchanged.
+    """
+    if not raw_values:
+        return set()
+
+    excluded = set()
+    for raw_value in raw_values:
+        for name in raw_value.split(","):
+            if name == "":
+                excluded.add("")
+                continue
+            normalized = resolve_session_category(name)
+            if normalized != name:
+                raise ValueError(f"Invalid excluded category: {name!r}")
+            excluded.add(normalized)
+    return excluded
+
+
 def main():
     """
     Main entry point for listing sessions.
@@ -379,6 +408,18 @@ def main():
         dest="session_category",
         default=None,
         help="Filter by exact category; omit to include all categories, use an empty value for uncategorized sessions",
+    )
+    parser.add_argument(
+        "--excluded-categories",
+        dest="excluded_categories",
+        action="append",
+        default=None,
+        metavar="NAMES",
+        help=(
+            "Exclude sessions whose category is listed; accepts comma-separated "
+            "names and may be repeated. An empty value excludes uncategorized "
+            "sessions. Applied in the database, so pagination stays correct"
+        ),
     )
     parser.add_argument(
         "--no-color",
@@ -447,6 +488,9 @@ def main():
         normalized_category = None
         if args.session_category is not None:
             normalized_category = resolve_session_category(args.session_category)
+        excluded_categories = _parse_excluded_categories(args.excluded_categories)
+        # Exclusion is a database predicate, so the page is selected after
+        # filtering and a limit always returns a full page of surviving rows.
         list_kwargs = {
             "sessions": query_sessions,
             "order_by": order_by,
@@ -455,12 +499,17 @@ def main():
         }
         if normalized_category is not None:
             list_kwargs["category"] = normalized_category
+        if excluded_categories:
+            list_kwargs["excluded_categories"] = excluded_categories
         sessions = manager.list_sessions(**list_kwargs)
         matched_count = None
-        if normalized_category is not None:
-            matched_count = manager.count_sessions(
-                sessions=query_sessions, category=normalized_category
-            )
+        if excluded_categories or normalized_category is not None:
+            count_kwargs = {"sessions": query_sessions}
+            if normalized_category is not None:
+                count_kwargs["category"] = normalized_category
+            if excluded_categories:
+                count_kwargs["excluded_categories"] = excluded_categories
+            matched_count = manager.count_sessions(**count_kwargs)
         sessions = _filter_sessions(sessions, args.has_project)
         sessions = _filter_sessions_by_time(
             sessions,

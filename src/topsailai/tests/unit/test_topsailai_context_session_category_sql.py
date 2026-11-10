@@ -243,3 +243,192 @@ def test_category_queries_do_not_change_rows_schema_or_metadata():
     manager.list_sessions(category=None)
     after = snapshot()
     assert after == before
+
+
+def _seed_exclusion_rows(manager):
+    """Create one row per category used by the exclusion tests."""
+    for session_id, category in (
+        ("driver-1", "agent_driver"),
+        ("driver-2", "agent_driver"),
+        ("agent-1", "agent"),
+        ("chat-1", "chat"),
+        ("plain-1", ""),
+    ):
+        manager.create_session(
+            SessionData(session_id=session_id, task="task", category=category)
+        )
+
+
+def test_excluded_categories_remove_only_listed_categories():
+    """Exclusion drops the listed categories and keeps every other row."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(excluded_categories={"agent_driver"})
+    assert {row.session_id for row in rows} == {"agent-1", "chat-1", "plain-1"}
+    assert manager.count_sessions(excluded_categories={"agent_driver"}) == 3
+
+
+def test_excluded_categories_empty_string_removes_uncategorized_rows():
+    """An empty string excludes uncategorized sessions like any other name."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(excluded_categories={""})
+    assert {row.session_id for row in rows} == {"driver-1", "driver-2", "agent-1", "chat-1"}
+    assert manager.count_sessions(excluded_categories={""}) == 4
+
+
+def test_excluded_categories_combine_with_inclusion():
+    """Inclusion and exclusion compose into one SQL predicate."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(category="agent", excluded_categories={"agent_driver"})
+    assert [row.session_id for row in rows] == ["agent-1"]
+    assert manager.count_sessions(category="agent", excluded_categories={"agent_driver"}) == 1
+
+
+def test_excluded_categories_apply_before_pagination():
+    """Offset and limit select a full page of surviving rows."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    page = manager.list_sessions(
+        excluded_categories={"agent_driver"}, order_by="session_id", offset=1, limit=2
+    )
+    assert [row.session_id for row in page] == ["chat-1", "plain-1"]
+    assert manager.count_sessions(excluded_categories={"agent_driver"}) == 3
+
+
+@pytest.mark.parametrize("excluded", [None, set()])
+def test_omitted_or_empty_exclusion_keeps_every_row(excluded):
+    """An omitted or empty exclusion must not change the unfiltered result."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(excluded_categories=excluded)
+    assert len(rows) == 5
+    assert manager.count_sessions(excluded_categories=excluded) == 5
+
+
+def test_null_category_is_treated_as_uncategorized(tmp_path):
+    """A NULL category counts as uncategorized instead of being dropped.
+
+    The current schema declares category NOT NULL, so this only happens in a
+    legacy table whose category column was created nullable. The coalesced
+    predicate must still treat such a row as uncategorized rather than letting
+    the negated IN silently discard it.
+    """
+    path = tmp_path / "nullable_category.db"
+    engine = create_engine(f"sqlite:///{path}")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE session (session_id TEXT PRIMARY KEY, session_name TEXT, "
+            "task TEXT NOT NULL, project_workspace TEXT, pwd TEXT, topsailai_home TEXT, "
+            "total_tokens INTEGER DEFAULT 0, total_cached_tokens INTEGER DEFAULT 0, "
+            "total_completion_tokens INTEGER DEFAULT 0, summary_count INTEGER DEFAULT 0, "
+            "turn_count INTEGER DEFAULT 0, tool_call_count INTEGER DEFAULT 0, "
+            "tool_error_count INTEGER DEFAULT 0, llm_request_count INTEGER DEFAULT 0, "
+            "llm_request_failure_count INTEGER DEFAULT 0, tool_duration_ms_sum INTEGER DEFAULT 0, "
+            "llm_request_duration_ms_sum INTEGER DEFAULT 0, create_time DATETIME NOT NULL, "
+            "update_time DATETIME NOT NULL, category TEXT)"
+        ))
+        connection.execute(text(
+            "INSERT INTO session (session_id, task, create_time, update_time, category) "
+            "VALUES ('null-1', 'task', '2020-01-01 00:00:00', '2020-01-01 00:00:00', NULL)"
+        ))
+        connection.execute(text(
+            "INSERT INTO session (session_id, task, create_time, update_time, category) "
+            "VALUES ('driver-1', 'task', '2020-01-02 00:00:00', '2020-01-02 00:00:00', 'agent_driver')"
+        ))
+    engine.dispose()
+    manager = SessionSQLAlchemy(f"sqlite:///{path}")
+    kept = {row.session_id for row in manager.list_sessions(excluded_categories={"agent_driver"})}
+    assert kept == {"null-1"}
+    dropped = {row.session_id for row in manager.list_sessions(excluded_categories={""})}
+    assert dropped == {"driver-1"}
+    manager.engine.dispose()
+
+
+def test_exclusion_predicate_is_sql_side_and_uses_coalesce():
+    """The exclusion reaches SQL as a negated coalesced IN predicate."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    statements = []
+
+    def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        statements.append((statement, parameters))
+
+    event.listen(manager.engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        manager.list_sessions(excluded_categories={"agent_driver"}, offset=0, limit=2)
+        manager.count_sessions(excluded_categories={"agent_driver"})
+    finally:
+        event.remove(manager.engine, "before_cursor_execute", before_cursor_execute)
+
+    select_statements = [item for item in statements if "FROM session" in item[0]]
+    assert len(select_statements) == 2
+    list_sql, list_parameters = select_statements[0]
+    count_sql, count_parameters = select_statements[1]
+    for statement, parameters in ((list_sql, list_parameters), (count_sql, count_parameters)):
+        lowered = statement.lower()
+        assert "coalesce" in lowered
+        assert "not in" in lowered
+        assert "agent_driver" in parameters
+    assert " limit " in f" {list_sql.lower()} "
+    assert " limit " not in f" {count_sql.lower()} "
+
+
+def test_create_time_index_exists_and_is_idempotent(tmp_path):
+    """Initialization adds the listing index once and keeps it on reopen."""
+    path = tmp_path / "index.db"
+    manager = SessionSQLAlchemy(f"sqlite:///{path}")
+    with manager.engine.connect() as connection:
+        first = connection.execute(text(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_create_time'"
+        )).fetchall()
+    assert first == [("idx_session_create_time",)]
+    manager.engine.dispose()
+
+    reopened = SessionSQLAlchemy(f"sqlite:///{path}")
+    with reopened.engine.connect() as connection:
+        second = connection.execute(text(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_create_time'"
+        )).fetchall()
+        plan = connection.execute(text(
+            "EXPLAIN QUERY PLAN SELECT * FROM session ORDER BY create_time DESC LIMIT 10"
+        )).fetchall()
+    assert second == [("idx_session_create_time",)]
+    assert any("idx_session_create_time" in str(row) for row in plan)
+    reopened.engine.dispose()
+
+
+def test_create_time_index_is_added_to_a_legacy_table(tmp_path):
+    """A table created before the index existed gains it on initialization."""
+    path = tmp_path / "legacy_index.db"
+    engine = create_engine(f"sqlite:///{path}")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT NOT NULL, "
+            "create_time DATETIME NOT NULL, update_time DATETIME NOT NULL, "
+            "category TEXT NOT NULL DEFAULT '')"
+        ))
+        connection.execute(text(
+            "INSERT INTO session VALUES ('legacy', 'task', '2020-01-01 00:00:00', "
+            "'2020-01-01 00:00:00', '')"
+        ))
+    with engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_create_time'"
+        )).fetchall() == []
+    engine.dispose()
+
+    manager = SessionSQLAlchemy(f"sqlite:///{path}")
+    with manager.engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_create_time'"
+        )).fetchall() == [("idx_session_create_time",)]
+        assert connection.execute(text("SELECT count(*) FROM session")).scalar_one() == 1
+    manager.engine.dispose()

@@ -15,7 +15,7 @@
 import re
 import threading
 
-from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer
+from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer, Index
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import func as sql_func, text
@@ -79,6 +79,10 @@ class Session(Base):
     update_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
     category = Column(Text, nullable=False, default="", server_default="")
 
+# Default listing orders by create_time, so without this index every page query
+# scans the whole table before it can return the first row.
+SessionCreateTimeIndex = Index("idx_session_create_time", Session.create_time)
+
 class SessionSQLAlchemy(SessionStorageBase):
     """
     A SQLAlchemy-based implementation of SessionStorageBase for managing sessions.
@@ -111,6 +115,11 @@ class SessionSQLAlchemy(SessionStorageBase):
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
 
         self._ensure_columns()
+        # create_all() does not add an index to a table that already exists, so a
+        # legacy database needs an explicit idempotent creation. It runs after the
+        # column migration because that migration asserts the index inventory is
+        # unchanged across its table rebuild.
+        SessionCreateTimeIndex.create(bind=self.engine, checkfirst=True)
 
         self.chat_history = ChatHistorySQLAlchemy(conn)
         self.conn = conn
@@ -433,12 +442,24 @@ class SessionSQLAlchemy(SessionStorageBase):
                 db_io_tool.restore_write_block(db_session, original_busy_timeout)
                 db_session.close()
 
-    def _apply_session_filters(self, query, sessions=None, category=None):
-        """Apply ID and optional exact category predicates before pagination."""
+    def _apply_session_filters(self, query, sessions=None, category=None,
+                               excluded_categories=None):
+        """Apply ID, exact category, and category-exclusion predicates.
+
+        Excluded names are treated as already validated exact strings: resolving
+        them here would turn an invalid name into the empty category and hide
+        uncategorized rows the caller never asked to hide. A NULL category is
+        coalesced to the empty string so it counts as uncategorized instead of
+        being silently dropped by the negated predicate.
+        """
         if sessions:
             query = query.filter(Session.session_id.in_(sessions))
         if category is not None:
             query = query.filter(Session.category == resolve_session_category(category))
+        if excluded_categories:
+            query = query.filter(
+                ~sql_func.coalesce(Session.category, "").in_(list(excluded_categories))
+            )
         return query
 
     def list_sessions(
@@ -448,12 +469,14 @@ class SessionSQLAlchemy(SessionStorageBase):
         offset: int = 0,
         limit: int = None,
         category: str = None,
+        excluded_categories: set[str] = None,
     ) -> list[SessionData]:
         """List sessions with SQL-side ID/category filtering and pagination."""
         db_session = self.SessionLocal()
         try:
             query = self._apply_session_filters(
-                db_session.query(Session), sessions=sessions, category=category
+                db_session.query(Session), sessions=sessions, category=category,
+                excluded_categories=excluded_categories,
             )
             query = self._apply_order_by(query, order_by)
             if offset is not None:
@@ -492,12 +515,14 @@ class SessionSQLAlchemy(SessionStorageBase):
         finally:
             db_session.close()
 
-    def count_sessions(self, sessions: list[str] = None, category: str = None) -> int:
+    def count_sessions(self, sessions: list[str] = None, category: str = None,
+                       excluded_categories: set[str] = None) -> int:
         """Count sessions matching ID/category filters without pagination."""
         db_session = self.SessionLocal()
         try:
             query = self._apply_session_filters(
-                db_session.query(Session), sessions=sessions, category=category
+                db_session.query(Session), sessions=sessions, category=category,
+                excluded_categories=excluded_categories,
             )
             return query.count()
         except Exception as e:

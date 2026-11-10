@@ -199,3 +199,34 @@ def test_list_and_count_forward_category_matrix(category):
         expected_list["category"] = category
     assert list_kwargs == expected_list
     assert count_kwargs == {"sessions": None, "category": category}
+
+
+@pytest.mark.parametrize("excluded", [None, set(), {"agent_driver"}, {""}])
+def test_list_and_count_forward_excluded_categories(excluded):
+    """Forward exclusion only when it can change the query, keeping kwargs exact."""
+    class RecordingStorage:
+        def __init__(self):
+            self.calls = []
+            self.chat_history = Mock()
+
+        def list_sessions(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return []
+
+        def count_sessions(self, **kwargs):
+            self.calls.append(("count", kwargs))
+            return 0
+
+    storage = RecordingStorage()
+    manager = DefaultSessionManager(storage, Mock())
+    manager.list_sessions(excluded_categories=excluded)
+    manager.count_sessions(excluded_categories=excluded)
+    list_kwargs = storage.calls[0][1]
+    count_kwargs = storage.calls[1][1]
+    expected_list = {"sessions": None, "order_by": None, "offset": 0, "limit": None}
+    expected_count = {"sessions": None, "category": None}
+    if excluded:
+        expected_list["excluded_categories"] = excluded
+        expected_count["excluded_categories"] = excluded
+    assert list_kwargs == expected_list
+    assert count_kwargs == expected_count
