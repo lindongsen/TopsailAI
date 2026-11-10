@@ -42,6 +42,8 @@ func setupFileManager(t *testing.T, maxBytes int, noTruncate []string) (*manager
 }
 
 // writeTempFile writes content to a file inside the test temporary directory.
+// It is used for --from sources, which stay on the operating-system file system
+// even though every destination lives inside a data object.
 func writeTempFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -66,12 +68,70 @@ func runFileCommand(t *testing.T, ctx context.Context, mgr *manager.Manager, arg
 	return out
 }
 
+// runFileCommandError runs one "file" subcommand and returns its error.
+func runFileCommandError(t *testing.T, ctx context.Context, mgr *manager.Manager, args ...string) error {
+	t.Helper()
+	var err error
+	captureStdout(t, func() {
+		err = runFile(ctx, mgr, args)
+	})
+	return err
+}
+
+// TestFileCommandRequiresObject proves --object is mandatory for every
+// subcommand, so a file command can never fall back to operating-system paths.
+func TestFileCommandRequiresObject(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+
+	cases := map[string][]string{
+		"read":            {"read", "x.md"},
+		"read-lines":      {"read-lines", "x.md"},
+		"read-around":     {"read-around", "x.md", "1"},
+		"read-context":    {"read-context", "x.md", "pattern"},
+		"read-files":      {"read-files", "x.md"},
+		"write":           {"write", "x.md", "--content", "c"},
+		"append":          {"append", "x.md", "--content", "c"},
+		"exists":          {"exists", "a=x.md"},
+		"mkdirs":          {"mkdirs", "folder"},
+		"list-dirs":       {"list-dirs", ""},
+		"size":            {"size", "x.md"},
+		"overwrite-lines": {"overwrite-lines", "x.md", "1", "--content", "c"},
+		"insert":          {"insert", "x.md", "1", "--content", "c"},
+	}
+	for name, args := range cases {
+		err := runFileCommandError(t, ctx, mgr, args...)
+		if err == nil {
+			t.Fatalf("%s: expected a missing --object error", name)
+		}
+		if !strings.Contains(err.Error(), "--object <id> is required") {
+			t.Fatalf("%s: expected required-object guidance, got %v", name, err)
+		}
+	}
+}
+
+// TestFileCommandRejectsEmptyObjectValue proves an explicitly empty --object is
+// rejected instead of being treated as "no object".
+func TestFileCommandRejectsEmptyObjectValue(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+
+	err := runFileCommandError(t, ctx, mgr, "read", "x.md", "--object", "")
+	if err == nil {
+		t.Fatal("expected an empty --object rejection")
+	}
+	if !strings.Contains(err.Error(), "--object <id> is required") {
+		t.Fatalf("expected required-object guidance, got %v", err)
+	}
+}
+
 func TestFileReadCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "hello world\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "marker",
+		"note.md":  "hello world\n",
+		"other.md": "other",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read", path)
+	out := runFileCommand(t, ctx, mgr, "read", "note.md", "--object", "demo")
 	if out != "hello world\n" {
 		t.Fatalf("expected full content, got %q", out)
 	}
@@ -79,15 +139,17 @@ func TestFileReadCommand(t *testing.T) {
 
 func TestFileReadCommandSeekAndSize(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "0123456789")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "0123456789",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read", path, "--seek", "2", "--size", "3")
+	out := runFileCommand(t, ctx, mgr, "read", "note.md", "--seek", "2", "--size", "3", "--object", "demo")
 	if out != "234" {
 		t.Fatalf("expected window 234, got %q", out)
 	}
 
-	out = runFileCommand(t, ctx, mgr, "read", path, "--seek", "-3")
+	out = runFileCommand(t, ctx, mgr, "read", "note.md", "--seek", "-3", "--object", "demo")
 	if out != "789" {
 		t.Fatalf("expected negative seek to read 789, got %q", out)
 	}
@@ -95,10 +157,12 @@ func TestFileReadCommandSeekAndSize(t *testing.T) {
 
 func TestFileReadCommandTruncatesUnlistedExtension(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 10, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "blob.bin", strings.Repeat("x", 50))
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "marker",
+		"blob.bin": strings.Repeat("x", 50),
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read", path)
+	out := runFileCommand(t, ctx, mgr, "read", "blob.bin", "--object", "demo")
 	if !strings.HasSuffix(out, " ... (force to truncate)") {
 		t.Fatalf("expected truncation suffix, got %q", out)
 	}
@@ -109,10 +173,12 @@ func TestFileReadCommandTruncatesUnlistedExtension(t *testing.T) {
 
 func TestFileReadCommandHonoursWhitelistOverride(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 10, []string{"*"})
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "blob.bin", strings.Repeat("x", 50))
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "marker",
+		"blob.bin": strings.Repeat("x", 50),
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read", path)
+	out := runFileCommand(t, ctx, mgr, "read", "blob.bin", "--object", "demo")
 	if strings.Contains(out, "force to truncate") {
 		t.Fatalf("expected no truncation with * override, got %q", out)
 	}
@@ -123,20 +189,23 @@ func TestFileReadCommandHonoursWhitelistOverride(t *testing.T) {
 
 func TestFileReadLinesCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "alpha\nbeta\ngamma\ndelta\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "marker",
+		"note.md":  "alpha\nbeta\ngamma\ndelta\n",
+		"other.md": "other",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read-lines", path, "--start", "2", "--end", "3")
+	out := runFileCommand(t, ctx, mgr, "read-lines", "note.md", "--start", "2", "--end", "3", "--object", "demo")
 	if out != "2-beta\n3-gamma" {
 		t.Fatalf("expected lines 2-3, got %q", out)
 	}
 
-	out = runFileCommand(t, ctx, mgr, "read-lines", path, "--start", "3", "--end", "-1")
+	out = runFileCommand(t, ctx, mgr, "read-lines", "note.md", "--start", "3", "--end", "-1", "--object", "demo")
 	if out != "3-gamma\n4-delta" {
 		t.Fatalf("expected lines 3 to end, got %q", out)
 	}
 
-	out = runFileCommand(t, ctx, mgr, "read-lines", path, "--start", "2")
+	out = runFileCommand(t, ctx, mgr, "read-lines", "note.md", "--start", "2", "--object", "demo")
 	if out != "2-beta" {
 		t.Fatalf("expected only line 2, got %q", out)
 	}
@@ -144,10 +213,12 @@ func TestFileReadLinesCommand(t *testing.T) {
 
 func TestFileReadAroundCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "alpha\nbeta\ngamma\ndelta\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "alpha\nbeta\ngamma\ndelta\n",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read-around", path, "2", "--context", "1")
+	out := runFileCommand(t, ctx, mgr, "read-around", "note.md", "2", "--context", "1", "--object", "demo")
 	if out != "1-alpha\n2:beta\n3-gamma" {
 		t.Fatalf("expected context around line 2, got %q", out)
 	}
@@ -155,10 +226,12 @@ func TestFileReadAroundCommand(t *testing.T) {
 
 func TestFileReadAroundCommandRejectsOutOfRange(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "alpha\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "alpha\n",
+	})
 
-	err := runFile(ctx, mgr, []string{"read-around", path, "9"})
+	err := runFileCommandError(t, ctx, mgr, "read-around", "note.md", "9", "--object", "demo")
 	if err == nil {
 		t.Fatal("expected an out-of-range error")
 	}
@@ -169,10 +242,12 @@ func TestFileReadAroundCommandRejectsOutOfRange(t *testing.T) {
 
 func TestFileReadContextCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "alpha\nbeta\ngamma\ndelta\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "alpha\nbeta\ngamma\ndelta\n",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read-context", path, "beta", "--context", "1")
+	out := runFileCommand(t, ctx, mgr, "read-context", "note.md", "beta", "--context", "1", "--object", "demo")
 	if out != "1-alpha\n2:beta\n3-gamma" {
 		t.Fatalf("expected context around beta, got %q", out)
 	}
@@ -180,15 +255,17 @@ func TestFileReadContextCommand(t *testing.T) {
 
 func TestFileReadContextCommandCaseSensitivity(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "Alpha\nbeta\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "Alpha\nbeta\n",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read-context", path, "alpha")
+	out := runFileCommand(t, ctx, mgr, "read-context", "note.md", "alpha", "--object", "demo")
 	if !strings.Contains(out, "1:Alpha") {
 		t.Fatalf("expected case-insensitive match, got %q", out)
 	}
 
-	out = runFileCommand(t, ctx, mgr, "read-context", path, "alpha", "--case-sensitive")
+	out = runFileCommand(t, ctx, mgr, "read-context", "note.md", "alpha", "--case-sensitive", "--object", "demo")
 	if out != "" {
 		t.Fatalf("expected no case-sensitive match, got %q", out)
 	}
@@ -196,131 +273,119 @@ func TestFileReadContextCommandCaseSensitivity(t *testing.T) {
 
 func TestFileReadFilesCommandJSON(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	first := writeTempFile(t, dir, "a.md", "one\n")
-	second := writeTempFile(t, dir, "b.md", "two\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"a.md":    "one\n",
+		"b.md":    "two\n",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read-files", first, second, "--format", "json")
+	out := runFileCommand(t, ctx, mgr, "read-files", "a.md", "b.md", "--format", "json", "--object", "demo")
 
 	var parsed map[string]string
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		t.Fatalf("expected JSON output, got %q: %v", out, err)
 	}
-	if parsed[first] != "one\n" || parsed[second] != "two\n" {
+	if parsed["a.md"] != "one\n" || parsed["b.md"] != "two\n" {
 		t.Fatalf("unexpected read-files result: %v", parsed)
 	}
 }
 
 func TestFileReadFilesCommandRecordsErrors(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	good := writeTempFile(t, dir, "a.md", "one\n")
-	missing := filepath.Join(dir, "missing.md")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"a.md":    "one\n",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "read-files", good, missing, "--format", "json")
+	out := runFileCommand(t, ctx, mgr, "read-files", "a.md", "missing.md", "--format", "json", "--object", "demo")
 
 	var parsed map[string]string
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		t.Fatalf("expected JSON output, got %q: %v", out, err)
 	}
-	if parsed[good] != "one\n" {
-		t.Fatalf("expected readable file content, got %q", parsed[good])
+	if parsed["a.md"] != "one\n" {
+		t.Fatalf("expected readable file content, got %q", parsed["a.md"])
 	}
-	if !strings.HasPrefix(parsed[missing], "Error:") {
-		t.Fatalf("expected an error entry for the missing file, got %q", parsed[missing])
+	if !strings.HasPrefix(parsed["missing.md"], "Error:") {
+		t.Fatalf("expected an error entry for the missing file, got %q", parsed["missing.md"])
 	}
 }
 
 func TestFileWriteCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.txt")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
 
-	out := runFileCommand(t, ctx, mgr, "write", path, "--content", "hello\n")
+	out := runFileCommand(t, ctx, mgr, "write", "out.txt", "--content", "hello\n", "--object", "demo")
 	if strings.TrimSpace(out) != "OK" {
 		t.Fatalf("expected OK, got %q", out)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read written file: %v", err)
-	}
-	if string(data) != "hello\n" {
-		t.Fatalf("expected hello, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "hello\n" {
+		t.Fatalf("expected hello, got %q", got)
 	}
 }
 
 func TestFileWriteCommandFromFile(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	source := writeTempFile(t, dir, "src.txt", "from source\n")
-	path := filepath.Join(dir, "out.txt")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
+	source := writeTempFile(t, t.TempDir(), "src.txt", "from source\n")
 
-	runFileCommand(t, ctx, mgr, "write", path, "--from", source)
+	runFileCommand(t, ctx, mgr, "write", "out.txt", "--from", source, "--object", "demo")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read written file: %v", err)
-	}
-	if string(data) != "from source\n" {
-		t.Fatalf("expected source content, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "from source\n" {
+		t.Fatalf("expected source content, got %q", got)
 	}
 }
 
 func TestFileWriteCommandInsertAtSeek(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "out.txt", "abcdef")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"out.txt": "abcdef",
+	})
 
-	runFileCommand(t, ctx, mgr, "write", path, "--content", "XY", "--seek", "2", "--insert")
+	runFileCommand(t, ctx, mgr, "write", "out.txt", "--content", "XY", "--seek", "2", "--insert", "--object", "demo")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "abXYcdef" {
-		t.Fatalf("expected insertion at offset 2, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "abXYcdef" {
+		t.Fatalf("expected insertion at offset 2, got %q", got)
 	}
 }
 
 func TestFileWriteCommandAppendWithNegativeSeek(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "out.txt", "abc")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"out.txt": "abc",
+	})
 
-	runFileCommand(t, ctx, mgr, "write", path, "--content", "Z", "--seek", "-1", "--insert")
+	runFileCommand(t, ctx, mgr, "write", "out.txt", "--content", "Z", "--seek", "-1", "--insert", "--object", "demo")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "abcZ" {
-		t.Fatalf("expected append with seek -1, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "abcZ" {
+		t.Fatalf("expected append with seek -1, got %q", got)
 	}
 }
 
 func TestFileAppendCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "out.txt", "one\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"out.txt": "one\n",
+	})
 
-	runFileCommand(t, ctx, mgr, "append", path, "--content", "two\n")
+	runFileCommand(t, ctx, mgr, "append", "out.txt", "--content", "two\n", "--object", "demo")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\ntwo\n" {
-		t.Fatalf("expected appended content, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "one\ntwo\n" {
+		t.Fatalf("expected appended content, got %q", got)
 	}
 }
 
 func TestFileExistsCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	present := writeTempFile(t, dir, "a.md", "x")
-	absent := filepath.Join(dir, "missing.md")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"a.md":    "x",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "exists", "a="+present, "b="+absent, "--format", "json")
+	out := runFileCommand(t, ctx, mgr, "exists", "a=a.md", "b=missing.md", "--format", "json", "--object", "demo")
 
 	var parsed map[string]bool
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
@@ -336,8 +401,9 @@ func TestFileExistsCommand(t *testing.T) {
 
 func TestFileExistsCommandRejectsMalformedPair(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
 
-	err := runFile(ctx, mgr, []string{"exists", "no-equals-sign"})
+	err := runFileCommandError(t, ctx, mgr, "exists", "no-equals-sign", "--object", "demo")
 	if err == nil {
 		t.Fatal("expected a malformed pair error")
 	}
@@ -346,63 +412,159 @@ func TestFileExistsCommandRejectsMalformedPair(t *testing.T) {
 	}
 }
 
-func TestFileMkdirsCommand(t *testing.T) {
+// TestFileMkdirsCommandCreatesDiscoverableFolders proves mkdirs writes an
+// AGENTS.md marker into every created level, so the new folder is immediately
+// visible through list-dirs instead of being a silent no-op.
+func TestFileMkdirsCommandCreatesDiscoverableFolders(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	target := filepath.Join(dir, "a", "b", "c")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
 
-	out := runFileCommand(t, ctx, mgr, "mkdirs", target)
+	out := runFileCommand(t, ctx, mgr, "mkdirs", "nested/a/b/c", "--object", "demo")
 	if strings.TrimSpace(out) != "OK" {
 		t.Fatalf("expected OK, got %q", out)
 	}
-	info, err := os.Stat(target)
-	if err != nil || !info.IsDir() {
-		t.Fatalf("expected directory %s to exist: %v", target, err)
+
+	root := decodeListing(t, runFileCommand(t, ctx, mgr, "list-dirs", "", "--format", "json", "--object", "demo"))
+	if !containsEntry(root[""], "nested") {
+		t.Fatalf("expected the object root to list nested, got %v", root[""])
+	}
+
+	level := decodeListing(t, runFileCommand(t, ctx, mgr, "list-dirs", "nested/a/b/c", "--format", "json", "--object", "demo"))
+	if !containsEntry(level["nested/a/b/c"], "AGENTS.md") {
+		t.Fatalf("expected AGENTS.md in the created folder, got %v", level["nested/a/b/c"])
+	}
+
+	content := runFileCommand(t, ctx, mgr, "read", "nested/a/b/c/AGENTS.md", "--object", "demo")
+	if !strings.Contains(content, "AGENTS") {
+		t.Fatalf("expected the marker content, got %q", content)
 	}
 }
 
-func TestFileMkdirsCommandRejectsRelativePath(t *testing.T) {
+// TestFileMkdirsCommandPreservesExistingContent proves mkdirs never overwrites
+// an existing AGENTS.md and never adds a marker to a folder that already holds
+// files.
+func TestFileMkdirsCommandPreservesExistingContent(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":         "marker",
+		"notes/AGENTS.md": "custom instructions",
+		"notes/keep.txt":  "keep me",
+	})
 
-	err := runFile(ctx, mgr, []string{"mkdirs", "relative/dir"})
-	if err == nil {
-		t.Fatal("expected a relative path rejection")
+	out := runFileCommand(t, ctx, mgr, "mkdirs", "notes", "--object", "demo")
+	if strings.TrimSpace(out) != "OK" {
+		t.Fatalf("expected OK, got %q", out)
 	}
-	if !strings.Contains(err.Error(), "absolute") {
-		t.Fatalf("expected absolute path guidance, got %v", err)
+
+	content := runFileCommand(t, ctx, mgr, "read", "notes/AGENTS.md", "--object", "demo")
+	if strings.TrimSpace(content) != "custom instructions" {
+		t.Fatalf("expected the existing AGENTS.md to survive, got %q", content)
+	}
+
+	kept := runFileCommand(t, ctx, mgr, "read", "notes/keep.txt", "--object", "demo")
+	if strings.TrimSpace(kept) != "keep me" {
+		t.Fatalf("expected the existing file to survive, got %q", kept)
+	}
+}
+
+// TestFileMkdirsCommandIsIdempotent proves a repeated mkdirs leaves the marker
+// content unchanged.
+func TestFileMkdirsCommandIsIdempotent(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
+
+	runFileCommand(t, ctx, mgr, "mkdirs", "docs", "--object", "demo")
+	first := runFileCommand(t, ctx, mgr, "read", "docs/AGENTS.md", "--object", "demo")
+
+	runFileCommand(t, ctx, mgr, "mkdirs", "docs", "--object", "demo")
+	second := runFileCommand(t, ctx, mgr, "read", "docs/AGENTS.md", "--object", "demo")
+
+	if first != second {
+		t.Fatalf("expected an idempotent marker, got %q then %q", first, second)
+	}
+}
+
+// TestFileMkdirsCommandSkipsObjectRoot proves the object root is never given a
+// marker file.
+func TestFileMkdirsCommandSkipsObjectRoot(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
+
+	out := runFileCommand(t, ctx, mgr, "mkdirs", ".", "--object", "demo")
+	if strings.TrimSpace(out) != "OK" {
+		t.Fatalf("expected OK, got %q", out)
+	}
+
+	root := decodeListing(t, runFileCommand(t, ctx, mgr, "list-dirs", "", "--format", "json", "--object", "demo"))
+	if containsEntry(root[""], "AGENTS.md") {
+		t.Fatalf("expected no marker at the object root, got %v", root[""])
+	}
+}
+
+// decodeListing decodes list-dirs JSON output.
+func decodeListing(t *testing.T, out string) map[string][]string {
+	t.Helper()
+	var parsed map[string][]string
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("expected JSON output, got %q: %v", out, err)
+	}
+	return parsed
+}
+
+// containsEntry reports whether names holds want.
+func containsEntry(names []string, want string) bool {
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestFileMkdirsCommandAcceptsRelativePathInObjectMode proves the absolute-path
+// requirement applies only to operating-system folders; object paths are always
+// relative to the object folder.
+func TestFileMkdirsCommandAcceptsRelativePathInObjectMode(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
+
+	out := runFileCommand(t, ctx, mgr, "mkdirs", "relative/dir", "--object", "demo")
+	if strings.TrimSpace(out) != "OK" {
+		t.Fatalf("expected OK, got %q", out)
 	}
 }
 
 func TestFileListDirsCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	writeTempFile(t, dir, "b.md", "x")
-	writeTempFile(t, dir, "a.md", "x")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"b.md":    "x",
+		"a.md":    "x",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "list-dirs", dir, "--format", "json")
+	out := runFileCommand(t, ctx, mgr, "list-dirs", "", "--format", "json", "--object", "demo")
 
 	var parsed map[string][]string
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		t.Fatalf("expected JSON output, got %q: %v", out, err)
 	}
-	entries := parsed[dir]
-	if len(entries) != 2 || entries[0] != "a.md" || entries[1] != "b.md" {
+	entries := parsed[""]
+	if len(entries) != 3 || entries[0] != "a.md" || entries[1] != "b.md" || entries[2] != "demo.md" {
 		t.Fatalf("expected sorted entries, got %v", entries)
 	}
 }
 
 func TestFileListDirsCommandRecordsErrors(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "missing")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
 
-	out := runFileCommand(t, ctx, mgr, "list-dirs", missing, "--format", "json")
+	out := runFileCommand(t, ctx, mgr, "list-dirs", "missing", "--format", "json", "--object", "demo")
 
 	var parsed map[string][]string
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		t.Fatalf("expected JSON output, got %q: %v", out, err)
 	}
-	entries := parsed[missing]
+	entries := parsed["missing"]
 	if len(entries) != 1 || !strings.HasPrefix(entries[0], "Error:") {
 		t.Fatalf("expected an error entry, got %v", entries)
 	}
@@ -410,10 +572,12 @@ func TestFileListDirsCommandRecordsErrors(t *testing.T) {
 
 func TestFileSizeCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "a.md", "12345")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"a.md":    "12345",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "size", path)
+	out := runFileCommand(t, ctx, mgr, "size", "a.md", "--object", "demo")
 	if strings.TrimSpace(out) != "5" {
 		t.Fatalf("expected size 5, got %q", out)
 	}
@@ -421,10 +585,12 @@ func TestFileSizeCommand(t *testing.T) {
 
 func TestFileOverwriteLinesCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "one\ntwo\nthree\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "one\ntwo\nthree\n",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "overwrite-lines", path, "2", "--content", "TWO\n")
+	out := runFileCommand(t, ctx, mgr, "overwrite-lines", "note.md", "2", "--content", "TWO\n", "--object", "demo")
 	if !strings.Contains(out, "You CANNOT call continuously") {
 		t.Fatalf("expected the overwrite warning, got %q", out)
 	}
@@ -432,53 +598,47 @@ func TestFileOverwriteLinesCommand(t *testing.T) {
 		t.Fatalf("expected a unified diff, got %q", out)
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\nTWO\nthree\n" {
-		t.Fatalf("expected line 2 replaced, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "note.md"); got != "one\nTWO\nthree\n" {
+		t.Fatalf("expected line 2 replaced, got %q", got)
 	}
 }
 
 func TestFileOverwriteLinesCommandThroughEnd(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "one\ntwo\nthree\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "one\ntwo\nthree\n",
+	})
 
-	runFileCommand(t, ctx, mgr, "overwrite-lines", path, "2", "--end", "-1", "--content", "tail\n")
+	runFileCommand(t, ctx, mgr, "overwrite-lines", "note.md", "2", "--end", "-1", "--content", "tail\n", "--object", "demo")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\ntail\n" {
-		t.Fatalf("expected replacement through the end, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "note.md"); got != "one\ntail\n" {
+		t.Fatalf("expected replacement through the end, got %q", got)
 	}
 }
 
 func TestFileOverwriteLinesCommandDeletesWithEmptyContent(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "one\ntwo\nthree\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "one\ntwo\nthree\n",
+	})
 
-	runFileCommand(t, ctx, mgr, "overwrite-lines", path, "2")
+	runFileCommand(t, ctx, mgr, "overwrite-lines", "note.md", "2", "--object", "demo")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\nthree\n" {
-		t.Fatalf("expected line 2 deleted, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "note.md"); got != "one\nthree\n" {
+		t.Fatalf("expected line 2 deleted, got %q", got)
 	}
 }
 
 func TestFileOverwriteLinesCommandRejectsBadRange(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "one\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "one\n",
+	})
 
-	err := runFile(ctx, mgr, []string{"overwrite-lines", path, "5", "--content", "x"})
+	err := runFileCommandError(t, ctx, mgr, "overwrite-lines", "note.md", "5", "--content", "x", "--object", "demo")
 	if err == nil {
 		t.Fatal("expected a range error")
 	}
@@ -489,36 +649,32 @@ func TestFileOverwriteLinesCommandRejectsBadRange(t *testing.T) {
 
 func TestFileInsertCommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "one\ntwo\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "one\ntwo\n",
+	})
 
-	out := runFileCommand(t, ctx, mgr, "insert", path, "1", "--content", "inserted\n")
+	out := runFileCommand(t, ctx, mgr, "insert", "note.md", "1", "--content", "inserted\n", "--object", "demo")
 	if !strings.Contains(out, "+inserted") {
 		t.Fatalf("expected a diff with the inserted line, got %q", out)
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\ninserted\ntwo\n" {
-		t.Fatalf("expected insertion after line 1, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "note.md"); got != "one\ninserted\ntwo\n" {
+		t.Fatalf("expected insertion after line 1, got %q", got)
 	}
 }
 
 func TestFileInsertCommandBefore(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "one\ntwo\n")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "one\ntwo\n",
+	})
 
-	runFileCommand(t, ctx, mgr, "insert", path, "2", "--content", "before-two\n", "--before")
+	runFileCommand(t, ctx, mgr, "insert", "note.md", "2", "--content", "before-two\n", "--before", "--object", "demo")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\nbefore-two\ntwo\n" {
-		t.Fatalf("expected insertion before line 2, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "note.md"); got != "one\nbefore-two\ntwo\n" {
+		t.Fatalf("expected insertion before line 2, got %q", got)
 	}
 }
 
@@ -534,12 +690,15 @@ func TestFileGroupPrintsUsage(t *testing.T) {
 			t.Fatalf("expected usage to list %s, got %q", name, out)
 		}
 	}
+	if !strings.Contains(out, "--object <id> is required") {
+		t.Fatalf("expected usage to state the required object flag, got %q", out)
+	}
 }
 
 func TestFileGroupRejectsUnknownSubcommand(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
 
-	err := runFile(ctx, mgr, []string{"nope"})
+	err := runFileCommandError(t, ctx, mgr, "nope")
 	if err == nil {
 		t.Fatal("expected an unknown subcommand error")
 	}
@@ -587,109 +746,91 @@ func withStdin(t *testing.T, content string, fn func()) {
 
 func TestFileWriteCommandFromStdinWithoutFromFlag(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.txt")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
 
 	withStdin(t, "piped content\n", func() {
-		runFileCommand(t, ctx, mgr, "write", path)
+		runFileCommand(t, ctx, mgr, "write", "out.txt", "--object", "demo")
 	})
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read written file: %v", err)
-	}
-	if string(data) != "piped content\n" {
-		t.Fatalf("expected piped content, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "piped content\n" {
+		t.Fatalf("expected piped content, got %q", got)
 	}
 }
 
 func TestFileAppendCommandFromStdinWithoutFromFlag(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "out.txt", "one\n")
-
-	withStdin(t, "two\n", func() {
-		runFileCommand(t, ctx, mgr, "append", path)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"out.txt": "one\n",
 	})
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\ntwo\n" {
-		t.Fatalf("expected appended stdin content, got %q", string(data))
+	withStdin(t, "two\n", func() {
+		runFileCommand(t, ctx, mgr, "append", "out.txt", "--object", "demo")
+	})
+
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "one\ntwo\n" {
+		t.Fatalf("expected appended stdin content, got %q", got)
 	}
 }
 
 func TestFileOverwriteLinesCommandFromStdinWithoutFromFlag(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "one\ntwo\nthree\n")
-
-	withStdin(t, "TWO\n", func() {
-		runFileCommand(t, ctx, mgr, "overwrite-lines", path, "2")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "one\ntwo\nthree\n",
 	})
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\nTWO\nthree\n" {
-		t.Fatalf("expected stdin replacement, got %q", string(data))
+	withStdin(t, "TWO\n", func() {
+		runFileCommand(t, ctx, mgr, "overwrite-lines", "note.md", "2", "--object", "demo")
+	})
+
+	if got := readObjectFile(t, ctx, mgr, "demo", "note.md"); got != "one\nTWO\nthree\n" {
+		t.Fatalf("expected stdin replacement, got %q", got)
 	}
 }
 
 func TestFileInsertCommandFromStdinWithoutFromFlag(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "note.md", "one\ntwo\n")
-
-	withStdin(t, "inserted\n", func() {
-		runFileCommand(t, ctx, mgr, "insert", path, "1")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"note.md": "one\ntwo\n",
 	})
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "one\ninserted\ntwo\n" {
-		t.Fatalf("expected stdin insertion, got %q", string(data))
+	withStdin(t, "inserted\n", func() {
+		runFileCommand(t, ctx, mgr, "insert", "note.md", "1", "--object", "demo")
+	})
+
+	if got := readObjectFile(t, ctx, mgr, "demo", "note.md"); got != "one\ninserted\ntwo\n" {
+		t.Fatalf("expected stdin insertion, got %q", got)
 	}
 }
 
 func TestFileWriteCommandExplicitEmptyContentBeatsStdin(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := writeTempFile(t, dir, "out.txt", "existing\n")
-
-	withStdin(t, "should be ignored\n", func() {
-		runFileCommand(t, ctx, mgr, "write", path, "--content", "")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "marker",
+		"out.txt": "existing\n",
 	})
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "" {
-		t.Fatalf("expected explicit empty content to win over stdin, got %q", string(data))
+	withStdin(t, "should be ignored\n", func() {
+		runFileCommand(t, ctx, mgr, "write", "out.txt", "--content", "", "--object", "demo")
+	})
+
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "" {
+		t.Fatalf("expected explicit empty content to win over stdin, got %q", got)
 	}
 }
 
 func TestFileWriteCommandFromDashReadsStdin(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.txt")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
 
 	withStdin(t, "dash content\n", func() {
-		runFileCommand(t, ctx, mgr, "write", path, "--from", "-")
+		runFileCommand(t, ctx, mgr, "write", "out.txt", "--from", "-", "--object", "demo")
 	})
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read written file: %v", err)
-	}
-	if string(data) != "dash content\n" {
-		t.Fatalf("expected stdin content via --from -, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "dash content\n" {
+		t.Fatalf("expected stdin content via --from -, got %q", got)
 	}
 }
 
@@ -697,20 +838,12 @@ func TestFileWriteCommandFromDashReadsStdin(t *testing.T) {
 // --from wins over --content so a caller can pass a file without quoting text.
 func TestFileWriteCommandFromFileBeatsContent(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
-	dir := t.TempDir()
-	src := filepath.Join(dir, "src.txt")
-	if err := os.WriteFile(src, []byte("from-file\n"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-	path := filepath.Join(dir, "out.txt")
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
+	src := writeTempFile(t, t.TempDir(), "src.txt", "from-file\n")
 
-	runFileCommand(t, ctx, mgr, "write", path, "--content", "inline", "--from", src)
+	runFileCommand(t, ctx, mgr, "write", "out.txt", "--content", "inline", "--from", src, "--object", "demo")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read written file: %v", err)
-	}
-	if string(data) != "from-file\n" {
-		t.Fatalf("expected --from to win over --content, got %q", string(data))
+	if got := readObjectFile(t, ctx, mgr, "demo", "out.txt"); got != "from-file\n" {
+		t.Fatalf("expected --from to win over --content, got %q", got)
 	}
 }

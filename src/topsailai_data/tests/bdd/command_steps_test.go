@@ -146,6 +146,14 @@ func runArguments(ctx context.Context, table *godog.Table) error {
 		args = append(args, row.Cells[0].Value)
 	}
 	for i := range args {
+		if strings.HasPrefix(args[i], "@") {
+			resolved, err := scenarioPath(state, args[i])
+			if err != nil {
+				return err
+			}
+			args[i] = resolved
+			continue
+		}
 		if i > 0 && args[i-1] == "--from" && args[i] != "-" && !filepath.IsAbs(args[i]) {
 			args[i] = filepath.Join(projectRoot, args[i])
 		}

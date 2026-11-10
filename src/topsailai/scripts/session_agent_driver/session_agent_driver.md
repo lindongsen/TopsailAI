@@ -66,7 +66,7 @@ Human.Topsail said:
 
 The driver owns each analysis round and deliberately runs the analysis Agent in its own long-lived process. Finishing a round does not end that process. Analysis metadata therefore records the driver PID, and the public cleanup guard refuses deletion while that owner is alive. The driver deliberately retains the analysis session record rather than weakening the general fail-closed PID-exit protection for analysis sessions.
 
-**Expected consequence:** analysis session DB rows/history accumulate across rounds by design. A completed analysis round whose session remains present while the driver is alive is expected retention, not a leak to fix or a defect to re-report. This is distinct from cleanup of the driver's own lock, metadata and logs described below; process exit alone does not automatically delete analysis DB/history records or guarantee cleanup authorization.
+**Expected consequence:** analysis session DB rows/history accumulate across rounds by design. A completed analysis round whose session remains present while the driver is alive is expected retention, not a leak to fix or a defect to re-report. This is distinct from cleanup of the driver's own lock, metadata and logs described below; process exit alone does not delete analysis DB/history records, because the public cleanup guard still refuses deletion while the owner PID is alive. The exit reaper described in the next section performs that cleanup after the driver PID disappears.
 
 Current source evidence (paths relative to the project workspace, verified 2026-10-31):
 
@@ -76,6 +76,62 @@ Current source evidence (paths relative to the project workspace, verified 2026-
 - `context/session_activity.py:115–120, 186–193` permits only STOPPED and treats a live owner as RUNNING, without trusting completion flags.
 
 Do not bypass the public cleanup guard, add force-delete or environment bypass switches, treat `completed`/`end_ts` as process-exit evidence, delete metadata to hide a live owner, move lifecycle policy into SQL, or weaken RUNNING/UNKNOWN fail-closed semantics. Changing this retention policy requires a new explicit Human decision, not a bug fix. The earlier alternatives A/B/C and implementation units A1/A2/A3 are superseded and must not be implemented on the authority of that proposal.
+
+## Exit Reaper
+
+**Human decision — 2026-11-10. Status: approved implementation.**
+
+Human.Topsail said:
+
+> 同意你说的 spawn一个收尸进程
+
+The driver cannot delete its own analysis sessions while it runs, because the
+public cleanup guard observes its own PID as RUNNING. Deleting from `finally` or
+from a plain `atexit` handler therefore always fails: both run while the process
+is still alive. Measured on the host before the change: 5 analysis rounds, 5
+`retained: deletion not authorized` warnings, 0 successful cleanups.
+
+`driver_reaper.py` resolves this without weakening the guard. At exit the driver
+spawns one detached child that waits for the driver PID to disappear, then calls
+the same public `SessionActivityProbe.can_clean()` before deleting. Once the
+parent is gone the observation is STOPPED, so the existing authorization check
+passes on its own terms. No force-delete switch, no bypass, no change to
+`context/session_activity.py` or `context/session_cleanup.py`.
+
+Flow:
+
+1. `track_session(session_id)` records each analysis session id in memory.
+2. `register_exit_reaper()` registers one `atexit` handler.
+3. The handler spawns `driver_reaper.py` with `start_new_session=True` and
+   `DEVNULL` streams, so the child survives the parent and holds no terminal.
+4. The child polls until the parent PID is gone, bounded by
+   `TOPSAILAI_SESSION_DRIVER_REAPER_TIMEOUT`.
+5. For each tracked session it re-checks `can_clean()`, deletes the DB row and
+   chat history, then deletes the on-disk owner records
+   (`.session.meta`, `.session.stdout`, `.session.stats.jsonl`, `.session.events`).
+   Row deletion happens first so a refused row deletion leaves the files intact
+   for a later retry.
+
+Deletion order matters: `delete_session()` in `context/session_manager/sql.py`
+only removes the DB row and chat history and never touches disk files. Without
+the explicit owner-record deletion the row and the files would disagree forever.
+
+`TOPSAILAI_HOME` is resolved to an absolute path before the child is spawned and
+again before any framework import in the child. Importing `topsailai` re-reads
+`TOPSAILAI_HOME`, so a relative value would be resolved twice and the reaper
+would look for owner records in the wrong tree.
+
+Known limits, accepted at approval time:
+
+- `atexit` does not run on `SIGKILL`, so a hard-killed driver still leaves its
+  sessions behind. A startup scan for dead-owner leftovers is the intended
+  follow-up and is not part of this change.
+- The reaper acts only at exit, so inventory still grows while a long run is in
+  progress. It is bounded per run, not per poll.
+- The reaper is disabled inside the child, so a reaper can never spawn another.
+
+The child writes to `{TOPSAILAI_HOME}/log/session_agent_driver_reaper.log` with
+size-based rotation, because it has no terminal to report to.
 
 ## Project Workspace Injection
 
@@ -113,6 +169,11 @@ reference stays in `docs/Environment_Variables.md` and `env_template`.
 | `TOPSAILAI_SESSION_DRIVER_TASK_GOAL` | `Drive the target session to completion.` | Task goal injected into the analysis prompt. |
 | `TOPSAILAI_SESSION_DRIVER_LOG_MAX_BYTES` | `10485760` | Positive maximum log size in bytes before rotation (10 MiB). |
 | `TOPSAILAI_SESSION_DRIVER_LOG_MAX_BACKUPS` | `5` | Positive number of rotated log backups to retain. |
+| `TOPSAILAI_SESSION_DRIVER_REAPER_ENABLED` | `1` | Set to `0` to disable the exit reaper. Any other value keeps it enabled. |
+| `TOPSAILAI_SESSION_DRIVER_REAPER_TIMEOUT` | `300` | Positive seconds the reaper waits for the driver PID to disappear before preserving the sessions. |
+| `TOPSAILAI_SESSION_DRIVER_REAPER_POLL_INTERVAL` | `0.5` | Positive seconds between parent-liveness checks in the reaper. |
+| `TOPSAILAI_SESSION_DRIVER_REAPER_LOG_MAX_BYTES` | `1048576` | Positive maximum reaper log size in bytes before rotation (1 MiB). |
+| `TOPSAILAI_SESSION_DRIVER_REAPER_LOG_MAX_BACKUPS` | `3` | Positive number of rotated reaper log backups to retain. |
 | `TOPSAILAI_PLUGIN_TOOLS` | `plugins.tools` | Plugin tools package (set by the script before importing topsailai). |
 | `TOPSAILAI_PLUGIN_SKILLS` | `{script_dir}/plugins/skills` | Plugin skills directory (contains the `topsailai-skills` soft link to topsailai/skills, set by the script). |
 

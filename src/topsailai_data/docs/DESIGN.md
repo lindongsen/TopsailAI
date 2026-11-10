@@ -727,30 +727,76 @@ The local adapter reserves the `.topsailai-data-write-*` namespace for temporary
 ## 20. File and Folder Command Group
 
 The `file` command group exposes the file and folder capabilities of the
-TopsailAI file tool through the same CLI. It is implemented in
-`pkg/filetool` as a reusable library and in `pkg/cli/file_commands.go` as the
-argument-parsing layer. The library has no CLI or adapter dependency, so every
-capability is unit tested in isolation.
+TopsailAI file tool through the same CLI, scoped to the actual data of one data
+object. It is implemented in `pkg/filetool` as a reusable library,
+`pkg/objectfs` as the adapter that presents an object's actual data as a file
+system, and `pkg/cli/file_commands.go` as the argument-parsing layer.
+
+Every subcommand requires `--object <id>`. There is no operating-system mode:
+a file command without `--object` is rejected, so the group can never silently
+read or write a path outside a data object.
 
 ### 20.1 Capability Inventory
 
 | Subcommand | Capability | Arguments |
 |------------|------------|-----------|
-| `read` | Read a file, optionally a byte window | `<file_path> [--seek n] [--size n]` |
-| `read-lines` | Read a line range | `<file_path> [--start n] [--end n]` |
-| `read-around` | Read context around one line | `<file_path> <line_number> [--context n]` |
-| `read-context` | Read lines matching a pattern with context | `<file_path> <pattern> [--context n] [--case-sensitive]` |
-| `read-files` | Read several files into one map | `<file_path...> [--format yaml\|json]` |
-| `write` | Write content, optionally at a byte offset | `<file_path> [--content <text>\|--from <path\|->] [--seek n] [--insert]` |
-| `append` | Append content | `<file_path> [--content <text>\|--from <path\|->]` |
-| `exists` | Check several paths for existence | `<name=path...> [--format yaml\|json]` |
-| `mkdirs` | Create folders, including parents | `<absolute_dir...>` |
-| `list-dirs` | List several folders | `<dir...> [--format yaml\|json]` |
-| `size` | Report a file size in bytes | `<file_path>` |
-| `overwrite-lines` | Replace a line range and return a diff | `<file_path> <start_num> [--end n] [--content <text>\|--from <path\|->]` |
-| `insert` | Insert content before or after a line and return a diff | `<file_path> <line_num> [--content <text>\|--from <path\|->] [--before]` |
+| `read` | Read a file, optionally a byte window | `<file_path> --object <id> [--seek n] [--size n]` |
+| `read-lines` | Read a line range | `<file_path> --object <id> [--start n] [--end n]` |
+| `read-around` | Read context around one line | `<file_path> <line_number> --object <id> [--context n]` |
+| `read-context` | Read lines matching a pattern with context | `<file_path> <pattern> --object <id> [--context n] [--case-sensitive]` |
+| `read-files` | Read several files into one map | `<file_path...> --object <id> [--format yaml\|json]` |
+| `write` | Write content, optionally at a byte offset | `<file_path> --object <id> [--content <text>\|--from <path\|->] [--seek n] [--insert]` |
+| `append` | Append content | `<file_path> --object <id> [--content <text>\|--from <path\|->]` |
+| `exists` | Check several paths for existence | `<name=path...> --object <id> [--format yaml\|json]` |
+| `mkdirs` | Create folders, each seeded with an `AGENTS.md` marker | `<dir...> --object <id>` |
+| `list-dirs` | List several folders | `<dir...> --object <id> [--format yaml\|json]` |
+| `size` | Report a file size in bytes | `<file_path> --object <id>` |
+| `overwrite-lines` | Replace a line range and return a diff | `<file_path> <start_num> --object <id> [--end n] [--content <text>\|--from <path\|->]` |
+| `insert` | Insert content before or after a line and return a diff | `<file_path> <line_num> --object <id> [--content <text>\|--from <path\|->] [--before]` |
 
-### 20.2 Preserved Behaviour Contracts
+### 20.2 Object Scoping
+
+`--object <id>` names the data object whose actual data the command operates
+on. The object folder is the root of every path:
+
+- A path is interpreted relative to the object folder. `notes/a.md` addresses
+  the file `notes/a.md` inside that object, never a file on the host.
+- A leading slash is ignored, so `/notes/a.md` and `notes/a.md` are the same
+  file.
+- An empty path addresses the object root. `list-dirs ""` and `list-dirs .`
+  both list the top level of the object folder.
+- A path that escapes the object folder, such as `../outside.md`, is rejected.
+- An unknown object id returns `ErrObjectNotFound` before any file is touched.
+
+Because every operation is routed through the manager, the guarantees of the
+object store apply unchanged:
+
+- Write operations acquire the advisory object lock.
+- Single-file writes replace the destination atomically through a temporary
+  file followed by a rename, so a failed write leaves the previous content
+  intact.
+- Read and write operations update the object's usage statistics.
+- Reserved metadata markers (`{object}.tags`, `{object}.lock`,
+  `{object}.deleted`, `{object}.ceased`, `.stat.json`) are rejected as read and
+  write targets, so a caller cannot bypass lifecycle management by editing a
+  marker through the file commands. The mandatory `{object}.md` file is actual
+  data and remains readable and writable.
+
+`mkdirs` creates every missing level of the requested path and writes an
+`AGENTS.md` marker into each level it creates. Object storage has no meaningful
+empty folder, so a folder becomes discoverable only once it holds a file; the
+marker is what makes the new folder visible to `list-dirs` and `exists`.
+
+- A level that already exists is skipped, so an existing `AGENTS.md` is never
+  overwritten and a populated folder receives no marker.
+- The object root is never modified: `mkdirs .` and `mkdirs ""` succeed without
+  writing a marker.
+- The marker is written through the manager, so the object lock, the atomic
+  replacement, and the write statistics apply exactly as for any other write.
+- The absolute-path requirement of the original tool does not apply in object
+  mode, because every path is already relative to the object folder.
+
+### 20.3 Preserved Behaviour Contracts
 
 - `--seek` and `--size` are byte offsets. A negative `--seek` counts from the
   end of the file; `--size -1` reads to the end.
@@ -767,12 +813,10 @@ capability is unit tested in isolation.
 - `overwrite-lines` and `insert` preserve the surrounding line endings and
   return a unified diff. `overwrite-lines` also returns the warning that line
   numbers change after each call.
-- `mkdirs` requires absolute paths so a call cannot silently create folders
-  relative to an unexpected working directory.
 - `read-files`, `list-dirs`, and `exists` record a per-item failure instead of
   hiding the other items.
 
-### 20.3 Content Source Precedence
+### 20.4 Content Source Precedence
 
 The four content-writing subcommands (`write`, `append`, `overwrite-lines`,
 `insert`) resolve their content from the same ordered sources:
@@ -797,7 +841,7 @@ the content stays empty instead of waiting for input, so an interactive
 invocation never hangs. This matches the convention already used by `create`
 and `put`.
 
-### 20.4 Documented Deviation
+### 20.5 Documented Deviation
 
 The TopsailAI file tool counts `seek` and `size` in characters because Python
 strings are character indexed. This implementation counts bytes because Go
@@ -805,7 +849,7 @@ strings are byte indexed. For ASCII and UTF-8 text the two agree; for
 multi-byte characters a byte offset may land inside a character. Callers that
 need character-accurate windows on multi-byte text must account for this.
 
-### 20.5 Configuration Boundary
+### 20.6 Configuration Boundary
 
 `TOPSAILAI_DATA_FILE_MAX_BYTES` and
 `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT` are read once by
@@ -814,44 +858,29 @@ need character-accurate windows on multi-byte text must account for this.
 variables, so tests override behaviour through parameters rather than by
 mutating global state.
 
-### 20.6 Testing
+### 20.7 Discovery Inside an Object
+
+`list-dirs` lists the immediate entries of each named folder inside the object
+and does not recurse, so a deeper level must be named explicitly. `exists`
+reports a boolean per named path and accepts files and folders alike. `size`
+reports a byte count, and `read` returns content.
+
+There is no recursive walk and no search-by-name command in the `file` group.
+Recursive discovery with object-boundary detection belongs to `list` and
+`search` in the object store, which scan the whole store rather than one
+object.
+
+### 20.8 Testing
 
 - `pkg/filetool` unit tests cover all thirteen capabilities, including
   truncation, whitelist overrides, encoding fallback, line-ending preservation,
   and the `end_num` sentinel rules.
+- `pkg/objectfs` unit tests cover path normalization, root listing, metadata
+  marker rejection, and statistics integration.
 - `pkg/cli` tests exercise every subcommand through the command layer with an
-  explicit configuration, so no test depends on process environment.
+  explicit configuration, including a table-driven test proving that all
+  thirteen subcommands reject a missing `--object`.
 - `tests/bdd/features/file-tool.feature` runs the real binary against an
-  isolated store and asserts user-visible output for every subcommand.
-
-### 20.7 Relationship to the Object Store
-
-The `file` command group and the object-store commands are two independent
-path models. The `file` group operates on the operating system file system
-directly and imposes no layout of its own:
-
-- An absolute path is used verbatim. A relative path is resolved against the
-  process working directory.
-- `TOPSAILAI_DATA_ROOT` is not consulted. The only configuration the group
-  reads is `TOPSAILAI_DATA_FILE_MAX_BYTES` and
-  `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT`, both of which affect
-  truncation only.
-- No time prefix, classify directory, object folder, or metadata marker file
-  is created. A caller that writes `notes/a.md` gets exactly `notes/a.md`.
-
-The object-store commands (`create`, `put`, `get`, `show`, `list`, `search`,
-`tag`, `move`, `delete`, `recover`, `gc`) do impose a layout under
-`TOPSAILAI_DATA_ROOT`: `{ROOT}/YYYY/MMDD/HHMM/{classify...}/{name}` with a
-mandatory `{name}.md` marker and optional `.tags`, `.lock`, `.deleted`,
-`.ceased`, and `.stat.json` files.
-
-Discovery differs accordingly. `list-dirs` lists the immediate entries of each
-named directory and does not recurse, so deeper levels must be named
-explicitly. `exists` reports a boolean per named path and accepts files and
-directories alike. There is no recursive walk and no search-by-name command in
-the `file` group; recursive discovery with object-boundary detection belongs to
-`list` and `search` in the object store.
-
-`mkdirs` requires absolute paths while the read and write subcommands accept
-relative paths. The asymmetry is preserved from the original tool so folder
-creation cannot silently land in an unexpected working directory.
+  isolated store. Objects are created through `create` and their content is
+  verified through `get`, so the scenarios exercise the public surface end to
+  end rather than the library alone.

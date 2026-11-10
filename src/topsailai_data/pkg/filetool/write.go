@@ -15,6 +15,10 @@ type WriteFileOptions struct {
 
 	// Insert inserts content at Seek instead of overwriting existing bytes.
 	Insert bool
+
+	// FS is the file system to write to. A nil value uses the operating
+	// system file system.
+	FS FS
 }
 
 // WriteFile writes content to a file, creating parent folders as needed.
@@ -30,49 +34,49 @@ func WriteFile(path string, content string, opts WriteFileOptions) error {
 	}
 
 	if opts.Insert {
-		return insertAt(path, content, opts.Seek)
+		return insertAt(path, content, opts.Seek, opts.FS)
 	}
-	return overwriteAt(path, content, opts.Seek)
+	return overwriteAt(path, content, opts.Seek, opts.FS)
 }
 
 // insertAt inserts content at the requested position without removing bytes.
-func insertAt(path, content string, seek int64) error {
-	existing, exists, err := readExisting(path)
+func insertAt(path, content string, seek int64, fs FS) error {
+	existing, exists, err := readExisting(path, fs)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return writeText(path, content)
+		return writeText(path, content, fs)
 	}
 	if seek == -1 {
-		return appendText(path, content)
+		return appendText(path, content, fs)
 	}
 
 	position := resolvePosition(seek, len(existing), true)
 	updated := existing[:position] + content + existing[position:]
-	return writeText(path, updated)
+	return writeText(path, updated, fs)
 }
 
 // overwriteAt replaces bytes starting at the requested position.
-func overwriteAt(path, content string, seek int64) error {
+func overwriteAt(path, content string, seek int64, fs FS) error {
 	if seek == 0 {
-		return writeText(path, content)
+		return writeText(path, content, fs)
 	}
 
-	existing, exists, err := readExisting(path)
+	existing, exists, err := readExisting(path, fs)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return writeText(path, content)
+		return writeText(path, content, fs)
 	}
 
 	position := resolvePosition(seek, len(existing), false)
 	if position+len(content) <= len(existing) {
 		updated := existing[:position] + content + existing[position+len(content):]
-		return writeText(path, updated)
+		return writeText(path, updated, fs)
 	}
-	return writeText(path, existing[:position]+content)
+	return writeText(path, existing[:position]+content, fs)
 }
 
 // resolvePosition converts a seek value into a byte position within content.
@@ -101,8 +105,8 @@ func resolvePosition(seek int64, length int, insert bool) int {
 }
 
 // readExisting returns the current file content and whether the file exists.
-func readExisting(path string) (string, bool, error) {
-	data, err := os.ReadFile(path)
+func readExisting(path string, fs FS) (string, bool, error) {
+	data, err := resolveFS(fs).ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", false, nil
@@ -113,39 +117,40 @@ func readExisting(path string) (string, bool, error) {
 }
 
 // writeText writes content to a file, creating parent folders as needed.
-func writeText(path, content string) error {
+func writeText(path, content string, fs FS) error {
+	target := resolveFS(fs)
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := target.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return target.WriteFile(path, []byte(content), 0o644)
 }
 
 // AppendFile appends content to a file, creating parent folders as needed.
 func AppendFile(path, content string) error {
+	return AppendFileWithFS(path, content, nil)
+}
+
+// AppendFileWithFS appends content to a file through the given file system.
+//
+// A nil file system uses the operating system file system.
+func AppendFileWithFS(path, content string, fs FS) error {
 	if path == "" {
 		return invalidParameter("file_path", path, "must be a non-empty string")
 	}
-	return appendText(path, content)
+	return appendText(path, content, fs)
 }
 
 // appendText appends content to a file, creating parent folders as needed.
-func appendText(path, content string) error {
+func appendText(path, content string, fs FS) error {
+	target := resolveFS(fs)
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := target.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
-	fd, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer fd.Close()
-	if _, err := fd.WriteString(content); err != nil {
-		return err
-	}
-	return fd.Sync()
+	return target.AppendFile(path, []byte(content), 0o644)
 }
 
 // unifiedDiff renders a unified diff between two texts.

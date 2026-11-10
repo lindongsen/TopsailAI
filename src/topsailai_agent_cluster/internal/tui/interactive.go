@@ -296,6 +296,10 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		var line string
 		var overflow bool
 		var err error
+		// watch is declared outside the reader branch because the recovery read
+		// below needs the stream that just ended, and that stream only exists when
+		// a watch-capable reader is configured.
+		var watch WatchSession
 		if options.ReadLine != nil {
 			var prompt strings.Builder
 			if promptErr := writePrompt(&prompt, state, options.Color); promptErr != nil {
@@ -306,7 +310,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			// An armed auto-refresh loop starts before the read, because a blocking
 			// read cannot be interrupted from outside. The reader stops it on the
 			// first keypress, so the loop never outlives the prompt it serves.
-			watch := startWatch(readCtx, api, &state, output, options)
+			watch = startWatch(readCtx, api, &state, output, options)
 			// An armed follow stream takes precedence over an armed auto-refresh
 			// loop, because the operator asked for one specific session's output
 			// and a moving table would compete for the same terminal rows. The
@@ -360,6 +364,17 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			return parentErr
 		}
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		// A follow stream that showed the operator nothing, or broke after
+		// showing only part of the tail, is recovered with one bounded snapshot.
+		// It runs after the read context is released, so it uses the parent
+		// context: the snapshot is a new bounded read, not part of the prompt that
+		// just ended. An interrupted prompt returned above, so a deliberate Ctrl+C
+		// never triggers a recovery read. The line is passed because an empty line
+		// is an accidental extra keypress, while a real command means the operator
+		// deliberately moved on and does not want the tail back.
+		if recoverErr := recoverFollowOutput(parent, api, watch, output, options, line != ""); recoverErr != nil {
+			return recoverErr
+		}
 		if line == "" {
 			if err == io.EOF {
 				return nil

@@ -19,6 +19,10 @@ type interactiveMessagesStub struct {
 	messages      map[string]protocol.MessagesResult
 	messagesEr    map[string]error
 	messagesCalls []string
+	// messagesSessions records the provider session ID of every interactive read,
+	// so a test can prove a row number resolved to the row the operator saw rather
+	// than to some other session on the same endpoint.
+	messagesSessions []string
 	// messagesMaxChars records the caller bound of every interactive read. The REPL
 	// always passes zero, so a non-zero value would mean the surface narrowed a
 	// conversation the operator did not ask to narrow.
@@ -28,10 +32,11 @@ type interactiveMessagesStub struct {
 	messagesMaxTokens []int
 }
 
-// GetMessages records the queried endpoint so a test can prove which endpoint the
-// interactive surface addressed.
-func (s *interactiveMessagesStub) GetMessages(_ context.Context, endpointID, _ string, maxChars, maxTokens int) (protocol.MessagesResult, error) {
+// GetMessages records the queried endpoint and session so a test can prove which
+// target the interactive surface addressed.
+func (s *interactiveMessagesStub) GetMessages(_ context.Context, endpointID, sessionID string, maxChars, maxTokens int) (protocol.MessagesResult, error) {
 	s.messagesCalls = append(s.messagesCalls, endpointID)
+	s.messagesSessions = append(s.messagesSessions, sessionID)
 	s.messagesMaxChars = append(s.messagesMaxChars, maxChars)
 	s.messagesMaxTokens = append(s.messagesMaxTokens, maxTokens)
 	if err := s.messagesEr[endpointID]; err != nil {
@@ -192,18 +197,172 @@ func TestInteractiveMessagesRejectsAmbiguousSessionID(t *testing.T) {
 	}
 }
 
-// TestInteractiveMessagesRequiresHistoryForRowNumber proves a row number without a
-// rendered table is refused rather than guessed, because the number has no meaning
-// on its own.
-func TestInteractiveMessagesRequiresHistoryForRowNumber(t *testing.T) {
-	stub := messagesScenarioStub(nil, historyReport(), protocol.MessagesResult{})
+// TestInteractiveMessagesReadsListRowByNumber proves a list row number is a valid
+// conversation target in workspace scope.
+//
+// This is the behaviour the command was missing: the ordinary "list" then
+// "messages <n>" sequence failed with "run history first", even though row n was
+// on screen and every other session-addressing command accepted it. The list row
+// here has no generation and is unverified, which is exactly the case that must
+// stay readable: a conversation read addresses persisted provider data, so it must
+// not inherit the addressability rules of cd and stop.
+func TestInteractiveMessagesReadsListRowByNumber(t *testing.T) {
+	stub := messagesScenarioStub(
+		nil,
+		historyReport(
+			historyLiveSession("res-live", "wa-live", "gen-1"),
+			protocol.Session{ClusterSessionID: "res-past", ProviderSessionID: "wa-past", State: protocol.SessionStateUnknown, StateReason: protocol.StateReasonLivenessUnverified},
+		),
+		protocol.MessagesResult{
+			ProviderSessionID: "wa-past",
+			MessageCount:      1,
+			Messages:          []protocol.Message{{Role: "user", Content: "list row conversation"}},
+		},
+	)
+
+	output, diagnostics := runScope(t, stub, "messages 2\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "list row conversation") {
+		t.Fatalf("conversation missing: %q", output)
+	}
+	if len(stub.messagesSessions) != 1 || stub.messagesSessions[0] != "wa-past" {
+		t.Fatalf("messages sessions = %v, want one read of wa-past", stub.messagesSessions)
+	}
+	if len(stub.messagesCalls) != 1 || stub.messagesCalls[0] != "endpoint-1" {
+		t.Fatalf("messages calls = %v, want one read of endpoint-1", stub.messagesCalls)
+	}
+}
+
+// TestInteractiveMessagesReadsListRowInEndpointScope proves the same list row
+// number works inside endpoint scope, where the current endpoint is already known.
+func TestInteractiveMessagesReadsListRowInEndpointScope(t *testing.T) {
+	stub := messagesScenarioStub(
+		nil,
+		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
+		protocol.MessagesResult{
+			ProviderSessionID: "wa-live",
+			MessageCount:      1,
+			Messages:          []protocol.Message{{Role: "assistant", Content: "endpoint scoped conversation"}},
+		},
+	)
+
+	output, diagnostics := runScope(t, stub, "cd endpoint-1\nmessages 1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "endpoint scoped conversation") {
+		t.Fatalf("conversation missing: %q", output)
+	}
+	if len(stub.messagesSessions) != 1 || stub.messagesSessions[0] != "wa-live" {
+		t.Fatalf("messages sessions = %v, want one read of wa-live", stub.messagesSessions)
+	}
+}
+
+// TestMessagesListRowRejectsForeignEndpoint proves endpoint scope does not
+// silently retarget a row rendered for another endpoint.
+//
+// This is a direct unit test rather than a REPL scenario, because the REPL cannot
+// reach the guard: entering an endpoint re-renders the list scoped to that
+// endpoint, so every row in state.Rows already belongs to it. The guard therefore
+// protects a state the REPL does not currently produce, and a REPL test would pass
+// for the wrong reason by never exercising it.
+func TestMessagesListRowRejectsForeignEndpoint(t *testing.T) {
+	state := &interactiveState{
+		Scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1"},
+	}
+	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-2", ClusterSessionID: "res-2", ProviderSessionID: "wa-two", ProviderGeneration: "gen-2"}})
+
+	_, _, err := messagesListRow(state, 1)
+	if err == nil || !strings.Contains(err.Error(), "belongs to endpoint") {
+		t.Fatalf("err = %v, want the foreign-endpoint rejection", err)
+	}
+}
+
+// TestMessagesListRowReadsUnverifiedRow proves a list row without a generation is
+// still readable.
+//
+// This is the distinction that keeps the command useful: cd and stop refuse an
+// unverified row because they address a live process, while a conversation read
+// addresses persisted provider data. Reusing resolveRowSelection here would have
+// made the new row-number support refuse exactly the rows the command exists for.
+func TestMessagesListRowReadsUnverifiedRow(t *testing.T) {
+	state := &interactiveState{}
+	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-past", ProviderSessionID: "wa-past", State: protocol.SessionStateUnknown, Unverified: true}})
+
+	endpointID, sessionID, err := messagesListRow(state, 1)
+	if err != nil {
+		t.Fatalf("messagesListRow: %v", err)
+	}
+	if endpointID != "endpoint-1" || sessionID != "wa-past" {
+		t.Fatalf("target = %q/%q, want endpoint-1/wa-past", endpointID, sessionID)
+	}
+}
+
+// TestMessagesListRowRejectsOutOfRange proves an out-of-range number names the
+// valid range instead of reading an arbitrary row.
+func TestMessagesListRowRejectsOutOfRange(t *testing.T) {
+	state := &interactiveState{}
+	state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderSessionID: "wa-one"}})
+
+	_, _, err := messagesListRow(state, 2)
+	if err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("err = %v, want the out-of-range rejection", err)
+	}
+}
+
+// TestInteractiveMessagesRequiresRenderedTableForRowNumber proves a row number
+// without a rendered table is refused rather than guessed, because the number has
+// no meaning on its own. Both remedies are named, because either table can supply
+// the number.
+//
+// The stub reports no endpoints, which is the only way the REPL reaches this
+// branch: a startup list always renders, and every endpoint contributes at least
+// one row, so a populated fleet never leaves state.Rows empty.
+func TestInteractiveMessagesRequiresRenderedTableForRowNumber(t *testing.T) {
+	stub := &interactiveMessagesStub{
+		interactiveHistoryStub: &interactiveHistoryStub{
+			interactiveStub: &interactiveStub{reports: map[string]protocol.InventoryReport{}},
+		},
+		messages: map[string]protocol.MessagesResult{},
+	}
 
 	_, diagnostics := runScope(t, stub, "messages 1\nexit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, "run history first") {
+	if !strings.Contains(diagnostics, "run list or history first") {
 		t.Fatalf("diagnostics = %q, want the missing-table rejection", diagnostics)
 	}
 	if len(stub.messagesCalls) != 0 {
 		t.Fatalf("messages calls = %v, want none", stub.messagesCalls)
+	}
+}
+
+// TestInteractiveMessagesHistoryRowWinsOverListRow proves the history namespace
+// keeps its meaning after a history render.
+//
+// A history render clears the list rows, so the two namespaces can never both be
+// live. This test pins the precedence anyway, because a future change that keeps
+// both would otherwise silently reinterpret a history number as a list number.
+func TestInteractiveMessagesHistoryRowWinsOverListRow(t *testing.T) {
+	stub := messagesScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-history", ProviderDisplayName: "history work", Resumable: true}},
+		historyReport(historyLiveSession("res-live", "wa-list", "gen-1")),
+		protocol.MessagesResult{
+			ProviderSessionID: "wa-history",
+			MessageCount:      1,
+			Messages:          []protocol.Message{{Role: "user", Content: "history row conversation"}},
+		},
+	)
+
+	output, diagnostics := runScope(t, stub, "history endpoint-1\nmessages 1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "history row conversation") {
+		t.Fatalf("conversation missing: %q", output)
+	}
+	if len(stub.messagesSessions) != 1 || stub.messagesSessions[0] != "wa-history" {
+		t.Fatalf("messages sessions = %v, want one read of wa-history", stub.messagesSessions)
 	}
 }
 

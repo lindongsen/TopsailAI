@@ -15,3 +15,6 @@ def isolate_driver_runtime(monkeypatch, tmp_path):
     """Inject a task-local home without changing the process environment."""
     import session_agent_driver as sad
     monkeypatch.setattr(sad, "TOPSAILAI_HOME", str(tmp_path))
+    # The exit reaper spawns a detached child that deletes real session
+    # records. Tests must never spawn it; the dedicated reaper tests opt in.
+    monkeypatch.setenv("TOPSAILAI_SESSION_DRIVER_REAPER_ENABLED", "0")

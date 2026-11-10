@@ -112,16 +112,68 @@ func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *i
 // turn an accepted action into a failure. failurePrefix names the action that
 // triggered the read, so the operator can tell which step failed.
 func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *interactiveState, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string) error {
+	return renderSnapshotForTarget(parent, api, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, color, options, failurePrefix)
+}
+
+// renderSnapshotForTarget renders one bounded output snapshot for an explicit
+// target. The automatic snapshot and the follow recovery both call it, so the
+// two routes cannot drift into two renderers, two budgets or two failure
+// messages. The target is passed explicitly because a recovery addresses the
+// session that was followed, which is not necessarily the current selection.
+func renderSnapshotForTarget(parent context.Context, api InteractiveAPI, endpointID, sessionID, generation string, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string) error {
 	maxBytes, maxLines := interactiveOutputBounds(options)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	if err := runner.RenderSessionSnapshot(ctx, trustedOut, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, maxBytes, maxLines, color); err != nil {
+	if err := runner.RenderSessionSnapshot(ctx, trustedOut, endpointID, sessionID, generation, maxBytes, maxLines, color); err != nil {
 		// The diagnostic interpolates a provider error, so it is sanitized
 		// before it reaches the trusted writer.
 		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic logs failed: "+sanitizeTerminal([]byte(err.Error())))
 	}
 	return nil
+}
+
+// followRecovery is the optional seam a follow session implements when it can
+// report that the operator was left without output. A session that does not
+// implement it keeps its current behaviour, so the auto-refresh loop and a
+// stream that never started are unaffected.
+type followRecovery interface {
+	Recovery(operatorContinued bool) (followRequest, string, bool)
+}
+
+// recoverFollowOutput renders one bounded snapshot when a follow stream ended
+// without showing the operator any output, or ended abnormally after showing
+// only part of it. The decision belongs to the session, because only the session
+// knows whether the bytes it received ever reached the terminal.
+//
+// operatorContinued reports that the operator typed a real command after the
+// stream stopped. A keypress that became a command is a deliberate move on, so
+// the keypress trigger declines; an abnormal end still recovers, because the
+// stream failed rather than being dismissed.
+//
+// The status line comes first and names the reason, so a snapshot is never
+// mistaken for a stream that is still running. A failed snapshot is a
+// diagnostic, never a command failure: the stream already ended, and the
+// operator's command was accepted before it started.
+func recoverFollowOutput(parent context.Context, api InteractiveAPI, watch WatchSession, trustedOut io.Writer, options InteractiveOptions, operatorContinued bool) error {
+	recovery, ok := watch.(followRecovery)
+	if !ok {
+		return nil
+	}
+	request, code, needed := recovery.Recovery(operatorContinued)
+	if !needed {
+		return nil
+	}
+	message := "follow ended: " + sanitizeInlineText(code) + "; showing one snapshot instead"
+	if code == "no_output" {
+		message = "follow stopped before any output; showing one snapshot instead"
+	}
+	// The policy comes from the writer this line goes to, exactly as the follow
+	// announcement does, so --no-color and a redirected stream stay plain.
+	if _, err := fmt.Fprintln(trustedOut, renderFollowStatus(message, ansiDim, OutputColorPolicy(trustedOut), false)); err != nil {
+		return err
+	}
+	return renderSnapshotForTarget(parent, api, request.EndpointID, request.ResourceID, request.ProviderGeneration, trustedOut, OutputColorPolicy(trustedOut), options, "follow recovery")
 }
 
 // refreshSelectedSession asks the selected session's Endpoint for one fresh

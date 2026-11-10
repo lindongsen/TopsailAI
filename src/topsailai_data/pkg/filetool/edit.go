@@ -2,7 +2,6 @@ package filetool
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -23,6 +22,10 @@ type OverwriteLinesOptions struct {
 
 	// Content replaces the selected lines. An empty value deletes them.
 	Content string
+
+	// FS is the file system to read and write. A nil value uses the operating
+	// system file system.
+	FS FS
 }
 
 // OverwriteLines replaces a line range with new content and returns a unified
@@ -43,7 +46,7 @@ func OverwriteLines(path string, opts OverwriteLinesOptions) (string, error) {
 		return "", invalidParameter("start_num", opts.StartNum, "must be >= 1")
 	}
 
-	original, err := os.ReadFile(path)
+	original, err := resolveFS(opts.FS).ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +80,7 @@ func OverwriteLines(path string, opts OverwriteLinesOptions) (string, error) {
 	}
 
 	updated := strings.Join(lines[:startIdx], "") + strings.Join(newLines, "") + strings.Join(lines[endIdx:], "")
-	if err := writeText(path, updated); err != nil {
+	if err := writeText(path, updated, opts.FS); err != nil {
 		return "", err
 	}
 
@@ -94,6 +97,10 @@ type InsertContentOptions struct {
 
 	// Content is inserted. A trailing newline is added when missing.
 	Content string
+
+	// FS is the file system to read and write. A nil value uses the operating
+	// system file system.
+	FS FS
 }
 
 // InsertContent inserts content before or after a line and returns a unified
@@ -110,7 +117,7 @@ func InsertContent(path string, opts InsertContentOptions) (string, error) {
 		return "", invalidParameter("line_num", opts.LineNum, "must be >= 1")
 	}
 
-	original, err := os.ReadFile(path)
+	original, err := resolveFS(opts.FS).ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -134,7 +141,7 @@ func InsertContent(path string, opts InsertContentOptions) (string, error) {
 	}
 
 	updated := strings.Join(lines[:insertIndex], "") + content + strings.Join(lines[insertIndex:], "")
-	if err := writeText(path, updated); err != nil {
+	if err := writeText(path, updated, opts.FS); err != nil {
 		return "", err
 	}
 

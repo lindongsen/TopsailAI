@@ -140,11 +140,19 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 		// Any decoded key ends the loop before it is applied, so the operator's
 		// next action always runs against a table that has stopped moving.
 		if watch != nil {
+			// A stream that already reported its own end needs no stop message:
+			// printing one would read as a second, contradictory event, and the
+			// recovery line that follows would make three lines describe one
+			// ending. A live stream keeps the label, because the operator's
+			// keypress is the only thing that ended it.
+			ended := watchEnded(watch)
 			label := watchStopLabel(watch, OutputColorPolicy(t.output))
 			watch.Stop()
 			watch = nil
-			if _, err = io.WriteString(t.output, label+"\r\n"); err != nil {
-				return
+			if !ended {
+				if _, err = io.WriteString(t.output, label+"\r\n"); err != nil {
+					return
+				}
 			}
 		}
 		if key.kind == lineKeyTab {
@@ -229,6 +237,14 @@ func (t *TerminalEditor) inputRows() int {
 		}
 	}
 	return defaultInputRows
+}
+
+// watchEnded reports that the loop ended on its own rather than being stopped by
+// a keypress. A session that does not implement the seam is treated as live, so
+// the auto-refresh loop keeps its existing stop message.
+func watchEnded(watch WatchSession) bool {
+	ended, ok := watch.(interface{ Ended() bool })
+	return ok && ended.Ended()
 }
 
 // watchStopLabel names the loop in the stop message. A session that does not
