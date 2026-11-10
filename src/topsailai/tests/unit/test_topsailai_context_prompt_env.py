@@ -352,67 +352,50 @@ class TestIntegration:
                 assert "uname:Linux" in combined
 
 
-class TestCurrentEvents:
-    """Tests for CurrentEvents class."""
+class TestEventsFileRemovedFromEnvPrompt:
+    """Tests that the events file description is no longer in the env prompt."""
 
-    def test_current_events_uses_unified_helper(self, monkeypatch):
-        """Test that CurrentEvents uses the unified events helper."""
+    def test_current_events_class_is_retained(self):
+        """Test that CurrentEvents stays available even though it is unused."""
+        import topsailai.context.prompt_env as prompt_env
+
+        assert hasattr(prompt_env, "CurrentEvents")
+
+    def test_current_events_still_produces_its_prompt(self):
+        """Test that the retained class still renders the events file path."""
         from topsailai.context.prompt_env import CurrentEvents
 
         with patch('topsailai.events.backends.get_default_events_file_path') as mock_get_path:
             mock_get_path.return_value = "/mock/events/file.events"
-            events = CurrentEvents()
-            result = events.prompt
+            result = CurrentEvents().prompt
 
-        mock_get_path.assert_called_once_with()
         assert "EventsFile=/mock/events/file.events" in result
         assert "detailed historical tool call records" in result
 
-    def test_current_events_with_session_id(self, monkeypatch):
-        """Test events file path when session id is set."""
-        from topsailai.context.prompt_env import CurrentEvents
-
-        monkeypatch.setenv("SESSION_ID", "test-session")
-        with patch('topsailai.events.backends.get_default_events_file_path') as mock_get_path:
-            mock_get_path.return_value = "/task/test-session.12345.session.events"
-            events = CurrentEvents()
-            result = events.prompt
-
-        assert "EventsFile=/task/test-session.12345.session.events" in result
-        assert "detailed historical tool call records" in result
-
-    def test_current_events_without_session_id(self, monkeypatch):
-        """Test events file path when no session id is set."""
-        from topsailai.context.prompt_env import CurrentEvents
-
-        monkeypatch.delenv("SESSION_ID", raising=False)
-        monkeypatch.delenv("TOPSAILAI_SESSION_ID", raising=False)
-        with patch('topsailai.events.backends.get_default_events_file_path') as mock_get_path:
-            mock_get_path.return_value = "/task/topsailai.99999.session.events"
-            events = CurrentEvents()
-            result = events.prompt
-
-        assert "EventsFile=/task/topsailai.99999.session.events" in result
-
-
-class TestGeneratePromptForEnvEvents:
-    """Tests for events file inclusion in generate_prompt_for_env."""
-
-    def test_generate_prompt_includes_events_file(self, monkeypatch):
-        """Test that generated prompt includes the events file section."""
+    def test_generate_prompt_excludes_events_file(self, monkeypatch):
+        """Test that the generated prompt no longer advertises an events file."""
         monkeypatch.delenv("ENV_PROMPT", raising=False)
 
         with patch('topsailai.context.prompt_env.CurrentDate') as mock_date:
             with patch('topsailai.context.prompt_env.CurrentSystem') as mock_system:
                 with patch('topsailai.context.prompt_env.CurrentProject') as mock_project:
-                    with patch('topsailai.events.backends.get_default_events_file_path') as mock_get_path:
-                        mock_date.return_value.prompt = "CurrentDate: 2025-01-15"
-                        mock_system.return_value.prompt = "SystemInfo:\n- uname:Linux"
-                        mock_project.return_value.prompt = "ProjectWorkspace=\nPWD=\n"
-                        mock_get_path.return_value = "/task/prompt-session.11111.session.events"
+                    mock_date.return_value.prompt = "CurrentDate: 2025-01-15"
+                    mock_system.return_value.prompt = "SystemInfo:\n- uname:Linux"
+                    mock_project.return_value.prompt = "ProjectWorkspace=\nPWD=\n"
 
-                        result = generate_prompt_for_env()
+                    result = generate_prompt_for_env()
 
-        assert "EventsFile=" in result
-        assert "/task/prompt-session.11111.session.events" in result
-        assert "historical tool call records" in result
+        assert "EventsFile" not in result
+        assert "historical tool call records" not in result
+        assert "CurrentDate: 2025-01-15" in result
+        assert "SystemInfo:" in result
+        assert "ProjectWorkspace=" in result
+
+    def test_generate_prompt_does_not_resolve_events_path(self, monkeypatch):
+        """Test that generating the prompt never touches the events backend."""
+        monkeypatch.delenv("ENV_PROMPT", raising=False)
+
+        with patch('topsailai.events.backends.get_default_events_file_path') as mock_get_path:
+            generate_prompt_for_env()
+
+        mock_get_path.assert_not_called()
