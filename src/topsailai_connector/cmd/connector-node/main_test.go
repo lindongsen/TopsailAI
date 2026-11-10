@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"topsailai_connector/internal/node"
+	"topsailai_connector/internal/security"
 )
 
 // captureStdout runs action with os.Stdout redirected to a pipe and returns what
@@ -313,4 +316,164 @@ func TestContextFromSignalsStopsWithoutASignal(t *testing.T) {
 func timeoutAfter(t *testing.T) <-chan time.Time {
 	t.Helper()
 	return time.After(5 * time.Second)
+}
+
+// writeNodePolicy writes a policy that exposes one scope, so a test can open a
+// runtime instead of failing on a missing policy.
+func writeNodePolicy(t *testing.T, configDir string) string {
+	t.Helper()
+
+	scopeDir := filepath.Join(configDir, "project")
+	if err := os.MkdirAll(scopeDir, 0o755); err != nil {
+		t.Fatalf("create scope directory: %v", err)
+	}
+
+	policyPath := filepath.Join(configDir, "policy.yaml")
+	policy := "version: 1\n" +
+		"scopes:\n" +
+		"  project:\n" +
+		"    path: " + scopeDir + "\n" +
+		"grants:\n" +
+		"  - scope: project\n" +
+		"    permissions: [read, list, stat]\n"
+	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	return policyPath
+}
+
+// openNodeRuntime opens a runtime over a complete environment and a real policy,
+// so a test can drive the tail of the process rather than the configuration
+// checks that precede it.
+func openNodeRuntime(t *testing.T) *node.Runtime {
+	t.Helper()
+
+	configDir := setNodeEnvironment(t)
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", writeNodePolicy(t, configDir))
+
+	config, err := node.LoadConfig(os.Getenv)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+
+	runtime, err := node.Open(config, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runtime.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return runtime
+}
+
+// TestServeNodeStopsOnACancelledContext checks that the tail of the process
+// returns as soon as the context is cancelled, because a shutdown must not wait
+// for a reconnect delay or for a dial to time out.
+//
+// The context is a parameter rather than created inside the function, so the test
+// drives the real dispatcher and the real dialer without signalling the test
+// binary.
+func TestServeNodeStopsOnACancelledContext(t *testing.T) {
+	runtime := openNodeRuntime(t)
+	identity, _ := runtime.NewIdentity()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := serveNode(ctx, runtime, identity, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatalf("serveNode() error = %v, want nil for a cancelled context", err)
+	}
+}
+
+// TestServeNodeRefusesAnUnusableIdentity checks that the tail refuses to build a
+// dialer from an identity the Server could never accept, because a Node that
+// dialled with a malformed identity would appear connected and serve nothing.
+func TestServeNodeRefusesAnUnusableIdentity(t *testing.T) {
+	runtime := openNodeRuntime(t)
+
+	// An empty id is refused by ValidateNodeID. A short id is not, which is the
+	// recorded defect in issues/issue-node-id-length-not-enforced.md.
+	broken := security.NodeIdentity{ID: "", Token: security.Secret("tokenvalue")}
+	if err := serveNode(context.Background(), runtime, broken, slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
+		t.Fatal("serveNode() = nil error, want a refusal for an unusable identity")
+	}
+}
+
+// TestServeNodeRetriesUntilTheContextEnds checks that the tail keeps retrying a
+// Server that is not listening and still returns when the context ends, because a
+// Node whose Server is down must wait rather than exit.
+func TestServeNodeRetriesUntilTheContextEnds(t *testing.T) {
+	runtime := openNodeRuntime(t)
+	identity, _ := runtime.NewIdentity()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	if err := serveNode(ctx, runtime, identity, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatalf("serveNode() error = %v, want nil after the context ended", err)
+	}
+}
+
+// TestRunNodeWithSignalsServesUntilASignalArrives checks the complete process:
+// configuration, identity, policy, scopes, dial and shutdown.
+//
+// The signal channel is a parameter so the test delivers a signal without
+// signalling the test binary. The Server address points at a closed port, so the
+// dial fails and the retry loop is what the signal interrupts; that is the
+// behaviour an operator relies on when the Server is down.
+func TestRunNodeWithSignalsServesUntilASignalArrives(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", writeNodePolicy(t, configDir))
+
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runNodeWithSignals(nil, signals)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runNodeWithSignals() error = %v, want nil after a signal", err)
+		}
+	case <-timeoutAfter(t):
+		t.Fatal("runNodeWithSignals() did not return after a signal")
+	}
+}
+
+// TestRunNodeWithSignalsPrintsAGeneratedIdentity checks that a first start prints
+// the pair once, because the operator has to copy it into a CLI and there is no
+// lookup endpoint.
+func TestRunNodeWithSignalsPrintsAGeneratedIdentity(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", writeNodePolicy(t, configDir))
+
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+
+	printed, err := captureStdout(t, func() error {
+		return runNodeWithSignals(nil, signals)
+	})
+	if err != nil {
+		t.Fatalf("runNodeWithSignals() error = %v", err)
+	}
+	if !strings.Contains(printed, "node identity generated:") {
+		t.Fatalf("stdout = %q, want the generated pair", printed)
+	}
+}
+
+// TestRunNodeWithSignalsRejectsBadFlags checks that a flag `run` does not define
+// is reported, because a silently ignored flag is a flag the operator believes
+// took effect.
+func TestRunNodeWithSignalsRejectsBadFlags(t *testing.T) {
+	setNodeEnvironment(t)
+
+	signals := make(chan os.Signal, 1)
+	if err := runNodeWithSignals([]string{"--not-a-flag"}, signals); err == nil {
+		t.Fatal("runNodeWithSignals() = nil error, want a flag refusal")
+	}
 }

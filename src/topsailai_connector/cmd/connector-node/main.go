@@ -19,6 +19,7 @@ import (
 
 	"topsailai_connector/internal/node"
 	"topsailai_connector/internal/protocol"
+	"topsailai_connector/internal/security"
 )
 
 func main() {
@@ -74,6 +75,22 @@ func splitCommand(arguments []string) (string, []string) {
 // to serve. The dialer is built last, so a Node that cannot serve never appears
 // connected.
 func runNode(arguments []string) error {
+	// The signal channel is created here rather than inside runNodeWithSignals, so
+	// the whole process can be tested without sending a signal to the test binary.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	return runNodeWithSignals(arguments, signals)
+}
+
+// runNodeWithSignals is runNode with the signal channel supplied by the caller.
+//
+// The channel is a parameter so a test can drive the complete process, including
+// the dial, without signalling the test binary: a real signal would make the test
+// depend on the order in which two handlers register, and a mistake there would
+// kill the test binary instead of failing the test.
+func runNodeWithSignals(arguments []string, signals <-chan os.Signal) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	if err := flags.Parse(arguments); err != nil {
 		return err
@@ -105,25 +122,27 @@ func runNode(arguments []string) error {
 
 	runtime.Report()
 
-	// The identity comes from the runtime rather than from a second read of the
-	// file, so the value the dialer validates is the value the deny list was built
-	// from. Reading it twice would let a regeneration between the two reads leave
-	// the process serving under an identity it no longer owns.
+	ctx, stop := contextFromSignals(signals)
+	defer stop()
+
+	return serveNode(ctx, runtime, identity, logger)
+}
+
+// serveNode builds the dispatcher and the dialer and serves until the context
+// ends.
+//
+// The context is a parameter so a test can drive the whole tail of the process
+// without signalling the test binary. The identity is a parameter rather than a
+// second read of the file, so the value the dialer validates is the value the
+// deny list was built from: reading it twice would let a regeneration between the
+// two reads leave the process serving under an identity it no longer owns.
+func serveNode(ctx context.Context, runtime *node.Runtime, identity security.NodeIdentity, logger *slog.Logger) error {
 	dispatcher := node.NewDispatcher(runtime.Authority(), identity, logger)
 
 	dialer, err := node.NewDialer(runtime.Config(), identity, dispatcher, logger)
 	if err != nil {
 		return err
 	}
-
-	// The signal channel is created here rather than inside contextFromSignals, so
-	// the wait can be tested without sending a signal to the test process.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
-
-	ctx, stop := contextFromSignals(signals)
-	defer stop()
 
 	return dialer.Run(ctx)
 }
