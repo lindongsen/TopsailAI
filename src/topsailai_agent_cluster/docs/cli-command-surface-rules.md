@@ -197,6 +197,7 @@ was dispatched rather than rejected as unknown.
 | `list` | `list`, `list --full`, `lf` | `list`, `l`, `list --full`, `lf` | yes (the `lf` shorthand implies the full layout on both surfaces) |
 | `refresh` | `refresh` | `refresh`, `r` | yes |
 | `history` | `history <endpoint-id-or-hostname>` | `history [endpoint-id-or-hostname]` | yes (standalone requires the endpoint argument; interactive requires it in workspace scope, and in endpoint scope it defaults to the current endpoint while rejecting a different one) |
+| `messages` | `messages <endpoint-id-or-hostname> <session-id>` | `messages [row-number-or-session-id]` | yes (standalone requires both arguments and addresses the provider session key; interactive resolves a bare number against the most recently rendered table, either the list or the history table, and rejects a number when neither is available) |
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
 | `info` | `info` | `info` | yes |

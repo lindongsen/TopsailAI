@@ -139,11 +139,22 @@ never a contract, and it never appears on the standalone surface.
 A session token is resolved in this order:
 
 1. A bare ASCII number in workspace or endpoint scope selects that row of the most
-   recently rendered **history** table. A number is rejected when no history table is
-   available, because a number with no table has no meaning.
+   recently rendered table, either the **list** or the **history** table. A number is
+   rejected when neither table is available, because a number with no table has no meaning.
 2. A cluster resource ID is resolved through the persisted inventory to its provider
    session ID.
 3. Any other token is used verbatim as a provider session ID.
+
+The two row-number namespaces cannot both be live, so the order above never chooses between
+two visible tables. A list render clears the history rows, and a history render clears the
+list rows, so the number always means the row the operator can see. The history namespace is
+checked first only to keep the precedence explicit if a future change ever keeps both.
+
+A list row is readable even when it carries no generation or is marked unverified. This is
+deliberate and it is the one place where `messages` diverges from `cd` and `stop`: those
+commands address a live process, so they must refuse an unverified row, while a conversation
+read addresses persisted provider data. Reusing the shared row resolver would have made the
+list-row form refuse exactly the rows the command exists to read.
 
 The provider session ID is the only key that addresses a stopped session, because a
 stopped session is absent from the inventory and therefore has no cluster resource ID.
@@ -154,6 +165,11 @@ resolves a provider session ID **within one endpoint only**, because the endpoin
 known: workspace scope requires it as an argument, and endpoint and session scope already
 name it. A token that matches several sessions inside one endpoint is rejected with the
 candidate list rather than guessed.
+
+A list row carries its own endpoint, so workspace scope resolves the row's endpoint instead
+of requiring the operator to repeat it. Endpoint scope refuses a row that belongs to another
+endpoint rather than silently retargeting it. That guard is defensive: entering an endpoint
+re-renders the list scoped to it, so the REPL does not currently produce a foreign row.
 
 ## Read-only and namespace behaviour
 

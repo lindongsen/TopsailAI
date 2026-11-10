@@ -243,7 +243,7 @@ func unitC19MainHelp() string {
 		"  refresh                               refresh inventories\n" +
 		unitC19WatchHelpLine() +
 		"  history [endpoint]                    read provider session history for one endpoint and number its rows\n" +
-		"  messages [session]                    read one session's conversation by history row number or session ID\n" +
+		"  messages [session]                    read one session's conversation by row number or session ID\n" +
 		"  model [session] [profile]             list the model profiles one session can select, by row number or session ID\n" +
 		"  help [command]                        show help\n" +
 		"  quit                                  leave interactive mode\n" +
