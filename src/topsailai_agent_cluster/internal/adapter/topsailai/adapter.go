@@ -115,6 +115,11 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			// control permission: an operator who may not control a session must not
 			// be able to run commands in its working directory either.
 			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating", RequiredPermission: "control"},
+			// agent.model.select changes the model a running agent uses, so it
+			// declares the control permission and the mutating safety class. A
+			// credential that may only read output must not be able to change what
+			// the agent is running on.
+			{Name: protocol.OperationAgentModelSelect, Version: protocol.ModelSelectPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
 		}},
 	}
 	// The provider control family is advertised per enabled action so an operator
@@ -468,6 +473,16 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		// Stop addresses the recorded controller, including a residual record whose
 		// process is already gone, so it must not require a live target.
 		args = []string{"workspace", "driver", "stop", "-s", providerKey, "--json"}
+	case protocol.OperationAgentModelSelect:
+		// The profile identifier is resolved through the durable mapping before any
+		// provider call, so an identifier this Endpoint never minted is rejected
+		// instead of being forwarded as a guess. A malformed payload is reported
+		// separately, because it is a different failure from an unknown profile.
+		modelArgs, modelCode, modelErr := a.selectModel(ctx, intent, providerKey)
+		if modelErr != nil {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, modelCode)}, modelErr
+		}
+		args = modelArgs
 	default:
 		// The provider control family is addressed by a dynamic ctl.<action>
 		// operation, so it cannot be a constant case label. controlActionArgs

@@ -1,5 +1,13 @@
 package protocol
 
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+)
+
 // ModelProfile is one selectable model configuration an Endpoint offers for a
 // session.
 //
@@ -109,4 +117,37 @@ const (
 	MaxModelCatalogBytes = 256 << 10
 	// MaxModelDisplayNameBytes bounds one display name.
 	MaxModelDisplayNameBytes = 256
+	// MaxModelProfileIDBytes bounds one opaque profile identifier. It is a
+	// separate bound from the display name because the two are different things:
+	// an identifier is minted by the Endpoint and never shown as a label, so a
+	// display-name limit would silently constrain a value no operator ever reads.
+	MaxModelProfileIDBytes = 256
 )
+
+// ModelSelectPayloadVersion is the payload schema version of agent.model.select.
+const ModelSelectPayloadVersion = "1"
+
+// ValidateModelSelectPayload validates the standard payload of agent.model.select.
+//
+// The payload carries exactly one opaque profile identifier. Unknown fields are
+// rejected rather than ignored, because the payload is the only place a caller
+// could try to smuggle provider vocabulary onto the wire: a provider model name, a
+// provider index or a provider credential would otherwise travel as an extra key
+// and be forwarded verbatim by an adapter that decodes loosely. Rejecting the
+// shape keeps the contract closed, so the Server validates a standard document and
+// never forwards provider vocabulary.
+func ValidateModelSelectPayload(payload []byte) (ModelSelectRequest, error) {
+	var request ModelSelectRequest
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return ModelSelectRequest{}, fmt.Errorf("decode model select payload: %w", err)
+	}
+	if strings.TrimSpace(request.ModelProfileID) == "" {
+		return ModelSelectRequest{}, errors.New("model_profile_id is required")
+	}
+	if len(request.ModelProfileID) > MaxModelProfileIDBytes {
+		return ModelSelectRequest{}, fmt.Errorf("model_profile_id exceeds %d bytes", MaxModelProfileIDBytes)
+	}
+	return request, nil
+}

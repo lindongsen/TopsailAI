@@ -1,6 +1,9 @@
 package protocol
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestValidateSafetyClassAcceptsClosedVocabulary pins the two standard values.
 // The vocabulary is closed because the value decides whether an operator must
@@ -86,5 +89,69 @@ func TestModelSelectRequestCarriesOnlyTheOpaqueID(t *testing.T) {
 	request := ModelSelectRequest{ModelProfileID: "mp-1"}
 	if request.ModelProfileID != "mp-1" {
 		t.Fatalf("unexpected identifier %q", request.ModelProfileID)
+	}
+}
+
+// TestValidateModelSelectPayloadAcceptsOpaqueID pins the accepted shape: exactly
+// one opaque profile identifier and nothing else.
+func TestValidateModelSelectPayloadAcceptsOpaqueID(t *testing.T) {
+	request, err := ValidateModelSelectPayload([]byte(`{"model_profile_id":"mp-1"}`))
+	if err != nil {
+		t.Fatalf("expected the payload to be accepted, got %v", err)
+	}
+	if request.ModelProfileID != "mp-1" {
+		t.Fatalf("unexpected identifier %q", request.ModelProfileID)
+	}
+}
+
+// TestValidateModelSelectPayloadRejectsBlankID proves an absent or blank
+// identifier is rejected. A blank identifier would otherwise reach an adapter as
+// "select nothing", which no provider can honour and no operator asked for.
+func TestValidateModelSelectPayloadRejectsBlankID(t *testing.T) {
+	for _, payload := range []string{
+		`{}`,
+		`{"model_profile_id":""}`,
+		`{"model_profile_id":"   "}`,
+	} {
+		if _, err := ValidateModelSelectPayload([]byte(payload)); err == nil {
+			t.Fatalf("expected %s to be rejected", payload)
+		}
+	}
+}
+
+// TestValidateModelSelectPayloadRejectsUnknownField proves provider vocabulary
+// cannot be smuggled onto the wire as an extra key. A loose decode would forward
+// a provider model name, index or credential verbatim, which is exactly what the
+// abstraction boundary forbids.
+func TestValidateModelSelectPayloadRejectsUnknownField(t *testing.T) {
+	for _, payload := range []string{
+		`{"model_profile_id":"mp-1","provider_model":"gpt-4"}`,
+		`{"model_profile_id":"mp-1","index":3}`,
+		`{"model_profile_id":"mp-1","api_key":"secret"}`,
+	} {
+		if _, err := ValidateModelSelectPayload([]byte(payload)); err == nil {
+			t.Fatalf("expected %s to be rejected", payload)
+		}
+	}
+}
+
+// TestValidateModelSelectPayloadRejectsOversizedID proves the identifier bound is
+// enforced, so an unbounded caller string cannot become an unbounded provider
+// argument.
+func TestValidateModelSelectPayloadRejectsOversizedID(t *testing.T) {
+	oversized := strings.Repeat("a", MaxModelDisplayNameBytes+1)
+	payload := []byte(`{"model_profile_id":"` + oversized + `"}`)
+	if _, err := ValidateModelSelectPayload(payload); err == nil {
+		t.Fatal("expected an oversized identifier to be rejected")
+	}
+}
+
+// TestValidateModelSelectPayloadRejectsMalformedJSON proves a document that is not
+// JSON is rejected rather than treated as an empty request.
+func TestValidateModelSelectPayloadRejectsMalformedJSON(t *testing.T) {
+	for _, payload := range []string{``, `not json`, `{"model_profile_id":`} {
+		if _, err := ValidateModelSelectPayload([]byte(payload)); err == nil {
+			t.Fatalf("expected %q to be rejected", payload)
+		}
 	}
 }
