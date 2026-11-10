@@ -171,16 +171,19 @@ func TestValidateNodeID(t *testing.T) {
 		id      string
 		wantErr bool
 	}{
-		{name: "valid", id: "node_abc123", wantErr: false},
-		{name: "valid with digits only", id: "node_0123456789", wantErr: false},
+		{name: "valid", id: "node_0123456789abcdefghijklmnop", wantErr: false},
+		{name: "valid with digits only", id: "node_01234567890123456789012345", wantErr: false},
 		{name: "empty", id: "", wantErr: true},
 		{name: "prefix only", id: "node_", wantErr: true},
-		{name: "missing prefix", id: "abc123", wantErr: true},
-		{name: "wrong prefix", id: "nodex_abc123", wantErr: true},
-		{name: "uppercase body", id: "node_ABC123", wantErr: true},
-		{name: "dash in body", id: "node_abc-123", wantErr: true},
-		{name: "dot in body", id: "node_abc.123", wantErr: true},
-		{name: "space in body", id: "node_abc 123", wantErr: true},
+		{name: "missing prefix", id: "0123456789abcdefghijklmnop", wantErr: true},
+		{name: "wrong prefix", id: "nodex_0123456789abcdefghijklmnop", wantErr: true},
+		{name: "uppercase body", id: "node_0123456789ABCDEFGHIJKLMNOP", wantErr: true},
+		{name: "dash in body", id: "node_0123456789abcdefghijklmno-", wantErr: true},
+		{name: "dot in body", id: "node_0123456789abcdefghijklmno.", wantErr: true},
+		{name: "space in body", id: "node_0123456789abcdefghijklmno ", wantErr: true},
+		{name: "body one character short", id: "node_0123456789abcdefghijklmno", wantErr: true},
+		{name: "body one character long", id: "node_0123456789abcdefghijklmnopq", wantErr: true},
+		{name: "truncated identifier", id: "node_short", wantErr: true},
 	}
 
 	for _, testCase := range cases {

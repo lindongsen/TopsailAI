@@ -45,7 +45,7 @@ func TestVersionIsSet(t *testing.T) {
 func TestHelloValidateAcceptsCompleteHello(t *testing.T) {
 	hello := Hello{
 		Version:     Version,
-		NodeID:      "node_0123456789abcdef0123456789abcdef",
+		NodeID:      "node_0123456789abcdefghijklmnop",
 		TunnelToken: []byte("tunnel-token-value"),
 		Operations:  []string{"file.read"},
 		Scopes:      []string{"project"},
@@ -60,7 +60,7 @@ func TestHelloValidateAcceptsCompleteHello(t *testing.T) {
 // refused, because the handshake cannot decide compatibility without it.
 func TestHelloValidateRejectsEmptyVersion(t *testing.T) {
 	hello := Hello{
-		NodeID:      "node_0123456789abcdef0123456789abcdef",
+		NodeID:      "node_0123456789abcdefghijklmnop",
 		TunnelToken: []byte("tunnel-token-value"),
 	}
 
@@ -89,7 +89,7 @@ func TestHelloValidateRejectsEmptyNodeID(t *testing.T) {
 func TestHelloValidateRejectsEmptyTunnelToken(t *testing.T) {
 	hello := Hello{
 		Version: Version,
-		NodeID:  "node_0123456789abcdef0123456789abcdef",
+		NodeID:  "node_0123456789abcdefghijklmnop",
 	}
 
 	if err := hello.Validate(); err == nil {
@@ -102,7 +102,7 @@ func TestHelloValidateRejectsEmptyTunnelToken(t *testing.T) {
 func TestHelloRoundTripKeepsTunnelToken(t *testing.T) {
 	original := Hello{
 		Version:     Version,
-		NodeID:      "node_0123456789abcdef0123456789abcdef",
+		NodeID:      "node_0123456789abcdefghijklmnop",
 		TunnelToken: []byte("tunnel-token-value"),
 	}
 

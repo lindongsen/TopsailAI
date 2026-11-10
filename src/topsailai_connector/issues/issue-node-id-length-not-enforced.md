@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: fixed
 created: 2026-11-10
 ---
 
@@ -39,12 +39,20 @@ the reasoning `ValidateNodeToken` legitimately uses. That reasoning does not
 transfer to the identifier: a token of an unexpected length is still comparable,
 but an identifier of an unexpected length addresses nothing.
 
-## Proposed fix
+## Fix
 
-Add an exact-length check to `ValidateNodeID` for the body, derived from
-`nodeIDRandomBytes` rather than hardcoded, so a change to the generator cannot
-silently disagree with the validator. Add a test asserting that a body one
-character short and one character long are both refused.
+`ValidateNodeID` now refuses a body whose length is not `nodeIDBodyLength`, which
+is derived from `nodeIDRandomBytes` as `(nodeIDRandomBytes*8 + 4) / 5` rather
+than hardcoded, so a change to the generator cannot silently disagree with the
+validator. The check runs after the empty-body check and before the alphabet
+check, so a truncated identifier is reported as a length problem rather than as a
+character problem.
+
+`TestValidateNodeID` gained three cases: a body one character short, a body one
+character long, and `node_short`. Every fixture identifier in the test suite was
+corrected to the real 26-character body, which is what surfaced the defect in the
+first place: the fixtures had been using 6- and 32-character bodies that the old
+validator accepted.
 
 ## Detection failure
 

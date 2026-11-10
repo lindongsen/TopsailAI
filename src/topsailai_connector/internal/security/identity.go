@@ -157,10 +157,16 @@ func ParseNodeIdentity(pair string) (NodeIdentity, error) {
 	return NodeIdentity{ID: id, Token: Secret(token)}, nil
 }
 
-// ValidateNodeID checks that an identifier has the fixed prefix and the exact
-// length the generator produces. A length check is not a security control, but
-// it turns a truncated identifier into a startup failure instead of a Node that
-// can never be addressed.
+// nodeIDBodyLength is the number of characters the generator emits after the
+// prefix. It is derived from nodeIDRandomBytes rather than written as a literal,
+// so a change to the entropy cannot leave the validator checking a length the
+// generator no longer produces.
+const nodeIDBodyLength = (nodeIDRandomBytes*8 + 4) / 5
+
+// ValidateNodeID checks that an identifier has the fixed prefix, the exact
+// length the generator produces and only alphabet characters. A length check is
+// not a security control, but it turns a truncated identifier into a startup
+// failure instead of a Node that can never be addressed.
 func ValidateNodeID(id string) error {
 	if id == "" {
 		return errors.New("node id is empty")
@@ -171,6 +177,9 @@ func ValidateNodeID(id string) error {
 	body := id[len(NodeIDPrefix):]
 	if body == "" {
 		return fmt.Errorf("node id %q has no body after the prefix", id)
+	}
+	if len(body) != nodeIDBodyLength {
+		return fmt.Errorf("node id %q has a %d character body, want %d", id, len(body), nodeIDBodyLength)
 	}
 	for _, character := range body {
 		if !isNodeIDCharacter(character) {

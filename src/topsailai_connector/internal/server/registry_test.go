@@ -36,7 +36,7 @@ func (f *fakeChannel) closes() int {
 // its node id.
 func TestRegistryRegisterAndLookup(t *testing.T) {
 	registry := NewRegistry()
-	channel := &fakeChannel{nodeID: "node_0123456789abcdef0123456789abcdef"}
+	channel := &fakeChannel{nodeID: "node_0123456789abcdefghijklmnop"}
 
 	registration, replaced, err := registry.Register(channel)
 	if err != nil {
@@ -66,7 +66,7 @@ func TestRegistryRegisterAndLookup(t *testing.T) {
 func TestRegistryLookupUnknownNode(t *testing.T) {
 	registry := NewRegistry()
 
-	channel, ok := registry.Lookup("node_0123456789abcdef0123456789abcdef")
+	channel, ok := registry.Lookup("node_0123456789abcdefghijklmnop")
 	if ok {
 		t.Fatalf("Lookup() ok = true, want false")
 	}
@@ -116,7 +116,7 @@ func TestRegistryRejectsInvalidNodeID(t *testing.T) {
 // two answers to one request.
 func TestRegistryReconnectReplacesEntry(t *testing.T) {
 	registry := NewRegistry()
-	first := &fakeChannel{nodeID: "node_0123456789abcdef0123456789abcdef"}
+	first := &fakeChannel{nodeID: "node_0123456789abcdefghijklmnop"}
 	second := &fakeChannel{nodeID: first.nodeID}
 
 	if _, _, err := registry.Register(first); err != nil {
@@ -146,7 +146,7 @@ func TestRegistryReconnectReplacesEntry(t *testing.T) {
 // entry it installed.
 func TestRegistryUnregisterRemovesOwnEntry(t *testing.T) {
 	registry := NewRegistry()
-	channel := &fakeChannel{nodeID: "node_0123456789abcdef0123456789abcdef"}
+	channel := &fakeChannel{nodeID: "node_0123456789abcdefghijklmnop"}
 
 	registration, _, err := registry.Register(channel)
 	if err != nil {
@@ -167,7 +167,7 @@ func TestRegistryUnregisterRemovesOwnEntry(t *testing.T) {
 // instead of failing, because a shutdown path may run twice.
 func TestRegistryUnregisterTwiceIsSafe(t *testing.T) {
 	registry := NewRegistry()
-	channel := &fakeChannel{nodeID: "node_0123456789abcdef0123456789abcdef"}
+	channel := &fakeChannel{nodeID: "node_0123456789abcdefghijklmnop"}
 
 	registration, _, err := registry.Register(channel)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestRegistryUnregisterTwiceIsSafe(t *testing.T) {
 // and answers node_offline.
 func TestRegistryStaleUnregisterKeepsReplacement(t *testing.T) {
 	registry := NewRegistry()
-	first := &fakeChannel{nodeID: "node_0123456789abcdef0123456789abcdef"}
+	first := &fakeChannel{nodeID: "node_0123456789abcdefghijklmnop"}
 	second := &fakeChannel{nodeID: first.nodeID}
 
 	firstRegistration, _, err := registry.Register(first)
@@ -218,7 +218,7 @@ func TestRegistryStaleUnregisterKeepsReplacement(t *testing.T) {
 func TestRegistryUnregisterUnknownRegistration(t *testing.T) {
 	registry := NewRegistry()
 
-	if registry.Unregister(Registration{nodeID: "node_0123456789abcdef0123456789abcdef", generation: 7}) {
+	if registry.Unregister(Registration{nodeID: "node_0123456789abcdefghijklmnop", generation: 7}) {
 		t.Fatalf("Unregister(unknown) = true, want false")
 	}
 }
@@ -227,8 +227,8 @@ func TestRegistryUnregisterUnknownRegistration(t *testing.T) {
 // connection and empties the registry.
 func TestRegistryCloseAllClosesEveryChannel(t *testing.T) {
 	registry := NewRegistry()
-	first := &fakeChannel{nodeID: "node_0123456789abcdef0123456789abcdef"}
-	second := &fakeChannel{nodeID: "node_fedcba9876543210fedcba9876543210"}
+	first := &fakeChannel{nodeID: "node_0123456789abcdefghijklmnop"}
+	second := &fakeChannel{nodeID: "node_ponmlkjihgfedcba9876543210"}
 
 	for _, channel := range []*fakeChannel{first, second} {
 		if _, _, err := registry.Register(channel); err != nil {
@@ -254,8 +254,8 @@ func TestRegistryCloseAllClosesEveryChannel(t *testing.T) {
 // to a Server that is going away.
 func TestRegistryCloseAllReportsFirstError(t *testing.T) {
 	registry := NewRegistry()
-	failing := &fakeChannel{nodeID: "node_0123456789abcdef0123456789abcdef", closeErr: errors.New("close failed")}
-	healthy := &fakeChannel{nodeID: "node_fedcba9876543210fedcba9876543210"}
+	failing := &fakeChannel{nodeID: "node_0123456789abcdefghijklmnop", closeErr: errors.New("close failed")}
+	healthy := &fakeChannel{nodeID: "node_ponmlkjihgfedcba9876543210"}
 
 	for _, channel := range []*fakeChannel{failing, healthy} {
 		if _, _, err := registry.Register(channel); err != nil {
@@ -282,7 +282,7 @@ func TestRegistryConcurrentRegisterAndLookup(t *testing.T) {
 		waitGroup.Add(1)
 		go func(index int) {
 			defer waitGroup.Done()
-			channel := &fakeChannel{nodeID: "node_0123456789abcdef0123456789abcdef"}
+			channel := &fakeChannel{nodeID: "node_0123456789abcdefghijklmnop"}
 			registration, replaced, err := registry.Register(channel)
 			if err != nil {
 				return

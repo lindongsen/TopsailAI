@@ -85,7 +85,7 @@ func newDialerFixture(t *testing.T, answer func(protocol.Hello) []protocol.Frame
 	}
 
 	identity := security.NodeIdentity{
-		ID:    "node_0123456789abcdef0123456789abcdef",
+		ID:    "node_0123456789abcdefghijklmnop",
 		Token: security.Secret("node-token-value-1234"),
 	}
 
@@ -129,7 +129,7 @@ func TestDialerSendsHelloWithTunnelToken(t *testing.T) {
 		if hello.Version != protocol.Version {
 			t.Fatalf("version = %q, want %q", hello.Version, protocol.Version)
 		}
-		if hello.NodeID != "node_0123456789abcdef0123456789abcdef" {
+		if hello.NodeID != "node_0123456789abcdefghijklmnop" {
 			t.Fatalf("node id = %q, want the identity id", hello.NodeID)
 		}
 		if string(hello.TunnelToken) != "tunnel-token-value-1234" {
@@ -225,7 +225,7 @@ func TestDialerRefusesUnexpectedHandshakeAnswer(t *testing.T) {
 func TestDialerServesRequestAfterHandshake(t *testing.T) {
 	requestFrame := func() protocol.Frame {
 		request := protocol.Request{
-			NodeID:    "node_0123456789abcdef0123456789abcdef",
+			NodeID:    "node_0123456789abcdefghijklmnop",
 			NodeToken: security.Secret("node-token-value-1234"),
 			Operation: protocol.OperationFileRead,
 			Scope:     security.Scope("project"),
@@ -278,7 +278,7 @@ func TestDialerServesRequestAfterHandshake(t *testing.T) {
 		ConfigDir:   t.TempDir(),
 	}
 	identity := security.NodeIdentity{
-		ID:    "node_0123456789abcdef0123456789abcdef",
+		ID:    "node_0123456789abcdefghijklmnop",
 		Token: security.Secret("node-token-value-1234"),
 	}
 	dispatcher := NewDispatcher(nil, identity, slog.New(slog.DiscardHandler))
@@ -353,7 +353,7 @@ func TestDialerRunStopsOnContextCancel(t *testing.T) {
 // refused, because it would accept requests and have no answer.
 func TestNewDialerRefusesNilDispatcher(t *testing.T) {
 	identity := security.NodeIdentity{
-		ID:    "node_0123456789abcdef0123456789abcdef",
+		ID:    "node_0123456789abcdefghijklmnop",
 		Token: security.Secret("node-token-value-1234"),
 	}
 	if _, err := NewDialer(Config{}, identity, nil, slog.New(slog.DiscardHandler)); err == nil {

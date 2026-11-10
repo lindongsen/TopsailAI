@@ -361,7 +361,7 @@ func TestHandlerRefusalMessageIsFixedPerCode(t *testing.T) {
 // the body or from a remembered value.
 func TestHandlerRejectsNodeTokenOnAnotherNode(t *testing.T) {
 	fixture := newFixture(t, true)
-	const otherNodeID = "node_def456"
+	const otherNodeID = "node_0123456789abcdefghijklmnop"
 	if _, _, err := fixture.registry.Register(&fakeChannel{nodeID: otherNodeID}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}

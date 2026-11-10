@@ -18,7 +18,7 @@ import (
 
 const (
 	// testNodeID is a well formed node id.
-	testNodeID = "node_abc123"
+	testNodeID = "node_0123456789abcdefghijklmnop"
 	// testClientToken is the Server's own gate.
 	testClientToken = "client-token-0123456789"
 	// testNodeToken is the Node's gate. The Server never validates it, so the
@@ -201,7 +201,15 @@ func TestHandlerRejectsBadPath(t *testing.T) {
 // TestHandlerRejectsMalformedNodeID checks that a syntactically invalid node id
 // is refused, so a typo does not become a credential test.
 func TestHandlerRejectsMalformedNodeID(t *testing.T) {
-	for _, nodeID := range []string{"node_ABC123", "abc123", "node_", "node_ab-c", "node_ab.c"} {
+	for _, nodeID := range []string{
+		"node_0123456789ABCDEFGHIJKLMNOP",
+		"0123456789abcdefghijklmnop",
+		"node_",
+		"node_0123456789abcdefghijklmno-",
+		"node_0123456789abcdefghijklmno.",
+		"node_0123456789abcdefghijklmno",
+		"node_0123456789abcdefghijklmnopq",
+	} {
 		fixture := newFixture(t, true)
 		request := operationRequest(nodeID, validBody)
 

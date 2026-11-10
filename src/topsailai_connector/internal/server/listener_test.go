@@ -123,7 +123,7 @@ func TestChannelAcceptsValidHello(t *testing.T) {
 	fixture := newListenerFixture(t)
 	conn := fixture.dial(t)
 
-	sendHello(t, conn, validHello("node_0123456789abcdef0123456789abcdef"))
+	sendHello(t, conn, validHello("node_0123456789abcdefghijklmnop"))
 
 	frame := readFrame(t, conn)
 	if frame.Type != protocol.FrameHelloConfirm {
@@ -152,7 +152,7 @@ func TestChannelRefusesWrongTunnelToken(t *testing.T) {
 	fixture := newListenerFixture(t)
 	conn := fixture.dial(t)
 
-	hello := validHello("node_0123456789abcdef0123456789abcdef")
+	hello := validHello("node_0123456789abcdefghijklmnop")
 	hello.TunnelToken = []byte("wrong-tunnel-token-1234")
 	sendHello(t, conn, hello)
 
@@ -180,7 +180,7 @@ func TestChannelRefusesEmptyTunnelToken(t *testing.T) {
 	fixture := newListenerFixture(t)
 	conn := fixture.dial(t)
 
-	hello := validHello("node_0123456789abcdef0123456789abcdef")
+	hello := validHello("node_0123456789abcdefghijklmnop")
 	hello.TunnelToken = nil
 	sendHello(t, conn, hello)
 
@@ -258,7 +258,7 @@ func TestChannelRefusesFirstFrameThatIsNotHello(t *testing.T) {
 // connections would be two answers to one request.
 func TestChannelReplacesLiveConnection(t *testing.T) {
 	fixture := newListenerFixture(t)
-	nodeID := "node_0123456789abcdef0123456789abcdef"
+	nodeID := "node_0123456789abcdefghijklmnop"
 
 	first := fixture.dial(t)
 	sendHello(t, first, validHello(nodeID))
@@ -293,7 +293,7 @@ func TestChannelAnswersHeartbeat(t *testing.T) {
 	fixture := newListenerFixture(t)
 	conn := fixture.dial(t)
 
-	sendHello(t, conn, validHello("node_0123456789abcdef0123456789abcdef"))
+	sendHello(t, conn, validHello("node_0123456789abcdefghijklmnop"))
 	if frame := readFrame(t, conn); frame.Type != protocol.FrameHelloConfirm {
 		t.Fatalf("frame type = %q, want %q", string(frame.Type), string(protocol.FrameHelloConfirm))
 	}
@@ -318,7 +318,7 @@ func TestChannelAnswersHeartbeat(t *testing.T) {
 func TestChannelRefusesSecondHandshake(t *testing.T) {
 	fixture := newListenerFixture(t)
 	conn := fixture.dial(t)
-	nodeID := "node_0123456789abcdef0123456789abcdef"
+	nodeID := "node_0123456789abcdefghijklmnop"
 
 	sendHello(t, conn, validHello(nodeID))
 	if frame := readFrame(t, conn); frame.Type != protocol.FrameHelloConfirm {
@@ -341,7 +341,7 @@ func TestChannelRefusesRequestSentToServer(t *testing.T) {
 	fixture := newListenerFixture(t)
 	conn := fixture.dial(t)
 
-	sendHello(t, conn, validHello("node_0123456789abcdef0123456789abcdef"))
+	sendHello(t, conn, validHello("node_0123456789abcdefghijklmnop"))
 	if frame := readFrame(t, conn); frame.Type != protocol.FrameHelloConfirm {
 		t.Fatalf("frame type = %q, want %q", string(frame.Type), string(protocol.FrameHelloConfirm))
 	}
@@ -369,7 +369,7 @@ func TestChannelRefusesUnknownFrameType(t *testing.T) {
 	fixture := newListenerFixture(t)
 	conn := fixture.dial(t)
 
-	sendHello(t, conn, validHello("node_0123456789abcdef0123456789abcdef"))
+	sendHello(t, conn, validHello("node_0123456789abcdefghijklmnop"))
 	if frame := readFrame(t, conn); frame.Type != protocol.FrameHelloConfirm {
 		t.Fatalf("frame type = %q, want %q", string(frame.Type), string(protocol.FrameHelloConfirm))
 	}
@@ -432,7 +432,7 @@ func TestChannelRefusesPost(t *testing.T) {
 func TestListenerForwardRefusesOfflineNode(t *testing.T) {
 	fixture := newListenerFixture(t)
 
-	_, err := fixture.listener.Forward(context.Background(), "node_0123456789abcdef0123456789abcdef", protocol.Request{})
+	_, err := fixture.listener.Forward(context.Background(), "node_0123456789abcdefghijklmnop", protocol.Request{})
 	if !errors.Is(err, ErrNodeOffline) {
 		t.Fatalf("error = %v, want %v", err, ErrNodeOffline)
 	}
@@ -442,7 +442,7 @@ func TestListenerForwardRefusesOfflineNode(t *testing.T) {
 // Node over the channel and its answer comes back unchanged.
 func TestListenerForwardRelaysResponse(t *testing.T) {
 	fixture := newListenerFixture(t)
-	nodeID := "node_0123456789abcdef0123456789abcdef"
+	nodeID := "node_0123456789abcdefghijklmnop"
 	conn := fixture.dial(t)
 
 	sendHello(t, conn, validHello(nodeID))
@@ -514,7 +514,7 @@ func TestListenerForwardRelaysResponse(t *testing.T) {
 // delivered to a Node it was not addressed to.
 func TestListenerForwardRefusesWrongNodeID(t *testing.T) {
 	fixture := newListenerFixture(t)
-	nodeID := "node_0123456789abcdef0123456789abcdef"
+	nodeID := "node_0123456789abcdefghijklmnop"
 	conn := fixture.dial(t)
 
 	sendHello(t, conn, validHello(nodeID))
@@ -532,7 +532,7 @@ func TestListenerForwardRefusesWrongNodeID(t *testing.T) {
 // gives up, so a Node that never answers does not hold the caller forever.
 func TestListenerForwardHonoursContext(t *testing.T) {
 	fixture := newListenerFixture(t)
-	nodeID := "node_0123456789abcdef0123456789abcdef"
+	nodeID := "node_0123456789abcdefghijklmnop"
 	conn := fixture.dial(t)
 
 	sendHello(t, conn, validHello(nodeID))
@@ -554,7 +554,7 @@ func TestListenerForwardHonoursContext(t *testing.T) {
 // will never arrive.
 func TestListenerForwardReturnsWhenChannelCloses(t *testing.T) {
 	fixture := newListenerFixture(t)
-	nodeID := "node_0123456789abcdef0123456789abcdef"
+	nodeID := "node_0123456789abcdefghijklmnop"
 	conn := fixture.dial(t)
 
 	sendHello(t, conn, validHello(nodeID))
@@ -588,7 +588,7 @@ func TestListenerHandlerServesBothSurfaces(t *testing.T) {
 
 	// The operation path is reachable and refuses a request with no client token,
 	// which proves the CLI surface is mounted on the same handler.
-	request, err := http.NewRequest(http.MethodPost, fixture.server.URL+OperationPathPrefix+"node_0123456789abcdef0123456789abcdef"+OperationPathSuffix, strings.NewReader("{}"))
+	request, err := http.NewRequest(http.MethodPost, fixture.server.URL+OperationPathPrefix+"node_0123456789abcdefghijklmnop"+OperationPathSuffix, strings.NewReader("{}"))
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}

@@ -188,7 +188,7 @@ func TestSaveIdentityReportsAnUnwritableDirectory(t *testing.T) {
 func TestSaveIdentityRejectsAnInvalidToken(t *testing.T) {
 	configDir, identityPath := newIdentityFixture(t)
 
-	identity := security.NodeIdentity{ID: "node_0123456789abcdef0123456789abcdef", Token: security.Secret("bad-token")}
+	identity := security.NodeIdentity{ID: "node_0123456789abcdefghijklmnop", Token: security.Secret("bad-token")}
 	if err := SaveIdentity(identityPath, identity); err == nil {
 		t.Fatal("SaveIdentity() = nil error, want a token refusal")
 	}
