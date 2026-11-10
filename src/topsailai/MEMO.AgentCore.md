@@ -782,6 +782,8 @@ Context environment information can be added to the system prompt through `/Tops
   - `CurrentProject` — `TOPSAILAI_PROJECT_WORKSPACE` and `TOPSAILAI_PWD`.
   - Optional custom content from `ENV_PROMPT` (file path or raw text).
 
+Session file locations are intentionally **not** part of this block. `self_tool-get_self_info` reads the session metadata file at runtime and reports the absolute path of every related session file, so the prompt cannot go stale when a session name or the file set changes.
+
 ### Relevant environment variables
 See `docs/Environment_Variables.md` for full details:
 - `ENV_PROMPT` — custom environment prompt (file path or raw text).

@@ -144,8 +144,10 @@ class CurrentEvents(_Base):
     """
     Prompt generator for the current execution's events file location.
 
-    The events file records execution events such as tool calls. Its path is
-    resolved at runtime using the unified helper from the events module.
+    Retained but intentionally unused. Session file locations are no longer
+    part of the environment prompt because self_tool reads the session
+    metadata file at runtime and reports the absolute path of every related
+    session file. The class stays available for explicit composition.
     """
 
     @property
@@ -183,8 +185,12 @@ def generate_prompt_for_env() -> str:
     Generate a comprehensive environment prompt for AI context.
 
     This function combines date, system information, project information,
-    the current events file location, and optional custom environment prompts
-    into a single formatted string.
+    and optional custom environment prompts into a single formatted string.
+
+    Session file locations are intentionally not part of this prompt. The
+    self_tool reads the session metadata file at runtime and reports the
+    absolute path of every related session file, so a static prompt cannot
+    go stale when a session name or file set changes.
 
     The custom environment prompt can be provided via the ENV_PROMPT
     environment variable, which can be either:
@@ -206,12 +212,15 @@ def generate_prompt_for_env() -> str:
                 env_prompt = fp.read()
 
     # Combine all prompt components with proper formatting
+    # Session file locations are deliberately absent from this prompt. The agent
+    # can call self_tool-get_self_info at any time to read its own session
+    # metadata file and get the absolute path of every related session file
+    # (events log, stdout log, input pipe, agent2llm inject file).
     return "# Environment\n" + "\n".join(
         [
             CurrentDate().prompt,
             CurrentSystem().prompt,
             CurrentProject().prompt,
-            CurrentEvents().prompt,
             env_prompt,
         ]
     )
