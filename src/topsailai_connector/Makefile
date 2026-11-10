@@ -80,10 +80,17 @@ bdd:
 # The end-to-end suite drives two real processes over a real socket, so it builds
 # the binaries first. Depending on build is what stops a stale binary in bin/ from
 # answering for source that has since changed, which would make a green run a lie.
+#
+# run.sh proves one read and the three refusals. reconnect.sh proves what a single
+# connection cannot show: that a dead Node is refused instead of hanging, that a
+# restarted Node recovers, that concurrent reads keep their own answers, and that a
+# second Node with the same identity replaces the first without the first evicting
+# it on the way out.
 e2e: build
 	@mkdir -p $(TMP_DIR)
 	bash tests/e2e/start.sh 2>&1 | tee $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/reconnect.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 
 check: vet test-unit coverage integration bdd e2e
 
