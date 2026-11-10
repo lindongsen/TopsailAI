@@ -155,4 +155,13 @@ func registerSteps(ctx *godog.ScenarioContext) {
 		return putOverlappingArchive(ctx, "recover", name)
 	})
 	ctx.Step(`^the object "([^"]+)" retains recorded identity and creation metadata$`, recordedPublicMetadataMatches)
+	ctx.Step(`^a scenario file "([^"]+)" with content "([^"]*)"$`, givenScenarioFile)
+	ctx.Step(`^a scenario folder "([^"]+)"$`, givenScenarioFolder)
+	ctx.Step(`^a scenario file "([^"]+)" with (\d+) repeated "([^"]*)"$`, givenScenarioRepeatedFile)
+	ctx.Step(`^I run the file command with arguments:$`, runFileArguments)
+	ctx.Step(`^scenario file "([^"]+)" contains "([^"]*)"$`, scenarioFileContains)
+	ctx.Step(`^scenario file "([^"]+)" does not contain "([^"]*)"$`, scenarioFileDoesNotContain)
+	ctx.Step(`^scenario file "([^"]+)" equals "([^"]*)"$`, scenarioFileEquals)
+	ctx.Step(`^scenario file "([^"]+)" has size (\d+)$`, scenarioFileHasSize)
+	ctx.Step(`^scenario folder "([^"]+)" exists$`, scenarioFolderExists)
 }

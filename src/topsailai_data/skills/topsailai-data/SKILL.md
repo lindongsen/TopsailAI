@@ -320,6 +320,7 @@ bin/topsailai-data show hello
 | `get-archive` | `get-archive <id>` | Output the object's actual data as a tar archive to stdout. |
 | `put` | `put <id> <dest-file> [--from <file\|->]` | Write a single file into the object's actual data. `<dest-file>` is the name inside the object; `--from` accepts a local file or `-` for stdin; when omitted, content is read from stdin. |
 | `put-archive` | `put-archive <id> <archive\|->` | Replace object actual data from a tar archive. Use `-` to read the archive from stdin. |
+| `file` | `file <subcommand> [arguments]` | Read, inspect, and edit local files and folders. See the file command group section. |
 
 ### Command examples
 
@@ -716,6 +717,8 @@ enable them explicitly.
 | `TOPSAILAI_DATA_INCLUDE_DELETED` | no | `false` | Include `deleted`/`ceased` objects in list/search. |
 | `TOPSAILAI_DATA_CEASED_RETENTION_DAYS` | no | `30` | Retention window for ceased metadata. |
 | `TOPSAILAI_DATA_LOG_LEVEL` | no | `INFO` | Log level. |
+| `TOPSAILAI_DATA_FILE_MAX_BYTES` | no | `30000` | Byte limit for reading a file whose extension is not whitelisted. |
+| `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT` | no | built-in list | Comma-separated extension override. `*` disables truncation; `!*` forces it. |
 
 Variables prefixed with `TOPSAILAI_DATA_ADAPTER_` are passed to adapter factories as adapter-specific settings.
 
@@ -763,3 +766,64 @@ read this skill documentation first rather than exploring the filesystem.
 - `put-archive` and `recover --from` reject file-backed archive sources located inside or aliased into the target object directory before cleanup or extraction. The object data and lifecycle status remain unchanged after rejection.
 - `.topsailai-data-write-*` is reserved for internal temporary files. These files are excluded from archive output, `show` folder trees, `exists` checks, and move copies.
 - Expired reserved temporary files are cleaned recursively at object cleanup/GC boundaries after 24 hours. Fresh temporary files, unrelated files, and directory symlinks are preserved.
+
+## File and folder command group
+
+The `file` command group exposes the file and folder capabilities of the
+TopsailAI file tool. It operates on the local filesystem, not on stored
+objects, so it is the right tool when a task needs to read or edit a file
+outside the topsailai-data store.
+
+| Subcommand | Usage | Description |
+|------------|-------|-------------|
+| `read` | `file read <file_path> [--seek n] [--size n]` | Read a file, optionally a byte window. A negative `--seek` counts from the end; `--size -1` reads to the end. |
+| `read-lines` | `file read-lines <file_path> [--start n] [--end n]` | Read a line range as `{n}-{content}`. `--end 0` reads only `--start`; `--end -1` reads to the end. |
+| `read-around` | `file read-around <file_path> <line_number> [--context n]` | Read a line with surrounding context. The target is marked `:` and context lines `-`. |
+| `read-context` | `file read-context <file_path> <pattern> [--context n] [--case-sensitive]` | Read lines matching a regular expression with context. Matching is case-insensitive by default. |
+| `read-files` | `file read-files <file_path...> [--format yaml\|json]` | Read several files into one path-to-content map. |
+| `write` | `file write <file_path> [--content <text>\|--from <path\|->] [--seek n] [--insert]` | Write content. `--insert` inserts at the offset instead of overwriting. |
+| `append` | `file append <file_path> [--content <text>\|--from <path\|->]` | Append content to a file. |
+| `exists` | `file exists <name=path...> [--format yaml\|json]` | Check several paths for existence. |
+| `mkdirs` | `file mkdirs <absolute_dir...>` | Create folders, including missing parents. Absolute paths are required. |
+| `list-dirs` | `file list-dirs <dir...> [--format yaml\|json]` | List several folders with sorted entries. |
+| `size` | `file size <file_path>` | Report a file size in bytes. |
+| `overwrite-lines` | `file overwrite-lines <file_path> <start_num> [--end n] [--content <text>\|--from <path\|->]` | Replace a line range and print a unified diff. |
+| `insert` | `file insert <file_path> <line_num> [--content <text>\|--from <path\|->] [--before]` | Insert content before or after a line and print a unified diff. |
+
+### Examples
+
+```
+bin/topsailai-data file read ./notes/design.md
+bin/topsailai-data file read ./notes/design.md --seek 100 --size 200
+bin/topsailai-data file read-lines ./notes/design.md --start 10 --end 20
+bin/topsailai-data file read-around ./notes/design.md 42 --context 3
+bin/topsailai-data file read-context ./notes/design.md "TODO" --context 2
+bin/topsailai-data file read-files ./a.md ./b.md --format json
+bin/topsailai-data file write ./notes/new.md --content "# Title"
+bin/topsailai-data file write ./notes/new.md --from ./draft.md
+bin/topsailai-data file append ./notes/log.md --content "one more line"
+bin/topsailai-data file exists a=./a.md b=./b.md
+bin/topsailai-data file mkdirs /tmp/work/reports
+bin/topsailai-data file list-dirs ./notes ./docs
+bin/topsailai-data file size ./notes/design.md
+bin/topsailai-data file overwrite-lines ./notes/design.md 10 --end 12 --content "replacement"
+bin/topsailai-data file insert ./notes/design.md 5 --content "inserted line"
+```
+
+### Behaviour notes
+
+- Content whose extension is not whitelisted is truncated at
+  `TOPSAILAI_DATA_FILE_MAX_BYTES` (default `30000`) and the suffix
+  ` ... (force to truncate)` is appended. Whitelisted extensions are returned
+  in full.
+- `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT` overrides the whitelist.
+  Use `*` to disable truncation for every extension and `!*` to force it.
+- `--seek` and `--size` count bytes, not characters. This differs from the
+  Python file tool, which counts characters.
+- `overwrite-lines` and `insert` print a unified diff. `overwrite-lines` also
+  prints the warning that line numbers change after each call, so re-read the
+  file before the next edit.
+- `mkdirs` rejects relative paths so a call cannot create folders in an
+  unexpected working directory.
+- `read-files`, `list-dirs`, and `exists` record a per-item failure instead of
+  hiding the other items.

@@ -104,6 +104,7 @@ func registeredCommands() []Command {
 		{Name: "get-archive", Usage: "get-archive <id>", Run: runGetArchive},
 		{Name: "put", Usage: "put <id> <dest-file> [--from <src-file|->]", Run: runPut},
 		{Name: "put-archive", Usage: "put-archive <id> <archive>", Run: runPutArchive},
+		{Name: "file", Usage: "file <subcommand> [arguments] (read, read-lines, read-around, read-context, read-files, write, append, exists, mkdirs, list-dirs, size, overwrite-lines, insert)", Run: runFile},
 	}
 }
 

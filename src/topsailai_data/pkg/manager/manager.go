@@ -90,6 +90,15 @@ func (m *Manager) Root() string {
 	return m.metaRoot
 }
 
+// Config returns the configuration the manager was created with.
+//
+// It lets CLI commands read boundary configuration such as the file read limit
+// without re-reading process-wide environment variables deeper in the call
+// stack.
+func (m *Manager) Config() *config.Config {
+	return m.cfg
+}
+
 var localFactoriesRegistered bool
 
 func registerLocalFactories() {

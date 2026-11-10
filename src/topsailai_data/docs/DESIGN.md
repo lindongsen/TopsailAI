@@ -642,6 +642,8 @@ Actual data is preserved during soft delete, so recovery restores the object to 
 | `TOPSAILAI_DATA_READ_LOCK` | no | `0` | If `1`, read operations acquire the object lock. |
 | `TOPSAILAI_DATA_INCLUDE_DELETED` | no | `false` | If `true`, list/search operations include objects with status `deleted` or `ceased`. |
 | `TOPSAILAI_DATA_CEASED_RETENTION_DAYS` | no | `30` | Number of days to retain `ceased` metadata before cleanup. |
+| `TOPSAILAI_DATA_FILE_MAX_BYTES` | no | `30000` | Byte limit applied when reading a file whose extension is not whitelisted. |
+| `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT` | no | built-in list | Comma-separated extension override for the no-truncate whitelist. `*` disables truncation; `!*` forces it. |
 All paths in configuration are resolved relative to the process working directory or as absolute paths. No hardcoded paths are used.
 
 ## 14. Logging
@@ -721,3 +723,78 @@ Single-file `put` rejects a source that is the same file as the destination, inc
 `put-archive` and `recover --from` reject file-backed archive sources that overlap the target object directory or any file that the archive write may clear or replace. The rejection occurs before cleanup, extraction, or lifecycle metadata updates, preserving the original object data and status.
 
 The local adapter reserves the `.topsailai-data-write-*` namespace for temporary replacements. Reserved temporary files are excluded from archive reads, folder-tree output, existence checks, and move copies. Expired reserved temporary files are removed recursively at object cleanup/GC boundaries after 24 hours; fresh and unrelated files are preserved, and directory symlinks are not traversed.
+
+## 20. File and Folder Command Group
+
+The `file` command group exposes the file and folder capabilities of the
+TopsailAI file tool through the same CLI. It is implemented in
+`pkg/filetool` as a reusable library and in `pkg/cli/file_commands.go` as the
+argument-parsing layer. The library has no CLI or adapter dependency, so every
+capability is unit tested in isolation.
+
+### 20.1 Capability Inventory
+
+| Subcommand | Capability | Arguments |
+|------------|------------|-----------|
+| `read` | Read a file, optionally a byte window | `<file_path> [--seek n] [--size n]` |
+| `read-lines` | Read a line range | `<file_path> [--start n] [--end n]` |
+| `read-around` | Read context around one line | `<file_path> <line_number> [--context n]` |
+| `read-context` | Read lines matching a pattern with context | `<file_path> <pattern> [--context n] [--case-sensitive]` |
+| `read-files` | Read several files into one map | `<file_path...> [--format yaml\|json]` |
+| `write` | Write content, optionally at a byte offset | `<file_path> [--content <text>\|--from <path\|->] [--seek n] [--insert]` |
+| `append` | Append content | `<file_path> [--content <text>\|--from <path\|->]` |
+| `exists` | Check several paths for existence | `<name=path...> [--format yaml\|json]` |
+| `mkdirs` | Create folders, including parents | `<absolute_dir...>` |
+| `list-dirs` | List several folders | `<dir...> [--format yaml\|json]` |
+| `size` | Report a file size in bytes | `<file_path>` |
+| `overwrite-lines` | Replace a line range and return a diff | `<file_path> <start_num> [--end n] [--content <text>\|--from <path\|->]` |
+| `insert` | Insert content before or after a line and return a diff | `<file_path> <line_num> [--content <text>\|--from <path\|->] [--before]` |
+
+### 20.2 Preserved Behaviour Contracts
+
+- `--seek` and `--size` are byte offsets. A negative `--seek` counts from the
+  end of the file; `--size -1` reads to the end.
+- Content whose extension is not whitelisted is truncated at
+  `TOPSAILAI_DATA_FILE_MAX_BYTES` and the suffix ` ... (force to truncate)` is
+  appended. Whitelisted extensions are returned in full.
+- The whitelist override accepts `*` to disable truncation for every extension
+  and `!*` to force truncation for every extension.
+- Encoding is detected from a bounded leading sample and decoded incrementally;
+  undecodable bytes are replaced so a partially corrupted file still yields
+  readable text.
+- `--end 0` addresses only `--start`; `--end -1` reads through the end of the
+  file; any other negative value is rejected.
+- `overwrite-lines` and `insert` preserve the surrounding line endings and
+  return a unified diff. `overwrite-lines` also returns the warning that line
+  numbers change after each call.
+- `mkdirs` requires absolute paths so a call cannot silently create folders
+  relative to an unexpected working directory.
+- `read-files`, `list-dirs`, and `exists` record a per-item failure instead of
+  hiding the other items.
+
+### 20.3 Documented Deviation
+
+The TopsailAI file tool counts `seek` and `size` in characters because Python
+strings are character indexed. This implementation counts bytes because Go
+strings are byte indexed. For ASCII and UTF-8 text the two agree; for
+multi-byte characters a byte offset may land inside a character. Callers that
+need character-accurate windows on multi-byte text must account for this.
+
+### 20.4 Configuration Boundary
+
+`TOPSAILAI_DATA_FILE_MAX_BYTES` and
+`TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT` are read once by
+`config.Load` at the CLI boundary and passed to the library as an explicit
+`filetool.Options` value. The library never reads process-wide environment
+variables, so tests override behaviour through parameters rather than by
+mutating global state.
+
+### 20.5 Testing
+
+- `pkg/filetool` unit tests cover all thirteen capabilities, including
+  truncation, whitelist overrides, encoding fallback, line-ending preservation,
+  and the `end_num` sentinel rules.
+- `pkg/cli` tests exercise every subcommand through the command layer with an
+  explicit configuration, so no test depends on process environment.
+- `tests/bdd/features/file-tool.feature` runs the real binary against an
+  isolated store and asserts user-visible output for every subcommand.
