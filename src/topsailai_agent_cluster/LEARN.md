@@ -465,3 +465,53 @@ other words, and the failure direction is silent in both ways. A false positive 
 implementation look broken, and a false negative would let an unwanted advertisement pass. This is
 the same class of error as matching a fixture name against a real state name: a substring match is
 not an identity match.
+
+## Reading the implementation first makes the implementation the design
+
+Trigger: asked to design a session model-selection command, the first design was written by reading
+the provider's registry file, its selection function and its numbered text output, and then copying
+that shape into the cluster. The result named provider files, inherited a provider numbering scheme
+as if it were an identity, and would have needed a provider change to produce a structured menu. The
+human rejected the direction: the cluster is the abstraction layer, so its behaviour pattern must be
+defined first and the adapter must follow it.
+
+Action: when the task is to add a capability to an abstraction layer, write the abstract resource,
+the operation, the payload, the result document, the safety class, the permission and the error codes
+before opening any provider source. Only then read the provider, and only to answer "what must the
+adapter supply to satisfy this contract". If a sentence in the design cannot be written without
+naming a provider, the design is not finished. Keep provider detail in one clearly labelled adapter
+section, and check that no provider name leaked into the protocol, a Server route, a stored document
+or a CLI help body.
+
+Why this prevents recurrence: reading the implementation first feels like diligence, and it produces
+a design that is guaranteed to fit the one provider that was read. That is exactly the failure: the
+design is then a description of the provider rather than a contract, so a second provider cannot be
+added without changing the protocol, the Server, the schema and the CLI. The abstraction layer exists
+to prevent that, and the only moment it can be protected is before the provider is read. A design
+reviewed against the provider will always look correct, because the provider is what it was copied
+from.
+
+## A capability gap must be checked against the provider's actual surface, not its documentation
+
+Trigger: while listing what was missing for the session model command, the plan stated that no
+machine-readable model list existed, so the numbered menu would have to be parsed from provider prose.
+That was wrong. `topsailai models list --json` exists and returns a structured JSON array
+(`cli/cli_topsailai/models_cli.py:287-296`, flag registered at `models_cli.py:484-489`). The human
+corrected it with "你再看 topsailai models list 这个命令是支持json输出的". The claim had been carried
+forward from an earlier turn and never re-verified, and it shaped the design: it was the reason a
+provider change looked necessary.
+
+Action: before recording a capability gap, run the provider command or read the subparser registration
+that proves the gap. A gap claim is a factual claim about another project's surface, so it needs the
+same evidence as a defect claim: the exact file and line, or the observed output. Search the subparser
+registration (`add_parser`, `add_argument`) rather than the handler name, because a flag can be
+registered on the parser while the handler reads it through `getattr(args, "json", False)`, and a
+handler-only search shows the read without proving the flag is reachable.
+
+Why this prevents recurrence: a gap claim is never reviewed as a claim, it is reviewed as a premise.
+Every later decision inherits it, so a wrong gap does not produce one wrong sentence, it produces a
+wrong design: here it made a provider change look mandatory and made the menu look inherently fragile.
+The correction also split one gap into two different ones, which is the useful outcome: the structured
+list exists, but it reports what is configured, while the current model is runtime state reported only
+as text (`workspace/plugin_instruction/agent.py:289`). A single "no JSON" claim hid that distinction
+and would have produced a catalog that silently omitted which profile is in use.
