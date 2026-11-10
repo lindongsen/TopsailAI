@@ -313,18 +313,25 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return err
 	}
-	preview := payloadText
-	if len(preview) > 512 {
-		preview = preview[:512] + "..."
-	}
-	// The preview is operator-supplied text, so it must be sanitized before it
-	// reaches the trusted writer that carries the question styling.
-	question := "send " + sanitizeInlineText(preview) + "? Confirm send? " + confirmationHint + " "
-	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
+	// The assembled block is echoed verbatim before the question, because the
+	// confirmation exists for exactly this form: a bare send is the one payload
+	// the operator never saw as a whole. A flattened preview would hide the line
+	// breaks being approved, so the body keeps its own rows and carries the
+	// payload colour, and the prompt below names the decision and the answers.
+	if err := writeSendConfirmationBody(trustedOut, payloadText, options.Color); err != nil {
 		return err
 	}
+	// The prompt is a named prompt, so the terminal editor draws it on the row the
+	// body echo just opened. The stream fallback has no editor, so the prompt is
+	// written here and its row is closed before the receipt.
+	prompt := RenderNamedPrompt(sendConfirmPrompt, options.Color)
+	if promptReader(parent) == nil {
+		if _, err := io.WriteString(trustedOut, prompt+"\n"); err != nil {
+			return err
+		}
+	}
 	markRecoverablePromptFailure(parent)
-	confirmation, ok := nextPromptLine(parent, lineSource)
+	confirmation, ok := nextPromptLine(parent, lineSource, prompt)
 	if !ok {
 		return fmt.Errorf("confirmation requires a complete line")
 	}

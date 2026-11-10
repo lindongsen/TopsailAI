@@ -302,11 +302,13 @@ func (t *TerminalEditor) redraw(prompt string, questionRow bool) error {
 	if questionRow {
 		budgetWidth = max(1, width-1)
 	}
-	// A question row must keep its trailing answer hint, because the hint is the
-	// only cue telling the operator what to type. A named prompt has no hint, so
-	// the plain clip is used there. Styled prompts are measured and clipped by
-	// visible columns, so escape bytes never shift the cursor.
-	if questionRow {
+	// A prompt that carries an answer hint must keep it, because the hint is the
+	// only cue telling the operator what to type. That covers a question row and
+	// also a named prompt whose name states the accepted answers, such as
+	// "send.confirm[y/N]> ". A named prompt without a hint uses the plain clip.
+	// Styled prompts are measured and clipped by visible columns, so escape bytes
+	// never shift the cursor.
+	if questionRow || answerHintIndex(prompt) >= 0 {
 		prompt = clipStyledCellKeepHint(prompt, budgetWidth)
 	} else {
 		prompt = clipStyledCell(prompt, budgetWidth)

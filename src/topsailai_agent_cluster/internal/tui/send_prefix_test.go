@@ -56,7 +56,7 @@ func TestSendPrefixSubmitsWithoutConfirmation(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	if count := strings.Count(output, "Confirm send?"); count != 0 {
+	if count := strings.Count(output, sendConfirmPrompt); count != 0 {
 		t.Fatalf("alias asked %d confirmations, want 0: %q", count, output)
 	}
 }
@@ -191,5 +191,58 @@ func TestSendPrefixDirectDispatch(t *testing.T) {
 	}
 	if got, want := string(stub.intents[0].Payload), `{"text":"tight message"}`; got != want {
 		t.Fatalf("payload=%s want %s", got, want)
+	}
+}
+
+// TestBareSendConfirmationRendersBodyThenPrompt proves the bare-send confirmation
+// is the assembled block followed by one named prompt, in that order. The stream
+// fallback has no terminal editor to draw the prompt, so the caller must write it;
+// without that write a piped transcript would show a body and no cue at all.
+func TestBareSendConfirmationRendersBodyThenPrompt(t *testing.T) {
+	stub := scopeStub()
+	output, diagnostics := runScope(t, stub, sessionScopeInput+"send\nfirst line\n  second line\nEOF\nn\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("declined confirmation admitted %d commands, want 0", stub.admit)
+	}
+	body := "first line\n  second line\n"
+	bodyIndex := strings.Index(output, body)
+	if bodyIndex < 0 {
+		t.Fatalf("confirmation body missing: %q", output)
+	}
+	promptIndex := strings.Index(output, sendConfirmPrompt)
+	if promptIndex < 0 {
+		t.Fatalf("confirmation prompt missing: %q", output)
+	}
+	if promptIndex < bodyIndex {
+		t.Fatalf("prompt rendered before the body: %q", output)
+	}
+	if count := strings.Count(output, sendConfirmPrompt); count != 1 {
+		t.Fatalf("prompt rendered %d times, want 1: %q", count, output)
+	}
+	if !strings.Contains(output, "send cancelled") {
+		t.Fatalf("declined confirmation not reported: %q", output)
+	}
+}
+
+// TestBareSendConfirmationAcceptsYes proves the new prompt keeps the accepted
+// answers unchanged, so the format change cannot silently alter the decision.
+func TestBareSendConfirmationAcceptsYes(t *testing.T) {
+	for _, answer := range []string{"y", "Y", "yes", " YES "} {
+		t.Run(answer, func(t *testing.T) {
+			stub := scopeStub()
+			output, diagnostics := runScope(t, stub, sessionScopeInput+"send\nhello\nEOF\n"+answer+"\nexit\n", ColorPolicy{})
+			if diagnostics != "" {
+				t.Fatalf("diagnostics=%q", diagnostics)
+			}
+			if stub.admit != 1 {
+				t.Fatalf("answer %q admitted %d commands, want 1: %q", answer, stub.admit, output)
+			}
+			if strings.Contains(output, "send cancelled") {
+				t.Fatalf("answer %q was declined: %q", answer, output)
+			}
+		})
 	}
 }

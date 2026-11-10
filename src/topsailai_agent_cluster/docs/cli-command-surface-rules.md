@@ -137,10 +137,31 @@ see the effect.
 - `send` asks for confirmation only when the payload is not already on screen. An
   explicit `send <text>`, `send {"text":"..."}` or `> <text>` submits directly,
   because the command word and the text are both visible. A bare `send` reads a
-  multi-line block and asks once, because the assembled block is never echoed as a
-  whole and the question is the only place the operator can see it before it is
-  admitted. The confirmation gate stays on every operation that cannot be undone:
-  `stop`, `btw`, `interrupt`, `ctl`, `drive start` and `drive stop`.
+  multi-line block, echoes it verbatim and asks once, because the assembled block
+  was never shown as a whole and the echo is the only place the operator can see
+  it before it is admitted. The confirmation gate stays on every operation that
+  cannot be undone: `stop`, `btw`, `interrupt`, `ctl`, `drive start` and
+  `drive stop`.
+- The bare-send confirmation is the block itself followed by one named prompt, not
+  a flattened question:
+
+  ```text
+  send> first line
+  send> second line
+  send> EOF
+  first line
+  second line
+  send.confirm[y/N]>
+  ```
+
+  The body keeps its own line breaks, indentation and spacing, because a flattened
+  preview hides exactly the property the question protects: the operator cannot
+  verify line breaks they cannot see. The body carries the payload colour, so a
+  message never reads as the application's own prompt, and the prompt name states
+  both the decision and the accepted answers, so no separate hint or repeated
+  `Confirm send?` wording is needed. The prompt keeps its `[y/N]` hint when a
+  narrow terminal clips it, because the hint is the only cue telling the operator
+  what to type.
 - A confirmation question expresses the session as the canonical identity
   expression, `({provider_session_name}) ({provider_session_id})`, for example
   `stop session (Daily work) (provider-res-1)? Confirm stop?`. The reported name is

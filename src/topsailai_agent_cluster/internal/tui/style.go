@@ -67,6 +67,14 @@ const answerPrompt = "answer> "
 // confirmationHint is the trailing answer hint of every confirmation question.
 const confirmationHint = "[y/N]"
 
+// sendConfirmPrompt is the named prompt of the bare-send confirmation. The
+// accepted answers are part of the prompt name, so the operator reads the
+// decision and the answers in one token instead of a question followed by a
+// separate hint. The prompt name states the decision, so the question no longer
+// repeats it. The hint spelling is confirmationHint, so every confirmation in
+// the CLI advertises its answers the same way.
+const sendConfirmPrompt = "send.confirm" + confirmationHint + "> "
+
 // RenderAnswerPrompt returns the reset-safe answer prompt for a child read.
 // The leading newline keeps the question on its own row; the bold-green
 // wrapper is the exact form the terminal editor recognises, so the cursor
@@ -216,15 +224,24 @@ func clipStyledCell(value string, width int) string {
 	return out.String()
 }
 
-// clipStyledCellKeepHint clips a styled question to width visible columns while
-// keeping the trailing answer hint. The hint is the only cue telling the operator
-// what to type, so a narrow terminal must shorten the question instead of hiding
-// the hint. Escape sequences are preserved and never counted.
+// answerHintIndex returns the start of the trailing answer hint in value, or -1
+// when value carries none. There is one hint spelling, confirmationHint, so a
+// confirmation question and the bare-send prompt advertise their answers
+// identically. The last occurrence wins, so a payload that itself contains the
+// hint spelling is never mistaken for the real one.
+func answerHintIndex(value string) int {
+	return strings.LastIndex(value, confirmationHint)
+}
+
+// clipStyledCellKeepHint clips a styled question or named prompt to width visible
+// columns while keeping the trailing answer hint. The hint is the only cue telling
+// the operator what to type, so a narrow terminal must shorten the text instead of
+// hiding the hint. Escape sequences are preserved and never counted.
 func clipStyledCellKeepHint(value string, width int) string {
 	if styledDisplayWidth(value) <= width {
 		return value
 	}
-	index := strings.LastIndex(value, confirmationHint)
+	index := answerHintIndex(value)
 	if index < 0 {
 		return clipStyledCell(value, width)
 	}
