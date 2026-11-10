@@ -548,7 +548,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "model":
 		// The model catalog table is trusted application styling over sanitized
 		// cells, so it renders through the trusted writer like list and history.
-		return false, interactiveModel(ctx, api, state, rest, trustedOut, errOut, options.Color)
+		return false, interactiveModel(ctx, api, state, rest, lineResults, out, trustedOut, errOut, options)
 	case "messages":
 		// A conversation is provider prose, so it renders through the untrusted
 		// writer: every body already passed the provider output boundary.

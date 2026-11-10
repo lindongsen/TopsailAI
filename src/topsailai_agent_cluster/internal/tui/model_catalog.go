@@ -243,8 +243,52 @@ func (r CommandRunner) ModelCatalog(ctx context.Context, out, errors io.Writer, 
 // and "this session has no profiles" need different remedies: the first is an
 // integration gap, the second is a configuration choice.
 func modelCatalogError(resourceID, code string) error {
+	if code == "" {
+		return nil
+	}
 	if code == protocol.ModelCatalogUnsupported {
 		return fmt.Errorf("model profiles are unavailable for session %q: the endpoint has no model-catalog-capable adapter", resourceID)
 	}
 	return fmt.Errorf("model profiles for session %q failed: %s", resourceID, code)
+}
+
+// ResolveEndpointTarget resolves one endpoint ID or unique hostname.
+//
+// It is exported so the standalone surface resolves an endpoint exactly like the
+// interactive surface does, including the ambiguous-hostname rejection. A second
+// implementation would drift, and the two surfaces would disagree about which
+// endpoints a name addresses.
+func ResolveEndpointTarget(ctx context.Context, api CommandAPI, target string) (protocol.Endpoint, error) {
+	return resolveHistoryEndpoint(ctx, api, target)
+}
+
+// ModelCatalogError maps a standard catalog error code to an operator message.
+//
+// It is exported for the same reason: the standalone surface must report an
+// unsupported adapter and an empty catalog as two different outcomes, and a second
+// mapping would let the two surfaces disagree about which one the operator sees.
+func ModelCatalogError(resourceID, code string) error {
+	return modelCatalogError(resourceID, code)
+}
+
+// ResolveModelProfileSelector resolves one profile selector against a rendered view.
+//
+// The standalone surface has no rendered table, so it passes the view it just built
+// from a live read. That keeps one resolution rule for both surfaces: a selector only
+// ever resolves against a catalog that was actually read, never against a guess.
+func ResolveModelProfileSelector(view ModelCatalogView, token string) (ModelCatalogViewRow, error) {
+	namespace := &modelCatalogNamespace{
+		EndpointID: view.EndpointID,
+		SessionID:  view.SessionID,
+		Rows:       make(map[int]ModelCatalogViewRow, len(view.Rows)),
+	}
+	for _, row := range view.Rows {
+		namespace.Rows[row.No] = row
+	}
+	return resolveModelProfileSelector(namespace, view.SessionID, token)
+}
+
+// ModelProfileLabel names one profile in operator-facing text.
+func ModelProfileLabel(row ModelCatalogViewRow) string {
+	return modelProfileLabel(row)
 }

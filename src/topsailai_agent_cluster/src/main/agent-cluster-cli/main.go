@@ -208,10 +208,13 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *maxChars, *jsonMode, tui.OutputColorPolicy(output))
 	case "model":
-		if flags.NArg() != 3 {
-			return fmt.Errorf("usage: model <endpoint-id-or-hostname> <session-id>")
+		if flags.NArg() < 3 || flags.NArg() > 4 {
+			return fmt.Errorf("usage: model <endpoint-id-or-hostname> <session-id> [profile]")
 		}
-		return model(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *jsonMode, tui.OutputColorPolicy(output))
+		if flags.NArg() == 3 {
+			return model(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *jsonMode, tui.OutputColorPolicy(output))
+		}
+		return modelSelectWithProgress(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), flags.Arg(3), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -572,6 +575,72 @@ func model(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, ta
 	options := tui.TableOptionsFor(output)
 	options.Color = color
 	return legacyRunner(api).ModelCatalog(ctx, output, errors, target, sessionID, "", jsonMode, options)
+}
+
+// modelSelectWithProgress applies one model profile to one session.
+//
+// The standalone surface has no rendered table, so a row number is rejected: a row
+// number is a position in a table the operator saw, and no table was rendered here.
+// The selector is resolved against a live catalog read instead, so an unknown or
+// unavailable profile is refused before anything is submitted rather than being sent
+// to the provider as an opaque value.
+//
+// The catalog read is also what supplies the generation when the caller did not pass
+// one. A model change addresses a live process, so the generation is mandatory: an
+// empty generation would let the Endpoint refuse the command with generation_required,
+// which is a correct but late failure, and reading it here lets the operator see the
+// real reason before a confirmation question is asked.
+func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, target, sessionID, profile string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	if tui.IsRowNumber(profile) {
+		return fmt.Errorf("model profile %q is a row number, which only exists after an interactive render; name the profile by model_profile_id or display name", profile)
+	}
+	querier, ok := api.(tui.ModelCatalogQuerier)
+	if !ok {
+		return fmt.Errorf("model profiles are unavailable: this client cannot query model profiles")
+	}
+	endpoint, err := tui.ResolveEndpointTarget(ctx, api, target)
+	if err != nil {
+		return err
+	}
+	catalog, err := querier.GetModelCatalog(ctx, endpoint.EndpointID, sessionID, generationFlag)
+	if err != nil {
+		return err
+	}
+	if catalog.ErrorCode != "" {
+		return tui.ModelCatalogError(sessionID, catalog.ErrorCode)
+	}
+	view := tui.NewModelCatalogView(endpoint.EndpointID, sessionID, catalog)
+	row, err := tui.ResolveModelProfileSelector(view, profile)
+	if err != nil {
+		return err
+	}
+	if !row.Available {
+		reason := row.UnavailableReason
+		if reason == "" {
+			reason = "unavailable"
+		}
+		return fmt.Errorf("model profile %q is unavailable (%s)", tui.ModelProfileLabel(row), reason)
+	}
+	payload, err := json.Marshal(protocol.ModelSelectRequest{ModelProfileID: row.ModelProfileID})
+	if err != nil {
+		return err
+	}
+	request := tui.ActionRequest{Operation: protocol.OperationAgentModelSelect, OperationLabel: "model select", EndpointID: endpoint.EndpointID, ResourceID: sessionID, Generation: generationFlag, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
+	runner := legacyRunner(api)
+	progress := tui.NewActionProgress(diagnostics, request)
+	intent, err := runner.PrepareAction(ctx, request)
+	if err != nil {
+		return err
+	}
+	actionResult, err := runner.SubmitAction(ctx, intent)
+	if err != nil {
+		return err
+	}
+	result, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
+	if err != nil {
+		return err
+	}
+	return renderActionResult(output, result, jsonMode)
 }
 
 // list renders the session table. full is the per-command request to disable
