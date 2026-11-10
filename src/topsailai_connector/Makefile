@@ -22,7 +22,7 @@ UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
 
-.PHONY: help build vet test test-unit coverage coverage-html integration bdd check fmt clean
+.PHONY: help build vet test test-unit coverage coverage-html integration bdd e2e check fmt clean
 
 help:
 	@echo "Targets:"
@@ -34,7 +34,8 @@ help:
 	@echo "  coverage-html   Write an HTML coverage report to $(COVERAGE_HTML)"
 	@echo "  integration     Build the binaries, then run the integration suite"
 	@echo "  bdd             Run the Gherkin scenarios in tests/bdd/"
-	@echo "  check           vet, unit, coverage, integration and bdd in that order"
+	@echo "  e2e             Build the binaries, then drive one read through two real processes"
+	@echo "  check           vet, unit, coverage, integration, bdd and e2e in that order"
 	@echo "  fmt             Format every Go source file"
 	@echo "  clean           Remove build and test artifacts"
 
@@ -76,7 +77,15 @@ bdd:
 	@mkdir -p $(TMP_DIR)
 	go test -count=1 -tags '$(BDD_TAGS)' ./tests/bdd/... 2>&1 | tee $(TMP_DIR)/bdd-test.log
 
-check: vet test-unit coverage integration bdd
+# The end-to-end suite drives two real processes over a real socket, so it builds
+# the binaries first. Depending on build is what stops a stale binary in bin/ from
+# answering for source that has since changed, which would make a green run a lie.
+e2e: build
+	@mkdir -p $(TMP_DIR)
+	bash tests/e2e/start.sh 2>&1 | tee $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+
+check: vet test-unit coverage integration bdd e2e
 
 fmt:
 	go fmt ./...
