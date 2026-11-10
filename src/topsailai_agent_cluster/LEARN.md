@@ -515,3 +515,46 @@ The correction also split one gap into two different ones, which is the useful o
 list exists, but it reports what is configured, while the current model is runtime state reported only
 as text (`workspace/plugin_instruction/agent.py:289`). A single "no JSON" claim hid that distinction
 and would have produced a catalog that silently omitted which profile is in use.
+
+## A line number from a sed window is relative to the window, not the file
+
+Trigger: while fixing a stale golden in `unit_c_batch3_state_test.go`, the line number was
+taken from a `sed -n '66,80p'` window and used directly in a line-range overwrite. It
+replaced the `if` line instead of the `want` line, leaving two `want` lines and an orphaned
+`Fatalf`. The same class of accident recurred throughout this task: an insert placed a
+capability entry outside its slice, an overwrite duplicated a doc comment, an overwrite
+deleted a `name :=` assignment, an insert split a `case` body so its label was lost, and an
+insert placed an `entry.examples` line inside the next `case` block.
+
+Action: obtain every line number with `grep -n` against the whole file, never by counting
+inside a `sed` window. Before overwriting, print the exact region and confirm the first and
+last line are the ones intended. When the region is a `case` block, include the `case` label
+and the closing brace in the replaced range, because an insert immediately after a label
+splits that case's body. When a small file needs several interdependent edits, rewrite the
+whole file instead of chaining line-range edits.
+
+Why this prevents recurrence: a line number is a position, not an identity, and a window
+offset is a third coordinate system that looks like the second. The tool reports success
+either way, and Go only catches the damage when it happens to produce invalid syntax; a
+duplicated comment, a lost assignment or a misplaced examples line compiles fine and is
+invisible in review.
+
+## A stale golden can predate your change, and a worktree at HEAD is the only proof
+
+Trigger: `unit_c_batch2_driver_test.go` failed while verifying the model command. The failure
+looked like a consequence of the new help entry. It was not: `git log -S 'after a completed
+start' -- ./internal/tui/help.go` showed commit `8e92ee7e` added two start-tail notes to
+`help.go` without updating that golden, and a detached worktree at HEAD `1523008b` reproduced
+the failure before any of this task's changes existed.
+
+Action: when a golden-value test fails after a deliberate surface change, do not assume the
+delta is yours. Run the same test in a detached worktree at HEAD. If it already fails, the
+golden was stale before the change: fix it in the same commit, but label it pre-existing in
+the commit body so it is not mistaken for scope creep. If it passes at HEAD, the delta is
+yours and the golden is telling you something about your change.
+
+Why this prevents recurrence: a surface-inventory golden encodes the whole command list, so
+any legitimate addition breaks several of them at once and the noise hides which failure is
+new. Without the HEAD comparison, a pre-existing defect gets silently absorbed into an
+unrelated commit, and the next person cannot tell which change was responsible. The worktree
+is the only evidence that separates "my change broke this" from "this was already broken".
