@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"topsailai_connector/internal/node"
@@ -43,8 +44,13 @@ func run(arguments []string) error {
 	}
 }
 
-// splitCommand separates the subcommand from its flags. A leading flag means the
-// default subcommand, so `connector-node --help` works without naming `run`.
+// splitCommand separates the subcommand from its flags.
+//
+// A leading flag means the default subcommand, so `connector-node --help` works
+// without naming `run`. A leading word that is not a known command is returned as
+// the command, so `run` reports it as unknown instead of starting the Node: a
+// typo that silently starts the default subcommand is a typo an operator never
+// learns about.
 func splitCommand(arguments []string) (string, []string) {
 	if len(arguments) == 0 {
 		return "", nil
@@ -53,7 +59,10 @@ func splitCommand(arguments []string) (string, []string) {
 	case "run", "id", "regenerate":
 		return arguments[0], arguments[1:]
 	}
-	return "", arguments
+	if strings.HasPrefix(arguments[0], "-") {
+		return "", arguments
+	}
+	return arguments[0], arguments[1:]
 }
 
 // runNode starts the Node: configuration, identity, policy, scopes, then wait.
