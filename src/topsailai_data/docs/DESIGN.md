@@ -823,3 +823,35 @@ mutating global state.
   explicit configuration, so no test depends on process environment.
 - `tests/bdd/features/file-tool.feature` runs the real binary against an
   isolated store and asserts user-visible output for every subcommand.
+
+### 20.7 Relationship to the Object Store
+
+The `file` command group and the object-store commands are two independent
+path models. The `file` group operates on the operating system file system
+directly and imposes no layout of its own:
+
+- An absolute path is used verbatim. A relative path is resolved against the
+  process working directory.
+- `TOPSAILAI_DATA_ROOT` is not consulted. The only configuration the group
+  reads is `TOPSAILAI_DATA_FILE_MAX_BYTES` and
+  `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT`, both of which affect
+  truncation only.
+- No time prefix, classify directory, object folder, or metadata marker file
+  is created. A caller that writes `notes/a.md` gets exactly `notes/a.md`.
+
+The object-store commands (`create`, `put`, `get`, `show`, `list`, `search`,
+`tag`, `move`, `delete`, `recover`, `gc`) do impose a layout under
+`TOPSAILAI_DATA_ROOT`: `{ROOT}/YYYY/MMDD/HHMM/{classify...}/{name}` with a
+mandatory `{name}.md` marker and optional `.tags`, `.lock`, `.deleted`,
+`.ceased`, and `.stat.json` files.
+
+Discovery differs accordingly. `list-dirs` lists the immediate entries of each
+named directory and does not recurse, so deeper levels must be named
+explicitly. `exists` reports a boolean per named path and accepts files and
+directories alike. There is no recursive walk and no search-by-name command in
+the `file` group; recursive discovery with object-boundary detection belongs to
+`list` and `search` in the object store.
+
+`mkdirs` requires absolute paths while the read and write subcommands accept
+relative paths. The asymmetry is preserved from the original tool so folder
+creation cannot silently land in an unexpected working directory.

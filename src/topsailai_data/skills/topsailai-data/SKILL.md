@@ -863,3 +863,39 @@ waiting, so an interactive invocation never hangs.
   unexpected working directory.
 - `read-files`, `list-dirs`, and `exists` record a per-item failure instead of
   hiding the other items.
+
+### Path resolution and discovery
+
+The `file` group imposes no folder structure. Paths are ordinary operating
+system paths:
+
+- An absolute path is used verbatim.
+- A relative path is resolved against the process working directory.
+- `TOPSAILAI_DATA_ROOT` is not consulted. The only configuration that affects
+  this group is `TOPSAILAI_DATA_FILE_MAX_BYTES` and
+  `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT`, and both affect truncation
+  only.
+- No time prefix, classify directory, object folder, or metadata marker file is
+  created. `file write ./notes/a.md` produces exactly `./notes/a.md`.
+
+This is the opposite of the object-store commands, which place every object at
+`{TOPSAILAI_DATA_ROOT}/YYYY/MMDD/HHMM/{classify...}/{name}` with a mandatory
+`{name}.md` marker and optional `.tags`, `.lock`, `.deleted`, `.ceased`, and
+`.stat.json` files.
+
+Discovery is shallow. `list-dirs` lists the immediate entries of each named
+directory and does not recurse, so each deeper level must be named explicitly:
+
+```
+bin/topsailai-data file list-dirs ./notes
+bin/topsailai-data file list-dirs ./notes/archive
+```
+
+`exists` reports a boolean per named path and accepts files and directories
+alike. There is no recursive walk and no search-by-name command in the `file`
+group; recursive discovery with object-boundary detection belongs to `list` and
+`search` in the object store.
+
+`mkdirs` requires absolute paths while the read and write subcommands accept
+relative paths. The asymmetry is preserved from the original tool so folder
+creation cannot silently land in an unexpected working directory.
