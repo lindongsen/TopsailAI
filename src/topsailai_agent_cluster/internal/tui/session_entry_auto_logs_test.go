@@ -78,7 +78,7 @@ func TestUnitSessionEntryArmsOneLiveTail(t *testing.T) {
 	if stub.outputCalls != 0 {
 		t.Fatalf("snapshot reads=%d want=0 (the entry transition must arm a tail only)", stub.outputCalls)
 	}
-	if !strings.Contains(output, "follow: res-1 (any key stops)") {
+	if !strings.Contains(output, "log.follow> res-1 (any key stops)") {
 		t.Fatalf("entry did not announce the live tail: %q", output)
 	}
 	armed := armedFollowSession(t, reader)

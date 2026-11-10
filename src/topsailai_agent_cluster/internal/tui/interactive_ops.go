@@ -76,7 +76,12 @@ func armFollowStream(api InteractiveAPI, state *interactiveState, endpointID, se
 		return fmt.Errorf("follow is unavailable: the API client does not support streaming output")
 	}
 	state.follow = &followRequest{EndpointID: endpointID, ResourceID: sessionID, Generation: generation, MaxBytes: maxBytes, MaxLines: maxLines}
-	_, err := fmt.Fprintf(trustedOut, "follow: %s (any key stops)\n", sanitizeInlineText(sessionID))
+	// The announcement carries the shared follow prefix, so the operator can tell
+	// it apart from agent output. The redundant "follow: " word is dropped because
+	// the prefix already names the writer. The policy comes from the writer this
+	// line goes to, so --no-color and a redirected stream stay plain.
+	message := sanitizeInlineText(sessionID) + " (any key stops)"
+	_, err := fmt.Fprintln(trustedOut, renderFollowStatus(message, ansiDim, OutputColorPolicy(trustedOut), false))
 	return err
 }
 

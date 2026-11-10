@@ -91,8 +91,8 @@ func TestRenderFollowRecordReportsEndState(t *testing.T) {
 		errorCode string
 		want      string
 	}{
-		{name: "clean end", errorCode: "", want: "follow ended\n"},
-		{name: "provider error", errorCode: "provider_error", want: "follow ended: provider_error\n"},
+		{name: "clean end", errorCode: "", want: "log.follow> follow ended\n"},
+		{name: "provider error", errorCode: "provider_error", want: "log.follow> follow ended: provider_error\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -104,6 +104,40 @@ func TestRenderFollowRecordReportsEndState(t *testing.T) {
 				t.Fatalf("got=%q want=%q", buffer.String(), testCase.want)
 			}
 		})
+	}
+}
+
+// TestRenderFollowStatusPrefixesAndStylesEveryMode proves the three rendering
+// modes are distinct, because each one has a different consumer: a plain terminal
+// needs the prefix and the colour, a redirected or --no-color stream needs the
+// prefix without escape sequences, and a JSON consumer must receive neither.
+func TestRenderFollowStatusPrefixesAndStylesEveryMode(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy ColorPolicy
+		json   bool
+		want   string
+	}{
+		{name: "colour disabled", policy: ColorPolicy{}, want: "log.follow> follow ended"},
+		{name: "colour enabled", policy: ColorPolicy{Enabled: true}, want: ansiBoldGreen + "log.follow>" + ansiReset + " " + ansiDim + "follow ended" + ansiReset},
+		{name: "json mode", policy: ColorPolicy{Enabled: true}, json: true, want: "follow ended"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := renderFollowStatus("follow ended", ansiDim, testCase.policy, testCase.json); got != testCase.want {
+				t.Fatalf("got=%q want=%q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestRenderFollowStatusNeverLeaksThePrefixIntoJSON proves a JSON consumer cannot
+// receive the prefix or an escape sequence, because either one would corrupt the
+// stream it is decoding.
+func TestRenderFollowStatusNeverLeaksThePrefixIntoJSON(t *testing.T) {
+	got := renderFollowStatus("follow ended: provider_error", ansiRed, ColorPolicy{Enabled: true}, true)
+	if strings.Contains(got, followStatusPrefix) || strings.Contains(got, "\x1b") {
+		t.Fatalf("json status carried presentation: %q", got)
 	}
 }
 
@@ -304,7 +338,7 @@ func TestFollowSessionNamesItsStop(t *testing.T) {
 		t.Fatalf("newFollowSession: %v", err)
 	}
 	defer session.Stop()
-	if got := watchStopLabel(session); got != "follow stopped" {
+	if got := watchStopLabel(session, ColorPolicy{}); got != "log.follow> follow stopped" {
 		t.Fatalf("label=%q", got)
 	}
 }
@@ -312,7 +346,7 @@ func TestFollowSessionNamesItsStop(t *testing.T) {
 // TestWatchStopLabelKeepsAutoRefreshWording proves a session that does not name
 // itself keeps the original message, so existing behaviour is unchanged.
 func TestWatchStopLabelKeepsAutoRefreshWording(t *testing.T) {
-	if got := watchStopLabel(&replWatch{}); got != "auto-refresh stopped" {
+	if got := watchStopLabel(&replWatch{}, ColorPolicy{}); got != "auto-refresh stopped" {
 		t.Fatalf("label=%q", got)
 	}
 }
@@ -383,7 +417,7 @@ func TestInteractiveLogsFollowArmsStream(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "follow: res-1 (any key stops)") {
+	if !strings.Contains(output, "log.follow> res-1 (any key stops)") {
 		t.Fatalf("follow not armed: %q", output)
 	}
 	// The armed stream must not replace the one-shot snapshot the session entry

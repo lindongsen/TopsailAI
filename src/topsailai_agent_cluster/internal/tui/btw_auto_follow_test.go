@@ -59,7 +59,7 @@ func TestUnitBtwAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 		t.Fatalf("missing submission evidence: %q", output)
 	}
 	tail := output[receipt:]
-	announced := strings.Index(tail, "follow: res-1 (any key stops)")
+	announced := strings.Index(tail, "log.follow> res-1 (any key stops)")
 	if announced < 0 {
 		t.Fatalf("btw did not arm a live tail after the receipt: %q", output)
 	}

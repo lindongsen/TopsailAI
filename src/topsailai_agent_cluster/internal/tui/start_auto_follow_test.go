@@ -107,7 +107,7 @@ func TestUnitStartAutoFollowArmsOneLiveTailForTheLaunchedSession(t *testing.T) {
 	if request.endpointID != "endpoint-1" || request.resourceID != "res-new" || request.generation != "generation-new" {
 		t.Fatalf("wrong follow identity tuple: %+v", request)
 	}
-	if !strings.Contains(output, "follow: res-new (any key stops)") {
+	if !strings.Contains(output, "log.follow> res-new (any key stops)") {
 		t.Fatalf("start did not announce the live tail: %q", output)
 	}
 }
