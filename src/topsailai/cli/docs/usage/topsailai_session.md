@@ -70,6 +70,10 @@ Options: `--json`, `--no-color`, `--has-project`, `--category <name>`,
 `--included-categories <names>`, `--excluded-categories <names>`, `--limit <N>`,
 `--offset <N>`, `--sort asc|desc`, `--db-conn <string>`.
 
+`--category` accepts exactly one value made of lowercase letters, digits, and
+underscores, or an empty value for uncategorized sessions; a repeated option or
+any other character is rejected with exit code `2`.
+
 `--included-categories` and `--excluded-categories` accept comma-separated names
 and may be repeated; an empty value selects or excludes uncategorized sessions,
 and an invalid name is rejected with exit code `1`. Both are applied in the

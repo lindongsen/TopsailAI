@@ -15,19 +15,22 @@ List stored sessions with optional exact category filtering.
 
 | Option | Description |
 |---|---|
-| `--category <value>` | Exact category filter. Omit the option to include every category; pass an empty value to select uncategorized sessions. Invalid values are logged and select uncategorized sessions. |
+| `--category <value>` | Exact category filter. Omit the option to include every category; pass an empty value to select uncategorized sessions. Accepts exactly one value made of lowercase letters, digits, and underscores. A repeated option or any other character is rejected with exit code `2`. |
 | `--included-categories <names>` | Include only sessions whose category is listed. Accepts comma-separated names and may be repeated. Pass an empty value to include uncategorized sessions. An invalid name is rejected with `Error: Invalid included category: '<name>'` and exit code `1`. |
 | `--excluded-categories <names>` | Exclude sessions whose category is listed. Accepts comma-separated names and may be repeated. Pass an empty value to exclude uncategorized sessions. An invalid name is rejected with `Error: Invalid excluded category: '<name>'` and exit code `1`. |
+| `--has-project` | Keep only sessions whose `project_workspace` is non-empty. |
+| `--since <iso>` | Inclusive lower bound on `create_time`, for example `2026-07-28T00:00:00`. |
+| `--until <iso>` | Inclusive upper bound on `create_time`, for example `2026-07-28T23:59:59`. |
 | `--json` | Emit the existing JSON array shape with an additive `category` field. |
-| `--offset` / `--limit` | Apply pagination after the database category predicates, so a page always contains the requested number of surviving rows. |
+| `--offset` / `--limit` | Apply pagination after every database predicate, so a page always contains the requested number of surviving rows. |
 
-Text output keeps `Total` as the displayed page size and adds `Matched Total` for category-filtered queries. `Matched Total` is the pre-pagination count of matching IDs and categories, including the inclusion and the exclusion when those options are used.
+Text output keeps `Total` as the displayed page size and adds `Matched Total` for filtered queries. `Matched Total` is the pre-pagination count of matching rows, including the category, project, and creation-time filters when those options are used.
 
-All category predicates run in the database, so a filter never reads rows it discards. The default ordering is by creation time, which is indexed, so a page query does not scan the whole session table.
+Every selection predicate runs in the database, so a filter never reads rows it discards. The default ordering is by creation time, which is indexed, so a page query does not scan the whole session table.
 
-`--category` and `--included-categories` intersect, and `--excluded-categories` is subtracted from the result, so the three options compose instead of overriding each other.
+`--category` and `--included-categories` intersect, and `--excluded-categories` is subtracted from the result, so the three options compose instead of overriding each other. `--has-project`, `--since`, and `--until` narrow the result further and combine with every category option.
 
-Category values are validated as lowercase letters, digits, and underscores; no enum allowlist is used. The CLI does not use `TOPSAILAI_SESSION_CATEGORY` as a query default.
+`--category` accepts exactly one value. It must be empty, which selects uncategorized sessions, or match lowercase letters, digits, and underscores. A repeated option and any other character are rejected before the query runs, so an invalid value can never silently select uncategorized rows. `--included-categories` and `--excluded-categories` accept several names and also reject an invalid name, but they exit with code `1` while `--category` exits with code `2`, because `--category` is validated by the argument parser. No enum allowlist is used. The CLI does not use `TOPSAILAI_SESSION_CATEGORY` as a query default.
 
 ## Empty values through the `bin/` wrapper
 
@@ -65,4 +68,13 @@ topsailai_list_sessions --excluded-categories ""
 # Combine an inclusion filter with an exclusion
 topsailai_list_sessions --category agent --excluded-categories agent_driver
 topsailai_list_sessions --included-categories agent,agent_driver --excluded-categories agent_driver
+
+# Keep only sessions bound to a project workspace
+topsailai_list_sessions --has-project
+
+# Keep a creation-time window, inclusive on both ends
+topsailai_list_sessions --since 2026-07-28T00:00:00 --until 2026-07-28T23:59:59
+
+# A page stays full because the filters run before pagination
+topsailai_list_sessions --has-project --limit 10 --offset 20
 ```

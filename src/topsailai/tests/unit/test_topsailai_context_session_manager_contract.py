@@ -1,6 +1,7 @@
 """Session management contract and explicit forwarding (author: DawsonLin)."""
 
 from unittest.mock import Mock
+from datetime import datetime
 
 import pytest
 
@@ -291,4 +292,121 @@ def test_inclusion_and_exclusion_are_forwarded_together():
     assert count_kwargs == {
         "sessions": None, "category": None,
         "included_categories": {"agent"}, "excluded_categories": {"agent_driver"},
+    }
+
+
+@pytest.mark.parametrize("has_project", [False, True])
+def test_list_and_count_forward_has_project(has_project):
+    """Forward has_project only when it can change the query, keeping kwargs exact."""
+    class RecordingStorage:
+        def __init__(self):
+            self.calls = []
+            self.chat_history = Mock()
+
+        def list_sessions(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return []
+
+        def count_sessions(self, **kwargs):
+            self.calls.append(("count", kwargs))
+            return 0
+
+    storage = RecordingStorage()
+    manager = DefaultSessionManager(storage, Mock())
+    manager.list_sessions(has_project=has_project)
+    manager.count_sessions(has_project=has_project)
+    list_kwargs = storage.calls[0][1]
+    count_kwargs = storage.calls[1][1]
+    expected_list = {"sessions": None, "order_by": None, "offset": 0, "limit": None}
+    expected_count = {"sessions": None, "category": None}
+    if has_project:
+        expected_list["has_project"] = True
+        expected_count["has_project"] = True
+    assert list_kwargs == expected_list
+    assert count_kwargs == expected_count
+
+
+@pytest.mark.parametrize("since,until", [(None, None), ("bound", None), (None, "bound"), ("bound", "bound")])
+def test_list_and_count_forward_time_bounds(since, until):
+    """Forward each time bound only when it is present, keeping kwargs exact."""
+    class RecordingStorage:
+        def __init__(self):
+            self.calls = []
+            self.chat_history = Mock()
+
+        def list_sessions(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return []
+
+        def count_sessions(self, **kwargs):
+            self.calls.append(("count", kwargs))
+            return 0
+
+    bound = datetime(2026, 1, 1, 0, 0, 0)
+    since_value = bound if since == "bound" else None
+    until_value = bound if until == "bound" else None
+    storage = RecordingStorage()
+    manager = DefaultSessionManager(storage, Mock())
+    manager.list_sessions(since=since_value, until=until_value)
+    manager.count_sessions(since=since_value, until=until_value)
+    list_kwargs = storage.calls[0][1]
+    count_kwargs = storage.calls[1][1]
+    expected_list = {"sessions": None, "order_by": None, "offset": 0, "limit": None}
+    expected_count = {"sessions": None, "category": None}
+    if since_value is not None:
+        expected_list["since"] = since_value
+        expected_count["since"] = since_value
+    if until_value is not None:
+        expected_list["until"] = until_value
+        expected_count["until"] = until_value
+    assert list_kwargs == expected_list
+    assert count_kwargs == expected_count
+
+
+def test_every_selection_filter_is_forwarded_together():
+    """All selection predicates reach storage in one call without dropping any."""
+    class RecordingStorage:
+        def __init__(self):
+            self.calls = []
+            self.chat_history = Mock()
+
+        def list_sessions(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return []
+
+        def count_sessions(self, **kwargs):
+            self.calls.append(("count", kwargs))
+            return 0
+
+    bound = datetime(2026, 1, 1, 0, 0, 0)
+    storage = RecordingStorage()
+    manager = DefaultSessionManager(storage, Mock())
+    manager.list_sessions(
+        category="agent",
+        included_categories={"agent"},
+        excluded_categories={"agent_driver"},
+        has_project=True,
+        since=bound,
+        until=bound,
+    )
+    manager.count_sessions(
+        category="agent",
+        included_categories={"agent"},
+        excluded_categories={"agent_driver"},
+        has_project=True,
+        since=bound,
+        until=bound,
+    )
+    list_kwargs = storage.calls[0][1]
+    count_kwargs = storage.calls[1][1]
+    assert list_kwargs == {
+        "sessions": None, "order_by": None, "offset": 0, "limit": None,
+        "category": "agent", "included_categories": {"agent"},
+        "excluded_categories": {"agent_driver"}, "has_project": True,
+        "since": bound, "until": bound,
+    }
+    assert count_kwargs == {
+        "sessions": None, "category": "agent", "included_categories": {"agent"},
+        "excluded_categories": {"agent_driver"}, "has_project": True,
+        "since": bound, "until": bound,
     }

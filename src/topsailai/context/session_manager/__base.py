@@ -9,6 +9,8 @@ Email: lin_dongsen@126.com
 Created: 2025-10-29
 """
 
+from datetime import datetime
+
 from topsailai.context.chat_history_manager.__base import (
     ChatHistoryMessageData,
 )
@@ -166,6 +168,9 @@ class SessionStorageBase(object):
         category: str = None,
         included_categories: set[str] = None,
         excluded_categories: set[str] = None,
+        has_project: bool = False,
+        since: datetime = None,
+        until: datetime = None,
     ) -> list[SessionData]:
         """
         Retrieve stored sessions, optionally filtered, sorted, and paginated.
@@ -193,6 +198,13 @@ class SessionStorageBase(object):
                 are matched exactly and are expected to be already validated; an
                 empty string excludes uncategorized sessions. ``None`` or an empty
                 set excludes nothing.
+            has_project (bool, optional): When true, keep only sessions whose
+                ``project_workspace`` is non-empty. Defaults to ``False``, which
+                keeps every session.
+            since (datetime, optional): Inclusive lower bound on ``create_time``.
+                ``None`` applies no lower bound.
+            until (datetime, optional): Inclusive upper bound on ``create_time``.
+                ``None`` applies no upper bound.
 
         Returns:
             list[SessionData]: A list of SessionData instances matching the query.
@@ -206,7 +218,9 @@ class SessionStorageBase(object):
 
     def count_sessions(self, sessions: list[str] = None, category: str = None,
                        included_categories: set[str] = None,
-                       excluded_categories: set[str] = None) -> int:
+                       excluded_categories: set[str] = None,
+                       has_project: bool = False, since: datetime = None,
+                       until: datetime = None) -> int:
         """Return the number of sessions matching the selection filters."""
         raise NotImplementedError
 

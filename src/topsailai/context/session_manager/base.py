@@ -1,6 +1,7 @@
 """Public session management contract (author: DawsonLin)."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from topsailai.context.session_manager.__base import SessionData
 from topsailai.context.chat_history_manager.__base import ChatHistoryMessageData
@@ -35,14 +36,18 @@ class SessionManager(ABC):
     def list_sessions(self, sessions: list[str] | None = None, order_by: str | None = None,
                       offset: int = 0, limit: int | None = None, category: str | None = None,
                       included_categories: set[str] | None = None,
-                      excluded_categories: set[str] | None = None) -> list[SessionData]:
-        """List sessions with existing filters, category, ordering and pagination."""
+                      excluded_categories: set[str] | None = None,
+                      has_project: bool = False, since: datetime | None = None,
+                      until: datetime | None = None) -> list[SessionData]:
+        """List sessions with every selection filter, ordering and pagination."""
         ...
 
     @abstractmethod
     def count_sessions(self, sessions: list[str] | None = None, category: str | None = None,
                        included_categories: set[str] | None = None,
-                       excluded_categories: set[str] | None = None) -> int:
+                       excluded_categories: set[str] | None = None,
+                       has_project: bool = False, since: datetime | None = None,
+                       until: datetime | None = None) -> int:
         """Count sessions matching the selection filters."""
         ...
 

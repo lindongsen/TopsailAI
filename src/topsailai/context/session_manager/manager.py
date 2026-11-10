@@ -1,5 +1,7 @@
 """Session management through explicit composition (author: DawsonLin)."""
 
+from datetime import datetime
+
 from topsailai.context.session_manager.__base import SessionStorageBase, SessionData
 from topsailai.context.chat_history_manager.__base import ChatHistoryMessageData
 from topsailai.context.session_cleanup import HistoryCleanupManager, SessionCleanupManager
@@ -38,8 +40,10 @@ class DefaultSessionManager(SessionManager):
     def list_sessions(self, sessions: list[str] | None = None, order_by: str | None = None,
                       offset: int = 0, limit: int | None = None, category: str | None = None,
                       included_categories: set[str] | None = None,
-                      excluded_categories: set[str] | None = None) -> list[SessionData]:
-        """List sessions with existing filters, category, ordering and pagination."""
+                      excluded_categories: set[str] | None = None,
+                      has_project: bool = False, since: datetime | None = None,
+                      until: datetime | None = None) -> list[SessionData]:
+        """List sessions with every selection filter, ordering and pagination."""
         kwargs = {"sessions": sessions, "order_by": order_by, "offset": offset, "limit": limit}
         if category is not None:
             kwargs["category"] = category
@@ -47,17 +51,31 @@ class DefaultSessionManager(SessionManager):
             kwargs["included_categories"] = included_categories
         if excluded_categories:
             kwargs["excluded_categories"] = excluded_categories
+        if has_project:
+            kwargs["has_project"] = has_project
+        if since is not None:
+            kwargs["since"] = since
+        if until is not None:
+            kwargs["until"] = until
         return self.storage.list_sessions(**kwargs)
 
     def count_sessions(self, sessions: list[str] | None = None, category: str | None = None,
                        included_categories: set[str] | None = None,
-                       excluded_categories: set[str] | None = None) -> int:
+                       excluded_categories: set[str] | None = None,
+                       has_project: bool = False, since: datetime | None = None,
+                       until: datetime | None = None) -> int:
         """Count sessions matching the selection filters."""
         kwargs = {"sessions": sessions, "category": category}
         if included_categories:
             kwargs["included_categories"] = included_categories
         if excluded_categories:
             kwargs["excluded_categories"] = excluded_categories
+        if has_project:
+            kwargs["has_project"] = has_project
+        if since is not None:
+            kwargs["since"] = since
+        if until is not None:
+            kwargs["until"] = until
         return self.storage.count_sessions(**kwargs)
 
     def update_session_name(self, session_id: str, session_name: str) -> bool:

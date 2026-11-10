@@ -1,10 +1,16 @@
 """Unit tests for session category storage."""
 
-import pytest
+import itertools
 import logging
 import re
+from datetime import datetime
+from unittest.mock import Mock
+
+import pytest
 from sqlalchemy import create_engine, text, event
 
+from topsailai.context.session_category import resolve_session_category
+from topsailai.context.session_manager.manager import DefaultSessionManager
 from topsailai.context.session_manager.sql import SessionData, SessionSQLAlchemy
 
 
@@ -575,3 +581,427 @@ def test_inclusion_predicate_is_sql_side_and_uses_coalesce():
         assert "agent" in parameters
     assert " limit " in f" {list_sql.lower()} "
     assert " limit " not in f" {count_sql.lower()} "
+
+
+def _seed_project_and_time_rows(manager):
+    """Create rows covering project-workspace shapes and creation times."""
+    rows = (
+        ("proj-early", "/work/a", datetime(2026, 1, 1, 0, 0, 0)),
+        ("proj-mid", "/work/b", datetime(2026, 1, 2, 0, 0, 0)),
+        ("proj-late", "/work/c", datetime(2026, 1, 3, 0, 0, 0)),
+        ("empty-ws", "", datetime(2026, 1, 4, 0, 0, 0)),
+        ("blank-ws", "   ", datetime(2026, 1, 5, 0, 0, 0)),
+        ("null-ws", None, datetime(2026, 1, 6, 0, 0, 0)),
+    )
+    for session_id, workspace, created in rows:
+        data = SessionData(session_id=session_id, task="task", project_workspace=workspace)
+        data.create_time = created
+        manager.create_session(data)
+
+
+def test_has_project_keeps_only_truthy_workspaces():
+    """has_project drops NULL and empty workspaces but keeps whitespace-only ones."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    rows = manager.list_sessions(has_project=True, order_by="session_id")
+    assert {row.session_id for row in rows} == {"proj-early", "proj-mid", "proj-late", "blank-ws"}
+    assert manager.count_sessions(has_project=True) == 4
+
+
+def test_has_project_applies_before_pagination():
+    """A limit selects a full page of rows that have a project workspace."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    page = manager.list_sessions(has_project=True, order_by="session_id", offset=0, limit=2)
+    assert [row.session_id for row in page] == ["blank-ws", "proj-early"]
+    assert manager.count_sessions(has_project=True) == 4
+
+
+def test_has_project_false_keeps_every_row():
+    """An omitted or false has_project must not change the unfiltered result."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    assert len(manager.list_sessions()) == 6
+    assert len(manager.list_sessions(has_project=False)) == 6
+    assert manager.count_sessions() == 6
+    assert manager.count_sessions(has_project=False) == 6
+
+
+def test_since_keeps_rows_created_at_or_after_the_bound():
+    """since is an inclusive lower bound on create_time."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    rows = manager.list_sessions(since=datetime(2026, 1, 3, 0, 0, 0), order_by="session_id")
+    assert {row.session_id for row in rows} == {"proj-late", "empty-ws", "blank-ws", "null-ws"}
+    assert manager.count_sessions(since=datetime(2026, 1, 3, 0, 0, 0)) == 4
+
+
+def test_until_keeps_rows_created_at_or_before_the_bound():
+    """until is an inclusive upper bound on create_time."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    rows = manager.list_sessions(until=datetime(2026, 1, 2, 0, 0, 0), order_by="session_id")
+    assert {row.session_id for row in rows} == {"proj-early", "proj-mid"}
+    assert manager.count_sessions(until=datetime(2026, 1, 2, 0, 0, 0)) == 2
+
+
+def test_time_range_keeps_only_rows_inside_the_window():
+    """Both bounds compose into one inclusive window."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    rows = manager.list_sessions(
+        since=datetime(2026, 1, 2, 0, 0, 0),
+        until=datetime(2026, 1, 4, 0, 0, 0),
+        order_by="session_id",
+    )
+    assert {row.session_id for row in rows} == {"proj-mid", "proj-late", "empty-ws"}
+    assert manager.count_sessions(
+        since=datetime(2026, 1, 2, 0, 0, 0), until=datetime(2026, 1, 4, 0, 0, 0)
+    ) == 3
+
+
+def test_time_range_boundary_is_inclusive_on_both_ends():
+    """An exact single-instant window selects exactly the row at that instant."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    instant = datetime(2026, 1, 3, 0, 0, 0)
+    rows = manager.list_sessions(since=instant, until=instant)
+    assert [row.session_id for row in rows] == ["proj-late"]
+    assert manager.count_sessions(since=instant, until=instant) == 1
+
+
+def test_time_range_after_every_row_returns_nothing():
+    """A window later than every row selects no row instead of a short page."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    rows = manager.list_sessions(since=datetime(2030, 1, 1, 0, 0, 0), offset=0, limit=2)
+    assert rows == []
+    assert manager.count_sessions(since=datetime(2030, 1, 1, 0, 0, 0)) == 0
+
+
+def test_time_range_applies_before_pagination():
+    """Offset and limit select a full page of rows inside the window."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    page = manager.list_sessions(
+        since=datetime(2026, 1, 2, 0, 0, 0),
+        order_by="session_id",
+        offset=1,
+        limit=2,
+    )
+    assert [row.session_id for row in page] == ["empty-ws", "null-ws"]
+    assert manager.count_sessions(since=datetime(2026, 1, 2, 0, 0, 0)) == 5
+
+
+def test_project_and_time_filters_combine_with_categories():
+    """Every selection predicate composes into one query."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    rows = (
+        ("driver-1", "agent_driver", "/work/a", datetime(2026, 1, 1, 0, 0, 0)),
+        ("driver-2", "agent_driver", "/work/b", datetime(2026, 1, 2, 0, 0, 0)),
+        ("agent-1", "agent", "/work/c", datetime(2026, 1, 3, 0, 0, 0)),
+        ("chat-1", "chat", "", datetime(2026, 1, 4, 0, 0, 0)),
+        ("plain-1", "", "/work/d", datetime(2026, 1, 5, 0, 0, 0)),
+    )
+    for session_id, category, workspace, created in rows:
+        data = SessionData(
+            session_id=session_id, task="task", category=category, project_workspace=workspace
+        )
+        data.create_time = created
+        manager.create_session(data)
+
+    combined = manager.list_sessions(
+        excluded_categories={"agent_driver"},
+        has_project=True,
+        since=datetime(2026, 1, 3, 0, 0, 0),
+        order_by="session_id",
+    )
+    assert [row.session_id for row in combined] == ["agent-1", "plain-1"]
+    assert manager.count_sessions(
+        excluded_categories={"agent_driver"},
+        has_project=True,
+        since=datetime(2026, 1, 3, 0, 0, 0),
+    ) == 2
+
+    narrowed = manager.list_sessions(
+        included_categories={"agent", "chat"},
+        has_project=True,
+        until=datetime(2026, 1, 3, 0, 0, 0),
+    )
+    assert [row.session_id for row in narrowed] == ["agent-1"]
+    assert manager.count_sessions(
+        included_categories={"agent", "chat"},
+        has_project=True,
+        until=datetime(2026, 1, 3, 0, 0, 0),
+    ) == 1
+
+
+def test_project_and_time_predicates_reach_the_sql_statement():
+    """has_project and the time bounds are SQL predicates, not Python filters."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_project_and_time_rows(manager)
+
+    statements = []
+
+    def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        statements.append((statement, parameters))
+
+    event.listen(manager.engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        manager.list_sessions(
+            has_project=True,
+            since=datetime(2026, 1, 2, 0, 0, 0),
+            until=datetime(2026, 1, 4, 0, 0, 0),
+            offset=0,
+            limit=2,
+        )
+        manager.count_sessions(
+            has_project=True,
+            since=datetime(2026, 1, 2, 0, 0, 0),
+            until=datetime(2026, 1, 4, 0, 0, 0),
+        )
+    finally:
+        event.remove(manager.engine, "before_cursor_execute", before_cursor_execute)
+
+    select_statements = [item for item in statements if "FROM session" in item[0]]
+    assert len(select_statements) == 2
+    list_sql, list_parameters = select_statements[0]
+    count_sql, count_parameters = select_statements[1]
+    for statement, parameters in ((list_sql, list_parameters), (count_sql, count_parameters)):
+        lowered = statement.lower()
+        assert "project_workspace !=" in lowered
+        assert "create_time >=" in lowered
+        assert "create_time <=" in lowered
+        assert "2026-01-02" in str(parameters)
+        assert "2026-01-04" in str(parameters)
+    assert " limit " in f" {list_sql.lower()} "
+    assert " limit " not in f" {count_sql.lower()} "
+
+
+# ---------------------------------------------------------------------------
+# Filter matrix: every selection filter, passed and omitted, in every
+# combination. The reference implementation below encodes the documented
+# semantics independently of SQLAlchemy, so a combination that silently drops
+# or silently adds a predicate fails here instead of only in the CLI.
+# ---------------------------------------------------------------------------
+
+_MATRIX_ROWS = (
+    {"session_id": "s-agent-a", "category": "agent", "project_workspace": "/work/a",
+     "create_time": datetime(2026, 1, 1, 0, 0, 0)},
+    {"session_id": "s-agent-b", "category": "agent", "project_workspace": "",
+     "create_time": datetime(2026, 1, 2, 0, 0, 0)},
+    {"session_id": "s-driver-a", "category": "agent_driver", "project_workspace": "/work/b",
+     "create_time": datetime(2026, 1, 3, 0, 0, 0)},
+    {"session_id": "s-driver-b", "category": "agent_driver", "project_workspace": None,
+     "create_time": datetime(2026, 1, 4, 0, 0, 0)},
+    {"session_id": "s-chat-a", "category": "chat", "project_workspace": "   ",
+     "create_time": datetime(2026, 1, 5, 0, 0, 0)},
+    {"session_id": "s-chat-b", "category": "chat", "project_workspace": "/work/c",
+     "create_time": datetime(2026, 1, 6, 0, 0, 0)},
+    {"session_id": "s-plain-a", "category": "", "project_workspace": "/work/d",
+     "create_time": datetime(2026, 1, 7, 0, 0, 0)},
+    {"session_id": "s-plain-b", "category": "", "project_workspace": "",
+     "create_time": datetime(2026, 1, 8, 0, 0, 0)},
+)
+
+# Each dimension carries the value used when it is "passed". Every value is
+# chosen so that passing it alone narrows the result, which keeps the matrix
+# from passing vacuously.
+_FILTER_DIMENSIONS = (
+    ("sessions", ["s-agent-a", "s-driver-a", "s-chat-a", "s-plain-a"]),
+    ("category", "agent"),
+    ("included_categories", {"agent", "chat"}),
+    ("excluded_categories", {"agent_driver"}),
+    ("has_project", True),
+    ("since", datetime(2026, 1, 3, 0, 0, 0)),
+    ("until", datetime(2026, 1, 6, 0, 0, 0)),
+)
+
+
+def _seed_matrix_rows(manager):
+    """Create the matrix dataset through the storage layer."""
+    for row in _MATRIX_ROWS:
+        data = SessionData(
+            session_id=row["session_id"],
+            task="task",
+            category=row["category"],
+            project_workspace=row["project_workspace"],
+        )
+        data.create_time = row["create_time"]
+        manager.create_session(data)
+
+
+def _reference_filter(sessions=None, category=None, included_categories=None,
+                      excluded_categories=None, has_project=False, since=None,
+                      until=None):
+    """Return the rows the documented filter semantics must select.
+
+    This mirrors the contract in words rather than in SQL: an empty or omitted
+    collection is a no-op, ``category`` is resolved to a legal name, a NULL or
+    empty workspace is dropped by ``has_project`` while a whitespace-only one is
+    kept, and the time bounds are inclusive.
+    """
+    selected = []
+    for row in _MATRIX_ROWS:
+        if sessions and row["session_id"] not in sessions:
+            continue
+        if category is not None and row["category"] != resolve_session_category(category):
+            continue
+        if included_categories and row["category"] not in included_categories:
+            continue
+        if excluded_categories and row["category"] in excluded_categories:
+            continue
+        if has_project and not row["project_workspace"]:
+            continue
+        if since is not None and row["create_time"] < since:
+            continue
+        if until is not None and row["create_time"] > until:
+            continue
+        selected.append(row)
+    return selected
+
+
+def _filter_combinations():
+    """Yield one kwargs dict per passed/omitted combination of every filter."""
+    for flags in itertools.product((False, True), repeat=len(_FILTER_DIMENSIONS)):
+        kwargs = {}
+        for passed, (name, value) in zip(flags, _FILTER_DIMENSIONS):
+            if passed:
+                kwargs[name] = value
+        yield flags, kwargs
+
+
+def _describe(flags):
+    """Render a combination as a readable pytest id."""
+    passed = [name for passed, (name, _) in zip(flags, _FILTER_DIMENSIONS) if passed]
+    return "+".join(passed) if passed else "none"
+
+
+@pytest.mark.parametrize("flags,kwargs", list(_filter_combinations()), ids=_describe)
+def test_every_filter_combination_matches_the_documented_semantics(flags, kwargs):
+    """All 128 passed/omitted combinations select exactly the reference rows."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(manager)
+
+    expected = sorted(row["session_id"] for row in _reference_filter(**kwargs))
+    listed = manager.list_sessions(order_by="session_id", **kwargs)
+    assert [row.session_id for row in listed] == expected
+    assert manager.count_sessions(**kwargs) == len(expected)
+
+
+@pytest.mark.parametrize("flags,kwargs", list(_filter_combinations()), ids=_describe)
+def test_every_filter_combination_paginates_the_filtered_set(flags, kwargs):
+    """Offset and limit slice the filtered set, never the unfiltered table."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(manager)
+
+    expected = sorted(row["session_id"] for row in _reference_filter(**kwargs))
+    page = manager.list_sessions(order_by="session_id", offset=1, limit=2, **kwargs)
+    assert [row.session_id for row in page] == expected[1:3]
+    assert manager.count_sessions(**kwargs) == len(expected)
+
+
+@pytest.mark.parametrize("flags,kwargs", list(_filter_combinations()), ids=_describe)
+def test_every_filter_combination_survives_manager_forwarding(flags, kwargs):
+    """The production manager forwards every combination without changing it."""
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(storage)
+    manager = DefaultSessionManager(storage, Mock())
+
+    expected = sorted(row["session_id"] for row in _reference_filter(**kwargs))
+    listed = manager.list_sessions(order_by="session_id", **kwargs)
+    assert [row.session_id for row in listed] == expected
+    assert manager.count_sessions(**kwargs) == len(expected)
+
+
+@pytest.mark.parametrize(
+    "name,value", _FILTER_DIMENSIONS, ids=[name for name, _ in _FILTER_DIMENSIONS]
+)
+def test_each_filter_alone_narrows_the_result(name, value):
+    """Every dimension is meaningful, so the matrix cannot pass vacuously."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(manager)
+
+    selected = manager.list_sessions(order_by="session_id", **{name: value})
+    assert 0 < len(selected) < len(_MATRIX_ROWS)
+    assert manager.count_sessions(**{name: value}) == len(selected)
+
+
+@pytest.mark.parametrize("kwargs", [
+    {},
+    {"sessions": []},
+    {"category": None},
+    {"included_categories": set()},
+    {"excluded_categories": set()},
+    {"has_project": False},
+    {"since": None},
+    {"until": None},
+    {"sessions": [], "category": None, "included_categories": set(),
+     "excluded_categories": set(), "has_project": False, "since": None, "until": None},
+])
+def test_omitted_and_no_op_values_select_every_row(kwargs):
+    """An omitted filter and its no-op value must both leave the result intact."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(manager)
+
+    listed = manager.list_sessions(order_by="session_id", **kwargs)
+    assert len(listed) == len(_MATRIX_ROWS)
+    assert manager.count_sessions(**kwargs) == len(_MATRIX_ROWS)
+
+
+def test_empty_category_string_is_not_the_same_as_omitting_it():
+    """category="" selects uncategorized rows while category=None selects all."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(manager)
+
+    uncategorized = manager.list_sessions(category="", order_by="session_id")
+    assert [row.session_id for row in uncategorized] == ["s-plain-a", "s-plain-b"]
+    assert manager.count_sessions(category="") == 2
+    assert manager.count_sessions(category=None) == len(_MATRIX_ROWS)
+
+
+def test_inclusion_and_exclusion_of_the_same_category_select_nothing():
+    """Inclusion is applied before exclusion, so the two cancel out."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(manager)
+
+    rows = manager.list_sessions(
+        included_categories={"agent"}, excluded_categories={"agent"}, order_by="session_id"
+    )
+    assert rows == []
+    assert manager.count_sessions(
+        included_categories={"agent"}, excluded_categories={"agent"}
+    ) == 0
+
+
+def test_contradictory_time_window_selects_nothing():
+    """A since later than until is an empty window, not a widened one."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(manager)
+
+    rows = manager.list_sessions(
+        since=datetime(2026, 1, 6, 0, 0, 0), until=datetime(2026, 1, 3, 0, 0, 0)
+    )
+    assert rows == []
+    assert manager.count_sessions(
+        since=datetime(2026, 1, 6, 0, 0, 0), until=datetime(2026, 1, 3, 0, 0, 0)
+    ) == 0
+
+
+def test_has_project_combined_with_an_empty_workspace_category():
+    """has_project and the uncategorized filter compose without widening."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_matrix_rows(manager)
+
+    rows = manager.list_sessions(has_project=True, category="", order_by="session_id")
+    assert [row.session_id for row in rows] == ["s-plain-a"]
+    assert manager.count_sessions(has_project=True, category="") == 1

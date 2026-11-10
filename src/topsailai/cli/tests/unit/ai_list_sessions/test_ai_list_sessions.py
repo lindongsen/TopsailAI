@@ -565,19 +565,37 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         self.assertEqual(data[0]["category"], "")
 
     @mock.patch.object(sys.stdout, "isatty", return_value=False)
-    def test_invalid_category_logs_error_and_selects_empty(self, _mock_tty):
-        """Invalid category values log the original value and select empty rows."""
+    def test_invalid_category_is_rejected(self, _mock_tty):
+        """Invalid category values fail instead of selecting uncategorized rows."""
         manager = get_session_manager(self.db_conn)
         manager.create_session(SessionData(session_id="empty", task="task", category=""))
         manager.create_session(SessionData(session_id="agent", task="task", category="agent"))
-        with self.assertLogs("topsailai.context.session_category", level="ERROR") as logs:
-            with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
-                                          "--category", "Agent\n", "--json", "--no-color"]):
-                with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
-                    ai_list_sessions.main()
-                    data = json.loads(output.getvalue())
-        self.assertTrue(any("Agent\\n" in message for message in logs.output))
-        self.assertEqual([row["session_id"] for row in data], ["empty"])
+        invalid_values = ["Agent", "agent,chat", "agent chat", "agent-1", "agent\n", "agent!"]
+        for invalid_value in invalid_values:
+            with self.subTest(value=invalid_value):
+                with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                              "--category", invalid_value, "--json", "--no-color"]):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                        with self.assertRaises(SystemExit) as raised:
+                            ai_list_sessions.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual(output.getvalue(), "")
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_valid_category_values_are_accepted(self, _mock_tty):
+        """Lowercase letters, digits, and underscores are accepted as one value."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(session_id="a", task="task", category="agent"))
+        manager.create_session(SessionData(session_id="b", task="task", category="agent_2"))
+        manager.create_session(SessionData(session_id="c", task="task", category="123"))
+        for valid_value, expected in (("agent", ["a"]), ("agent_2", ["b"]), ("123", ["c"])):
+            with self.subTest(value=valid_value):
+                with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                              "--category", valid_value, "--json", "--no-color"]):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                        ai_list_sessions.main()
+                        data = json.loads(output.getvalue())
+                self.assertEqual([row["session_id"] for row in data], expected)
 
     @mock.patch.object(sys.stdout, "isatty", return_value=False)
     def test_category_text_and_omitted_filter_ignore_environment(self, _mock_tty):
@@ -618,8 +636,8 @@ class TestJsonAndFilterFlags(unittest.TestCase):
 
 
     @mock.patch.object(sys.stdout, "isatty", return_value=False)
-    def test_repeated_category_uses_last_value(self, _mock_tty):
-        """Argparse uses the last repeated category value."""
+    def test_repeated_category_is_rejected(self, _mock_tty):
+        """A repeated category option fails instead of silently keeping the last."""
         manager = get_session_manager(self.db_conn)
         manager.create_session(SessionData(session_id="agent", task="task", category="agent"))
         manager.create_session(SessionData(session_id="chat", task="task", category="chat"))
@@ -627,11 +645,10 @@ class TestJsonAndFilterFlags(unittest.TestCase):
             "ai_list_sessions.py", "--db-conn", self.db_conn, "--json",
             "--category", "agent", "--category", "chat", "--no-color",
         ]):
-            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
-                ai_list_sessions.main()
-                data = json.loads(output.getvalue())
-        assert [row["session_id"] for row in data] == ["chat"]
-        assert [row["category"] for row in data] == ["chat"]
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                with self.assertRaises(SystemExit) as raised:
+                    ai_list_sessions.main()
+        self.assertEqual(raised.exception.code, 2)
 
     @mock.patch.object(sys.stdout, "isatty", return_value=False)
     def test_category_combined_with_project_filter(self, _mock_tty):
@@ -1005,6 +1022,148 @@ class TestIncludedCategories(unittest.TestCase):
         self.assertIn("coalesce", page_statements[0].lower())
         self.assertIn(" in ", page_statements[0].lower())
         self.assertNotIn("not in", page_statements[0].lower())
+
+
+class TestProjectAndTimeFilters(unittest.TestCase):
+    """Tests for the database-side --has-project and --since/--until filters."""
+
+    def setUp(self):
+        self.db_fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(self.db_fd)
+        self.db_conn = f"sqlite:///{self.db_path}"
+        manager = get_session_manager(self.db_conn)
+        rows = (
+            ("proj-early", "/work/a", datetime(2026, 1, 1, 0, 0, 0)),
+            ("proj-mid", "/work/b", datetime(2026, 1, 2, 0, 0, 0)),
+            ("proj-late", "/work/c", datetime(2026, 1, 3, 0, 0, 0)),
+            ("empty-ws", "", datetime(2026, 1, 4, 0, 0, 0)),
+            ("blank-ws", "   ", datetime(2026, 1, 5, 0, 0, 0)),
+            ("null-ws", None, datetime(2026, 1, 6, 0, 0, 0)),
+        )
+        for session_id, workspace, created in rows:
+            data = SessionData(session_id=session_id, task="task", project_workspace=workspace)
+            data.create_time = created
+            manager.create_session(data)
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def _run(self, options):
+        """Run main() with *options* and return its stdout."""
+        with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                     "--no-color", *options]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                ai_list_sessions.main()
+                return output.getvalue()
+
+    def test_has_project_keeps_only_rows_with_a_workspace(self):
+        """The project filter drops NULL and empty workspaces."""
+        data = json.loads(self._run(["--json", "--has-project"]))
+        self.assertEqual({row["session_id"] for row in data},
+                         {"proj-early", "proj-mid", "proj-late", "blank-ws"})
+
+    def test_has_project_limit_returns_a_full_page(self):
+        """A limit must select a full page of rows that have a workspace."""
+        data = json.loads(self._run(["--json", "--has-project", "--limit", "2"]))
+        self.assertEqual(len(data), 2)
+        for row in data:
+            self.assertTrue(row["project_workspace"])
+
+    def test_has_project_reports_matched_total(self):
+        """Text mode counts the filtered rows instead of the whole table."""
+        text = self._run(["--has-project", "--limit", "1"])
+        self.assertIn("Total: 1 session", text)
+        self.assertIn("Matched Total: 4", text)
+
+    def test_since_keeps_rows_at_or_after_the_bound(self):
+        """since is an inclusive lower bound on create_time."""
+        data = json.loads(self._run(["--json", "--since", "2026-01-03T00:00:00"]))
+        self.assertEqual({row["session_id"] for row in data},
+                         {"proj-late", "empty-ws", "blank-ws", "null-ws"})
+
+    def test_until_keeps_rows_at_or_before_the_bound(self):
+        """until is an inclusive upper bound on create_time."""
+        data = json.loads(self._run(["--json", "--until", "2026-01-02T00:00:00"]))
+        self.assertEqual({row["session_id"] for row in data}, {"proj-early", "proj-mid"})
+
+    def test_time_window_limit_returns_a_full_page(self):
+        """A limit must select a full page of rows inside the window."""
+        data = json.loads(self._run([
+            "--json", "--since", "2026-01-02T00:00:00", "--limit", "2",
+        ]))
+        self.assertEqual(len(data), 2)
+
+    def test_time_window_reports_matched_total(self):
+        """Text mode counts the rows inside the window."""
+        text = self._run(["--since", "2026-01-02T00:00:00", "--limit", "1"])
+        self.assertIn("Total: 1 session", text)
+        self.assertIn("Matched Total: 5", text)
+
+    def test_window_later_than_every_row_returns_nothing(self):
+        """A window past every row selects no row instead of a short page."""
+        data = json.loads(self._run(["--json", "--since", "2030-01-01T00:00:00"]))
+        self.assertEqual(data, [])
+
+    def test_project_and_time_filters_combine(self):
+        """Both filters compose into one query."""
+        data = json.loads(self._run([
+            "--json", "--has-project", "--since", "2026-01-02T00:00:00",
+            "--until", "2026-01-03T00:00:00",
+        ]))
+        self.assertEqual({row["session_id"] for row in data}, {"proj-mid", "proj-late"})
+
+    def test_filters_are_pushed_down_to_the_database(self):
+        """Every selection value reaches the query instead of being applied later."""
+        manager = get_session_manager(self.db_conn)
+        captured = {}
+
+        original = manager.list_sessions
+
+        def recording_list_sessions(**kwargs):
+            captured.update(kwargs)
+            return original(**kwargs)
+
+        with mock.patch.object(manager, "list_sessions", side_effect=recording_list_sessions):
+            with mock.patch.object(ai_list_sessions, "get_session_manager", return_value=manager):
+                self._run([
+                    "--json", "--has-project", "--since", "2026-01-02T00:00:00",
+                    "--until", "2026-01-04T00:00:00", "--offset", "1", "--limit", "2",
+                ])
+
+        self.assertTrue(captured["has_project"])
+        self.assertEqual(captured["since"], datetime(2026, 1, 2, 0, 0, 0))
+        self.assertEqual(captured["until"], datetime(2026, 1, 4, 0, 0, 0))
+        self.assertEqual(captured["offset"], 1)
+        self.assertEqual(captured["limit"], 2)
+
+    def test_project_and_time_predicates_reach_the_sql_statement(self):
+        """The predicates are SQL-side, so no filtered row is ever read."""
+        statements = []
+        manager = get_session_manager(self.db_conn)
+        engine = manager.storage.engine
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            with mock.patch.object(ai_list_sessions, "get_session_manager", return_value=manager):
+                self._run([
+                    "--json", "--has-project", "--since", "2026-01-02T00:00:00",
+                    "--until", "2026-01-04T00:00:00", "--limit", "2",
+                ])
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+        page_statements = [s for s in statements if "FROM session" in s and "LIMIT" in s.upper()]
+        self.assertTrue(page_statements)
+        lowered = page_statements[0].lower()
+        self.assertIn("project_workspace !=", lowered)
+        self.assertIn("create_time >=", lowered)
+        self.assertIn("create_time <=", lowered)
 
 
 if __name__ == "__main__":

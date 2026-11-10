@@ -443,14 +443,21 @@ class SessionSQLAlchemy(SessionStorageBase):
                 db_session.close()
 
     def _apply_session_filters(self, query, sessions=None, category=None,
-                               included_categories=None, excluded_categories=None):
-        """Apply ID, exact category, and category set predicates.
+                               included_categories=None, excluded_categories=None,
+                               has_project=False, since=None, until=None):
+        """Apply ID, category, project, and creation-time predicates.
 
         Category names are treated as already validated exact strings: resolving
         them here would turn an invalid name into the empty category and change
         which rows match. A NULL category is coalesced to the empty string so it
         counts as uncategorized for both the inclusion and the exclusion
         predicate instead of being silently dropped.
+
+        ``has_project`` keeps rows whose ``project_workspace`` is truthy, which
+        matches the previous in-memory test: a NULL or empty value is dropped and
+        a whitespace-only value is kept. ``since`` and ``until`` are inclusive
+        bounds on ``create_time``; a NULL ``create_time`` never satisfies them,
+        matching the previous in-memory comparison that skipped such rows.
         """
         if sessions:
             query = query.filter(Session.session_id.in_(sessions))
@@ -464,6 +471,12 @@ class SessionSQLAlchemy(SessionStorageBase):
             query = query.filter(
                 ~sql_func.coalesce(Session.category, "").in_(list(excluded_categories))
             )
+        if has_project:
+            query = query.filter(Session.project_workspace != "")
+        if since is not None:
+            query = query.filter(Session.create_time >= since)
+        if until is not None:
+            query = query.filter(Session.create_time <= until)
         return query
 
     def list_sessions(
@@ -475,14 +488,18 @@ class SessionSQLAlchemy(SessionStorageBase):
         category: str = None,
         included_categories: set[str] = None,
         excluded_categories: set[str] = None,
+        has_project: bool = False,
+        since: datetime = None,
+        until: datetime = None,
     ) -> list[SessionData]:
-        """List sessions with SQL-side ID/category filtering and pagination."""
+        """List sessions with SQL-side filtering, ordering, and pagination."""
         db_session = self.SessionLocal()
         try:
             query = self._apply_session_filters(
                 db_session.query(Session), sessions=sessions, category=category,
                 included_categories=included_categories,
                 excluded_categories=excluded_categories,
+                has_project=has_project, since=since, until=until,
             )
             query = self._apply_order_by(query, order_by)
             if offset is not None:
@@ -523,14 +540,17 @@ class SessionSQLAlchemy(SessionStorageBase):
 
     def count_sessions(self, sessions: list[str] = None, category: str = None,
                        included_categories: set[str] = None,
-                       excluded_categories: set[str] = None) -> int:
-        """Count sessions matching ID/category filters without pagination."""
+                       excluded_categories: set[str] = None,
+                       has_project: bool = False, since: datetime = None,
+                       until: datetime = None) -> int:
+        """Count sessions matching the selection filters without pagination."""
         db_session = self.SessionLocal()
         try:
             query = self._apply_session_filters(
                 db_session.query(Session), sessions=sessions, category=category,
                 included_categories=included_categories,
                 excluded_categories=excluded_categories,
+                has_project=has_project, since=since, until=until,
             )
             return query.count()
         except Exception as e:
