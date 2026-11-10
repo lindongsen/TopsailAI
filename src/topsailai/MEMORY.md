@@ -53,3 +53,11 @@ Trigger: an implementer added an `observe_*` wrapper (`observe_tool_execute`) ar
 Action: call the named Hook Point function directly, keep payload builders data-only and never dispatch Hooks from them, and obtain explicit Human approval before adding any wrapper, adapter, or indirection. Do not reinterpret implementation convenience as authorization.
 
 Why this prevents recurrence: the mandatory rule and Human decision provenance are now explicit in `features/feature-unified-hooks-design.md` and `docs/Hooks_API.md`, so future implementers cannot claim the constraint was undocumented or infer permission from historical adapter descriptions.
+
+## Minor behavior additions belong only in source code and unit tests
+
+Trigger: after implementing the Agent2LLM injection log, an "Injection Log" section was added to `MEMO.AgentCore.md` and a behavior bullet was added to `docs/Environment_Variables.md`. The Human rejected both: "这种功能就不用记到 MEMO 里面了" and "docs/Environment_Variables.md 这里也不需要，环境变量只需要关注自身的功能、运行机制就可以了".
+
+Action: keep a small behavior addition in the source code and its unit tests only. Do not add a new section to `MEMO.md` / `MEMO.*.md` for a minor feature, log format, or display tweak, and do not add feature-behavior notes to `docs/Environment_Variables.md` — that document describes only each variable's own purpose, default, valid values, and runtime mechanism.
+
+Why this prevents recurrence: MEMO documents are injected into the agent context and are meant for architecture-level conclusions and pitfalls, so recording every small feature there dilutes the signal and costs tokens on every turn. The environment-variable reference is a configuration contract, not a changelog, so feature behavior written there goes stale and misleads readers looking for how a variable works. Reserve MEMO entries for structural decisions, cross-module contracts, and non-obvious traps.
