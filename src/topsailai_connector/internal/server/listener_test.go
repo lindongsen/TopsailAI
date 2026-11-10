@@ -647,9 +647,11 @@ func TestListenerServeStopsOnContextCancel(t *testing.T) {
 		done <- listener.Serve(ctx)
 	}()
 
-	// Wait for the bind so the cancel does not race the listen call.
+	// Wait for the bind so the cancel does not race the listen call. Addr reports
+	// the configured address until Serve has bound, so a different value means the
+	// kernel has chosen a port and the listener is live.
 	deadline := time.Now().Add(5 * time.Second)
-	for listener.listener == nil {
+	for listener.Addr() == config.Listen {
 		if time.Now().After(deadline) {
 			t.Fatal("the listener did not bind")
 		}

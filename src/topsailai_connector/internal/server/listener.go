@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -50,6 +51,11 @@ type Listener struct {
 	upgrader    websocket.Upgrader
 	generations atomic.Uint64
 
+	// mutex guards server and listener, which Serve writes and Addr and shutdown
+	// read. Without it a caller that polls Addr while Serve is binding is a data
+	// race, and the race detector reports it as one even though the value read is
+	// only an address.
+	mutex    sync.Mutex
 	server   *http.Server
 	listener net.Listener
 }
@@ -135,7 +141,6 @@ func (l *Listener) Serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", address, err)
 	}
-	l.listener = listener
 
 	if l.config.TLSEnabled() {
 		certificate, err := tls.LoadX509KeyPair(l.config.TLSCert, l.config.TLSKey)
@@ -149,7 +154,7 @@ func (l *Listener) Serve(ctx context.Context) error {
 		})
 	}
 
-	l.server = &http.Server{
+	server := &http.Server{
 		Handler:           l.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// The write timeout is deliberately unset: a forwarded request is bounded
@@ -158,8 +163,16 @@ func (l *Listener) Serve(ctx context.Context) error {
 		// node_timeout the caller can act on.
 	}
 
+	// The bound listener and the server are published under the mutex, so a caller
+	// that reads Addr after Serve has bound sees the address the kernel chose
+	// rather than the configured one.
+	l.mutex.Lock()
+	l.listener = listener
+	l.server = server
+	l.mutex.Unlock()
+
 	l.logger.Info("server listening",
-		"listen", address,
+		"listen", listener.Addr().String(),
 		"tls", l.config.TLSEnabled(),
 		"channel_path", ChannelPath,
 		"operation_path_prefix", OperationPathPrefix,
@@ -167,7 +180,7 @@ func (l *Listener) Serve(ctx context.Context) error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- l.server.Serve(listener)
+		serveErr <- server.Serve(listener)
 	}()
 
 	select {
@@ -192,9 +205,15 @@ func (l *Listener) shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
+	// The server is copied under the mutex so a shutdown that races the bind
+	// either sees the server or does not, instead of reading a half-written field.
+	l.mutex.Lock()
+	server := l.server
+	l.mutex.Unlock()
+
 	var first error
-	if l.server != nil {
-		if err := l.server.Shutdown(ctx); err != nil {
+	if server != nil {
+		if err := server.Shutdown(ctx); err != nil {
 			first = fmt.Errorf("shut down the http server: %w", err)
 		}
 	}
@@ -212,8 +231,12 @@ func (l *Listener) shutdown() error {
 // which port the kernel chose. Before the bind it returns the configured address,
 // which is what a startup log reports.
 func (l *Listener) Addr() string {
-	if l.listener != nil {
-		return l.listener.Addr().String()
+	l.mutex.Lock()
+	listener := l.listener
+	l.mutex.Unlock()
+
+	if listener != nil {
+		return listener.Addr().String()
 	}
 	return l.config.Listen
 }
