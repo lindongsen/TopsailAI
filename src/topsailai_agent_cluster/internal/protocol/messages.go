@@ -7,15 +7,26 @@ package protocol
 // ProviderSessionID is the provider's own session key, because a stopped session
 // is absent from the inventory and therefore has no cluster resource ID.
 //
-// MaxChars bounds one message body. It is applied by the adapter after the body is
-// unwrapped, never forwarded to the provider: the provider truncates the raw
-// stored document, which cuts a structured body into invalid JSON and leaves the
-// adapter unable to unwrap exactly the long messages an operator most wants to
-// read. Zero means no truncation. It cannot bound the document, because one
-// message may be arbitrarily long, so the adapter applies its own byte bounds too.
+// MaxChars bounds one message body in characters. It is applied by the adapter
+// after the body is unwrapped, never forwarded to the provider: the provider
+// truncates the raw stored document, which cuts a structured body into invalid
+// JSON and leaves the adapter unable to unwrap exactly the long messages an
+// operator most wants to read. Zero means no truncation. It cannot bound the
+// document, because one message may be arbitrarily long, so the adapter applies
+// its own byte bounds too.
+//
+// MaxTokens bounds one message body in model tokens, which is the bound an
+// operator usually wants: a token is the unit that makes a conversation expensive
+// and noisy, while a character count says nothing about how much of the model's
+// context a message occupies. It is applied by the adapter after unwrapping, for
+// the same reason as MaxChars, and it is measured with the provider's own counting
+// rule so the bound agrees with the count printed in the header. Zero means no
+// truncation. When both bounds are supplied the tighter one wins, so neither can
+// silently override the other.
 type MessagesQuery struct {
 	ProviderSessionID string `json:"provider_session_id"`
 	MaxChars          int    `json:"max_chars,omitempty"`
+	MaxTokens         int    `json:"max_tokens,omitempty"`
 }
 
 // Message is one provider-neutral conversation record.
@@ -91,4 +102,15 @@ const (
 	// larger value is clamped rather than rejected, so a caller cannot ask for a
 	// bound the provider would silently reduce.
 	MaxMessagesMaxChars = 100000
+	// DefaultMessagesMaxTokens is the token bound applied when a caller states
+	// none. A conversation is read to be understood, not exported, so an unbounded
+	// body is noise: one long tool result can bury every other message. The value
+	// is resolved at the surface that can tell "not supplied" from "supplied zero",
+	// because zero is a meaningful request for no bound and must not be confused
+	// with an absent one.
+	DefaultMessagesMaxTokens = 5000
+	// MaxMessagesMaxTokens bounds the caller's per-message token request. A larger
+	// value is clamped rather than rejected, so a caller cannot ask for a bound the
+	// adapter would silently reduce.
+	MaxMessagesMaxTokens = 200000
 )

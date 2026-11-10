@@ -6,14 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
-	tiktoken "github.com/pkoukk/tiktoken-go"
-	tiktokenloader "github.com/pkoukk/tiktoken-go-loader"
-
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/tokenizer"
 )
 
 // messagesEntry mirrors one record of the provider's `session history --json`
@@ -100,30 +97,31 @@ func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (p
 	if envelope.MessageCount > len(envelope.Messages) {
 		result.Truncated = true
 	}
-	// The caller's display bound is resolved once, before the loop, so every
-	// message is shortened by the same rule.
-	maxChars := clampMessagesMaxChars(query.MaxChars)
+	// The caller's display bounds are deliberately not applied here. A bound is a
+	// presentation decision, so it belongs to the renderer that presents the body:
+	// cutting the stored text here would cut a structured body into invalid JSON,
+	// and the renderer would then have to print the fragment verbatim because it
+	// could no longer parse it. The adapter therefore returns every body whole and
+	// reports only what the provider itself reported.
 	total := 0
 	for _, entry := range envelope.Messages {
-		// The counts are measured from the body as the provider stored it, before
-		// unwrapping and before any display bound. That is the order the provider's
-		// own human-readable surface uses, and it is load-bearing: a count taken
-		// after truncation would describe the shortened text, so the same message
-		// would report a different size depending on how much of it was displayed.
+		// The counts are measured from the body as the provider stored it. That is
+		// the order the provider's own human-readable surface uses, and it is
+		// load-bearing: a count taken after a display bound would describe the
+		// shortened text, so the same message would report a different size
+		// depending on how much of it was displayed.
 		wordCount := utf8.RuneCountInString(entry.Content)
-		tokenCount := countProviderTokens(entry.Content)
+		tokenCount := tokenizer.Count(entry.Content)
 		// The provider wraps most bodies in its own step record, so the body is
-		// unwrapped before it is bounded. The order matters: bounding first would
-		// cut the wrapper into invalid JSON, and the unwrapper would then have to
-		// give up on exactly the long messages an operator most wants to read.
-		unwrapped := unwrapProviderContent(entry.Content)
-		content := truncateMessageContent(unwrapped, maxChars)
-		if content != unwrapped {
-			result.Truncated = true
-		}
+		// unwrapped before it is returned. The record format is provider detail, so
+		// unwrapping belongs here rather than in the renderer.
+		content := unwrapProviderContent(entry.Content)
+		// The byte guard is a transport bound, not a display bound: it keeps one
+		// oversized conversation from exhausting the channel. Breaking here leaves
+		// fewer messages than the provider counted, so the renderer reports a
+		// bounded window rather than a shortened body, which is the true fact.
 		total += len(content)
 		if total > protocol.MaxMessagesBytes {
-			result.Truncated = true
 			break
 		}
 		result.Messages = append(result.Messages, protocol.Message{
@@ -169,109 +167,6 @@ func (a *Adapter) requireSession(ctx context.Context, sessionID string) (string,
 		// the operator looking for data that still exists.
 		return protocol.MessagesProviderError, fmt.Errorf("session info for %q failed: %s", sessionID, envelope.ErrorCode)
 	}
-}
-
-// clampMessagesMaxChars bounds the caller's per-message character request.
-//
-// A value above the accepted maximum is clamped rather than rejected, so a caller
-// cannot request a bound the adapter would silently reduce. Zero means no
-// truncation, which is the cluster's own convention: the provider treats a zero
-// bound as an empty body, but a request that erases every message is not a useful
-// operator intent, so the cluster reads zero as "show the whole body".
-func clampMessagesMaxChars(value int) int {
-	if value <= 0 {
-		return 0
-	}
-	if value > protocol.MaxMessagesMaxChars {
-		return protocol.MaxMessagesMaxChars
-	}
-	return value
-}
-
-// truncateMessageContent shortens one readable body to the caller's display bound.
-//
-// The cut is counted in code points and lands on a rune boundary, so a multi-byte
-// character is never split. The provider's own human-readable surface appends an
-// ellipsis to a shortened body, and the same marker is used here so the operator
-// can see that text is missing rather than assuming the message ended there.
-//
-// A zero bound means no truncation. The provider treats a zero bound as an empty
-// body, but that reading is not carried over: a request that erases every message
-// is not a useful operator intent, and silently returning nothing would look like
-// a session with no content.
-func truncateMessageContent(content string, maxChars int) string {
-	if maxChars <= 0 {
-		return content
-	}
-	if utf8.RuneCountInString(content) <= maxChars {
-		return content
-	}
-	count := 0
-	for offset := range content {
-		if count == maxChars {
-			return content[:offset] + "..."
-		}
-		count++
-	}
-	return content
-}
-
-// providerTokenEncodingName is the encoding the provider's own counter uses.
-//
-// It is named here rather than derived from a model, because the provider counts
-// with a fixed encoding and the cluster must reproduce that number, not the number
-// a different model would produce.
-const providerTokenEncodingName = "cl100k_base"
-
-var (
-	// providerTokenEncodingOnce builds the encoder at most once per process.
-	//
-	// Loading the encoding costs about 200ms, which is a fifth of the whole
-	// messages budget. Building it per message would spend the budget on setup and
-	// leave nothing for the read itself.
-	providerTokenEncodingOnce sync.Once
-	// providerTokenEncoding is nil when the encoding could not be loaded, so a
-	// counting failure degrades to "no count claimed" instead of failing the read.
-	providerTokenEncoding *tiktoken.Tiktoken
-)
-
-// countProviderTokens reports how many model tokens one body contains.
-//
-// The provider's own human-readable surface prints this number next to each
-// message, so the cluster reproduces it rather than inventing a different measure.
-// The counting rule is provider detail and therefore lives in the adapter: a
-// second provider may count differently, and the renderer must never compute this
-// for itself.
-//
-// The encoding is loaded from an embedded vocabulary, so counting works on a host
-// with no network access. A load or encode failure returns zero, which the protocol
-// documents as "no count claimed" rather than as a measured empty body: a display
-// detail must never turn a readable conversation into a failed read.
-func countProviderTokens(content string) int {
-	if content == "" {
-		return 0
-	}
-	providerTokenEncodingOnce.Do(func() {
-		// The offline loader is installed before the encoding is requested, because
-		// the default loader downloads the vocabulary at first use. A packaged node
-		// may have no route to the internet, so a download would make the count
-		// depend on network reachability.
-		tiktoken.SetBpeLoader(tiktokenloader.NewOfflineLoader())
-		encoding, err := tiktoken.GetEncoding(providerTokenEncodingName)
-		if err != nil {
-			return
-		}
-		providerTokenEncoding = encoding
-	})
-	if providerTokenEncoding == nil {
-		return 0
-	}
-	// EncodeOrdinary is used rather than Encode because the provider calls
-	// encoding.encode(text) with no special-token arguments, which treats every
-	// special token as ordinary text. Encode would instead panic on a body that
-	// happens to contain a token-looking string, and a conversation is untrusted
-	// text that may contain anything.
-	return len(providerTokenEncoding.EncodeOrdinary(content))
 }
 
 // Provider step-record field names. These are provider vocabulary, so they are

@@ -23,13 +23,17 @@ type interactiveMessagesStub struct {
 	// always passes zero, so a non-zero value would mean the surface narrowed a
 	// conversation the operator did not ask to narrow.
 	messagesMaxChars []int
+	// messagesMaxTokens records the token bound of every interactive read, so a
+	// test can prove the default reached the seam rather than being dropped.
+	messagesMaxTokens []int
 }
 
 // GetMessages records the queried endpoint so a test can prove which endpoint the
 // interactive surface addressed.
-func (s *interactiveMessagesStub) GetMessages(_ context.Context, endpointID, _ string, maxChars int) (protocol.MessagesResult, error) {
+func (s *interactiveMessagesStub) GetMessages(_ context.Context, endpointID, _ string, maxChars, maxTokens int) (protocol.MessagesResult, error) {
 	s.messagesCalls = append(s.messagesCalls, endpointID)
 	s.messagesMaxChars = append(s.messagesMaxChars, maxChars)
+	s.messagesMaxTokens = append(s.messagesMaxTokens, maxTokens)
 	if err := s.messagesEr[endpointID]; err != nil {
 		return protocol.MessagesResult{}, err
 	}
@@ -256,24 +260,34 @@ func TestRenderMessagesLabelsTruncation(t *testing.T) {
 }
 
 // TestRenderMessagesLabelsShortenedBodySeparately proves a shortened body is not
-// reported as a bounded window.
+// reported as a bounded window, and that a bounded window is not reported as a
+// shortened body.
 //
 // The two facts are different: a window means messages are missing, while a
 // shortened body means every message is present and only one is cut. Reporting the
 // window label when nothing was omitted claims messages were dropped, which is the
-// same class of error as presenting a shortened body as complete. This case is
-// separate from the window case because a fixture that sets both flags cannot
-// distinguish the two branches.
+// same class of error as presenting a shortened body as complete.
+//
+// The label is derived from the rows rather than from view.Truncated, because
+// Truncated now means only that the provider reported more messages than were
+// returned or that the transport byte guard stopped the read. Reading it for the
+// body label would claim bodies were shortened when none were, so the second case
+// below is the guard for that distinction.
+//
+// The bound is set on the view rather than pre-applied to the content, because the
+// renderer recomputes the per-row outcome from the bound it actually applied. A
+// hand-set Shortened flag would be overwritten, so a fixture that set it would
+// prove nothing about the renderer.
 func TestRenderMessagesLabelsShortenedBodySeparately(t *testing.T) {
-	view := MessagesView{
+	shortened := MessagesView{
 		EndpointID:        "ep-1",
 		ProviderSessionID: "wa-1",
-		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "cut..."}},
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "cutting"}},
 		MessageCount:      1,
-		Truncated:         true,
+		MaxChars:          3,
 	}
 	var out strings.Builder
-	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+	if err := RenderMessages(&out, shortened, ColorPolicy{}); err != nil {
 		t.Fatalf("RenderMessages: %v", err)
 	}
 	rendered := out.String()
@@ -283,10 +297,108 @@ func TestRenderMessagesLabelsShortenedBodySeparately(t *testing.T) {
 	if !strings.Contains(rendered, "shortened") {
 		t.Fatalf("a shortened body was not labelled: %q", rendered)
 	}
+
+	window := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "whole"}},
+		MessageCount:      40,
+		Truncated:         true,
+	}
+	out.Reset()
+	if err := RenderMessages(&out, window, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	rendered = out.String()
+	if strings.Contains(rendered, "shortened") {
+		t.Fatalf("a bounded window was reported as a shortened body: %q", rendered)
+	}
+	if !strings.Contains(rendered, "bounded window") {
+		t.Fatalf("a bounded window was not labelled: %q", rendered)
+	}
+}
+
+// TestRenderMessagesKeepsStructuredBodiesReadableUnderABound proves the display
+// bound is applied to rendered text rather than to the stored body. Bounding the
+// stored body first would cut a structured body into invalid JSON, and the
+// renderer's documented unchanged-on-invalid-JSON fallback would then print the
+// fragment verbatim, which is the defect this test guards.
+func TestRenderMessagesKeepsStructuredBodiesReadableUnderABound(t *testing.T) {
+	dictBody := `{"alpha":"first value","beta":{"nested":"inner value"},"gamma":["one","two"]}`
+	listBody := `[{"name":"first item","state":"ready"},{"name":"second item","state":"waiting"}]`
+	for _, tc := range []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{"dict under a character bound", dictBody, []string{"alpha: first value", "nested: inner value", "- one"}},
+		{"dict under a token bound", dictBody, []string{"alpha: first value", "beta:"}},
+		{"list under a character bound", listBody, []string{"[1]", "name: first item", "[2]", "name: second item"}},
+		{"list under a token bound", listBody, []string{"[1]", "name: first item"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := MessagesView{
+				EndpointID:        "ep-1",
+				ProviderSessionID: "wa-1",
+				Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: tc.content}},
+				MessageCount:      1,
+			}
+			if strings.Contains(tc.name, "character") {
+				view.MaxChars = 62
+			} else {
+				view.MaxTokens = 12
+			}
+			var out strings.Builder
+			if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+				t.Fatalf("RenderMessages: %v", err)
+			}
+			rendered := out.String()
+			for _, want := range tc.want {
+				if !strings.Contains(rendered, want) {
+					t.Fatalf("rendered output lost %q: %q", want, rendered)
+				}
+			}
+			for _, fragment := range []string{`{"`, `[{`, `"alpha"`, `"name"`} {
+				if strings.Contains(rendered, fragment) {
+					t.Fatalf("rendered output contains raw JSON fragment %q: %q", fragment, rendered)
+				}
+			}
+			if !strings.Contains(rendered, "shortened") {
+				t.Fatalf("the bound did not shorten anything, so this case proves nothing: %q", rendered)
+			}
+		})
+	}
+}
+
+// TestRenderMessagesBoundsRenderedTextNotStoredBody proves a bound small enough
+// to cut the stored body still yields readable text, because the bound acts on
+// the rendered form. A stored-body bound would produce `{"alpha":"...` here.
+func TestRenderMessagesBoundsRenderedTextNotStoredBody(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: `{"alpha":"first value","beta":"second value"}`}},
+		MessageCount:      1,
+		MaxChars:          12,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	rendered := out.String()
+	if strings.Contains(rendered, `{"`) {
+		t.Fatalf("a tight bound printed raw JSON: %q", rendered)
+	}
+	if !strings.Contains(rendered, "alpha: first") {
+		t.Fatalf("a tight bound did not keep the rendered key: %q", rendered)
+	}
+	if !strings.Contains(rendered, "shortened") {
+		t.Fatalf("a tight bound was not labelled: %q", rendered)
+	}
 }
 
 // TestRenderMessagesOmitsLabelWhenComplete proves a complete conversation carries
-// no trailer, so a clean read is byte-identical to the provider's own output.
+// no trailer, so a clean read is not decorated with a truncation notice.
 func TestRenderMessagesOmitsLabelWhenComplete(t *testing.T) {
 	view := MessagesView{
 		EndpointID:        "ep-1",
@@ -367,7 +479,7 @@ func TestBuildMessagesViewNumbersRows(t *testing.T) {
 			{Role: "user", Content: "a"},
 			{Role: "assistant", Content: "b"},
 		},
-	})
+	}, 0, 0)
 	if len(view.Rows) != 2 || view.Rows[0].No != 1 || view.Rows[1].No != 2 {
 		t.Fatalf("rows = %+v", view.Rows)
 	}
@@ -387,12 +499,16 @@ type messagesRunnerStub struct {
 	// maxChars records the caller bound of every read, so a test can prove the
 	// standalone flag reached the seam instead of being dropped on the way.
 	maxChars []int
+	// maxTokens records the token bound of every read, so a test can prove the
+	// default and the flag both reached the seam.
+	maxTokens []int
 }
 
 // GetMessages records the queried endpoint and bound.
-func (s *messagesRunnerStub) GetMessages(_ context.Context, endpointID, _ string, maxChars int) (protocol.MessagesResult, error) {
+func (s *messagesRunnerStub) GetMessages(_ context.Context, endpointID, _ string, maxChars, maxTokens int) (protocol.MessagesResult, error) {
 	s.messagesCalls = append(s.messagesCalls, endpointID)
 	s.maxChars = append(s.maxChars, maxChars)
+	s.maxTokens = append(s.maxTokens, maxTokens)
 	if err := s.messagesEr[endpointID]; err != nil {
 		return protocol.MessagesResult{}, err
 	}
@@ -416,7 +532,7 @@ func messagesRunnerScenario(result protocol.MessagesResult) *messagesRunnerStub 
 // identify the session the operator asked for.
 func TestCommandRunnerMessagesRequiresEndpointArgument(t *testing.T) {
 	stub := messagesRunnerScenario(protocol.MessagesResult{})
-	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "  ", "wa-1", 0, false, ColorPolicy{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "  ", "wa-1", 0, 0, false, ColorPolicy{})
 	if err == nil || !strings.Contains(err.Error(), "usage: messages") {
 		t.Fatalf("err=%v", err)
 	}
@@ -429,7 +545,7 @@ func TestCommandRunnerMessagesRequiresEndpointArgument(t *testing.T) {
 // usage error rather than a read of whatever session happens to be first.
 func TestCommandRunnerMessagesRequiresSessionArgument(t *testing.T) {
 	stub := messagesRunnerScenario(protocol.MessagesResult{})
-	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "   ", 0, false, ColorPolicy{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "   ", 0, 0, false, ColorPolicy{})
 	if err == nil || !strings.Contains(err.Error(), "usage: messages") {
 		t.Fatalf("err=%v", err)
 	}
@@ -446,7 +562,7 @@ func TestCommandRunnerMessagesRequiresSessionArgument(t *testing.T) {
 // real observation.
 func TestCommandRunnerMessagesReportsMissingSeam(t *testing.T) {
 	api := &historyStubAPI{endpoints: []protocol.Endpoint{{EndpointID: "ep-1"}}}
-	err := (CommandRunner{API: api, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "wa-1", 0, false, ColorPolicy{})
+	err := (CommandRunner{API: api, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "wa-1", 0, 0, false, ColorPolicy{})
 	if err == nil || !strings.Contains(err.Error(), "messages is unavailable") {
 		t.Fatalf("err=%v", err)
 	}
@@ -456,7 +572,7 @@ func TestCommandRunnerMessagesReportsMissingSeam(t *testing.T) {
 // reported before any provider read is attempted.
 func TestCommandRunnerMessagesRejectsUnknownEndpoint(t *testing.T) {
 	stub := messagesRunnerScenario(protocol.MessagesResult{})
-	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-missing", "wa-1", 0, false, ColorPolicy{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-missing", "wa-1", 0, 0, false, ColorPolicy{})
 	if err == nil || !strings.Contains(err.Error(), "was not found") {
 		t.Fatalf("err=%v", err)
 	}
@@ -469,7 +585,7 @@ func TestCommandRunnerMessagesRejectsUnknownEndpoint(t *testing.T) {
 // the seam, so --max-chars is not silently dropped on the way to the provider.
 func TestCommandRunnerMessagesForwardsMaxChars(t *testing.T) {
 	stub := messagesRunnerScenario(protocol.MessagesResult{ProviderSessionID: "wa-1"})
-	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "wa-1", 1234, false, ColorPolicy{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "wa-1", 1234, 0, false, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -487,7 +603,7 @@ func TestCommandRunnerMessagesForwardsMaxChars(t *testing.T) {
 func TestCommandRunnerMessagesReportsResultErrorCode(t *testing.T) {
 	stub := messagesRunnerScenario(protocol.MessagesResult{ProviderSessionID: "wa-1", ErrorCode: protocol.MessagesProviderError})
 	var out strings.Builder
-	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, false, ColorPolicy{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, 0, false, ColorPolicy{})
 	if err == nil || !strings.Contains(err.Error(), protocol.MessagesProviderError) {
 		t.Fatalf("err=%v", err)
 	}
@@ -508,7 +624,7 @@ func TestCommandRunnerMessagesRendersConversation(t *testing.T) {
 		},
 	})
 	var out strings.Builder
-	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, false, ColorPolicy{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, 0, false, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -529,7 +645,7 @@ func TestCommandRunnerMessagesJSONMode(t *testing.T) {
 		Messages:          []protocol.Message{{Role: "user", Content: "only message"}},
 	})
 	var out strings.Builder
-	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, true, ColorPolicy{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, 0, true, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -548,14 +664,14 @@ func TestCommandRunnerMessagesJSONMode(t *testing.T) {
 	}
 }
 
-// TestRenderMessagesMatchesProviderLayout proves the rendered conversation is
-// byte-identical to the provider's own human-readable format.
+// TestRenderMessagesMatchesDocumentedLayout proves the rendered conversation is
+// byte-identical to the layout this cluster documents.
 //
-// The expected value is written out literally rather than assembled from the
-// renderer's own constants, because a test that reuses the constants proves only
-// that the code agrees with itself. The literal below was copied from the
-// provider's output for the same record.
-func TestRenderMessagesMatchesProviderLayout(t *testing.T) {
+// The layout is this cluster's own presentation, so the expected value is the
+// documented form rather than any provider's output. It is written out literally
+// rather than assembled from the renderer's own constants, because a test that
+// reuses the constants proves only that the code agrees with itself.
+func TestRenderMessagesMatchesDocumentedLayout(t *testing.T) {
 	view := MessagesView{
 		EndpointID:        "ep-1",
 		ProviderSessionID: "wa-1",
@@ -580,16 +696,16 @@ func TestRenderMessagesMatchesProviderLayout(t *testing.T) {
 		"second answer\n" +
 		"\n"
 	if got := out.String(); got != want {
-		t.Fatalf("rendered layout does not match the provider format:\ngot  %q\nwant %q", got, want)
+		t.Fatalf("rendered layout does not match the documented layout:\ngot  %q\nwant %q", got, want)
 	}
 }
 
 // TestRenderMessagesRuleIsFixedWidth proves the rule is a fixed 80 columns and
 // does not follow the terminal width.
 //
-// The provider's format uses a fixed rule, so a rule that followed the terminal
-// would make the same conversation look different on two terminals and would no
-// longer match the provider's output.
+// A rule that followed the terminal would make the same conversation look
+// different on two terminals, and the header would no longer align with the rule
+// above and below it.
 func TestRenderMessagesRuleIsFixedWidth(t *testing.T) {
 	view := MessagesView{
 		EndpointID:        "ep-1",

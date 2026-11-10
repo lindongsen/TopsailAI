@@ -20,7 +20,7 @@ import (
 // absence, so the two are mutually exclusive; messages addresses persisted
 // provider data and therefore needs neither.
 func interactiveMessages(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out, diagnostics io.Writer, color ColorPolicy) error {
-	target, maxChars, err := parseMessagesArgs(rest)
+	target, maxChars, maxTokens, err := parseMessagesArgs(rest)
 	if err != nil {
 		return err
 	}
@@ -34,14 +34,14 @@ func interactiveMessages(parent context.Context, api InteractiveAPI, state *inte
 	if err != nil {
 		return err
 	}
-	result, err := querier.GetMessages(ctx, endpointID, sessionID, maxChars)
+	result, err := querier.GetMessages(ctx, endpointID, sessionID, maxChars, maxTokens)
 	if err != nil {
 		return err
 	}
 	if result.ErrorCode != "" {
 		return fmt.Errorf("messages for session %s on endpoint %q failed: %s", sessionIdentityLabel("", sessionID, ""), endpointID, result.ErrorCode)
 	}
-	view := BuildMessagesView(endpointID, result)
+	view := BuildMessagesView(endpointID, result, maxChars, maxTokens)
 	// The renderer owns both halves of the boundary: it applies trusted styling
 	// to its own headers and sanitizes every provider body itself. It therefore
 	// needs the trusted writer, because the untrusted one would strip the styling

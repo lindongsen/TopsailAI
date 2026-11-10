@@ -41,7 +41,7 @@ func TestMessagesHTTPClient(t *testing.T) {
 	server := httptest.NewServer(h)
 	defer server.Close()
 	api := client.NewAPIClient(server.URL, "test")
-	result, err := api.GetMessages(context.Background(), "e /1", "s 1", 0)
+	result, err := api.GetMessages(context.Background(), "e /1", "s 1", 0, 0)
 	if err != nil || len(result.Messages) != 1 || result.Messages[0].Content != "e /1" {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -272,7 +272,7 @@ func TestMessagesMaxCharsReachesTheEndpoint(t *testing.T) {
 		{500, 500},
 		{100000, 100000},
 	} {
-		if _, err := api.GetMessages(context.Background(), "ep-1", "s-1", item.maxChars); err != nil {
+		if _, err := api.GetMessages(context.Background(), "ep-1", "s-1", item.maxChars, 0); err != nil {
 			t.Fatalf("maxChars=%d err=%v", item.maxChars, err)
 		}
 		if got := requester.queries[len(requester.queries)-1].MaxChars; got != item.want {

@@ -51,7 +51,11 @@ func (h *Handler) messages(w http.ResponseWriter, r *http.Request) {
 	// The bound is parsed at the boundary and passed down as an explicit value, so
 	// the transport never re-reads the request. An absent or invalid value keeps
 	// the adapter's own default instead of silently narrowing it to zero.
-	query := protocol.MessagesQuery{ProviderSessionID: sessionID, MaxChars: parseInt(r.URL.Query().Get("max_chars"), 0)}
+	query := protocol.MessagesQuery{
+		ProviderSessionID: sessionID,
+		MaxChars:          parseInt(r.URL.Query().Get("max_chars"), 0),
+		MaxTokens:         parseInt(r.URL.Query().Get("max_tokens"), 0),
+	}
 	result, err := requester.RequestMessages(ctx, endpointID, query)
 	if err != nil {
 		h.writeMessagesFailure(w, r, endpointID, err)

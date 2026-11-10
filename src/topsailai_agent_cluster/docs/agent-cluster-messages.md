@@ -178,33 +178,73 @@ Two acceptance bounds apply, and neither is a display decision:
 | `MaxMessages` | 1000 | accepted message count |
 | `MaxMessagesBytes` | 512 KiB | the whole accepted provider document |
 
-There is deliberately no per-message byte bound. The document bound already rejects anything
-larger, so a second bound could only ever cut a body that had already been accepted, and that
-cut would be silent: the operator would read a shortened message as a complete one. An
-over-ceiling body is a defect, not a display decision, so it fails closed at the document
-check instead of being trimmed.
+There is deliberately no per-message byte bound at the transport layer. The document bound
+already rejects anything larger, so a second bound there could only ever cut a body that had
+already been accepted, and that cut would be silent: the operator would read a shortened
+message as a complete one. An over-ceiling body is a defect, not a display decision, so it
+fails closed at the document check instead of being trimmed.
 
-`--max-chars` is never forwarded to the provider. The provider truncates the raw stored
-document, which cuts a structured body into invalid JSON, and the adapter would then be unable
-to unwrap exactly the long messages an operator most wants to read. The bound is applied after
-unwrapping, so it shortens readable text instead of corrupting the record.
+### The display bound is a presentation decision
 
-The caller's bound is counted in characters and clamped to `MaxMessagesMaxChars` (100000)
-rather than rejected, so a caller cannot ask for a bound the provider would silently reduce.
-A shortened body always ends with an ellipsis.
+A display bound never reaches the provider and never reaches the stored body. The provider
+truncates the raw stored document, which cuts a structured body into invalid JSON, so the
+adapter cannot unwrap exactly the long messages an operator most wants to read. The adapter
+therefore returns the whole body and applies no bound at all.
 
-Two different facts are labelled separately, because one boolean cannot carry both:
+The bound is applied by the renderer, after the body has been rendered into readable text:
+
+```text
+stored body -> renderStructuredBody -> boundMessagesBody -> filterProviderOutput
+```
+
+The order is load-bearing. Bounding the stored body first would cut a structured body into
+invalid JSON, and the renderer's documented unchanged-on-invalid-JSON fallback would then
+print the fragment verbatim, so a bounded `dict` body would appear as `{"alpha":"...` instead
+of as readable text. Sanitizing last is safe because it only removes bytes, so the displayed
+text can never grow past the bound.
+
+Two bounds are available and they stack rather than replace each other:
+
+| Flag | Short form | Default | Maximum | Unit |
+|---|---|---|---|---|
+| `--max-chars` | `-c` | none | 100000 | characters |
+| `--max-tokens` | `-t` | 5000 | 200000 | model tokens |
+
+The character bound is applied first and the token bound second, which is safe because
+truncation only ever shortens text. The token bound is skipped entirely when the shared
+encoder is unavailable, because a count that could not be measured must never erase readable
+text.
+
+Zero means no bound, and it is distinct from "not supplied". A caller that states `0` has
+stated an intent, so the default must not override it. The default of 5000 applies only when
+the flag is absent.
+
+A shortened body always ends with a single ellipsis, even when both bounds applied, because
+the token bound trims the marker the character bound added before appending its own.
+
+### Two different facts are labelled separately
+
+One boolean cannot carry both, so the label is derived from what actually happened:
 
 | Fact | Label |
 |---|---|
 | messages are missing | `conversation is a bounded window: N of M messages shown` |
 | every message present, one body shortened | `one or more message bodies were shortened to the requested bound` |
-| neither | no label, so the output is byte-identical to the provider |
+| neither | no label |
 
 The window case is judged first, because a report that omitted messages may also have
 shortened the ones it kept, and the missing messages are the more important fact. A shortened
 answer must never be presented as complete, because the operator would then believe the
 conversation ended where the bound was reached.
+
+The shortened-body label is derived per row rather than from a conversation-wide flag,
+because a bound can shorten one long body while leaving every other body intact. A
+conversation-wide flag would make the label claim bodies were shortened when only one was.
+
+`Truncated` on the result therefore means only one of two things: the provider reported more
+messages than were returned, or the transport byte guard stopped the read. It never means a
+display bound shortened a body, because that decision belongs to the renderer and is recorded
+per row.
 
 ## Rendering
 
@@ -215,9 +255,10 @@ the boundary keeps only colour-only SGR sequences and still removes cursor movem
 changes and hyperlinks, so provider prose can never reposition the cursor or overwrite a
 trusted row.
 
-The rendered form reproduces the provider's own human-readable conversation format, so the
-same conversation reads the same way here and in the provider CLI. The layout is a copy, not
-an interpretation:
+The rendered form is this cluster's own presentation. It is not a copy of the provider's
+human-readable conversation format, and it is not required to match it. A provider's layout is
+presentation, so it must not shape what the cluster shows; the cluster renders a conversation
+from its own model of what an operator needs to read.
 
 | Element | Exact form |
 |---|---|
@@ -229,8 +270,9 @@ an interpretation:
 | Empty body | `  [No content]`, two leading spaces |
 | Trailer | one blank line after the last block |
 
-The separator is a fixed 80 characters rather than the terminal width, because the provider
-uses a fixed width and a faithful copy must not reflow when the window is resized.
+The separator is a fixed 80 characters rather than the terminal width, so a block does not
+reflow when the window is resized and the header stays aligned with the rule above and below
+it.
 
 `Words` is the character count of the untruncated body, not a word count. The provider's own
 function is named `_count_words` but counts characters, and the cluster reproduces the

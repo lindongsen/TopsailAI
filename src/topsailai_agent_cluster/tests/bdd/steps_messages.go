@@ -22,6 +22,7 @@ func registerMessagesSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the reported counts are real measurements$`, assertMessagesCounts)
 	ctx.Step(`^the body shows the step label and its text without the record keys$`, assertMessagesUnwrapped)
 	ctx.Step(`^the messages command is run with a character bound$`, runMessagesWithBound)
+	ctx.Step(`^the messages command is run with a token bound$`, runMessagesTokenBound)
 	ctx.Step(`^the body is shortened and the header counts are unchanged$`, assertMessagesBounded)
 	ctx.Step(`^the messages command is run with a bound above the maximum$`, runMessagesAboveMaximum)
 	ctx.Step(`^the command is refused and names the maximum$`, assertMessagesMaximumRefused)
@@ -93,6 +94,16 @@ func runMessages() error {
 // runMessagesWithBound runs the same command with a short character bound.
 func runMessagesWithBound() error {
 	return runMessagesCommand("-c", "20")
+}
+
+// runMessagesTokenBound runs the same command with a short token bound.
+//
+// The bound is 3 because the unwrapped body is about ten cl100k_base tokens: small
+// enough to shorten it, large enough to leave a readable prefix. A bound of 200 would
+// not shorten anything, which is the vacuous pass that had to be fixed once already in
+// the renderer tests.
+func runMessagesTokenBound() error {
+	return runMessagesCommand("-t", "3")
 }
 
 // runMessagesAboveMaximum runs the command with a bound above the protocol limit.

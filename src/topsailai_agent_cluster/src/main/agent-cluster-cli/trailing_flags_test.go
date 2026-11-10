@@ -1,8 +1,11 @@
 package main
 
 import (
+	"flag"
 	"strings"
 	"testing"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 // TestHoistTrailingFlags pins the rewrite that lets an operator write a global
@@ -368,6 +371,171 @@ func TestMaxCharsAboveMaximumIsRejected(t *testing.T) {
 			// grammar was correct and only the value was out of range.
 			if strings.Contains(err.Error(), "usage:") {
 				t.Fatalf("%v was reported as a usage error instead of a value error: %v", tc.args, err)
+			}
+		})
+	}
+}
+
+// TestMaxTokensShortFormIsHonoured proves -t reaches the transport wherever it
+// is written, so the short spelling is not silently dropped by hoisting.
+func TestMaxTokensShortFormIsHonoured(t *testing.T) {
+	deadServer := []string{"--server-url", "http://127.0.0.1:1"}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"short form after the session", []string{"messages", "ep", "session", "-t", "40"}},
+		{"short form attached", []string{"messages", "ep", "session", "-t=40"}},
+		{"short form before the endpoint", []string{"messages", "-t", "40", "ep", "session"}},
+		{"long form after the session", []string{"messages", "ep", "session", "--max-tokens", "40"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string{}, deadServer...), tc.args...)
+			var output, diagnostics strings.Builder
+			err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil)
+			if err == nil {
+				t.Fatalf("%v unexpectedly succeeded against an unreachable Server", tc.args)
+			}
+			if strings.Contains(err.Error(), "usage:") {
+				t.Fatalf("%v was rejected as a usage error, so the token flag was not hoisted: %v", tc.args, err)
+			}
+		})
+	}
+}
+
+// TestMaxTokensNegativeIsRejected proves a negative token bound is reported as a
+// value error instead of being read as "no bound".
+//
+// The adapter treats a non-positive bound as "no bound", so a negative value that
+// reached it would silently render the whole conversation while the command
+// reported success.
+func TestMaxTokensNegativeIsRejected(t *testing.T) {
+	deadServer := []string{"--server-url", "http://127.0.0.1:1"}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"long form negative", []string{"messages", "ep", "session", "--max-tokens", "-5"}},
+		{"short form negative", []string{"messages", "ep", "session", "-t", "-5"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string{}, deadServer...), tc.args...)
+			var output, diagnostics strings.Builder
+			err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil)
+			if err == nil {
+				t.Fatalf("%v unexpectedly succeeded, so the negative bound was accepted", tc.args)
+			}
+			if !strings.Contains(err.Error(), "is negative") {
+				t.Fatalf("%v error=%q want it to name the value as negative", tc.args, err.Error())
+			}
+			if strings.Contains(err.Error(), "usage:") {
+				t.Fatalf("%v was reported as a usage error instead of a value error: %v", tc.args, err)
+			}
+		})
+	}
+}
+
+// TestMaxTokensAboveMaximumIsRejected proves an oversized token bound is refused
+// rather than clamped, so the bound that was honoured is the bound that was asked
+// for.
+func TestMaxTokensAboveMaximumIsRejected(t *testing.T) {
+	deadServer := []string{"--server-url", "http://127.0.0.1:1"}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"one above the maximum", []string{"messages", "ep", "session", "--max-tokens", "200001"}},
+		{"far above the maximum", []string{"messages", "ep", "session", "--max-tokens", "999999999"}},
+		{"short form above the maximum", []string{"messages", "ep", "session", "-t", "200001"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string{}, deadServer...), tc.args...)
+			var output, diagnostics strings.Builder
+			err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil)
+			if err == nil {
+				t.Fatalf("%v unexpectedly succeeded, so the bound was silently clamped", tc.args)
+			}
+			if !strings.Contains(err.Error(), "exceeds the maximum") {
+				t.Fatalf("%v error=%q want it to report the maximum", tc.args, err.Error())
+			}
+		})
+	}
+}
+
+// TestMaxTokensSpellingsAreReconciled pins the rule that folds -t and
+// --max-tokens into one value.
+//
+// Two different non-zero values are rejected instead of resolved by precedence,
+// because either choice would silently ignore a bound the operator stated.
+func TestMaxTokensSpellingsAreReconciled(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		long    int
+		short   int
+		want    int
+		wantErr bool
+	}{
+		{"neither supplied", 0, 0, 0, false},
+		{"long only", 40, 0, 40, false},
+		{"short only", 0, 40, 40, false},
+		{"both agree", 40, 40, 40, false},
+		{"both zero", 0, 0, 0, false},
+		{"both disagree", 40, 50, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := reconcileMaxTokens(tc.long, tc.short)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("reconcileMaxTokens(%d, %d) accepted disagreeing spellings", tc.long, tc.short)
+				}
+				if !strings.Contains(err.Error(), "disagree") {
+					t.Fatalf("error=%q want it to report the disagreement", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("reconcileMaxTokens(%d, %d): %v", tc.long, tc.short, err)
+			}
+			if got != tc.want {
+				t.Fatalf("reconcileMaxTokens(%d, %d) = %d, want %d", tc.long, tc.short, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMaxTokensDefaultIsAppliedOnlyWhenAbsent proves the default of 5000 fills an
+// absent flag without overriding an explicit zero.
+//
+// A zero value cannot distinguish "not supplied" from "supplied zero", and the two
+// mean different things for a bound: absent selects the default, while an explicit
+// zero asks for no bound at all.
+func TestMaxTokensDefaultIsAppliedOnlyWhenAbsent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"absent uses the default", []string{"messages", "ep", "session"}, protocol.DefaultMessagesMaxTokens},
+		{"explicit zero keeps no bound", []string{"messages", "ep", "session", "--max-tokens", "0"}, 0},
+		{"explicit short zero keeps no bound", []string{"messages", "ep", "session", "-t", "0"}, 0},
+		{"explicit value wins", []string{"messages", "ep", "session", "--max-tokens", "40"}, 40},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := flag.NewFlagSet("messages", flag.ContinueOnError)
+			maxTokens := flags.Int("max-tokens", 0, "")
+			maxTokensShort := flags.Int("t", 0, "")
+			// Hoist first, because Go's flag package stops parsing at the first
+			// positional argument. Parsing the raw tail would leave every trailing
+			// flag unparsed and make this test pass for the wrong reason.
+			if err := flags.Parse(hoistTrailingFlags(tc.args[1:])); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			bound, err := resolveMaxTokens(flags, *maxTokens, *maxTokensShort)
+			if err != nil {
+				t.Fatalf("resolveMaxTokens: %v", err)
+			}
+			if bound != tc.want {
+				t.Fatalf("bound = %d, want %d", bound, tc.want)
 			}
 		})
 	}

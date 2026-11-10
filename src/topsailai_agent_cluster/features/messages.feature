@@ -26,6 +26,11 @@ Feature: provider conversation rendering
     When the messages command is run with a character bound
     Then the body is shortened and the header counts are unchanged
 
+  Scenario: a token bound shortens a body without changing the counts
+    Given a real cluster with a session holding a structured body
+    When the messages command is run with a token bound
+    Then the body is shortened and the header counts are unchanged
+
   Scenario: a bound above the maximum is refused
     Given a real cluster with a session holding a structured body
     When the messages command is run with a bound above the maximum

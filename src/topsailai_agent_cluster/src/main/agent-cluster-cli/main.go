@@ -109,6 +109,15 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// alias mechanism, and the two spellings are reconciled after parsing so they
 	// can never disagree about one quantity.
 	maxCharsShort := flags.Int("c", 0, "short form of --max-chars")
+	// --max-tokens bounds one message body in model tokens, which is the bound an
+	// operator usually wants: a token is the unit that makes a conversation
+	// expensive and noisy, while a character count says nothing about how much of
+	// the model's context a message occupies. An absent value selects the cluster
+	// default rather than "no bound", because an unbounded conversation is noise.
+	maxTokens := flags.Int("max-tokens", 0, "maximum tokens per message returned by messages; 0 means no bound, and an absent value uses the default of 5000")
+	// -t is the short spelling of --max-tokens, reconciled with it after parsing so
+	// the two can never disagree about one quantity.
+	maxTokensShort := flags.Int("t", 0, "short form of --max-tokens")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -175,7 +184,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// negative bound would therefore silently widen the result instead of
 	// narrowing it, and the operator would see a complete conversation while
 	// believing it was bounded.
-	if err := rejectNegativeNumericFlags(*maxChars, *maxCharsShort, *historyLimit, *maxBytes, *lines); err != nil {
+	if err := rejectNegativeNumericFlags(*maxChars, *maxCharsShort, *maxTokens, *maxTokensShort, *historyLimit, *maxBytes, *lines); err != nil {
 		return err
 	}
 	// The two spellings of the per-message bound are reconciled into one value
@@ -183,6 +192,15 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// different values are rejected instead of resolved by precedence, because
 	// either choice would silently ignore a bound the operator stated.
 	messageBound, err := reconcileMaxChars(*maxChars, *maxCharsShort)
+	if err != nil {
+		return err
+	}
+	// The token bound is reconciled the same way, and an absent value selects the
+	// cluster default. The default is resolved here because this is the first layer
+	// that can tell an absent flag from a stated zero: zero is a meaningful request
+	// for no bound, so applying the default to it would silently override the
+	// operator's own instruction.
+	tokenBound, err := resolveMaxTokens(flags, *maxTokens, *maxTokensShort)
 	if err != nil {
 		return err
 	}
@@ -195,6 +213,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// and fail in the REPL.
 	if messageBound > protocol.MaxMessagesMaxChars {
 		return fmt.Errorf("--max-chars %d exceeds the maximum of %d", messageBound, protocol.MaxMessagesMaxChars)
+	}
+	if tokenBound > protocol.MaxMessagesMaxTokens {
+		return fmt.Errorf("--max-tokens %d exceeds the maximum of %d", tokenBound, protocol.MaxMessagesMaxTokens)
 	}
 	switch flags.Arg(0) {
 	case "help":
@@ -241,7 +262,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id> [-c N|--max-chars N]")
 		}
-		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), messageBound, *jsonMode, tui.OutputColorPolicy(output))
+		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), messageBound, tokenBound, *jsonMode, tui.OutputColorPolicy(output))
 	case "model":
 		if flags.NArg() < 3 || flags.NArg() > 4 {
 			return fmt.Errorf("usage: model <endpoint-id-or-hostname> <session-id> [profile]")
@@ -426,13 +447,15 @@ func resolveInteractiveLines(flags *flag.FlagSet, value int) (int, error) {
 // believing the request was bounded, which is the opposite of what the flag says.
 // The check lives at the boundary because the same convention is repeated in the
 // adapter, the client and the Server, and a single rejected value cannot drift.
-func rejectNegativeNumericFlags(maxChars, maxCharsShort, historyLimit, maxBytes, lines int) error {
+func rejectNegativeNumericFlags(maxChars, maxCharsShort, maxTokens, maxTokensShort, historyLimit, maxBytes, lines int) error {
 	checks := []struct {
 		name  string
 		value int
 	}{
 		{"--max-chars", maxChars},
 		{"-c", maxCharsShort},
+		{"--max-tokens", maxTokens},
+		{"-t", maxTokensShort},
 		{"--limit", historyLimit},
 		{"--max-bytes", maxBytes},
 		{"--lines", lines},
@@ -462,6 +485,58 @@ func reconcileMaxChars(maxChars, maxCharsShort int) (int, error) {
 	return maxChars, nil
 }
 
+// reconcileMaxTokens folds the two spellings of the per-message token bound into
+// one value, so -t and --max-tokens can never disagree about one quantity.
+//
+// Two different non-zero values are rejected instead of resolved by precedence,
+// because either choice would silently ignore a bound the operator stated. Zero
+// means "not supplied" for both spellings, so "-t 0" and "--max-tokens 0" agree and
+// both mean "no bound".
+func reconcileMaxTokens(maxTokens, maxTokensShort int) (int, error) {
+	if maxTokens != 0 && maxTokensShort != 0 && maxTokens != maxTokensShort {
+		return 0, fmt.Errorf("--max-tokens %d and -t %d disagree; state the bound once", maxTokens, maxTokensShort)
+	}
+	if maxTokensShort != 0 {
+		return maxTokensShort, nil
+	}
+	return maxTokens, nil
+}
+
+// resolveMaxTokens folds the two spellings of the token bound into one value and
+// applies the cluster default when neither was stated.
+//
+// The default is resolved here because this is the first layer that can tell an
+// absent flag from a stated zero. Zero is a meaningful request for no bound, so
+// applying the default to it would silently override the operator's own
+// instruction, and a caller who asked for no bound would receive 5000 instead.
+func resolveMaxTokens(flags *flag.FlagSet, maxTokens, maxTokensShort int) (int, error) {
+	bound, err := reconcileMaxTokens(maxTokens, maxTokensShort)
+	if err != nil {
+		return 0, err
+	}
+	if !flagSupplied(flags, "max-tokens") && !flagSupplied(flags, "t") {
+		return protocol.DefaultMessagesMaxTokens, nil
+	}
+	return bound, nil
+}
+
+// flagSupplied reports whether one option was stated on the command line.
+//
+// It exists because a zero value cannot distinguish "not supplied" from "supplied
+// zero", and the two mean different things for a bound: an absent token bound
+// selects the cluster default, while an explicit zero asks for no bound at all.
+// Reading the parsed value alone would silently override the operator's own
+// instruction to disable the bound.
+func flagSupplied(flags *flag.FlagSet, name string) bool {
+	supplied := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			supplied = true
+		}
+	})
+	return supplied
+}
+
 // globalOptionNames lists the options the top-level flag set owns. Only these are
 // hoisted, so an option a subcommand owns (for example list --clean) keeps its
 // position and its meaning.
@@ -477,6 +552,7 @@ var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
 	"no-progress": true, "no-truncate": true, "limit": true, "max-chars": true, "c": true,
+	"max-tokens": true, "t": true,
 	"profile": true, "profile-revision": true, "folder": true, "task": true,
 	"generation": true, "i": true, "follow": true, "f": true,
 }
@@ -722,8 +798,8 @@ func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 // resource ID, because a stopped session is absent from the inventory and has no
 // resource ID. That is also why this read needs no generation: it addresses
 // persisted provider data, not a live process.
-func messages(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target, sessionID string, maxChars int, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).Messages(ctx, output, errors, target, sessionID, maxChars, jsonMode, color)
+func messages(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target, sessionID string, maxChars, maxTokens int, jsonMode bool, color tui.ColorPolicy) error {
+	return legacyRunner(api).Messages(ctx, output, errors, target, sessionID, maxChars, maxTokens, jsonMode, color)
 }
 
 // model renders the model profiles one session can select.
