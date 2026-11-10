@@ -34,12 +34,14 @@ class SessionManager(ABC):
     @abstractmethod
     def list_sessions(self, sessions: list[str] | None = None, order_by: str | None = None,
                       offset: int = 0, limit: int | None = None, category: str | None = None,
+                      included_categories: set[str] | None = None,
                       excluded_categories: set[str] | None = None) -> list[SessionData]:
         """List sessions with existing filters, category, ordering and pagination."""
         ...
 
     @abstractmethod
     def count_sessions(self, sessions: list[str] | None = None, category: str | None = None,
+                       included_categories: set[str] | None = None,
                        excluded_categories: set[str] | None = None) -> int:
         """Count sessions matching the selection filters."""
         ...

@@ -164,6 +164,7 @@ class SessionStorageBase(object):
         offset: int = 0,
         limit: int = None,
         category: str = None,
+        included_categories: set[str] = None,
         excluded_categories: set[str] = None,
     ) -> list[SessionData]:
         """
@@ -183,6 +184,11 @@ class SessionStorageBase(object):
                 If ``None``, all matching sessions are returned.
             category (str, optional): Exact category to include. ``None`` includes
                 every category; an empty string selects uncategorized sessions.
+            included_categories (set[str], optional): Categories to include. Names
+                are matched exactly and are expected to be already validated; an
+                empty string includes uncategorized sessions. ``None`` or an empty
+                set includes every category. Combined with ``category`` by
+                intersection and with ``excluded_categories`` by subtraction.
             excluded_categories (set[str], optional): Categories to exclude. Names
                 are matched exactly and are expected to be already validated; an
                 empty string excludes uncategorized sessions. ``None`` or an empty
@@ -199,6 +205,7 @@ class SessionStorageBase(object):
         raise NotImplementedError
 
     def count_sessions(self, sessions: list[str] = None, category: str = None,
+                       included_categories: set[str] = None,
                        excluded_categories: set[str] = None) -> int:
         """Return the number of sessions matching the selection filters."""
         raise NotImplementedError

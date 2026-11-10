@@ -295,6 +295,86 @@ class TestChildCommandForwarding:
         assert command == cli._SESSION_LIST
         assert argv == ["--json", "--limit", "5", "--offset", "2", "--sort", "desc"]
 
+    def test_list_forwards_included_categories(self):
+        """A single inclusion value is forwarded verbatim to the child script."""
+        with patch.object(cli, "_run_script", return_value=0) as run:
+            assert cli.run_session_cli(
+                ["list", "--included-categories", "agent,chat"]
+            ) == 0
+        command, argv = run.call_args.args
+        assert command == cli._SESSION_LIST
+        assert argv == ["--included-categories", "agent,chat"]
+
+    def test_list_forwards_repeated_included_categories(self):
+        """Repeated inclusions stay separate arguments instead of being merged."""
+        with patch.object(cli, "_run_script", return_value=0) as run:
+            assert cli.run_session_cli(
+                ["list", "--included-categories", "agent",
+                 "--included-categories", "chat"]
+            ) == 0
+        command, argv = run.call_args.args
+        assert command == cli._SESSION_LIST
+        assert argv == ["--included-categories", "agent",
+                        "--included-categories", "chat"]
+
+    def test_list_forwards_empty_included_categories(self):
+        """An empty value survives forwarding, because it includes uncategorized rows."""
+        with patch.object(cli, "_run_script", return_value=0) as run:
+            assert cli.run_session_cli(["list", "--included-categories", ""]) == 0
+        command, argv = run.call_args.args
+        assert command == cli._SESSION_LIST
+        assert argv == ["--included-categories", ""]
+
+    def test_list_forwards_inclusion_and_exclusion_together(self):
+        """Both category options reach the child script in declaration order."""
+        with patch.object(cli, "_run_script", return_value=0) as run:
+            assert cli.run_session_cli(
+                ["list", "--included-categories", "agent",
+                 "--excluded-categories", "agent_driver"]
+            ) == 0
+        command, argv = run.call_args.args
+        assert command == cli._SESSION_LIST
+        assert argv == ["--included-categories", "agent",
+                        "--excluded-categories", "agent_driver"]
+
+    def test_list_forwards_excluded_categories(self):
+        """A single exclusion value is forwarded verbatim to the child script."""
+        with patch.object(cli, "_run_script", return_value=0) as run:
+            assert cli.run_session_cli(
+                ["list", "--excluded-categories", "agent_driver,agent"]
+            ) == 0
+        command, argv = run.call_args.args
+        assert command == cli._SESSION_LIST
+        assert argv == ["--excluded-categories", "agent_driver,agent"]
+
+    def test_list_forwards_repeated_excluded_categories(self):
+        """Repeated exclusions stay separate arguments instead of being merged."""
+        with patch.object(cli, "_run_script", return_value=0) as run:
+            assert cli.run_session_cli(
+                ["list", "--excluded-categories", "agent_driver",
+                 "--excluded-categories", "chat"]
+            ) == 0
+        command, argv = run.call_args.args
+        assert command == cli._SESSION_LIST
+        assert argv == ["--excluded-categories", "agent_driver",
+                        "--excluded-categories", "chat"]
+
+    def test_list_forwards_empty_excluded_categories(self):
+        """An empty value survives forwarding, because it excludes uncategorized rows."""
+        with patch.object(cli, "_run_script", return_value=0) as run:
+            assert cli.run_session_cli(["list", "--excluded-categories", ""]) == 0
+        command, argv = run.call_args.args
+        assert command == cli._SESSION_LIST
+        assert argv == ["--excluded-categories", ""]
+
+    def test_list_omits_excluded_categories_when_absent(self):
+        """Omitting the option must not add an empty exclusion argument."""
+        with patch.object(cli, "_run_script", return_value=0) as run:
+            assert cli.run_session_cli(["list", "--json"]) == 0
+        command, argv = run.call_args.args
+        assert command == cli._SESSION_LIST
+        assert argv == ["--json"]
+
     def test_status_reports_state(self, capsys):
         with patch.object(cli, "_capture_script", return_value=(0, "idle\n", "")):
             assert cli.run_session_cli(["status", "abc"]) == 0

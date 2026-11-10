@@ -370,6 +370,32 @@ def _parse_excluded_categories(raw_values):
     return excluded
 
 
+def _parse_included_categories(raw_values):
+    """Parse repeated comma-separated inclusion values into a normalized set.
+
+    An exactly empty value is meaningful: it includes uncategorized sessions.
+    Any other value must pass the same validation as the exclusion filter, and
+    an invalid name is rejected instead of being resolved to the empty
+    category, because silently including uncategorized rows would expose data
+    the caller never asked to see. Returns an empty set when no inclusion was
+    requested, which keeps the unfiltered query path unchanged.
+    """
+    if not raw_values:
+        return set()
+
+    included = set()
+    for raw_value in raw_values:
+        for name in raw_value.split(","):
+            if name == "":
+                included.add("")
+                continue
+            normalized = resolve_session_category(name)
+            if normalized != name:
+                raise ValueError(f"Invalid included category: {name!r}")
+            included.add(normalized)
+    return included
+
+
 def main():
     """
     Main entry point for listing sessions.
@@ -408,6 +434,18 @@ def main():
         dest="session_category",
         default=None,
         help="Filter by exact category; omit to include all categories, use an empty value for uncategorized sessions",
+    )
+    parser.add_argument(
+        "--included-categories",
+        dest="included_categories",
+        action="append",
+        default=None,
+        metavar="NAMES",
+        help=(
+            "Include only sessions whose category is listed; accepts comma-separated "
+            "names and may be repeated. An empty value includes uncategorized "
+            "sessions. Applied in the database, so pagination stays correct"
+        ),
     )
     parser.add_argument(
         "--excluded-categories",
@@ -488,8 +526,9 @@ def main():
         normalized_category = None
         if args.session_category is not None:
             normalized_category = resolve_session_category(args.session_category)
+        included_categories = _parse_included_categories(args.included_categories)
         excluded_categories = _parse_excluded_categories(args.excluded_categories)
-        # Exclusion is a database predicate, so the page is selected after
+        # Category predicates run in the database, so the page is selected after
         # filtering and a limit always returns a full page of surviving rows.
         list_kwargs = {
             "sessions": query_sessions,
@@ -499,14 +538,18 @@ def main():
         }
         if normalized_category is not None:
             list_kwargs["category"] = normalized_category
+        if included_categories:
+            list_kwargs["included_categories"] = included_categories
         if excluded_categories:
             list_kwargs["excluded_categories"] = excluded_categories
         sessions = manager.list_sessions(**list_kwargs)
         matched_count = None
-        if excluded_categories or normalized_category is not None:
+        if included_categories or excluded_categories or normalized_category is not None:
             count_kwargs = {"sessions": query_sessions}
             if normalized_category is not None:
                 count_kwargs["category"] = normalized_category
+            if included_categories:
+                count_kwargs["included_categories"] = included_categories
             if excluded_categories:
                 count_kwargs["excluded_categories"] = excluded_categories
             matched_count = manager.count_sessions(**count_kwargs)

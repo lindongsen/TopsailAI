@@ -230,3 +230,65 @@ def test_list_and_count_forward_excluded_categories(excluded):
         expected_count["excluded_categories"] = excluded
     assert list_kwargs == expected_list
     assert count_kwargs == expected_count
+
+
+@pytest.mark.parametrize("included", [None, set(), {"agent"}, {""}])
+def test_list_and_count_forward_included_categories(included):
+    """Forward inclusion only when it can change the query, keeping kwargs exact."""
+    class RecordingStorage:
+        def __init__(self):
+            self.calls = []
+            self.chat_history = Mock()
+
+        def list_sessions(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return []
+
+        def count_sessions(self, **kwargs):
+            self.calls.append(("count", kwargs))
+            return 0
+
+    storage = RecordingStorage()
+    manager = DefaultSessionManager(storage, Mock())
+    manager.list_sessions(included_categories=included)
+    manager.count_sessions(included_categories=included)
+    list_kwargs = storage.calls[0][1]
+    count_kwargs = storage.calls[1][1]
+    expected_list = {"sessions": None, "order_by": None, "offset": 0, "limit": None}
+    expected_count = {"sessions": None, "category": None}
+    if included:
+        expected_list["included_categories"] = included
+        expected_count["included_categories"] = included
+    assert list_kwargs == expected_list
+    assert count_kwargs == expected_count
+
+
+def test_inclusion_and_exclusion_are_forwarded_together():
+    """Both category sets reach storage in one call without dropping either."""
+    class RecordingStorage:
+        def __init__(self):
+            self.calls = []
+            self.chat_history = Mock()
+
+        def list_sessions(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return []
+
+        def count_sessions(self, **kwargs):
+            self.calls.append(("count", kwargs))
+            return 0
+
+    storage = RecordingStorage()
+    manager = DefaultSessionManager(storage, Mock())
+    manager.list_sessions(included_categories={"agent"}, excluded_categories={"agent_driver"})
+    manager.count_sessions(included_categories={"agent"}, excluded_categories={"agent_driver"})
+    list_kwargs = storage.calls[0][1]
+    count_kwargs = storage.calls[1][1]
+    assert list_kwargs == {
+        "sessions": None, "order_by": None, "offset": 0, "limit": None,
+        "included_categories": {"agent"}, "excluded_categories": {"agent_driver"},
+    }
+    assert count_kwargs == {
+        "sessions": None, "category": None,
+        "included_categories": {"agent"}, "excluded_categories": {"agent_driver"},
+    }

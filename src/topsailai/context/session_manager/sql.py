@@ -443,19 +443,23 @@ class SessionSQLAlchemy(SessionStorageBase):
                 db_session.close()
 
     def _apply_session_filters(self, query, sessions=None, category=None,
-                               excluded_categories=None):
-        """Apply ID, exact category, and category-exclusion predicates.
+                               included_categories=None, excluded_categories=None):
+        """Apply ID, exact category, and category set predicates.
 
-        Excluded names are treated as already validated exact strings: resolving
-        them here would turn an invalid name into the empty category and hide
-        uncategorized rows the caller never asked to hide. A NULL category is
-        coalesced to the empty string so it counts as uncategorized instead of
-        being silently dropped by the negated predicate.
+        Category names are treated as already validated exact strings: resolving
+        them here would turn an invalid name into the empty category and change
+        which rows match. A NULL category is coalesced to the empty string so it
+        counts as uncategorized for both the inclusion and the exclusion
+        predicate instead of being silently dropped.
         """
         if sessions:
             query = query.filter(Session.session_id.in_(sessions))
         if category is not None:
             query = query.filter(Session.category == resolve_session_category(category))
+        if included_categories:
+            query = query.filter(
+                sql_func.coalesce(Session.category, "").in_(list(included_categories))
+            )
         if excluded_categories:
             query = query.filter(
                 ~sql_func.coalesce(Session.category, "").in_(list(excluded_categories))
@@ -469,6 +473,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         offset: int = 0,
         limit: int = None,
         category: str = None,
+        included_categories: set[str] = None,
         excluded_categories: set[str] = None,
     ) -> list[SessionData]:
         """List sessions with SQL-side ID/category filtering and pagination."""
@@ -476,6 +481,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         try:
             query = self._apply_session_filters(
                 db_session.query(Session), sessions=sessions, category=category,
+                included_categories=included_categories,
                 excluded_categories=excluded_categories,
             )
             query = self._apply_order_by(query, order_by)
@@ -516,12 +522,14 @@ class SessionSQLAlchemy(SessionStorageBase):
             db_session.close()
 
     def count_sessions(self, sessions: list[str] = None, category: str = None,
+                       included_categories: set[str] = None,
                        excluded_categories: set[str] = None) -> int:
         """Count sessions matching ID/category filters without pagination."""
         db_session = self.SessionLocal()
         try:
             query = self._apply_session_filters(
                 db_session.query(Session), sessions=sessions, category=category,
+                included_categories=included_categories,
                 excluded_categories=excluded_categories,
             )
             return query.count()

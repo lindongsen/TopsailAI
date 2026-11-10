@@ -432,3 +432,146 @@ def test_create_time_index_is_added_to_a_legacy_table(tmp_path):
         )).fetchall() == [("idx_session_create_time",)]
         assert connection.execute(text("SELECT count(*) FROM session")).scalar_one() == 1
     manager.engine.dispose()
+
+
+def test_included_categories_keep_only_listed_categories():
+    """Inclusion keeps the listed categories and drops every other row."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(included_categories={"agent", "chat"})
+    assert {row.session_id for row in rows} == {"agent-1", "chat-1"}
+    assert manager.count_sessions(included_categories={"agent", "chat"}) == 2
+
+
+def test_included_categories_empty_string_keeps_uncategorized_rows():
+    """An empty string includes uncategorized sessions like any other name."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(included_categories={""})
+    assert {row.session_id for row in rows} == {"plain-1"}
+    assert manager.count_sessions(included_categories={""}) == 1
+
+
+def test_included_categories_combine_with_exclusion():
+    """Inclusion and exclusion compose into one SQL predicate."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(
+        included_categories={"agent", "agent_driver"}, excluded_categories={"agent_driver"}
+    )
+    assert [row.session_id for row in rows] == ["agent-1"]
+    assert manager.count_sessions(
+        included_categories={"agent", "agent_driver"}, excluded_categories={"agent_driver"}
+    ) == 1
+
+
+def test_included_categories_intersect_with_exact_category():
+    """An exact category and an inclusion set intersect instead of overriding."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(category="agent", included_categories={"agent", "chat"})
+    assert [row.session_id for row in rows] == ["agent-1"]
+    assert manager.count_sessions(
+        category="agent", included_categories={"agent", "chat"}
+    ) == 1
+
+    disjoint = manager.list_sessions(category="chat", included_categories={"agent"})
+    assert disjoint == []
+    assert manager.count_sessions(category="chat", included_categories={"agent"}) == 0
+
+
+def test_included_categories_apply_before_pagination():
+    """Offset and limit select a full page of surviving rows."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    page = manager.list_sessions(
+        included_categories={"agent", "chat", ""}, order_by="session_id", offset=1, limit=2
+    )
+    assert [row.session_id for row in page] == ["chat-1", "plain-1"]
+    assert manager.count_sessions(included_categories={"agent", "chat", ""}) == 3
+
+
+@pytest.mark.parametrize("included", [None, set()])
+def test_omitted_or_empty_inclusion_keeps_every_row(included):
+    """An omitted or empty inclusion must not change the unfiltered result."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    rows = manager.list_sessions(included_categories=included)
+    assert len(rows) == 5
+    assert manager.count_sessions(included_categories=included) == 5
+
+
+def test_null_category_is_included_as_uncategorized(tmp_path):
+    """A NULL category counts as uncategorized for the inclusion predicate.
+
+    The current schema declares category NOT NULL, so this only happens in a
+    legacy table whose category column was created nullable. The coalesced
+    predicate must still treat such a row as uncategorized instead of letting
+    the positive IN silently discard it.
+    """
+    path = tmp_path / "nullable_category_inclusion.db"
+    engine = create_engine(f"sqlite:///{path}")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE session (session_id TEXT PRIMARY KEY, session_name TEXT, "
+            "task TEXT NOT NULL, project_workspace TEXT, pwd TEXT, topsailai_home TEXT, "
+            "total_tokens INTEGER DEFAULT 0, total_cached_tokens INTEGER DEFAULT 0, "
+            "total_completion_tokens INTEGER DEFAULT 0, summary_count INTEGER DEFAULT 0, "
+            "turn_count INTEGER DEFAULT 0, tool_call_count INTEGER DEFAULT 0, "
+            "tool_error_count INTEGER DEFAULT 0, llm_request_count INTEGER DEFAULT 0, "
+            "llm_request_failure_count INTEGER DEFAULT 0, tool_duration_ms_sum INTEGER DEFAULT 0, "
+            "llm_request_duration_ms_sum INTEGER DEFAULT 0, create_time DATETIME NOT NULL, "
+            "update_time DATETIME NOT NULL, category TEXT)"
+        ))
+        connection.execute(text(
+            "INSERT INTO session (session_id, task, create_time, update_time, category) "
+            "VALUES ('null-1', 'task', '2020-01-01 00:00:00', '2020-01-01 00:00:00', NULL)"
+        ))
+        connection.execute(text(
+            "INSERT INTO session (session_id, task, create_time, update_time, category) "
+            "VALUES ('driver-1', 'task', '2020-01-02 00:00:00', '2020-01-02 00:00:00', 'agent_driver')"
+        ))
+    engine.dispose()
+    manager = SessionSQLAlchemy(f"sqlite:///{path}")
+    kept = {row.session_id for row in manager.list_sessions(included_categories={""})}
+    assert kept == {"null-1"}
+    dropped = {row.session_id for row in manager.list_sessions(included_categories={"agent_driver"})}
+    assert dropped == {"driver-1"}
+    manager.engine.dispose()
+
+
+def test_inclusion_predicate_is_sql_side_and_uses_coalesce():
+    """The inclusion reaches SQL as a coalesced IN predicate."""
+    manager = SessionSQLAlchemy("sqlite:///:memory:")
+    _seed_exclusion_rows(manager)
+
+    statements = []
+
+    def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        statements.append((statement, parameters))
+
+    event.listen(manager.engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        manager.list_sessions(included_categories={"agent"}, offset=0, limit=2)
+        manager.count_sessions(included_categories={"agent"})
+    finally:
+        event.remove(manager.engine, "before_cursor_execute", before_cursor_execute)
+
+    select_statements = [item for item in statements if "FROM session" in item[0]]
+    assert len(select_statements) == 2
+    list_sql, list_parameters = select_statements[0]
+    count_sql, count_parameters = select_statements[1]
+    for statement, parameters in ((list_sql, list_parameters), (count_sql, count_parameters)):
+        lowered = statement.lower()
+        assert "coalesce" in lowered
+        assert " in " in lowered
+        assert "not in" not in lowered
+        assert "agent" in parameters
+    assert " limit " in f" {list_sql.lower()} "
+    assert " limit " not in f" {count_sql.lower()} "

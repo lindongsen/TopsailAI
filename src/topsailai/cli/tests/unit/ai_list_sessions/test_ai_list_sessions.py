@@ -867,5 +867,145 @@ class TestExcludedCategories(unittest.TestCase):
         self.assertIn("not in", page_statements[0].lower())
 
 
+class TestIncludedCategories(unittest.TestCase):
+    """Tests for the database-side --included-categories filter."""
+
+    def setUp(self):
+        self.db_fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(self.db_fd)
+        self.db_conn = f"sqlite:///{self.db_path}"
+        manager = get_session_manager(self.db_conn)
+        for session_id, category in (
+            ("driver-1", "agent_driver"),
+            ("driver-2", "agent_driver"),
+            ("agent-1", "agent"),
+            ("chat-1", "chat"),
+            ("plain-1", ""),
+        ):
+            manager.create_session(
+                SessionData(session_id=session_id, task="task", category=category)
+            )
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def _run(self, options):
+        """Run main() with *options* and return its stdout."""
+        with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                     "--no-color", *options]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                ai_list_sessions.main()
+                return output.getvalue()
+
+    def test_parse_accepts_comma_separated_and_repeated_values(self):
+        """Comma-separated and repeated options accumulate into one set."""
+        parsed = ai_list_sessions._parse_included_categories(["agent,chat", "agent_driver"])
+        self.assertEqual(parsed, {"agent", "chat", "agent_driver"})
+
+    def test_parse_returns_empty_set_when_omitted(self):
+        """An omitted option must not change the unfiltered query path."""
+        self.assertEqual(ai_list_sessions._parse_included_categories(None), set())
+
+    def test_parse_keeps_empty_value_as_uncategorized(self):
+        """An empty value includes uncategorized sessions instead of nothing."""
+        self.assertEqual(ai_list_sessions._parse_included_categories([""]), {""})
+
+    def test_parse_rejects_invalid_name(self):
+        """An invalid name is rejected instead of including uncategorized rows."""
+        with self.assertLogs("topsailai.context.session_category", level="ERROR") as logs:
+            with self.assertRaises(ValueError):
+                ai_list_sessions._parse_included_categories(["Agent\n"])
+        self.assertTrue(any("Agent\\n" in message for message in logs.output))
+
+    def test_included_categories_keep_only_listed_rows(self):
+        """Only the listed categories survive the filter."""
+        data = json.loads(self._run(["--json", "--included-categories", "agent,chat"]))
+        self.assertEqual({row["session_id"] for row in data}, {"agent-1", "chat-1"})
+
+    def test_repeated_option_includes_every_listed_category(self):
+        """A repeated option behaves like one comma-separated value."""
+        data = json.loads(self._run([
+            "--json", "--included-categories", "agent", "--included-categories", "chat",
+        ]))
+        self.assertEqual({row["session_id"] for row in data}, {"agent-1", "chat-1"})
+
+    def test_empty_value_includes_uncategorized_sessions(self):
+        """An empty value keeps only the uncategorized rows."""
+        data = json.loads(self._run(["--json", "--included-categories", ""]))
+        self.assertEqual({row["session_id"] for row in data}, {"plain-1"})
+
+    def test_pagination_applies_after_inclusion(self):
+        """A limit must select a full page of surviving rows, not a short one."""
+        data = json.loads(self._run([
+            "--json", "--included-categories", "agent,chat,", "--limit", "2",
+        ]))
+        self.assertEqual(len(data), 2)
+        self.assertTrue({row["category"] for row in data} <= {"agent", "chat", ""})
+
+    def test_text_output_reports_matched_total_after_inclusion(self):
+        """Text mode reports the pre-pagination count of surviving rows."""
+        text = self._run(["--included-categories", "agent,chat", "--limit", "1"])
+        self.assertIn("Total: 1 session", text)
+        self.assertIn("Matched Total: 2", text)
+
+    def test_inclusion_combines_with_exclusion(self):
+        """Inclusion and exclusion compose into one database predicate."""
+        data = json.loads(self._run([
+            "--json", "--included-categories", "agent,agent_driver",
+            "--excluded-categories", "agent_driver",
+        ]))
+        self.assertEqual([row["session_id"] for row in data], ["agent-1"])
+
+    def test_omitted_inclusion_keeps_every_row(self):
+        """Without the option the previous unfiltered output is unchanged."""
+        data = json.loads(self._run(["--json"]))
+        self.assertEqual(len(data), 5)
+
+    def test_inclusion_is_pushed_down_to_the_database(self):
+        """The inclusion set reaches the query instead of being filtered in memory."""
+        manager = get_session_manager(self.db_conn)
+        captured = {}
+
+        original = manager.list_sessions
+
+        def recording_list_sessions(**kwargs):
+            captured.update(kwargs)
+            return original(**kwargs)
+
+        with mock.patch.object(manager, "list_sessions", side_effect=recording_list_sessions):
+            with mock.patch.object(ai_list_sessions, "get_session_manager", return_value=manager):
+                self._run(["--json", "--included-categories", "agent,chat",
+                           "--offset", "1", "--limit", "1"])
+
+        self.assertEqual(captured["offset"], 1)
+        self.assertEqual(captured["limit"], 1)
+        self.assertEqual(captured["included_categories"], {"agent", "chat"})
+
+    def test_inclusion_predicate_reaches_the_sql_statement(self):
+        """The inclusion is a SQL predicate, so no unlisted row is ever read."""
+        statements = []
+        manager = get_session_manager(self.db_conn)
+        engine = manager.storage.engine
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            with mock.patch.object(ai_list_sessions, "get_session_manager", return_value=manager):
+                self._run(["--json", "--included-categories", "agent", "--limit", "2"])
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+        page_statements = [s for s in statements if "FROM session" in s and "LIMIT" in s.upper()]
+        self.assertTrue(page_statements)
+        self.assertIn("coalesce", page_statements[0].lower())
+        self.assertIn(" in ", page_statements[0].lower())
+        self.assertNotIn("not in", page_statements[0].lower())
+
+
 if __name__ == "__main__":
     unittest.main()
