@@ -172,11 +172,13 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 	return nil
 }
 
-// Resume row numbers come from one of two tables. The names are used in the
-// stale-number notice, so the operator is told which command refreshes them.
+// Resume targets come from one of two tables, or from a session identifier named
+// in endpoint scope. The names are used in the stale-number notice, so the
+// operator is told which command refreshes the numbers they were looking at.
 const (
-	resumeSourceHistory = "history"
-	resumeSourceList    = "list"
+	resumeSourceHistory   = "history"
+	resumeSourceList      = "list"
+	resumeSourceSessionID = "session ID"
 )
 
 // resumeSelection is one resolved resume target.
@@ -196,7 +198,8 @@ type resumeSelection struct {
 	Source string
 }
 
-// interactiveResume resumes one stopped session selected by a row number.
+// interactiveResume resumes one stopped session selected by a row number, or by a
+// session identifier named in endpoint scope.
 //
 // Resume authorizes on the absence of the target, so it addresses the opaque
 // resource handle the Endpoint minted for the provider session and carries no
@@ -213,11 +216,22 @@ type resumeSelection struct {
 // A bare resume is accepted only when exactly one listed session is unknown,
 // because a second unknown row would make the choice ambiguous and resuming the
 // wrong session would start a runtime the operator did not ask for.
+//
+// A session identifier named in endpoint scope is a different contract: the
+// operator stated the exact target, so the row-number, unknown-state and
+// generation rules do not apply, and the client-side absence recheck is skipped
+// as well. The Endpoint still inspects the provider before it invokes it, so a
+// live target is rejected there with target_still_active and the provider refuses
+// it again on its own liveness check. The client therefore never claims an
+// authority it does not have; it only stops pre-empting a target the operator
+// named explicitly.
 func interactiveResume(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	if err := rejectInteractiveOption("resume", rest); err != nil {
 		return err
 	}
-	selection, err := resolveResumeSelection(state, strings.TrimSpace(rest))
+	ctx, cancel := commandContext(parent)
+	selection, err := resolveResumeSelection(ctx, api, state, strings.TrimSpace(rest))
+	cancel()
 	if err != nil {
 		return err
 	}
@@ -230,8 +244,14 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 	pinned.ProviderGeneration = ""
 	pinned.Invalidated = false
 	pinned.InvalidReason = ""
-	revalidate := func(revalidateCtx context.Context) error {
-		return validateResumeAbsence(revalidateCtx, api, selection.EndpointID, selection.ProviderSessionID)
+	// A named session skips the absence recheck, so the callback must still be
+	// non-nil: a nil revalidate falls back to findSelected, which requires a
+	// generation and would reject exactly the stopped session resume addresses.
+	revalidate := func(context.Context) error { return nil }
+	if selection.Source != resumeSourceSessionID {
+		revalidate = func(revalidateCtx context.Context) error {
+			return validateResumeAbsence(revalidateCtx, api, selection.EndpointID, selection.ProviderSessionID)
+		}
 	}
 	postSubmit := func(postCtx context.Context, result map[string]any) error {
 		state.commandID = pinned.commandID
@@ -248,14 +268,42 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 // resolved against whichever table is currently rendered, because each render
 // clears the other namespace and a number must never silently mean a row from a
 // table the operator can no longer see.
-func resolveResumeSelection(state *interactiveState, token string) (resumeSelection, error) {
+//
+// Endpoint scope additionally accepts a session identifier, because the operator
+// is already inside one machine and can name the exact target. That path skips
+// the row-number, unknown-state and generation rules: those rules exist to make a
+// row number unambiguous, and a named session is not ambiguous. The Endpoint
+// still inspects the provider before invoking it, so a live target is rejected
+// there rather than here.
+func resolveResumeSelection(ctx context.Context, api InteractiveAPI, state *interactiveState, token string) (resumeSelection, error) {
 	if token == "" {
 		return uniqueUnknownResumeSelection(state)
 	}
 	number, numeric := parseRowNumber(token)
+	if numeric {
+		// A number that names a rendered row keeps its documented meaning and its
+		// existing rules. A number that names no rendered row falls through,
+		// because a provider session identifier is a numeric string and would
+		// otherwise be reported as an out-of-range row.
+		if state.history != nil {
+			if _, ok := state.history.Rows[number]; ok {
+				return historyResumeSelection(state.history, number)
+			}
+		} else if len(state.Rows) > 0 {
+			if _, ok := state.Rows[number]; ok {
+				return listResumeSelection(state, number)
+			}
+		}
+	}
+	if state.Scope.Kind == ScopeEndpoint {
+		return resumeSelectionBySessionID(ctx, api, state.Scope.EndpointID, token)
+	}
 	if !numeric {
 		return resumeSelection{}, fmt.Errorf("resume accepts a row number only; run list or history to see the rows")
 	}
+	// Workspace scope keeps the row-number contract, so an out-of-range number is
+	// still reported as an out-of-range row instead of being retried as an
+	// identifier that could match sessions on several endpoints.
 	if state.history != nil {
 		return historyResumeSelection(state.history, number)
 	}
@@ -263,6 +311,43 @@ func resolveResumeSelection(state *interactiveState, token string) (resumeSelect
 		return listResumeSelection(state, number)
 	}
 	return resumeSelection{}, fmt.Errorf("resume requires a rendered table; run list or history first")
+}
+
+// resumeSelectionBySessionID resolves one named session inside the current
+// endpoint and accepts it whatever state the inventory reports.
+//
+// The endpoint-online and complete-inventory checks are kept because they are
+// what makes the name resolvable at all: an incomplete report cannot prove which
+// session the operator named. They are not a target verdict, so a session that is
+// live, unverified or in any other state is still returned here and left to the
+// Endpoint, which inspects the provider before it invokes it.
+func resumeSelectionBySessionID(ctx context.Context, api InteractiveAPI, endpointID, token string) (resumeSelection, error) {
+	loaded, err := loadReports(ctx, api, endpointID)
+	if err != nil {
+		return resumeSelection{}, err
+	}
+	endpoint, found := endpointByID(loaded, endpointID)
+	if !found {
+		return resumeSelection{}, fmt.Errorf("endpoint %q was not found; run list again", endpointID)
+	}
+	if err := validateEndpointOnline(endpoint); err != nil {
+		return resumeSelection{}, err
+	}
+	report, ok := loaded.reports[endpointID]
+	if !ok || !report.ReportComplete {
+		return resumeSelection{}, fmt.Errorf("endpoint %q inventory is unavailable, so session %q cannot be resolved", endpointID, token)
+	}
+	_, _, session, err := findSessionInEndpoint(loaded, endpointID, token)
+	if err != nil {
+		return resumeSelection{}, numericTokenHint(token, err)
+	}
+	return resumeSelection{
+		EndpointID:          endpointID,
+		ProviderSessionID:   session.ProviderSessionID,
+		ResourceID:          session.ClusterSessionID,
+		ProviderDisplayName: session.ProviderDisplayName,
+		Source:              resumeSourceSessionID,
+	}, nil
 }
 
 // historyResumeSelection applies the history-table rules to one row number.
@@ -402,10 +487,16 @@ func validateResumeAbsence(ctx context.Context, api InteractiveAPI, endpointID, 
 // changes the inventory, so a number from either table can be stale afterwards,
 // and clearing only the source table would leave the other one silently wrong.
 // The notice names the command that refreshes the numbers the operator was
-// actually looking at, so the recovery step matches the table they used.
+// actually looking at, so the recovery step matches the table they used. A resume
+// addressed by session identifier used no row number, so it reports the
+// invalidation without naming a command the operator never used.
 func invalidateResumeRowBindings(state *interactiveState, source string, out io.Writer) error {
 	state.history = nil
 	state.Rows = nil
+	if source == resumeSourceSessionID {
+		_, err := fmt.Fprintln(out, "row numbers are stale after resume; run list or history to refresh")
+		return err
+	}
 	command := resumeSourceList
 	if source == resumeSourceHistory {
 		command = resumeSourceHistory

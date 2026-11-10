@@ -841,3 +841,138 @@ func TestInteractiveResumeRejectsUnknownListRowWithGeneration(t *testing.T) {
 		t.Fatalf("unknown row with a generation admitted %d commands", stub.admit)
 	}
 }
+
+// TestInteractiveResumeAcceptsProviderSessionIDInEndpointScope proves endpoint
+// scope accepts a session identifier as the resume target.
+//
+// The operator is already inside one machine there, so the name is unambiguous
+// and the row-number rules do not apply. The submitted target must still be the
+// opaque cluster resource ID, because the provider session ID is never a routing
+// identity.
+func TestInteractiveResumeAcceptsProviderSessionIDInEndpointScope(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(unverifiedSession("res-dead", "wa-dead", "dead work")))
+
+	output, diagnostics := runScope(t, stub, "cd endpoint-1\nresume wa-dead\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("a named session must be resumable, diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d want=1", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Operation != protocol.OperationAgentResume || intent.EndpointID != "endpoint-1" {
+		t.Fatalf("wrong resume intent: %+v", intent)
+	}
+	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.ProviderGeneration != "" {
+		t.Fatalf("wrong resume target: %+v", intent.Target)
+	}
+	if !strings.Contains(output, "row numbers are stale after resume; run list or history to refresh") {
+		t.Fatalf("missing row invalidation notice: %q", output)
+	}
+}
+
+// TestInteractiveResumeNamedSessionSkipsAbsenceRecheck proves a named session is
+// not pre-empted by the client-side absence check.
+//
+// The operator stated the exact target, so the client must not refuse it. A live
+// session is the sharpest case: the row-number path rejects it here, while the
+// named path submits it and leaves the verdict to the Endpoint, which inspects the
+// provider before invoking it.
+func TestInteractiveResumeNamedSessionSkipsAbsenceRecheck(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(historyLiveSession("res-live", "wa-live", "gen-1")))
+
+	_, diagnostics := runScope(t, stub, "cd endpoint-1\nresume wa-live\ny\nexit\n", ColorPolicy{})
+	if strings.Contains(diagnostics, "cannot be resumed") {
+		t.Fatalf("a named session must not be refused by the client, diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d want=1; the Endpoint owns the live verdict", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Target == nil || intent.Target.ResourceID != "res-live" || intent.Target.ProviderGeneration != "" {
+		t.Fatalf("wrong resume target: %+v", intent.Target)
+	}
+}
+
+// TestInteractiveResumeNumericTokenFallsBackToProviderSessionID proves a numeric
+// token that names no rendered row is retried as a provider session ID.
+//
+// Provider session identifiers are numeric strings, so a strict row-number reading
+// would report an out-of-range row for a target the operator named correctly.
+func TestInteractiveResumeNumericTokenFallsBackToProviderSessionID(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(unverifiedSession("res-dead", "20261013131753", "dead work")))
+
+	_, diagnostics := runScope(t, stub, "cd endpoint-1\nresume 20261013131753\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("a numeric provider session ID must be resumable, diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d want=1", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Target == nil || intent.Target.ResourceID != "res-dead" {
+		t.Fatalf("wrong resume target: %+v", intent.Target)
+	}
+}
+
+// TestInteractiveResumeRenderedRowKeepsRowNumberMeaning proves a numeric token
+// that does name a rendered row keeps its documented row-number meaning.
+//
+// The fallback must not shadow the row contract: a rendered row is what the
+// operator can see, so it wins over a provider identifier with the same spelling.
+func TestInteractiveResumeRenderedRowKeepsRowNumberMeaning(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(
+		unverifiedSession("res-first", "wa-first", "first work"),
+		unverifiedSession("res-second", "2", "second work"),
+	))
+
+	_, diagnostics := runScope(t, stub, "cd endpoint-1\nlist\nresume 1\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("row 1 must be resumable, diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d want=1", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Target == nil || intent.Target.ResourceID != "res-first" {
+		t.Fatalf("row 1 must resolve to the first row, got %+v", intent.Target)
+	}
+}
+
+// TestInteractiveResumeRejectsSessionIDInWorkspaceScope proves workspace scope
+// keeps the row-number contract.
+//
+// A session identifier there could match sessions on several endpoints, so the
+// scope that cannot disambiguate must not accept it.
+func TestInteractiveResumeRejectsSessionIDInWorkspaceScope(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(unverifiedSession("res-dead", "wa-dead", "dead work")))
+
+	_, diagnostics := runScope(t, stub, "resume wa-dead\nexit\n", ColorPolicy{})
+	want := "resume accepts a row number only"
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("workspace scope admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeNamedSessionRequiresCompleteInventory proves the name is
+// resolved from a complete report.
+//
+// An incomplete report cannot prove which session the operator named, so the
+// target is unresolvable rather than guessed.
+func TestInteractiveResumeNamedSessionRequiresCompleteInventory(t *testing.T) {
+	incomplete := historyReport(unverifiedSession("res-dead", "wa-dead", "dead work"))
+	incomplete.ReportComplete = false
+	stub := historyScenarioStub(nil, incomplete)
+
+	_, diagnostics := runScope(t, stub, "cd endpoint-1\nresume wa-dead\nexit\n", ColorPolicy{})
+	want := `inventory is unavailable, so session "wa-dead" cannot be resolved`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("incomplete inventory admitted %d commands", stub.admit)
+	}
+}
