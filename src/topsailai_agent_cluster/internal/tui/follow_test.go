@@ -475,7 +475,7 @@ func TestFollowSessionIdleReportsRenderFailure(t *testing.T) {
 	channel := make(chan protocol.OutputFollowRecord, 1)
 	channel <- protocol.OutputFollowRecord{Lines: []string{"line"}, End: true}
 	close(channel)
-	session := newFollowSessionWithRecords(channel, func() {}, ColorPolicy{})
+	session := newFollowSessionWithRecords(channel, func() {}, ColorPolicy{}, followRequest{})
 	defer session.Stop()
 	payload := idleUntil(t, session, "line")
 	if !strings.Contains(payload, "line") {
@@ -502,7 +502,7 @@ func TestFollowSessionIdleReportsRenderFailure(t *testing.T) {
 func TestFollowSessionDrainsBurstWithoutAnEditorPoll(t *testing.T) {
 	const burst = DefaultInteractiveMaxLines
 	records := make(chan protocol.OutputFollowRecord, 1)
-	session := newFollowSessionWithRecords(records, func() {}, ColorPolicy{})
+	session := newFollowSessionWithRecords(records, func() {}, ColorPolicy{}, followRequest{})
 	defer session.Stop()
 	sent := make(chan struct{})
 	go func() {
