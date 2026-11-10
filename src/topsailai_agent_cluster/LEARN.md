@@ -558,3 +558,25 @@ any legitimate addition breaks several of them at once and the noise hides which
 new. Without the HEAD comparison, a pre-existing defect gets silently absorbed into an
 unrelated commit, and the next person cannot tell which change was responsible. The worktree
 is the only evidence that separates "my change broke this" from "this was already broken".
+
+## A styled prefix is invisible to an assertion that matches plain text
+
+Trigger: the follow status lines gained a `log.follow>` prefix rendered bold green through
+`RenderNamedPrompt`. The unit tests passed, because they compared the rendered string against an
+expected string that contained the escape sequences. The BDD scenarios failed, because they assert
+with `strings.Contains(output, "log.follow> res_")` and the real output is
+`\x1b[1;32mlog.follow>\x1b[0m res_`. The message was correct and the assertion could not see it.
+
+Action: when a rendered line gains styling, check every assertion that matches it as text. A unit
+test that compares whole rendered strings is safe, because the expected value carries the same
+sequences. A substring assertion is not: it silently requires the plain form. Either strip the
+styling before asserting, or assert on a structural property. Here `tests/bdd/steps_follow.go` gained
+`stripFollowSGR`, which removes the four sequences the prefix and the severity styles use.
+
+Why this prevents recurrence: the failure direction is the dangerous one. A styled prefix makes a
+correct message look absent, so the natural conclusion is "the prefix was not applied" and the fix
+would be to remove the styling that was just requested. The real cause is that the assertion was
+written against the unstyled form, and nothing in the test names that assumption. The same trap
+applies to any surface that is asserted as text but rendered with colour: a PTY-driven BDD scenario
+with a real `TERM` sees sequences that an in-process unit test with colour disabled never produces,
+so the two layers disagree about what the output is.
