@@ -49,10 +49,11 @@ POST /v1/nodes/{node_id}/operations
 `hello`. It is an address, not a credential: knowing it grants nothing without the
 `node-token`.
 
-The `node_id` appears twice on this path: in the URL, where the Server routes by
-it, and as the first half of the `node-id.node-token` pair the CLI presents. The
-Server compares them and refuses a mismatch, so a caller cannot route to one Node
-while presenting another Node's secret.
+The `node_id` appears in the URL, where the Server routes by it. The CLI splits
+the `node-id.node-token` pair locally and sends only the token half in
+`X-Connector-Node-Token`, so the Server never holds both halves and cannot compare
+them. A caller that routes to one Node while presenting another Node's secret is
+refused by the Node it reached, because only the Node knows its own token.
 
 ### One listener, two surfaces
 
