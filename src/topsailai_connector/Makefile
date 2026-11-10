@@ -85,12 +85,15 @@ bdd:
 # connection cannot show: that a dead Node is refused instead of hanging, that a
 # restarted Node recovers, that concurrent reads keep their own answers, and that a
 # second Node with the same identity replaces the first without the first evicting
-# it on the way out.
+# it on the way out. long_run.sh restarts the real Node twenty times and asserts the
+# Server's own log balances established against closed channels, which is the
+# process-level evidence that no registration is left behind.
 e2e: build
 	@mkdir -p $(TMP_DIR)
 	bash tests/e2e/start.sh 2>&1 | tee $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/reconnect.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/long_run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 
 check: vet test-unit coverage integration bdd e2e
 
