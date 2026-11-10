@@ -91,8 +91,8 @@ func TestRenderFollowRecordReportsEndState(t *testing.T) {
 		errorCode string
 		want      string
 	}{
-		{name: "clean end", errorCode: "", want: "follow ended\n"},
-		{name: "provider error", errorCode: "provider_error", want: "follow ended: provider_error\n"},
+		{name: "clean end", errorCode: "", want: "log.follow> follow ended\n"},
+		{name: "provider error", errorCode: "provider_error", want: "log.follow> follow ended: provider_error\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -104,6 +104,40 @@ func TestRenderFollowRecordReportsEndState(t *testing.T) {
 				t.Fatalf("got=%q want=%q", buffer.String(), testCase.want)
 			}
 		})
+	}
+}
+
+// TestRenderFollowStatusPrefixesAndStylesEveryMode proves the three rendering
+// modes are distinct, because each one has a different consumer: a plain terminal
+// needs the prefix and the colour, a redirected or --no-color stream needs the
+// prefix without escape sequences, and a JSON consumer must receive neither.
+func TestRenderFollowStatusPrefixesAndStylesEveryMode(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy ColorPolicy
+		json   bool
+		want   string
+	}{
+		{name: "colour disabled", policy: ColorPolicy{}, want: "log.follow> follow ended"},
+		{name: "colour enabled", policy: ColorPolicy{Enabled: true}, want: ansiBoldGreen + "log.follow>" + ansiReset + " " + ansiDim + "follow ended" + ansiReset},
+		{name: "json mode", policy: ColorPolicy{Enabled: true}, json: true, want: "follow ended"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := renderFollowStatus("follow ended", ansiDim, testCase.policy, testCase.json); got != testCase.want {
+				t.Fatalf("got=%q want=%q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestRenderFollowStatusNeverLeaksThePrefixIntoJSON proves a JSON consumer cannot
+// receive the prefix or an escape sequence, because either one would corrupt the
+// stream it is decoding.
+func TestRenderFollowStatusNeverLeaksThePrefixIntoJSON(t *testing.T) {
+	got := renderFollowStatus("follow ended: provider_error", ansiRed, ColorPolicy{Enabled: true}, true)
+	if strings.Contains(got, followStatusPrefix) || strings.Contains(got, "\x1b") {
+		t.Fatalf("json status carried presentation: %q", got)
 	}
 }
 
@@ -205,7 +239,7 @@ func TestFollowLogsRefusesClientWithoutStreaming(t *testing.T) {
 // when no record is available, so a keypress is never delayed behind a stream.
 func TestFollowSessionIdleNeverBlocks(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}, ColorPolicy{})
+	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("newFollowSession: %v", err)
 	}
@@ -236,7 +270,7 @@ func TestFollowSessionIdleDrainsAvailableRecords(t *testing.T) {
 		{Lines: []string{"second"}},
 		{End: true},
 	}}
-	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}, ColorPolicy{})
+	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("newFollowSession: %v", err)
 	}
@@ -287,7 +321,7 @@ func waitEnded(t *testing.T, session *followSession) {
 // the same stream without a double-cancel panic.
 func TestFollowSessionStopIsIdempotent(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}, ColorPolicy{})
+	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("newFollowSession: %v", err)
 	}
@@ -299,12 +333,12 @@ func TestFollowSessionStopIsIdempotent(t *testing.T) {
 // message, so the operator is not told an auto-refresh loop ended.
 func TestFollowSessionNamesItsStop(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}, ColorPolicy{})
+	session, err := newFollowSession(context.Background(), stub, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}, ColorPolicy{})
 	if err != nil {
 		t.Fatalf("newFollowSession: %v", err)
 	}
 	defer session.Stop()
-	if got := watchStopLabel(session); got != "follow stopped" {
+	if got := watchStopLabel(session, ColorPolicy{}); got != "log.follow> follow stopped" {
 		t.Fatalf("label=%q", got)
 	}
 }
@@ -312,7 +346,7 @@ func TestFollowSessionNamesItsStop(t *testing.T) {
 // TestWatchStopLabelKeepsAutoRefreshWording proves a session that does not name
 // itself keeps the original message, so existing behaviour is unchanged.
 func TestWatchStopLabelKeepsAutoRefreshWording(t *testing.T) {
-	if got := watchStopLabel(&replWatch{}); got != "auto-refresh stopped" {
+	if got := watchStopLabel(&replWatch{}, ColorPolicy{}); got != "auto-refresh stopped" {
 		t.Fatalf("label=%q", got)
 	}
 }
@@ -321,7 +355,7 @@ func TestWatchStopLabelKeepsAutoRefreshWording(t *testing.T) {
 // keypress that stops the stream cannot silently re-arm it on the next prompt.
 func TestStartFollowConsumesIntent(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}}
+	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}}
 	options := InteractiveOptions{WatchReader: &TerminalEditor{}}
 	session := startFollow(context.Background(), stub, state, options)
 	if session == nil {
@@ -340,7 +374,7 @@ func TestStartFollowConsumesIntent(t *testing.T) {
 // one diagnostic line instead of a prompt that silently does nothing.
 func TestStartFollowReportsStartFailure(t *testing.T) {
 	stub := &followStub{startErr: errors.New("transport unavailable")}
-	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}}
+	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}}
 	session := startFollow(context.Background(), stub, state, InteractiveOptions{WatchReader: &TerminalEditor{}})
 	if session == nil {
 		t.Fatal("startFollow returned nil")
@@ -366,7 +400,7 @@ func TestStartFollowReportsStartFailure(t *testing.T) {
 // keypress never starts a stream it could not stop.
 func TestStartFollowRequiresWatchReader(t *testing.T) {
 	stub := &followStub{blockOpen: true}
-	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"}}
+	state := &interactiveState{follow: &followRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"}}
 	if session := startFollow(context.Background(), stub, state, InteractiveOptions{}); session != nil {
 		t.Fatal("startFollow started without a watch-capable reader")
 	}
@@ -383,7 +417,7 @@ func TestInteractiveLogsFollowArmsStream(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "follow: res-1 (any key stops)") {
+	if !strings.Contains(output, "log.follow> res-1 (any key stops)") {
 		t.Fatalf("follow not armed: %q", output)
 	}
 	// The armed stream must not replace the one-shot snapshot the session entry

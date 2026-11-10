@@ -16,6 +16,9 @@ Arguments:
 
 Options:
     --db-conn: Database connection string. Defaults to 'sqlite:///sessions.db'
+    --category: Exact category to include; one value of lowercase letters,
+                digits, and underscores, or an empty value for uncategorized.
+    --excluded-categories: Comma-separated categories to exclude; repeatable.
 
 Examples:
     ai_list_sessions.py
@@ -24,6 +27,7 @@ Examples:
     ai_list_sessions.py --limit 10 --sort desc
     ai_list_sessions.py --since 2026-07-28T00:00:00 --until 2026-07-28T23:59:59
     ai_list_sessions.py --db-conn sqlite:///custom.db s1 s2 --json
+    ai_list_sessions.py --excluded-categories agent_driver,agent
 
 Author: DawsonLin
 Email: lin_dongsen@126.com
@@ -32,6 +36,7 @@ Email: lin_dongsen@126.com
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import textwrap
@@ -205,9 +210,9 @@ def format_sessions(sessions, matched_count=None):
                         - project_workspace: Project workspace path
                         - pwd: Working directory
                         - topsailai_home: TopsailAI home directory
-        matched_count (int, optional): Number of rows matching the category filter
-            before pagination. When no sessions are displayed, it is still shown
-            when supplied for an explicit category filter.
+        matched_count (int, optional): Number of rows matching every selection
+            filter before pagination. When no sessions are displayed, it is still
+            shown when supplied for an explicit filter.
 
     Returns:
         str: Formatted string containing all sessions in card format.
@@ -293,40 +298,6 @@ def _parse_order_by(sort_order):
     return "create_time"
 
 
-def _filter_sessions(sessions, has_project):
-    """Filter sessions to only those with a non-empty project_workspace when requested."""
-    if not has_project:
-        return sessions
-    return [session for session in sessions if session.project_workspace]
-
-
-def _filter_sessions_by_time(sessions, since=None, until=None):
-    """Filter sessions by create_time range.
-
-    Args:
-        sessions (list): List of session objects with a create_time attribute.
-        since (datetime, optional): Include sessions with create_time >= since.
-        until (datetime, optional): Include sessions with create_time <= until.
-
-    Returns:
-        list: Sessions whose create_time falls within the requested range.
-    """
-    if since is None and until is None:
-        return sessions
-
-    result = []
-    for session in sessions:
-        create_time = getattr(session, "create_time", None)
-        if create_time is None:
-            continue
-        if since is not None and create_time < since:
-            continue
-        if until is not None and create_time > until:
-            continue
-        result.append(session)
-    return result
-
-
 def _parse_datetime(value):
     """Parse an ISO datetime string into a datetime object."""
     if value is None:
@@ -339,6 +310,88 @@ def _parse_sessions(positional_sessions):
     if not positional_sessions:
         return None
     return [session_id.strip() for session_id in positional_sessions if session_id.strip()]
+
+
+def _parse_excluded_categories(raw_values):
+    """Parse repeated comma-separated exclusion values into a normalized set.
+
+    An exactly empty value is meaningful: it excludes uncategorized sessions.
+    Any other value must pass the same validation as the inclusion filter, and
+    an invalid name is rejected instead of being resolved to the empty
+    category, because silently excluding uncategorized rows would hide data the
+    caller never asked to hide. Returns an empty set when no exclusion was
+    requested, which keeps the unfiltered query path unchanged.
+    """
+    if not raw_values:
+        return set()
+
+    excluded = set()
+    for raw_value in raw_values:
+        for name in raw_value.split(","):
+            if name == "":
+                excluded.add("")
+                continue
+            normalized = resolve_session_category(name)
+            if normalized != name:
+                raise ValueError(f"Invalid excluded category: {name!r}")
+            excluded.add(normalized)
+    return excluded
+
+
+def _parse_included_categories(raw_values):
+    """Parse repeated comma-separated inclusion values into a normalized set.
+
+    An exactly empty value is meaningful: it includes uncategorized sessions.
+    Any other value must pass the same validation as the exclusion filter, and
+    an invalid name is rejected instead of being resolved to the empty
+    category, because silently including uncategorized rows would expose data
+    the caller never asked to see. Returns an empty set when no inclusion was
+    requested, which keeps the unfiltered query path unchanged.
+    """
+    if not raw_values:
+        return set()
+
+    included = set()
+    for raw_value in raw_values:
+        for name in raw_value.split(","):
+            if name == "":
+                included.add("")
+                continue
+            normalized = resolve_session_category(name)
+            if normalized != name:
+                raise ValueError(f"Invalid included category: {name!r}")
+            included.add(normalized)
+    return included
+
+
+_CATEGORY_PATTERN = re.compile(r"[a-z0-9_]+")
+
+
+def _parse_category_value(raw_value):
+    """Validate one --category value and return it unchanged.
+
+    The value must be exactly empty, which selects uncategorized sessions, or
+    match lowercase letters, digits, and underscores. Anything else is rejected
+    instead of being resolved to the empty category, because resolving it would
+    silently select uncategorized rows the caller never asked for.
+    """
+    if raw_value == "":
+        return ""
+    if _CATEGORY_PATTERN.fullmatch(raw_value):
+        return raw_value
+    raise argparse.ArgumentTypeError(
+        f"invalid category {raw_value!r}: expected lowercase letters, digits, or underscores"
+    )
+
+
+class _SingleCategory(argparse.Action):
+    """Reject a repeated --category option instead of silently keeping the last."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        """Store the first value and fail on any second occurrence."""
+        if getattr(namespace, self.dest, None) is not None:
+            raise argparse.ArgumentError(self, "may only be given once")
+        setattr(namespace, self.dest, values)
 
 
 def main():
@@ -377,8 +430,38 @@ def main():
     parser.add_argument(
         "--category",
         dest="session_category",
+        type=_parse_category_value,
+        action=_SingleCategory,
         default=None,
-        help="Filter by exact category; omit to include all categories, use an empty value for uncategorized sessions",
+        help=(
+            "Filter by exact category; omit to include all categories, use an empty "
+            "value for uncategorized sessions. Accepts one value made of lowercase "
+            "letters, digits, and underscores"
+        ),
+    )
+    parser.add_argument(
+        "--included-categories",
+        dest="included_categories",
+        action="append",
+        default=None,
+        metavar="NAMES",
+        help=(
+            "Include only sessions whose category is listed; accepts comma-separated "
+            "names and may be repeated. An empty value includes uncategorized "
+            "sessions. Applied in the database, so pagination stays correct"
+        ),
+    )
+    parser.add_argument(
+        "--excluded-categories",
+        dest="excluded_categories",
+        action="append",
+        default=None,
+        metavar="NAMES",
+        help=(
+            "Exclude sessions whose category is listed; accepts comma-separated "
+            "names and may be repeated. An empty value excludes uncategorized "
+            "sessions. Applied in the database, so pagination stays correct"
+        ),
     )
     parser.add_argument(
         "--no-color",
@@ -444,29 +527,42 @@ def main():
             order_by = _parse_order_by(args.sort)
 
         query_sessions = _parse_sessions(args.sessions)
-        normalized_category = None
-        if args.session_category is not None:
-            normalized_category = resolve_session_category(args.session_category)
+        normalized_category = args.session_category
+        included_categories = _parse_included_categories(args.included_categories)
+        excluded_categories = _parse_excluded_categories(args.excluded_categories)
+        since = _parse_datetime(args.since)
+        until = _parse_datetime(args.until)
+        # Every selection predicate runs in the database, so the page is chosen
+        # after filtering and a limit always returns a full page of surviving rows.
         list_kwargs = {
             "sessions": query_sessions,
             "order_by": order_by,
             "offset": args.offset,
             "limit": args.limit,
         }
+        count_kwargs = {"sessions": query_sessions}
         if normalized_category is not None:
             list_kwargs["category"] = normalized_category
+            count_kwargs["category"] = normalized_category
+        if included_categories:
+            list_kwargs["included_categories"] = included_categories
+            count_kwargs["included_categories"] = included_categories
+        if excluded_categories:
+            list_kwargs["excluded_categories"] = excluded_categories
+            count_kwargs["excluded_categories"] = excluded_categories
+        if args.has_project:
+            list_kwargs["has_project"] = True
+            count_kwargs["has_project"] = True
+        if since is not None:
+            list_kwargs["since"] = since
+            count_kwargs["since"] = since
+        if until is not None:
+            list_kwargs["until"] = until
+            count_kwargs["until"] = until
         sessions = manager.list_sessions(**list_kwargs)
         matched_count = None
-        if normalized_category is not None:
-            matched_count = manager.count_sessions(
-                sessions=query_sessions, category=normalized_category
-            )
-        sessions = _filter_sessions(sessions, args.has_project)
-        sessions = _filter_sessions_by_time(
-            sessions,
-            since=_parse_datetime(args.since),
-            until=_parse_datetime(args.until),
-        )
+        if len(count_kwargs) > 1:
+            matched_count = manager.count_sessions(**count_kwargs)
 
         if args.json:
             print(format_sessions_json(sessions))

@@ -515,9 +515,9 @@ func tableCells(row SessionRow, location *time.Location) map[string]string {
 		columnNo:         strconv.Itoa(row.No),
 		columnState:      escapeCell(row.State),
 		columnDrive:      escapeCell(driveCell(row)),
-		columnName:       escapeCell(row.DisplayName),
+		columnName:       escapeCell(row.ProviderDisplayName),
 		columnID:         escapeCell(row.ProviderSessionID),
-		columnWorkspace:  escapeCell(row.ProjectWorkspace),
+		columnWorkspace:  escapeCell(row.ProviderProjectWorkspace),
 		columnEndpoint:   escapeCell(endpoint),
 		columnDataStatus: escapeCell(dataStatusCell(row, location)),
 	}

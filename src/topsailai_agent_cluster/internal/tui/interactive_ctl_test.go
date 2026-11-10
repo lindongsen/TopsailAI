@@ -308,7 +308,7 @@ func TestExecuteInteractiveLineCtlAdmitsTheAdvertisedOperation(t *testing.T) {
 	if intent.OperationVersion != "2" {
 		t.Fatalf("operation version = %q, want the advertised 2", intent.OperationVersion)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "session-1" || intent.Target.Generation != "generation-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "session-1" || intent.Target.ProviderGeneration != "generation-1" {
 		t.Fatalf("target = %+v, want session-1/generation-1", intent.Target)
 	}
 	if !sameJSONObject(intent.Payload, `{"note":"x"}`) {

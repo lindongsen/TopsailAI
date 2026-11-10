@@ -137,22 +137,44 @@ see the effect.
 - `send` asks for confirmation only when the payload is not already on screen. An
   explicit `send <text>`, `send {"text":"..."}` or `> <text>` submits directly,
   because the command word and the text are both visible. A bare `send` reads a
-  multi-line block and asks once, because the assembled block is never echoed as a
-  whole and the question is the only place the operator can see it before it is
-  admitted. The confirmation gate stays on every operation that cannot be undone:
-  `stop`, `btw`, `interrupt`, `ctl`, `drive start` and `drive stop`.
-- A confirmation question names the reported session name first, then the provider
-  session identifier, then the opaque cluster resource ID in parentheses, for
-  example `stop session "Daily work" provider-res-1 (res-1)? Confirm stop?`. The
-  reported name is the only value the interactive table shows, because that table
-  hides the `SESSION_ID` column, so naming it first lets the operator match the
-  question against the row they selected. The provider identifier follows because
-  it is the provider's own name for the session, and the opaque ID stays visible
-  because `status` and `info` accept it. A name never replaces an identifier: it
-  can be empty, duplicated or changed between collections. A session with no
-  reported name keeps the previous wording exactly, and a session with neither a
-  name nor a provider identifier falls back to the opaque ID alone, so the question
-  never names an empty session.
+  multi-line block, echoes it verbatim and asks once, because the assembled block
+  was never shown as a whole and the echo is the only place the operator can see
+  it before it is admitted. The confirmation gate stays on every operation that
+  cannot be undone: `stop`, `btw`, `interrupt`, `ctl`, `drive start` and
+  `drive stop`.
+- The bare-send confirmation is the block itself followed by one named prompt, not
+  a flattened question:
+
+  ```text
+  send> first line
+  send> second line
+  send> EOF
+  first line
+  second line
+  send.confirm[y/N]>
+  ```
+
+  The body keeps its own line breaks, indentation and spacing, because a flattened
+  preview hides exactly the property the question protects: the operator cannot
+  verify line breaks they cannot see. The body carries the payload colour, so a
+  message never reads as the application's own prompt, and the prompt name states
+  both the decision and the accepted answers, so no separate hint or repeated
+  `Confirm send?` wording is needed. The prompt keeps its `[y/N]` hint when a
+  narrow terminal clips it, because the hint is the only cue telling the operator
+  what to type.
+- A confirmation question expresses the session as the canonical identity
+  expression, `({provider_session_name}) ({provider_session_id})`, for example
+  `stop session (Daily work) (provider-res-1)? Confirm stop?`. The reported name is
+  the only value the interactive table shows, because that table hides the
+  `SESSION_ID` column, so naming it first lets the operator match the question
+  against the row they selected. The provider identifier follows because it is the
+  provider's own name for the session. The opaque cluster resource ID is not
+  printed, because it is a routing identity rather than a name, and `status` and
+  `info` still accept it. A name never replaces an identifier: it can be empty,
+  duplicated or changed between collections. A session with no reported name
+  renders `(provider-res-1)` alone rather than `() (provider-res-1)`, and a session
+  with neither a name nor a provider identifier falls back to the opaque ID alone,
+  so the question never names an empty session.
 
 - The interactive tables hide the `SESSION_ID` column, because the provider session
   identifier is a long opaque value that only widens the table while the operator
@@ -761,14 +783,13 @@ execution stages, and it never reports success before the receipt does. A repeat
 stage is not a new fact and is printed once.
 
 The header names the same target the confirmation question named, in the same
-order: the reported session name first, then the opaque resource ID, then the
-endpoint, for example
-`starting drive controller for session "Daily work" res-1 (ep-1)...`. The operator
-therefore reads one target description before answering and the same one while
-waiting, instead of an opaque identifier the interactive table never showed. The
-name is descriptive report data: it is sanitized like every other provider value,
-it never replaces the resource ID, and an unnamed session keeps the previous
-header exactly.
+form: the canonical session identity expression, for example
+`starting drive controller for session (Daily work) (provider-res-1) (ep-1)...`.
+The operator therefore reads one target description before answering and the same
+one while waiting, instead of an opaque identifier the interactive table never
+showed. The name is descriptive report data: it is sanitized like every other
+provider value, it never replaces the provider identifier, and an unnamed session
+renders `(provider-res-1)` alone rather than `() (provider-res-1)`.
 
 Progress never animates. The interactive diagnostics writer strips carriage
 returns and cursor control, so an in-place animation would be printed as

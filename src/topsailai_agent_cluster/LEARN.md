@@ -618,3 +618,67 @@ different grammar, so it is legitimate code rather than a duplicate to be remove
 will never be caught by a test that checks the shared catalog, and the disagreement is invisible in
 review because both strings are plausible. Reading the rendered help output of the real binary is what
 turned "the flag is documented" into "the flag is advertised where the operator looks".
+## A line number from a sed window is relative to the window, not the file
+
+Trigger: while fixing a stale golden in `unit_c_batch3_state_test.go`, the line number was
+taken from a `sed -n '66,80p'` window and used directly in a line-range overwrite. It
+replaced the `if` line instead of the `want` line, leaving two `want` lines and an orphaned
+`Fatalf`. The same class of accident recurred throughout this task: an insert placed a
+capability entry outside its slice, an overwrite duplicated a doc comment, an overwrite
+deleted a `name :=` assignment, an insert split a `case` body so its label was lost, and an
+insert placed an `entry.examples` line inside the next `case` block.
+
+Action: obtain every line number with `grep -n` against the whole file, never by counting
+inside a `sed` window. Before overwriting, print the exact region and confirm the first and
+last line are the ones intended. When the region is a `case` block, include the `case` label
+and the closing brace in the replaced range, because an insert immediately after a label
+splits that case's body. When a small file needs several interdependent edits, rewrite the
+whole file instead of chaining line-range edits.
+
+Why this prevents recurrence: a line number is a position, not an identity, and a window
+offset is a third coordinate system that looks like the second. The tool reports success
+either way, and Go only catches the damage when it happens to produce invalid syntax; a
+duplicated comment, a lost assignment or a misplaced examples line compiles fine and is
+invisible in review.
+
+## A stale golden can predate your change, and a worktree at HEAD is the only proof
+
+Trigger: `unit_c_batch2_driver_test.go` failed while verifying the model command. The failure
+looked like a consequence of the new help entry. It was not: `git log -S 'after a completed
+start' -- ./internal/tui/help.go` showed commit `8e92ee7e` added two start-tail notes to
+`help.go` without updating that golden, and a detached worktree at HEAD `1523008b` reproduced
+the failure before any of this task's changes existed.
+
+Action: when a golden-value test fails after a deliberate surface change, do not assume the
+delta is yours. Run the same test in a detached worktree at HEAD. If it already fails, the
+golden was stale before the change: fix it in the same commit, but label it pre-existing in
+the commit body so it is not mistaken for scope creep. If it passes at HEAD, the delta is
+yours and the golden is telling you something about your change.
+
+Why this prevents recurrence: a surface-inventory golden encodes the whole command list, so
+any legitimate addition breaks several of them at once and the noise hides which failure is
+new. Without the HEAD comparison, a pre-existing defect gets silently absorbed into an
+unrelated commit, and the next person cannot tell which change was responsible. The worktree
+is the only evidence that separates "my change broke this" from "this was already broken".
+
+## A styled prefix is invisible to an assertion that matches plain text
+
+Trigger: the follow status lines gained a `log.follow>` prefix rendered bold green through
+`RenderNamedPrompt`. The unit tests passed, because they compared the rendered string against an
+expected string that contained the escape sequences. The BDD scenarios failed, because they assert
+with `strings.Contains(output, "log.follow> res_")` and the real output is
+`\x1b[1;32mlog.follow>\x1b[0m res_`. The message was correct and the assertion could not see it.
+
+Action: when a rendered line gains styling, check every assertion that matches it as text. A unit
+test that compares whole rendered strings is safe, because the expected value carries the same
+sequences. A substring assertion is not: it silently requires the plain form. Either strip the
+styling before asserting, or assert on a structural property. Here `tests/bdd/steps_follow.go` gained
+`stripFollowSGR`, which removes the four sequences the prefix and the severity styles use.
+
+Why this prevents recurrence: the failure direction is the dangerous one. A styled prefix makes a
+correct message look absent, so the natural conclusion is "the prefix was not applied" and the fix
+would be to remove the styling that was just requested. The real cause is that the assertion was
+written against the unstyled form, and nothing in the test names that assumption. The same trap
+applies to any surface that is asserted as text but rendered with colour: a PTY-driven BDD scenario
+with a real `TERM` sees sequences that an in-process unit test with colour disabled never produces,
+so the two layers disagree about what the output is.

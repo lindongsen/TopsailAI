@@ -30,7 +30,7 @@ func TestReplaceInventoryAcceptsSessionWithIdentityAndAdapter(t *testing.T) {
 		ReportComplete:   true,
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "fixture-main", ProviderType: "fixture"}},
-		Sessions:         []protocol.Session{{SessionID: "fixture-session", AdapterID: "fixture-main"}},
+		Sessions:         []protocol.Session{{ClusterSessionID: "fixture-session", AdapterID: "fixture-main"}},
 	}
 	if err := store.ReplaceInventory(ctx, "endpoint-1", report, 2); err != nil {
 		t.Fatalf("valid inventory rejected: %v", err)
@@ -95,7 +95,7 @@ func TestReplaceInventoryAcceptsRestartedEndpointWithLowerRevision(t *testing.T)
 		SchemaVersion: "v1", SourceGeneration: "endpoint-local", SnapshotRevision: 1,
 		ObservedAtMS: 200, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded,
 		Adapters: []protocol.AdapterSummary{{AdapterID: "fixture-main", ProviderType: "fixture"}},
-		Sessions: []protocol.Session{{SessionID: "restarted-session", AdapterID: "fixture-main"}},
+		Sessions: []protocol.Session{{ClusterSessionID: "restarted-session", AdapterID: "fixture-main"}},
 	}
 	if err := store.ReplaceInventory(ctx, "endpoint-1", oldReport, 101); err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestReplaceInventoryAcceptsRestartedEndpointWithLowerRevision(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SnapshotRevision != 1 || got.ObservedAtMS != 200 || got.CollectionStatus != protocol.CollectionSucceeded || !got.ReportComplete || len(got.Sessions) != 1 || got.Sessions[0].SessionID != "restarted-session" {
+	if got.SnapshotRevision != 1 || got.ObservedAtMS != 200 || got.CollectionStatus != protocol.CollectionSucceeded || !got.ReportComplete || len(got.Sessions) != 1 || got.Sessions[0].ClusterSessionID != "restarted-session" {
 		t.Fatalf("restarted report was not retained: %#v", got)
 	}
 }
@@ -126,12 +126,12 @@ func TestReplaceInventoryRejectsOlderObservedReport(t *testing.T) {
 		SchemaVersion: "v1", SourceGeneration: "endpoint-local", SnapshotRevision: 2,
 		ObservedAtMS: 200, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded,
 		Adapters: []protocol.AdapterSummary{{AdapterID: "fixture-main", ProviderType: "fixture"}},
-		Sessions: []protocol.Session{{SessionID: "latest-session", AdapterID: "fixture-main"}},
+		Sessions: []protocol.Session{{ClusterSessionID: "latest-session", AdapterID: "fixture-main"}},
 	}
 	stale := latest
 	stale.SnapshotRevision = 99
 	stale.ObservedAtMS = 199
-	stale.Sessions = []protocol.Session{{SessionID: "stale-session", AdapterID: "fixture-main"}}
+	stale.Sessions = []protocol.Session{{ClusterSessionID: "stale-session", AdapterID: "fixture-main"}}
 	if err := store.ReplaceInventory(ctx, "endpoint-1", latest, 201); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestReplaceInventoryRejectsOlderObservedReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SnapshotRevision != 2 || got.ObservedAtMS != 200 || len(got.Sessions) != 1 || got.Sessions[0].SessionID != "latest-session" {
+	if got.SnapshotRevision != 2 || got.ObservedAtMS != 200 || len(got.Sessions) != 1 || got.Sessions[0].ClusterSessionID != "latest-session" {
 		t.Fatalf("stale report replaced latest report: %#v", got)
 	}
 }

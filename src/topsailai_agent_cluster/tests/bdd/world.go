@@ -166,7 +166,7 @@ func (w *World) submitRealCommand(commandID, operation, target, generation, payl
 	}
 	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": "fixture-main", "operation": operation, "operation_version": "v1", "capability_revision": "v1", "payload_schema_version": "v1", "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
 	if target != "" {
-		intent["target"] = map[string]any{"kind": "session", "resource_id": target, "generation": generation}
+		intent["target"] = map[string]any{"kind": "session", "resource_id": target, "provider_generation": generation}
 	}
 	status, body, err := w.realRequestE(http.MethodPost, "/api/v1/commands", intent)
 	if err != nil {
@@ -195,11 +195,11 @@ func (w *World) resolveRealTarget(target, generation string) (string, string, er
 	if !ok {
 		return "", "", fmt.Errorf("resolve fixture resource: invalid session record")
 	}
-	resourceID, ok := session["session_id"].(string)
+	resourceID, ok := session["cluster_session_id"].(string)
 	if !ok || resourceID == "" {
 		return "", "", fmt.Errorf("resolve fixture resource: missing opaque resource ID")
 	}
-	if value, ok := session["generation"].(string); ok && value != "" {
+	if value, ok := session["provider_generation"].(string); ok && value != "" {
 		generation = value
 	}
 	return resourceID, generation, nil

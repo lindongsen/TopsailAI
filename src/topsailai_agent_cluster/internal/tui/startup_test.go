@@ -18,7 +18,7 @@ func startupStub() *interactiveStub {
 
 func startupInventory() protocol.InventoryReport {
 	report := testInventory()
-	report.Sessions[0].SessionID = "res_session-1"
+	report.Sessions[0].ClusterSessionID = "res_session-1"
 	report.Sessions[0].ProviderSessionID = "provider-session-1"
 	return report
 }

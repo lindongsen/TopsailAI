@@ -133,6 +133,14 @@ def _handle_list(args) -> int:
     category = getattr(args, "category", None)
     if category is not None:
         argv.extend(["--category", category])
+    included_categories = getattr(args, "included_categories", None)
+    if included_categories:
+        for included in included_categories:
+            argv.extend(["--included-categories", included])
+    excluded_categories = getattr(args, "excluded_categories", None)
+    if excluded_categories:
+        for excluded in excluded_categories:
+            argv.extend(["--excluded-categories", excluded])
     limit = getattr(args, "limit", None)
     if limit is not None:
         argv.extend(["--limit", str(limit)])
@@ -474,6 +482,16 @@ def build_parser() -> SessionParser:
     list_parser.add_argument("--category", dest="category", action=UniqueValue,
                              default=argparse.SUPPRESS,
                              help="filter by exact category")
+    list_parser.add_argument("--included-categories", dest="included_categories",
+                             action="append", default=argparse.SUPPRESS,
+                             metavar="NAMES",
+                             help=("include only listed categories; accepts comma-separated "
+                                   "names and may be repeated"))
+    list_parser.add_argument("--excluded-categories", dest="excluded_categories",
+                             action="append", default=argparse.SUPPRESS,
+                             metavar="NAMES",
+                             help=("exclude listed categories; accepts comma-separated "
+                                   "names and may be repeated"))
     list_parser.add_argument("--limit", type=int, action=UniqueValue,
                              default=argparse.SUPPRESS,
                              help="return at most N sessions")

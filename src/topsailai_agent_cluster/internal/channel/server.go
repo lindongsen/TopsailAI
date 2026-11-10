@@ -76,10 +76,48 @@ type FollowEvent struct {
 	End   *protocol.OutputEnd
 }
 
-// followChunkBuffer bounds how many chunks may wait for one consumer. A consumer
-// that falls this far behind is disconnected rather than buffered without limit,
-// because an unbounded queue would let one slow reader exhaust Server memory.
+// followChunkBuffer is the minimum number of chunks that may wait for one
+// consumer. A consumer that falls this far behind is disconnected rather than
+// buffered without limit, because an unbounded queue would let one slow reader
+// exhaust Server memory.
+//
+// It is a floor rather than the whole bound, because the Endpoint delivers one
+// frame per record and a requested tail can be far larger than this value. A
+// fixed bound smaller than the requested tail made a healthy consumer look like
+// a stalled one: the Server filled the queue before the consumer could drain it
+// and terminated the stream with consumer_overflow. See followQueueCapacity.
 const followChunkBuffer = 64
+
+// followMaxChunkBuffer bounds the derived queue so one reader can never reserve
+// unbounded Server memory, however large a tail it requests. The Server clamps a
+// requested tail to 10000 lines (internal/server/http.go parseMaxLines), so this
+// ceiling covers the largest tail the API accepts plus the headroom below.
+const followMaxChunkBuffer = 16384
+
+// followQueueHeadroom is the extra room above the requested tail. The tail is
+// delivered as one frame per record, so a queue sized exactly to the tail is
+// full the moment the last record is queued, and any consumer cost at all then
+// overflows before it can drain. The headroom absorbs that burst boundary.
+const followQueueHeadroom = 256
+
+// followQueueCapacity derives the follow event queue capacity from the requested
+// tail. A non-positive tail means the caller asked for the provider default, so
+// the Server cannot know how many records will arrive and uses the floor. The
+// result is always at least followChunkBuffer, because deliverFollowEnd relies on
+// a buffered channel to terminate instead of spinning.
+func followQueueCapacity(maxLines int) int {
+	if maxLines <= 0 {
+		return followChunkBuffer
+	}
+	capacity := maxLines + followQueueHeadroom
+	if capacity < followChunkBuffer {
+		return followChunkBuffer
+	}
+	if capacity > followMaxChunkBuffer {
+		return followMaxChunkBuffer
+	}
+	return capacity
+}
 
 // maxPendingFollow bounds concurrent follow streams per Server so a few operators
 // cannot hold every transport slot.
@@ -471,7 +509,10 @@ func (s *Server) RequestOutput(ctx context.Context, endpointID string, request p
 // child streaming into a queue nobody reads.
 func (s *Server) RequestFollow(ctx context.Context, endpointID string, request protocol.OutputFollowRequest) (<-chan FollowEvent, error) {
 	requestID := security.NewRequestID()
-	events := make(chan FollowEvent, followChunkBuffer)
+	// The queue is sized from the requested tail, because the Endpoint delivers
+	// one frame per record: a fixed queue smaller than the tail overflows a
+	// consumer that is keeping up, and reports it as a stalled one.
+	events := make(chan FollowEvent, followQueueCapacity(request.MaxLines))
 	done := make(chan struct{})
 	s.Mu.Lock()
 	if len(s.pendingFollow) >= maxPendingFollow {

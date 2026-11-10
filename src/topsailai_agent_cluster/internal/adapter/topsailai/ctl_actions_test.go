@@ -180,7 +180,7 @@ func controlIntent(t *testing.T, binding *Adapter, operation string, payload []b
 		CommandID:        "cmd_ctl",
 		Operation:        operation,
 		OperationVersion: "v1",
-		Target:           &protocol.CommandTarget{Kind: "session", ResourceID: "res_sess1", Generation: "g1"},
+		Target:           &protocol.CommandTarget{Kind: "session", ResourceID: "res_sess1", ProviderGeneration: "g1"},
 		Payload:          payload,
 	}
 }

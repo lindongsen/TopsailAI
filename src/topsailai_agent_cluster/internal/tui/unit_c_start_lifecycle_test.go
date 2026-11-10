@@ -53,7 +53,7 @@ func TestUnitCStartCancelKeepsReplSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.EndpointID != before.EndpointID || state.SessionID != before.SessionID || state.Generation != before.Generation || state.Scope != before.Scope {
+	if state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID || state.ProviderGeneration != before.ProviderGeneration || state.Scope != before.Scope {
 		t.Fatalf("selection changed: before=%+v after=%+v", before, state)
 	}
 }

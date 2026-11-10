@@ -27,9 +27,11 @@ func TestAnswerPromptStyling(t *testing.T) {
 }
 
 // TestConfirmationQuestionStyling proves the confirmation question is styled
-// while the untrusted payload preview cannot inject its own styling.
+// while the untrusted payload preview cannot inject its own styling. The sample is
+// a stop question, because that is the wording the shared renderer still serves:
+// the bare-send confirmation is a named prompt now, not a question row.
 func TestConfirmationQuestionStyling(t *testing.T) {
-	question := "send " + sanitizeInlineText("hi\x1b[31mRED\x1b[0m") + "? Confirm send? " + confirmationHint + " "
+	question := "stop session (Daily work) (provider-res-1)? Confirm stop? " + confirmationHint + " "
 	var plain, colored strings.Builder
 	if err := writeConfirmationQuestion(&plain, question, ColorPolicy{}); err != nil {
 		t.Fatal(err)
@@ -47,19 +49,16 @@ func TestConfirmationQuestionStyling(t *testing.T) {
 	if !strings.Contains(text, ansiBoldCyan) || !strings.Contains(text, ansiDim+confirmationHint+ansiReset) {
 		t.Fatalf("colored question missing styles: %q", text)
 	}
-	if strings.Contains(text, "\x1b[31m") {
-		t.Fatalf("payload ANSI reached the terminal: %q", text)
-	}
 	stripped := strings.NewReplacer(ansiBoldCyan, "", ansiDim, "", ansiReset, "").Replace(text)
 	if stripped != question {
 		t.Fatalf("stripped=%q want=%q", stripped, question)
 	}
 }
 
-// TestConfirmationHintSplitUsesTrailingLiteral keeps a payload that itself
-// contains the hint from being mistaken for the answer hint.
+// TestConfirmationHintSplitUsesTrailingLiteral keeps a value that itself contains
+// the hint from being mistaken for the answer hint.
 func TestConfirmationHintSplitUsesTrailingLiteral(t *testing.T) {
-	question := "send " + confirmationHint + "? Confirm send? " + confirmationHint + " "
+	question := "stop session " + confirmationHint + "? Confirm stop? " + confirmationHint + " "
 	var colored strings.Builder
 	if err := writeConfirmationQuestion(&colored, question, ColorPolicy{Enabled: true}); err != nil {
 		t.Fatal(err)
@@ -73,9 +72,11 @@ func TestConfirmationHintSplitUsesTrailingLiteral(t *testing.T) {
 	}
 }
 
-// TestInteractiveSendConfirmationIsStyled drives the real REPL path and proves
-// both the confirmation question and the answer prompt are styled, while the
-// plain run stays free of ANSI.
+// TestInteractiveSendConfirmationIsStyled drives the real REPL path and proves the
+// bare-send confirmation is a coloured body followed by a styled named prompt,
+// while the plain run stays free of ANSI. The prompt is asserted through the read
+// argument, because the terminal editor owns that row and the caller must not
+// write it a second time.
 func TestInteractiveSendConfirmationIsStyled(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		t.Run(map[bool]string{true: "color", false: "plain"}[enabled], func(t *testing.T) {
@@ -89,7 +90,7 @@ func TestInteractiveSendConfirmationIsStyled(t *testing.T) {
 					return "cd endpoint-1/session-1", false, nil
 				case 2:
 					// A bare send is the only form that still asks, because the
-					// assembled block is never echoed as a whole.
+					// assembled block was never shown as a whole.
 					return "send", false, nil
 				case 3:
 					return "hi", false, nil
@@ -99,15 +100,8 @@ func TestInteractiveSendConfirmationIsStyled(t *testing.T) {
 					if history {
 						t.Fatalf("confirmation read must not use history")
 					}
-					if prompt != RenderAnswerPrompt(ColorPolicy{Enabled: enabled}) {
-						t.Fatalf("answer prompt=%q", prompt)
-					}
-					if enabled {
-						if !strings.HasPrefix(prompt, "\n"+ansiBoldGreen+"answer>"+ansiReset+" ") {
-							t.Fatalf("answer prompt not styled: %q", prompt)
-						}
-					} else if prompt != "\nanswer> " {
-						t.Fatalf("plain answer prompt=%q", prompt)
+					if want := RenderNamedPrompt(sendConfirmPrompt, ColorPolicy{Enabled: enabled}); prompt != want {
+						t.Fatalf("confirmation prompt=%q want=%q", prompt, want)
 					}
 					return "y", false, nil
 				default:
@@ -119,16 +113,17 @@ func TestInteractiveSendConfirmationIsStyled(t *testing.T) {
 				t.Fatalf("RunInteractive: %v", err)
 			}
 			text := out.String()
-			stripped := strings.NewReplacer(ansiBoldCyan, "", ansiDim, "", ansiReset, "").Replace(text)
-			if !strings.Contains(stripped, "Confirm send? "+confirmationHint) {
-				t.Fatalf("confirmation question missing: %q", text)
-			}
 			if enabled {
-				if !strings.Contains(text, ansiBoldCyan+"send ") || !strings.Contains(text, ansiDim+confirmationHint+ansiReset) {
-					t.Fatalf("confirmation question not styled: %q", text)
+				if !strings.Contains(text, ansiMagenta+"hi"+ansiReset+"\n") {
+					t.Fatalf("confirmation body not styled: %q", text)
 				}
-			} else if strings.Contains(text, "\x1b") {
-				t.Fatalf("plain run carries ANSI: %q", text)
+			} else {
+				if !strings.Contains(text, "hi\n") {
+					t.Fatalf("confirmation body missing: %q", text)
+				}
+				if strings.Contains(text, "\x1b") {
+					t.Fatalf("plain run carries ANSI: %q", text)
+				}
 			}
 		})
 	}
@@ -240,5 +235,103 @@ func TestReadPromptLineStylesCallerPrompt(t *testing.T) {
 				t.Fatalf("prompt=%q want=%q", seen, testCase.want)
 			}
 		})
+	}
+}
+
+// TestSendConfirmationBodyKeepsLineBreaks proves the bare-send confirmation body
+// is the block itself, not a flattened preview. A multi-line block must keep its
+// own rows, because a single flattened line hides exactly the line breaks the
+// operator is approving, and the payload colour must never be confused with the
+// application's own prompt.
+func TestSendConfirmationBodyKeepsLineBreaks(t *testing.T) {
+	block := "first line\n  indented second line\nthird line"
+	var plain, colored strings.Builder
+	if err := writeSendConfirmationBody(&plain, block, ColorPolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSendConfirmationBody(&colored, block, ColorPolicy{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if want := block + "\n"; plain.String() != want {
+		t.Fatalf("plain body=%q want=%q", plain.String(), want)
+	}
+	if strings.Contains(plain.String(), "\x1b") {
+		t.Fatalf("plain body carries ANSI: %q", plain.String())
+	}
+	text := colored.String()
+	for _, line := range strings.Split(block, "\n") {
+		if !strings.Contains(text, ansiMagenta+line+ansiReset+"\n") {
+			t.Fatalf("line %q not styled in %q", line, text)
+		}
+	}
+	stripped := strings.ReplaceAll(text, ansiReset, "")
+	stripped = strings.ReplaceAll(stripped, ansiMagenta, "")
+	if want := block + "\n"; stripped != want {
+		t.Fatalf("stripped body=%q want=%q", stripped, want)
+	}
+}
+
+// TestSendConfirmationBodyStripsPayloadStyling proves an operator payload cannot
+// inject its own styling or move the cursor, because the body is written through
+// the trusted writer that carries the payload colour.
+func TestSendConfirmationBodyStripsPayloadStyling(t *testing.T) {
+	var colored strings.Builder
+	if err := writeSendConfirmationBody(&colored, "hi\x1b[31mRED\x1b[0m\x1b[2J", ColorPolicy{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	text := colored.String()
+	if strings.Contains(text, "\x1b[31m") {
+		t.Fatalf("payload ANSI reached the terminal: %q", text)
+	}
+	if strings.Contains(text, "\x1b[2J") {
+		t.Fatalf("payload cursor control reached the terminal: %q", text)
+	}
+	if !strings.Contains(text, ansiMagenta+"hiRED") {
+		t.Fatalf("payload text lost: %q", text)
+	}
+}
+
+// TestSendConfirmPromptKeepsHintWhenClipped proves a narrow terminal shortens the
+// prompt name but never hides the accepted answers, because the hint is the only
+// cue telling the operator what to type.
+func TestSendConfirmPromptKeepsHintWhenClipped(t *testing.T) {
+	styled := RenderNamedPrompt(sendConfirmPrompt, ColorPolicy{Enabled: true})
+	// The hint always survives, even when it is wider than the budget: a prompt
+	// that hides the accepted answers tells the operator nothing.
+	for _, width := range []int{4, 6, 8, 10, 12} {
+		clipped := clipStyledCellKeepHint(styled, width)
+		if !strings.Contains(clipped, confirmationHint) {
+			t.Fatalf("width=%d clipped=%q lost the answer hint", width, clipped)
+		}
+	}
+	// Above the hint width the clip also respects the budget, so a narrow terminal
+	// shortens the prompt name instead of overflowing the row.
+	for _, width := range []int{8, 10, 12} {
+		clipped := clipStyledCellKeepHint(styled, width)
+		if got := styledDisplayWidth(clipped); got > width {
+			t.Fatalf("width=%d clipped=%q width=%d", width, clipped, got)
+		}
+	}
+	if got := clipStyledCellKeepHint(styled, 200); got != styled {
+		t.Fatalf("wide clip changed the prompt: %q", got)
+	}
+}
+
+// TestSendConfirmPromptKeepsHintThroughEditor proves the editor keeps the answer
+// hint of the bare-send named prompt on a narrow terminal. The prompt is a named
+// prompt rather than a question row, so this exercises the editor's own clip
+// decision instead of the helper alone: a helper that preserves the hint is
+// useless if the editor never calls it for this prompt.
+func TestSendConfirmPromptKeepsHintThroughEditor(t *testing.T) {
+	prompt := RenderNamedPrompt(sendConfirmPrompt, ColorPolicy{})
+	for _, width := range []int{20, 24, 30, 80} {
+		var out strings.Builder
+		editor := NewTerminalEditor(&editorTestInput{Reader: strings.NewReader("\r")}, &out, func() int { return width }, func() (func() error, error) { return func() error { return nil }, nil })
+		if _, _, err := editor.ReadLine(context.Background(), prompt, false, 32); err != nil {
+			t.Fatalf("width=%d ReadLine: %v", width, err)
+		}
+		if !strings.Contains(out.String(), confirmationHint) {
+			t.Fatalf("width=%d clipped the answer hint: %q", width, out.String())
+		}
 	}
 }

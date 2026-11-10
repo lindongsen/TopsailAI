@@ -225,8 +225,8 @@ func waitExecInventory(t *testing.T, url string, limit time.Duration) {
 	type payload struct {
 		Adapters []adapterSummary `json:"adapters"`
 		Sessions []struct {
-			ResourceID string `json:"session_id"`
-			Generation string `json:"generation"`
+			ResourceID         string `json:"cluster_session_id"`
+			ProviderGeneration string `json:"provider_generation"`
 		} `json:"sessions"`
 	}
 	type envelope struct {
@@ -243,7 +243,7 @@ func waitExecInventory(t *testing.T, url string, limit time.Duration) {
 			var decoded envelope
 			if readErr == nil && resp.StatusCode == http.StatusOK && json.Unmarshal(body, &decoded) == nil &&
 				len(decoded.Data.Adapters) > 0 && decoded.Data.Adapters[0].AdapterID == "topsailai-main" &&
-				len(decoded.Data.Sessions) > 0 && decoded.Data.Sessions[0].ResourceID != "" && decoded.Data.Sessions[0].Generation != "" {
+				len(decoded.Data.Sessions) > 0 && decoded.Data.Sessions[0].ResourceID != "" && decoded.Data.Sessions[0].ProviderGeneration != "" {
 				return
 			}
 		}
@@ -308,8 +308,8 @@ func addExecTarget(c *execCluster, intent map[string]any) error {
 	var envelope struct {
 		Data struct {
 			Sessions []struct {
-				ResourceID string `json:"session_id"`
-				Generation string `json:"generation"`
+				ResourceID         string `json:"cluster_session_id"`
+				ProviderGeneration string `json:"provider_generation"`
 			} `json:"sessions"`
 		} `json:"data"`
 	}
@@ -319,7 +319,7 @@ func addExecTarget(c *execCluster, intent map[string]any) error {
 	if len(envelope.Data.Sessions) == 0 || envelope.Data.Sessions[0].ResourceID == "" {
 		return fmt.Errorf("inventory has no opaque target: %+v", envelope.Data.Sessions)
 	}
-	intent["target"] = map[string]any{"kind": "session", "resource_id": envelope.Data.Sessions[0].ResourceID, "generation": envelope.Data.Sessions[0].Generation}
+	intent["target"] = map[string]any{"kind": "session", "resource_id": envelope.Data.Sessions[0].ResourceID, "provider_generation": envelope.Data.Sessions[0].ProviderGeneration}
 	return nil
 }
 

@@ -31,24 +31,24 @@ func (k ScopeKind) String() string {
 
 // ScopeState stores the current interactive navigation location.
 type ScopeState struct {
-	Kind              ScopeKind
-	EndpointID        string
-	Hostname          string
-	SessionID         string
-	ProviderSessionID string
-	SessionName       string
-	AdapterID         string
-	Generation        string
+	Kind               ScopeKind
+	EndpointID         string
+	Hostname           string
+	ClusterSessionID   string
+	ProviderSessionID  string
+	SessionName        string
+	AdapterID          string
+	ProviderGeneration string
 }
 
 // interactiveSelection stores the identity pinned by an explicit navigation command.
 type interactiveSelection struct {
-	EndpointID    string
-	SessionID     string
-	Generation    string
-	Invalidated   bool
-	InvalidReason string
-	Rows          map[int]SessionRow
+	EndpointID         string
+	ClusterSessionID   string
+	ProviderGeneration string
+	Invalidated        bool
+	InvalidReason      string
+	Rows               map[int]SessionRow
 }
 
 // invalidate marks a selection permanently unusable until a session is selected again.
@@ -63,15 +63,15 @@ func (s *interactiveSelection) invalidate(reason string) {
 // reset replaces the pinned selection after a successful explicit navigation command.
 func (s *interactiveSelection) reset(endpointID, sessionID, generation string) {
 	s.EndpointID = endpointID
-	s.SessionID = sessionID
-	s.Generation = generation
+	s.ClusterSessionID = sessionID
+	s.ProviderGeneration = generation
 	s.Invalidated = false
 	s.InvalidReason = ""
 }
 
 // requireUsable rejects no-selection and sticky-invalidated states.
 func (s interactiveSelection) requireUsable() error {
-	if s.EndpointID == "" || s.SessionID == "" {
+	if s.EndpointID == "" || s.ClusterSessionID == "" {
 		return fmt.Errorf("no session selected; use cd <number> to select a session row, or cd <endpoint>/<session>")
 	}
 	if s.Invalidated {
@@ -108,13 +108,13 @@ func (s *interactiveState) enterSession(endpoint protocol.Endpoint, sessionID, g
 func (s *interactiveState) enterSessionDetails(endpoint protocol.Endpoint, sessionID, providerSessionID, sessionName, adapterID, generation string) {
 	s.reset(endpoint.EndpointID, sessionID, generation)
 	s.Scope = ScopeState{
-		Kind:              ScopeSession,
-		EndpointID:        endpoint.EndpointID,
-		Hostname:          endpoint.Hostname,
-		SessionID:         sessionID,
-		ProviderSessionID: providerSessionID,
-		SessionName:       sessionName,
-		AdapterID:         adapterID,
-		Generation:        generation,
+		Kind:               ScopeSession,
+		EndpointID:         endpoint.EndpointID,
+		Hostname:           endpoint.Hostname,
+		ClusterSessionID:   sessionID,
+		ProviderSessionID:  providerSessionID,
+		SessionName:        sessionName,
+		AdapterID:          adapterID,
+		ProviderGeneration: generation,
 	}
 }

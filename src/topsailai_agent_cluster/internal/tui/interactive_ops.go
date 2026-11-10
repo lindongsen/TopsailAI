@@ -27,7 +27,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	if endpointID == "" {
 		return fmt.Errorf("no endpoint selected; use cd <number> to enter an endpoint row, or cd <hostname>/<endpoint-id>")
 	}
-	resourceID := state.Scope.SessionID
+	resourceID := state.Scope.ClusterSessionID
 	target, maxLines, follow, err := parseLogsArgs(rest, maxLines)
 	if err != nil {
 		return err
@@ -39,7 +39,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 			return err
 		}
 		if resolved {
-			resourceID = row.SessionID
+			resourceID = row.ClusterSessionID
 		}
 	}
 	if resourceID == "" {
@@ -60,9 +60,9 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		// because the editor owns the terminal and is the only writer. Arming
 		// keeps the existing watch seam, so a keypress stops the stream through
 		// the same path that stops an auto-refresh loop.
-		return armFollowStream(api, state, endpointID, session.SessionID, session.Generation, maxBytes, maxLines, trustedOut)
+		return armFollowStream(api, state, endpointID, session.ClusterSessionID, session.ProviderGeneration, maxBytes, maxLines, trustedOut)
 	}
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.SessionID, maxBytes, maxLines, false, color)
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.ClusterSessionID, maxBytes, maxLines, false, color)
 }
 
 // armFollowStream arms one follow intent for the next prompt and names the
@@ -75,8 +75,13 @@ func armFollowStream(api InteractiveAPI, state *interactiveState, endpointID, se
 	if _, ok := api.(OutputFollower); !ok {
 		return fmt.Errorf("follow is unavailable: the API client does not support streaming output")
 	}
-	state.follow = &followRequest{EndpointID: endpointID, ResourceID: sessionID, Generation: generation, MaxBytes: maxBytes, MaxLines: maxLines}
-	_, err := fmt.Fprintf(trustedOut, "follow: %s (any key stops)\n", sanitizeInlineText(sessionID))
+	state.follow = &followRequest{EndpointID: endpointID, ResourceID: sessionID, ProviderGeneration: generation, MaxBytes: maxBytes, MaxLines: maxLines}
+	// The announcement carries the shared follow prefix, so the operator can tell
+	// it apart from agent output. The redundant "follow: " word is dropped because
+	// the prefix already names the writer. The policy comes from the writer this
+	// line goes to, so --no-color and a redirected stream stay plain.
+	message := sanitizeInlineText(sessionID) + " (any key stops)"
+	_, err := fmt.Fprintln(trustedOut, renderFollowStatus(message, ansiDim, OutputColorPolicy(trustedOut), false))
 	return err
 }
 
@@ -388,18 +393,25 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return err
 	}
-	preview := payloadText
-	if len(preview) > 512 {
-		preview = preview[:512] + "..."
-	}
-	// The preview is operator-supplied text, so it must be sanitized before it
-	// reaches the trusted writer that carries the question styling.
-	question := "send " + sanitizeInlineText(preview) + "? Confirm send? " + confirmationHint + " "
-	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
+	// The assembled block is echoed verbatim before the question, because the
+	// confirmation exists for exactly this form: a bare send is the one payload
+	// the operator never saw as a whole. A flattened preview would hide the line
+	// breaks being approved, so the body keeps its own rows and carries the
+	// payload colour, and the prompt below names the decision and the answers.
+	if err := writeSendConfirmationBody(trustedOut, payloadText, options.Color); err != nil {
 		return err
 	}
+	// The prompt is a named prompt, so the terminal editor draws it on the row the
+	// body echo just opened. The stream fallback has no editor, so the prompt is
+	// written here and its row is closed before the receipt.
+	prompt := RenderNamedPrompt(sendConfirmPrompt, options.Color)
+	if promptReader(parent) == nil {
+		if _, err := io.WriteString(trustedOut, prompt+"\n"); err != nil {
+			return err
+		}
+	}
 	markRecoverablePromptFailure(parent)
-	confirmation, ok := nextPromptLine(parent, lineSource)
+	confirmation, ok := nextPromptLine(parent, lineSource, prompt)
 	if !ok {
 		return fmt.Errorf("confirmation requires a complete line")
 	}
@@ -471,7 +483,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, DisplayName: session.DisplayName}
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.ClusterSessionID, ProviderGeneration: session.ProviderGeneration, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: session.ProviderDisplayName, ProviderSessionID: session.ProviderSessionID}
 	progress := NewActionProgress(options.ProgressWriter, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
@@ -497,7 +509,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	// happened, so the operator should not have to type logs to see the effect.
 	// The automatic step is the same live tail as logs -f, because a one-shot
 	// snapshot stops at the moment it was read while the agent keeps writing.
-	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.SessionID, session.Generation, trustedOut, options, "send completed"); err != nil {
+	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, "send completed"); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
@@ -768,7 +780,7 @@ func autoFollowAfterStart(parent context.Context, api InteractiveAPI, state *int
 		return writeAutomaticDiagnostic(trustedOut, "start completed", fmt.Sprintf("automatic follow skipped: %d sessions appeared; run logf <session> to follow one", len(appeared)))
 	}
 	session := appeared[0]
-	if session.Generation == "" {
+	if session.ProviderGeneration == "" {
 		// An empty generation means liveness was never verified, so a stream bound to
 		// it would be refused by the Endpoint. Saying so is better than arming a tail
 		// that fails on the next prompt.
@@ -785,7 +797,7 @@ func autoFollowAfterStart(parent context.Context, api InteractiveAPI, state *int
 		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
 	}
 	maxBytes, maxLines := interactiveOutputBounds(options)
-	if err := armFollowStream(api, state, endpointID, session.SessionID, session.Generation, maxBytes, maxLines, trustedOut); err != nil {
+	if err := armFollowStream(api, state, endpointID, session.ClusterSessionID, session.ProviderGeneration, maxBytes, maxLines, trustedOut); err != nil {
 		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
 	}
 	return nil
@@ -800,7 +812,7 @@ func renderLaunchedSnapshot(parent context.Context, api InteractiveAPI, endpoint
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	return runner.RenderSessionSnapshot(ctx, trustedOut, endpointID, session.SessionID, session.Generation, maxBytes, maxLines, options.Color)
+	return runner.RenderSessionSnapshot(ctx, trustedOut, endpointID, session.ClusterSessionID, session.ProviderGeneration, maxBytes, maxLines, options.Color)
 }
 
 // sessionIDs reads the committed projection and returns its standard session IDs.
@@ -813,7 +825,7 @@ func sessionIDs(ctx context.Context, api InteractiveAPI, endpointID string) (map
 	}
 	ids := make(map[string]struct{}, len(report.Sessions))
 	for _, session := range report.Sessions {
-		ids[session.SessionID] = struct{}{}
+		ids[session.ClusterSessionID] = struct{}{}
 	}
 	return ids, true
 }
@@ -826,7 +838,7 @@ func sessionIDs(ctx context.Context, api InteractiveAPI, endpointID string) (map
 func appearedSessions(before map[string]struct{}, report protocol.InventoryReport) []protocol.Session {
 	var appeared []protocol.Session
 	for _, session := range report.Sessions {
-		if _, known := before[session.SessionID]; !known {
+		if _, known := before[session.ClusterSessionID]; !known {
 			appeared = append(appeared, session)
 		}
 	}
@@ -856,21 +868,21 @@ func renderInteractiveStartResult(out io.Writer, commandID string, result map[st
 // what happened; this reconciliation only decides where the operator continues working, so
 // an inventory failure keeps the scope and never turns an acknowledged stop into an error.
 func reconcileStoppedSelection(ctx context.Context, api InteractiveAPI, state *interactiveState, sessionID string, out io.Writer) error {
-	if state.Scope.Kind != ScopeSession || state.SessionID != sessionID {
+	if state.Scope.Kind != ScopeSession || state.ClusterSessionID != sessionID {
 		return nil
 	}
 	loaded, err := loadReports(ctx, api, state.EndpointID)
 	if err != nil {
-		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionID)
+		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, sessionID))
 		return writeErr
 	}
 	report, ok := loaded.reports[state.EndpointID]
 	if !ok || !report.ReportComplete {
-		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionID)
+		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, sessionID))
 		return writeErr
 	}
 	for _, session := range report.Sessions {
-		if session.SessionID == sessionID {
+		if session.ClusterSessionID == sessionID {
 			return nil
 		}
 	}
@@ -878,8 +890,12 @@ func reconcileStoppedSelection(ctx context.Context, api InteractiveAPI, state *i
 	if !found {
 		endpoint = protocol.Endpoint{EndpointID: state.EndpointID, Hostname: state.Scope.Hostname}
 	}
+	// The label is captured before the scope changes, because entering endpoint
+	// scope replaces ScopeState and would drop the session identity the message
+	// has to name.
+	label := sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, sessionID)
 	state.enterEndpoint(endpoint)
-	_, err = fmt.Fprintf(out, "session %s is no longer reported by endpoint %s; returned to endpoint scope\n", sessionID, endpoint.EndpointID)
+	_, err = fmt.Fprintf(out, "session %s is no longer reported by endpoint %s; returned to endpoint scope\n", label, endpoint.EndpointID)
 	return err
 }
 
@@ -938,10 +954,10 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	var postSubmit func(context.Context, map[string]any) error
 	if op == protocol.OperationContextInject {
 		postSubmit = func(postCtx context.Context, _ map[string]any) error {
-			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.SessionID, session.Generation, trustedOut, options, name+" completed")
+			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, name+" completed")
 		}
 	}
-	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, postSubmit)
+	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.ProviderGeneration, payload, lines, out, trustedOut, options, nil, postSubmit)
 }
 
 // promptInterruptPayload guides a bare interrupt through the action choice and, for a soft
@@ -1023,7 +1039,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, DisplayName: target.DisplayName}
+	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.ClusterSessionID, ProviderGeneration: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: target.ProviderDisplayName, ProviderSessionID: target.ProviderSessionID}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)
 	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {

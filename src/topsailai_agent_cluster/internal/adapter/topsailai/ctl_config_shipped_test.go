@@ -278,3 +278,35 @@ func TestShippedControlActionCatalogListsInstructions(t *testing.T) {
 		seen[name] = true
 	}
 }
+
+// TestShippedControlActionCatalogRequiresControlToChangeTheModel proves the
+// shipped catalog does not let a read_output credential change the live model.
+//
+// agent.models applies a model configuration to a running agent, so it mutates
+// the session. Advertising it as read_output would let an operator who is only
+// allowed to read output reconfigure the model that produces that output. The
+// permission is therefore control, and this test fails if the example drifts
+// back to a read scope.
+func TestShippedControlActionCatalogRequiresControlToChangeTheModel(t *testing.T) {
+	data, err := os.ReadFile(shippedControlActionPath(t))
+	if err != nil {
+		t.Fatalf("read the shipped control action catalog: %v", err)
+	}
+	set, err := ParseControlActionSet(data)
+	if err != nil {
+		t.Fatalf("the shipped control action catalog must parse, got %v", err)
+	}
+	var found bool
+	for _, action := range set.Actions() {
+		if action.Name != "agent.models" {
+			continue
+		}
+		found = true
+		if action.Permission != "control" {
+			t.Errorf("the shipped catalog gives agent.models permission %q, but it changes the live model and must require control", action.Permission)
+		}
+	}
+	if !found {
+		t.Fatal("the shipped catalog no longer declares agent.models, so the model selection surface is unreachable")
+	}
+}

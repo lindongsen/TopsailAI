@@ -186,7 +186,7 @@ failure.
 | GET | `/api/v1/output` | Read one bounded output snapshot |
 
 Required query parameters are `endpoint_id` and `resource_id`. Optional parameters are
-`generation`, `max_bytes` and `max_lines`.
+`provider_generation`, `max_bytes` and `max_lines`.
 
 `max_bytes` defaults to 64 KiB and is clamped to 1 MiB. `max_lines` is optional; an absent or
 invalid value keeps the provider default, and an explicit value is clamped to the provider range of
@@ -209,7 +209,7 @@ code, so an unavailable read is never reported as an empty successful read.
 | GET | `/api/v1/output/follow` | Stream output records for one resource |
 
 Required query parameters are `endpoint_id` and `resource_id`. Optional parameters are
-`generation`, `max_bytes` and `max_lines`. `max_bytes` defaults to 64 KiB and is clamped to 1 MiB;
+`provider_generation`, `max_bytes` and `max_lines`. `max_bytes` defaults to 64 KiB and is clamped to 1 MiB;
 `max_lines` keeps the provider default when absent or invalid and is clamped to 10000 lines.
 
 `max_bytes` bounds one record, because one record is one chunk. A record longer than the budget is
@@ -269,14 +269,14 @@ The check runs before the transport is consulted, so an unauthorized caller cann
 reachability from the response.
 
 The response `data` contains `rows`, `observed_at_ms` and an optional `truncated`. Each row carries
-`provider_session_id`, an optional `resource_id`, descriptive `display_name`, `project_workspace`,
+`provider_session_id`, an optional `resource_id`, descriptive `provider_display_name`, `provider_project_workspace`,
 `task`, `provider_status`, `provider_no`, `created_at_ms`, `modified_at_ms`, `resumable` and an
 optional `resume_blocked_reason`.
 
 A history row is deliberately not a routable resource. It carries an opaque cluster handle so a
 resume request can address it, but it never carries a provider generation, because a past session is
 not running and therefore has no generation to validate. Routing still requires `resource_id` plus
-`generation`, and only the inventory join can supply that pair.
+`provider_generation`, and only the inventory join can supply that pair.
 
 `truncated` reports that the provider returned its own capped window rather than everything that
 exists, so a bounded window is never presented as a complete history. Accepted rows are bounded by

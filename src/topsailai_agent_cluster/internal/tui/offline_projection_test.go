@@ -51,7 +51,7 @@ func offlineReport() protocol.InventoryReport {
 		ReportComplete:   true,
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
-		Sessions:         []protocol.Session{{SessionID: "session-1", AdapterID: "adapter-1", Generation: "gen-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
+		Sessions:         []protocol.Session{{ClusterSessionID: "session-1", AdapterID: "adapter-1", ProviderGeneration: "gen-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
 	}
 }
 
@@ -100,7 +100,7 @@ func TestListRowsMarksDisconnectedEndpointWithoutSessionsStale(t *testing.T) {
 // inventory cannot authorize session-scoped actions.
 func TestFindSelectedRejectsDisconnectedEndpoint(t *testing.T) {
 	api := &offlineAPI{state: "offline", report: offlineReport(), caps: matrixCapability("rev-1")}
-	state := &interactiveState{interactiveSelection: interactiveSelection{EndpointID: "ep", SessionID: "session-1", Generation: "gen-1"}}
+	state := &interactiveState{interactiveSelection: interactiveSelection{EndpointID: "ep", ClusterSessionID: "session-1", ProviderGeneration: "gen-1"}}
 	_, _, _, err := findSelected(context.Background(), api, state)
 	if err == nil {
 		t.Fatal("disconnected endpoint selection unexpectedly succeeded")
@@ -113,12 +113,12 @@ func TestFindSelectedRejectsDisconnectedEndpoint(t *testing.T) {
 // TestFindSelectedAcceptsOnlineEndpoint verifies the online path is unchanged.
 func TestFindSelectedAcceptsOnlineEndpoint(t *testing.T) {
 	api := &offlineAPI{state: "online", report: offlineReport(), caps: matrixCapability("rev-1")}
-	state := &interactiveState{interactiveSelection: interactiveSelection{EndpointID: "ep", SessionID: "session-1", Generation: "gen-1"}}
+	state := &interactiveState{interactiveSelection: interactiveSelection{EndpointID: "ep", ClusterSessionID: "session-1", ProviderGeneration: "gen-1"}}
 	endpoint, _, session, err := findSelected(context.Background(), api, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if endpoint.EndpointID != "ep" || session == nil || session.SessionID != "session-1" {
+	if endpoint.EndpointID != "ep" || session == nil || session.ClusterSessionID != "session-1" {
 		t.Fatalf("endpoint=%#v session=%#v", endpoint, session)
 	}
 }
@@ -139,7 +139,7 @@ func TestCDRowNumberRejectsDisconnectedEndpoint(t *testing.T) {
 	if !strings.Contains(err.Error(), "not online") || !strings.Contains(err.Error(), "offline") {
 		t.Fatalf("error=%q, want an offline diagnostic", err)
 	}
-	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID {
+	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID {
 		t.Fatalf("state changed after offline rejection: before=%+v after=%+v", before, state)
 	}
 }

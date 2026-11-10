@@ -16,10 +16,10 @@ func unitC3State(scope ScopeKind, rows string) interactiveState {
 	s.InvalidReason = "retained reason"
 	row := s.Rows[1]
 	row.AdapterID, row.EndpointLabel, row.AdapterLabel = "adapter", "endpoint label", "adapter label"
-	row.ProviderSessionID, row.DisplayName, row.State = "provider", "display", "ready"
+	row.ProviderSessionID, row.ProviderDisplayName, row.State = "provider", "display", "ready"
 	row.Stale, row.Unknown, row.CollectionStatus = true, true, "failed"
 	s.Rows[1] = row
-	row.No, row.SessionID = 2, "session-2"
+	row.No, row.ClusterSessionID = 2, "session-2"
 	s.Rows[2] = row
 	if rows == "nil" {
 		s.Rows = nil
@@ -70,7 +70,7 @@ func TestUnitCBatch3SessionRejection(t *testing.T) {
 	api := newUnitCAPI()
 	var out strings.Builder
 	exit, err := executeInteractiveLine(context.Background(), api, &state, "start", make(chan lineReadResult), &out, &out, &out, InteractiveOptions{})
-	want := `command "start" is unavailable in session scope; available commands: list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, help, quit, exit`
+	want := `command "start" is unavailable in session scope; available commands: list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, model, help, quit, exit`
 	if exit || err == nil || err.Error() != want || out.Len() != 0 || !reflect.DeepEqual(state, before) {
 		t.Fatalf("C6 session: exit=%v err=%v output=%q", exit, err, out.String())
 	}

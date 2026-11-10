@@ -242,6 +242,14 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id> [-c N|--max-chars N]")
 		}
 		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), messageBound, *jsonMode, tui.OutputColorPolicy(output))
+	case "model":
+		if flags.NArg() < 3 || flags.NArg() > 4 {
+			return fmt.Errorf("usage: model <endpoint-id-or-hostname> <session-id> [profile]")
+		}
+		if flags.NArg() == 3 {
+			return model(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *jsonMode, tui.OutputColorPolicy(output))
+		}
+		return modelSelectWithProgress(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), flags.Arg(3), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -718,6 +726,101 @@ func messages(ctx context.Context, api tui.CommandAPI, output, errors io.Writer,
 	return legacyRunner(api).Messages(ctx, output, errors, target, sessionID, maxChars, jsonMode, color)
 }
 
+// model renders the model profiles one session can select.
+//
+// The endpoint argument is mandatory because a catalog read is endpoint-scoped:
+// provider session IDs may collide across endpoints, so a fleet-wide merge could
+// not identify the session the operator asked for.
+//
+// The generation is empty on purpose. A catalog read is read-only and addresses
+// the provider's configuration rather than a live process, so it needs no
+// generation proof; requiring one would refuse to list profiles for exactly the
+// stopped sessions an operator may want to inspect before resuming.
+func model(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target, sessionID string, jsonMode bool, color tui.ColorPolicy) error {
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).ModelCatalog(ctx, output, errors, target, sessionID, "", jsonMode, options)
+}
+
+// modelSelectWithProgress applies one model profile to one session.
+//
+// The standalone surface has no rendered table, so a row number is rejected: a row
+// number is a position in a table the operator saw, and no table was rendered here.
+// The selector is resolved against a live catalog read instead, so an unknown or
+// unavailable profile is refused before anything is submitted rather than being sent
+// to the provider as an opaque value.
+//
+// The catalog carries no generation, so the generation a model change needs is
+// resolved from the committed inventory instead. A model change addresses a live
+// process, and the Endpoint rejects an empty generation with generation_required
+// (internal/endpoint/executor.go:126-133), which would otherwise surface only after
+// the operator had already answered the confirmation question. Resolving it here
+// turns that late failure into an immediate one that names the real reason.
+func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, target, sessionID, profile string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	if tui.IsRowNumber(profile) {
+		return fmt.Errorf("model profile %q is a row number, which only exists after an interactive render; name the profile by model_profile_id or display name", profile)
+	}
+	querier, ok := api.(tui.ModelCatalogQuerier)
+	if !ok {
+		return fmt.Errorf("model profiles are unavailable: this client cannot query model profiles")
+	}
+	endpoint, err := tui.ResolveEndpointTarget(ctx, api, target)
+	if err != nil {
+		return err
+	}
+	// The label is resolved once and reused by every message below, so one command
+	// performs one inventory read instead of one per failure path.
+	label := tui.SessionIdentityLabelFromInventory(ctx, api, endpoint.EndpointID, sessionID)
+	if generationFlag == "" {
+		generationFlag, err = resolveSessionGeneration(ctx, api, endpoint.EndpointID, sessionID)
+		if err != nil {
+			return err
+		}
+		if generationFlag == "" {
+			return fmt.Errorf("session %s has no verified generation in the committed inventory, so a model change cannot address it; pass --generation explicitly or refresh the inventory", label)
+		}
+	}
+	catalog, err := querier.GetModelCatalog(ctx, endpoint.EndpointID, sessionID, generationFlag)
+	if err != nil {
+		return err
+	}
+	if catalog.ErrorCode != "" {
+		return tui.ModelCatalogError(label, catalog.ErrorCode)
+	}
+	view := tui.NewModelCatalogView(endpoint.EndpointID, sessionID, catalog)
+	row, err := tui.ResolveModelProfileSelector(view, profile, label)
+	if err != nil {
+		return err
+	}
+	if !row.Available {
+		reason := row.UnavailableReason
+		if reason == "" {
+			reason = "unavailable"
+		}
+		return fmt.Errorf("model profile %q is unavailable (%s)", tui.ModelProfileLabel(row), reason)
+	}
+	payload, err := json.Marshal(protocol.ModelSelectRequest{ModelProfileID: row.ModelProfileID})
+	if err != nil {
+		return err
+	}
+	request := tui.ActionRequest{Operation: protocol.OperationAgentModelSelect, OperationLabel: "model select", EndpointID: endpoint.EndpointID, ResourceID: sessionID, ProviderGeneration: generationFlag, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
+	runner := legacyRunner(api)
+	progress := tui.NewActionProgress(diagnostics, request)
+	intent, err := runner.PrepareAction(ctx, request)
+	if err != nil {
+		return err
+	}
+	actionResult, err := runner.SubmitAction(ctx, intent)
+	if err != nil {
+		return err
+	}
+	result, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
+	if err != nil {
+		return err
+	}
+	return renderActionResult(output, result, jsonMode)
+}
+
 // list renders the session table. full is the per-command request to disable
 // truncation, and it is ORed with the boundary value rather than replacing it,
 // so the startup --no-truncate option survives a command that did not repeat it.
@@ -798,6 +901,24 @@ func interruptContext(parent context.Context, interrupts <-chan os.Signal) (cont
 	}
 }
 
+// resolveSessionGeneration looks up the generation the committed inventory reports
+// for one session. An empty result means the inventory reports no verified
+// generation for that session, which is a fact the caller must interpret: a model
+// change refuses it, while a follow stream passes it through and lets the Endpoint
+// decide. The lookup is shared so the two surfaces cannot drift apart.
+func resolveSessionGeneration(ctx context.Context, api tui.CommandAPI, endpointID, sessionID string) (string, error) {
+	report, err := api.GetInventory(ctx, endpointID)
+	if err != nil {
+		return "", err
+	}
+	for _, session := range report.Sessions {
+		if session.ClusterSessionID == sessionID {
+			return session.ProviderGeneration, nil
+		}
+	}
+	return "", nil
+}
+
 // followLogs streams output records for one session. The generation is resolved
 // from the committed inventory first, so the stream is bound to the exact
 // session the operator named rather than to whatever the provider reports later.
@@ -806,16 +927,11 @@ func interruptContext(parent context.Context, interrupts <-chan os.Signal) (cont
 func followLogs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID, generation string, maxBytes, maxLines int, jsonMode bool, color tui.ColorPolicy) error {
 	runner := legacyRunner(api)
 	if generation == "" {
-		report, err := api.GetInventory(ctx, endpointID)
+		resolved, err := resolveSessionGeneration(ctx, api, endpointID, resourceID)
 		if err != nil {
 			return err
 		}
-		for _, session := range report.Sessions {
-			if session.SessionID == resourceID {
-				generation = session.Generation
-				break
-			}
-		}
+		generation = resolved
 	}
 	return runner.FollowLogs(ctx, output, endpointID, resourceID, generation, maxBytes, maxLines, jsonMode, color)
 }
@@ -861,7 +977,7 @@ func driveWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnost
 	if generation == "" {
 		return fmt.Errorf("drive %s requires a generation", action)
 	}
-	request := tui.ActionRequest{Operation: operation, OperationLabel: "drive " + action, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: json.RawMessage(`{}`), Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
+	request := tui.ActionRequest{Operation: operation, OperationLabel: "drive " + action, EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, Payload: json.RawMessage(`{}`), Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
 	runner := legacyRunner(api)
 	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)
@@ -1047,7 +1163,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		}
 		payload = resolved
 	}
-	target := protocol.CommandTarget{Kind: "session", ResourceID: resourceID, Generation: generation}
+	target := protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: generation}
 	if operation == "start" {
 		target = protocol.CommandTarget{}
 	}
@@ -1057,7 +1173,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		}
 	}
 	operationValue := operationName(operation)
-	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
+	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
 	runner := legacyRunner(api)
 	// Progress is created before the capability preflight, because that preflight
 	// is itself a network round trip the operator would otherwise wait through

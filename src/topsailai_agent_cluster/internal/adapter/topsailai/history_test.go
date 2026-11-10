@@ -56,7 +56,7 @@ func TestHistoryNormalizesTheDocumentedFields(t *testing.T) {
 		t.Fatalf("rows = %d, want 1", len(result.Rows))
 	}
 	row := result.Rows[0]
-	if row.ProviderSessionID != "wa-6cee12a5f2a0" || row.DisplayName != "会话问题根因分析" || row.ProjectWorkspace != "/TopsailAI/src/topsailai" || row.Task != "分析根本原因" || row.ProviderStatus != "Idle" || row.ProviderNo != 1 {
+	if row.ProviderSessionID != "wa-6cee12a5f2a0" || row.ProviderDisplayName != "会话问题根因分析" || row.ProviderProjectWorkspace != "/TopsailAI/src/topsailai" || row.Task != "分析根本原因" || row.ProviderStatus != "Idle" || row.ProviderNo != 1 {
 		t.Fatalf("unexpected row: %+v", row)
 	}
 	if !row.Resumable || row.ResumeBlockedReason != "" {

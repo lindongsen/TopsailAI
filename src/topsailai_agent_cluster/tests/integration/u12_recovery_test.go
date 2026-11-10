@@ -68,7 +68,7 @@ func TestInvocationStartedWithoutReceiptReportsUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: "fixture-generation"}
+	intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, ProviderGeneration: "fixture-generation"}
 	// Match the authenticated identity injected by the Server before hashing.
 	intent.IssuerID = "operator"
 	hash, err := protocol.CanonicalHash(intent)
@@ -249,18 +249,18 @@ func addU12Target(c *u12Cluster, intent map[string]any) error {
 	var envelope struct {
 		Data struct {
 			Sessions []struct {
-				ResourceID string `json:"session_id"`
-				Generation string `json:"generation"`
+				ResourceID         string `json:"cluster_session_id"`
+				ProviderGeneration string `json:"provider_generation"`
 			} `json:"sessions"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		return err
 	}
-	if len(envelope.Data.Sessions) == 0 || envelope.Data.Sessions[0].ResourceID == "" || envelope.Data.Sessions[0].Generation == "" {
+	if len(envelope.Data.Sessions) == 0 || envelope.Data.Sessions[0].ResourceID == "" || envelope.Data.Sessions[0].ProviderGeneration == "" {
 		return fmt.Errorf("inventory has no opaque target: %+v", envelope.Data.Sessions)
 	}
-	intent["target"] = map[string]any{"kind": "session", "resource_id": envelope.Data.Sessions[0].ResourceID, "generation": envelope.Data.Sessions[0].Generation}
+	intent["target"] = map[string]any{"kind": "session", "resource_id": envelope.Data.Sessions[0].ResourceID, "provider_generation": envelope.Data.Sessions[0].ProviderGeneration}
 	return nil
 }
 
@@ -315,7 +315,7 @@ func postU12Command(t *testing.T, c *u12Cluster, id string, expiry time.Time) {
 func postU12Intent(t *testing.T, c *u12Cluster, intent protocol.ImmutableIntent) {
 	t.Helper()
 	payload := u12Intent(intent.CommandID, intent.EndpointID, time.UnixMilli(intent.ExecuteBeforeAtMS))
-	payload["target"] = map[string]any{"kind": "session", "resource_id": intent.Target.ResourceID, "generation": intent.Target.Generation}
+	payload["target"] = map[string]any{"kind": "session", "resource_id": intent.Target.ResourceID, "provider_generation": intent.Target.ProviderGeneration}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)

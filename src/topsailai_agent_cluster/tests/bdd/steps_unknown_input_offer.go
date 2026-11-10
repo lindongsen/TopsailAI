@@ -132,7 +132,7 @@ func assertOfferDoesNotRepeatConfirmation() error {
 	if count := strings.Count(text, "as a message?"); count != 1 {
 		return fmt.Errorf("the offer asked %d questions, want 1: %s", count, text)
 	}
-	if strings.Contains(text, "Confirm send?") {
+	if strings.Contains(text, "send.confirm[y/N]>") {
 		return fmt.Errorf("the offer repeated the send confirmation: %s", text)
 	}
 	return nil

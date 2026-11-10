@@ -11,7 +11,7 @@ import (
 
 func TestListRowsMarksStaleAndUnknown(t *testing.T) {
 	last := int64(42)
-	rows := ListRows([]protocol.Endpoint{{EndpointID: "e1"}}, map[string]protocol.InventoryReport{"e1": {Adapters: []protocol.AdapterSummary{{AdapterID: "a1", DataKnown: false, Stale: true, LastSuccessAtMS: &last}}, Sessions: []protocol.Session{{SessionID: "s1", AdapterID: "a1", Generation: "g1", State: "idle"}}}}, "")
+	rows := ListRows([]protocol.Endpoint{{EndpointID: "e1"}}, map[string]protocol.InventoryReport{"e1": {Adapters: []protocol.AdapterSummary{{AdapterID: "a1", DataKnown: false, Stale: true, LastSuccessAtMS: &last}}, Sessions: []protocol.Session{{ClusterSessionID: "s1", AdapterID: "a1", ProviderGeneration: "g1", State: "idle"}}}}, "")
 	if len(rows) != 1 || !rows[0].Stale || !rows[0].Unknown || rows[0].LastSuccessAtMS == nil {
 		t.Fatalf("unexpected rows: %#v", rows)
 	}

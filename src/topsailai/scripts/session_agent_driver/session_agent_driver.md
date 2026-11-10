@@ -77,6 +77,32 @@ Current source evidence (paths relative to the project workspace, verified 2026-
 
 Do not bypass the public cleanup guard, add force-delete or environment bypass switches, treat `completed`/`end_ts` as process-exit evidence, delete metadata to hide a live owner, move lifecycle policy into SQL, or weaken RUNNING/UNKNOWN fail-closed semantics. Changing this retention policy requires a new explicit Human decision, not a bug fix. The earlier alternatives A/B/C and implementation units A1/A2/A3 are superseded and must not be implemented on the authority of that proposal.
 
+## Project Workspace Injection
+
+The analysis agent runs inside the driver process, so the driver exports the
+target session's project workspace into its own environment before the agent is
+constructed. Without this, framework readers would keep the inherited value and
+the agent would run against the wrong project.
+
+Resolution order for the effective workspace:
+
+1. The target session's stored `project_workspace`.
+2. `TOPSAILAI_PWD` when the stored value is empty.
+3. The current working directory as the final fallback.
+
+The resolved value is written to both `TOPSAILAI_PROJECT_WORKSPACE` and its
+alias `TOPSAILAI_PROJECT_FOLDER`. The driver applies it at startup so the whole
+process carries it, and re-applies it before each analysis round. Previous values
+are restored on every exit path, including failures.
+
+Skill discovery scans `{TOPSAILAI_PROJECT_WORKSPACE}/.topsailai/skills` at
+module import time, so the skill prompt is reloaded after the value changes. A
+reload failure is logged as a warning and does not abort the run.
+
+These variables are TopsailAI-owned, not script-owned: they are read by the
+framework (system prompt, skill discovery, workspace lock, project history). Their
+reference stays in `docs/Environment_Variables.md` and `env_template`.
+
 ## Environment Variables
 
 | Variable | Default | Description |

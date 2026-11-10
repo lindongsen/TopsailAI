@@ -208,8 +208,8 @@ const briefRenderWorkspace = "/srv/brief-render-workspace-must-not-be-printed"
 // dropped columns are observable in the rendered bytes.
 func briefRenderStub() *interactiveStub {
 	report := scopeInventory("res-1", "generation-1")
-	report.Sessions[0].ProjectWorkspace = briefRenderWorkspace
-	report.Sessions[0].DisplayName = "brief-render-session"
+	report.Sessions[0].ProviderProjectWorkspace = briefRenderWorkspace
+	report.Sessions[0].ProviderDisplayName = "brief-render-session"
 	return &interactiveStub{
 		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "host-one"}},
 		reports:   map[string]protocol.InventoryReport{"endpoint-1": report},
@@ -288,7 +288,7 @@ func TestListWideRenderKeepsTheDroppedColumns(t *testing.T) {
 func TestListBriefShorthandCombinesWithFull(t *testing.T) {
 	report := scopeInventory("res-1", "generation-1")
 	longName := strings.Repeat("n", 200)
-	report.Sessions[0].DisplayName = longName
+	report.Sessions[0].ProviderDisplayName = longName
 	stub := &interactiveStub{
 		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "host-one"}},
 		reports:   map[string]protocol.InventoryReport{"endpoint-1": report},

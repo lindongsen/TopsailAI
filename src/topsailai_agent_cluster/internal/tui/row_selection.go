@@ -21,10 +21,10 @@ func resolveRowSelection(state *interactiveState, token string) (SessionRow, err
 	if !ok {
 		return SessionRow{}, fmt.Errorf("row %d is out of range; valid rows are 1-%d", number, len(state.Rows))
 	}
-	if row.SessionID == "" {
+	if row.ClusterSessionID == "" {
 		return SessionRow{}, fmt.Errorf("row %d does not identify a session; choose a session row", number)
 	}
-	if row.Generation == "" {
+	if row.ProviderGeneration == "" {
 		// A row reported without a generation is present but its liveness was not
 		// verified, so it cannot be addressed. Naming the real reason keeps the
 		// operator from retrying a refresh that cannot change the outcome.

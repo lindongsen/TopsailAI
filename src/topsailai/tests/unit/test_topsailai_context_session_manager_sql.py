@@ -1163,11 +1163,20 @@ class TestSessionUpdateTime:
         with manager.engine.connect() as connection:
             after = self._sqlite_snapshot(connection, before_columns)
             assert tuple(row for row in after[0] if row[1] != "update_time") == before[0]
-            assert after[1:] == before[1:]
+            # The rebuild must preserve the pre-existing inventory; the listing
+            # index is added afterwards by initialization, so it is excluded here
+            # and asserted separately.
+            preserved_indexes = tuple(
+                item for item in after[2] if item[0] != "idx_session_create_time"
+            )
+            assert preserved_indexes == before[2]
+            assert any(item[0] == "idx_session_create_time" for item in after[2])
+            assert after[1] == before[1]
+            assert after[3] == before[3]
+            assert after[3]
+            assert after[4] == before[4]
             assert any(item[3] == "u" and item[5] == ("task",) for item in after[2])
             assert any(item[1] is not None and item[0] == "session_task_explicit" for item in after[2])
-            assert after[3]
-            assert after[4] == (("legacy", 1, "task", "2020-01-01 00:00:00"),)
             assert connection.execute(text(
                 "SELECT update_time = create_time FROM session"
             )).scalar() == 1

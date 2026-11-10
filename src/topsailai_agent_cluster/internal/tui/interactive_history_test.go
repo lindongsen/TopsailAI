@@ -67,8 +67,8 @@ func historyScenarioStub(rows []protocol.HistoryRow, report protocol.InventoryRe
 // marker that proves both rows were rendered.
 func TestInteractiveHistoryRendersTableAndBindsRowNumbers(t *testing.T) {
 	stub := historyScenarioStub([]protocol.HistoryRow{
-		{ProviderSessionID: "wa-live", DisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
-		{ProviderSessionID: "wa-past", DisplayName: "past work", Resumable: true, ResourceID: "res-past"},
+		{ProviderSessionID: "wa-live", ProviderDisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
+		{ProviderSessionID: "wa-past", ProviderDisplayName: "past work", Resumable: true, ResourceID: "res-past"},
 	}, historyReport(historyLiveSession("res-live", "wa-live", "gen-1")))
 
 	output, diagnostics := runScope(t, stub, "history endpoint-1\nexit\n", ColorPolicy{})
@@ -306,7 +306,7 @@ func TestInteractiveResumeSubmitsAgentResumeWithoutGeneration(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentResume || intent.EndpointID != "endpoint-1" {
 		t.Fatalf("wrong resume intent: %+v", intent)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-past" || intent.Target.Generation != "" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-past" || intent.Target.ProviderGeneration != "" {
 		t.Fatalf("wrong resume target: %+v", intent.Target)
 	}
 	if !strings.Contains(output, "history row numbers are stale after resume; run history to refresh") {
@@ -411,7 +411,7 @@ func TestInteractiveResumeRevalidatesAbsenceBeforeSubmission(t *testing.T) {
 	stub.interactiveStub.sessionPresenceSequence = []bool{true, false, true}
 
 	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\ny\nexit\n", ColorPolicy{})
-	want := `session "wa-past" is live on endpoint "endpoint-1", so it cannot be resumed; use cd to enter it`
+	want := `session (wa-past) is live on endpoint "endpoint-1", so it cannot be resumed; use cd to enter it`
 	if !strings.Contains(diagnostics, want) {
 		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
 	}
@@ -483,10 +483,10 @@ func TestInteractiveHistoryRowNumberRejectedInSessionScope(t *testing.T) {
 		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
 	)
 	state := &interactiveState{}
-	state.Scope = ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", SessionID: "res-live", Generation: "gen-1"}
+	state.Scope = ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", ClusterSessionID: "res-live", ProviderGeneration: "gen-1"}
 	state.history = &historyNamespace{
 		EndpointID: "endpoint-1",
-		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-live", Joined: true, Live: true, ResourceID: "res-live", Generation: "gen-1"}},
+		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-live", Joined: true, Live: true, ResourceID: "res-live", ProviderGeneration: "gen-1"}},
 	}
 
 	err := cdHistoryRowNumber(state, stub, context.Background(), 1)
@@ -513,7 +513,7 @@ func TestInteractiveHistoryNamespaceClearedAfterEnteringSession(t *testing.T) {
 	state := &interactiveState{}
 	state.history = &historyNamespace{
 		EndpointID: "endpoint-1",
-		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-live", Joined: true, Live: true, ResourceID: "res-live", Generation: "gen-1"}},
+		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-live", Joined: true, Live: true, ResourceID: "res-live", ProviderGeneration: "gen-1"}},
 	}
 
 	if err := cdHistoryRowNumber(state, stub, context.Background(), 1); err != nil {
@@ -645,7 +645,7 @@ func TestInteractiveResumeAcceptsUnverifiedRow(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentResume {
 		t.Fatalf("wrong operation: %+v", intent)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.Generation != "" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.ProviderGeneration != "" {
 		t.Fatalf("wrong resume target: %+v", intent.Target)
 	}
 	if !strings.Contains(output, "history row numbers are stale after resume; run history to refresh") {
@@ -676,12 +676,12 @@ func TestInteractiveHistoryCDRejectsUnverifiedRow(t *testing.T) {
 // entered.
 func unverifiedSession(resourceID, providerSessionID, displayName string) protocol.Session {
 	return protocol.Session{
-		SessionID:         resourceID,
-		ProviderSessionID: providerSessionID,
-		DisplayName:       displayName,
-		Generation:        "",
-		State:             protocol.SessionStateUnknown,
-		StateReason:       protocol.StateReasonLivenessUnverified,
+		ClusterSessionID:    resourceID,
+		ProviderSessionID:   providerSessionID,
+		ProviderDisplayName: displayName,
+		ProviderGeneration:  "",
+		State:               protocol.SessionStateUnknown,
+		StateReason:         protocol.StateReasonLivenessUnverified,
 	}
 }
 
@@ -706,7 +706,7 @@ func TestInteractiveResumeAcceptsUnknownListRow(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentResume || intent.EndpointID != "endpoint-1" {
 		t.Fatalf("wrong resume intent: %+v", intent)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.Generation != "" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.ProviderGeneration != "" {
 		t.Fatalf("wrong resume target: %+v", intent.Target)
 	}
 	if !strings.Contains(output, "list row numbers are stale after resume; run list to refresh") {
@@ -734,7 +734,7 @@ func TestInteractiveResumeRejectsLiveListRow(t *testing.T) {
 // resumable from the list. A stopped session is a different condition: the provider
 // proved no process holds it, so it is not a resume candidate from this table.
 func TestInteractiveResumeRejectsNonUnknownListRow(t *testing.T) {
-	stopped := protocol.Session{SessionID: "res-stopped", ProviderSessionID: "wa-stopped", State: "stopped"}
+	stopped := protocol.Session{ClusterSessionID: "res-stopped", ProviderSessionID: "wa-stopped", State: "stopped"}
 	stub := historyScenarioStub(nil, historyReport(stopped))
 
 	_, diagnostics := runScope(t, stub, "list\nresume 1\nexit\n", ColorPolicy{})
@@ -763,7 +763,7 @@ func TestInteractiveResumeBareAcceptsSoleUnknownSession(t *testing.T) {
 		t.Fatalf("admitted=%d want=1", stub.admit)
 	}
 	intent := stub.intents[0]
-	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.Generation != "" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.ProviderGeneration != "" {
 		t.Fatalf("bare resume selected the wrong target: %+v", intent.Target)
 	}
 	if !strings.Contains(output, "list row numbers are stale after resume; run list to refresh") {
@@ -825,10 +825,10 @@ func TestInteractiveResumeBareIgnoresLiveSessions(t *testing.T) {
 // wrong.
 func TestInteractiveResumeRejectsUnknownListRowWithGeneration(t *testing.T) {
 	contradictory := protocol.Session{
-		SessionID:         "res-odd",
-		ProviderSessionID: "wa-odd",
-		Generation:        "gen-1",
-		State:             protocol.SessionStateUnknown,
+		ClusterSessionID:   "res-odd",
+		ProviderSessionID:  "wa-odd",
+		ProviderGeneration: "gen-1",
+		State:              protocol.SessionStateUnknown,
 	}
 	stub := historyScenarioStub(nil, historyReport(contradictory))
 

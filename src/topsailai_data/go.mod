@@ -4,9 +4,12 @@ go 1.25.0
 
 require (
 	github.com/cucumber/godog v0.15.1
+	github.com/pmezard/go-difflib v1.0.0
+	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.44.0
+	golang.org/x/text v0.30.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

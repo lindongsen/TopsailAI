@@ -43,6 +43,9 @@ TASK_GOAL_ENV = "TOPSAILAI_SESSION_DRIVER_TASK_GOAL"
 SESSION_ID_ENV = "TOPSAILAI_SESSION_ID"
 PLUGIN_TOOLS_ENV = "TOPSAILAI_PLUGIN_TOOLS"
 PLUGIN_SKILLS_ENV = "TOPSAILAI_PLUGIN_SKILLS"
+PROJECT_WORKSPACE_ENV = "TOPSAILAI_PROJECT_WORKSPACE"
+PROJECT_FOLDER_ENV = "TOPSAILAI_PROJECT_FOLDER"
+PWD_ENV = "TOPSAILAI_PWD"
 DEFAULT_POLL_INTERVAL = 5
 DEFAULT_TIMEOUT = 120
 LOG_TAIL_LINES = 100
@@ -267,8 +270,8 @@ def format_messages_summary(messages) -> str:
     return summary
 
 
-def resolve_project_workspace(session_id: str) -> str:
-    """Resolve the target session's project workspace, falling back to the environment."""
+def _stored_project_workspace(session_id: str) -> str:
+    """Return the target session's stored project workspace, or an empty string."""
     try:
         manager = ctx_manager.get_session_manager()
         if manager:
@@ -277,7 +280,67 @@ def resolve_project_workspace(session_id: str) -> str:
                 return rows[0].project_workspace
     except Exception as error:  # noqa: BLE001
         logger.warning("failed to read stored project workspace for %s: %s", session_id, error)
-    return os.environ.get("TOPSAILAI_PROJECT_WORKSPACE", "")
+    return ""
+
+
+def resolve_project_workspace(session_id: str) -> str:
+    """Resolve the target session's project workspace, falling back to the environment."""
+    return _stored_project_workspace(session_id) or os.environ.get(PROJECT_WORKSPACE_ENV, "")
+
+
+def resolve_effective_project_workspace(session_id: str) -> str:
+    """Resolve the workspace the analysis agent must run in.
+
+    The stored session value wins. An empty stored value falls back to the
+    framework-captured startup directory (``TOPSAILAI_PWD``) and finally to the
+    current working directory, so the agent never runs without a workspace.
+    """
+    stored = _stored_project_workspace(session_id)
+    if stored:
+        return stored
+    return os.environ.get(PWD_ENV) or os.getcwd()
+
+
+def apply_project_workspace(session_id: str) -> dict:
+    """Export the target session's workspace to this process environment.
+
+    The analysis agent runs inside the driver process, so the framework readers
+    (system prompt, skill discovery, workspace lock, project history) only see
+    the target workspace when the variable is set here. The skill prompt is
+    rebuilt only when the value changes, because skill discovery scans the
+    workspace at import time and would otherwise stay stale.
+
+    Args:
+        session_id: Target session whose stored workspace must be applied.
+
+    Returns:
+        dict: Previous values of the touched variables, suitable for
+        ``restore_project_workspace``. A ``None`` value means the variable was
+        unset before the call.
+    """
+    workspace = resolve_effective_project_workspace(session_id)
+    previous = {name: os.environ.get(name) for name in (PROJECT_WORKSPACE_ENV, PROJECT_FOLDER_ENV)}
+    if previous[PROJECT_WORKSPACE_ENV] == workspace:
+        return previous
+    os.environ[PROJECT_WORKSPACE_ENV] = workspace
+    os.environ[PROJECT_FOLDER_ENV] = workspace
+    logger.info("analysis agent project workspace set to %s for session %s", workspace, session_id)
+    try:
+        from topsailai.tools import skill_tool
+
+        skill_tool.reload()
+    except Exception as error:  # noqa: BLE001 - a stale skill prompt must not abort the run
+        logger.warning("failed to reload skill prompt for workspace %s: %s", workspace, error)
+    return previous
+
+
+def restore_project_workspace(previous: dict) -> None:
+    """Restore the project workspace variables captured by ``apply_project_workspace``."""
+    for name, value in previous.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 def get_session_info(session_id: str) -> dict | None:
@@ -444,11 +507,15 @@ def _run_analysis_agent(session_id: str) -> None:
         analysis_session_id, session_id, session_info["status"],
     )
     monitor = None
+    previous_workspace = {}
     exit_process.set_exit_guard(lambda: not any(
         row.get("is_task") and row["status"] != "idle"
         for row in _session_snapshot(session_id)[0]
     ))
     try:
+        # The analysis agent runs in this process, so the target session's
+        # workspace must be exported before the agent is constructed.
+        previous_workspace = apply_project_workspace(session_id)
         # P15: isolate the driver argv from the analysis agent. get_message()
         # reads sys.argv[1:] and would otherwise prepend the driver CLI args
         # (e.g. "-s <session> --poll-interval 5") to the analysis prompt.
@@ -497,6 +564,7 @@ def _run_analysis_agent(session_id: str) -> None:
         inject_input.set_input_guard(None)
         _clear_analysis_interrupt(analysis_session_id)
         exit_process.set_exit_guard(None)
+        restore_project_workspace(previous_workspace)
         cleanup_analysis_session(analysis_session_id)
 
 
@@ -541,15 +609,21 @@ def main(argv=None, *, record_directory=None) -> int:
     directory = record_directory or Path(TOPSAILAI_HOME) / "workspace" / "task" / "session_agent_driver"
     max_bytes = _read_int_env("TOPSAILAI_SESSION_DRIVER_LOG_MAX_BYTES", 10 * 1024 * 1024)
     backups = _read_int_env("TOPSAILAI_SESSION_DRIVER_LOG_MAX_BACKUPS", 5)
-    with DriverRuntime(directory, session_id, poll_interval, logger,
-                       max_bytes=max_bytes, backups=backups) as runtime:
-        old_int = signal.getsignal(signal.SIGINT)
-        old_term = signal.getsignal(signal.SIGTERM)
-        try:
-            return _poll_session(session_id, poll_interval, runtime)
-        finally:
-            signal.signal(signal.SIGINT, old_int)
-            signal.signal(signal.SIGTERM, old_term)
+    # The driver process itself must carry the target session's workspace so
+    # every framework reader sees it from startup, not only during a run.
+    previous_workspace = apply_project_workspace(session_id)
+    try:
+        with DriverRuntime(directory, session_id, poll_interval, logger,
+                           max_bytes=max_bytes, backups=backups) as runtime:
+            old_int = signal.getsignal(signal.SIGINT)
+            old_term = signal.getsignal(signal.SIGTERM)
+            try:
+                return _poll_session(session_id, poll_interval, runtime)
+            finally:
+                signal.signal(signal.SIGINT, old_int)
+                signal.signal(signal.SIGTERM, old_term)
+    finally:
+        restore_project_workspace(previous_workspace)
 
 
 def _poll_session(session_id, poll_interval, runtime) -> int:

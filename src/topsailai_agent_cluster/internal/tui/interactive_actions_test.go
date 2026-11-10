@@ -52,7 +52,7 @@ func TestInteractiveSessionExactIntents(t *testing.T) {
 				t.Fatalf("diagnostics=%q intents=%v", diagnostics.String(), stub.intents)
 			}
 			i := stub.intents[0]
-			if i.Operation != op || i.EndpointID != "endpoint-1" || i.Target == nil || i.Target.ResourceID != "session-1" || i.Target.Generation != "generation-1" || string(i.Payload) != payload || i.Budget.WaitTimeoutMS != 321 {
+			if i.Operation != op || i.EndpointID != "endpoint-1" || i.Target == nil || i.Target.ResourceID != "session-1" || i.Target.ProviderGeneration != "generation-1" || string(i.Payload) != payload || i.Budget.WaitTimeoutMS != 321 {
 				t.Fatalf("intent=%+v", i)
 			}
 			if !json.Valid(i.Payload) {

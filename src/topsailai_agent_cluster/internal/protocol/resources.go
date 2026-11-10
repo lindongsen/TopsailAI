@@ -14,30 +14,41 @@ type Endpoint struct {
 
 // Session identifies a provider session without exposing provider routing details.
 type Session struct {
-	SessionID string `json:"session_id"`
+	// ClusterSessionID is the opaque cluster resource ID the Endpoint minted for
+	// this session. It is the only routing identity the Server ever sees, and it
+	// is never derived from a provider key, a row number or a PID.
+	ClusterSessionID string `json:"cluster_session_id"`
 	// ProviderSessionID is the provider-native session identifier reported by the
-	// adapter. SessionID stays the opaque cluster resource ID used for routing.
+	// adapter. It is evidence and a provider-side selector, never a cluster
+	// routing identity.
 	ProviderSessionID string `json:"provider_session_id,omitempty"`
 	// ProviderPID is the provider-native process identity the provider reported for
 	// this session. It is display evidence only: it never participates in routing,
 	// generation validation or signalling, because a reused PID cannot prove which
 	// process an operation would reach. Zero means the provider reported no PID,
 	// which is not the same as a session with no process.
-	ProviderPID int64  `json:"provider_pid,omitempty"`
-	DisplayName string `json:"display_name,omitempty"`
-	// ProjectWorkspace is the workspace the session is working on, as reported by
-	// the provider. It is descriptive report data only: it never participates in
-	// routing, capability selection, or authorization.
-	ProjectWorkspace string `json:"project_workspace,omitempty"`
-	AgentID          string `json:"agent_id"`
-	Generation       string `json:"generation"`
-	AdapterID        string `json:"adapter_id"`
-	State            string `json:"state"`
-	StateReason      string `json:"state_reason,omitempty"`
-	Stale            bool   `json:"stale,omitempty"`
-	Unknown          bool   `json:"unknown,omitempty"`
-	CollectionStatus string `json:"collection_status,omitempty"`
-	ObservedAtMS     int64  `json:"observed_at_ms"`
+	ProviderPID int64 `json:"provider_pid,omitempty"`
+	// ProviderDisplayName is the provider session name, descriptive only.
+	ProviderDisplayName string `json:"provider_display_name,omitempty"`
+	// ProviderProjectWorkspace is the workspace the session is working on, as
+	// reported by the provider. It is descriptive report data only: it never
+	// participates in routing, capability selection, or authorization.
+	ProviderProjectWorkspace string `json:"provider_project_workspace,omitempty"`
+	// ProviderAgentID is the provider's own agent identity, forwarded verbatim.
+	// The cluster never mints an agent ID, so this value is provider evidence and
+	// must never be read as a cluster identity.
+	ProviderAgentID string `json:"provider_agent_id"`
+	// ProviderGeneration is the provider's own process generation for this
+	// session. It is the value an operation revalidates against, and an empty
+	// value means the provider could not verify liveness.
+	ProviderGeneration string `json:"provider_generation"`
+	AdapterID          string `json:"adapter_id"`
+	State              string `json:"state"`
+	StateReason        string `json:"state_reason,omitempty"`
+	Stale              bool   `json:"stale,omitempty"`
+	Unknown            bool   `json:"unknown,omitempty"`
+	CollectionStatus   string `json:"collection_status,omitempty"`
+	ObservedAtMS       int64  `json:"observed_at_ms"`
 	// Drive is the bounded controller summary reported by the adapter. It is
 	// descriptive report data: Server stores and returns it without interpreting
 	// provider semantics, and an absent summary means the provider reported no

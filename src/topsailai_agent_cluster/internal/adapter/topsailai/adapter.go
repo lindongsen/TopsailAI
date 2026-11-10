@@ -114,12 +114,17 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			// command.exec runs an operator-supplied argv array, so it declares the
 			// control permission: an operator who may not control a session must not
 			// be able to run commands in its working directory either.
-			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating", RequiredPermission: "control"},
+			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
 			// agent.model.select changes the model a running agent uses, so it
 			// declares the control permission and the mutating safety class. A
 			// credential that may only read output must not be able to change what
 			// the agent is running on.
 			{Name: protocol.OperationAgentModelSelect, Version: protocol.ModelSelectPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
+			// agent.model.list reads the profiles a session can select, so it
+			// declares the view permission and the read-only safety class. It is
+			// advertised separately from select because a credential that may look
+			// at the menu must not thereby be able to change the model.
+			{Name: protocol.OperationAgentModelList, Version: "v1", TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassReadOnly, RequiredPermission: "view"},
 		}},
 	}
 	// The provider control family is advertised per enabled action so an operator
@@ -306,7 +311,7 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 			stateReason = protocol.StateReasonLivenessUnverified
 		}
 		observedAtMS := time.Now().UnixMilli()
-		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, ProviderPID: item.PID, DisplayName: item.SessionName, ProjectWorkspace: item.ProjectWorkspace, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, StateReason: stateReason, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
+		result.Sessions = append(result.Sessions, protocol.Session{ClusterSessionID: resourceID, ProviderSessionID: item.SessionID, ProviderPID: item.PID, ProviderDisplayName: item.SessionName, ProviderProjectWorkspace: item.ProjectWorkspace, ProviderAgentID: item.AgentID, ProviderGeneration: generation, AdapterID: a.config.AdapterID, State: state, StateReason: stateReason, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
 	}
 	if response.Total != nil && *response.Total > len(response.Items) {
 		result.Complete = false
@@ -392,7 +397,7 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 		// Resume authorizes on the absence of a live target, so it must read Live
 		// rather than Found: reading Found would refuse to resume exactly the
 		// sessions whose process is gone, which is the only case resume exists for.
-		return adapter.InspectResult{Found: true, Live: generation != "", Generation: generation, State: state}, nil
+		return adapter.InspectResult{Found: true, Live: generation != "", ProviderGeneration: generation, State: state}, nil
 	}
 	// An empty targeted result is a legitimate absence, not a malformed report.
 	return adapter.InspectResult{Found: false}, nil
@@ -459,10 +464,10 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	case protocol.OperationAgentResume:
 		args = []string{"workspace", "resume", "-s", providerKey, "--background", "--json"}
 	case protocol.OperationAgentStop:
-		if intent.Target.Generation == "" {
+		if intent.Target.ProviderGeneration == "" {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "generation_required")}, errors.New("generation is required for stop")
 		}
-		args = []string{"workspace", "kill", providerKey, "-g", intent.Target.Generation, "--json"}
+		args = []string{"workspace", "kill", providerKey, "-g", intent.Target.ProviderGeneration, "--json"}
 	case protocol.OperationAgentDriveStart:
 		// The provider selects the unique live row for the session and rejects an
 		// ambiguous target itself. The adapter passes no PID: a cluster generation
@@ -682,7 +687,7 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 // than the budget is truncated and labelled rather than ending the stream, so an
 // oversized provider line cannot be reported as a provider failure.
 func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
-	key, err := a.providerTarget(ctx, &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation})
+	key, err := a.providerTarget(ctx, &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration})
 	if err != nil {
 		return err
 	}

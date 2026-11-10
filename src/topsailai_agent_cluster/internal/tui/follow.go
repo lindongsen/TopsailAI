@@ -16,11 +16,11 @@ import (
 // the exact session the operator selected rather than to whatever the provider
 // reports later.
 type followRequest struct {
-	EndpointID string
-	ResourceID string
-	Generation string
-	MaxBytes   int
-	MaxLines   int
+	EndpointID         string
+	ResourceID         string
+	ProviderGeneration string
+	MaxBytes           int
+	MaxLines           int
 }
 
 // OutputFollower is the optional streaming seam. A client without it keeps the
@@ -35,6 +35,33 @@ type OutputFollower interface {
 // existing watch behaviour stays byte-identical.
 type followStopLabel interface {
 	StopLabel() string
+}
+
+// followStatusPrefix names the writer of every follow status line, so a status
+// line is never mistaken for provider output that happens to contain the same
+// words. It is rendered as a named prompt, so it carries the same bold-green
+// wrapper as the REPL prompt and the terminal editor's column accounting stays
+// identical to the plain form.
+const followStatusPrefix = "log.follow>"
+
+// renderFollowStatus returns one follow status line. The prefix is always
+// present, because the operator asked for a way to tell these lines apart from
+// agent output; the message style carries the severity, so a clean end and an
+// error are distinguishable at a glance. With colour disabled the plain
+// "log.follow> <message>" form is returned, so a redirected stream and a
+// --no-color run stay readable and byte-stable.
+//
+// jsonMode returns the bare message, because a JSON consumer parses records and a
+// prefix or an escape sequence would corrupt the stream it is reading.
+func renderFollowStatus(message, style string, policy ColorPolicy, jsonMode bool) string {
+	if jsonMode {
+		return message
+	}
+	prefix := RenderNamedPrompt(followStatusPrefix, policy)
+	if !policy.Enabled || style == "" {
+		return prefix + message
+	}
+	return prefix + style + message + ansiReset
 }
 
 // renderFollowRecord appends one streamed record to the buffer. The body is
@@ -62,10 +89,14 @@ func renderFollowRecord(buffer *bytes.Buffer, record protocol.OutputFollowRecord
 		return nil
 	}
 	if record.ErrorCode == "" {
-		buffer.WriteString("follow ended\n")
+		// A clean end needs no attention, so the message is dim.
+		buffer.WriteString(renderFollowStatus("follow ended", ansiDim, color, jsonMode))
+		buffer.WriteByte('\n')
 		return nil
 	}
-	buffer.WriteString("follow ended: " + sanitizeInlineText(record.ErrorCode) + "\n")
+	// An error code needs a look, so the message is red.
+	buffer.WriteString(renderFollowStatus("follow ended: "+sanitizeInlineText(record.ErrorCode), ansiRed, color, jsonMode))
+	buffer.WriteByte('\n')
 	return nil
 }
 
@@ -85,13 +116,14 @@ func (r CommandRunner) FollowLogs(ctx context.Context, out io.Writer, endpointID
 	for {
 		select {
 		case <-ctx.Done():
-			_, writeErr := fmt.Fprintln(out, "follow stopped")
+			// An operator stop is a normal end, so the message is dim.
+			_, writeErr := fmt.Fprintln(out, renderFollowStatus("follow stopped", ansiDim, color, jsonMode))
 			return writeErr
 		case record, open := <-records:
 			if !open {
 				// A channel that closes without an end record is an interrupted
-				// stream, never a clean finish.
-				_, writeErr := fmt.Fprintln(out, "follow ended: stream_interrupted")
+				// stream, never a clean finish, so the message is red.
+				_, writeErr := fmt.Fprintln(out, renderFollowStatus("follow ended: stream_interrupted", ansiRed, color, jsonMode))
 				return writeErr
 			}
 			var buffer bytes.Buffer
@@ -150,7 +182,7 @@ func newFollowSession(parent context.Context, api InteractiveAPI, request follow
 		return nil, fmt.Errorf("follow is unavailable: the API client does not support streaming output")
 	}
 	ctx, cancel := context.WithCancel(parent)
-	records, err := follower.FollowOutput(ctx, request.EndpointID, request.ResourceID, request.Generation, request.MaxBytes, request.MaxLines)
+	records, err := follower.FollowOutput(ctx, request.EndpointID, request.ResourceID, request.ProviderGeneration, request.MaxBytes, request.MaxLines)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -178,8 +210,8 @@ func (s *followSession) pump() {
 		case record, open := <-s.records:
 			if !open {
 				// A channel that closes without a terminal record is an
-				// interrupted stream, never a clean finish.
-				s.finish([]byte("follow ended: stream_interrupted\n"), nil)
+				// interrupted stream, never a clean finish, so the message is red.
+				s.finish([]byte(renderFollowStatus("follow ended: stream_interrupted", ansiRed, s.color, false)+"\n"), nil)
 				return
 			}
 			var buffer bytes.Buffer
@@ -279,7 +311,10 @@ func (s *followSession) Stop() {
 }
 
 // StopLabel names this session in the editor's stop message, so the operator
-// reads "follow stopped" rather than the auto-refresh wording.
+// reads the follow wording rather than the auto-refresh wording. It returns the
+// bare message, because the editor owns the writer and therefore owns the
+// prefix and the colour policy; rendering here would need a policy this seam
+// does not receive.
 func (s *followSession) StopLabel() string { return "follow stopped" }
 
 // startFollow activates an armed follow intent for the next prompt. It consumes
@@ -298,16 +333,18 @@ func startFollow(parent context.Context, api InteractiveAPI, state *interactiveS
 	if err != nil {
 		// The stream could not start, so the operator gets one diagnostic line
 		// instead of a prompt that silently does nothing.
-		return &failedFollowSession{message: err.Error()}
+		return &failedFollowSession{message: err.Error(), color: options.Color}
 	}
 	return session
 }
 
 // failedFollowSession reports a stream that never started. It exists so the
 // failure surfaces on the next prompt through the same seam, instead of being
-// swallowed by the command that armed the intent.
+// swallowed by the command that armed the intent. It carries the colour policy
+// because it renders its own line, and a failure is red rather than dim.
 type failedFollowSession struct {
 	message string
+	color   ColorPolicy
 	once    sync.Once
 }
 
@@ -315,7 +352,7 @@ type failedFollowSession struct {
 func (s *failedFollowSession) Idle() ([]byte, error) {
 	var payload []byte
 	s.once.Do(func() {
-		payload = []byte("follow failed: " + sanitizeInlineText(s.message) + "\n")
+		payload = []byte(renderFollowStatus("follow failed: "+sanitizeInlineText(s.message), ansiRed, s.color, false) + "\n")
 	})
 	return payload, nil
 }

@@ -176,7 +176,7 @@ func TestForceCollectionUsesTheCommittedRefreshResponse(t *testing.T) {
 	if stub.inventoryCalls != 0 {
 		t.Fatalf("projection reads=%d, want none after a committed refresh", stub.inventoryCalls)
 	}
-	if got := loaded.reports["endpoint-1"].Sessions[0].SessionID; got != "fresh-session" {
+	if got := loaded.reports["endpoint-1"].Sessions[0].ClusterSessionID; got != "fresh-session" {
 		t.Fatalf("rendered session=%q, want the committed refresh document", got)
 	}
 }

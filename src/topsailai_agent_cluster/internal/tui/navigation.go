@@ -103,7 +103,7 @@ func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *i
 	if state.Scope.Kind != ScopeSession || previous.Kind == ScopeSession {
 		return nil
 	}
-	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.SessionID, state.Generation, trustedOut, options, "session selected")
+	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, "session selected")
 }
 
 // renderAutomaticSnapshot renders one bounded output snapshot for the selected
@@ -116,7 +116,7 @@ func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	if err := runner.RenderSessionSnapshot(ctx, trustedOut, state.EndpointID, state.SessionID, state.Generation, maxBytes, maxLines, color); err != nil {
+	if err := runner.RenderSessionSnapshot(ctx, trustedOut, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, maxBytes, maxLines, color); err != nil {
 		// The diagnostic interpolates a provider error, so it is sanitized
 		// before it reaches the trusted writer.
 		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic logs failed: "+sanitizeTerminal([]byte(err.Error())))
@@ -221,10 +221,10 @@ func cdRowNumber(state *interactiveState, api InteractiveAPI, parent context.Con
 	if !ok {
 		return fmt.Errorf("row %d is out of range; valid rows are 1-%d", number, len(state.Rows))
 	}
-	if row.SessionID == "" {
+	if row.ClusterSessionID == "" {
 		return fmt.Errorf("row %d does not identify a session; choose a session row", number)
 	}
-	if row.Generation == "" {
+	if row.ProviderGeneration == "" {
 		return fmt.Errorf("row %d has no generation; run list again", number)
 	}
 	return cdSessionRow(state, api, parent, number, row)
@@ -247,7 +247,7 @@ func cdSessionRow(state *interactiveState, api InteractiveAPI, parent context.Co
 	}
 	var match *protocol.Session
 	for i := range report.Sessions {
-		if report.Sessions[i].SessionID != row.SessionID {
+		if report.Sessions[i].ClusterSessionID != row.ClusterSessionID {
 			continue
 		}
 		if match != nil {
@@ -258,7 +258,7 @@ func cdSessionRow(state *interactiveState, api InteractiveAPI, parent context.Co
 	if match == nil {
 		return fmt.Errorf("row %d no longer identifies a session; run list again", number)
 	}
-	if match.Generation == "" || match.Generation != row.Generation {
+	if match.ProviderGeneration == "" || match.ProviderGeneration != row.ProviderGeneration {
 		return fmt.Errorf("row %d generation changed; run list again", number)
 	}
 	outcome, enterErr := enterValidatedSession(state, endpoint, report, *match)
@@ -442,13 +442,13 @@ func resolveSessionInEndpoint(state *interactiveState, loaded reportLoad, endpoi
 		return outcomeNotFound, nil
 	}
 	for _, session := range report.Sessions {
-		if session.SessionID == target {
+		if session.ClusterSessionID == target {
 			return enterValidatedSession(state, endpoint, report, session)
 		}
 	}
 	byName := make([]protocol.Session, 0, 1)
 	for _, session := range report.Sessions {
-		if session.DisplayName != "" && session.DisplayName == target {
+		if session.ProviderDisplayName != "" && session.ProviderDisplayName == target {
 			byName = append(byName, session)
 		}
 	}
@@ -464,12 +464,12 @@ func resolveSessionInEndpoint(state *interactiveState, loaded reportLoad, endpoi
 
 // enterValidatedSession changes scope only after freshness validation succeeds.
 func enterValidatedSession(state *interactiveState, endpoint protocol.Endpoint, report protocol.InventoryReport, session protocol.Session) (resolveOutcome, error) {
-	if session.Generation == "" {
+	if session.ProviderGeneration == "" {
 		// A session reported without a generation is present but its liveness was
 		// not verified, so it cannot be entered. Returning not-found here would
 		// tell the operator the session does not exist, which is false and hides
 		// the only recovery step.
-		return outcomeCancelled, fmt.Errorf("session %q is unverified on endpoint %q: the session record exists but no process holds it, so it cannot be entered; use resume to resume it", session.SessionID, endpoint.EndpointID)
+		return outcomeCancelled, fmt.Errorf("session %s is unverified on endpoint %q: the session record exists but no process holds it, so it cannot be entered; use resume to resume it", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, session.ClusterSessionID), endpoint.EndpointID)
 	}
 	if err := validateEndpointOnline(endpoint); err != nil {
 		return outcomeCancelled, err
@@ -480,7 +480,7 @@ func enterValidatedSession(state *interactiveState, endpoint protocol.Endpoint, 
 	if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
 		return outcomeCancelled, err
 	}
-	state.enterSessionDetails(endpoint, session.SessionID, session.ProviderSessionID, session.DisplayName, session.AdapterID, session.Generation)
+	state.enterSessionDetails(endpoint, session.ClusterSessionID, session.ProviderSessionID, session.ProviderDisplayName, session.AdapterID, session.ProviderGeneration)
 	return outcomeResolved, nil
 }
 
@@ -533,7 +533,7 @@ func findSessionInEndpoint(loaded reportLoad, endpointID, target string) (protoc
 		return protocol.Endpoint{}, protocol.InventoryReport{}, protocol.Session{}, fmt.Errorf("endpoint %q inventory is unavailable", endpointID)
 	}
 	for _, session := range report.Sessions {
-		if session.SessionID == target {
+		if session.ClusterSessionID == target {
 			return endpoint, report, session, nil
 		}
 	}
@@ -547,7 +547,7 @@ func findSessionInEndpoint(loaded reportLoad, endpointID, target string) (protoc
 	}
 	byName := make([]protocol.Session, 0, 1)
 	for _, session := range report.Sessions {
-		if session.DisplayName != "" && session.DisplayName == target {
+		if session.ProviderDisplayName != "" && session.ProviderDisplayName == target {
 			byName = append(byName, session)
 		}
 	}

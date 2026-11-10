@@ -72,7 +72,7 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 		reports: map[string]protocol.InventoryReport{"ep": {
 			CollectionStatus: protocol.CollectionSucceeded,
 			Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
-			Sessions:         []protocol.Session{{SessionID: "session", AdapterID: "adapter", Generation: "generation", State: "running"}},
+			Sessions:         []protocol.Session{{ClusterSessionID: "session", AdapterID: "adapter", ProviderGeneration: "generation", State: "running"}},
 		}},
 	}
 	var plain strings.Builder
@@ -241,7 +241,7 @@ func TestCommandRunnerJSONAndStatus(t *testing.T) {
 func TestCommandRunnerActionSharesPrepareSubmitWait(t *testing.T) {
 	api := &runnerStubAPI{commands: map[string]map[string]any{"cmd-1": {"status": "finished"}}}
 	runner := CommandRunner{API: api, NewID: func() string { return "fixed-id" }, Now: func() time.Time { return time.UnixMilli(100) }}
-	intent, err := runner.PrepareAction(context.Background(), ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep", ResourceID: "session", Generation: "gen", Payload: json.RawMessage(`{"text":"hi"}`), Confirmed: true})
+	intent, err := runner.PrepareAction(context.Background(), ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep", ResourceID: "session", ProviderGeneration: "gen", Payload: json.RawMessage(`{"text":"hi"}`), Confirmed: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestCommandRunnerRenderActionUsesPolicySpecificFormat(t *testing.T) {
 func TestCommandRunnerShowAndLogs(t *testing.T) {
 	api := &runnerStubAPI{
 		endpoints: []protocol.Endpoint{{EndpointID: "ep"}},
-		reports:   map[string]protocol.InventoryReport{"ep": {CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{SessionID: "session", Generation: "gen", State: "running"}}}},
+		reports:   map[string]protocol.InventoryReport{"ep": {CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{ClusterSessionID: "session", ProviderGeneration: "gen", State: "running"}}}},
 		commands:  map[string]map[string]any{"unused": {"status": "finished"}},
 	}
 	var out strings.Builder

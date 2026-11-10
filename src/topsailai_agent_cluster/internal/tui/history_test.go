@@ -106,10 +106,10 @@ func (s *historylessAPI) AdmitCommand(context.Context, protocol.ImmutableIntent)
 
 func historyLiveSession(resourceID, providerSessionID, generation string) protocol.Session {
 	return protocol.Session{
-		SessionID:         resourceID,
-		ProviderSessionID: providerSessionID,
-		Generation:        generation,
-		State:             "running",
+		ClusterSessionID:   resourceID,
+		ProviderSessionID:  providerSessionID,
+		ProviderGeneration: generation,
+		State:              "running",
 	}
 }
 
@@ -125,7 +125,7 @@ func TestJoinHistoryMarksLiveRowRoutable(t *testing.T) {
 	if !row.Joined || !row.Live {
 		t.Fatalf("row not joined live: %+v", row)
 	}
-	if row.ResourceID != "res_1" || row.Generation != "gen-1" {
+	if row.ResourceID != "res_1" || row.ProviderGeneration != "gen-1" {
 		t.Fatalf("join did not supply routing identity: %+v", row)
 	}
 	if row.No != 1 {
@@ -145,7 +145,7 @@ func TestJoinHistoryLeavesPastRowWithoutRoutingIdentity(t *testing.T) {
 	if row.Live {
 		t.Fatalf("row must not be live: %+v", row)
 	}
-	if row.ResourceID != "" || row.Generation != "" {
+	if row.ResourceID != "" || row.ProviderGeneration != "" {
 		t.Fatalf("past row must carry no routing identity: %+v", row)
 	}
 }
@@ -165,7 +165,7 @@ func TestJoinHistoryRejectsAmbiguousSameEndpointMatch(t *testing.T) {
 	if !row.Ambiguous {
 		t.Fatalf("ambiguous match must be marked ambiguous: %+v", row)
 	}
-	if row.ResourceID != "" || row.Generation != "" {
+	if row.ResourceID != "" || row.ProviderGeneration != "" {
 		t.Fatalf("ambiguous match must supply no routing identity: %+v", row)
 	}
 }
@@ -205,7 +205,7 @@ func TestJoinHistoryWithoutInventoryIsUnknownNotStopped(t *testing.T) {
 	if row.Joined || row.Live {
 		t.Fatalf("row must stay unjoined: %+v", row)
 	}
-	if row.ResourceID != "" || row.Generation != "" {
+	if row.ResourceID != "" || row.ProviderGeneration != "" {
 		t.Fatalf("unjoined row must carry no routing identity: %+v", row)
 	}
 }
@@ -505,7 +505,7 @@ func TestJoinHistoryMarksUnverifiedRowVisibleButNotEnterable(t *testing.T) {
 	if !row.Unverified {
 		t.Fatalf("row without a generation must be unverified: %+v", row)
 	}
-	if row.Generation != "" {
+	if row.ProviderGeneration != "" {
 		t.Fatalf("unverified row must carry no generation: %+v", row)
 	}
 	if got := historyLiveCell(row); got != "unverified" {

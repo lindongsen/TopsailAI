@@ -15,12 +15,12 @@ func scopeInventory(sessionID, generation string) protocol.InventoryReport {
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		Sessions: []protocol.Session{{
-			SessionID:         sessionID,
-			ProviderSessionID: "provider-" + sessionID,
-			AdapterID:         "adapter-1",
-			Generation:        generation,
-			State:             "running",
-			CollectionStatus:  protocol.CollectionSucceeded,
+			ClusterSessionID:   sessionID,
+			ProviderSessionID:  "provider-" + sessionID,
+			AdapterID:          "adapter-1",
+			ProviderGeneration: generation,
+			State:              "running",
+			CollectionStatus:   protocol.CollectionSucceeded,
 		}},
 	}
 }
@@ -43,13 +43,13 @@ func scopeStub() *interactiveStub {
 func siblingStub() *interactiveStub {
 	report := scopeInventory("res-1", "generation-1")
 	report.Sessions = append(report.Sessions, protocol.Session{
-		SessionID:         "res-1b",
-		ProviderSessionID: "provider-1b",
-		DisplayName:       "sibling work",
-		AdapterID:         "adapter-1",
-		Generation:        "generation-1b",
-		State:             "stopped",
-		CollectionStatus:  protocol.CollectionSucceeded,
+		ClusterSessionID:    "res-1b",
+		ProviderSessionID:   "provider-1b",
+		ProviderDisplayName: "sibling work",
+		AdapterID:           "adapter-1",
+		ProviderGeneration:  "generation-1b",
+		State:               "stopped",
+		CollectionStatus:    protocol.CollectionSucceeded,
 	})
 	return &interactiveStub{
 		endpoints: []protocol.Endpoint{
@@ -97,12 +97,12 @@ func TestSendIsUnavailableOutsideSessionScope(t *testing.T) {
 		{
 			name:  "workspace",
 			input: "send {\"text\":\"hi\"}\nexit\n",
-			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, help, quit, exit\n",
+			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, model, help, quit, exit\n",
 		},
 		{
 			name:  "endpoint",
 			input: "cd host-one/endpoint-1\nsend {\"text\":\"hi\"}\nexit\n",
-			want:  "error: command \"send\" is unavailable in endpoint scope; available commands: list, cd, show, info, start, resume, stop, drive, logs, status, refresh, watch, history, messages, help, quit, exit\n",
+			want:  "error: command \"send\" is unavailable in endpoint scope; available commands: list, cd, show, info, start, resume, stop, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit\n",
 		},
 	}
 	for _, testCase := range cases {
@@ -133,7 +133,7 @@ func TestSendWorksInSessionScope(t *testing.T) {
 
 func TestLogsIsUnavailableInWorkspaceScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "logs\nexit\n", ColorPolicy{})
-	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, help, quit, exit\n"
+	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, model, help, quit, exit\n"
 	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
@@ -218,7 +218,7 @@ func TestShowDefaultsToCurrentSession(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	want := "session: res-1 adapter=adapter-1 generation=generation-1 state=running"
+	want := "session: res-1 adapter=adapter-1 provider_generation=generation-1 state=running"
 	if !strings.Contains(output, want) {
 		t.Fatalf("missing session detail %q in %q", want, output)
 	}
@@ -343,9 +343,9 @@ func TestCompletableCommandsAddOnlyMultiCharacterAliases(t *testing.T) {
 		kind ScopeKind
 		want string
 	}{
-		{ScopeWorkspace, "list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, help, quit, exit"},
-		{ScopeEndpoint, "list, cd, show, info, start, resume, stop, drive, logs, status, refresh, watch, history, messages, help, quit, exit"},
-		{ScopeSession, "list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, help, quit, exit, control"},
+		{ScopeWorkspace, "list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, model, help, quit, exit"},
+		{ScopeEndpoint, "list, cd, show, info, start, resume, stop, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit"},
+		{ScopeSession, "list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, model, help, quit, exit, control"},
 	} {
 		t.Run(testCase.kind.String(), func(t *testing.T) {
 			if got := strings.Join(completableCommands(testCase.kind), ", "); got != testCase.want {
@@ -369,9 +369,9 @@ func TestAvailableCommandsUseStableOrder(t *testing.T) {
 		kind ScopeKind
 		want string
 	}{
-		{kind: ScopeWorkspace, want: "list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, help, quit, exit"},
-		{kind: ScopeEndpoint, want: "list, cd, show, info, start, resume, stop, drive, logs, status, refresh, watch, history, messages, help, quit, exit"},
-		{kind: ScopeSession, want: "list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, help, quit, exit"},
+		{kind: ScopeWorkspace, want: "list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, model, help, quit, exit"},
+		{kind: ScopeEndpoint, want: "list, cd, show, info, start, resume, stop, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit"},
+		{kind: ScopeSession, want: "list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, model, help, quit, exit"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.kind.String(), func(t *testing.T) {

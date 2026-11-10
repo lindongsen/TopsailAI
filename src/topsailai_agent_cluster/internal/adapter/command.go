@@ -29,9 +29,28 @@ type commandAdapter struct {
 	config CommandConfig
 }
 
+// commandResponse is the provider's own discovery document. Its tags are the
+// provider's field names, not the cluster's, because this struct decodes what a
+// provider command printed. Renaming a tag here silently decodes every session to
+// an empty value, and validation then rejects the whole report, so these names
+// must stay exactly as the provider writes them.
 type commandResponse struct {
-	Sessions []protocol.Session `json:"sessions"`
-	Complete bool               `json:"complete"`
+	Sessions []commandSession `json:"sessions"`
+	Complete bool             `json:"complete"`
+}
+
+// commandSession is one provider session row in the provider's own vocabulary.
+// It is mapped into protocol.Session by Discover, which is the only place the
+// provider names and the cluster names meet.
+type commandSession struct {
+	SessionID        string                 `json:"session_id"`
+	Generation       string                 `json:"generation"`
+	State            string                 `json:"state"`
+	AgentID          string                 `json:"agent_id"`
+	DisplayName      string                 `json:"display_name"`
+	ProjectWorkspace string                 `json:"project_workspace"`
+	PID              int64                  `json:"pid"`
+	Drive            *protocol.DriveSummary `json:"drive"`
 }
 
 // NewCommandAdapter creates a shell-free adapter backed by an absolute command path.
@@ -69,26 +88,35 @@ func (a *commandAdapter) Discover(parent context.Context, _ DiscoverRequest) (Di
 	if err := json.Unmarshal(output, &response); err != nil {
 		return DiscoverResult{}, fmt.Errorf("decode adapter %q response: %w", a.config.AdapterID, err)
 	}
-	if a.config.ResourceMapper != nil {
-		for index := range response.Sessions {
-			session := &response.Sessions[index]
-			// Keep the provider-native identifier before replacing it with the
-			// opaque cluster resource ID used for routing.
-			providerSessionID := session.SessionID
-			mapping, err := a.config.ResourceMapper.GetOrCreateResourceID(ctx, a.config.AdapterID, session.SessionID, time.Now().UnixMilli())
+	sessions := make([]protocol.Session, 0, len(response.Sessions))
+	for _, row := range response.Sessions {
+		// The provider row carries the provider's own key. Mint the opaque cluster
+		// resource ID from it, and keep the provider key as evidence. Both values
+		// are read from the provider row before either is stored, so the provider
+		// key can never be overwritten by the cluster ID.
+		providerSessionID := row.SessionID
+		clusterSessionID := providerSessionID
+		if a.config.ResourceMapper != nil {
+			mapping, err := a.config.ResourceMapper.GetOrCreateResourceID(ctx, a.config.AdapterID, providerSessionID, time.Now().UnixMilli())
 			if err != nil {
 				return DiscoverResult{}, fmt.Errorf("map adapter %q resource: %w", a.config.AdapterID, err)
 			}
-			session.SessionID = mapping.ResourceID
-			if session.ProviderSessionID == "" {
-				session.ProviderSessionID = providerSessionID
-			}
-			if session.AdapterID == "" {
-				session.AdapterID = a.config.AdapterID
-			}
+			clusterSessionID = mapping.ResourceID
 		}
+		sessions = append(sessions, protocol.Session{
+			ClusterSessionID:         clusterSessionID,
+			ProviderSessionID:        providerSessionID,
+			ProviderPID:              row.PID,
+			ProviderDisplayName:      row.DisplayName,
+			ProviderProjectWorkspace: row.ProjectWorkspace,
+			ProviderAgentID:          row.AgentID,
+			ProviderGeneration:       row.Generation,
+			AdapterID:                a.config.AdapterID,
+			State:                    row.State,
+			Drive:                    row.Drive,
+		})
 	}
-	return DiscoverResult{Sessions: response.Sessions, Complete: response.Complete, CollectionStatus: protocol.CollectionSucceeded}, nil
+	return DiscoverResult{Sessions: sessions, Complete: response.Complete, CollectionStatus: protocol.CollectionSucceeded}, nil
 }
 
 // Inspect verifies that a resource exists and returns its current state.
@@ -113,10 +141,10 @@ func (a *commandAdapter) Inspect(ctx context.Context, request InspectRequest) (I
 		return InspectResult{}, err
 	}
 	for _, session := range result.Sessions {
-		if session.SessionID != request.Target.ResourceID {
+		if session.ClusterSessionID != request.Target.ResourceID {
 			continue
 		}
-		return InspectResult{Found: true, Live: session.Generation != "", Generation: session.Generation, State: session.State}, nil
+		return InspectResult{Found: true, Live: session.ProviderGeneration != "", ProviderGeneration: session.ProviderGeneration, State: session.State}, nil
 	}
 	// A resource that is absent from a successful discovery is a legitimate
 	// absence, not an observation failure. Reporting it as an error makes the
@@ -140,7 +168,7 @@ func (a *commandAdapter) Execute(parent context.Context, request ExecuteRequest)
 			}
 			providerKey = mapping.ProviderKey
 		}
-		args = append(args, "--target-resource-id", providerKey, "--target-generation", request.Intent.Target.Generation)
+		args = append(args, "--target-resource-id", providerKey, "--target-generation", request.Intent.Target.ProviderGeneration)
 	}
 	args = append(args, "--payload", string(request.Intent.Payload))
 	output, err := exec.CommandContext(ctx, a.config.Command, args...).Output()

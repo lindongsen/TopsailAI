@@ -60,7 +60,7 @@ func matrixInventory(generation string) protocol.InventoryReport {
 	return protocol.InventoryReport{
 		ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded,
 		Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
-		Sessions: []protocol.Session{{SessionID: "session-1", AdapterID: "adapter-1", Generation: generation, State: "running", CollectionStatus: protocol.CollectionSucceeded}},
+		Sessions: []protocol.Session{{ClusterSessionID: "session-1", AdapterID: "adapter-1", ProviderGeneration: generation, State: "running", CollectionStatus: protocol.CollectionSucceeded}},
 	}
 }
 func matrixCapability(revision string) protocol.CapabilityDescriptor {
@@ -86,7 +86,7 @@ func TestInteractiveSendAdmissionCallMatrix(t *testing.T) {
 		{name: "success", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nsend {\"text\":\"hi\"}\nexit\n", capability: 2, admit: 1, wait: 1},
 		{name: "declined", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nsend\nhi\nEOF\nn\nexit\n", capability: 1, wantDiagnostic: "send cancelled"},
 		{name: "invalidated", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen"), matrixInventory("gen"), matrixInventory("new")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nrefresh\nsend {\"text\":\"hi\"}\nexit\n", capability: 0, wantDiagnostic: "error: selected session generation changed; use the session again\nerror: selected session invalidated; use the session again"},
-		{name: "freshness", api: &matrixAPI{invs: []protocol.InventoryReport{func() protocol.InventoryReport { r := matrixInventory("gen"); r.Sessions[0].Stale = true; return r }()}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nexit\n", wantDiagnostic: "error: session \"session-1\" is not fresh: stale=true unknown=false collection_status=succeeded"},
+		{name: "freshness", api: &matrixAPI{invs: []protocol.InventoryReport{func() protocol.InventoryReport { r := matrixInventory("gen"); r.Sessions[0].Stale = true; return r }()}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nexit\n", wantDiagnostic: "error: session session-1 is not fresh: stale=true unknown=false collection_status=succeeded"},
 		{name: "invalid payload", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nsend {\nexit\n", wantDiagnostic: "error: payload must be a JSON object or plain text"},
 		{name: "generation race", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen"), matrixInventory("gen"), matrixInventory("new")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nsend {\"text\":\"hi\"}\nexit\n", capability: 1, wantDiagnostic: "error: selected session generation changed; use the session again"},
 		{name: "capability race", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev-1"), matrixCapability("rev-2")}}, input: "cd ep/session-1\nsend\nhi\nEOF\ny\nexit\n", capability: 2, wantDiagnostic: "error: capability changed after confirmation; send cancelled"},

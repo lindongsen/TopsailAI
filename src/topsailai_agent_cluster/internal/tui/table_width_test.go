@@ -79,8 +79,8 @@ func narrowProbeWidth() int {
 func TestNarrowTableKeepsStylingAndFullSessionName(t *testing.T) {
 	name := "PS11-" + strings.Repeat("segment-", 899) + "tail"
 	rows := []SessionRow{
-		{No: 701, EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov", DisplayName: name, State: "running", CollectionStatus: "succeeded"},
-		{No: 702, EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov2", DisplayName: "other", State: "failed", CollectionStatus: "failed"},
+		{No: 701, EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov", ProviderDisplayName: name, State: "running", CollectionStatus: "succeeded"},
+		{No: 702, EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov2", ProviderDisplayName: "other", State: "failed", CollectionStatus: "failed"},
 	}
 	var out strings.Builder
 	if err := RenderTable(&out, io.Discard, rows, nil, TableOptions{Width: narrowProbeWidth(), Color: ColorPolicy{Enabled: true}}); err != nil {
@@ -120,7 +120,7 @@ func TestNarrowTableKeepsStylingAndFullSessionName(t *testing.T) {
 
 // TestNarrowTableWithoutColorStaysPlain keeps redirected narrow output free of escapes.
 func TestNarrowTableWithoutColorStaysPlain(t *testing.T) {
-	rows := []SessionRow{{No: 703, EndpointID: "ep", AdapterID: "ad", DisplayName: "name", State: "running", CollectionStatus: "succeeded"}}
+	rows := []SessionRow{{No: 703, EndpointID: "ep", AdapterID: "ad", ProviderDisplayName: "name", State: "running", CollectionStatus: "succeeded"}}
 	var out strings.Builder
 	if err := RenderTable(&out, io.Discard, rows, nil, TableOptions{Width: narrowProbeWidth()}); err != nil {
 		t.Fatal(err)

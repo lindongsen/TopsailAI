@@ -140,7 +140,7 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 		// Any decoded key ends the loop before it is applied, so the operator's
 		// next action always runs against a table that has stopped moving.
 		if watch != nil {
-			label := watchStopLabel(watch)
+			label := watchStopLabel(watch, OutputColorPolicy(t.output))
 			watch.Stop()
 			watch = nil
 			if _, err = io.WriteString(t.output, label+"\r\n"); err != nil {
@@ -233,10 +233,13 @@ func (t *TerminalEditor) inputRows() int {
 
 // watchStopLabel names the loop in the stop message. A session that does not
 // name itself keeps the auto-refresh wording, so the existing behaviour stays
-// byte-identical for every caller that predates follow.
-func watchStopLabel(watch WatchSession) string {
+// byte-identical for every caller that predates follow. A follow session gets
+// the shared "log.follow>" prefix, because the operator asked for a way to tell
+// these lines apart from agent output; the policy comes from the editor's own
+// output boundary, so --no-color and a redirected stream stay plain.
+func watchStopLabel(watch WatchSession, policy ColorPolicy) string {
 	if labelled, ok := watch.(followStopLabel); ok {
-		return labelled.StopLabel()
+		return renderFollowStatus(labelled.StopLabel(), ansiDim, policy, false)
 	}
 	return "auto-refresh stopped"
 }
@@ -299,11 +302,13 @@ func (t *TerminalEditor) redraw(prompt string, questionRow bool) error {
 	if questionRow {
 		budgetWidth = max(1, width-1)
 	}
-	// A question row must keep its trailing answer hint, because the hint is the
-	// only cue telling the operator what to type. A named prompt has no hint, so
-	// the plain clip is used there. Styled prompts are measured and clipped by
-	// visible columns, so escape bytes never shift the cursor.
-	if questionRow {
+	// A prompt that carries an answer hint must keep it, because the hint is the
+	// only cue telling the operator what to type. That covers a question row and
+	// also a named prompt whose name states the accepted answers, such as
+	// "send.confirm[y/N]> ". A named prompt without a hint uses the plain clip.
+	// Styled prompts are measured and clipped by visible columns, so escape bytes
+	// never shift the cursor.
+	if questionRow || answerHintIndex(prompt) >= 0 {
 		prompt = clipStyledCellKeepHint(prompt, budgetWidth)
 	} else {
 		prompt = clipStyledCell(prompt, budgetWidth)

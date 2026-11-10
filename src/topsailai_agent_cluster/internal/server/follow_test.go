@@ -93,7 +93,7 @@ func TestOutputFollowStreamsChunksThenEnd(t *testing.T) {
 		{End: &protocol.OutputEnd{ObservedAtMS: 30}},
 	}}
 	h := followHandler(follower)
-	rec := callFollow(t, h, http.MethodGet, "/api/v1/output/follow?endpoint_id=e1&resource_id=res_1&generation=g1")
+	rec := callFollow(t, h, http.MethodGet, "/api/v1/output/follow?endpoint_id=e1&resource_id=res_1&provider_generation=g1")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -125,7 +125,7 @@ func TestOutputFollowStreamsChunksThenEnd(t *testing.T) {
 	if records[2]["observed_at_ms"] != float64(30) {
 		t.Fatalf("end observation %v", records[2]["observed_at_ms"])
 	}
-	if follower.gotEP != "e1" || follower.gotReq.ResourceID != "res_1" || follower.gotReq.Generation != "g1" {
+	if follower.gotEP != "e1" || follower.gotReq.ResourceID != "res_1" || follower.gotReq.ProviderGeneration != "g1" {
 		t.Fatalf("forwarded request %+v for %q", follower.gotReq, follower.gotEP)
 	}
 }

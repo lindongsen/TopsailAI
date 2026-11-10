@@ -15,7 +15,7 @@ func modelSelectIntent(sessionID, profileID string) protocol.ImmutableIntent {
 	return protocol.ImmutableIntent{
 		CommandID: "cmd-1",
 		Operation: protocol.OperationAgentModelSelect,
-		Target:    &protocol.CommandTarget{ResourceID: sessionID, Generation: "gen-1"},
+		Target:    &protocol.CommandTarget{ResourceID: sessionID, ProviderGeneration: "gen-1"},
 		Payload:   []byte(`{"model_profile_id":"` + profileID + `"}`),
 	}
 }

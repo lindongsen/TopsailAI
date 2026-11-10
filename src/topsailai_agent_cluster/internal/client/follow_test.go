@@ -46,7 +46,7 @@ func TestFollowOutputDecodesRecordsUntilEnd(t *testing.T) {
 	if !chunks[2].End || chunks[2].ErrorCode != "" || chunks[2].ObservedAtMS != 30 {
 		t.Fatalf("end chunk %+v", chunks[2])
 	}
-	for _, want := range []string{"endpoint_id=e1", "resource_id=res_1", "generation=g1", "max_bytes=4096", "max_lines=250"} {
+	for _, want := range []string{"endpoint_id=e1", "resource_id=res_1", "provider_generation=g1", "max_bytes=4096", "max_lines=250"} {
 		if !strings.Contains(query, want) {
 			t.Fatalf("query %q missing %q", query, want)
 		}

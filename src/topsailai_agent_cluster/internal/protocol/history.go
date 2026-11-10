@@ -26,10 +26,10 @@ type HistoryRow struct {
 	// a provider key or an adapter, so the Server still sees only an opaque ID.
 	// It is never a routing identity on its own: routing needs a generation too.
 	ResourceID string `json:"resource_id,omitempty"`
-	// DisplayName is the provider session name, descriptive only.
-	DisplayName string `json:"display_name,omitempty"`
-	// ProjectWorkspace is the workspace the session worked on, descriptive only.
-	ProjectWorkspace string `json:"project_workspace,omitempty"`
+	// ProviderDisplayName is the provider session name, descriptive only.
+	ProviderDisplayName string `json:"provider_display_name,omitempty"`
+	// ProviderProjectWorkspace is the workspace the session worked on, descriptive only.
+	ProviderProjectWorkspace string `json:"provider_project_workspace,omitempty"`
 	// Task is the provider's recorded task text, descriptive only.
 	Task string `json:"task,omitempty"`
 	// ProviderStatus is the provider's own status word, kept verbatim as evidence.

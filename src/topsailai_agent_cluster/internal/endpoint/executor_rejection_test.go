@@ -79,7 +79,7 @@ func TestExecuteRecordsTerminalRejectionForUnmappedResource(t *testing.T) {
 		EndpointID:        "e1",
 		Operation:         protocol.OperationMessageSend,
 		OperationVersion:  "v1",
-		Target:            &protocol.CommandTarget{Kind: "session", ResourceID: "res_absent", Generation: "g1"},
+		Target:            &protocol.CommandTarget{Kind: "session", ResourceID: "res_absent", ProviderGeneration: "g1"},
 		ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli(),
 	}
 	receipt, err := executor.Execute(context.Background(), intent, "hash")
@@ -106,7 +106,7 @@ func TestExecuteRecordsTerminalRejectionForUnconfiguredAdapter(t *testing.T) {
 		EndpointID:        "e1",
 		Operation:         protocol.OperationMessageSend,
 		OperationVersion:  "v1",
-		Target:            &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: "g1"},
+		Target:            &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, ProviderGeneration: "g1"},
 		ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli(),
 	}
 	receipt, err := executor.Execute(context.Background(), intent, "hash")
@@ -140,7 +140,7 @@ func TestServiceDoesNotPublishReceiptWithoutCommandID(t *testing.T) {
 		PayloadSchemaVersion: "v1",
 		CapabilityRevision:   "c1",
 		Payload:              []byte(`{}`),
-		Target:               &protocol.CommandTarget{ResourceID: "r", Generation: "g"},
+		Target:               &protocol.CommandTarget{ResourceID: "r", ProviderGeneration: "g"},
 	}
 	service.executeFrame(context.Background(), channel.Frame{Type: channel.FrameCommand, FrameID: "cmd", RequestID: "req", Intent: &intent})
 	if count := transport.count(channel.FrameReceipt); count != 0 {

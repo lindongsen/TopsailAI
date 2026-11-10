@@ -17,7 +17,7 @@ func TestCommandAdapterInspectReportsAbsenceWithoutError(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "discover")
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Inspect(context.Background(), InspectRequest{Target: protocol.CommandTarget{ResourceID: "res-absent", Generation: "gen-1"}})
+	result, err := a.Inspect(context.Background(), InspectRequest{Target: protocol.CommandTarget{ResourceID: "res-absent", ProviderGeneration: "gen-1"}})
 	if err != nil {
 		t.Fatalf("absence must not be an error: %v", err)
 	}

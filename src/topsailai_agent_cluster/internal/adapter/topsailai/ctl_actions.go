@@ -37,7 +37,7 @@ func controlActionCapabilities(set *ControlActionSet) []protocol.Capability {
 			Version:            "v1",
 			TargetKinds:        []string{"session"},
 			PayloadSchema:      action.PayloadSchema,
-			SafetyClass:        "mutating",
+			SafetyClass:        protocol.SafetyClassMutating,
 			RequiredPermission: action.Permission,
 		})
 	}

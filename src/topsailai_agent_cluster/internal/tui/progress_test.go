@@ -410,22 +410,23 @@ func TestRefreshWithNilProgressKeepsBehaviour(t *testing.T) {
 // opaque identifier that the interactive table never showed.
 func TestProgressHeaderNamesTheSession(t *testing.T) {
 	out := newProgressStub()
-	request := ActionRequest{Operation: protocol.OperationAgentDriveStart, EndpointID: "ep-1", ResourceID: "s-1", DisplayName: "Daily work"}
+	request := ActionRequest{Operation: protocol.OperationAgentDriveStart, EndpointID: "ep-1", ResourceID: "s-1", ProviderDisplayName: "Daily work"}
 	progress := NewActionProgress(out, request)
 	pastThreshold(progress)
 	progress.Stage("server received")
 	progress.Tick()
-	want := `starting drive controller for session "Daily work" s-1 (ep-1)...` + "\n" +
+	want := `starting drive controller for session (Daily work) (ep-1)...` + "\n" +
 		progressStageIndent + "server received\n"
 	if got := out.String(); got != want {
 		t.Fatalf("unexpected progress block:\n got %q\nwant %q", got, want)
 	}
 }
 
-// TestProgressHeaderKeepsTheOldWordingWithoutAName proves an unnamed session keeps
-// the previous header exactly, so the descriptive name never becomes a required
-// field of the progress line.
-func TestProgressHeaderKeepsTheOldWordingWithoutAName(t *testing.T) {
+// TestProgressHeaderNamesTheProviderIDWithoutAName proves an unnamed session still
+// names the provider session identifier and omits the empty name rather than
+// printing "()", so the descriptive name never becomes a required field of the
+// progress line.
+func TestProgressHeaderNamesTheProviderIDWithoutAName(t *testing.T) {
 	out := newProgressStub()
 	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep-1", ResourceID: "s-1"}
 	progress := NewActionProgress(out, request)
@@ -443,7 +444,7 @@ func TestProgressHeaderKeepsTheOldWordingWithoutAName(t *testing.T) {
 // control sequences through a session name.
 func TestProgressHeaderSanitizesTheReportedName(t *testing.T) {
 	out := newProgressStub()
-	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep-1", ResourceID: "s-1", DisplayName: "evil\x1b[31mname"}
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep-1", ResourceID: "s-1", ProviderDisplayName: "evil\x1b[31mname"}
 	progress := NewActionProgress(out, request)
 	pastThreshold(progress)
 	progress.Stage("server received")
@@ -452,7 +453,7 @@ func TestProgressHeaderSanitizesTheReportedName(t *testing.T) {
 	if strings.Contains(got, "\x1b[31m") {
 		t.Fatalf("reported name reached the terminal unsanitized: %q", got)
 	}
-	if !strings.Contains(got, `"evilname"`) {
+	if !strings.Contains(got, `(evilname)`) {
 		t.Fatalf("sanitized name is missing from the header: %q", got)
 	}
 }

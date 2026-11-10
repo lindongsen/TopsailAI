@@ -146,8 +146,8 @@ func unitCAPIAdd(before, after unitCAPICounts) unitCAPICounts {
 func seedUnitCState() interactiveState {
 	last := int64(123)
 	return interactiveState{
-		interactiveSelection: interactiveSelection{EndpointID: "endpoint-1", SessionID: "session-1", Generation: "generation-1", Rows: map[int]SessionRow{1: {No: 1, EndpointID: "endpoint-1", SessionID: "session-1", Generation: "generation-1", LastSuccessAtMS: &last}}},
-		Scope:                ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1", Hostname: "host-1", Generation: "generation-1"},
+		interactiveSelection: interactiveSelection{EndpointID: "endpoint-1", ClusterSessionID: "session-1", ProviderGeneration: "generation-1", Rows: map[int]SessionRow{1: {No: 1, EndpointID: "endpoint-1", ClusterSessionID: "session-1", ProviderGeneration: "generation-1", LastSuccessAtMS: &last}}},
+		Scope:                ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1", Hostname: "host-1", ProviderGeneration: "generation-1"},
 		commandID:            "existing-command",
 	}
 }

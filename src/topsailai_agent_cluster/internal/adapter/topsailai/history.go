@@ -81,15 +81,15 @@ func (a *Adapter) History(ctx context.Context, query protocol.HistoryQuery) (pro
 			return protocol.HistoryResult{}, fmt.Errorf("map history resource: %w", err)
 		}
 		row := protocol.HistoryRow{
-			ProviderSessionID: entry.SessionID,
-			ResourceID:        resourceID,
-			DisplayName:       entry.SessionName,
-			ProjectWorkspace:  entry.ProjectWorkspace,
-			Task:              boundedHistoryTask(entry.Task),
-			ProviderStatus:    entry.Status,
-			CreatedAtMS:       historyTimeMS(entry.CreateTimeRaw),
-			ModifiedAtMS:      historyTimeMS(entry.ModifiedTimeRaw),
-			ProviderNo:        entry.No,
+			ProviderSessionID:        entry.SessionID,
+			ResourceID:               resourceID,
+			ProviderDisplayName:      entry.SessionName,
+			ProviderProjectWorkspace: entry.ProjectWorkspace,
+			Task:                     boundedHistoryTask(entry.Task),
+			ProviderStatus:           entry.Status,
+			CreatedAtMS:              historyTimeMS(entry.CreateTimeRaw),
+			ModifiedAtMS:             historyTimeMS(entry.ModifiedTimeRaw),
+			ProviderNo:               entry.No,
 		}
 		row.Resumable, row.ResumeBlockedReason = historyResumability(entry.Status)
 		result.Rows = append(result.Rows, row)

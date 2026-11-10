@@ -89,10 +89,10 @@ func TestRefreshForcesEveryEndpointInWorkspaceScope(t *testing.T) {
 func TestRefreshRendersTheFreshlyCollectedDocument(t *testing.T) {
 	stub := refreshScopeStub()
 	previous := stub.reports["endpoint-1"]
-	previous.Sessions[0].DisplayName = "previous work"
+	previous.Sessions[0].ProviderDisplayName = "previous work"
 	stub.reports["endpoint-1"] = previous
 	fresh := scopeInventory("fresh-session", "fresh-generation")
-	fresh.Sessions[0].DisplayName = "fresh work"
+	fresh.Sessions[0].ProviderDisplayName = "fresh work"
 	stub.fresh["endpoint-1"] = fresh
 	output, diagnostics := runScope(t, stub, "refresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
@@ -157,7 +157,7 @@ func TestRefreshWorkspaceScopeDegrades(t *testing.T) {
 func TestRefreshSessionScopeForcesThenRenders(t *testing.T) {
 	stub := refreshScopeStub()
 	report := stub.reports["endpoint-1"]
-	report.Sessions[0].DisplayName = "reloaded work"
+	report.Sessions[0].ProviderDisplayName = "reloaded work"
 	stub.reports["endpoint-1"] = report
 	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {

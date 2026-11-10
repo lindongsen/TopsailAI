@@ -17,20 +17,20 @@ func providerIDStub() *interactiveStub {
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		Sessions: []protocol.Session{
 			{
-				SessionID:         "res-1",
-				ProviderSessionID: "20261027152208",
-				AdapterID:         "adapter-1",
-				Generation:        "generation-1",
-				State:             "running",
-				CollectionStatus:  protocol.CollectionSucceeded,
+				ClusterSessionID:   "res-1",
+				ProviderSessionID:  "20261027152208",
+				AdapterID:          "adapter-1",
+				ProviderGeneration: "generation-1",
+				State:              "running",
+				CollectionStatus:   protocol.CollectionSucceeded,
 			},
 			{
-				SessionID:         "res-2",
-				ProviderSessionID: "20261027152209",
-				AdapterID:         "adapter-1",
-				Generation:        "generation-2",
-				State:             "running",
-				CollectionStatus:  protocol.CollectionSucceeded,
+				ClusterSessionID:   "res-2",
+				ProviderSessionID:  "20261027152209",
+				AdapterID:          "adapter-1",
+				ProviderGeneration: "generation-2",
+				State:              "running",
+				CollectionStatus:   protocol.CollectionSucceeded,
 			},
 		},
 	}
@@ -97,8 +97,8 @@ func TestRowNumberWinsOverAProviderSessionID(t *testing.T) {
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		Sessions: []protocol.Session{
-			{SessionID: "res-1", ProviderSessionID: "1", AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded},
-			{SessionID: "res-2", ProviderSessionID: "2", AdapterID: "adapter-1", Generation: "generation-2", State: "running", CollectionStatus: protocol.CollectionSucceeded},
+			{ClusterSessionID: "res-1", ProviderSessionID: "1", AdapterID: "adapter-1", ProviderGeneration: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded},
+			{ClusterSessionID: "res-2", ProviderSessionID: "2", AdapterID: "adapter-1", ProviderGeneration: "generation-2", State: "running", CollectionStatus: protocol.CollectionSucceeded},
 		},
 	}
 	stub := &interactiveStub{
@@ -123,7 +123,7 @@ func TestNumericTokenBeyondTheRowsFallsBackToTheProviderSessionID(t *testing.T) 
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		Sessions: []protocol.Session{
-			{SessionID: "res-1", ProviderSessionID: "7", AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded},
+			{ClusterSessionID: "res-1", ProviderSessionID: "7", AdapterID: "adapter-1", ProviderGeneration: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded},
 		},
 	}
 	stub := &interactiveStub{
@@ -151,10 +151,10 @@ func TestUnknownNumericTokenKeepsTheRowRangeError(t *testing.T) {
 func TestFindSessionAcceptsTheProviderSessionID(t *testing.T) {
 	endpoints := []protocol.Endpoint{{EndpointID: "e1"}}
 	reports := map[string]protocol.InventoryReport{"e1": {Sessions: []protocol.Session{
-		{SessionID: "res-1", ProviderSessionID: "20261027152208"},
+		{ClusterSessionID: "res-1", ProviderSessionID: "20261027152208"},
 	}}}
 	_, _, session, err := FindSession("20261027152208", endpoints, reports)
-	if err != nil || session == nil || session.SessionID != "res-1" {
+	if err != nil || session == nil || session.ClusterSessionID != "res-1" {
 		t.Fatalf("session=%#v err=%v", session, err)
 	}
 }
@@ -164,11 +164,11 @@ func TestFindSessionAcceptsTheProviderSessionID(t *testing.T) {
 func TestFindSessionPrefersTheResourceID(t *testing.T) {
 	endpoints := []protocol.Endpoint{{EndpointID: "e1"}}
 	reports := map[string]protocol.InventoryReport{"e1": {Sessions: []protocol.Session{
-		{SessionID: "res-1", ProviderSessionID: "res-2"},
-		{SessionID: "res-2", ProviderSessionID: "provider-2"},
+		{ClusterSessionID: "res-1", ProviderSessionID: "res-2"},
+		{ClusterSessionID: "res-2", ProviderSessionID: "provider-2"},
 	}}}
 	_, _, session, err := FindSession("res-2", endpoints, reports)
-	if err != nil || session == nil || session.SessionID != "res-2" {
+	if err != nil || session == nil || session.ClusterSessionID != "res-2" {
 		t.Fatalf("session=%#v err=%v", session, err)
 	}
 }
@@ -180,11 +180,11 @@ func TestFindSessionInEndpointAcceptsTheProviderSessionID(t *testing.T) {
 		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}},
 		reports: map[string]protocol.InventoryReport{"endpoint-1": {
 			ReportComplete: true,
-			Sessions:       []protocol.Session{{SessionID: "res-1", ProviderSessionID: "20261027152208"}},
+			Sessions:       []protocol.Session{{ClusterSessionID: "res-1", ProviderSessionID: "20261027152208"}},
 		}},
 	}
 	_, _, session, err := findSessionInEndpoint(loaded, "endpoint-1", "20261027152208")
-	if err != nil || session.SessionID != "res-1" {
+	if err != nil || session.ClusterSessionID != "res-1" {
 		t.Fatalf("session=%#v err=%v", session, err)
 	}
 }
@@ -192,12 +192,12 @@ func TestFindSessionInEndpointAcceptsTheProviderSessionID(t *testing.T) {
 // TestResolveSessionTokenLeavesNonNumericTokensToTheIdentifierPath proves the
 // resolver never claims a token it cannot map from the rendered list.
 func TestResolveSessionTokenLeavesNonNumericTokensToTheIdentifierPath(t *testing.T) {
-	state := rowSelectionState(SessionRow{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", ProviderSessionID: "20261027152208", Generation: "generation-1"})
+	state := rowSelectionState(SessionRow{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderSessionID: "20261027152208", ProviderGeneration: "generation-1"})
 	if _, resolved, err := resolveSessionToken(state, "res-1"); err != nil || resolved {
 		t.Fatalf("resolved=%v err=%v", resolved, err)
 	}
 	row, resolved, err := resolveSessionToken(state, "20261027152208")
-	if err != nil || !resolved || row.SessionID != "res-1" {
+	if err != nil || !resolved || row.ClusterSessionID != "res-1" {
 		t.Fatalf("row=%+v resolved=%v err=%v", row, resolved, err)
 	}
 }
@@ -205,7 +205,7 @@ func TestResolveSessionTokenLeavesNonNumericTokensToTheIdentifierPath(t *testing
 // TestResolveSessionTokenInEndpointRejectsAForeignProviderID proves a provider
 // identifier rendered for another endpoint is never silently retargeted.
 func TestResolveSessionTokenInEndpointRejectsAForeignProviderID(t *testing.T) {
-	state := rowSelectionState(SessionRow{No: 1, EndpointID: "endpoint-2", SessionID: "res-2", ProviderSessionID: "20261027152208", Generation: "generation-2"})
+	state := rowSelectionState(SessionRow{No: 1, EndpointID: "endpoint-2", ClusterSessionID: "res-2", ProviderSessionID: "20261027152208", ProviderGeneration: "generation-2"})
 	_, _, err := resolveSessionTokenInEndpoint(state, "20261027152208", "endpoint-1")
 	want := `row 1 belongs to endpoint "endpoint-2", not the current endpoint "endpoint-1"; run list in that endpoint first`
 	if err == nil || err.Error() != want {

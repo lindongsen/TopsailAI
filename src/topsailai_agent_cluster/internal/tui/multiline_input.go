@@ -244,6 +244,28 @@ func writeMultiLineEcho(out io.Writer, header, text string, policy ColorPolicy) 
 	return nil
 }
 
+// writeSendConfirmationBody prints the assembled bare-send block verbatim so the
+// operator can verify exactly what the confirmation is about to submit. It is the
+// body of the confirmation, not a preview: the block keeps its own line breaks,
+// indentation and spacing, because a flattened preview would hide the very thing
+// the question protects. Every line is sanitized first, because the block is
+// operator-supplied text: terminal escape sequences are stripped and control
+// characters become a replacement rune. The body carries ansiMagenta, the
+// established colour of operator-supplied payload text, so a message can never be
+// read as the application's own prompt. It is written through the trusted writer,
+// because the safe writer strips the styling.
+func writeSendConfirmationBody(out io.Writer, text string, policy ColorPolicy) error {
+	for _, line := range strings.Split(text, "\n") {
+		if err := writeStyled(out, ansiMagenta, sanitizeTerminal([]byte(line)), policy); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, "\n"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WriteTaskEcho prints one accepted multi-line task verbatim with colour, so a
 // caller outside this package can show exactly what will be sent.
 func WriteTaskEcho(out io.Writer, text string, policy ColorPolicy) error {

@@ -9,6 +9,8 @@ Email: lin_dongsen@126.com
 Created: 2025-10-29
 """
 
+from datetime import datetime
+
 from topsailai.context.chat_history_manager.__base import (
     ChatHistoryMessageData,
 )
@@ -164,6 +166,11 @@ class SessionStorageBase(object):
         offset: int = 0,
         limit: int = None,
         category: str = None,
+        included_categories: set[str] = None,
+        excluded_categories: set[str] = None,
+        has_project: bool = False,
+        since: datetime = None,
+        until: datetime = None,
     ) -> list[SessionData]:
         """
         Retrieve stored sessions, optionally filtered, sorted, and paginated.
@@ -180,6 +187,24 @@ class SessionStorageBase(object):
             offset (int, optional): Number of sessions to skip. Defaults to ``0``.
             limit (int, optional): Maximum number of sessions to return.
                 If ``None``, all matching sessions are returned.
+            category (str, optional): Exact category to include. ``None`` includes
+                every category; an empty string selects uncategorized sessions.
+            included_categories (set[str], optional): Categories to include. Names
+                are matched exactly and are expected to be already validated; an
+                empty string includes uncategorized sessions. ``None`` or an empty
+                set includes every category. Combined with ``category`` by
+                intersection and with ``excluded_categories`` by subtraction.
+            excluded_categories (set[str], optional): Categories to exclude. Names
+                are matched exactly and are expected to be already validated; an
+                empty string excludes uncategorized sessions. ``None`` or an empty
+                set excludes nothing.
+            has_project (bool, optional): When true, keep only sessions whose
+                ``project_workspace`` is non-empty. Defaults to ``False``, which
+                keeps every session.
+            since (datetime, optional): Inclusive lower bound on ``create_time``.
+                ``None`` applies no lower bound.
+            until (datetime, optional): Inclusive upper bound on ``create_time``.
+                ``None`` applies no upper bound.
 
         Returns:
             list[SessionData]: A list of SessionData instances matching the query.
@@ -191,7 +216,11 @@ class SessionStorageBase(object):
         """
         raise NotImplementedError
 
-    def count_sessions(self, sessions: list[str] = None, category: str = None) -> int:
+    def count_sessions(self, sessions: list[str] = None, category: str = None,
+                       included_categories: set[str] = None,
+                       excluded_categories: set[str] = None,
+                       has_project: bool = False, since: datetime = None,
+                       until: datetime = None) -> int:
         """Return the number of sessions matching the selection filters."""
         raise NotImplementedError
 

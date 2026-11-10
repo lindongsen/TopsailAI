@@ -389,7 +389,7 @@ func freshTestInventory() protocol.InventoryReport {
 	return freshTestInventoryWithAdapter(protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded})
 }
 func freshTestInventoryWithAdapter(adapter protocol.AdapterSummary) protocol.InventoryReport {
-	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{adapter}, Sessions: []protocol.Session{{SessionID: "session-1", AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}
+	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{adapter}, Sessions: []protocol.Session{{ClusterSessionID: "session-1", AdapterID: "adapter-1", ProviderGeneration: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}
 }
 
 func TestSelectedSessionFreshnessRejectsInvalidReports(t *testing.T) {
@@ -422,7 +422,7 @@ func TestMissingAdapterSummaryDoesNotBlockFreshSession(t *testing.T) {
 	inventory := protocol.InventoryReport{
 		ReportComplete:   true,
 		CollectionStatus: protocol.CollectionSucceeded,
-		Sessions:         []protocol.Session{{SessionID: "session-1", AdapterID: "unreported-adapter", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
+		Sessions:         []protocol.Session{{ClusterSessionID: "session-1", AdapterID: "unreported-adapter", ProviderGeneration: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
 	}
 	stub := &freshnessStub{inventory: inventory}
 	var output, errorsOut strings.Builder

@@ -96,6 +96,10 @@ type interactiveState struct {
 	// render. It is nil until history renders, and rendering a list clears it, so
 	// a number always means the row of the table the operator last saw.
 	history *historyNamespace
+	// modelCatalog is the profile-number namespace produced by the most recent
+	// model catalog render. It is separate from history because a profile number
+	// selects a model configuration while a history row number selects a session.
+	modelCatalog *modelCatalogNamespace
 }
 
 type interruptController struct {
@@ -548,6 +552,10 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// The history table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and endpoints.
 		return false, interactiveHistory(ctx, api, state, rest, trustedOut, errOut, options.Color)
+	case "model":
+		// The model catalog table is trusted application styling over sanitized
+		// cells, so it renders through the trusted writer like list and history.
+		return false, interactiveModel(ctx, api, state, rest, lineResults, out, trustedOut, errOut, options)
 	case "messages":
 		// The conversation renderer applies trusted styling to its own headers
 		// and sanitizes every provider body itself, so it renders through the
@@ -938,7 +946,7 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 			return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint %q inventory is unavailable", state.EndpointID)
 		}
 		for index := range report.Sessions {
-			if report.Sessions[index].SessionID != state.SessionID {
+			if report.Sessions[index].ClusterSessionID != state.ClusterSessionID {
 				continue
 			}
 			session := &report.Sessions[index]
@@ -948,16 +956,16 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 			if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
 			}
-			if session.Generation == "" {
+			if session.ProviderGeneration == "" {
 				// A session that is still reported but whose liveness was not
 				// verified has no generation, so it cannot be addressed. This is
 				// not a generation change: the operator must leave the scope and
 				// resume the session, because resume is the only operation that
 				// does not need a generation.
 				state.invalidate("selected session liveness is unverified")
-				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q is no longer verified as running, so it cannot be addressed; use cd .. then resume it", state.SessionID)
+				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %s is no longer verified as running, so it cannot be addressed; use cd .. then resume it", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, state.ClusterSessionID))
 			}
-			if session.Generation != state.Generation {
+			if session.ProviderGeneration != state.ProviderGeneration {
 				state.invalidate("selected session generation changed")
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session generation changed; use the session again")
 			}
@@ -966,7 +974,7 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 	}
 	// The endpoint no longer reports the pinned session, so the selection can never be
 	// resolved again; name the recovery step instead of leaving the operator to guess.
-	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q was not found; use cd .. to leave the session scope", state.SessionID)
+	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %s was not found; use cd .. to leave the session scope", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, state.ClusterSessionID))
 }
 
 func validateSessionFreshness(report protocol.InventoryReport, session protocol.Session) error {
@@ -975,7 +983,7 @@ func validateSessionFreshness(report protocol.InventoryReport, session protocol.
 		collectionStatus = report.CollectionStatus
 	}
 	if session.Stale || session.Unknown || collectionStatus != protocol.CollectionSucceeded {
-		return fmt.Errorf("session %q is not fresh: stale=%t unknown=%t collection_status=%s", session.SessionID, session.Stale, session.Unknown, collectionStatus)
+		return fmt.Errorf("session %s is not fresh: stale=%t unknown=%t collection_status=%s", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, session.ClusterSessionID), session.Stale, session.Unknown, collectionStatus)
 	}
 	return nil
 }
@@ -1057,7 +1065,7 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 			if err != nil {
 				return err
 			}
-			id = session.SessionID
+			id = session.ClusterSessionID
 		}
 	} else {
 		row, resolved, err := resolveSessionToken(state, id)
@@ -1065,7 +1073,7 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 			return err
 		}
 		if resolved {
-			id = row.SessionID
+			id = row.ClusterSessionID
 		}
 	}
 	if err := (CommandRunner{API: api, Policy: InteractivePolicy}).Show(ctx, out, id, false); err != nil {

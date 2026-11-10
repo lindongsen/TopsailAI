@@ -3,7 +3,7 @@ package protocol
 import "testing"
 
 func validInventory() InventoryReport {
-	return InventoryReport{SchemaVersion: "v1", SourceGeneration: "g1", SnapshotRevision: 1, ObservedAtMS: 1, ReportComplete: true, CollectionStatus: CollectionSucceeded, Adapters: []AdapterSummary{{AdapterID: "a1", ProviderType: "test", DataKnown: true}}, Sessions: []Session{{SessionID: "s1", AdapterID: "a1"}}}
+	return InventoryReport{SchemaVersion: "v1", SourceGeneration: "g1", SnapshotRevision: 1, ObservedAtMS: 1, ReportComplete: true, CollectionStatus: CollectionSucceeded, Adapters: []AdapterSummary{{AdapterID: "a1", ProviderType: "test", DataKnown: true}}, Sessions: []Session{{ClusterSessionID: "s1", AdapterID: "a1"}}}
 }
 
 func TestInventoryValidation(t *testing.T) {

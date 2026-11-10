@@ -239,7 +239,7 @@ const longWorkspacePath = "/srv/very-long-project-workspace-name-for-full-render
 // longer than the column cap, so the rendered bytes prove which layout ran.
 func fullRenderStub() *interactiveStub {
 	report := scopeInventory("res-1", "generation-1")
-	report.Sessions[0].ProjectWorkspace = longWorkspacePath
+	report.Sessions[0].ProviderProjectWorkspace = longWorkspacePath
 	return &interactiveStub{
 		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "host-one"}},
 		reports:   map[string]protocol.InventoryReport{"endpoint-1": report},

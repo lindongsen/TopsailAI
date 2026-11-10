@@ -67,14 +67,14 @@ func ctlCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, dia
 		return err
 	}
 	return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
-		Operation:      operation,
-		OperationLabel: command + " " + action,
-		EndpointID:     endpointID,
-		ResourceID:     resourceID,
-		Generation:     generation,
-		Payload:        payload,
-		Confirmed:      confirmed,
-		WaitTimeoutMS:  waitTimeoutMS,
+		Operation:          operation,
+		OperationLabel:     command + " " + action,
+		EndpointID:         endpointID,
+		ResourceID:         resourceID,
+		ProviderGeneration: generation,
+		Payload:            payload,
+		Confirmed:          confirmed,
+		WaitTimeoutMS:      waitTimeoutMS,
 	}, jsonMode)
 }
 
@@ -124,14 +124,14 @@ func execCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 		return err
 	}
 	return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
-		Operation:      protocol.OperationCommandExec,
-		OperationLabel: "exec",
-		EndpointID:     endpointID,
-		ResourceID:     resourceID,
-		Generation:     generation,
-		Payload:        payload,
-		Confirmed:      confirmed,
-		WaitTimeoutMS:  waitTimeoutMS,
+		Operation:          protocol.OperationCommandExec,
+		OperationLabel:     "exec",
+		EndpointID:         endpointID,
+		ResourceID:         resourceID,
+		ProviderGeneration: generation,
+		Payload:            payload,
+		Confirmed:          confirmed,
+		WaitTimeoutMS:      waitTimeoutMS,
 	}, jsonMode)
 }
 

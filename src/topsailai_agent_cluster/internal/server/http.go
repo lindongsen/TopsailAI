@@ -134,7 +134,7 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 	if maxBytes > 1<<20 {
 		maxBytes = 1 << 20
 	}
-	response, err := h.Output.RequestOutput(r.Context(), endpointID, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, Generation: q.Get("generation"), MaxBytes: maxBytes, MaxLines: parseMaxLines(q.Get("max_lines"))})
+	response, err := h.Output.RequestOutput(r.Context(), endpointID, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: q.Get("provider_generation"), MaxBytes: maxBytes, MaxLines: parseMaxLines(q.Get("max_lines"))})
 	if err != nil {
 		code := response.ErrorCode
 		if code == "" {
@@ -180,7 +180,7 @@ func (h *Handler) outputFollow(w http.ResponseWriter, r *http.Request) {
 	if maxBytes > 1<<20 {
 		maxBytes = 1 << 20
 	}
-	events, err := follower.RequestFollow(r.Context(), endpointID, protocol.OutputFollowRequest{EndpointID: endpointID, ResourceID: resourceID, Generation: q.Get("generation"), MaxBytes: maxBytes, MaxLines: parseMaxLines(q.Get("max_lines"))})
+	events, err := follower.RequestFollow(r.Context(), endpointID, protocol.OutputFollowRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: q.Get("provider_generation"), MaxBytes: maxBytes, MaxLines: parseMaxLines(q.Get("max_lines"))})
 	if err != nil {
 		h.writeError(w, http.StatusServiceUnavailable, "endpoint_offline", err.Error())
 		return

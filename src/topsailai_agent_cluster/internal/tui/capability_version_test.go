@@ -82,13 +82,13 @@ func TestPrepareActionUsesAdvertisedVersion(t *testing.T) {
 	}}
 	runner := CommandRunner{API: api, NewID: func() string { return "cmd-1" }}
 	intent, err := runner.PrepareAction(context.Background(), ActionRequest{
-		Operation:      protocol.OperationCommandExec,
-		EndpointID:     "endpoint-1",
-		ResourceID:     "session-1",
-		Generation:     "gen-1",
-		Payload:        []byte(`{"argv":["echo","hello"]}`),
-		Confirmed:      true,
-		OperationLabel: "exec",
+		Operation:          protocol.OperationCommandExec,
+		EndpointID:         "endpoint-1",
+		ResourceID:         "session-1",
+		ProviderGeneration: "gen-1",
+		Payload:            []byte(`{"argv":["echo","hello"]}`),
+		Confirmed:          true,
+		OperationLabel:     "exec",
 	})
 	if err != nil {
 		t.Fatalf("PrepareAction returned error: %v", err)
@@ -99,7 +99,7 @@ func TestPrepareActionUsesAdvertisedVersion(t *testing.T) {
 	if intent.CapabilityRevision != "rev-1" {
 		t.Fatalf("CapabilityRevision = %q, want rev-1", intent.CapabilityRevision)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "session-1" || intent.Target.Generation != "gen-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "session-1" || intent.Target.ProviderGeneration != "gen-1" {
 		t.Fatalf("target = %+v, want session-1/gen-1", intent.Target)
 	}
 }

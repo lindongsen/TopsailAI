@@ -44,11 +44,11 @@ func newInspectAdapter(t *testing.T, runner *recordingRunner) *Adapter {
 func TestInspectUsesTargetedProviderQuery(t *testing.T) {
 	runner := &recordingRunner{out: []byte(`{"items":[{"session_id":"provider-session","process_generation":"g7","status":"running"}]}`)}
 	a := newInspectAdapter(t, runner)
-	result, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "res_provider-session", Generation: "g7"}})
+	result, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "res_provider-session", ProviderGeneration: "g7"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Found || result.Generation != "g7" || result.State != "running" {
+	if !result.Found || result.ProviderGeneration != "g7" || result.State != "running" {
 		t.Fatalf("inspect result=%#v", result)
 	}
 	if len(runner.calls) != 1 {
@@ -76,7 +76,7 @@ func TestInspectUsesTargetedProviderQuery(t *testing.T) {
 func TestInspectReportsAbsenceWithoutError(t *testing.T) {
 	runner := &recordingRunner{out: []byte(`{"items":[]}`)}
 	a := newInspectAdapter(t, runner)
-	result, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "res_provider-session", Generation: "g7"}})
+	result, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "res_provider-session", ProviderGeneration: "g7"}})
 	if err != nil {
 		t.Fatalf("absence must not be an error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestInspectReportsCrossHostSessionAsFoundNotLive(t *testing.T) {
 	if result.Live {
 		t.Fatalf("cross-host record must not be live: %#v", result)
 	}
-	if result.Generation != "" {
+	if result.ProviderGeneration != "" {
 		t.Fatalf("cross-host record must report no generation: %#v", result)
 	}
 	if result.State != "idle" {
@@ -128,7 +128,7 @@ func TestInspectReportsLiveSessionAsLive(t *testing.T) {
 	if !result.Found || !result.Live {
 		t.Fatalf("live session must be found and live: %#v", result)
 	}
-	if result.Generation != "g7" {
-		t.Fatalf("generation=%q want g7", result.Generation)
+	if result.ProviderGeneration != "g7" {
+		t.Fatalf("generation=%q want g7", result.ProviderGeneration)
 	}
 }

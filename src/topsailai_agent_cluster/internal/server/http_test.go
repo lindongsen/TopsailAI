@@ -87,7 +87,7 @@ func TestReadOutputEndpointOfflineReturnsError(t *testing.T) {
 	}
 	defer store.Close()
 	h := NewHandlerWithCommandsAndBrokerAndOutput(store, "secret", &CommandService{Store: store}, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/output?endpoint_id=e1&resource_id=res_1&generation=g1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/output?endpoint_id=e1&resource_id=res_1&provider_generation=g1", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -206,7 +206,7 @@ func TestOutputHTTPForwardsLineBudget(t *testing.T) {
 			defer store.Close()
 			requester := &recordingOutputRequester{}
 			h := NewHandlerWithCommandsAndBrokerAndOutput(store, "secret", &CommandService{Store: store}, nil, requester)
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/output?endpoint_id=e1&resource_id=res_1&generation=g1"+testCase.query, nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/output?endpoint_id=e1&resource_id=res_1&provider_generation=g1"+testCase.query, nil)
 			req.Header.Set("Authorization", "Bearer secret")
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)

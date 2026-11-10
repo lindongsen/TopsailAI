@@ -135,7 +135,7 @@ func registerRealInventorySteps(ctx *godog.ScenarioContext) {
 			return err
 		}
 		for _, session := range inventory.Sessions {
-			if strings.TrimSpace(session.Generation) != "" {
+			if strings.TrimSpace(session.ProviderGeneration) != "" {
 				return nil
 			}
 		}
@@ -146,7 +146,7 @@ func registerRealInventorySteps(ctx *godog.ScenarioContext) {
 func validReport(endpoint string, revision int64, empty bool) protocol.InventoryReport {
 	report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: endpoint + "-generation", SnapshotRevision: revision, ObservedAtMS: 1, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", ProviderType: "fixture", DisplayName: "Fixture", Version: "v1", Health: "healthy", CollectionStatus: protocol.CollectionSucceeded, DataKnown: true}}}
 	if !empty {
-		report.Sessions = []protocol.Session{{SessionID: "session-1", AgentID: "agent-1", Generation: "generation-1", AdapterID: "adapter-1", State: "idle", ObservedAtMS: 1}}
+		report.Sessions = []protocol.Session{{ClusterSessionID: "session-1", ProviderAgentID: "agent-1", ProviderGeneration: "generation-1", AdapterID: "adapter-1", State: "idle", ObservedAtMS: 1}}
 	}
 	return report
 }
@@ -158,7 +158,7 @@ func registerInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 		report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: endpoint + "-generation", SnapshotRevision: 1, ObservedAtMS: now, ReportComplete: false, CollectionStatus: protocol.CollectionPartial, Adapters: []protocol.AdapterSummary{
 			{AdapterID: "source-good", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, DataKnown: true, LastAttemptAtMS: now, LastSuccessAtMS: &now},
 			{AdapterID: "source-bad", ProviderType: "fixture", CollectionStatus: protocol.CollectionFailed, DataKnown: false, LastAttemptAtMS: now},
-		}, Sessions: []protocol.Session{{SessionID: "good-session", AdapterID: "source-good", Generation: "good-generation", State: "idle"}}}
+		}, Sessions: []protocol.Session{{ClusterSessionID: "good-session", AdapterID: "source-good", ProviderGeneration: "good-generation", State: "idle"}}}
 		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
 		if err != nil {
 			return err
@@ -281,7 +281,7 @@ func registerInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 	})
 	ctx.Step(`^endpoint "([^"]*)" submits a truncated partial report$`, func(endpoint string) error {
 		now := time.Now().UnixMilli()
-		report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: endpoint + "-generation", SnapshotRevision: 1, ObservedAtMS: now, ReportComplete: false, CollectionStatus: protocol.CollectionPartial, Adapters: []protocol.AdapterSummary{{AdapterID: "partial-source", ProviderType: "fixture", CollectionStatus: protocol.CollectionPartial, LastAttemptAtMS: now, DataKnown: true}}, Sessions: []protocol.Session{{SessionID: "partial-session", AdapterID: "partial-source", Generation: "partial-generation"}}}
+		report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: endpoint + "-generation", SnapshotRevision: 1, ObservedAtMS: now, ReportComplete: false, CollectionStatus: protocol.CollectionPartial, Adapters: []protocol.AdapterSummary{{AdapterID: "partial-source", ProviderType: "fixture", CollectionStatus: protocol.CollectionPartial, LastAttemptAtMS: now, DataKnown: true}}, Sessions: []protocol.Session{{ClusterSessionID: "partial-session", AdapterID: "partial-source", ProviderGeneration: "partial-generation"}}}
 		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
 		if err != nil {
 			return err
@@ -386,7 +386,7 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 			return fmt.Errorf("automatic stale snapshot did not retain sessions: %#v", decoded)
 		}
 		for _, session := range decoded.Sessions {
-			if session.SessionID == "" || session.AdapterID != item.AdapterID {
+			if session.ClusterSessionID == "" || session.AdapterID != item.AdapterID {
 				return fmt.Errorf("retained session is not attributable to the stale source: %#v", session)
 			}
 		}

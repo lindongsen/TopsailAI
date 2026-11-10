@@ -363,7 +363,7 @@ func sameRowIdentity(current map[int]SessionRow, rows []SessionRow) bool {
 	}
 	for _, row := range rows {
 		existing, ok := current[row.No]
-		if !ok || existing.SessionID != row.SessionID || existing.Generation != row.Generation || existing.EndpointID != row.EndpointID {
+		if !ok || existing.ClusterSessionID != row.ClusterSessionID || existing.ProviderGeneration != row.ProviderGeneration || existing.EndpointID != row.EndpointID {
 			return false
 		}
 	}

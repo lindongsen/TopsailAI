@@ -172,7 +172,7 @@ func TestUnitSendAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 		t.Fatalf("missing submission evidence: %q", output)
 	}
 	tail := output[receipt:]
-	announced := strings.Index(tail, "follow: res-1 (any key stops)")
+	announced := strings.Index(tail, "log.follow> res-1 (any key stops)")
 	if announced < 0 {
 		t.Fatalf("send did not arm a live tail after the receipt: %q", output)
 	}
@@ -445,7 +445,7 @@ func TestUnitSendAutoFollowKeepsTheForcedCollection(t *testing.T) {
 			t.Fatalf("automatic steps=%v, want %v", got, want)
 		}
 	}
-	if !strings.Contains(output, "follow: res-1 (any key stops)") {
+	if !strings.Contains(output, "log.follow> res-1 (any key stops)") {
 		t.Fatalf("the tail was not armed before the refresh: %q", output)
 	}
 	if !strings.Contains(output, "command submitted:") {

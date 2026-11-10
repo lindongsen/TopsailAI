@@ -88,7 +88,7 @@ func matchInfoSession(id string, endpoints []protocol.Endpoint, reports map[stri
 			continue
 		}
 		for _, session := range report.Sessions {
-			matched := session.SessionID == id
+			matched := session.ClusterSessionID == id
 			if !byResourceID {
 				matched = session.ProviderSessionID != "" && session.ProviderSessionID == id
 			}

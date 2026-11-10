@@ -29,6 +29,7 @@ var featurePaths = []string{
 	"../../features/output_follow.feature",
 	"../../features/output_scope.feature",
 	"../../features/messages.feature",
+	"../../features/model_command.feature",
 }
 
 // TestFeatures runs the strict real-boundary BDD suite.
@@ -76,6 +77,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerOutputScopeSteps(ctx)
 	registerQReturnsToWorkspaceSteps(ctx)
 	registerMessagesSteps(ctx)
+	registerModelSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone

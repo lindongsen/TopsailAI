@@ -23,7 +23,7 @@ func (a policyTestAdapter) Describe(context.Context) (adapter.Descriptor, error)
 }
 
 func (a policyTestAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
-	return adapter.InspectResult{Found: true, Generation: "g1"}, nil
+	return adapter.InspectResult{Found: true, ProviderGeneration: "g1"}, nil
 }
 
 func (a policyTestAdapter) Execute(context.Context, adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
@@ -69,7 +69,7 @@ func commandExecIntent(commandID, resourceID string) protocol.ImmutableIntent {
 		CommandID:            commandID,
 		EndpointID:           "e1",
 		Operation:            protocol.OperationCommandExec,
-		Target:               &protocol.CommandTarget{Kind: "session", ResourceID: resourceID, Generation: "g1"},
+		Target:               &protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: "g1"},
 		OperationVersion:     "v1",
 		CapabilityRevision:   "v1",
 		PayloadSchemaVersion: protocol.CommandExecPayloadVersion,

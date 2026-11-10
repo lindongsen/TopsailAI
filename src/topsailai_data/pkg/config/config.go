@@ -22,6 +22,9 @@ const (
 
 	// DefaultStatFlush is the default object-stat flush mode.
 	DefaultStatFlush = "sync"
+
+	// DefaultFileMaxBytes is the default message size limit for file reads.
+	DefaultFileMaxBytes = 30000
 )
 
 // Config holds the runtime configuration for topsailai_data.
@@ -53,6 +56,14 @@ type Config struct {
 	// StatFlush controls object-stat persistence and accepts sync or async.
 	StatFlush string
 
+	// FileMaxBytes is the message size limit applied when reading a file whose
+	// extension is not whitelisted.
+	FileMaxBytes int
+
+	// FileNoTruncateExtensions overrides the built-in no-truncate extension
+	// whitelist. "*" disables truncation and "!*" forces it.
+	FileNoTruncateExtensions []string
+
 	// AdapterConfig holds adapter-specific key-value settings.
 	AdapterConfig map[string]string
 }
@@ -69,6 +80,7 @@ func Load() (*Config, error) {
 		LogLevel:            DefaultLogLevel,
 		TrackStat:           true,
 		StatFlush:           DefaultStatFlush,
+		FileMaxBytes:        DefaultFileMaxBytes,
 		AdapterConfig:       make(map[string]string),
 	}
 
@@ -108,6 +120,16 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv(EnvPrefix + "STAT_FLUSH"); v != "" {
 		cfg.StatFlush = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv(EnvPrefix + "FILE_MAX_BYTES"); v != "" {
+		limit, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || limit <= 0 {
+			return nil, fmt.Errorf("invalid %sFILE_MAX_BYTES: must be a positive integer", EnvPrefix)
+		}
+		cfg.FileMaxBytes = limit
+	}
+	if v := os.Getenv(EnvPrefix + "FILE_WHITE_LIST_NO_TRUNCATE_EXT"); v != "" {
+		cfg.FileNoTruncateExtensions = splitExtensions(v)
 	}
 
 	for _, e := range os.Environ() {
@@ -154,7 +176,27 @@ func (c *Config) Validate() error {
 	if c.StatFlush != "sync" && c.StatFlush != "async" {
 		return fmt.Errorf("%sSTAT_FLUSH must be sync or async", EnvPrefix)
 	}
+	if c.FileMaxBytes == 0 {
+		c.FileMaxBytes = DefaultFileMaxBytes
+	}
+	if c.FileMaxBytes < 0 {
+		return fmt.Errorf("%sFILE_MAX_BYTES must be positive", EnvPrefix)
+	}
 	return nil
+}
+
+// splitExtensions splits a comma-separated extension list, trimming whitespace
+// and dropping empty entries.
+func splitExtensions(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // CeasedRetentionDuration returns the retention window as a time.Duration.

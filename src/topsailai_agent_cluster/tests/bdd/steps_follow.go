@@ -115,15 +115,23 @@ func runStandaloneFollow() error {
 	return nil
 }
 
+// stripFollowSGR removes the SGR sequences the follow status prefix carries when
+// the terminal reports colour. The scenarios drive a real PTY with a real TERM, so
+// the prefix is styled there; the assertions care about the words, not the styling,
+// and a styled prefix must not make a correct message look absent.
+func stripFollowSGR(text string) string {
+	return strings.NewReplacer("\x1b[1;32m", "", "\x1b[2m", "", "\x1b[31m", "", "\x1b[0m", "").Replace(text)
+}
+
 // assertFollowArmed proves the command armed a stream instead of silently
 // falling back to a snapshot. A snapshot fallback is the exact defect this
 // scenario exists to catch.
 func assertFollowArmed() error {
-	text := interactiveOutput()
+	text := stripFollowSGR(interactiveOutput())
 	if strings.Contains(text, "follow is unavailable") {
 		return fmt.Errorf("follow was rejected, so the shipped binary does not wire the streaming client: %s", text)
 	}
-	if !strings.Contains(text, "follow: res_") {
+	if !strings.Contains(text, "log.follow> res_") {
 		return fmt.Errorf("the follow command did not report its target and mode: %s", text)
 	}
 	if !strings.Contains(text, "any key stops") {
@@ -146,8 +154,8 @@ func assertFollowRecordsArrived() error {
 // assertFollowStopped proves the keypress ended the stream through the watch
 // seam, rather than the stream ending on its own.
 func assertFollowStopped() error {
-	text := interactiveOutput()
-	if !strings.Contains(text, "follow stopped") {
+	text := stripFollowSGR(interactiveOutput())
+	if !strings.Contains(text, "log.follow> follow stopped") {
 		return fmt.Errorf("the first keypress did not stop the follow stream: %s", text)
 	}
 	if strings.Contains(text, "auto-refresh stopped") {
@@ -163,8 +171,8 @@ func assertFollowStoppedByEnter() error {
 	if activeScenario.lastStatus != 0 {
 		return fmt.Errorf("the REPL did not exit cleanly after the enter key, so the stream was probably never stopped: exit=%d output=%s", activeScenario.lastStatus, interactiveOutput())
 	}
-	text := interactiveOutput()
-	if !strings.Contains(text, "follow stopped") {
+	text := stripFollowSGR(interactiveOutput())
+	if !strings.Contains(text, "log.follow> follow stopped") {
 		return fmt.Errorf("the enter key did not stop the follow stream: %s", text)
 	}
 	return nil
@@ -177,8 +185,8 @@ func assertFollowInterruptedCleanly() error {
 	if activeScenario.lastStatus != 0 {
 		return fmt.Errorf("the interrupt was reported as a failure: exit=%d output=%s", activeScenario.lastStatus, string(activeScenario.lastBody))
 	}
-	text := string(activeScenario.lastBody)
-	if !strings.Contains(text, "follow stopped") {
+	text := stripFollowSGR(string(activeScenario.lastBody))
+	if !strings.Contains(text, "log.follow> follow stopped") {
 		return fmt.Errorf("the interrupt did not report a clean stop: %s", text)
 	}
 	return nil
@@ -219,8 +227,8 @@ func assertFollowInterruptedByDisconnect() error {
 	if activeScenario.lastStatus != 0 {
 		return fmt.Errorf("the disconnect was reported as a failure: exit=%d output=%s", activeScenario.lastStatus, string(activeScenario.lastBody))
 	}
-	text := string(activeScenario.lastBody)
-	if !strings.Contains(text, "follow ended: endpoint_offline") {
+	text := stripFollowSGR(string(activeScenario.lastBody))
+	if !strings.Contains(text, "log.follow> follow ended: endpoint_offline") {
 		return fmt.Errorf("the disconnect did not report the Server-inferred endpoint_offline code: %s", text)
 	}
 	if strings.Contains(text, "follow ended\n") {

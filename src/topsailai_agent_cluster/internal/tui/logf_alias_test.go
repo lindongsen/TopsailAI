@@ -15,7 +15,7 @@ func TestLogfAliasArmsFollowStream(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "follow: res-1 (any key stops)") {
+	if !strings.Contains(output, "log.follow> res-1 (any key stops)") {
 		t.Fatalf("follow not armed: %q", output)
 	}
 	// The armed stream must not add a snapshot read, so the shorthand cannot be

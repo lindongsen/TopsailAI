@@ -387,6 +387,21 @@ class TestMainArgs:
                 mock.patch.object(sad.exit_process, "is_exit_requested", return_value=False):
             assert sad.main([]) == 0
 
+    def test_main_applies_session_workspace_at_startup(self):
+        """The driver process must carry the target workspace from startup."""
+        manager = mock.Mock()
+        manager.list_sessions.return_value = [mock.Mock(project_workspace="/project/real")]
+        with mock.patch.dict(os.environ, {"TOPSAILAI_SESSION_ID": "s1"}, clear=False), \
+                mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.object(sad, "check_session_status", return_value="idle"), \
+                mock.patch.object(sad.exit_process, "reset_exit_flag"), \
+                mock.patch.object(sad.exit_process, "is_exit_requested", return_value=False), \
+                mock.patch("topsailai.tools.skill_tool.reload"):
+            os.environ.pop(sad.PROJECT_WORKSPACE_ENV, None)
+            assert sad.main([]) == 0
+            # The startup value is restored on exit, so the process is clean.
+            assert sad.PROJECT_WORKSPACE_ENV not in os.environ
+
 
 # ---------------------------------------------------------------------------
 # project workspace resolution and analysis session cleanup
@@ -435,6 +450,132 @@ class TestResolveProjectWorkspace:
             finally:
                 if saved is not None:
                     os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = saved
+
+
+class TestApplyProjectWorkspace:
+    """The analysis agent must run in the target session's project workspace."""
+
+    @staticmethod
+    def _manager(workspace):
+        """Build a session manager returning one stored workspace."""
+        manager = mock.Mock()
+        manager.list_sessions.return_value = [mock.Mock(project_workspace=workspace)]
+        return manager
+
+    def test_stored_workspace_is_exported(self):
+        """Export the stored workspace and its alias to the process environment."""
+        with mock.patch.object(sad.ctx_manager, "get_session_manager",
+                               return_value=self._manager("/project/real")), \
+                mock.patch.dict(os.environ, {}, clear=False), \
+                mock.patch("topsailai.tools.skill_tool.reload") as reload:
+            os.environ.pop(sad.PROJECT_WORKSPACE_ENV, None)
+            os.environ.pop(sad.PROJECT_FOLDER_ENV, None)
+            previous = sad.apply_project_workspace("s1")
+            assert os.environ[sad.PROJECT_WORKSPACE_ENV] == "/project/real"
+            assert os.environ[sad.PROJECT_FOLDER_ENV] == "/project/real"
+            reload.assert_called_once_with()
+            assert previous == {sad.PROJECT_WORKSPACE_ENV: None, sad.PROJECT_FOLDER_ENV: None}
+
+    def test_empty_stored_workspace_falls_back_to_pwd(self):
+        """An empty stored value falls back to the framework startup directory."""
+        with mock.patch.object(sad.ctx_manager, "get_session_manager",
+                               return_value=self._manager(None)), \
+                mock.patch.dict(os.environ, {sad.PWD_ENV: "/startup/dir"}, clear=False), \
+                mock.patch("topsailai.tools.skill_tool.reload"):
+            os.environ.pop(sad.PROJECT_WORKSPACE_ENV, None)
+            sad.apply_project_workspace("s1")
+            assert os.environ[sad.PROJECT_WORKSPACE_ENV] == "/startup/dir"
+
+    def test_missing_pwd_falls_back_to_cwd(self):
+        """Without a stored value or TOPSAILAI_PWD the current directory is used."""
+        with mock.patch.object(sad.ctx_manager, "get_session_manager",
+                               return_value=self._manager("")), \
+                mock.patch.dict(os.environ, {}, clear=False), \
+                mock.patch("topsailai.tools.skill_tool.reload"):
+            os.environ.pop(sad.PWD_ENV, None)
+            os.environ.pop(sad.PROJECT_WORKSPACE_ENV, None)
+            sad.apply_project_workspace("s1")
+            assert os.environ[sad.PROJECT_WORKSPACE_ENV] == os.getcwd()
+
+    def test_reload_is_skipped_when_value_is_unchanged(self):
+        """An unchanged workspace must not rescan the skill folders."""
+        with mock.patch.object(sad.ctx_manager, "get_session_manager",
+                               return_value=self._manager("/project/real")), \
+                mock.patch.dict(os.environ, {sad.PROJECT_WORKSPACE_ENV: "/project/real"},
+                                clear=False), \
+                mock.patch("topsailai.tools.skill_tool.reload") as reload:
+            sad.apply_project_workspace("s1")
+            reload.assert_not_called()
+
+    def test_reload_failure_does_not_abort_the_run(self):
+        """A broken skill reload only warns; the workspace stays applied."""
+        with mock.patch.object(sad.ctx_manager, "get_session_manager",
+                               return_value=self._manager("/project/real")), \
+                mock.patch.dict(os.environ, {}, clear=False), \
+                mock.patch("topsailai.tools.skill_tool.reload",
+                           side_effect=RuntimeError("scan failed")), \
+                mock.patch.object(sad.logger, "warning") as warning:
+            os.environ.pop(sad.PROJECT_WORKSPACE_ENV, None)
+            sad.apply_project_workspace("s1")
+            assert os.environ[sad.PROJECT_WORKSPACE_ENV] == "/project/real"
+            assert "failed to reload skill prompt" in warning.call_args[0][0]
+
+    def test_restore_removes_variables_that_were_unset(self):
+        """Restoring must not leave a workspace behind for the next run."""
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(sad.PROJECT_WORKSPACE_ENV, None)
+            os.environ.pop(sad.PROJECT_FOLDER_ENV, None)
+            sad.restore_project_workspace({sad.PROJECT_WORKSPACE_ENV: None,
+                                           sad.PROJECT_FOLDER_ENV: None})
+            assert sad.PROJECT_WORKSPACE_ENV not in os.environ
+            assert sad.PROJECT_FOLDER_ENV not in os.environ
+
+    def test_restore_returns_previous_values(self):
+        """Restoring must put back the values captured before the run."""
+        with mock.patch.dict(os.environ, {sad.PROJECT_WORKSPACE_ENV: "/before"},
+                             clear=False):
+            sad.restore_project_workspace({sad.PROJECT_WORKSPACE_ENV: "/before"})
+            assert os.environ[sad.PROJECT_WORKSPACE_ENV] == "/before"
+
+
+class TestAnalysisRunAppliesWorkspace:
+    """The analysis lifecycle exports the workspace and always restores it."""
+
+    @pytest.mark.parametrize("failure", [None, "factory", "run"])
+    def test_workspace_is_applied_and_restored(self, failure):
+        """Apply before the agent is built and restore on every exit path."""
+        observed = {}
+
+        def run(**kwargs):
+            """Record the workspace visible to the running agent."""
+            observed["run"] = os.environ.get(sad.PROJECT_WORKSPACE_ENV)
+            if failure == "run":
+                raise RuntimeError("run failed")
+
+        def factory(**kwargs):
+            """Record the workspace visible when the agent is constructed."""
+            observed["factory"] = os.environ.get(sad.PROJECT_WORKSPACE_ENV)
+            if failure == "factory":
+                raise RuntimeError("factory failed")
+            return mock.Mock(run=run)
+
+        manager = mock.Mock()
+        manager.list_sessions.return_value = [mock.Mock(project_workspace="/project/real")]
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.object(sad, "check_session_status", return_value="input"), \
+                mock.patch.object(sad, "get_session_info", return_value={"status": "input"}), \
+                mock.patch.object(sad, "render_analysis_prompt", return_value="prompt"), \
+                mock.patch.object(sad, "get_agent_chat", side_effect=factory), \
+                mock.patch.object(sad, "cleanup_analysis_session"), \
+                mock.patch("topsailai.tools.skill_tool.reload"), \
+                mock.patch.dict(os.environ, {sad.PROJECT_WORKSPACE_ENV: "/before"}, clear=False), \
+                mock.patch.object(sad.signal, "signal"), \
+                mock.patch.object(sad.signal, "alarm"):
+            sad.run_analysis_agent("target")
+            assert os.environ[sad.PROJECT_WORKSPACE_ENV] == "/before"
+        assert observed.get("factory") == "/project/real"
+        if failure != "factory":
+            assert observed.get("run") == "/project/real"
 
 
 class TestCleanupAnalysisSession:

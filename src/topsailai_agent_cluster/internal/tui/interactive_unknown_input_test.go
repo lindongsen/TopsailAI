@@ -146,7 +146,7 @@ func TestSendCommandAsksNothing(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	if count := strings.Count(output, "Confirm send?"); count != 0 {
+	if count := strings.Count(output, sendConfirmPrompt); count != 0 {
 		t.Fatalf("send asked %d confirmations, want 0: %q", count, output)
 	}
 }
@@ -162,7 +162,7 @@ func TestUnknownInputOfferAsksOnce(t *testing.T) {
 	if count := strings.Count(output, "as a message?"); count != 1 {
 		t.Fatalf("offer asked %d questions, want 1: %q", count, output)
 	}
-	if count := strings.Count(output, "Confirm send?"); count != 0 {
+	if count := strings.Count(output, sendConfirmPrompt); count != 0 {
 		t.Fatalf("offer repeated the send confirmation %d times: %q", count, output)
 	}
 }

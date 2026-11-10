@@ -47,7 +47,7 @@ func (f fakeAdapter) Watch(context.Context) (<-chan adapter.Event, error) {
 func (f fakeAdapter) Close() error { return nil }
 
 func TestCollectIsolatesFailureAndPreservesSuccessfulData(t *testing.T) {
-	good := fakeAdapter{result: adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{SessionID: "s1", AdapterID: "good"}}}}
+	good := fakeAdapter{result: adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{ClusterSessionID: "s1", AdapterID: "good"}}}}
 	bad := fakeAdapter{err: errors.New("provider unavailable")}
 	collector, err := NewCollector(context.Background(), []Binding{{AdapterID: "bad", ProviderType: "fixture", Adapter: bad}, {AdapterID: "good", ProviderType: "fixture", Adapter: good}}, 50*time.Millisecond, nil)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestCollectIsolatesFailureAndPreservesSuccessfulData(t *testing.T) {
 	if report.CollectionStatus != protocol.CollectionPartial || report.ReportComplete {
 		t.Fatalf("unexpected report: %#v", report)
 	}
-	if len(report.Sessions) != 1 || report.Sessions[0].SessionID != "s1" {
+	if len(report.Sessions) != 1 || report.Sessions[0].ClusterSessionID != "s1" {
 		t.Fatalf("healthy source was blocked: %#v", report.Sessions)
 	}
 }
@@ -92,7 +92,7 @@ func TestCollectDistinguishesUnknownFromSuccessfulEmpty(t *testing.T) {
 }
 
 func TestCollectTimeoutDoesNotBlockOtherSource(t *testing.T) {
-	fast := fakeAdapter{result: adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{SessionID: "fast", AdapterID: "fast"}}}}
+	fast := fakeAdapter{result: adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{ClusterSessionID: "fast", AdapterID: "fast"}}}}
 	slow := fakeAdapter{delay: 100 * time.Millisecond, result: adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded}}
 	collector, err := NewCollector(context.Background(), []Binding{{AdapterID: "slow", ProviderType: "fixture", Adapter: slow}, {AdapterID: "fast", ProviderType: "fixture", Adapter: fast}}, 5*time.Millisecond, nil)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestCollectTimeoutDoesNotBlockOtherSource(t *testing.T) {
 	if time.Since(started) > 50*time.Millisecond {
 		t.Fatal("collector waited for slow source")
 	}
-	if len(report.Sessions) != 1 || report.Sessions[0].SessionID != "fast" {
+	if len(report.Sessions) != 1 || report.Sessions[0].ClusterSessionID != "fast" {
 		t.Fatalf("fast source missing: %#v", report)
 	}
 }
@@ -117,7 +117,7 @@ func TestIncompleteResultPreservesPreviousSourceData(t *testing.T) {
 		if state.incomplete {
 			return adapter.DiscoverResult{Complete: false, CollectionStatus: protocol.CollectionPartial}, nil
 		}
-		return adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{SessionID: "stable", AdapterID: "a"}}}, nil
+		return adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{ClusterSessionID: "stable", AdapterID: "a"}}}, nil
 	}}
 	collector, err := NewCollector(context.Background(), []Binding{{AdapterID: "a", ProviderType: "fixture", Adapter: adapter}}, time.Second, nil)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestIncompleteResultPreservesPreviousSourceData(t *testing.T) {
 	if report.CollectionStatus != protocol.CollectionPartial || report.ReportComplete {
 		t.Fatalf("unexpected incomplete report: %#v", report)
 	}
-	if len(report.Sessions) != 1 || report.Sessions[0].SessionID != "stable" {
+	if len(report.Sessions) != 1 || report.Sessions[0].ClusterSessionID != "stable" {
 		t.Fatalf("incomplete result cleared old data: %#v", report.Sessions)
 	}
 	if len(report.Adapters) != 1 || !report.Adapters[0].Stale || report.Adapters[0].LastSuccessAtMS == nil || *report.Adapters[0].LastSuccessAtMS != 100 {

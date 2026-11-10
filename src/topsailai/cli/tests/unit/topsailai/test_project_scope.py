@@ -84,6 +84,8 @@ class TestBuildProjectList(unittest.TestCase):
                 "--has-project",
                 "--sort",
                 "desc",
+                "--excluded-categories",
+                "agent_driver",
                 "--limit",
                 "10",
             ],

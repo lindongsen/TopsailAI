@@ -28,18 +28,18 @@ type HistoryQuerier interface {
 // could not be joined carries Joined=false and no resource ID or generation, so a
 // caller can never mistake it for a routable resource.
 type HistoryViewRow struct {
-	No                  int    `json:"no"`
-	EndpointID          string `json:"endpoint_id"`
-	ProviderSessionID   string `json:"provider_session_id"`
-	DisplayName         string `json:"display_name,omitempty"`
-	ProjectWorkspace    string `json:"project_workspace,omitempty"`
-	Task                string `json:"task,omitempty"`
-	ProviderStatus      string `json:"provider_status,omitempty"`
-	ProviderNo          int    `json:"provider_no,omitempty"`
-	CreatedAtMS         int64  `json:"created_at_ms,omitempty"`
-	ModifiedAtMS        int64  `json:"modified_at_ms,omitempty"`
-	Resumable           bool   `json:"resumable"`
-	ResumeBlockedReason string `json:"resume_blocked_reason,omitempty"`
+	No                       int    `json:"no"`
+	EndpointID               string `json:"endpoint_id"`
+	ProviderSessionID        string `json:"provider_session_id"`
+	ProviderDisplayName      string `json:"provider_display_name,omitempty"`
+	ProviderProjectWorkspace string `json:"provider_project_workspace,omitempty"`
+	Task                     string `json:"task,omitempty"`
+	ProviderStatus           string `json:"provider_status,omitempty"`
+	ProviderNo               int    `json:"provider_no,omitempty"`
+	CreatedAtMS              int64  `json:"created_at_ms,omitempty"`
+	ModifiedAtMS             int64  `json:"modified_at_ms,omitempty"`
+	Resumable                bool   `json:"resumable"`
+	ResumeBlockedReason      string `json:"resume_blocked_reason,omitempty"`
 	// Joined reports whether the inventory join could be evaluated at all. A
 	// false value means the row is unknown, never that it is stopped.
 	Joined bool `json:"joined"`
@@ -61,8 +61,8 @@ type HistoryViewRow struct {
 	Unverified bool `json:"unverified,omitempty"`
 	// ResourceID and Generation are supplied only by the join. They are empty for
 	// every non-live row, because a past session has no generation to validate.
-	ResourceID string `json:"resource_id,omitempty"`
-	Generation string `json:"generation,omitempty"`
+	ResourceID         string `json:"resource_id,omitempty"`
+	ProviderGeneration string `json:"provider_generation,omitempty"`
 	// ResumeResourceID is the opaque cluster handle the Endpoint minted for this
 	// provider session. It exists so a resume request can address a stopped row
 	// without naming a provider key or an adapter. It is never a routing
@@ -114,17 +114,17 @@ func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.
 	}
 	for _, row := range rows {
 		viewRow := HistoryViewRow{
-			EndpointID:          endpointID,
-			ProviderSessionID:   row.ProviderSessionID,
-			DisplayName:         row.DisplayName,
-			ProjectWorkspace:    row.ProjectWorkspace,
-			Task:                row.Task,
-			ProviderStatus:      row.ProviderStatus,
-			ProviderNo:          row.ProviderNo,
-			CreatedAtMS:         row.CreatedAtMS,
-			ModifiedAtMS:        row.ModifiedAtMS,
-			Resumable:           row.Resumable,
-			ResumeBlockedReason: row.ResumeBlockedReason,
+			EndpointID:               endpointID,
+			ProviderSessionID:        row.ProviderSessionID,
+			ProviderDisplayName:      row.ProviderDisplayName,
+			ProviderProjectWorkspace: row.ProviderProjectWorkspace,
+			Task:                     row.Task,
+			ProviderStatus:           row.ProviderStatus,
+			ProviderNo:               row.ProviderNo,
+			CreatedAtMS:              row.CreatedAtMS,
+			ModifiedAtMS:             row.ModifiedAtMS,
+			Resumable:                row.Resumable,
+			ResumeBlockedReason:      row.ResumeBlockedReason,
 			// The Endpoint minted this handle for the provider session, so it
 			// addresses the row even when the session is not running. It is
 			// copied verbatim and never derived from the inventory join.
@@ -136,15 +136,15 @@ func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.
 			// the ambiguity is recorded so the caller can report the real cause.
 			if matches := live[row.ProviderSessionID]; len(matches) == 1 {
 				viewRow.Joined = true
-				viewRow.ResourceID = matches[0].SessionID
-				viewRow.Generation = matches[0].Generation
+				viewRow.ResourceID = matches[0].ClusterSessionID
+				viewRow.ProviderGeneration = matches[0].ProviderGeneration
 				viewRow.State = matches[0].State
 				// A reported session without a generation is present but its
 				// liveness was not verified, so it is not live. Reporting it as
 				// live would let the operator enter a session that cannot be
 				// addressed, and would also block the resume that is the only
 				// operation able to recover it.
-				viewRow.Live = matches[0].Generation != ""
+				viewRow.Live = matches[0].ProviderGeneration != ""
 				viewRow.Unverified = !viewRow.Live
 			} else if len(matches) == 0 {
 				viewRow.Joined = true
@@ -183,9 +183,9 @@ func historyCells(row HistoryViewRow) map[string]string {
 	return map[string]string{
 		columnNo:          strconv.Itoa(row.No),
 		"provider_status": escapeCell(row.ProviderStatus),
-		columnName:        escapeCell(row.DisplayName),
+		columnName:        escapeCell(row.ProviderDisplayName),
 		columnID:          escapeCell(row.ProviderSessionID),
-		columnWorkspace:   escapeCell(row.ProjectWorkspace),
+		columnWorkspace:   escapeCell(row.ProviderProjectWorkspace),
 		"live":            historyLiveCell(row),
 		"resumable":       escapeCell(historyResumableCell(row)),
 	}

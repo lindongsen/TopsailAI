@@ -16,7 +16,7 @@ func TestUnitBS3InvalidListPreservesOnlyBeforeValidationAndRecovers(t *testing.T
 	stub := scopeStub()
 	state := interactiveState{}
 	state.enterEndpoint(stub.endpoints[0])
-	old := SessionRow{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}
+	old := SessionRow{No: 1, EndpointID: "old", ClusterSessionID: "old", ProviderGeneration: "old"}
 	state.setRows([]SessionRow{old})
 	var output, diagnostics strings.Builder
 	if err := interactiveList(context.Background(), stub, &state, listArguments{Filter: "endpoint-2"}, &output, &diagnostics, ColorPolicy{}); err == nil {
@@ -36,7 +36,7 @@ func TestUnitBS3InvalidListPreservesOnlyBeforeValidationAndRecovers(t *testing.T
 func TestUnitBS3PartialTableWriteFailureLeavesRowsEmpty(t *testing.T) {
 	stub := scopeStub()
 	state := interactiveState{}
-	state.setRows([]SessionRow{{No: 1, SessionID: "old", Generation: "old"}})
+	state.setRows([]SessionRow{{No: 1, ClusterSessionID: "old", ProviderGeneration: "old"}})
 	writer := &unitBFailAfterWriter{remaining: 3}
 	err := interactiveList(context.Background(), stub, &state, listArguments{}, writer, io.Discard, ColorPolicy{})
 	if err == nil {
@@ -50,7 +50,7 @@ func TestUnitBS3PartialTableWriteFailureLeavesRowsEmpty(t *testing.T) {
 func TestUnitBS3PublishesRowsOnlyAfterEveryOutputAndDiagnosticWrite(t *testing.T) {
 	stub := scopeStub()
 	state := interactiveState{}
-	state.setRows([]SessionRow{{No: 1, SessionID: "old", Generation: "old"}})
+	state.setRows([]SessionRow{{No: 1, ClusterSessionID: "old", ProviderGeneration: "old"}})
 	observer := &unitBObservingWriter{state: &state}
 	if err := interactiveList(context.Background(), stub, &state, listArguments{}, observer, io.Discard, ColorPolicy{}); err == nil {
 		t.Fatal("expected render failure")
@@ -59,7 +59,7 @@ func TestUnitBS3PublishesRowsOnlyAfterEveryOutputAndDiagnosticWrite(t *testing.T
 		t.Fatal("rows became visible while table output was still being rendered")
 	}
 
-	state.setRows([]SessionRow{{No: 1, SessionID: "old", Generation: "old"}})
+	state.setRows([]SessionRow{{No: 1, ClusterSessionID: "old", ProviderGeneration: "old"}})
 	diagnosticFailure := &unitBFailingWriter{}
 	if err := interactiveList(context.Background(), &unitBDiagnosticAPI{interactiveStub: scopeStub()}, &state, listArguments{}, io.Discard, diagnosticFailure, ColorPolicy{}); err == nil {
 		t.Fatal("expected diagnostic write failure")
@@ -74,7 +74,7 @@ func TestUnitBS3PublishesRowsOnlyAfterEveryOutputAndDiagnosticWrite(t *testing.T
 func TestUnitBS3PublishesOnlyAfterSuccessfulTableAndDiagnostics(t *testing.T) {
 	stub := scopeStub()
 	state := interactiveState{}
-	state.setRows([]SessionRow{{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}})
+	state.setRows([]SessionRow{{No: 1, EndpointID: "old", ClusterSessionID: "old", ProviderGeneration: "old"}})
 	observer := &unitBSuccessfulObservingWriter{state: &state}
 	if err := interactiveList(context.Background(), &unitBDiagnosticAPI{interactiveStub: stub}, &state, listArguments{}, observer, io.Discard, ColorPolicy{}); err != nil {
 		t.Fatalf("successful render: %v", err)
@@ -93,7 +93,7 @@ func TestUnitBS3InvalidSyntaxPreservesBindings(t *testing.T) {
 	stub := scopeStub()
 	state := interactiveState{}
 	state.enterEndpoint(stub.endpoints[0])
-	old := SessionRow{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}
+	old := SessionRow{No: 1, EndpointID: "old", ClusterSessionID: "old", ProviderGeneration: "old"}
 	state.setRows([]SessionRow{old})
 	beforeList, beforeInventory := stub.listCalls, stub.inventoryCalls
 	var output, diagnostics strings.Builder
@@ -116,7 +116,7 @@ func TestUnitBS3SuccessfulListReplacesOldBindings(t *testing.T) {
 	state := interactiveState{}
 	oldRows := make([]SessionRow, 100)
 	for i := range oldRows {
-		oldRows[i] = SessionRow{No: i + 1, EndpointID: "old", SessionID: fmt.Sprintf("old-%d", i+1), Generation: "old-generation"}
+		oldRows[i] = SessionRow{No: i + 1, EndpointID: "old", ClusterSessionID: fmt.Sprintf("old-%d", i+1), ProviderGeneration: "old-generation"}
 	}
 	state.setRows(oldRows)
 	var output, diagnostics strings.Builder
@@ -139,7 +139,7 @@ func TestUnitBS3SuccessfulListReplacesOldBindings(t *testing.T) {
 	if err := interactiveList(context.Background(), stub, &state, listArguments{}, &output, &diagnostics, ColorPolicy{}); err != nil {
 		t.Fatalf("successful recovery: %v", err)
 	}
-	if len(state.Rows) != 2 || state.Rows[1].SessionID == "old-1" {
+	if len(state.Rows) != 2 || state.Rows[1].ClusterSessionID == "old-1" {
 		t.Fatalf("recovery did not publish new bindings: %+v", state.Rows)
 	}
 	if _, ok := state.Rows[99]; ok {
@@ -160,7 +160,7 @@ func TestUnitBB4AuthorityMatrixRejectsWithoutSelectionMutation(t *testing.T) {
 		{"removed", func(r protocol.InventoryReport) protocol.InventoryReport { r.Sessions = nil; return r }, "no longer identifies"},
 		{"incomplete", func(r protocol.InventoryReport) protocol.InventoryReport { r.ReportComplete = false; return r }, "unavailable"},
 		{"generation", func(r protocol.InventoryReport) protocol.InventoryReport {
-			r.Sessions[0].Generation = "changed"
+			r.Sessions[0].ProviderGeneration = "changed"
 			return r
 		}, "generation changed"},
 	}
@@ -168,7 +168,7 @@ func TestUnitBB4AuthorityMatrixRejectsWithoutSelectionMutation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := singleHostStub()
 			state := interactiveState{}
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			before := state
 			stub.reports["endpoint-1"] = tc.mutate(stub.reports["endpoint-1"])
 			if tc.name == "unavailable" {
@@ -178,7 +178,7 @@ func TestUnitBB4AuthorityMatrixRejectsWithoutSelectionMutation(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want %q", err, tc.want)
 			}
-			if state.Scope != before.Scope || state.SessionID != before.SessionID {
+			if state.Scope != before.Scope || state.ClusterSessionID != before.ClusterSessionID {
 				t.Fatalf("authority failure mutated selection: before=%+v after=%+v", before, state)
 			}
 		})
@@ -194,7 +194,10 @@ func TestUnitBB4CompleteAuthorityFailureMatrix(t *testing.T) {
 		want   string
 	}{
 		{name: "unavailable", mutate: func(r protocol.InventoryReport) protocol.InventoryReport { return r }, want: "inventory is unavailable"},
-		{name: "empty-generation", mutate: func(r protocol.InventoryReport) protocol.InventoryReport { r.Sessions[0].Generation = ""; return r }, want: "generation changed"},
+		{name: "empty-generation", mutate: func(r protocol.InventoryReport) protocol.InventoryReport {
+			r.Sessions[0].ProviderGeneration = ""
+			return r
+		}, want: "generation changed"},
 		{name: "adapter-stale", mutate: func(r protocol.InventoryReport) protocol.InventoryReport { r.Adapters[0].Stale = true; return r }, want: "adapter"},
 		{name: "adapter-unknown", mutate: func(r protocol.InventoryReport) protocol.InventoryReport { r.Adapters[0].DataKnown = false; return r }, want: "adapter"},
 	}
@@ -202,7 +205,7 @@ func TestUnitBB4CompleteAuthorityFailureMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := singleHostStub()
 			state := interactiveState{}
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			before := state
 			stub.reports["endpoint-1"] = tc.mutate(stub.reports["endpoint-1"])
 			if tc.name == "unavailable" {
@@ -212,7 +215,7 @@ func TestUnitBB4CompleteAuthorityFailureMatrix(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error=%v want=%q", err, tc.want)
 			}
-			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID || state.Generation != before.Generation || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
+			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID || state.ProviderGeneration != before.ProviderGeneration || state.Invalidated != before.Invalidated || state.InvalidReason != before.InvalidReason {
 				t.Fatalf("authority failure mutated selection: before=%+v after=%+v", before, state)
 			}
 		})
@@ -224,7 +227,7 @@ func TestUnitBB4CompleteAuthorityFailureMatrix(t *testing.T) {
 func TestUnitBS3DiagnosticFailureClearsOldIdentityAndRecoveryPublishesNewIdentity(t *testing.T) {
 	stub := scopeStub()
 	state := interactiveState{}
-	oldRows := []SessionRow{{No: 1, EndpointID: "old-endpoint", SessionID: "session-A", Generation: "generation-A"}}
+	oldRows := []SessionRow{{No: 1, EndpointID: "old-endpoint", ClusterSessionID: "session-A", ProviderGeneration: "generation-A"}}
 	state.setRows(oldRows)
 	failing := &unitBDiagnosticAPI{interactiveStub: stub}
 	failing.inventoryErr = errors.New("diagnostic fixture failure")
@@ -241,10 +244,10 @@ func TestUnitBS3DiagnosticFailureClearsOldIdentityAndRecoveryPublishesNewIdentit
 		t.Fatalf("recovery: %v", err)
 	}
 	row, ok := state.Rows[1]
-	if !ok || row.SessionID != "session-B" || row.Generation != "generation-B" {
+	if !ok || row.ClusterSessionID != "session-B" || row.ProviderGeneration != "generation-B" {
 		t.Fatalf("recovery identity=%+v exists=%t", row, ok)
 	}
-	if row.SessionID == "session-A" || row.Generation == "generation-A" {
+	if row.ClusterSessionID == "session-A" || row.ProviderGeneration == "generation-A" {
 		t.Fatalf("recovery republished old identity: %+v", row)
 	}
 }
@@ -256,7 +259,7 @@ func TestUnitBB4FailedReplacementInvalidatesBothNumericSpellings(t *testing.T) {
 		t.Run(input, func(t *testing.T) {
 			stub := scopeStub()
 			state := interactiveState{}
-			state.setRows([]SessionRow{{No: 99, EndpointID: "old", SessionID: "session-old", Generation: "generation-old"}})
+			state.setRows([]SessionRow{{No: 99, EndpointID: "old", ClusterSessionID: "session-old", ProviderGeneration: "generation-old"}})
 			before := state
 			stub.failList = true
 			var output, diagnostics strings.Builder
@@ -271,7 +274,7 @@ func TestUnitBB4FailedReplacementInvalidatesBothNumericSpellings(t *testing.T) {
 			if err == nil {
 				t.Fatalf("stale spelling %q unexpectedly succeeded", input)
 			}
-			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID || state.Generation != before.Generation {
+			if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.ClusterSessionID != before.ClusterSessionID || state.ProviderGeneration != before.ProviderGeneration {
 				t.Fatalf("failed replacement changed selection: before=%+v after=%+v", before, state)
 			}
 			if stub.listCalls != beforeList || stub.inventoryCalls != beforeInventory {
@@ -390,26 +393,26 @@ func TestUnitBB2BareAndExplicitRejectionsUseIndependentStateSnapshots(t *testing
 		setup func(*interactiveStub, *interactiveState)
 	}{
 		{name: "zero", input: "0", setup: func(_ *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", DisplayName: "one", Generation: "generation-1", State: "running", CollectionStatus: "succeeded"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderDisplayName: "one", ProviderGeneration: "generation-1", State: "running", CollectionStatus: "succeeded"}})
 		}},
 		{name: "out-of-range", input: "9", setup: func(_ *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", DisplayName: "one", Generation: "generation-1", State: "running", CollectionStatus: "succeeded"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderDisplayName: "one", ProviderGeneration: "generation-1", State: "running", CollectionStatus: "succeeded"}})
 		}},
 		{name: "overflow", input: strings.Repeat("9", 64), setup: func(_ *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", DisplayName: "one", Generation: "generation-1", State: "running", CollectionStatus: "succeeded"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderDisplayName: "one", ProviderGeneration: "generation-1", State: "running", CollectionStatus: "succeeded"}})
 		}},
 		{name: "surplus-space", input: "1 foo", setup: func(_ *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", DisplayName: "one", Generation: "generation-1", State: "running", CollectionStatus: "succeeded"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderDisplayName: "one", ProviderGeneration: "generation-1", State: "running", CollectionStatus: "succeeded"}})
 		}},
 		{name: "surplus-tab", input: "1\tfoo", setup: func(_ *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", DisplayName: "one", Generation: "generation-1", State: "running", CollectionStatus: "succeeded"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderDisplayName: "one", ProviderGeneration: "generation-1", State: "running", CollectionStatus: "succeeded"}})
 		}},
 		{name: "generation-mismatch", input: "1", setup: func(stub *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", DisplayName: "one", Generation: "generation-1", State: "running", CollectionStatus: "succeeded"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderDisplayName: "one", ProviderGeneration: "generation-1", State: "running", CollectionStatus: "succeeded"}})
 			stub.reports["endpoint-1"] = scopeInventory("res-1", "generation-2")
 		}},
 		{name: "duplicate-id", input: "1", setup: func(stub *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", DisplayName: "one", Generation: "generation-1", State: "running", CollectionStatus: "succeeded"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderDisplayName: "one", ProviderGeneration: "generation-1", State: "running", CollectionStatus: "succeeded"}})
 			report := scopeInventory("res-1", "generation-1")
 			report.Sessions = append(report.Sessions, report.Sessions[0])
 			stub.reports["endpoint-1"] = report
@@ -484,13 +487,13 @@ func TestUnitBB2QualifiedEndpointPathUsesIndependentExplicitState(t *testing.T) 
 		stub := scopeStub()
 		state := interactiveState{}
 		if input == "1" {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", Generation: "generation-1", CollectionStatus: protocol.CollectionSucceeded}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", CollectionStatus: protocol.CollectionSucceeded}})
 		}
 		var output, diagnostics strings.Builder
 		if _, err := executeInteractiveLine(context.Background(), stub, &state, input, nil, &output, &output, &diagnostics, InteractiveOptions{}); err != nil {
 			t.Fatalf("path %q: %v", input, err)
 		}
-		if state.Scope.Kind != ScopeSession || state.Scope.EndpointID != "endpoint-1" || state.Scope.SessionID != "res-1" {
+		if state.Scope.Kind != ScopeSession || state.Scope.EndpointID != "endpoint-1" || state.Scope.ClusterSessionID != "res-1" {
 			t.Fatalf("path %q state=%+v", input, state)
 		}
 		wantInventory := 2
@@ -512,35 +515,35 @@ func TestUnitBB2AuthorityBranchesUseIndependentNumericSpellings(t *testing.T) {
 	}{
 		{name: "no-bindings", setup: func(_ *interactiveStub, _ *interactiveState) {}},
 		{name: "empty-session-id", setup: func(_ *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ProviderGeneration: "generation-1"}})
 		}},
 		{name: "empty-generation", setup: func(_ *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1"}})
 		}},
 		{name: "inventory-unavailable", setup: func(stub *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			stub.inventoryErr = errors.New("inventory load failed")
 		}},
 		{name: "inventory-incomplete", setup: func(stub *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			report := stub.reports["endpoint-1"]
 			report.ReportComplete = false
 			stub.reports["endpoint-1"] = report
 		}},
 		{name: "session-removed", setup: func(stub *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			report := stub.reports["endpoint-1"]
 			report.Sessions = nil
 			stub.reports["endpoint-1"] = report
 		}},
 		{name: "stale-session", setup: func(stub *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			report := stub.reports["endpoint-1"]
 			report.Sessions[0].Stale = true
 			stub.reports["endpoint-1"] = report
 		}},
 		{name: "adapter-authority", setup: func(stub *interactiveStub, state *interactiveState) {
-			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", SessionID: "res-1", Generation: "generation-1"}})
+			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", AdapterID: "adapter-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1"}})
 			report := stub.reports["endpoint-1"]
 			report.Adapters[0].DataKnown = false
 			stub.reports["endpoint-1"] = report

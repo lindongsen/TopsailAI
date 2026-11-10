@@ -181,7 +181,7 @@ func TestRunFollowStillSendsExactlyOneEndOnNormalStop(t *testing.T) {
 	service.startFollow(context.Background(), channel.Frame{
 		Type:                channel.FrameOutputFollowRequest,
 		RequestID:           "req-normal",
-		OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r", Generation: "g"},
+		OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r", ProviderGeneration: "g"},
 	})
 	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
 
@@ -215,7 +215,7 @@ func TestRunFollowRecordsLossWhenChannelDropsMidStream(t *testing.T) {
 	service.startFollow(context.Background(), channel.Frame{
 		Type:                channel.FrameOutputFollowRequest,
 		RequestID:           "req-drop",
-		OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r", Generation: "g"},
+		OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r", ProviderGeneration: "g"},
 	})
 	<-executor.started
 	service.stopFollows()

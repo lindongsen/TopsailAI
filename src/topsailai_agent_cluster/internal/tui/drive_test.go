@@ -131,7 +131,7 @@ func TestDriveStartInWorkspaceScopeAdmitsTheExactTarget(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentDriveStart {
 		t.Fatalf("operation=%q want %q", intent.Operation, protocol.OperationAgentDriveStart)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.Generation != "generation-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.ProviderGeneration != "generation-1" {
 		t.Fatalf("target=%+v want res-1/generation-1", intent.Target)
 	}
 	if intent.EndpointID != "endpoint-1" {
@@ -268,7 +268,7 @@ func TestDriveStatusJSONCarriesTheRequestIdentity(t *testing.T) {
 	if err := (CommandRunner{API: stub, Policy: LegacyPolicy}).DriveStatus(context.Background(), &out, "endpoint-1", "res-1", true); err != nil {
 		t.Fatalf("DriveStatus: %v", err)
 	}
-	for _, want := range []string{`"endpoint_id": "endpoint-1"`, `"session_id": "res-1"`, `"generation": "generation-1"`, `"state": "running"`, `"verified": true`} {
+	for _, want := range []string{`"endpoint_id": "endpoint-1"`, `"cluster_session_id": "res-1"`, `"provider_generation": "generation-1"`, `"state": "running"`, `"verified": true`} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("drive status JSON missing %q: %q", want, out.String())
 		}
@@ -323,7 +323,7 @@ func TestInteractiveDriveStartAdmitsTheDriveOperation(t *testing.T) {
 	if intent.Operation != protocol.OperationAgentDriveStart {
 		t.Fatalf("operation=%q want %q", intent.Operation, protocol.OperationAgentDriveStart)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.Generation != "generation-1" {
+	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.ProviderGeneration != "generation-1" {
 		t.Fatalf("target=%+v want res-1/generation-1", intent.Target)
 	}
 	if !strings.Contains(output, "CommandID:") {
@@ -383,7 +383,7 @@ func TestInteractiveDriveRejectsUnknownActionsAndOptions(t *testing.T) {
 func namedDriveStub() *interactiveStub {
 	stub := driveStub()
 	report := stub.reports["endpoint-1"]
-	report.Sessions[0].DisplayName = "Daily work"
+	report.Sessions[0].ProviderDisplayName = "Daily work"
 	stub.reports["endpoint-1"] = report
 	return stub
 }
@@ -399,7 +399,7 @@ func TestDriveStartConfirmationNamesTheSession(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	const question = `drive start session "Daily work" provider-res-1 (res-1)? Confirm drive start?`
+	const question = `drive start session (Daily work) (provider-res-1)? Confirm drive start?`
 	if !strings.Contains(output, question) {
 		t.Fatalf("drive start question does not name the session: %q", output)
 	}
@@ -423,22 +423,23 @@ func TestDriveStopConfirmationNamesTheSession(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	const question = `drive stop session "Daily work" provider-res-1 (res-1)? Confirm drive stop?`
+	const question = `drive stop session (Daily work) (provider-res-1)? Confirm drive stop?`
 	if !strings.Contains(output, question) {
 		t.Fatalf("drive stop question does not name the session: %q", output)
 	}
 }
 
-// TestDriveConfirmationKeepsTheOldWordingWithoutAName proves a session the provider
-// reported no name for keeps the previous wording exactly. The name is descriptive
-// report data, so its absence must not change the question an operator answers.
-func TestDriveConfirmationKeepsTheOldWordingWithoutAName(t *testing.T) {
+// TestDriveConfirmationNamesTheProviderIDWithoutAName proves a session the provider
+// reported no name for still names the provider session identifier, and omits the
+// empty name rather than printing "()". The name is descriptive report data, so its
+// absence must not degrade the question into an opaque resource ID.
+func TestDriveConfirmationNamesTheProviderIDWithoutAName(t *testing.T) {
 	stub := driveCapabilityStub{interactiveStub: driveStub()}
 	output, diagnostics := runScope(t, stub, "drive start res-1\ny\nquit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	const question = "drive start session provider-res-1 (res-1)? Confirm drive start?"
+	const question = "drive start session (provider-res-1)? Confirm drive start?"
 	if !strings.Contains(output, question) {
 		t.Fatalf("unnamed session changed the question: %q", output)
 	}
@@ -450,7 +451,7 @@ func TestDriveConfirmationKeepsTheOldWordingWithoutAName(t *testing.T) {
 func TestDriveConfirmationSanitizesTheReportedName(t *testing.T) {
 	stub := driveCapabilityStub{interactiveStub: driveStub()}
 	report := stub.reports["endpoint-1"]
-	report.Sessions[0].DisplayName = "evil\x1b[31mname"
+	report.Sessions[0].ProviderDisplayName = "evil\x1b[31mname"
 	stub.reports["endpoint-1"] = report
 	output, diagnostics := runScope(t, stub, "drive start res-1\ny\nquit\n", ColorPolicy{})
 	if diagnostics != "" {

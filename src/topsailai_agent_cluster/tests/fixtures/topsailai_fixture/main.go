@@ -39,6 +39,16 @@ func main() {
 		session(args[1:])
 	case "runtime":
 		runtime(args[1:])
+	case "models":
+		// The adapter reads `models list --json` and decodes a bare array of
+		// registry entries. Two entries are enough to prove row numbering and
+		// selection, and neither carries `enabled`, because the provider omits
+		// that field for an enabled entry.
+		recordInvocation(args)
+		emit([]map[string]any{
+			{"id": "fixture-model-a", "name": "fixture-model-a", "protocol": "openai-compatible"},
+			{"id": "fixture-model-b", "name": "fixture-model-b", "protocol": "openai-compatible"},
+		})
 	default:
 		fail("unsupported subcommand " + args[0])
 	}
@@ -281,6 +291,10 @@ func control(args []string) {
 	if action == "" {
 		fail("missing control action")
 	}
+	// Record the argv before answering, so a scenario can prove which payload
+	// reached the provider. The payload is the only place a resolved profile
+	// name differs from a row number, and the parser above discards it.
+	recordInvocation(args)
 	// The provider reports control delivery as control_acknowledged, which the
 	// adapter maps to an acknowledged submitted boundary. Emitting a bare
 	// "acknowledged" would fall through the adapter's switch to unknown, so the
@@ -305,4 +319,24 @@ func emit(document any) {
 func fail(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(2)
+}
+
+// recordInvocation appends one JSON line describing the argv the adapter invoked,
+// when a test asks for it. The provider fixture already records its invocations,
+// and the model write path needs the same evidence: a scenario must prove the
+// resolved profile name reached the provider instead of a row number, and the
+// argv is the only place that difference is observable.
+func recordInvocation(args []string) {
+	logPath := os.Getenv("AGENT_CLUSTER_TEST_PROVIDER_INVOCATION_LOG")
+	if logPath == "" {
+		return
+	}
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		fail(err.Error())
+	}
+	defer func() { _ = file.Close() }()
+	if err := json.NewEncoder(file).Encode(map[string]any{"argv": args}); err != nil {
+		fail(err.Error())
+	}
 }

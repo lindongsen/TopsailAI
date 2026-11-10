@@ -67,7 +67,7 @@ func newFollowService(t *testing.T, executor CommandExecutor) (*Service, *servic
 func TestStartFollowStreamsChunksAndOneEnd(t *testing.T) {
 	executor := &followExecutor{chunks: []protocol.OutputChunk{{Lines: []string{"a"}}, {Lines: []string{"b"}}}}
 	service, transport := newFollowService(t, executor)
-	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-1", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r", Generation: "g"}})
+	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-1", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r", ProviderGeneration: "g"}})
 	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
 	if got := transport.count(channel.FrameOutputChunk); got != 2 {
 		t.Fatalf("chunks=%d want 2", got)

@@ -67,16 +67,16 @@ func TestModelCatalogEmptyIsNotUnsupported(t *testing.T) {
 // boundary forbids.
 func TestModelProfileCarriesNoProviderVocabulary(t *testing.T) {
 	profile := ModelProfile{
-		ModelProfileID:    "mp-1",
-		DisplayName:       "fast",
-		Available:         true,
-		UnavailableReason: "",
+		ModelProfileID:      "mp-1",
+		ProviderDisplayName: "fast",
+		Available:           true,
+		UnavailableReason:   "",
 	}
 	if profile.ModelProfileID == "" {
 		t.Fatal("a profile must be addressable by its opaque identifier")
 	}
 	// The identifier is the only addressing key, so an empty one is unusable.
-	unaddressable := ModelProfile{DisplayName: "fast", Available: true}
+	unaddressable := ModelProfile{ProviderDisplayName: "fast", Available: true}
 	if unaddressable.ModelProfileID != "" {
 		t.Fatal("this fixture is meant to have no identifier")
 	}

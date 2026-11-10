@@ -84,7 +84,7 @@ func TestDiscoverUsesOpaqueIDsAndRejectsMalformedOrTruncatedResults(t *testing.T
 	if err != nil || len(result.Sessions) != 1 {
 		t.Fatalf("discover: %#v %v", result, err)
 	}
-	if result.Sessions[0].SessionID == "provider-secret" || result.Sessions[0].Generation != "g1" {
+	if result.Sessions[0].ClusterSessionID == "provider-secret" || result.Sessions[0].ProviderGeneration != "g1" {
 		t.Fatalf("provider identity leaked or generation missing: %#v", result.Sessions[0])
 	}
 	if !reflect.DeepEqual(runner.args, []string{"workspace", "list", "--json", "--local"}) {
@@ -119,13 +119,13 @@ func TestDiscoverReportsUnverifiedRowsAsUnknown(t *testing.T) {
 		t.Fatalf("sessions = %#v, want both the unverified and the live row", result.Sessions)
 	}
 	unverified := result.Sessions[0]
-	if unverified.SessionID != "res_idle-history" || unverified.Generation != "" {
+	if unverified.ClusterSessionID != "res_idle-history" || unverified.ProviderGeneration != "" {
 		t.Fatalf("unverified session = %#v, want opaque ID and no generation", unverified)
 	}
 	if unverified.State != protocol.SessionStateUnknown || unverified.StateReason != protocol.StateReasonLivenessUnverified {
 		t.Fatalf("unverified session state = %q reason = %q, want unknown/liveness_unverified", unverified.State, unverified.StateReason)
 	}
-	if result.Sessions[1].Generation != "g1" || result.Sessions[1].SessionID != "res_live-session" {
+	if result.Sessions[1].ProviderGeneration != "g1" || result.Sessions[1].ClusterSessionID != "res_live-session" {
 		t.Fatalf("live session = %#v, want generation g1 and opaque mapping", result.Sessions[1])
 	}
 }
@@ -140,15 +140,15 @@ func TestDiscoverAcceptsNumericStringAndNullGenerations(t *testing.T) {
 	if len(result.Sessions) != 3 {
 		t.Fatalf("session count = %d, want 3: %#v", len(result.Sessions), result.Sessions)
 	}
-	if result.Sessions[0].SessionID != "res_numeric" || result.Sessions[0].Generation != "435912980" {
+	if result.Sessions[0].ClusterSessionID != "res_numeric" || result.Sessions[0].ProviderGeneration != "435912980" {
 		t.Fatalf("numeric session = %#v", result.Sessions[0])
 	}
-	if result.Sessions[1].SessionID != "res_string" || result.Sessions[1].Generation != "g1" {
+	if result.Sessions[1].ClusterSessionID != "res_string" || result.Sessions[1].ProviderGeneration != "g1" {
 		t.Fatalf("string session = %#v", result.Sessions[1])
 	}
 	// A null generation is a listed record with unverified liveness, so it stays
 	// visible as unknown instead of being silently excluded.
-	if result.Sessions[2].SessionID != "res_idle" || result.Sessions[2].Generation != "" || result.Sessions[2].State != protocol.SessionStateUnknown {
+	if result.Sessions[2].ClusterSessionID != "res_idle" || result.Sessions[2].ProviderGeneration != "" || result.Sessions[2].State != protocol.SessionStateUnknown {
 		t.Fatalf("null-generation session = %#v, want unknown with no generation", result.Sessions[2])
 	}
 }
@@ -161,7 +161,7 @@ func TestExecuteUsesProviderCLIFlagsAndMessagePayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.out = []byte(`{"delivery_state":"submitted"}`)
-	target := &protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID, Generation: "g1"}
+	target := &protocol.CommandTarget{ResourceID: result.Sessions[0].ClusterSessionID, ProviderGeneration: "g1"}
 	payload := []byte(`{"message":"-- -g value with spaces \"quotes\"\nnext"}`)
 	_, err = a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c1", Operation: "send", Target: target, Payload: payload}})
 	if err != nil {
@@ -189,7 +189,7 @@ func TestStopRequiresGenerationAndPreservesSignalSemantics(t *testing.T) {
 	if err == nil || !contains(err.Error(), "generation") {
 		t.Fatalf("missing generation was not rejected: %v", err)
 	}
-	result, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c2", Operation: "agent.stop", Target: &protocol.CommandTarget{ResourceID: id, Generation: "g1"}}})
+	result, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c2", Operation: "agent.stop", Target: &protocol.CommandTarget{ResourceID: id, ProviderGeneration: "g1"}}})
 	if err != nil || result.Receipt.EffectCertainty != protocol.EffectAcknowledged || result.Receipt.DeliveryBoundary != protocol.DeliverySignalSent || result.Receipt.ExitConfirmed {
 		t.Fatalf("stop signal semantics were not preserved: %#v %v", result, err)
 	}
@@ -213,7 +213,7 @@ func TestTopsailaiAdapterExecutesDeclaredInterruptOperation(t *testing.T) {
 			runner.out = []byte(`{"delivery_boundary":"submitted"}`)
 			_, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 				CommandID: "interrupt-1", Operation: protocol.OperationExecutionInterrupt,
-				Target:  &protocol.CommandTarget{ResourceID: "res_provider-secret", Generation: "g1"},
+				Target:  &protocol.CommandTarget{ResourceID: "res_provider-secret", ProviderGeneration: "g1"},
 				Payload: []byte(testCase.payload),
 			}})
 			if err != nil {
@@ -246,7 +246,7 @@ func TestTopsailaiAdapterRejectsInvalidInterruptPayload(t *testing.T) {
 			runner.args = nil
 			_, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 				CommandID: "interrupt-invalid", Operation: protocol.OperationExecutionInterrupt,
-				Target:  &protocol.CommandTarget{ResourceID: "res_provider-secret", Generation: "g1"},
+				Target:  &protocol.CommandTarget{ResourceID: "res_provider-secret", ProviderGeneration: "g1"},
 				Payload: []byte(payload),
 			}})
 			if err == nil || runner.args != nil {
@@ -278,7 +278,7 @@ func TestReadOutputMarksProviderTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.out = []byte(`{"ok":true,"response":{"lines":["one"],"scan_limited":true}}`)
-	output, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID}, MaxLines: 10})
+	output, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].ClusterSessionID}, MaxLines: 10})
 	if err != nil || !output.Truncated || !output.ScanLimited {
 		t.Fatalf("truncation not reported: %#v %v", output, err)
 	}
@@ -312,7 +312,7 @@ func TestReadOutputLineBudgetIndependentOfBytes(t *testing.T) {
 			}
 			runner.out = []byte(`{"ok":true,"response":{"lines":["one"]}}`)
 			runner.args = nil
-			if _, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID}, MaxBytes: testCase.maxBytes, MaxLines: testCase.maxLines}); err != nil {
+			if _, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].ClusterSessionID}, MaxBytes: testCase.maxBytes, MaxLines: testCase.maxLines}); err != nil {
 				t.Fatal(err)
 			}
 			want := []string{"runtime", "logs", "-s", "s", "-n", testCase.want, "--json"}
@@ -349,7 +349,7 @@ func TestStopUnsupportedWhenPlatformCapabilityMissing(t *testing.T) {
 			t.Fatal("agent.stop must not be declared without pidfd support")
 		}
 	}
-	result, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c1", Operation: "agent.stop", Target: &protocol.CommandTarget{ResourceID: "opaque", Generation: "g1"}}})
+	result, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c1", Operation: "agent.stop", Target: &protocol.CommandTarget{ResourceID: "opaque", ProviderGeneration: "g1"}}})
 	if !errors.Is(err, adapter.ErrUnsupported) {
 		t.Fatalf("stop error = %v, want ErrUnsupported", err)
 	}
@@ -371,7 +371,7 @@ func TestStopSupportedOnLinuxWithPidfd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c1", Operation: "agent.stop", Target: &protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID, Generation: "g1"}}})
+	_, err = a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c1", Operation: "agent.stop", Target: &protocol.CommandTarget{ResourceID: result.Sessions[0].ClusterSessionID, ProviderGeneration: "g1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestDiscoverPopulatesFreshnessFields(t *testing.T) {
 
 func TestInspectRejectsUnknownMappedResource(t *testing.T) {
 	a := newTestAdapter(t, &fakeRunner{out: []byte(`{"items":[]}`)})
-	result, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "unknown", Generation: "g1"}})
+	result, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "unknown", ProviderGeneration: "g1"}})
 	if err == nil || result.Found {
 		t.Fatalf("unknown resource result=%#v err=%v", result, err)
 	}
@@ -408,7 +408,7 @@ func TestNewRejectsMissingIdentityAndInspectValidatesTarget(t *testing.T) {
 	if _, err := a.Inspect(context.Background(), adapter.InspectRequest{}); err == nil {
 		t.Fatal("missing inspect target must fail")
 	}
-	if _, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "r", Generation: "g"}}); err == nil {
+	if _, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "r", ProviderGeneration: "g"}}); err == nil {
 		t.Fatal("unknown mapping must fail")
 	}
 }
@@ -444,14 +444,14 @@ func TestDiscoverPreservesProviderSessionNameWhileKeepingOpaqueID(t *testing.T) 
 		t.Fatalf("sessions = %#v", result.Sessions)
 	}
 	session := result.Sessions[0]
-	if session.DisplayName != "Daily work" {
-		t.Fatalf("display name = %q, want Daily work", session.DisplayName)
+	if session.ProviderDisplayName != "Daily work" {
+		t.Fatalf("display name = %q, want Daily work", session.ProviderDisplayName)
 	}
 	if session.ProviderSessionID != "provider-secret" {
 		t.Fatalf("provider session ID = %q, want provider-secret", session.ProviderSessionID)
 	}
-	if session.SessionID != "res_provider-secret" {
-		t.Fatalf("session ID = %q, want opaque resource ID", session.SessionID)
+	if session.ClusterSessionID != "res_provider-secret" {
+		t.Fatalf("session ID = %q, want opaque resource ID", session.ClusterSessionID)
 	}
 }
 
@@ -462,7 +462,7 @@ func TestDiscoverLeavesProviderSessionNameEmptyWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := result.Sessions[0].DisplayName; got != "" {
+	if got := result.Sessions[0].ProviderDisplayName; got != "" {
 		t.Fatalf("display name = %q, want empty", got)
 	}
 }
@@ -479,7 +479,7 @@ func TestDiscoverForwardsProviderProjectWorkspace(t *testing.T) {
 	if len(result.Sessions) != 1 {
 		t.Fatalf("sessions = %#v", result.Sessions)
 	}
-	if got := result.Sessions[0].ProjectWorkspace; got != "/work/project-a" {
+	if got := result.Sessions[0].ProviderProjectWorkspace; got != "/work/project-a" {
 		t.Fatalf("project workspace = %q, want /work/project-a", got)
 	}
 }
@@ -493,7 +493,7 @@ func TestDiscoverLeavesProjectWorkspaceEmptyWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := result.Sessions[0].ProjectWorkspace; got != "" {
+	if got := result.Sessions[0].ProviderProjectWorkspace; got != "" {
 		t.Fatalf("project workspace = %q, want empty", got)
 	}
 }
@@ -598,7 +598,7 @@ func TestResumeUsesExplicitProviderSessionSelector(t *testing.T) {
 	runner.out = []byte(`{"status":"submitted"}`)
 	_, err = a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
 		CommandID: "resume-contract", Operation: protocol.OperationAgentResume,
-		Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].SessionID, Generation: "g1"},
+		Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].ClusterSessionID, ProviderGeneration: "g1"},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -621,7 +621,7 @@ func TestExecuteUsesAssignmentFormForDashLeadingMessage(t *testing.T) {
 				t.Fatal(err)
 			}
 			runner.out = []byte(`{"delivery_state":"submitted"}`)
-			target := &protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID, Generation: "g1"}
+			target := &protocol.CommandTarget{ResourceID: result.Sessions[0].ClusterSessionID, ProviderGeneration: "g1"}
 			payload := []byte(`{"text":"--json"}`)
 			if _, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c1", Operation: operation, Target: target, Payload: payload}}); err != nil {
 				t.Fatal(err)

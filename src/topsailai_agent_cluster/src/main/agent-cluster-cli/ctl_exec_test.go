@@ -82,7 +82,7 @@ func TestCtlCommandAdmitsTheAdvertisedOperation(t *testing.T) {
 	if intent.OperationVersion != "2" {
 		t.Fatalf("operation version = %q, want the advertised 2", intent.OperationVersion)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "session" || intent.Target.Generation != "gen" {
+	if intent.Target == nil || intent.Target.ResourceID != "session" || intent.Target.ProviderGeneration != "gen" {
 		t.Fatalf("target = %+v, want session/gen", intent.Target)
 	}
 	if string(intent.Payload) != `{"note":"x"}` {
@@ -109,7 +109,7 @@ func TestCtlCommandUsesTheGenerationFlag(t *testing.T) {
 	if err := ctlCommand(context.Background(), stub, &strings.Builder{}, []string{"ctl", "ep", "session", "heartbeat"}, true, false, 100, "gen-flag"); err != nil {
 		t.Fatalf("ctlCommand: %v", err)
 	}
-	if got := stub.intents[0].Target.Generation; got != "gen-flag" {
+	if got := stub.intents[0].Target.ProviderGeneration; got != "gen-flag" {
 		t.Fatalf("generation = %q, want gen-flag", got)
 	}
 }
@@ -186,7 +186,7 @@ func TestExecCommandAdmitsTheArgvArray(t *testing.T) {
 	if intent.OperationVersion != protocol.CommandExecPayloadVersion {
 		t.Fatalf("operation version = %q, want %q", intent.OperationVersion, protocol.CommandExecPayloadVersion)
 	}
-	if intent.Target == nil || intent.Target.ResourceID != "session" || intent.Target.Generation != "gen" {
+	if intent.Target == nil || intent.Target.ResourceID != "session" || intent.Target.ProviderGeneration != "gen" {
 		t.Fatalf("target = %+v, want session/gen", intent.Target)
 	}
 	var request protocol.CommandExecRequest
@@ -326,13 +326,13 @@ func TestSubmitActionRejectsUnadvertisedOperation(t *testing.T) {
 // sequence consumes, so a test can exercise it without the argument parsing.
 func tuiActionRequest(operation, label string) tui.ActionRequest {
 	return tui.ActionRequest{
-		Operation:      operation,
-		OperationLabel: label,
-		EndpointID:     "ep",
-		ResourceID:     "session",
-		Generation:     "gen",
-		Payload:        json.RawMessage(`{}`),
-		Confirmed:      true,
-		WaitTimeoutMS:  100,
+		Operation:          operation,
+		OperationLabel:     label,
+		EndpointID:         "ep",
+		ResourceID:         "session",
+		ProviderGeneration: "gen",
+		Payload:            json.RawMessage(`{}`),
+		Confirmed:          true,
+		WaitTimeoutMS:      100,
 	}
 }

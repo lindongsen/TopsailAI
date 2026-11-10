@@ -69,7 +69,7 @@ func TestProviderFailureTextIgnoresNonExitError(t *testing.T) {
 func TestCommandAdapterExecuteCarriesProviderDocument(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", Generation: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
+	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestCommandAdapterExecuteCarriesProviderDiagnostic(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "execute-fail")
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", Generation: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
+	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
 	if err == nil {
 		t.Fatal("expected the provider failure to be reported")
 	}
@@ -106,7 +106,7 @@ func TestCommandAdapterExecuteCarriesUndecodableDocument(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "execute-garbage")
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", Generation: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
+	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
 	if err == nil {
 		t.Fatal("expected the decode failure to be reported")
 	}
@@ -120,7 +120,7 @@ func TestCommandAdapterExecuteCarriesUndecodableDocument(t *testing.T) {
 func TestCommandAdapterExecuteKeepsReceiptOnSuccess(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", Generation: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
+	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestCommandAdapterExecuteHelperIsReachable(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "execute-fail")
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", Generation: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
+	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
 	if err == nil {
 		t.Fatal("helper failure mode was not reached")
 	}

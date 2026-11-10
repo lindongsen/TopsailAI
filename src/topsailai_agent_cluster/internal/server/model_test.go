@@ -26,7 +26,7 @@ func (modelCatalogRequester) RequestOutput(context.Context, string, protocol.Out
 // boundary.
 func (modelCatalogRequester) RequestModelCatalog(_ context.Context, endpoint string, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
 	return protocol.ModelCatalog{
-		Profiles:         []protocol.ModelProfile{{ModelProfileID: "mp-1", DisplayName: endpoint, Available: true}},
+		Profiles:         []protocol.ModelProfile{{ModelProfileID: "mp-1", ProviderDisplayName: endpoint, Available: true}},
 		CurrentProfileID: "mp-1",
 		ObservedAtMS:     1000,
 	}, nil
@@ -40,7 +40,7 @@ func TestModelCatalogHTTPClient(t *testing.T) {
 	defer server.Close()
 	api := client.NewAPIClient(server.URL, "test")
 	result, err := api.GetModelCatalog(context.Background(), "e /1", "s-1", "")
-	if err != nil || len(result.Profiles) != 1 || result.Profiles[0].DisplayName != "e /1" {
+	if err != nil || len(result.Profiles) != 1 || result.Profiles[0].ProviderDisplayName != "e /1" {
 		t.Fatalf("%#v %v", result, err)
 	}
 	for _, item := range []struct {
@@ -272,8 +272,8 @@ func TestModelCatalogTargetReachesTheEndpoint(t *testing.T) {
 		if query.Target.ResourceID != item.resourceID {
 			t.Fatalf("resource=%q want=%q", query.Target.ResourceID, item.resourceID)
 		}
-		if query.Target.Generation != item.generation {
-			t.Fatalf("generation=%q want=%q", query.Target.Generation, item.generation)
+		if query.Target.ProviderGeneration != item.generation {
+			t.Fatalf("generation=%q want=%q", query.Target.ProviderGeneration, item.generation)
 		}
 		if query.Target.Kind != "session" {
 			t.Fatalf("kind=%q want=session", query.Target.Kind)

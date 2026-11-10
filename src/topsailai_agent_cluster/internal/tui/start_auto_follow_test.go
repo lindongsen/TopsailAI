@@ -73,13 +73,13 @@ func (s *startAutoFollowStub) automaticSteps() []string {
 func launchedInventory(sessionID, generation string) protocol.InventoryReport {
 	report := scopeInventory("res-1", "generation-1")
 	report.Sessions = append(report.Sessions, protocol.Session{
-		SessionID:         sessionID,
-		ProviderSessionID: "provider-" + sessionID,
-		DisplayName:       "launched work",
-		AdapterID:         "adapter-1",
-		Generation:        generation,
-		State:             "running",
-		CollectionStatus:  protocol.CollectionSucceeded,
+		ClusterSessionID:    sessionID,
+		ProviderSessionID:   "provider-" + sessionID,
+		ProviderDisplayName: "launched work",
+		AdapterID:           "adapter-1",
+		ProviderGeneration:  generation,
+		State:               "running",
+		CollectionStatus:    protocol.CollectionSucceeded,
 	})
 	return report
 }
@@ -107,7 +107,7 @@ func TestUnitStartAutoFollowArmsOneLiveTailForTheLaunchedSession(t *testing.T) {
 	if request.endpointID != "endpoint-1" || request.resourceID != "res-new" || request.generation != "generation-new" {
 		t.Fatalf("wrong follow identity tuple: %+v", request)
 	}
-	if !strings.Contains(output, "follow: res-new (any key stops)") {
+	if !strings.Contains(output, "log.follow> res-new (any key stops)") {
 		t.Fatalf("start did not announce the live tail: %q", output)
 	}
 }
@@ -225,12 +225,12 @@ func TestUnitStartAutoFollowSkipsAnAmbiguousLaunch(t *testing.T) {
 	stub := newStartAutoFollowStub()
 	report := launchedInventory("res-new", "generation-new")
 	report.Sessions = append(report.Sessions, protocol.Session{
-		SessionID:         "res-other",
-		ProviderSessionID: "provider-other",
-		AdapterID:         "adapter-1",
-		Generation:        "generation-other",
-		State:             "running",
-		CollectionStatus:  protocol.CollectionSucceeded,
+		ClusterSessionID:   "res-other",
+		ProviderSessionID:  "provider-other",
+		AdapterID:          "adapter-1",
+		ProviderGeneration: "generation-other",
+		State:              "running",
+		CollectionStatus:   protocol.CollectionSucceeded,
 	})
 	stub.fresh["endpoint-1"] = report
 	output, diagnostics, _ := runWatchREPL(t, stub, startAutoFollowInput, nil)

@@ -101,7 +101,7 @@ func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 		t.Fatalf("intent counts legacy=%d interactive=%d", len(legacy.intents), len(interactive.intents))
 	}
 	left, right := legacy.intents[0], interactive.intents[0]
-	if left.EndpointID != right.EndpointID || left.Operation != right.Operation || string(left.Payload) != string(right.Payload) || left.Target == nil || right.Target == nil || left.Target.ResourceID != right.Target.ResourceID || left.Target.Generation != right.Target.Generation {
+	if left.EndpointID != right.EndpointID || left.Operation != right.Operation || string(left.Payload) != string(right.Payload) || left.Target == nil || right.Target == nil || left.Target.ResourceID != right.Target.ResourceID || left.Target.ProviderGeneration != right.Target.ProviderGeneration {
 		t.Fatalf("intent mismatch legacy=%+v interactive=%+v", left, right)
 	}
 }
@@ -114,7 +114,7 @@ func (s *actionPathStub) ListEndpoints(context.Context) ([]protocol.Endpoint, er
 	return []protocol.Endpoint{{EndpointID: "ep"}}, nil
 }
 func (s *actionPathStub) GetInventory(context.Context, string) (protocol.InventoryReport, error) {
-	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}, Sessions: []protocol.Session{{SessionID: "session", AdapterID: "adapter-1", Generation: "gen", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}, nil
+	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}, Sessions: []protocol.Session{{ClusterSessionID: "session", AdapterID: "adapter-1", ProviderGeneration: "gen", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}, nil
 }
 func (s *actionPathStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
 	return protocol.CapabilityDescriptor{Revision: "rev-1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}}}, nil
@@ -613,7 +613,7 @@ func newListBehaviorServer(t *testing.T) *httptest.Server {
 func listTestInventory(sessionIDs ...string) protocol.InventoryReport {
 	sessions := make([]protocol.Session, 0, len(sessionIDs))
 	for _, id := range sessionIDs {
-		sessions = append(sessions, protocol.Session{SessionID: id, ProviderSessionID: id, AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded})
+		sessions = append(sessions, protocol.Session{ClusterSessionID: id, ProviderSessionID: id, AdapterID: "adapter-1", ProviderGeneration: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded})
 	}
 	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}, Sessions: sessions}
 }
@@ -864,7 +864,7 @@ func TestStandaloneSendWithoutTextReadsMultiLineBlock(t *testing.T) {
 	if got, want := string(stub.intents[0].Payload), `{"text":"first line\nsecond line"}`; got != want {
 		t.Fatalf("payload=%s want=%s", got, want)
 	}
-	if stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen" {
+	if stub.intents[0].Target == nil || stub.intents[0].Target.ProviderGeneration != "gen" {
 		t.Fatalf("target=%+v", stub.intents[0].Target)
 	}
 }
@@ -1159,7 +1159,7 @@ func TestActionAcceptsDashLeadingTextThroughJSONPayload(t *testing.T) {
 	if got := string(stub.intents[0].Payload); got != `{"text":"--json"}` {
 		t.Fatalf("payload=%q", got)
 	}
-	if stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen" {
+	if stub.intents[0].Target == nil || stub.intents[0].Target.ProviderGeneration != "gen" {
 		t.Fatalf("target=%+v", stub.intents[0].Target)
 	}
 }
@@ -1171,7 +1171,7 @@ func TestActionAcceptsNegativeGeneration(t *testing.T) {
 	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello", "-1"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatalf("err=%v", err)
 	}
-	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "-1" {
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.ProviderGeneration != "-1" {
 		t.Fatalf("intents=%+v", stub.intents)
 	}
 }
@@ -1213,7 +1213,7 @@ func TestActionAcceptsTextAndGeneration(t *testing.T) {
 	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello", "gen-1"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatalf("err=%v", err)
 	}
-	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen-1" {
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.ProviderGeneration != "gen-1" {
 		t.Fatalf("intents=%+v", stub.intents)
 	}
 	if got := string(stub.intents[0].Payload); got != `{"text":"hello"}` {
@@ -1227,7 +1227,7 @@ func TestActionAcceptsGenerationFlagWithText(t *testing.T) {
 	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello"}, true, false, 100, "", "", "", "", "gen-1"); err != nil {
 		t.Fatalf("err=%v", err)
 	}
-	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen-1" {
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.ProviderGeneration != "gen-1" {
 		t.Fatalf("intents=%+v", stub.intents)
 	}
 }

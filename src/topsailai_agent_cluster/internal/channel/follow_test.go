@@ -13,7 +13,7 @@ import (
 
 // followRequest builds one standard follow request for a resource generation.
 func followRequest(resourceID string) protocol.OutputFollowRequest {
-	return protocol.OutputFollowRequest{EndpointID: "endpoint-1", ResourceID: resourceID, Generation: "generation-1", MaxLines: 20, MaxBytes: 4096}
+	return protocol.OutputFollowRequest{EndpointID: "endpoint-1", ResourceID: resourceID, ProviderGeneration: "generation-1", MaxLines: 20, MaxBytes: 4096}
 }
 
 // dialFollowEndpoint connects one Endpoint client to a test Server and returns
@@ -182,9 +182,16 @@ func TestRequestFollowBoundsConcurrentStreams(t *testing.T) {
 // The consumer deliberately does not read until the overflow is detected, so the
 // queue really does fill. The terminal event is then delivered by discarding
 // queued chunks, which is safe because the end event already declares the loss.
+//
+// The burst is sized from the queue the request actually gets, not from a fixed
+// constant, because the queue is now derived from the requested tail. A test that
+// kept a literal burst would stop exercising overflow the moment the derivation
+// changed, and would then pass while proving nothing.
 func TestFollowOverflowEndsStreamWithExplicitCode(t *testing.T) {
 	server := NewServer(nil)
 	client, ctx, _ := dialFollowEndpoint(t, server)
+	request := followRequest("res-1")
+	capacity := followQueueCapacity(request.MaxLines)
 	reply := make(chan error, 1)
 	go func() {
 		frame, err := client.Read(ctx)
@@ -193,7 +200,7 @@ func TestFollowOverflowEndsStreamWithExplicitCode(t *testing.T) {
 			return
 		}
 		// One more chunk than the buffer holds, so the last delivery overflows.
-		for i := 0; i <= followChunkBuffer; i++ {
+		for i := 0; i <= capacity; i++ {
 			chunk := protocol.OutputChunk{Lines: []string{"line"}, ObservedAtMS: 1000}
 			if err := client.SendFrame(ctx, Frame{Type: FrameOutputChunk, ProtocolVersion: ProtocolVersion, RequestID: frame.RequestID, OutputChunk: &chunk}); err != nil {
 				reply <- err
@@ -202,7 +209,7 @@ func TestFollowOverflowEndsStreamWithExplicitCode(t *testing.T) {
 		}
 		reply <- nil
 	}()
-	events, err := server.RequestFollow(ctx, "endpoint-1", followRequest("res-1"))
+	events, err := server.RequestFollow(ctx, "endpoint-1", request)
 	if err != nil {
 		t.Fatalf("request follow: %v", err)
 	}
@@ -240,8 +247,8 @@ func TestFollowOverflowEndsStreamWithExplicitCode(t *testing.T) {
 	}
 	// The end event must be delivered even though the queue was full, so the
 	// consumer never mistakes a truncated stream for a finished one.
-	if chunks > followChunkBuffer {
-		t.Fatalf("chunks=%d", chunks)
+	if chunks > capacity {
+		t.Fatalf("chunks=%d capacity=%d", chunks, capacity)
 	}
 }
 
@@ -292,7 +299,7 @@ func TestDisconnectFailsPendingOutput(t *testing.T) {
 	}()
 	result := make(chan protocol.OutputSnapshotResponse, 1)
 	go func() {
-		response, _ := server.RequestOutput(ctx, "endpoint-1", protocol.OutputSnapshotRequest{EndpointID: "endpoint-1", ResourceID: "res-1", Generation: "generation-1"})
+		response, _ := server.RequestOutput(ctx, "endpoint-1", protocol.OutputSnapshotRequest{EndpointID: "endpoint-1", ResourceID: "res-1", ProviderGeneration: "generation-1"})
 		result <- response
 	}()
 	select {

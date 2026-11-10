@@ -101,7 +101,7 @@ func (r CommandRunner) Show(ctx context.Context, out io.Writer, id string, jsonM
 	detail := Detail{Endpoint: endpoint, Session: session, Inventory: report, Capabilities: capabilities}
 	resourceID := ""
 	if session != nil {
-		resourceID = session.SessionID
+		resourceID = session.ClusterSessionID
 	}
 	if commands, commandErr := r.API.ListCommands(ctx, endpoint.EndpointID, resourceID, 20); commandErr == nil {
 		detail.CommandHistory = commands
@@ -127,8 +127,8 @@ func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, reso
 	}
 	generation := ""
 	for _, session := range report.Sessions {
-		if session.SessionID == resourceID {
-			generation = session.Generation
+		if session.ClusterSessionID == resourceID {
+			generation = session.ProviderGeneration
 			break
 		}
 	}

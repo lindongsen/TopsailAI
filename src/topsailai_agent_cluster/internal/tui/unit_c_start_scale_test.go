@@ -24,7 +24,7 @@ var unitCScaleOutput = flag.String("unit-c-scale-output", "", "absolute temporar
 func unitCScaleReport(endpointID string, sessions int) protocol.InventoryReport {
 	report := protocol.InventoryReport{SchemaVersion: "1", SourceGeneration: "gen-1", ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded}
 	for i := 0; i < sessions; i++ {
-		report.Sessions = append(report.Sessions, protocol.Session{SessionID: fmt.Sprintf("%s-session-%06d", endpointID, i), AgentID: endpointID, Generation: "gen-1", AdapterID: "adapter-1", State: "ready", CollectionStatus: protocol.CollectionSucceeded})
+		report.Sessions = append(report.Sessions, protocol.Session{ClusterSessionID: fmt.Sprintf("%s-session-%06d", endpointID, i), ProviderAgentID: endpointID, ProviderGeneration: "gen-1", AdapterID: "adapter-1", State: "ready", CollectionStatus: protocol.CollectionSucceeded})
 	}
 	return report
 }

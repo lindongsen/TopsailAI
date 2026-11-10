@@ -28,7 +28,7 @@ func (a ctlTestAdapter) Describe(context.Context) (adapter.Descriptor, error) {
 }
 
 func (a ctlTestAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
-	return adapter.InspectResult{Found: true, Generation: "g1"}, nil
+	return adapter.InspectResult{Found: true, ProviderGeneration: "g1"}, nil
 }
 
 func (a ctlTestAdapter) Execute(context.Context, adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
@@ -74,7 +74,7 @@ func ctlIntent(commandID, operation, resourceID string) protocol.ImmutableIntent
 		CommandID:            commandID,
 		EndpointID:           "e1",
 		Operation:            operation,
-		Target:               &protocol.CommandTarget{Kind: "session", ResourceID: resourceID, Generation: "g1"},
+		Target:               &protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: "g1"},
 		OperationVersion:     "v1",
 		CapabilityRevision:   "v1",
 		PayloadSchemaVersion: "v1",

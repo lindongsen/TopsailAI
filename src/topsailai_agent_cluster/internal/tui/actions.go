@@ -89,7 +89,7 @@ func PreflightCapability(ctx context.Context, querier CapabilityQuerier, endpoin
 
 // ValidateStopTarget requires an exact generation for stop operations.
 func ValidateStopTarget(target protocol.CommandTarget) error {
-	if target.ResourceID == "" || target.Generation == "" {
+	if target.ResourceID == "" || target.ProviderGeneration == "" {
 		return fmt.Errorf("stop requires resource_id and generation")
 	}
 	return nil

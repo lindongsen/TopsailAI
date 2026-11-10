@@ -83,21 +83,21 @@ func TestDimStatesShareOneColour(t *testing.T) {
 func TestUnverifiedRowIsDimAndKeepsTheReportedState(t *testing.T) {
 	rows := []SessionRow{
 		{
-			EndpointID:        "endpoint-1",
-			AdapterID:         "adapter",
-			ProviderSessionID: "provider-1",
-			DisplayName:       "provider reported",
-			State:             protocol.SessionStateUnknown,
-			CollectionStatus:  protocol.CollectionSucceeded,
+			EndpointID:          "endpoint-1",
+			AdapterID:           "adapter",
+			ProviderSessionID:   "provider-1",
+			ProviderDisplayName: "provider reported",
+			State:               protocol.SessionStateUnknown,
+			CollectionStatus:    protocol.CollectionSucceeded,
 		},
 		{
-			EndpointID:        "endpoint-1",
-			AdapterID:         "adapter",
-			ProviderSessionID: "provider-2",
-			DisplayName:       "liveness not verified",
-			State:             protocol.SessionStateUnknown,
-			Unverified:        true,
-			CollectionStatus:  protocol.CollectionSucceeded,
+			EndpointID:          "endpoint-1",
+			AdapterID:           "adapter",
+			ProviderSessionID:   "provider-2",
+			ProviderDisplayName: "liveness not verified",
+			State:               protocol.SessionStateUnknown,
+			Unverified:          true,
+			CollectionStatus:    protocol.CollectionSucceeded,
 		},
 	}
 	var colored, errors strings.Builder
@@ -133,8 +133,8 @@ func TestUnverifiedRowIsDimAndKeepsTheReportedState(t *testing.T) {
 // label is gone, so the line reports one dimension.
 func TestUnverifiedSummaryLabelIsAbsent(t *testing.T) {
 	rows := []SessionRow{
-		{SessionID: "a", State: "unknown", Unverified: true},
-		{SessionID: "b", State: "unknown"},
+		{ClusterSessionID: "a", State: "unknown", Unverified: true},
+		{ClusterSessionID: "b", State: "unknown"},
 	}
 	var out strings.Builder
 	if err := writeStatusSummary(&out, rows, ColorPolicy{Enabled: true}); err != nil {

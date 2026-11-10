@@ -41,12 +41,12 @@ func TestStandaloneListKeepsSessionIDColumn(t *testing.T) {
 			CollectionStatus: protocol.CollectionSucceeded,
 			Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 			Sessions: []protocol.Session{{
-				SessionID:         "session",
-				ProviderSessionID: "provider-session",
-				AdapterID:         "adapter",
-				Generation:        "generation",
-				State:             "running",
-				CollectionStatus:  protocol.CollectionSucceeded,
+				ClusterSessionID:   "session",
+				ProviderSessionID:  "provider-session",
+				AdapterID:          "adapter",
+				ProviderGeneration: "generation",
+				State:              "running",
+				CollectionStatus:   protocol.CollectionSucceeded,
 			}},
 		}},
 	}
@@ -74,12 +74,12 @@ func TestHiddenSessionIDStillResolvesInStandaloneShow(t *testing.T) {
 			CollectionStatus: protocol.CollectionSucceeded,
 			Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 			Sessions: []protocol.Session{{
-				SessionID:         "res-1",
-				ProviderSessionID: "provider-res-1",
-				AdapterID:         "adapter",
-				Generation:        "generation-1",
-				State:             "running",
-				CollectionStatus:  protocol.CollectionSucceeded,
+				ClusterSessionID:   "res-1",
+				ProviderSessionID:  "provider-res-1",
+				AdapterID:          "adapter",
+				ProviderGeneration: "generation-1",
+				State:              "running",
+				CollectionStatus:   protocol.CollectionSucceeded,
 			}},
 		}},
 	}
@@ -101,7 +101,7 @@ func TestHiddenSessionIDStillNamesTheStopConfirmation(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "stop session provider-res-1 (res-1)? Confirm stop?") {
+	if !strings.Contains(output, "stop session (provider-res-1)? Confirm stop?") {
 		t.Fatalf("confirmation question lost the provider session ID: %q", output)
 	}
 }
