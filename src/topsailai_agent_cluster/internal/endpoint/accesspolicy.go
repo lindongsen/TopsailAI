@@ -492,6 +492,38 @@ var knownAccessOperations = map[string]struct{}{
 	OperationMessagesRead:                {},
 }
 
+// KnownAccessOperations returns the closed set of operations this build serves,
+// sorted so a caller can compare it deterministically.
+//
+// It exists for the BDD coverage guard, which must compare the production
+// vocabulary against the feature matrix. The alternative, a hand-copied list in
+// the test, would drift silently the moment an operation is added here, and that
+// silent drift is the exact defect the guard exists to catch. The returned slice
+// is a copy, so a caller cannot mutate the closed set, and nothing else about the
+// set is exposed.
+func KnownAccessOperations() []string {
+	names := make([]string, 0, len(knownAccessOperations))
+	for name := range knownAccessOperations {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ScopeOperations returns the operations each scope covers, with every operation
+// list copied so a caller cannot mutate the mapping.
+//
+// It exists for the same reason as KnownAccessOperations: the coverage guard has
+// to prove that every operation in the closed set is reachable through at least
+// one scope, and a hand-copied scope table would drift from this one.
+func ScopeOperations() map[string][]string {
+	scopes := make(map[string][]string, len(scopeOperations))
+	for scope, operations := range scopeOperations {
+		scopes[scope] = append([]string(nil), operations...)
+	}
+	return scopes
+}
+
 // hashAccessToken returns the lower-case hex SHA-256 of a token, so a file can
 // declare the digest instead of the secret.
 func hashAccessToken(token string) string {
