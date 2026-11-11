@@ -39,6 +39,9 @@ func validateStoredTag(tag string) error {
 // readObjectTags reads only this object's metadata tags, without inheritance.
 func readObjectTags(metaDir string) ([]string, error) {
 	path := filepath.Join(metaDir, "tags")
+	if err := checkObjectTagsFile(path); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return []string{}, nil
@@ -74,6 +77,9 @@ func writeObjectTags(metaDir string, tags []string) error {
 			return fmt.Errorf("write object tags in %q: %w", metaDir, err)
 		}
 	}
+	if err := checkObjectTagsFile(filepath.Join(metaDir, "tags")); err != nil {
+		return err
+	}
 	content := strings.Join(MergeTags(nil, tags), "\n")
 	if content != "" {
 		content += "\n"
@@ -101,6 +107,21 @@ func writeObjectTags(metaDir string, tags []string) error {
 	}
 	if err := os.Rename(f.Name(), filepath.Join(metaDir, "tags")); err != nil {
 		return fmt.Errorf("replace object tags: %w", err)
+	}
+	return nil
+}
+
+// checkObjectTagsFile rejects unsafe leaves without changing missing-file semantics.
+func checkObjectTagsFile(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect object tags %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("object tags %q must be regular: %w", path, apperrors.ErrCorruptedMetadata)
 	}
 	return nil
 }

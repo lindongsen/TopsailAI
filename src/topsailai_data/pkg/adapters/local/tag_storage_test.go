@@ -103,3 +103,41 @@ func TestObjectTagStorageFailures(t *testing.T) {
 		t.Fatal("invalid parent accepted")
 	}
 }
+
+// TestObjectTagStorageAliases rejects existing and dangling aliases before I/O.
+func TestObjectTagStorageAliases(t *testing.T) {
+	for _, exists := range []bool{false, true} {
+		dir := t.TempDir()
+		target := filepath.Join(t.TempDir(), "target")
+		if exists {
+			if err := os.WriteFile(target, []byte("sentinel\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		path := filepath.Join(dir, "tags")
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readObjectTags(dir); !errors.Is(err, apperrors.ErrCorruptedMetadata) {
+			t.Fatalf("alias read accepted: %v", err)
+		}
+		if err := writeObjectTags(dir, []string{"new"}); !errors.Is(err, apperrors.ErrCorruptedMetadata) {
+			t.Fatalf("alias write accepted: %v", err)
+		}
+		link, err := os.Readlink(path)
+		if err != nil || link != target {
+			t.Fatalf("alias changed: %q %v", link, err)
+		}
+		data, err := os.ReadFile(target)
+		if exists && (err != nil || string(data) != "sentinel\n") {
+			t.Fatalf("target changed: %q %v", data, err)
+		}
+		if !exists && !os.IsNotExist(err) {
+			t.Fatalf("dangling target created: %v", err)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("unexpected files after rejection: %v %v", entries, err)
+		}
+	}
+}
