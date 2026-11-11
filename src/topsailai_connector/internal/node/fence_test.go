@@ -47,6 +47,29 @@ func writeFile(t *testing.T, path string, content string) {
 	}
 }
 
+// mustSymlink creates a symlink and skips the test when the platform cannot.
+//
+// A successful os.Symlink call is not proof the link exists: an unprivileged
+// Windows account fails outright, and some environments report success while
+// creating nothing. The link is therefore read back with Lstat before the test
+// continues, so a platform that cannot represent a symlink skips instead of
+// failing. A failure would report a missing privilege as a defect in the fence,
+// which is the one thing a security test must never do.
+func mustSymlink(t *testing.T, target string, link string) {
+	t.Helper()
+
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported here: %v", err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Skipf("symlink was not created here: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Skipf("created entry %q is not a symlink here", link)
+	}
+}
+
 // openFixtureScope opens a scope over the fixture root.
 func openFixtureScope(t *testing.T, root string) *Scope {
 	t.Helper()
@@ -65,10 +88,6 @@ func TestOpenScopeRejectsBadMappings(t *testing.T) {
 	root, _ := newScopeFixture(t)
 
 	filePath := filepath.Join(root, "inside.txt")
-	symlinkPath := filepath.Join(filepath.Dir(root), "scope-link")
-	if err := os.Symlink(root, symlinkPath); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
 
 	cases := []struct {
 		name string
@@ -79,8 +98,7 @@ func TestOpenScopeRejectsBadMappings(t *testing.T) {
 		{name: "relative path", path: "scope", want: "relative"},
 		{name: "missing path", path: filepath.Join(root, "absent"), want: "stat"},
 		{name: "file not directory", path: filePath, want: "not a directory"},
-		{name: "symlink root", path: symlinkPath, want: "symlink"},
-		{name: "filesystem root", path: string(filepath.Separator), want: "filesystem root"},
+		{name: "filesystem root", path: filesystemRootPath(t), want: "filesystem root"},
 	}
 
 	for _, testCase := range cases {
@@ -95,6 +113,51 @@ func TestOpenScopeRejectsBadMappings(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOpenScopeRejectsSymlinkRoot checks that a scope root reached through a
+// symlink is refused, because the link could be repointed after startup and the
+// scope would silently mean a different directory.
+//
+// The case is separate from TestOpenScopeRejectsBadMappings because creating a
+// symlink needs a privilege on Windows that an ordinary account does not have.
+// A test that cannot create its fixture must skip, not fail: a failure would
+// report a missing privilege as a defect in the fence.
+func TestOpenScopeRejectsSymlinkRoot(t *testing.T) {
+	root, _ := newScopeFixture(t)
+
+	symlinkPath := filepath.Join(filepath.Dir(root), "scope-link")
+	mustSymlink(t, root, symlinkPath)
+
+	scope, err := OpenScope("project", symlinkPath, nil)
+	if err == nil {
+		scope.Close()
+		t.Fatalf("OpenScope(%q) = nil error, want a refusal", symlinkPath)
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("OpenScope(%q) = %v, want a message containing %q", symlinkPath, err, "symlink")
+	}
+}
+
+// filesystemRootPath returns the root of the filesystem the test is running on.
+//
+// The root is derived from the working directory rather than written as a
+// separator, because a bare separator is not an absolute path on Windows: `\` is
+// drive-relative, so it would be refused as a relative path and the
+// filesystem-root rule would never be reached.
+func filesystemRootPath(t *testing.T) string {
+	t.Helper()
+
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	volume := filepath.VolumeName(workingDirectory)
+	root := volume + string(filepath.Separator)
+	if !filepath.IsAbs(root) {
+		t.Fatalf("derived root %q is not absolute", root)
+	}
+	return root
 }
 
 // TestOpenScopeRejectsBadScopeName checks that the scope name is validated at
@@ -248,12 +311,8 @@ func TestScopeReadRejectsSymlinkEscape(t *testing.T) {
 	root, outside := newScopeFixture(t)
 	scope := openFixtureScope(t, root)
 
-	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "outlink")); err != nil {
-		t.Fatalf("symlink file: %v", err)
-	}
-	if err := os.Symlink(outside, filepath.Join(root, "outdir")); err != nil {
-		t.Fatalf("symlink dir: %v", err)
-	}
+	mustSymlink(t, filepath.Join(outside, "secret.txt"), filepath.Join(root, "outlink"))
+	mustSymlink(t, outside, filepath.Join(root, "outdir"))
 
 	for _, path := range []string{"outlink", "outdir/secret.txt"} {
 		t.Run(path, func(t *testing.T) {
@@ -275,9 +334,7 @@ func TestScopeReadAllowsSymlinkInside(t *testing.T) {
 	root, _ := newScopeFixture(t)
 	scope := openFixtureScope(t, root)
 
-	if err := os.Symlink("inside.txt", filepath.Join(root, "rel_inside")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
+	mustSymlink(t, "inside.txt", filepath.Join(root, "rel_inside"))
 
 	data, _, err := scope.Read("rel_inside", 0, 0)
 	if err != nil {
@@ -443,9 +500,7 @@ func TestScopeListReportsSymlinkAsSymlink(t *testing.T) {
 	root, outside := newScopeFixture(t)
 	scope := openFixtureScope(t, root)
 
-	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "outlink")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
+	mustSymlink(t, filepath.Join(outside, "secret.txt"), filepath.Join(root, "outlink"))
 
 	entries, err := scope.List("")
 	if err != nil {
@@ -473,9 +528,19 @@ func TestScopeListReportsGrammarRefusedName(t *testing.T) {
 
 	// A trailing space is refused by the grammar, so this name can be listed
 	// but never addressed.
-	refused := filepath.Join(root, "trailing ")
+	const refusedName = "trailing "
+	refused := filepath.Join(root, refusedName)
 	if err := os.WriteFile(refused, []byte("x"), 0o644); err != nil {
 		t.Skipf("filesystem refuses a trailing space: %v", err)
+	}
+
+	// A successful write is not proof the name survived: Windows strips a
+	// trailing space, so the file is created as "trailing" and the write
+	// returns nil. The name must be read back before the listing is asserted,
+	// otherwise the test fails on a platform that cannot represent the name
+	// rather than on a listing that hides it.
+	if !directoryHasName(t, root, refusedName) {
+		t.Skipf("filesystem strips a trailing space, so the name cannot exist here")
 	}
 
 	entries, err := scope.List("")
@@ -483,11 +548,29 @@ func TestScopeListReportsGrammarRefusedName(t *testing.T) {
 		t.Fatalf("List = %v, want nil", err)
 	}
 
-	entry, ok := findEntry(entries, "trailing ")
+	entry, ok := findEntry(entries, refusedName)
 	if !ok {
-		t.Fatalf("List = %v, want an entry named %q", entryNames(entries), "trailing ")
+		t.Fatalf("List = %v, want an entry named %q", entryNames(entries), refusedName)
 	}
 	if entry.Type != "unknown" {
 		t.Fatalf("trailing-space entry type = %q, want unknown", entry.Type)
 	}
+}
+
+// directoryHasName reports whether a directory holds an entry with exactly this
+// name, so a test can tell "the name was created" from "the name was silently
+// rewritten by the filesystem".
+func directoryHasName(t *testing.T, directory string, name string) bool {
+	t.Helper()
+
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatalf("readdir %q: %v", directory, err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return true
+		}
+	}
+	return false
 }

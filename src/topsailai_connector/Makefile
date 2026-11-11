@@ -22,7 +22,7 @@ UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
 
-.PHONY: help build vet test test-unit coverage coverage-html integration bdd e2e check fmt clean
+.PHONY: help build vet test test-unit coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile
 
 help:
 	@echo "Targets:"
@@ -37,6 +37,8 @@ help:
 	@echo "  e2e             Build the binaries, then drive one read through two real processes"
 	@echo "  check           vet, unit, coverage, integration, bdd and e2e in that order"
 	@echo "  fmt             Format every Go source file"
+	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
+	@echo "  test-windows-compile  Compile the windows test binaries and run vet for windows"
 	@echo "  clean           Remove build and test artifacts"
 
 build:
@@ -95,7 +97,35 @@ e2e: build
 	bash tests/e2e/reconnect.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/long_run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 
-check: vet test-unit coverage integration bdd e2e
+# Windows is a supported platform for the Node, so the Node must be compiled for
+# it on every check. The Server is deployed on Linux and is not built here: a
+# Windows Server binary would be a build nobody runs, and a target that produces
+# one invites the belief that the Server is supported there.
+#
+# The cross build is not a substitute for running the suite on Windows, but it is
+# the only check that catches a POSIX-only import or a syscall that does not exist
+# on Windows. Without it nothing in this repository ever compiles for Windows.
+build-windows:
+	@mkdir -p $(TMP_DIR)/xbuild
+	GOOS=windows GOARCH=amd64 go build -o $(TMP_DIR)/xbuild/connector-node-amd64.exe $(NODE_PKG)
+	GOOS=windows GOARCH=arm64 go build -o $(TMP_DIR)/xbuild/connector-node-arm64.exe $(NODE_PKG)
+	GOOS=windows GOARCH=386 go build -o $(TMP_DIR)/xbuild/connector-node-386.exe $(NODE_PKG)
+	@echo "built the Node for windows/amd64, windows/arm64 and windows/386"
+
+# Compiling the test binaries proves the test code is portable too. A test that
+# imports syscall or calls Mkfifo compiles on Linux and breaks the Windows build,
+# so the test sources are part of the platform contract rather than a local
+# convenience.
+test-windows-compile:
+	@mkdir -p $(TMP_DIR)/xbuild
+	GOOS=windows GOARCH=amd64 go vet ./...
+	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/node.test.exe ./internal/node/
+	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/policy.test.exe ./internal/node/policy/
+	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/protocol.test.exe ./internal/protocol/
+	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/security.test.exe ./internal/security/
+	@echo "compiled the windows test binaries"
+
+check: vet test-unit coverage integration bdd e2e build-windows test-windows-compile
 
 fmt:
 	go fmt ./...

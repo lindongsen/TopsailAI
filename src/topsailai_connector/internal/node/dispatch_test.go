@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -335,9 +334,7 @@ func TestDispatchReadRefusesSymlinkEscape(t *testing.T) {
 
 	outside := filepath.Join(filepath.Dir(fixture.project), "outside.txt")
 	writeFile(t, outside, "outside content")
-	if err := os.Symlink(outside, filepath.Join(fixture.project, "escape")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
+	mustSymlink(t, outside, filepath.Join(fixture.project, "escape"))
 
 	response := fixture.dispatcher.Dispatch(fixture.request(protocol.OperationFileRead, "project", "escape"))
 	if response.Code != protocol.CodeDenied {
@@ -394,9 +391,7 @@ func TestDispatchListRefusesFile(t *testing.T) {
 func TestDispatchStatReportsSymlinkWithoutFollowing(t *testing.T) {
 	fixture := newDispatchFixture(t)
 
-	if err := os.Symlink("inside.txt", filepath.Join(fixture.project, "link")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
+	mustSymlink(t, "inside.txt", filepath.Join(fixture.project, "link"))
 
 	response := fixture.dispatcher.Dispatch(fixture.request(protocol.OperationFileStat, "project", "link"))
 	if !response.Succeeded() {
