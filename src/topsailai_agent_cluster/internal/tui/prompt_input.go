@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -12,11 +13,27 @@ import (
 // above and relies on that break instead of writing a second one.
 type InteractiveLineReader func(context.Context, string, bool, int) (string, bool, error)
 
+// EchoReader is the optional reader seam that appends the echo of an accepted
+// answer to the answer row itself. It is a separate interface because
+// InteractiveLineReader is a function value and cannot be type asserted, and
+// because a reader without it must still report the echo instead of dropping it.
+//
+// Only a terminal editor can append in-row: it owns the row the answer was typed
+// on. A reader that cannot do that keeps the plain read, and the echo is written
+// on its own line instead.
+type EchoReader interface {
+	ReadLineWithEcho(context.Context, string, bool, int, func(string) string) (string, bool, error)
+}
+
 type promptReaderKey struct{}
 type promptReaderConfig struct {
-	read    InteractiveLineReader
-	limit   int
-	color   ColorPolicy
+	read  InteractiveLineReader
+	echo  EchoReader
+	limit int
+	color ColorPolicy
+	// echoOut receives the echo when the reader cannot append it in-row, so a
+	// piped or TERM=dumb session still reports what a bare number selected.
+	echoOut io.Writer
 	failure *error
 	// recoverable is set by a caller whose prompt read failure only cancels the
 	// current operation instead of ending the session.
@@ -55,6 +72,78 @@ func readPromptLine(ctx context.Context, prompts ...string) (string, bool, error
 		*config.failure = err
 	}
 	return line, overflow, err
+}
+
+// readPromptLineWithEcho reads one guided answer and reports the label of the
+// accepted choice on the answer row itself.
+//
+// The echo is produced by the caller, because only the caller knows which row a
+// bare number selected, and it is written by the reader, because only the reader
+// still owns the answer row when the answer is accepted. A reader that cannot
+// append in-row keeps the plain read and the echo is written on its own line, so
+// a piped or TERM=dumb session still reports what the answer selected instead of
+// silently dropping the confirmation.
+//
+// A cancelled, empty or failed answer echoes nothing, because no choice was
+// accepted and an echo would claim one was.
+func readPromptLineWithEcho(ctx context.Context, echo func(string) string, prompts ...string) (string, bool, error) {
+	config := ctx.Value(promptReaderKey{}).(promptReaderConfig)
+	prompt := RenderAnswerPrompt(config.color)
+	if len(prompts) > 0 {
+		prompt = styleNamedPrompt(prompts[0], config.color)
+	}
+	var line string
+	var overflow bool
+	var err error
+	if config.echo != nil {
+		line, overflow, err = config.echo.ReadLineWithEcho(ctx, prompt, false, config.limit, echo)
+	} else {
+		line, overflow, err = config.read(ctx, prompt, false, config.limit)
+		if err == nil && !overflow && line != "" && echo != nil {
+			if writeErr := writeAnswerEchoFallback(config.echoOut, echo(line)); writeErr != nil {
+				err = writeErr
+			}
+		}
+	}
+	if err != nil && config.failure != nil {
+		*config.failure = err
+	}
+	return line, overflow, err
+}
+
+// writeAnswerEchoFallback writes an echo on its own line for a reader that cannot
+// append it to the answer row. A nil writer keeps the read silent, so a caller
+// that supplied no output boundary loses nothing.
+func writeAnswerEchoFallback(out io.Writer, suffix string) error {
+	if out == nil || suffix == "" {
+		return nil
+	}
+	_, err := io.WriteString(out, suffix+"\n")
+	return err
+}
+
+// nextPromptLineWithEcho preserves the stream fallback and reports the accepted
+// choice beside the answer, so a guided selection outside the start wizard gets
+// the same echo as one inside it. A reader seam appends the echo to the answer
+// row; the stream fallback has no row to append to, so the echo is written on its
+// own line through echoOut instead of being dropped. A nil echo keeps the plain
+// read, so every existing caller is unchanged.
+func nextPromptLineWithEcho(ctx context.Context, source <-chan lineReadResult, echoOut io.Writer, echo func(string) string, prompts ...string) (lineReadResult, bool) {
+	if promptReader(ctx) != nil {
+		line, overflow, err := readPromptLineWithEcho(ctx, echo, prompts...)
+		return lineReadResult{line: line, overflow: overflow, err: err}, true
+	}
+	select {
+	case <-ctx.Done():
+		return lineReadResult{err: ctx.Err()}, true
+	case result, ok := <-source:
+		if ok && result.err == nil && !result.overflow && result.line != "" && echo != nil {
+			if writeErr := writeAnswerEchoFallback(echoOut, echo(result.line)); writeErr != nil {
+				return lineReadResult{err: writeErr}, true
+			}
+		}
+		return result, ok
+	}
 }
 
 // nextPromptLine preserves the stream fallback and makes confirmation cancellation observable.

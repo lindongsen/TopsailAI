@@ -23,15 +23,7 @@ func launchEndpointChoices(ctx context.Context, api InteractiveAPI, out io.Write
 		return nil, fmt.Errorf("no endpoint is registered; register an endpoint before starting an agent")
 	}
 	for index, endpoint := range endpoints {
-		label := endpoint.DisplayName
-		if label == "" {
-			label = endpoint.EndpointID
-		}
-		hostname := endpoint.Hostname
-		if hostname == "" {
-			hostname = endpoint.EndpointID
-		}
-		if _, err := fmt.Fprintf(out, "%d. %s / %s / %s\n", index+1, hostname, endpoint.EndpointID, label); err != nil {
+		if _, err := fmt.Fprintf(out, "%d. %s\n", index+1, launchEndpointRowLabel(endpoint)); err != nil {
 			return nil, err
 		}
 	}
@@ -39,6 +31,41 @@ func launchEndpointChoices(ctx context.Context, api InteractiveAPI, out io.Write
 		return nil, err
 	}
 	return endpoints, nil
+}
+
+// launchEndpointRowLabel renders one endpoint row as "hostname / id / label".
+// The numbered list and the answer echo both call it, so the echo can never
+// describe a row differently from the row the operator read. A missing hostname
+// or display name falls back to the identifier, because a row with an empty
+// field would make two different endpoints look identical.
+func launchEndpointRowLabel(endpoint protocol.Endpoint) string {
+	label := endpoint.DisplayName
+	if label == "" {
+		label = endpoint.EndpointID
+	}
+	hostname := endpoint.Hostname
+	if hostname == "" {
+		hostname = endpoint.EndpointID
+	}
+	return fmt.Sprintf("%s / %s / %s", hostname, endpoint.EndpointID, label)
+}
+
+// launchEndpointEchoLabel returns the echo label of one endpoint answer, or an
+// empty string when the answer selected nothing. It resolves through the same
+// function the wizard uses to pick the endpoint, so the echo and the selection
+// cannot disagree: an out-of-range number or an unknown identifier echoes
+// nothing, because the wizard is about to reject it.
+func launchEndpointEchoLabel(endpoints []protocol.Endpoint, answer string) string {
+	endpointID, err := resolveLaunchEndpointValue(endpoints, answer)
+	if err != nil || endpointID == "" {
+		return ""
+	}
+	for _, endpoint := range endpoints {
+		if endpoint.EndpointID == endpointID {
+			return launchEndpointRowLabel(endpoint)
+		}
+	}
+	return ""
 }
 
 // resolveLaunchEndpointAnswer maps a numbered answer to its endpoint identifier.
@@ -77,7 +104,16 @@ func resolveLaunchEndpoint(ctx context.Context, api InteractiveAPI, state *inter
 			return "", writeErr
 		}
 	}
-	answer, err := launchAnswerValueOrControl(ctx, lines, out, trustedOut, state, "endpoint", color)
+	// The echo resolves through the same function that selects the endpoint, so
+	// the label beside the number is the row the wizard will actually use. A
+	// failed inventory read has no rows to describe, so it echoes nothing.
+	echo := func(answer string) string {
+		if listErr != nil {
+			return ""
+		}
+		return RenderAnswerEcho(launchEndpointEchoLabel(endpoints, answer), color)
+	}
+	answer, err := launchAnswerValueOrControlWithEcho(ctx, lines, out, trustedOut, state, "endpoint", color, echo)
 	if err != nil || answer == "" {
 		return "", err
 	}

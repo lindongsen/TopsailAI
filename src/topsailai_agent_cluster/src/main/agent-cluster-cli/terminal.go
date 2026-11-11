@@ -152,16 +152,18 @@ func interactiveEditor(input io.Reader, output io.Writer) (*tui.TerminalEditor, 
 	return editor, owned.Close, nil
 }
 
-// wireEditorReaders attaches both readers from one editor. A nil editor keeps the
-// plain prompt reader, so watch refuses explicitly instead of silently degrading
-// to a single read. This is a separate function so a test can prove the shipped
-// wiring provides the tick-capable reader, which unit tests that inject the reader
-// directly cannot prove.
+// wireEditorReaders attaches every reader seam from one editor. A nil editor
+// keeps the plain prompt reader, so watch refuses explicitly instead of silently
+// degrading to a single read, and a guided answer's echo is written on its own
+// line instead of being dropped. This is a separate function so a test can prove
+// the shipped wiring provides the tick-capable and echo-capable readers, which
+// unit tests that inject the reader directly cannot prove.
 func wireEditorReaders(options tui.InteractiveOptions, editor *tui.TerminalEditor) tui.InteractiveOptions {
 	if editor == nil {
 		return options
 	}
 	options.ReadLine = editor.ReadLine
 	options.WatchReader = editor
+	options.EchoReader = editor
 	return options
 }

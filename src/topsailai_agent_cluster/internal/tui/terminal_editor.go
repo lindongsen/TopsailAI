@@ -33,6 +33,10 @@ type TerminalEditor struct {
 	// the next redraw returns to its first row instead of appending a second copy.
 	blockRows      int
 	blockCursorRow int
+	// blockLastRowWidth is the visible column count of the last rendered row, so
+	// an echo appended at submit time lands after the typed text instead of at a
+	// column the caller would have to recompute.
+	blockLastRowWidth int
 }
 
 // NewTerminalEditor injects terminal operations at the CLI boundary.
@@ -58,18 +62,32 @@ var (
 
 // ReadLine restores terminal state on every return and never returns partial text on failure.
 func (t *TerminalEditor) ReadLine(ctx context.Context, prompt string, history bool, limit int) (line string, overflow bool, err error) {
-	return t.readLine(ctx, prompt, history, limit, nil)
+	return t.readLine(ctx, prompt, history, limit, nil, nil)
 }
 
 // ReadLineWithWatch observes an auto-refresh loop while it waits for a key.
 // The first decoded key stops the loop before it is applied, so a moving table
 // can never rebind a row number under an operator who has started typing.
 func (t *TerminalEditor) ReadLineWithWatch(ctx context.Context, prompt string, history bool, limit int, watch WatchSession) (line string, overflow bool, err error) {
-	return t.readLine(ctx, prompt, history, limit, watch)
+	return t.readLine(ctx, prompt, history, limit, watch, nil)
 }
 
-// readLine is the single editing loop; a nil watch keeps the plain behaviour.
-func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bool, limit int, watch WatchSession) (line string, overflow bool, err error) {
+// ReadLineWithEcho appends the echo of the accepted answer to the answer row
+// before the row is ended, so a guided selection stays readable after the list
+// it came from has scrolled away.
+//
+// The echo is written here rather than by the caller because this is the only
+// moment the cursor is still on the answer row: the submit path ends the row
+// before returning, so a caller would have to recompute a position it does not
+// know. A nil echo keeps the plain behaviour, and a cancelled, interrupted or
+// failed read never echoes, because no answer was accepted.
+func (t *TerminalEditor) ReadLineWithEcho(ctx context.Context, prompt string, history bool, limit int, echo func(string) string) (line string, overflow bool, err error) {
+	return t.readLine(ctx, prompt, history, limit, nil, echo)
+}
+
+// readLine is the single editing loop; a nil watch keeps the plain behaviour and
+// a nil echo keeps the answer row unchanged.
+func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bool, limit int, watch WatchSession, echo func(string) string) (line string, overflow bool, err error) {
 	if err = ctx.Err(); err != nil {
 		return
 	}
@@ -92,7 +110,7 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 	t.editor.reset()
 	// A new prompt always starts a new input block, so no stale row count from a
 	// previous read can move the cursor on the first redraw.
-	t.blockRows, t.blockCursorRow = 0, 0
+	t.blockRows, t.blockCursorRow, t.blockLastRowWidth = 0, 0, 0
 	defer t.editor.reset()
 	// Only question-style prompts request a new row; named prompts are already printed.
 	// The marker is captured before it is stripped, because a question row is allowed
@@ -168,6 +186,18 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 		case lineEditContinue:
 		case lineEditSubmit:
 			line, overflow = t.editor.finish(history)
+			// The echo is appended while the cursor is still on the answer row,
+			// so a guided selection stays readable after the list it came from
+			// has scrolled away. A rejected or empty answer echoes nothing,
+			// because no selection was accepted.
+			if echo != nil && !overflow && line != "" {
+				if suffix := echo(line); suffix != "" {
+					if _, writeErr := io.WriteString(t.output, t.blockEchoSequence(suffix)); writeErr != nil {
+						err = writeErr
+						return
+					}
+				}
+			}
 			// The cursor leaves from the last row of the block, so the submit
 			// newline never splits the operator's input in the middle.
 			_, err = io.WriteString(t.output, t.blockEndSequence()+"\r\n")
@@ -182,6 +212,29 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 	}
 }
 
+// blockEchoSequence returns the cursor movement that places the cursor at the
+// end of the last rendered row, so an echo is appended after the typed text
+// instead of at the cursor's editing position. The operator may have moved the
+// cursor with Home or the arrow keys before submitting, so the column is
+// recomputed from the rendered row width rather than assumed. A block that was
+// never rendered needs no movement, because the cursor is already where the
+// typed text ended.
+func (t *TerminalEditor) blockEchoSequence(suffix string) string {
+	if t.blockRows == 0 {
+		return suffix
+	}
+	var out strings.Builder
+	if down := t.blockRows - 1 - t.blockCursorRow; down > 0 {
+		fmt.Fprintf(&out, "\x1b[%dB", down)
+	}
+	out.WriteString("\r")
+	if t.blockLastRowWidth > 0 {
+		fmt.Fprintf(&out, "\x1b[%dC", t.blockLastRowWidth)
+	}
+	out.WriteString(suffix)
+	return out.String()
+}
+
 // blockEndSequence returns the cursor movement that leaves the rendered input
 // block below its last row, and forgets the block so the next prompt starts on a
 // fresh row. A block that was never rendered needs no movement.
@@ -190,7 +243,7 @@ func (t *TerminalEditor) blockEndSequence() string {
 		return ""
 	}
 	down := t.blockRows - 1 - t.blockCursorRow
-	t.blockRows, t.blockCursorRow = 0, 0
+	t.blockRows, t.blockCursorRow, t.blockLastRowWidth = 0, 0, 0
 	if down <= 0 {
 		return "\r"
 	}
@@ -223,7 +276,7 @@ func (t *TerminalEditor) eraseBlock() error {
 		fmt.Fprintf(&out, "\x1b[%dA", t.blockRows-1)
 	}
 	out.WriteString("\r")
-	t.blockRows, t.blockCursorRow = 0, 0
+	t.blockRows, t.blockCursorRow, t.blockLastRowWidth = 0, 0, 0
 	_, err := io.WriteString(t.output, out.String())
 	return err
 }
@@ -400,6 +453,15 @@ func (t *TerminalEditor) redraw(prompt string, questionRow bool) error {
 		fmt.Fprintf(&out, "\x1b[%dC", column)
 	}
 	t.blockRows, t.blockCursorRow = len(visibleRows), cursorRow
+	// The last row's visible width is recorded so an echo appended at submit
+	// time lands after the typed text, whatever the cursor's editing position.
+	// The prompt shares the first row, so a single-row block must count it: the
+	// rows hold text only, and the prompt is written beside row 0. Omitting it
+	// would place the echo inside the prompt instead of after the answer.
+	t.blockLastRowWidth = styledDisplayWidth(visibleRows[len(visibleRows)-1])
+	if len(visibleRows) == 1 {
+		t.blockLastRowWidth += promptWidth
+	}
 	_, err := io.WriteString(t.output, out.String())
 	return err
 }

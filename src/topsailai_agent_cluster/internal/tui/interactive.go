@@ -66,6 +66,11 @@ type InteractiveOptions struct {
 	// a separate seam because ReadLine is a function value and cannot be type
 	// asserted, and because a reader without it must refuse watch explicitly.
 	WatchReader WatchLineReader
+	// EchoReader is the reader seam that appends a guided answer's echo to the
+	// answer row. It is a separate seam for the same reason as WatchReader, and
+	// because a reader without it must still report the echo on its own line
+	// instead of dropping it.
+	EchoReader EchoReader
 	// ProgressWriter receives progress lines for long-running commands. It is a
 	// separate seam because the REPL diagnostics writer sanitizes untrusted text
 	// and therefore cannot report a progress boundary itself. A nil writer keeps
@@ -390,7 +395,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		var promptRecoverable bool
 		commandCtx, cancel := context.WithCancel(parent)
 		if options.ReadLine != nil {
-			commandCtx = context.WithValue(commandCtx, promptReaderKey{}, promptReaderConfig{read: options.ReadLine, limit: options.LineLimit, color: options.Color, failure: &promptFailure, recoverable: &promptRecoverable})
+			commandCtx = context.WithValue(commandCtx, promptReaderKey{}, promptReaderConfig{read: options.ReadLine, echo: options.EchoReader, limit: options.LineLimit, color: options.Color, echoOut: output, failure: &promptFailure, recoverable: &promptRecoverable})
 		}
 		controller.setCancel(cancel)
 		exit, execErr := executeInteractiveLine(commandCtx, api, &state, line, lineResults, out, output, errOut, options)

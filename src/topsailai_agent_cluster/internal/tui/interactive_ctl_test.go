@@ -230,8 +230,8 @@ func TestPromptCtlActionRendersAdvertisedActions(t *testing.T) {
 				protocol.Capability{Name: "ctl.heartbeat"},
 				protocol.Capability{Name: "ctl.pause"},
 			)
-			var output strings.Builder
-			action, err := promptCtlAction(context.Background(), stub, ctlState(), ctlLines(testCase.answer), &output, InteractiveOptions{})
+			var output, echoOut strings.Builder
+			action, err := promptCtlAction(context.Background(), stub, ctlState(), ctlLines(testCase.answer), &output, &echoOut, InteractiveOptions{})
 			if err != nil {
 				t.Fatalf("promptCtlAction error: %v", err)
 			}
@@ -241,6 +241,12 @@ func TestPromptCtlActionRendersAdvertisedActions(t *testing.T) {
 			if !strings.Contains(output.String(), "1. heartbeat") || !strings.Contains(output.String(), "2. pause") {
 				t.Fatalf("rendered list missing actions: %q", output.String())
 			}
+			// The stream fallback has no answer row, so the echo is written on
+			// its own line. It must name the action that was actually selected,
+			// which is the only evidence that the echo and the selection agree.
+			if want := " (" + testCase.want + ")\n"; echoOut.String() != want {
+				t.Fatalf("echo = %q, want %q", echoOut.String(), want)
+			}
 		})
 	}
 }
@@ -249,8 +255,8 @@ func TestPromptCtlActionRendersAdvertisedActions(t *testing.T) {
 // of selecting the first action, because the request is mutating.
 func TestPromptCtlActionCancelsOnEmptyAnswer(t *testing.T) {
 	stub := ctlStub(protocol.Capability{Name: "ctl.heartbeat"})
-	var output strings.Builder
-	action, err := promptCtlAction(context.Background(), stub, ctlState(), ctlLines(""), &output, InteractiveOptions{})
+	var output, echoOut strings.Builder
+	action, err := promptCtlAction(context.Background(), stub, ctlState(), ctlLines(""), &output, &echoOut, InteractiveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "ctl cancelled") {
 		t.Fatalf("error = %v, want a cancellation", err)
 	}
@@ -263,8 +269,8 @@ func TestPromptCtlActionCancelsOnEmptyAnswer(t *testing.T) {
 // list fails instead of being forwarded to the Endpoint.
 func TestPromptCtlActionRejectsUnknownAction(t *testing.T) {
 	stub := ctlStub(protocol.Capability{Name: "ctl.heartbeat"})
-	var output strings.Builder
-	action, err := promptCtlAction(context.Background(), stub, ctlState(), ctlLines("hard_interrupt"), &output, InteractiveOptions{})
+	var output, echoOut strings.Builder
+	action, err := promptCtlAction(context.Background(), stub, ctlState(), ctlLines("hard_interrupt"), &output, &echoOut, InteractiveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "unknown control action") {
 		t.Fatalf("error = %v, want an unknown-action rejection", err)
 	}
@@ -277,8 +283,8 @@ func TestPromptCtlActionRejectsUnknownAction(t *testing.T) {
 // no control action fails instead of prompting with an empty list.
 func TestPromptCtlActionRejectsEndpointWithoutActions(t *testing.T) {
 	stub := ctlStub(protocol.Capability{Name: protocol.OperationMessageSend})
-	var output strings.Builder
-	action, err := promptCtlAction(context.Background(), stub, ctlState(), ctlLines("1"), &output, InteractiveOptions{})
+	var output, echoOut strings.Builder
+	action, err := promptCtlAction(context.Background(), stub, ctlState(), ctlLines("1"), &output, &echoOut, InteractiveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "advertises no control actions") {
 		t.Fatalf("error = %v, want an empty-catalog rejection", err)
 	}

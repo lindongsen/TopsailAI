@@ -728,3 +728,40 @@ only asserts "the script ran". The three failures are all about *when* it ran, s
 invocations is the only thing that distinguishes the two designs. The baseline also has to be keyed
 by a stable identity rather than a row number, because a row number is a position that is rebound on
 every render, and a rebound key looks exactly like a transition.
+
+## A byte-order assertion cannot see a cursor column
+
+Trigger: the guided-answer echo was written by the editor at submit time, and the test asserted that
+`(ai-dev)` appears after `1` in the captured output. It passed. The echo was still wrong: the cursor
+was moved to column 1, so on a one-row block the echo overwrote `start.endpoint> ` instead of
+following the answer. The rows the editor renders hold text only, and the prompt is written beside
+row zero, so a width taken from the text alone omits the prompt.
+
+Action: when output is placed by a cursor movement rather than by stream order, assert the movement
+itself. Capture the escape sequence and compare it exactly, for example `"\r\x1b[17C (ai-dev)"`, and
+compute the expected column from the prompt width plus the answer width. A `strings.Index` comparison
+proves only that two substrings appear in order, which stays true while the cursor is anywhere.
+
+Why this prevents recurrence: a terminal is a grid, not a stream, so the same bytes render differently
+depending on where the cursor was. The failure is invisible in the captured text because the text is
+correct; only the position is wrong. This is the same class as the recorded lesson about a styled
+prefix being invisible to a plain-text assertion: the assertion and the defect live in different
+dimensions, so a green test certifies nothing about the dimension that broke.
+
+## A fallback branch must repeat the guard its seam branch already has
+
+Trigger: `readPromptLineWithEcho` had two branches. The seam branch passed the echo to the reader,
+which guards it internally. The fallback branch called `echo(line)` directly and checked only
+`err == nil && !overflow && line != ""`. The pre-existing `TestPromptReaderGating` panicked with a nil
+dereference, because that test supplies a reader and no echo.
+
+Action: when a function has a seam branch and a fallback branch that do the same job, list the guards
+each branch needs and confirm both have them. A guard that lives inside the seam implementation is not
+inherited by the fallback, so it must be repeated at the call site. Prefer one shared helper that both
+branches call, so the guard cannot exist in only one of them.
+
+Why this prevents recurrence: the seam branch is the one that gets exercised while the feature is
+being built, because the editor is the interesting case. The fallback is the piped or `TERM=dumb` path,
+which is exactly the path a developer's own terminal never takes. The nil dereference therefore
+appears only in a test that was written for a different purpose, and only because that test happened
+to inject a reader without an echo.

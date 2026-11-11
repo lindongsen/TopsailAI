@@ -61,6 +61,35 @@ func writeStyled(w io.Writer, style, text string, policy ColorPolicy) error {
 	return err
 }
 
+// styledString returns text wrapped in one ANSI style, or the plain text when
+// colour is disabled. It is the string form of writeStyled, so a caller that
+// must build a value before writing it applies exactly the same policy.
+func styledString(style, text string, policy ColorPolicy) string {
+	if !policy.Enabled || style == "" {
+		return text
+	}
+	return style + text + ansiReset
+}
+
+// RenderAnswerEcho returns the trailing echo of one guided answer, for example
+// " (ai-dev / endpoint-1 / ai-dev)". The label is the same text the numbered
+// list printed for that row, so the operator reads the selection twice in one
+// token instead of matching a number against a list that has scrolled away.
+//
+// The label is sanitized here rather than at each call site, because it is
+// provider-reported data: a display name carrying an escape sequence must never
+// reach the terminal as styling. The echo carries ansiMagenta, the established
+// colour of operator-selected data, so it can never be read as the
+// application's own question. With colour disabled the plain form is returned,
+// so a redirected or --no-color run stays byte-identical.
+func RenderAnswerEcho(label string, policy ColorPolicy) string {
+	label = sanitizeInlineText(label)
+	if label == "" {
+		return ""
+	}
+	return styledString(ansiMagenta, " ("+label+")", policy)
+}
+
 // answerPrompt is the history-free child question shown after a confirmation.
 const answerPrompt = "answer> "
 
