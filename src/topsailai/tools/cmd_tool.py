@@ -122,7 +122,7 @@ def exec_cmd(
         cmd:str|list,
         no_need_stderr:int=0,
         timeout:int=120,
-        cwd:str=EnvReaderInstance.project_folder,
+        cwd:str=None,
         env:dict|None=None,
     ):
     """ execute command
@@ -133,8 +133,8 @@ def exec_cmd(
         timeout (int, optional): Timeout in seconds. If the command does not finish
                                  within this time, a exception will be raised.
                                  Defaults to 120.
-        cwd (str, optional): Working directory the command runs in. Defaults to the
-                             project folder.
+        cwd (str, optional): Working directory the command runs in. When empty or
+                             omitted, the project folder is resolved at call time.
         env: (dict, optional): environment variables
     Returns:
         tuple: (code, stdout, stderr)
@@ -157,6 +157,12 @@ def exec_cmd(
     no_need_stderr, error = resolve_int_flag(no_need_stderr, "no_need_stderr")
     if error:
         return error
+
+    # Resolve at call time: an import-time default would freeze the folder, and
+    # an empty string is fatal for subprocess.Popen while None inherits the
+    # current process working directory.
+    if not cwd:
+        cwd = EnvReaderInstance.project_folder or None
 
     result = exec_command(
         cmd,
