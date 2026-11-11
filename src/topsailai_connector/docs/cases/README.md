@@ -23,9 +23,9 @@ one boundary, so a reviewer touching that boundary reads one file.
 | `AdversarialCase_path-fence.md` | Attempts to read outside a scope | `AC-PATH-` | 63 |
 | `AdversarialCase_node-authority.md` | Attempts to move the authority off the Node | `AC-NODE-` | 65 |
 | `AdversarialCase_secrets.md` | Attempts to defeat or extract a secret | `AC-SEC-` | 44 |
-| `AdversarialCase_windows-paths.md` | Windows-specific name hazards | `AC-WIN-` | 44 |
+| `AdversarialCase_windows-paths.md` | Windows-specific name hazards, junctions at depth | `AC-WIN-` | 48 |
 
-473 cases in total. The adversarial files are the larger half on purpose: a
+477 cases in total. The adversarial files are the larger half on purpose: a
 read-only system has one real boundary, so that boundary gets the most cases.
 
 The Node-authority pair is the second-largest group, because the authority is the

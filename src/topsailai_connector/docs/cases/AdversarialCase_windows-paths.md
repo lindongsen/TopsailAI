@@ -353,6 +353,50 @@ on Windows is a defect, because the policy author wrote one policy for both.
 **Expected:** `invalid_argument`. The colon rule applies on POSIX too, so a name that
 is special on Windows is refused everywhere rather than only where it matters.
 
+### AC-WIN-45: A junction at depth escapes the scope
+
+**Precondition:** A tree of 20 nested directories inside the scope, with a junction
+at the bottom pointing at the Node's config directory, which sits outside the scope.
+
+**Action:** `file.read` on `<depth>/escape/identity`.
+
+**Expected:** `denied`, with the reason naming the escape rather than the missing
+file. Depth must not weaken the fence: the escape happens 20 levels below the root,
+where a depth-limited or prefix-based check never looks. Measured on a real Windows
+Server 2022 host, which returned `denied` and the reason `path escapes from parent`.
+
+### AC-WIN-46: A junction at depth is reported without being followed
+
+**Action:** `file.stat` on the junction from AC-WIN-45.
+
+**Expected:** `success`, reporting the link itself. Following it is exactly the
+operation the fence refuses, so a `stat` that resolved the target would be a fence
+bypass with a metadata-shaped hole. Measured on the same host, which returned
+`success` without reading the target.
+
+### AC-WIN-47: A file at every depth up to the filesystem ceiling is readable
+
+**Precondition:** A tree built level by level until the filesystem refuses, with one
+file per level whose content names that level.
+
+**Action:** `file.read` at each depth from 1 to the deepest level that could be
+created.
+
+**Expected:** The decoded content equals the payload that level was written with. A
+successful open returning the wrong file is a failure, so the check is on the bytes
+rather than on the status code. Measured on a real Windows Server 2022 host: levels
+1 to 114 all returned their own payload, and level 115 could not be created because
+`MAX_PATH` refused it.
+
+### AC-WIN-48: A path beyond the Windows filesystem ceiling is refused
+
+**Action:** `file.read` on a path one level deeper than the deepest tree that could
+be created.
+
+**Expected:** `not_found`. The kernel reports the over-long path as missing, and the
+Node relays that classification rather than inventing a different one. Measured on
+the same host, which returned `not_found` at level 115.
+
 ## What these cases do not cover
 
 - A Windows-specific filesystem that is not NTFS, such as a FAT32 mount. The
