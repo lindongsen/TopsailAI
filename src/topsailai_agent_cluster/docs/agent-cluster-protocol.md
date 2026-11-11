@@ -578,36 +578,23 @@ Initial reachability policy remains heartbeat every 10 seconds, suspect after 30
 
 SQLite serializes write transactions; use bounded transaction lengths, a bounded busy retry policy and explicit database-error responses. Configure WAL/checkpoint and durability settings deliberately with the SQLite library; publish commit evidence rather than promising hard real-time I/O. The initial single active Server owns the database. Measure JSON serialization/whole-document replacement costs, collection duration, commit latency, database/WAL size and bounded query parsing under representative retained provider history. No per-Session SQL index or database-specific JSON features are needed for MVP.
 
-## Implemented output read authorization, scheduled for removal
+## Implemented Endpoint output authorization
 
-This section describes behaviour that exists in the code today. The Endpoint access
-policy supersedes it: once the policy is in force, the Server stops authorizing
-operations and the Endpoint decides, so the check described here is removed rather
-than kept alongside the policy. Two authorizers would disagree, and the weaker one
-would silently win.
+Both output routes are authorized by the target Endpoint. The CLI sends the
+Endpoint token through the Server, and the Endpoint checks `output.read` or
+`output.follow` against its local access-policy directory before consulting the
+adapter or transport. A refusal uses the machine code `policy_denied` and names the
+requested operation.
 
-Current behaviour, for reference while the change is pending. Both output routes
-require the `read_output` scope. `GET /api/v1/output` and `GET /api/v1/output/follow`
-resolve the required permission through one shared helper
-(`internal/server/output_scope.go`), so a future output route cannot be added without
-the check. A credential that lacks the scope receives `403` with code
-`permission_denied`, and the message names the operation and the missing permission.
+The Server authenticates the CLI's Server token and verifies Endpoint existence and
+channel liveness, but it does not inspect operator scopes or authorize output. This
+keeps one authority in force: an Endpoint policy decision cannot be widened or
+narrowed by Server configuration.
 
-The check runs before the transport is consulted and before the handler inspects
-whether a transport or streaming capability is configured. An unauthorized caller
-therefore cannot infer Endpoint reachability or Server streaming capability from a
-status code or a response time.
-
-An empty scope set remains unrestricted, which models the single-credential
-deployment where the one provisioned token is the administrator. The check therefore
-only narrows access when `AGENT_CLUSTER_AUTH_SCOPES` (or `--auth-scopes`) is set
-explicitly.
-
-After the change, the same two properties are preserved by different means. A caller
-without the `endpoint-token` is refused by the Endpoint, and the refusal happens
-before the transport is consulted there, so reachability still cannot be inferred
-from a status code. The scope vocabulary survives as the Endpoint policy's
-vocabulary, so an operator still learns one set of names.
+An Endpoint with no configured policy directory preserves the default all-allowed
+behaviour. Once a policy directory contains a `.conf` file, only tokens represented
+by its rules are accepted. The scope vocabulary remains available inside those
+Endpoint policy files; it is not a Server bearer-token property.
 
 ## Output and backpressure
 

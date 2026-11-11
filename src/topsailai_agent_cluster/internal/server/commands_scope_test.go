@@ -14,9 +14,10 @@ import (
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
 )
 
-// scopeTestHandler builds a handler whose credential is restricted to the given
-// scopes and whose Endpoint advertises one capability with a declared permission.
-func scopeTestHandler(t *testing.T, scopes []string, capability protocol.Capability) http.Handler {
+// scopeTestHandler builds a handler whose Endpoint advertises one capability with
+// a declared permission. The credential carries no permission concept, because the
+// Server no longer decides what a caller may do on a machine.
+func scopeTestHandler(t *testing.T, capability protocol.Capability) http.Handler {
 	t.Helper()
 	store, err := serverstorage.Open(context.Background(), filepath.Join(t.TempDir(), "server.db"))
 	if err != nil {
@@ -43,7 +44,7 @@ func scopeTestHandler(t *testing.T, scopes []string, capability protocol.Capabil
 	if err := store.ReplaceInventory(context.Background(), "e1", report, 1); err != nil {
 		t.Fatal(err)
 	}
-	return NewHandlerWithScopes(store, "secret", scopes, &CommandService{Store: store}, nil, nil, nil)
+	return NewHandlerWithCommandsAndBrokerAndOutputAndRefresh(store, "secret", &CommandService{Store: store}, nil, nil, nil)
 }
 
 // postCommand submits one command intent and returns the recorded response.
@@ -69,23 +70,11 @@ func postCommand(t *testing.T, handler http.Handler, intent protocol.ImmutableIn
 // Endpoint decides, and it answers with policy_denied.
 func TestCommandAdmissionForwardsRegardlessOfDeclaredPermission(t *testing.T) {
 	capability := protocol.Capability{Name: "ctl.get_session_messages", Version: "v1", RequiredPermission: security.ScopeControl}
-	tests := []struct {
-		name   string
-		scopes []string
-	}{
-		{name: "unrestricted credential", scopes: nil},
-		{name: "credential holding the permission", scopes: []string{security.ScopeControl}},
-		{name: "credential lacking the permission", scopes: []string{security.ScopeView}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			handler := scopeTestHandler(t, test.scopes, capability)
-			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-scope", EndpointID: "e1", Operation: "ctl.get_session_messages", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{"action":"get_session_messages"}`), ExecuteBeforeAtMS: 100}
-			rec := postCommand(t, handler, intent)
-			if rec.Code == http.StatusForbidden {
-				t.Fatalf("the Server refused a command on permission grounds: %s", rec.Body.String())
-			}
-		})
+	handler := scopeTestHandler(t, capability)
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-scope", EndpointID: "e1", Operation: "ctl.get_session_messages", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{"action":"get_session_messages"}`), ExecuteBeforeAtMS: 100}
+	rec := postCommand(t, handler, intent)
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("the Server refused a command on permission grounds: %s", rec.Body.String())
 	}
 }
 
@@ -97,7 +86,7 @@ func TestCommandAdmissionForwardsRegardlessOfDeclaredPermission(t *testing.T) {
 // Server had to interpret the advertised capability list, which is exactly the
 // provider knowledge the abstraction boundary forbids.
 func TestCommandAdmissionForwardsUndeclaredControlOperation(t *testing.T) {
-	handler := scopeTestHandler(t, nil, protocol.Capability{Name: "message.send", Version: "v1"})
+	handler := scopeTestHandler(t, protocol.Capability{Name: "message.send", Version: "v1"})
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-undeclared", EndpointID: "e1", Operation: "ctl.heartbeat", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{}`), ExecuteBeforeAtMS: 100}
 	rec := postCommand(t, handler, intent)
 	if rec.Code == http.StatusForbidden {
@@ -108,7 +97,7 @@ func TestCommandAdmissionForwardsUndeclaredControlOperation(t *testing.T) {
 // TestCommandAdmissionKeepsStandardOperationAdmissible proves a standard
 // operation without a declared permission keeps its previous behaviour.
 func TestCommandAdmissionKeepsStandardOperationAdmissible(t *testing.T) {
-	handler := scopeTestHandler(t, []string{security.ScopeView}, protocol.Capability{Name: "message.send", Version: "v1"})
+	handler := scopeTestHandler(t, protocol.Capability{Name: "message.send", Version: "v1"})
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-standard", EndpointID: "e1", Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{"text":"x"}`), ExecuteBeforeAtMS: 100}
 	rec := postCommand(t, handler, intent)
 	if rec.Code != http.StatusAccepted {
@@ -123,7 +112,7 @@ func TestCommandAdmissionKeepsStandardOperationAdmissible(t *testing.T) {
 // in flight to claim another caller's identity. That is an integrity property of
 // the request, so it stays on the Server.
 func TestCommandAdmissionStillRejectsIssuerMismatch(t *testing.T) {
-	handler := scopeTestHandler(t, nil, protocol.Capability{Name: "message.send", Version: "v1"})
+	handler := scopeTestHandler(t, protocol.Capability{Name: "message.send", Version: "v1"})
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-issuer", EndpointID: "e1", IssuerID: "someone-else", Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{"text":"x"}`), ExecuteBeforeAtMS: 100}
 	rec := postCommand(t, handler, intent)
 	if rec.Code != http.StatusForbidden {

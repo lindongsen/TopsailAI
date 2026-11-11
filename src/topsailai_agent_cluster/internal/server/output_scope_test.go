@@ -51,14 +51,13 @@ func (s *scopedOutputRequester) RequestFollow(ctx context.Context, _ string, _ p
 	return events, nil
 }
 
-// scopedOutputHandler builds a handler whose credential holds exactly the given
-// scopes. An empty list is the unrestricted single-administrator deployment.
+// scopedOutputHandler builds a handler around the given transport.
 //
 // The transport is an interface rather than the recording double, so a test can
 // substitute a transport that answers with a refusal code.
-func scopedOutputHandler(scopes []string, output OutputRequester) *Handler {
+func scopedOutputHandler(output OutputRequester) *Handler {
 	return &Handler{
-		Authenticator: security.BearerAuthenticator{Token: "secret", Scopes: security.NewScopeSet(scopes...)},
+		Authenticator: security.BearerAuthenticator{Token: "secret"},
 		Output:        output,
 	}
 }
@@ -88,7 +87,7 @@ func TestOutputRoutesForwardCredentialWithoutReadOutput(t *testing.T) {
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			output := &scopedOutputRequester{}
-			rec := callScopedOutput(t, scopedOutputHandler([]string{security.ScopeView}, output), path)
+			rec := callScopedOutput(t, scopedOutputHandler(output), path)
 			if rec.Code == http.StatusForbidden {
 				t.Fatalf("the Server refused an output read on permission grounds: %s", rec.Body.String())
 			}
@@ -117,7 +116,7 @@ func TestOutputRoutesForwardEndpointToken(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer secret")
 			req.Header.Set(endpointTokenHeader, "endpoint-secret")
 			rec := httptest.NewRecorder()
-			scopedOutputHandler(nil, output).ServeHTTP(rec, req)
+			scopedOutputHandler(output).ServeHTTP(rec, req)
 			if output.token != "endpoint-secret" {
 				t.Fatalf("forwarded token=%q want endpoint-secret", output.token)
 			}
@@ -132,7 +131,7 @@ func TestOutputRoutesForwardEndpointToken(t *testing.T) {
 // so forwarding it unchanged is what makes the refusal possible.
 func TestOutputRoutesForwardAbsentEndpointToken(t *testing.T) {
 	output := &scopedOutputRequester{}
-	rec := callScopedOutput(t, scopedOutputHandler(nil, output), "/api/v1/output?endpoint_id=e1&resource_id=res_1")
+	rec := callScopedOutput(t, scopedOutputHandler(output), "/api/v1/output?endpoint_id=e1&resource_id=res_1")
 	if rec.Code == http.StatusForbidden {
 		t.Fatalf("an absent Endpoint token was refused by the Server: %s", rec.Body.String())
 	}
@@ -145,7 +144,7 @@ func TestOutputRoutesForwardAbsentEndpointToken(t *testing.T) {
 // works, so the removed check did not narrow the single-administrator case.
 func TestOutputRoutesAdmitUnrestrictedCredential(t *testing.T) {
 	output := &scopedOutputRequester{}
-	rec := callScopedOutput(t, scopedOutputHandler(nil, output), "/api/v1/output?endpoint_id=e1&resource_id=res_1")
+	rec := callScopedOutput(t, scopedOutputHandler(output), "/api/v1/output?endpoint_id=e1&resource_id=res_1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s want 200", rec.Code, rec.Body.String())
 	}
@@ -165,7 +164,7 @@ func TestOutputRoutesStillRequireAuthentication(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/output?endpoint_id=e1&resource_id=res_1", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
 	rec := httptest.NewRecorder()
-	scopedOutputHandler(nil, output).ServeHTTP(rec, req)
+	scopedOutputHandler(output).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d body=%s want 401", rec.Code, rec.Body.String())
 	}
@@ -220,7 +219,7 @@ func (r *refusedOutputRequester) RequestOutput(context.Context, string, protocol
 // and reporting it as an outage would send them to investigate a provider that
 // was never invoked.
 func TestOutputSnapshotReportsRefusalAsForbidden(t *testing.T) {
-	rec := callScopedOutput(t, scopedOutputHandler(nil, &refusedOutputRequester{}), "/api/v1/output?endpoint_id=e1&resource_id=res_1")
+	rec := callScopedOutput(t, scopedOutputHandler(&refusedOutputRequester{}), "/api/v1/output?endpoint_id=e1&resource_id=res_1")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s want 403", rec.Code, rec.Body.String())
 	}

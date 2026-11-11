@@ -19,6 +19,7 @@ import (
 // execCluster is one Server plus one Endpoint bound to the TopsailAI fixture.
 type execCluster struct {
 	root, api, serverDB, endpointDB, sessionDir, allowlist string
+	endpointToken                                          string
 	// controlActions is the ctl. catalog file the Endpoint loads. It is always
 	// written, because the catalog is the only source of ctl. actions: an
 	// Endpoint without one advertises no action and refuses every ctl.
@@ -112,18 +113,16 @@ func TestCommandExecRejectsWithoutAllowlist(t *testing.T) {
 	}
 }
 
-// startExecCluster builds the Server, the Endpoint and both provider fixtures, then
-// waits for the fixture inventory to be committed. The Server credential is left
-// unrestricted, which is the single-administrator deployment.
+// startExecCluster builds the Server, the Endpoint and both provider fixtures,
+// then waits for the fixture inventory to be committed.
 func startExecCluster(t *testing.T, allowlist string) *execCluster {
 	t.Helper()
-	return startExecClusterWithScopes(t, allowlist, "")
+	return startExecClusterWithPolicy(t, allowlist, "", "")
 }
 
-// startExecClusterWithScopes starts the same cluster with an explicit Server
-// operator scope list, so a test can prove admission honours a restricted
-// credential instead of only the unrestricted default.
-func startExecClusterWithScopes(t *testing.T, allowlist, scopes string) *execCluster {
+// startExecClusterWithPolicy configures one Endpoint token policy for tests that
+// need to prove the authorization decision happens after Server admission.
+func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy string) *execCluster {
 	t.Helper()
 	root := t.TempDir()
 	certs := makeIntegrationCerts(t, root)
@@ -142,9 +141,10 @@ func startExecClusterWithScopes(t *testing.T, allowlist, scopes string) *execClu
 	build(t, filepath.Join(providerDir, "topsailai_session_info"), "./tests/fixtures/topsailai_session_info_fixture")
 	c := &execCluster{
 		root: root, api: free(t),
-		serverDB:   filepath.Join(root, "server.db"),
-		endpointDB: filepath.Join(root, "endpoint.db"),
-		sessionDir: filepath.Join(root, "session"),
+		serverDB:      filepath.Join(root, "server.db"),
+		endpointDB:    filepath.Join(root, "endpoint.db"),
+		sessionDir:    filepath.Join(root, "session"),
+		endpointToken: endpointToken,
 	}
 	if err := os.MkdirAll(c.sessionDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -176,9 +176,6 @@ func startExecClusterWithScopes(t *testing.T, allowlist, scopes string) *execClu
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey,
 	)
-	if scopes != "" {
-		serverEnv = append(serverEnv, "AGENT_CLUSTER_AUTH_SCOPES="+scopes)
-	}
 	c.server.Env = serverEnv
 	c.server.Stdout, c.server.Stderr = os.Stdout, os.Stderr
 	if err := c.server.Start(); err != nil {
@@ -198,6 +195,16 @@ func startExecClusterWithScopes(t *testing.T, allowlist, scopes string) *execClu
 	)
 	if c.allowlist != "" {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE="+c.allowlist)
+	}
+	if policy != "" {
+		policyDir := filepath.Join(root, "endpoint-access.d")
+		if err := os.MkdirAll(policyDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(policyDir, "integration.conf"), []byte(policy), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR="+policyDir)
 	}
 	// The catalog path is passed explicitly so the Endpoint advertises the ctl.
 	// actions the control tests address. Without it the Endpoint fails closed and

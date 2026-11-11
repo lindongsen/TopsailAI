@@ -196,39 +196,6 @@ func TestMessagesDisconnectIsNotReportedAsProviderError(t *testing.T) {
 	}
 }
 
-// TestMessagesForwardsCredentialWithoutScope proves the Server no longer
-// refuses a conversation read on permission grounds.
-//
-// Authorization belongs to the Endpoint that owns the machine. A Server-side
-// refusal would be a second authority the Endpoint could not revoke, so a
-// credential narrowed to an unrelated scope must still reach the transport: the
-// Endpoint decides, and it answers with policy_denied.
-func TestMessagesForwardsCredentialWithoutScope(t *testing.T) {
-	for _, item := range []struct {
-		name   string
-		scopes security.ScopeSet
-	}{
-		{name: "unrestricted", scopes: security.ScopeSet{}},
-		{name: "view", scopes: security.NewScopeSet(security.ScopeView)},
-		{name: "read_output only", scopes: security.NewScopeSet(security.ScopeReadOutput)},
-		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage)},
-	} {
-		t.Run(item.name, func(t *testing.T) {
-			h := &Handler{
-				Authenticator: security.BearerAuthenticator{Token: "test", Scopes: item.scopes},
-				Output:        messagesRequester{},
-			}
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/messages?endpoint_id=e&session_id=s", nil)
-			req.Header.Set("Authorization", "Bearer test")
-			out := httptest.NewRecorder()
-			h.ServeHTTP(out, req)
-			if out.Code == http.StatusForbidden {
-				t.Fatalf("the Server refused a conversation read on permission grounds: %s", out.Body.String())
-			}
-		})
-	}
-}
-
 // TestMessagesForwardsEndpointToken proves the Endpoint token crosses the
 // Server unchanged, so the Endpoint can decide which policy applies.
 func TestMessagesForwardsEndpointToken(t *testing.T) {

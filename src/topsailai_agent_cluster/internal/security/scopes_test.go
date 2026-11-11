@@ -5,44 +5,19 @@ import (
 	"testing"
 )
 
-func TestNewScopeSetDropsEmptyEntries(t *testing.T) {
-	set := NewScopeSet("view", "  ", "", "control")
-	if !set.Has("view") || !set.Has("control") {
-		t.Fatalf("expected view and control scopes, got %v", set)
-	}
-	if set.Has("") {
-		t.Fatalf("empty scope must not be stored")
-	}
-	if len(set) != 2 {
-		t.Fatalf("expected 2 scopes, got %d", len(set))
-	}
-}
-
-func TestScopeSetUnrestricted(t *testing.T) {
-	if !NewScopeSet().Unrestricted() {
-		t.Fatalf("empty scope set must be unrestricted")
-	}
-	if NewScopeSet("view").Unrestricted() {
-		t.Fatalf("configured scope set must be restricted")
-	}
-}
-
-func TestAuthenticateScopesReturnsConfiguredScopes(t *testing.T) {
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("Authorization", "Bearer secret")
-	identity, scopes, ok := (BearerAuthenticator{Token: "secret", Scopes: NewScopeSet(ScopeView)}).AuthenticateScopes(req)
-	if !ok || identity != "operator" {
-		t.Fatalf("identity=%q ok=%v", identity, ok)
-	}
-	if !scopes.Has(ScopeView) || scopes.Unrestricted() {
-		t.Fatalf("expected restricted view scope, got %v", scopes)
-	}
-}
-
-func TestAuthenticateScopesRejectsWrongToken(t *testing.T) {
+func TestAuthenticateRejectsWrongToken(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer other")
-	if _, _, ok := (BearerAuthenticator{Token: "secret"}).AuthenticateScopes(req); ok {
+	if _, ok := (BearerAuthenticator{Token: "secret"}).Authenticate(req); ok {
 		t.Fatalf("wrong token must not authenticate")
+	}
+}
+
+func TestAuthenticateAcceptsConfiguredToken(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	identity, ok := (BearerAuthenticator{Token: "secret"}).Authenticate(req)
+	if !ok || identity != "operator" {
+		t.Fatalf("identity=%q ok=%v", identity, ok)
 	}
 }

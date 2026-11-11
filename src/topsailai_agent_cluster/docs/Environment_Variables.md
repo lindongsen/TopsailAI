@@ -85,21 +85,6 @@ a container.
 | `AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
 | `AGENT_CLUSTER_LISTEN_ADDRESS` | `--listen-address` | `:8080` | Deprecated alias for the API address |
 | `AGENT_CLUSTER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
-| `AGENT_CLUSTER_AUTH_SCOPES` | `--auth-scopes` | empty | Comma-separated operator scopes granted to that token |
-
-### `AGENT_CLUSTER_AUTH_SCOPES`
-
-Recognised values: `view`, `read_output`, `send_message`, `control`,
-`endpoint_admin`. An unknown value is rejected at startup rather than ignored, so
-a typo cannot silently widen or narrow access.
-
-An empty value grants every scope. This is the single-administrator deployment and
-preserves the behaviour of earlier releases.
-
-A command whose advertised capability declares a permission is rejected with
-`403 permission_denied` when the credential does not hold it. Every `ctl.*`
-operation must declare a permission, so a sensitive provider action cannot become
-reachable merely because an Endpoint omitted the declaration.
 
 ### `AGENT_CLUSTER_AUTH_TOKEN`
 
@@ -325,7 +310,6 @@ File format constraints:
 |---|---|
 | `AGENT_CLUSTER_AUTH_TOKEN` | The known development token is accepted |
 | `AGENT_CLUSTER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
-| `AGENT_CLUSTER_AUTH_SCOPES` | The token holds every scope |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
 | `AGENT_CLUSTER_CONTROL_ACTION_FILE` | No `ctl.` action is advertised and every `ctl.` operation is refused |
 | `AGENT_CLUSTER_TLS_*` | Remote listeners cannot verify peers |
