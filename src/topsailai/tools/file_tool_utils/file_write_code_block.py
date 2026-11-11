@@ -29,11 +29,15 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
 
     Args:
         file_path (str): Path to the file to modify
-        start_num (int): The 1-based starting line number to begin replacement -> **include this line to replace**
+        start_num (int): The 1-based starting line number to begin replacement -> **include this line to replace**.
+                         MUST be >= 1; a smaller value is rejected and the file is left untouched.
         end_num (int): The 1-based ending line number (inclusive) to end replacement.
                        Omitted, ``0``, ``None``, or blank text means no end line,
-                       so ONLY ``start_num`` is replaced.
+                       so ONLY ``start_num`` is replaced. ``0`` never means "to the
+                       end of the file"; pass ``-1`` explicitly for that.
                        ``-1`` replaces from ``start_num`` through the end of the file.
+                       A positive number replaces through that line, inclusive;
+                       ``end_num == start_num`` replaces exactly one line.
                        Any other negative value is rejected.
                        This differs from ``read_file_lines``, where omitting
                        ``end_num`` reads to the end of the file; a write is

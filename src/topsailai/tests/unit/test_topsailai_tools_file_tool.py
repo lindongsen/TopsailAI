@@ -1041,3 +1041,53 @@ class TestDocumentedPrivateFileHelpers:
         target.write_text("one\n", encoding="utf-8")
         with pytest.raises(ValueError, match="before_or_after"):
             _insert_data_to_file(str(target), "x", 1, "middle")
+
+
+class TestPromptDoesNotDuplicateDocstrings:
+    """The module PROMPT must not restate what a function docstring already says.
+
+    ``get_tool_prompt()`` and ``get_tools_for_chat()`` both read
+    ``TOOLS[name].__doc__``, so the docstring is what the LLM actually receives.
+    A PROMPT copy of the same rule is a second source of truth that drifts.
+    """
+
+    def test_prompt_omits_per_argument_end_num_table(self):
+        """The per-tool end_num value table belongs to the docstrings only."""
+        from topsailai.tools import file_tool
+
+        assert "Default `-1`" not in file_tool.PROMPT
+        assert "Any other negative number is rejected" not in file_tool.PROMPT
+        assert "`start_num` is 1-based" not in file_tool.PROMPT
+
+    def test_prompt_omits_content_must_be_a_string_section(self):
+        """The content type rule lives in overwrite_code_block's docstring."""
+        from topsailai.tools import file_tool
+
+        assert "Must Be a String" not in file_tool.PROMPT
+        assert "invalid_request" not in file_tool.PROMPT
+
+    def test_prompt_keeps_only_cross_tool_rules(self):
+        """PROMPT retains routing and workflow rules that span several tools."""
+        from topsailai.tools import file_tool
+
+        assert "Mandatory Tool Mapping" in file_tool.PROMPT
+        assert "Requirements for `overwrite_lines_in_file`" in file_tool.PROMPT
+        assert "read_file_lines" in file_tool.PROMPT
+
+    def test_docstrings_own_the_per_argument_rules(self):
+        """Every rule removed from PROMPT is still stated by its docstring."""
+        from topsailai.tools.file_tool_utils import file_read_line, file_write_code_block
+
+        read_doc = file_read_line.read_file_lines.__doc__
+        for token in ("non-positive", "-1", "end_num == start_num", "Any other negative"):
+            assert token in read_doc
+
+        write_doc = file_write_code_block.overwrite_code_block.__doc__
+        for token in ("MUST be >= 1", "never means", "-1", "MUST be a string", "empty string"):
+            assert token in write_doc
+
+    def test_prompt_stays_concise(self):
+        """PROMPT must not grow back into a second copy of the docstrings."""
+        from topsailai.tools import file_tool
+
+        assert len(file_tool.PROMPT.strip().splitlines()) <= 20

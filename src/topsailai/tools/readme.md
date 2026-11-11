@@ -37,6 +37,20 @@ When a tool registers a function in `TOOLS`, its function `__doc__`, module-leve
 
 Do not duplicate the same catalog or overview in both places.
 
+### Never Repeat the Function Docstring in `PROMPT`
+
+A function registered in `TOOLS` already exposes its `__doc__` to the LLM: `get_tool_prompt()` and `get_tools_for_chat()` both read `TOOLS[name].__doc__` directly. The docstring is therefore the single source of truth for that function's signature, parameters, return value, and per-argument rules.
+
+`PROMPT` MUST NOT restate any of it. Restating creates two copies of the same rule that drift apart, and the LLM then receives the same instruction twice in one system prompt, which wastes tokens and invites contradictions.
+
+- **Docstring owns** everything about one function: parameter meaning, defaults, accepted and rejected values, return shape, and usage examples.
+- **`PROMPT` owns** only what no single docstring can express: cross-tool routing ("read before you write"), mandatory workflow ordering, capability catalogs, and role lists.
+- When a rule applies to exactly one function, put it in that function's docstring and delete it from `PROMPT`. When a rule spans several tools, keep it in `PROMPT` and do not copy it into each docstring.
+- Before adding a line to `PROMPT`, check whether the owning docstring already states it. If it does, the `PROMPT` line is a duplicate and must be removed instead of added.
+- A `PROMPT` section that only paraphrases docstrings is a defect, not extra safety: the docstring is what the LLM actually receives, so a stale `PROMPT` copy can contradict the live contract.
+
+Reference: `tools/file_tool.py` keeps only `## Mandatory Tool Mapping` and `## Requirements for overwrite_lines_in_file` in `PROMPT`, because both span multiple tools; every per-argument rule lives in `read_file_lines()` and `overwrite_code_block()` docstrings.
+
 ## Utility Placement
 
 Public/common methods closely related to tools in general belong in `base/`; public methods related to a specific tool belong in `{tool}_utils/`.
@@ -93,11 +107,11 @@ LLM argument mistakes are routine, so tolerance is a design decision, not a defe
 
 - Coerce only when every possible interpretation of the wrong value leads to the same harmless outcome. `start_num <= 0` always means "the first line", so coercion is unambiguous.
 - Reject when a wrong value has a plausible destructive interpretation. `start_num = 0` on a write could mean "line 1" or "the whole file"; guessing is unacceptable.
-- State the tolerance explicitly in the function docstring and the module `PROMPT`, including which values are coerced and which are rejected.
+- State the tolerance explicitly in the function docstring, including which values are coerced and which are rejected. Do not repeat it in the module `PROMPT`; see "Never Repeat the Function Docstring in `PROMPT`".
 - Cover both directions with tests: a read test asserting the coerced result, and a write test asserting the rejection plus an unchanged file.
 
 ### Reference implementation
 
 `tools/file_tool_utils/file_read_line.py` - `read_file_lines()` coerces a non-positive `start_num` to `1`.
 `tools/file_tool_utils/file_write_code_block.py` - `overwrite_code_block()` raises on `start_num < 1`.
-See `tools/file_tool.py` section "Line-range `end_num` Convention" for the per-tool argument table.
+The per-tool argument table lives in those two docstrings; `tools/file_tool.py` `PROMPT` only states that the two tools differ and why.

@@ -574,35 +574,10 @@ PROMPT = """
 ## Requirements for `overwrite_lines_in_file`
 You MUST confirm the line number using either `read_file_lines` or `read_file_around_line` or `read_file_with_context`.
 
-## Line-range `end_num` Convention
+## Line-range `end_num` Differs Between Read and Write
 `end_num` is interpreted per tool, because reading extra lines is harmless while
-deleting the file tail is destructive.
-
-`read_file_lines`:
-- Default `-1`: through the end of the file. `read_file_lines(path)` reads the
-  whole file.
-- `0`, `null`, or empty text: also no upper bound, so every line from
-  `start_num` through the end of the file is read.
-- A positive number: the last line to read, inclusive. `end_num == start_num`
-  reads exactly one line; `end_num < start_num` is rejected as an inverted
-  range.
-- Any other negative number is rejected.
-- `start_num` is 1-based. A non-positive value is treated as `1`, so a cosmetic
-  argument mistake still reads from the first line.
-
-`overwrite_lines_in_file`:
-- Omitted, `0`, `null`, or empty text: only `start_num` is replaced.
-- `-1`: replaces from `start_num` through the end of the file.
-- A positive number: the last line to replace, inclusive. `end_num == start_num`
-  replaces exactly one line.
-- Any other negative number is rejected.
-- `start_num` is 1-based and MUST be >= 1.
-
-`overwrite_lines_in_file` is destructive, so `0` never means "to the end of the file".
-To replace through the end of the file you MUST pass `-1` explicitly.
-
-## `content` Must Be a String
-`overwrite_lines_in_file` requires `content` to be a string. A non-string value
-such as `0`, `[]`, `{}` or `42` is rejected with `invalid_request` and the file is
-left untouched. Pass an explicit empty string `""` to delete the replaced lines.
+deleting the file tail is destructive. The exact accepted values are documented in
+each function's docstring; read them before calling. In short: omitting `end_num`
+reads to the end of the file but replaces only one line, and `0` never means "to
+the end of the file" for a write.
 """
