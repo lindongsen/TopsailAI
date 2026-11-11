@@ -130,20 +130,6 @@ func TestShowRowNumberOutOfRangeReportsTheValidRange(t *testing.T) {
 	assertActionableError(t, diagnostics, "error: row 99 is out of range; valid rows are 1-2")
 }
 
-// TestShowRowNumberRejectsPlaceholderRow proves an endpoint-only row is not a session.
-func TestShowRowNumberRejectsPlaceholderRow(t *testing.T) {
-	stub := &interactiveStub{
-		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "host-one"}},
-		reports: map[string]protocol.InventoryReport{"endpoint-1": {
-			ReportComplete:   true,
-			CollectionStatus: protocol.CollectionSucceeded,
-			Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
-		}},
-	}
-	_, diagnostics := runScope(t, stub, "list\nshow 1\nexit\n", ColorPolicy{})
-	assertActionableError(t, diagnostics, "error: row 1 does not identify a session; choose a session row")
-}
-
 // TestStatusWithoutArgumentReusesTheLastSubmittedCommand proves the operator never
 // retypes an opaque command identifier.
 func TestStatusWithoutArgumentReusesTheLastSubmittedCommand(t *testing.T) {

@@ -1061,8 +1061,15 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 }
 
 // interactiveShow renders the current scope target or an explicit target.
-// A bare ASCII row number selects the session from the most recently rendered
-// list, so the operator never has to type a provider session identifier.
+// A bare ASCII row number selects the row from the most recently rendered list,
+// so the operator never has to type a provider session identifier.
+//
+// A row number is resolved through the read-only resolver, because show only reads
+// persisted report data. An unverified session row therefore renders its real
+// detail instead of being refused, and an endpoint placeholder row renders endpoint
+// detail, which is what show already does for a literal endpoint identifier. Every
+// live-process command keeps the stricter resolver, so this widening cannot make an
+// unaddressable session look addressable.
 func interactiveShow(parent context.Context, api InteractiveAPI, state *interactiveState, id string, out io.Writer) error {
 	if state.Invalidated {
 		return state.requireUsable()
@@ -1083,12 +1090,18 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 			id = session.ClusterSessionID
 		}
 	} else {
-		row, resolved, err := resolveSessionToken(state, id)
+		row, resolved, err := resolveReadSessionToken(state, id)
 		if err != nil {
 			return err
 		}
 		if resolved {
+			// A row with no session identity is an endpoint placeholder row, so the
+			// endpoint identifier is the only identity it carries. Falling back to it
+			// keeps the row readable instead of reporting that it identifies nothing.
 			id = row.ClusterSessionID
+			if id == "" {
+				id = row.EndpointID
+			}
 		}
 	}
 	if err := (CommandRunner{API: api, Policy: InteractivePolicy}).Show(ctx, out, id, false); err != nil {
