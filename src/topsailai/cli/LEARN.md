@@ -484,3 +484,36 @@ verify, so every legitimate addition to the source of truth becomes a false
 failure, and the test never exercises the branch it is named after. Assert the
 relationship between the two independent paths instead, and add a case for the
 degraded path, because that branch is exactly where a silent crash hides.
+
+## A verified index is not a committed index when another agent shares the repository
+
+### Trigger
+
+Commit `393d6b0f` was meant to contain the seven files of one logical unit. I
+staged them by explicit path and confirmed with `git diff --cached --name-only`
+that exactly seven files were staged and no foreign file was present. The commit
+that landed contained nine: `src/topsailai_agent_cluster/MEMORY.md` and
+`src/topsailai_agent_cluster/Makefile` had been staged by a parallel agent in
+the window between my verification and the `git commit` call.
+
+### Action taken
+
+Confirmed the damage with `git show --name-only 393d6b0f`, verified no content
+was lost (`git diff HEAD` was empty for the two foreign files, and both had
+grown), and left the history untouched because rewriting it would require
+`git reset`/`git rebase` and would also disturb the parallel agent's later
+commit on top. Reported the contamination and the three remediation options to
+the human instead of silently repairing it.
+
+### Why this prevents recurrence
+
+`git diff --cached` is a snapshot of the index at one instant, and `git commit`
+without a pathspec commits whatever the index holds at a later instant. In a
+shared repository those two instants are not the same state, so a clean
+verification proves only that the index was clean once, not that the commit will
+be clean. Carry the path selection into the commit itself with
+`git commit -m <msg> -- <path>...` (or `git commit -o <path>...`), which makes
+the committed set independent of concurrent staging, and re-check the result
+afterwards with `git show --name-only HEAD` rather than trusting the pre-commit
+check. A pre-commit verification is a necessary condition, never a sufficient
+one.
