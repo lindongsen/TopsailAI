@@ -110,7 +110,7 @@ def test_invalid_selection(tmp_path, selectors, code):
 
 
 def test_ambiguous_and_no_task_fallback(tmp_path):
-    """Historical matches stay ambiguous and task logs cannot substitute."""
+    """Historical matches stay ambiguous and log kinds never substitute."""
     target(tmp_path)
     (tmp_path / "session.x.456.session.stdout").touch()
     with pytest.raises(logs.RuntimeTargetError, match="exact") as error:
@@ -120,6 +120,30 @@ def test_ambiguous_and_no_task_fallback(tmp_path):
     with pytest.raises(logs.RuntimeTargetError) as error:
         logs.resolve_log_target(tmp_path, pid=789)
     assert error.value.error_code == "target_not_found"
+    with pytest.raises(logs.RuntimeTargetError) as error:
+        logs.resolve_log_target(tmp_path, pid=123, is_task=True)
+    assert error.value.error_code == "target_not_found"
+
+
+def test_task_log_selection_is_explicit_and_strict(tmp_path):
+    """Task mode selects only task stdout using the child PID in its filename."""
+    (tmp_path / "session.x.123.session.stdout").write_text("session\n")
+    task_path = tmp_path / "sessionx.456.task-1.task.stdout"
+    task_path.write_text("task\n")
+    item = logs.resolve_log_target(
+        tmp_path, session_id="sessionx", pid=456, is_task=True)
+    assert item.stdout_path == task_path
+    assert logs.read_log_tail(item).lines == ("task",)
+
+
+def test_task_log_selection_rejects_ambiguity(tmp_path):
+    """Several task streams for one session/PID require a more exact selector."""
+    (tmp_path / "sessionx.456.task-1.task.stdout").touch()
+    (tmp_path / "sessionx.456.task-2.task.stdout").touch()
+    with pytest.raises(logs.RuntimeTargetError) as error:
+        logs.resolve_log_target(tmp_path, session_id="sessionx", pid=456,
+                                is_task=True)
+    assert error.value.error_code == "ambiguous_target"
 
 
 def test_directory_rules(tmp_path):

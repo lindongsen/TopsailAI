@@ -299,7 +299,9 @@ def test_lazy_import_and_writer(monkeypatch):
     operations.RuntimeRequest("logs", payload={}, lines=20),
     operations.RuntimeRequest("logs", control_action="x", lines=20),
     operations.RuntimeRequest("logs", timeout=1, lines=20),
-    operations.RuntimeRequest("send", "x", lines=20)])
+    operations.RuntimeRequest("logs", lines=20, is_task=1),
+    operations.RuntimeRequest("send", "x", lines=20),
+    operations.RuntimeRequest("send", "x", is_task=True)])
 def test_logs_invalid_before_discovery(log_request, tmp_path, monkeypatch):
     """Python callers cannot bypass count or cross-action validation."""
     resolver = Mock(side_effect=AssertionError("no discovery"))
@@ -323,6 +325,19 @@ def test_logs_delivery_isolation(target, monkeypatch):
     assert not result.delivery_unknown
     live.assert_not_called()
     side_effect.assert_not_called()
+
+
+def test_task_log_selector_reaches_discovery(target, monkeypatch):
+    """Snapshot execution forwards the normalized task-log discriminator."""
+    resolver = Mock(wraps=operations.runtime_logs.resolve_log_target)
+    monkeypatch.setattr(operations.runtime_logs, "resolve_log_target", resolver)
+    task_path = target / "sessionx.456.work.task.stdout"
+    task_path.write_text("task\n")
+    result = operations.execute_runtime_request(
+        operations.RuntimeRequest("logs", lines=20, is_task=True), target,
+        session_id="sessionx", pid=456)
+    assert result.ok and result.response["lines"] == ["task"]
+    assert resolver.call_args.kwargs["is_task"] is True
 
 
 @pytest.mark.parametrize("code,exit_code", [("permission_denied", 4), ("log_read_failed", 5),

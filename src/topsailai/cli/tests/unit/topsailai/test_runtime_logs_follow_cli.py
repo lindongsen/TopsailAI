@@ -176,6 +176,21 @@ def test_follow_rejected_offline(argv, capsys):
     follow_executor.assert_not_called()
 
 
+def test_follow_task_selector_reaches_resolution(tmp_path, monkeypatch):
+    """Follow execution selects task stdout when the request asks for it."""
+    task_path = tmp_path / "sessionx.456.work.task.stdout"
+    task_path.write_text("task\n")
+    resolver = Mock(wraps=operations.runtime_logs.resolve_log_target)
+    monkeypatch.setattr(operations.runtime_logs, "resolve_log_target", resolver)
+    request = operations.RuntimeRequest("logs", lines=20, follow=True,
+                                        is_task=True)
+    with pytest.raises(KeyboardInterrupt):
+        operations.execute_log_follow(
+            request, tmp_path, session_id="sessionx", pid=456,
+            emit=Mock(), sleep=Mock(side_effect=KeyboardInterrupt))
+    assert resolver.call_args.kwargs["is_task"] is True
+
+
 def test_follow_dispatches_to_follow_executor(capsys):
     """A follow request uses the follow executor and streams no snapshot lines."""
     code, executor, follow_executor = invoke(["logs", "-s", "s", "-n", "3", "-f"])

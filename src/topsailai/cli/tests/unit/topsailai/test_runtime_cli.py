@@ -397,6 +397,15 @@ def test_logs_normalization(argv, count):
     args = cli.build_parser().parse_intermixed_args(argv)
     request = cli.normalize(args)
     assert request.action == "logs" and request.lines == count
+    assert not request.is_task
+
+
+def test_task_logs_normalization():
+    """The task selector is carried only by the logs request."""
+    args = cli.build_parser().parse_intermixed_args(
+        ["logs", "-s", "s", "--is-task"])
+    request = cli.normalize(args)
+    assert request.action == "logs" and request.is_task
 
 
 @pytest.mark.parametrize("extra", [
@@ -414,11 +423,19 @@ def test_logs_invalid_offline(extra, capsys):
     executor.assert_not_called()
 
 
-@pytest.mark.parametrize("argv", [["send", "-m", "x"], ["btw", "-m", "x"],
-                                    ["control", "x"], ["-i", "/send x"]])
-def test_lines_reject_delivery(argv):
-    """New options never alter existing delivery actions."""
-    code, executor = invoke([*argv, "-s", "s", "-n", "2"])
+@pytest.mark.parametrize("argv,option", [
+    (["send", "-m", "x"], ["-n", "2"]),
+    (["btw", "-m", "x"], ["-n", "2"]),
+    (["control", "x"], ["-n", "2"]),
+    (["-i", "/send x"], ["-n", "2"]),
+    (["send", "-m", "x"], ["--is-task"]),
+    (["btw", "-m", "x"], ["--is-task"]),
+    (["control", "x"], ["--is-task"]),
+    (["-i", "/send x"], ["--is-task"]),
+])
+def test_log_options_reject_delivery(argv, option):
+    """Log-only options never alter existing delivery actions."""
+    code, executor = invoke([*argv, "-s", "s", *option])
     assert code == 2
     executor.assert_not_called()
 

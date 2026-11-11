@@ -398,7 +398,7 @@ topsailai runtime send -s SESSION --message='--literal text'
 | Option | Meaning |
 |---|---|
 | `-s`, `--session-id`, `--session_id` | Exact session identifier. |
-| `-p`, `--pid` | Positive session PID, not a task child PID. |
+| `-p`, `--pid` | Positive session PID; with `runtime logs --is-task`, the positive task child PID. |
 | `--timeout` | Positive finite transport budget in seconds; default 5. |
 | `--json` | Emit one public result document on stdout, including failures. |
 | `-i`, `--instruction` | One allowed slash instruction; mutually exclusive with structured action syntax. |
@@ -406,22 +406,24 @@ topsailai runtime send -s SESSION --message='--literal text'
 | `--stdin` | Explicit bounded non-TTY UTF-8 body source for send/btw only. |
 | `-a`, `--args` | Control JSON object; default `{}`. |
 | `-f`, `--follow` | Keep printing appended log records until interrupted; `logs` only. |
+| `--is-task` | Read a task stdout file instead of a session stdout file; `logs` only. |
 
 At least session or PID is required. Providing both means strict intersection: neither may be relaxed. Discovery considers session stdout records under `{TOPSAILAI_HOME}/workspace/task/`, not task stdout as parent identities. For send/btw/control, no match, stale target, mismatch or multiple live candidates fails; the CLI never chooses the newest, falls back to another target, filters ambiguity by endpoint availability, or broadcasts.
 
 Common options may appear before or after the structured action. Identical repeated value options are permitted; conflicting repeated values are rejected. Unknown options, leftover arguments and option abbreviations are rejected. Runtime `-m raw` and `-m tmux` are literal messages. Use `--message=VALUE` (or `-m=VALUE`) when a body starts with `--`. Help is offline: `runtime --help`, `runtime send --help`, `runtime btw --help`, `runtime control --help`, and `runtime logs --help` do not resolve a target, read stdin, or load control handlers/injection writers.
 
-### Recent session logs
+### Recent session and task logs
 
 ```bash
 topsailai runtime logs -s SESSION -p PID
 topsailai runtime logs -s SESSION -p PID -n 100 --json
 topsailai runtime logs -s SESSION -p PID -n 100 -f
+topsailai runtime logs -s SESSION --is-task -p TASK_PID
 ```
 
-`logs` reads recent physical LF-delimited records once and exits; it does not contact the agent. `-n/--lines` defaults to 20, accepts integers 1–10000, and applies only to `logs`, not slash instructions. `-f/--follow` keeps printing appended records after that initial tail until the host interrupts, so `-n 100 -f` behaves like `tail -n 100 -f`. At least one exact session/PID selector is required; both mean strict intersection. Idle and exited sessions are supported without process probes. Multiple historical matches are ambiguous: supply PID, rather than choosing the newest. Discovery considers only immediate regular, non-symlink session stdout files. Task stdout is never a fallback or merged stream. A runtime command without an action remains invalid.
+`logs` reads recent physical LF-delimited records once and exits; it does not contact the agent. `-n/--lines` defaults to 20, accepts integers 1–10000, and applies only to `logs`, not slash instructions. `-f/--follow` keeps printing appended records after that initial tail until the host interrupts, so `-n 100 -f` behaves like `tail -n 100 -f`. At least one exact session/PID selector is required; both mean strict intersection. Idle and exited logs are supported without process probes. By default discovery considers only immediate regular, non-symlink `.session.stdout` files. `--is-task` switches discovery to immediate regular, non-symlink `.task.stdout` files, matching the `is_task=true` rows from `topsailai workspace list --json`; in this mode `-p/--pid` is the task child PID encoded in the task filename, not the parent session PID. The two log kinds never fall back to or merge with each other. Multiple matches are ambiguous and fail rather than choosing the newest. If several task stdout files have the same session and child PID, the command returns `ambiguous_target` because the current selectors cannot distinguish those files. A runtime command without an action remains invalid.
 
-Reject message, stdin, payload, instruction, explicit timeout and extra positional arguments for logs. Identical repeated counts are accepted; conflicting counts fail before filesystem access. The interactive top-level `-n/--tail-lines` option remains separate. `-f/--follow` is rejected together with `--json` and for `send`, `btw`, `control` and instruction form, because a followed stream has no single bounded result document.
+Reject message, stdin, payload, instruction, explicit timeout and extra positional arguments for logs. Reject `--is-task` for send, btw, control and instruction forms. Identical repeated counts are accepted; conflicting counts fail before filesystem access. The interactive top-level `-n/--tail-lines` option remains separate. `-f/--follow` is rejected together with `--json` and for `send`, `btw`, `control` and instruction form, because a followed stream has no single bounded result document.
 
 Tail scanning uses portable binary reads in 64 KiB blocks, with an 8 MiB scan budget and a captured initial EOF. It never loads an unbounded file or counts the entire file in an extra pass. Blank records and unterminated final records count as lines; terminal LF creates no phantom line. LF and preceding CR are removed, lone CR is preserved, and malformed UTF-8 is decoded with replacement. Unicode separators are not line boundaries. If the byte budget cuts a leading record, that fragment is dropped: a huge single line can return zero records with `scan_limited=true`, which does not mean the file is empty.
 
@@ -429,7 +431,7 @@ Plain output contains only chronological log records, one output newline each; e
 
 | Field | Meaning |
 |---|---|
-| `filename` | Absolute selected session stdout path. |
+| `filename` | Absolute selected session or task stdout path. |
 | `lines` | Chronological decoded records without LF/CRLF terminators. |
 | `requested_lines`, `returned_lines` | Requested count and number actually returned. |
 | `total_lines` | Exact count only when scanning reaches file start; otherwise null. |
@@ -441,13 +443,13 @@ Empty files return zero counts and false flags. Requests larger than available r
 
 Appends after snapshot capture are excluded. Rotation keeps reading the opened descriptor where supported. Short reads, shrinkage and detected identity changes fail without retries. Same-size in-place rewrites cannot always be detected: this is a best-effort snapshot, not a transactional guarantee. Filesystem I/O has no hard timeout. Portable checks require trusted per-user storage and cannot guarantee resistance to hostile replacement races. Log content may contain secrets or terminal escape sequences; handle raw output accordingly. Windows uses ordinary Python file I/O without shell tail or POSIX transports; real Windows validation is separate from portable-path unit tests.
 
-### Following session logs
+### Following session or task logs
 
 `-f/--follow` turns the same command into a bounded-start, unbounded-duration stream. The initial tail is printed exactly as in snapshot mode, then appended records are printed as they are written, until the host interrupts the process. `-n` keeps its snapshot meaning, so `-n 100 -f` is `tail -n 100 -f`, and `-f` alone starts from the default 20 records.
 
-- The target is resolved once and its descriptor is opened once, so a later poll can never select another session log. Rotation therefore keeps reading the original file, like `tail -f` rather than `tail -F`; a new file created by rotation is not followed.
+- The target is resolved once and its descriptor is opened once, so a later poll can never select another session or task log. Rotation therefore keeps reading the original file, like `tail -f` rather than `tail -F`; a new file created by rotation is not followed.
 - Only complete LF-delimited records are printed. An unterminated trailing record is held in a buffer bounded to 1 MiB and printed once when the follow ends, so a partial write is never emitted twice or split arbitrarily. A record longer than that bound is emitted in bounded pieces.
-- Appended bytes are read in bounded chunks under the same 8 MiB per-poll budget, and the loop waits 0.5 seconds between polls. Follow never probes the process, so following an exited session simply stops producing output.
+- Appended bytes are read in bounded chunks under the same 8 MiB per-poll budget, and the loop waits 0.5 seconds between polls. Follow never probes the process, so following an exited log simply stops producing output.
 - Shrinkage restarts reading at the new beginning of the file. A detected identity change fails with `log_changed` instead of silently switching files.
 - An interrupt is the normal end of a follow and exits `0`, after the held record is printed. Other failures keep the snapshot exit codes: `2` invalid arguments, `3` missing/mismatched/ambiguous target, `4` permission or missing/invalid file endpoint, `5` `log_read_failed` or `log_changed`.
 - Follow prints only records and never a JSON document, so `-f` with `--json` is rejected with exit `2`. It is also rejected for `send`, `btw`, `control` and the instruction form.

@@ -25,6 +25,7 @@ class RuntimeRequest:
     timeout: float = 5.0
     lines: int | None = None
     follow: bool = False
+    is_task: bool = False
 
 @dataclass
 class RuntimeResult:
@@ -67,10 +68,11 @@ def _validate(request, control_actions):
         if (request.message is not None or request.control_action is not None or
                 request.payload is not None or type(request.lines) is not int or
                 not 1 <= request.lines <= runtime_logs.MAX_LINES or
-                request.timeout != 5.0 or type(request.follow) is not bool):
+                request.timeout != 5.0 or type(request.follow) is not bool or
+                type(request.is_task) is not bool):
             raise _usage()
         return None
-    if request.lines is not None or request.follow:
+    if request.lines is not None or request.follow or request.is_task:
         raise _usage()
     if type(request.timeout) not in (int, float):
         raise _usage()
@@ -164,7 +166,8 @@ def execute_log_follow(
     target = None
     try:
         _validate(request, runtime_control.get_control_actions)
-        target = runtime_logs.resolve_log_target(task_dir, session_id=session_id, pid=pid)
+        target = runtime_logs.resolve_log_target(
+            task_dir, session_id=session_id, pid=pid, is_task=request.is_task)
         with runtime_logs.LogFollower(target, request.lines, poll_interval=poll_interval,
                                       sleep=sleep) as follower:
             tail = follower.tail
@@ -215,7 +218,8 @@ def execute_runtime_request(
     try:
         payload = _validate(request, control_actions or runtime_control.get_control_actions)
         if request.action == "logs":
-            target = runtime_logs.resolve_log_target(task_dir, session_id=session_id, pid=pid)
+            target = runtime_logs.resolve_log_target(
+                task_dir, session_id=session_id, pid=pid, is_task=request.is_task)
             tail = runtime_logs.read_log_tail(target, request.lines)
             return RuntimeResult(True, 0, "logs", target.session_id, target.pid,
                                  "log_read", response=tail.response())

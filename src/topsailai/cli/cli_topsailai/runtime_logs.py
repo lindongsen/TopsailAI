@@ -1,4 +1,4 @@
-"""Read bounded session log snapshots and follow appended records.
+"""Read bounded runtime log snapshots and follow appended records.
 
 Author: DawsonLin
 """
@@ -60,13 +60,15 @@ def _io_error(exc, *, discovery=False):
         code = "endpoint_invalid"
     else:
         code = "log_read_failed"
-    return RuntimeLogError(code, "Unable to read session log")
+    return RuntimeLogError(code, "Unable to read runtime log")
 
 
-def resolve_log_target(task_dir, *, session_id=None, pid=None):
-    """Select exactly one regular session stdout, without process probes."""
+def resolve_log_target(task_dir, *, session_id=None, pid=None, is_task=False):
+    """Select exactly one regular stdout of the requested kind without probes."""
     if (session_id is None and pid is None) or (pid is not None and (type(pid) is not int or pid <= 0)):
         raise RuntimeTargetError("usage_error", "Supply a session or positive PID")
+    if type(is_task) is not bool:
+        raise RuntimeTargetError("usage_error", "Invalid log kind")
     if session_id is not None and (not isinstance(session_id, str) or not session_id or
                                   session_id in (".", "..") or re.search(r"[\s/\\\x00]", session_id)):
         raise RuntimeTargetError("usage_error", "Invalid session identifier")
@@ -77,8 +79,9 @@ def resolve_log_target(task_dir, *, session_id=None, pid=None):
         if not stat.S_ISDIR(folder.lstat().st_mode):
             raise RuntimeLogError("endpoint_invalid", "Invalid task directory")
         candidates = []
+        suffix = ".task.stdout" if is_task else ".session.stdout"
         for path in folder.iterdir():
-            if not path.name.endswith(".session.stdout"):
+            if not path.name.endswith(suffix):
                 continue
             parsed_session, raw_pid = parse_stdout_filename(path.name)
             parsed_pid = int(raw_pid) if raw_pid and raw_pid.isdecimal() else None
@@ -94,9 +97,9 @@ def resolve_log_target(task_dir, *, session_id=None, pid=None):
     if not matches:
         code = "target_mismatch" if session_id is not None and pid is not None and any(
             item.pid == pid for item in candidates) else "target_not_found"
-        raise RuntimeTargetError(code, "No matching session log")
+        raise RuntimeTargetError(code, "No matching runtime log")
     if len(matches) != 1:
-        raise RuntimeTargetError("ambiguous_target", "Specify an exact session PID")
+        raise RuntimeTargetError("ambiguous_target", "Specify an exact log target")
     return matches[0]
 
 
@@ -115,7 +118,7 @@ def _scan(stream, size, count, chunk_size, budget):
         stream.seek(position)
         chunk = stream.read(amount)
         if len(chunk) != amount:
-            raise RuntimeLogError("log_changed", "Session log changed during read")
+            raise RuntimeLogError("log_changed", "Runtime log changed during read")
         if not chunks:
             terminal_lf = chunk.endswith(b"\n")
         chunks.append(chunk)
@@ -141,12 +144,12 @@ def _scan(stream, size, count, chunk_size, budget):
 
 
 def _open_regular_log(target):
-    """Open one regular session log with no-follow custody and return its stream."""
+    """Open one regular runtime log with no-follow custody and return its stream."""
     try:
         path = Path(target.stdout_path)
         before = path.lstat()
         if not stat.S_ISREG(before.st_mode):
-            raise RuntimeLogError("endpoint_invalid", "Invalid session log file")
+            raise RuntimeLogError("endpoint_invalid", "Invalid runtime log file")
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         fd = os.open(path, flags)
         try:
@@ -157,9 +160,9 @@ def _open_regular_log(target):
         try:
             opened = os.fstat(stream.fileno())
             if not stat.S_ISREG(opened.st_mode):
-                raise RuntimeLogError("endpoint_invalid", "Invalid session log file")
+                raise RuntimeLogError("endpoint_invalid", "Invalid runtime log file")
             if not _same_identity(before, opened):
-                raise RuntimeLogError("log_changed", "Session log changed before read")
+                raise RuntimeLogError("log_changed", "Runtime log changed before read")
         except BaseException:
             stream.close()
             raise
@@ -180,7 +183,7 @@ def read_log_tail(target, count=20, *, chunk_size=CHUNK_SIZE, budget=SCAN_BUDGET
             lines, total, truncated, limited, amount = _scan(stream, opened.st_size, count, chunk_size, budget)
             after = os.fstat(stream.fileno())
             if after.st_size < opened.st_size or not _same_identity(opened, after):
-                raise RuntimeLogError("log_changed", "Session log changed during read")
+                raise RuntimeLogError("log_changed", "Runtime log changed during read")
         return LogTail(str(Path(target.stdout_path)), lines, count, len(lines), total,
                        truncated, limited, amount, opened.st_size)
     except OSError as exc:
@@ -188,10 +191,10 @@ def read_log_tail(target, count=20, *, chunk_size=CHUNK_SIZE, budget=SCAN_BUDGET
 
 
 class LogFollower:
-    """Follow one selected session log through a single open descriptor.
+    """Follow one selected runtime log through a single open descriptor.
 
     The descriptor is opened once, so a later poll can never select another
-    session log, and rotation keeps reading the original file. Only complete
+    runtime log, and rotation keeps reading the original file. Only complete
     LF-delimited records are emitted; an unterminated remainder is held in a
     bounded buffer and emitted once when the follow ends.
     """
@@ -260,7 +263,7 @@ class LogFollower:
         try:
             current = os.fstat(stream.fileno())
             if not stat.S_ISREG(current.st_mode) or not _same_identity(self._identity, current):
-                raise RuntimeLogError("log_changed", "Session log changed during follow")
+                raise RuntimeLogError("log_changed", "Runtime log changed during follow")
             if current.st_size < self._position:
                 # Truncation or in-place rotation restarts at the new beginning.
                 self._position = 0
