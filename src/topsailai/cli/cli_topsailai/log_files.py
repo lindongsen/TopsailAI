@@ -351,6 +351,56 @@ def parse_session_selector(value: Optional[str]) -> Optional[List[str]]:
     return selected
 
 
+def parse_pid_selector(value: Optional[str]) -> Optional[List[int]]:
+    """Parse a comma-separated PID selector into exact positive PIDs.
+
+    ``None`` means "no filter" and is returned unchanged. An empty or
+    whitespace-only value is rejected for the same reason as the session
+    selector: "select nothing" and "select everything" must never be confused.
+    Whitespace around each PID is stripped, empty segments are dropped, and
+    duplicates are removed while preserving first-seen order. A non-numeric,
+    zero or negative PID is rejected, because no process can own such a PID and
+    silently ignoring it would widen the inventory instead of narrowing it.
+
+    Args:
+        value: Raw selector text, or ``None`` when no selector was given.
+
+    Returns:
+        The ordered distinct PIDs, or ``None`` for no filter.
+
+    Raises:
+        SessionSelectorError: The value is not a string, names no PID, or
+            contains a value that cannot be a process ID.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SessionSelectorError("pid selector must be a string")
+
+    selected: List[int] = []
+    seen = set()
+    for part in value.split(","):
+        text = part.strip()
+        if not text:
+            continue
+        try:
+            pid = int(text)
+        except ValueError as error:
+            raise SessionSelectorError(
+                "pid selector must contain only integers"
+            ) from error
+        if pid <= 0:
+            raise SessionSelectorError("pid selector must be positive")
+        if pid in seen:
+            continue
+        seen.add(pid)
+        selected.append(pid)
+
+    if not selected:
+        raise SessionSelectorError("pid selector must name at least one PID")
+    return selected
+
+
 def filter_log_files_by_session(
     files: List[dict],
     session_ids: Optional[List[str]],

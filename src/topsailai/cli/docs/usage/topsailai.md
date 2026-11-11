@@ -204,6 +204,64 @@ prompt is open keeps its files. `/clean` without arguments additionally requires
 a file to be older than three days, and both forms require an explicit `y`
 confirmation that defaults to `N`.
 
+### Non-interactive clean
+
+```text
+topsailai workspace clean [-s ID1,ID2] [-p PID1,PID2] [--yes] [--json]
+```
+
+`workspace clean` applies the same inventory rule as `/clean` without arguments:
+a file must be idle and older than three days, and the same liveness and
+launch-lease guards decide eligibility. Both commands read one shared expiry
+constant and one shared inventory helper, so the interactive and non-interactive
+paths cannot drift.
+
+The command previews by default. Nothing is deleted unless `--yes` is given,
+because a non-interactive caller must never trigger an irreversible action
+through an implicit default. `-s/--session ID1,ID2` restricts the inventory to
+the named comma-separated sessions using the same selector syntax as
+`workspace list`; an empty or whitespace-only selector is a usage error with
+exit code `2` rather than a silent "select everything", and two different `-s`
+values in one invocation are rejected as ambiguous.
+
+`-p/--pid PID1,PID2` narrows the inventory to the named session instances. A
+session ID alone selects every instance of that session, so the PID is the only
+way to target one run. The value matches the owning session PID, which is the
+`{session_id}.{pid}` prefix that groups a session's related files, not the child
+PID of a task file that the session produced; selecting a child PID therefore
+selects nothing. The syntax and validation match `-s`: comma-separated, whitespace
+around each value stripped, duplicates removed, and an empty, non-numeric,
+zero or negative value rejected with exit code `2` because no process can own
+such a PID and silently ignoring it would widen the inventory instead of
+narrowing it. Two different `-p` values in one invocation are rejected as
+ambiguous, while repeating the same value is accepted. `-s` and `-p` may be used
+independently and combine as an intersection when both are given.
+
+Launch logs carry no session owner and no owner PID, so they are excluded
+whenever either selector is active. A selector that matches nothing reports an
+empty inventory with `nothing_to_delete` and exit code `0`, not a failure.
+
+Every deletion is revalidated immediately before removal, exactly as in the
+interactive path: a file that became an active launch log, whose owner started
+answering the control channel, or whose modification time changed after the
+inventory pass is skipped instead of deleted. When every candidate is skipped
+this way, the command reports `nothing_to_delete` rather than claiming a
+deletion that never happened.
+
+With `--json`, stdout contains exactly one receipt and every human diagnostic
+line goes to stderr. The receipt uses the shared workspace field set, and
+`response` carries `expired_age_seconds`, `selectors`, `candidates`,
+`candidate_count`, `deleted`, `deleted_count`, `failed`, and `failed_count`.
+`selectors` echoes the effective `session_ids` and `pids` filters, so a caller
+can confirm which filter produced the inventory instead of inferring it from the
+rows. `deleted` lists the paths actually removed, so a caller never infers the
+outcome from a count. `delivery_state` is `preview`, `nothing_to_delete`,
+`deleted`, or `partial`.
+
+Exit codes: `0` for a preview, an empty inventory, or a complete deletion; `1`
+when the task directory cannot be read or at least one removal failed; `2` for a
+usage error.
+
 ### Workspace task list columns
 
 When the CLI starts, it prints the workspace task list built by scanning `{TOPSAILAI_HOME}/workspace/task/` for `.stdout` and `.stderr` log files produced by running sessions and their tasks. Each row represents a discovered log file and shows:
@@ -502,6 +560,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `workspace agent [<folder>] [-m MODE] [-b/--background] [--task MESSAGE] [--non-interactive] [--json]` | Launch a configured agent in the foreground; the folder defaults to the caller's working directory. `--task` supplies the initial user task so a fresh agent starts without manual input. Background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. `--non-interactive` suppresses launcher prompts for this launch only. |
 | `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; success requires the resumed process to answer on its control channel within 7 seconds. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
+| `workspace clean [-s ID1,ID2] [-p PID1,PID2] [--yes] [--json]` | List expired session files without prompting, and delete them only with `--yes`. `-s/--session` restricts the inventory to the named comma-separated sessions, and `-p/--pid` narrows it to the named session instances by owning PID; the two combine as an intersection. `--json` emits one receipt on stdout with diagnostics on stderr. See [Non-interactive clean](#non-interactive-clean). |
 | `docs list [--json]` | List all usage documentation files and exit. `--json` outputs a JSON array of document records instead of a table. |
 | `docs read <name> [--json]` | Read a specific usage documentation file and exit. `--json` outputs one structured result object instead of the raw content. |
 | `project add <path> [name]` | Add a project to the managed project list. |

@@ -341,6 +341,14 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
         return run_workspace_resume_cli(
             resume_args, startup_cwd=getattr(args, "startup_cwd", None),
         )
+    if workspace_command == "clean":
+        from cli_topsailai.workspace_clean_cli import run_workspace_clean_cli
+        clean_args = list(getattr(args, "clean_args", []) or [])
+        if getattr(args, "clean_help", False):
+            clean_args.insert(0, "--help")
+        if clean_args and clean_args[0] == "--":
+            clean_args = clean_args[1:]
+        return run_workspace_clean_cli(clean_args)
     output_format = getattr(args, "format", None)
     if workspace_command == "list" and getattr(args, "json", False):
         output_format = "json"
@@ -1427,6 +1435,11 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         sys.exit(run_workspace_driver_cli(argv[2:]))
 
+    if argv[:2] == ["workspace", "clean"]:
+        from cli_topsailai.workspace_clean_cli import run_workspace_clean_cli
+
+        sys.exit(run_workspace_clean_cli(argv[2:]))
+
     _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models", "runtime", "session"}
     _TOP_LEVEL_OPTIONS = {
         "-h", "--help", "--version", "-w", "--workspace",
@@ -1712,6 +1725,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     workspace_kill_parser.add_argument("kill_args", nargs=argparse.REMAINDER)
     workspace_kill_parser.set_defaults(func=_handle_workspace_subcommand)
+    workspace_clean_parser = workspace_subparsers.add_parser(
+        "clean", help="list or delete expired session files", add_help=False,
+    )
+    workspace_clean_parser.add_argument(
+        "-h", "--help", action="store_true", dest="clean_help",
+    )
+    workspace_clean_parser.add_argument("clean_args", nargs=argparse.REMAINDER)
+    workspace_clean_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_resume_parser = workspace_subparsers.add_parser(
         "resume", help="resume an exact persisted session", allow_abbrev=False,
     )
