@@ -281,6 +281,11 @@ Feature: Tools accept string-typed parameters from the LLM
     Then the tool reports a business problem instead of a parameter error
     And the tool output contains Invalid range
 
+  Scenario: read_file_lines rejects a range whose end equals its start
+    When the tool read_file_lines is called on the test file with parameters start_num set to 5 and end_num set to 5
+    Then the tool reports a business problem instead of a parameter error
+    And the tool output contains Invalid range
+
   Scenario: read_file_lines reads the whole file when end_num is omitted
     When the tool read_file_lines is called on the test file without end_num
     Then the tool call is accepted and produces a result

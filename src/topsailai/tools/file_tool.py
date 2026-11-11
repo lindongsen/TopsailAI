@@ -583,7 +583,8 @@ deleting the file tail is destructive.
   whole file.
 - `0`, `null`, or empty text: also no upper bound, so every line from
   `start_num` through the end of the file is read.
-- A positive number: the last line to read, inclusive.
+- A positive number: the last line to read, inclusive. It MUST be greater than
+  `start_num`; `end_num == start_num` is rejected as an ambiguous range.
 - Any other negative number is rejected.
 
 `overwrite_lines_in_file`:

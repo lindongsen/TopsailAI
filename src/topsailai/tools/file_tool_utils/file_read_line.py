@@ -316,8 +316,9 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=-1, **_) -> s
                        ``-1``, which reads through the end of the file.
                        ``0``, ``None``, or blank text also means no end line, so
                        every line from ``start_num`` through the end of the file
-                       is read. A positive number reads through that line,
-                       inclusive. Any other negative value is rejected.
+                       is read. A positive number must be greater than
+                       ``start_num`` and reads through that line, inclusive.
+                       Any other negative value is rejected.
 
     Returns:
         str: The concatenated content of the specified lines as a single string.
@@ -346,11 +347,17 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=-1, **_) -> s
         if not start_num:
             start_num = 1
 
-        # ``0`` means no end line, so every line from ``start_num`` to the end
-        # of the file is read. The loop guard below already treats ``0`` as
-        # "no upper bound", so no sentinel rewrite is needed here.
-        if end_num > 0 and start_num > end_num:
-            return f"Error: Invalid range: start_num ({start_num}) > end_num ({end_num})"
+        # ``0`` and ``-1`` mean "no end line", so every line from ``start_num``
+        # to the end of the file is read. The loop guard below already treats
+        # them as "no upper bound", so no sentinel rewrite is needed here.
+        # A positive ``end_num`` must be strictly greater than ``start_num``:
+        # ``end_num == start_num`` is ambiguous, so it is rejected instead of
+        # being guessed as a single-line read.
+        if end_num > 0 and start_num >= end_num:
+            return (
+                f"Error: Invalid range: start_num ({start_num}) >= "
+                f"end_num ({end_num}); use 0 or -1 to read through the end"
+            )
 
         start_idx = start_num - 1
         output_lines = []

@@ -464,16 +464,15 @@ class TestReadFileLines:
         assert "3-line3" in lines[1]
         assert "4-line4" in lines[2]
 
-    def test_single_line(self, tmp_path):
-        """Test reading a single line."""
+    def test_start_equals_end_is_rejected(self, tmp_path):
+        """A positive end_num equal to start_num is an ambiguous range."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("line1\nline2\nline3\n")
 
         result = read_file_lines(str(test_file), 2, 2)
-        lines = result.split("\n")
 
-        assert len(lines) == 1
-        assert "2-line2" in lines[0]
+        assert "Invalid range" in result
+        assert "start_num (2) >= end_num (2)" in result
 
     def test_range_at_beginning(self, tmp_path):
         """Test reading from the beginning."""
@@ -676,11 +675,12 @@ class TestReadFileLines:
         test_file = tmp_path / "test.txt"
         test_file.write_bytes(b"line1\rline2\rline3\r")
 
-        result = read_file_lines(str(test_file), 2, 2)
+        result = read_file_lines(str(test_file), 2, 3)
         lines = result.split("\n")
 
-        assert len(lines) == 1
+        assert len(lines) == 2
         assert lines[0] == "2-line2"
+        assert lines[1] == "3-line3"
 
     def test_latin1_encoding(self, tmp_path):
         """Test Latin-1 encoded file is decoded correctly."""
@@ -688,11 +688,12 @@ class TestReadFileLines:
         content = "café\nnaïve\nseñor\n".encode("latin-1")
         test_file.write_bytes(content)
 
-        result = read_file_lines(str(test_file), 2, 2)
+        result = read_file_lines(str(test_file), 2, 3)
         lines = result.split("\n")
 
-        assert len(lines) == 1
+        assert len(lines) == 2
         assert lines[0] == "2-naïve"
+        assert lines[1] == "3-señor"
 
 
 class TestTools:
