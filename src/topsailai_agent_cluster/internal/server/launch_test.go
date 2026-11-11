@@ -63,6 +63,35 @@ func (launchFailureRequester) RequestLaunchOptions(context.Context, string, prot
 	return protocol.LaunchOptions{}, errors.New("endpoint is offline")
 }
 
+// launchRefusalRequester answers every launch query with the Endpoint refusal
+// code and no Go error, which is how a refusal actually arrives.
+type launchRefusalRequester struct{ launchRequester }
+
+// RequestLaunchOptions returns the refusal code as a successful answer.
+func (launchRefusalRequester) RequestLaunchOptions(context.Context, string, protocol.LaunchQuery) (protocol.LaunchOptions, error) {
+	return protocol.LaunchOptions{ErrorCode: protocol.PolicyDenied}, nil
+}
+
+// TestLaunchOptionsReportsRefusalAsForbidden proves an Endpoint refusal is not
+// reported as a successful empty catalog.
+//
+// An empty catalog is a claim about the machine: it has no launch handler. A
+// refusal is a claim about the caller. Reporting the second as the first would
+// tell an operator to register a handler that already exists.
+func TestLaunchOptionsReportsRefusalAsForbidden(t *testing.T) {
+	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: launchRefusalRequester{}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/launch-options?endpoint_id=e", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	out := httptest.NewRecorder()
+	h.ServeHTTP(out, req)
+	if out.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s want 403", out.Code, out.Body.String())
+	}
+	if !strings.Contains(out.Body.String(), `"`+protocol.PolicyDenied+`"`) {
+		t.Fatalf("body=%s want code %q", out.Body.String(), protocol.PolicyDenied)
+	}
+}
+
 // TestLaunchOptionsDistinguishesUnknownEndpointFromOffline proves a typo is no
 // longer reported as an availability failure.
 func TestLaunchOptionsDistinguishesUnknownEndpointFromOffline(t *testing.T) {

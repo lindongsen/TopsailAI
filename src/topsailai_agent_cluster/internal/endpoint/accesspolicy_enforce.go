@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"topsailai_agent_cluster/internal/channel"
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 // policyDeniedCode is the single refusal code for every operation the Endpoint
@@ -16,7 +17,7 @@ import (
 // every time an operation was added. The message names the refused operation, so
 // the caller still learns which request was refused; that is not new information,
 // because it asked for that operation.
-const policyDeniedCode = "policy_denied"
+const policyDeniedCode = protocol.PolicyDenied
 
 // permitOperation decides whether the caller behind one frame may exercise one
 // operation on this Endpoint.

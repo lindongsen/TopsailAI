@@ -93,6 +93,11 @@ func (h *Handler) writeMessagesResultFailure(w http.ResponseWriter, r *http.Requ
 		h.writeError(w, 502, protocol.MessagesResponseTooLarge, "provider messages response exceeded the configured bound")
 	case "endpoint_unavailable":
 		h.writeError(w, 503, "endpoint_unavailable", "messages query failed: endpoint is not connected")
+	case protocol.PolicyDenied:
+		// The Endpoint refused the caller, so this is not a provider failure and
+		// not an outage. Reporting it as either would send the operator to
+		// investigate a provider that was never invoked.
+		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation messages.read is not permitted for this endpoint token")
 	default:
 		h.writeError(w, 502, protocol.MessagesProviderError, "provider messages read failed")
 	}

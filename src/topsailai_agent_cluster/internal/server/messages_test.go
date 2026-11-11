@@ -132,6 +132,10 @@ func TestMessagesAdapterFailureCodes(t *testing.T) {
 		{code: protocol.MessagesSessionNotFound, status: http.StatusNotFound},
 		{code: protocol.MessagesResponseTooLarge, status: http.StatusBadGateway},
 		{code: protocol.MessagesProviderError, status: http.StatusBadGateway},
+		// A refusal is neither a capability gap nor a provider failure, so it
+		// must not share their status. Reporting it as a provider failure would
+		// send the operator to investigate a provider that was never invoked.
+		{code: protocol.PolicyDenied, status: http.StatusForbidden},
 	} {
 		h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: messagesCodeRequester{code: item.code}}
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/messages?endpoint_id=e&session_id=s", nil)

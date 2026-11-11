@@ -53,7 +53,10 @@ func (s *scopedOutputRequester) RequestFollow(ctx context.Context, _ string, _ p
 
 // scopedOutputHandler builds a handler whose credential holds exactly the given
 // scopes. An empty list is the unrestricted single-administrator deployment.
-func scopedOutputHandler(scopes []string, output *scopedOutputRequester) *Handler {
+//
+// The transport is an interface rather than the recording double, so a test can
+// substitute a transport that answers with a refusal code.
+func scopedOutputHandler(scopes []string, output OutputRequester) *Handler {
 	return &Handler{
 		Authenticator: security.BearerAuthenticator{Token: "secret", Scopes: security.NewScopeSet(scopes...)},
 		Output:        output,
@@ -194,6 +197,35 @@ func TestOutputRoutesReportUnknownEndpointAsNotFound(t *testing.T) {
 	}
 	if output.snapshotSeen {
 		t.Fatal("an unknown endpoint reached the transport")
+	}
+}
+
+// refusedOutputRequester answers every output read with the Endpoint refusal
+// code and no Go error, which is how a refusal actually arrives.
+//
+// A refusal is a successful answer to the request: the Endpoint decided, and it
+// decided no. Modelling it as an error would let the handler classify it as an
+// outage, which is the defect these tests guard.
+type refusedOutputRequester struct{ scopedOutputRequester }
+
+func (r *refusedOutputRequester) RequestOutput(context.Context, string, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{ErrorCode: protocol.PolicyDenied}, nil
+}
+
+// TestOutputSnapshotReportsRefusalAsForbidden proves an Endpoint refusal is not
+// reported as a successful empty snapshot.
+//
+// The Endpoint answered, so the request did not fail. Reporting the refusal as a
+// 200 with an empty body would hand the operator a blank panel and no reason,
+// and reporting it as an outage would send them to investigate a provider that
+// was never invoked.
+func TestOutputSnapshotReportsRefusalAsForbidden(t *testing.T) {
+	rec := callScopedOutput(t, scopedOutputHandler(nil, &refusedOutputRequester{}), "/api/v1/output?endpoint_id=e1&resource_id=res_1")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s want 403", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"`+protocol.PolicyDenied+`"`) {
+		t.Fatalf("body=%s want code %q", rec.Body.String(), protocol.PolicyDenied)
 	}
 }
 

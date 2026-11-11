@@ -36,6 +36,14 @@ func (h *Handler) launchOptions(w http.ResponseWriter, r *http.Request) {
 		h.writeLaunchFailure(w, r, endpointID, err)
 		return
 	}
+	// A refusal arrives as an error code with no Go error, because the Endpoint
+	// answered the query rather than failing it. Reporting it as a successful
+	// empty catalog would tell the operator this machine has no launch handler,
+	// which is a different and false claim.
+	if result.ErrorCode == protocol.PolicyDenied {
+		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation launch.query is not permitted for this endpoint token")
+		return
+	}
 	h.write(w, 200, 0, "success", result)
 }
 

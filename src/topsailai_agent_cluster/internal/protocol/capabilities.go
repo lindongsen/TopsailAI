@@ -32,6 +32,21 @@ const (
 	OperationAgentModelSelect = "agent.model.select"
 )
 
+// PolicyDenied is the single refusal code for every operation an Endpoint access
+// policy refuses.
+//
+// One code covers every operation rather than one code per operation, because a
+// refusal is one decision: this caller may not exercise this operation on this
+// machine. A per-operation vocabulary would grow with every operation added and
+// force a client to learn each new name, while telling the caller nothing it did
+// not already know, since it asked for that operation. The refused operation is
+// named in the message instead.
+//
+// It lives here rather than in the Endpoint package because the Server must
+// recognise the code to report it as a refusal instead of a provider failure, and
+// two literals in two packages would drift.
+const PolicyDenied = "policy_denied"
+
 // Standard safety classes. The vocabulary is closed, because the value decides
 // whether an operator must confirm an operation and which scope a credential must
 // hold. A read-only listing advertised as mutating is a contract lie: it forces a

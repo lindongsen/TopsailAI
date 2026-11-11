@@ -81,6 +81,11 @@ func (h *Handler) writeHistoryResultFailure(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, 502, protocol.HistoryResponseTooLarge, "provider history response exceeded the configured bound")
 	case "endpoint_unavailable":
 		h.writeError(w, 503, "endpoint_unavailable", "history query failed: endpoint is not connected")
+	case protocol.PolicyDenied:
+		// The Endpoint refused the caller, so this is not a provider failure and
+		// not an outage. Reporting it as either would send the operator to
+		// investigate a provider that was never invoked.
+		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation history.read is not permitted for this endpoint token")
 	default:
 		h.writeError(w, 502, protocol.HistoryProviderError, "provider history read failed")
 	}

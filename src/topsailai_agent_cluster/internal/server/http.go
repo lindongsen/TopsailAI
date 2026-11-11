@@ -183,6 +183,14 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, code, code)
 		return
 	}
+	// A refusal arrives as an error code with no Go error, because the Endpoint
+	// answered the request rather than failing it. Reporting it as a successful
+	// snapshot would hand the operator an empty panel and no reason, so the code
+	// is classified before the success path.
+	if response.ErrorCode == protocol.PolicyDenied {
+		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation output.read is not permitted for this endpoint token")
+		return
+	}
 	h.write(w, http.StatusOK, 0, "success", response)
 }
 

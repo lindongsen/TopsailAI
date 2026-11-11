@@ -125,6 +125,10 @@ func TestModelCatalogAdapterFailureCodes(t *testing.T) {
 		{code: protocol.ModelCatalogUnsupported, status: http.StatusNotImplemented},
 		{code: protocol.ModelCatalogTooLarge, status: http.StatusBadGateway},
 		{code: protocol.ModelCatalogProviderError, status: http.StatusBadGateway},
+		// A refusal is neither a capability gap nor a provider failure, so it
+		// must not share their status. Reporting it as a provider failure would
+		// send the operator to investigate a provider that was never invoked.
+		{code: protocol.PolicyDenied, status: http.StatusForbidden},
 	} {
 		h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: modelCatalogCodeRequester{code: item.code}}
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/model-catalog?endpoint_id=e&resource_id=s", nil)

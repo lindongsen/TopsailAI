@@ -117,6 +117,10 @@ func TestHistoryAdapterFailureCodes(t *testing.T) {
 		{code: protocol.HistoryUnsupported, status: http.StatusNotImplemented},
 		{code: protocol.HistoryResponseTooLarge, status: http.StatusBadGateway},
 		{code: protocol.HistoryProviderError, status: http.StatusBadGateway},
+		// A refusal is neither a capability gap nor a provider failure, so it
+		// must not share their status. Reporting it as a provider failure would
+		// send the operator to investigate a provider that was never invoked.
+		{code: protocol.PolicyDenied, status: http.StatusForbidden},
 	} {
 		h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: historyCodeRequester{code: item.code}}
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=e", nil)

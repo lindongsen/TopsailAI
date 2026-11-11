@@ -78,6 +78,11 @@ func (h *Handler) writeModelCatalogResultFailure(w http.ResponseWriter, r *http.
 		h.writeError(w, http.StatusBadGateway, protocol.ModelCatalogTooLarge, "provider model catalog exceeded the configured bound")
 	case "endpoint_unavailable":
 		h.writeError(w, http.StatusServiceUnavailable, "endpoint_unavailable", "model catalog query failed: endpoint is not connected")
+	case protocol.PolicyDenied:
+		// The Endpoint refused the caller, so this is not a provider failure and
+		// not an outage. Reporting it as either would send the operator to
+		// investigate a provider that was never invoked.
+		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation agent.model.list is not permitted for this endpoint token")
 	default:
 		h.writeError(w, http.StatusBadGateway, protocol.ModelCatalogProviderError, "provider model catalog read failed")
 	}
