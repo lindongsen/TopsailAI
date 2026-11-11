@@ -554,7 +554,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	// happened, so the operator should not have to type logs to see the effect.
 	// The automatic step is the same live tail as logs -f, because a one-shot
 	// snapshot stops at the moment it was read while the agent keeps writing.
-	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, "send completed"); err != nil {
+	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, "send completed", actionResultData); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
@@ -585,7 +585,20 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 // never stop a live tail. That case degrades to the previous bounded snapshot
 // and says so, because a snapshot presented as a stream would look complete
 // while silently missing everything written after it.
-func autoFollowAfterAction(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation string, trustedOut io.Writer, options InteractiveOptions, failurePrefix string) error {
+//
+// result is the durable receipt of the action that triggered the tail. When the
+// receipt proves the effect was not applied, no tail is armed and no snapshot is
+// rendered: a stream after a rejected command would show output that has nothing
+// to do with the operator's message, and an operator reading a live stream
+// naturally concludes the agent received it. The predicate is the same one
+// RefreshAfterStartWithResult uses, so "provably did not take effect" has one
+// definition. A nil result decodes to a zero receipt, which is not
+// EffectNotApplied, so a caller with no action receipt keeps its previous
+// behaviour.
+func autoFollowAfterAction(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation string, trustedOut io.Writer, options InteractiveOptions, failurePrefix string, result map[string]any) error {
+	if ReceiptForStatus(result).EffectCertainty == protocol.EffectNotApplied {
+		return nil
+	}
 	if _, ok := api.(OutputFollower); !ok || options.WatchReader == nil {
 		if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, failurePrefix); err != nil {
 			return err
@@ -998,8 +1011,8 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	// reason to expect new output, so it keeps its previous behaviour.
 	var postSubmit func(context.Context, map[string]any) error
 	if op == protocol.OperationContextInject {
-		postSubmit = func(postCtx context.Context, _ map[string]any) error {
-			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, name+" completed")
+		postSubmit = func(postCtx context.Context, result map[string]any) error {
+			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, name+" completed", result)
 		}
 	}
 	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.ProviderGeneration, payload, lines, out, trustedOut, options, nil, postSubmit)

@@ -29,11 +29,11 @@ func driveStub() *interactiveStub {
 	stub := scopeStub()
 	report := stub.reports["endpoint-1"]
 	report.Sessions[0].Drive = &protocol.DriveSummary{
-		State:         protocol.DriveStateRunning,
-		ControllerPID: 4242,
-		RunID:         "run-1",
-		Verified:      true,
-		ObservedAtMS:  1700000000000,
+		State:        protocol.DriveStateRunning,
+		DrivePID:     4242,
+		RunID:        "run-1",
+		Verified:     true,
+		ObservedAtMS: 1700000000000,
 	}
 	stub.reports["endpoint-1"] = report
 	return stub
@@ -202,7 +202,7 @@ func TestDriveStatusRendersThePersistedControllerSummary(t *testing.T) {
 	if err := (CommandRunner{API: stub, Policy: LegacyPolicy}).DriveStatus(context.Background(), &out, "endpoint-1", "res-1", false); err != nil {
 		t.Fatalf("DriveStatus: %v", err)
 	}
-	for _, want := range []string{"session: res-1", "drive_state: running", "drive_verified: true", "controller_pid: 4242", "drive_run_id: run-1"} {
+	for _, want := range []string{"session: res-1", "drive_state: running", "drive_verified: true", "drive_pid: 4242", "drive_run_id: run-1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("drive status missing %q: %q", want, out.String())
 		}

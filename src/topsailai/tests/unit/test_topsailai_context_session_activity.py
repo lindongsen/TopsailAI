@@ -1,6 +1,7 @@
 """Ownership observations and fail-closed boundaries (author: DawsonLin)."""
 import json
 import os
+import socket
 from unittest.mock import Mock
 
 import psutil
@@ -9,10 +10,13 @@ import pytest
 from topsailai.context.session_activity import ActivityState as State, SessionActivityProbe, observe_process
 
 
-def record(root, sid="a.b[1]", pid=123, suffix="meta"):
+def record(root, sid="a.b[1]", pid=123, suffix="meta", hostname=None):
     """Create an exact owner fixture without touching production state."""
     path = root / f"{sid}.{pid}.session.{suffix}"
-    path.write_text(json.dumps({"session_id": sid, "pid": pid, "status": "completed"}))
+    owner_host = socket.gethostname() if hostname is None else hostname
+    path.write_text(json.dumps({
+        "session_id": sid, "pid": pid, "hostname": owner_host, "status": "completed",
+    }))
     return path
 
 
@@ -38,8 +42,9 @@ def test_owner_states(tmp_path, state):
     "agent2llm_interrupt.fbt_waiting",
     "agent2llm_interrupt.fbt_retry",
 ])
-def test_fallback_inventory(tmp_path, suffix):
-    """Fallback records are inspected by name without reading their payload."""
+def test_auxiliary_inventory_requires_metadata(tmp_path, suffix):
+    """Auxiliary records participate only beside strict owner metadata."""
+    record(tmp_path)
     record(tmp_path, suffix=suffix)
     assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).can_clean("a.b[1]")
 
@@ -68,13 +73,106 @@ def test_real_stats_writer_rotation_is_cleanable(tmp_path):
 
 @pytest.mark.parametrize("suffix", ["stats.jsonl", "sock", "agent2llm_interrupt.flag"])
 def test_framework_auxiliary_records_do_not_block_cleanup(tmp_path, suffix):
-    """Framework auxiliary records must not be treated as malformed evidence."""
+    """Known auxiliary records do not invalidate strict owner metadata."""
     record(tmp_path, suffix="meta")
     (tmp_path / f"a.b[1].123.session.{suffix}").write_text("auxiliary")
     observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
 
     assert observation.state == State.STOPPED
-    assert observation.reason == "all recorded owners absent"
+    assert observation.reason == "all verified local owners absent"
+
+
+def test_foreign_owner_missing_local_pid_is_unknown(tmp_path):
+    """A remote owner cannot be declared stopped from this host's process table."""
+    record(tmp_path, hostname="remote-host")
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED, hostname="local-host")
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+    assert not probe.can_clean("a.b[1]")
+
+
+def test_running_metadata_blocks_same_hostname_pid_absence(tmp_path):
+    """A running owner is protected across same-hostname PID namespaces."""
+    path = record(tmp_path)
+    data = json.loads(path.read_text())
+    data["status"] = "running"
+    path.write_text(json.dumps(data))
+
+    assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe(
+        "a.b[1]"
+    ).state == State.UNKNOWN
+
+
+@pytest.mark.parametrize("hostname", ["", None, [], 42])
+def test_missing_or_invalid_hostname_is_unknown(tmp_path, hostname):
+    """Incomplete host identity never authorizes destructive cleanup."""
+    path = record(tmp_path)
+    data = json.loads(path.read_text())
+    data["hostname"] = hostname
+    path.write_text(json.dumps(data))
+
+    assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe(
+        "a.b[1]"
+    ).state == State.UNKNOWN
+
+
+def test_live_endpoint_protects_foreign_owner(tmp_path):
+    """A responding endpoint is positive liveness evidence on any host."""
+    record(tmp_path, hostname="remote-host")
+    endpoint = Mock(return_value=True)
+    process = Mock(return_value=State.STOPPED)
+    probe = SessionActivityProbe(
+        (tmp_path,), process, endpoint_observer=endpoint, hostname="local-host",
+    )
+
+    assert probe.observe("a.b[1]").state == State.RUNNING
+    endpoint.assert_called_once_with(tmp_path / "a.b[1].123.session.sock")
+    process.assert_not_called()
+
+
+def test_endpoint_probe_failure_blocks_cleanup(tmp_path):
+    """A broken liveness check cannot become deletion authorization."""
+    record(tmp_path)
+    endpoint = Mock(side_effect=OSError("probe failed"))
+    process = Mock(return_value=State.STOPPED)
+    probe = SessionActivityProbe(
+        (tmp_path,), process, endpoint_observer=endpoint,
+    )
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+    assert not probe.can_clean("a.b[1]")
+    process.assert_not_called()
+
+
+def test_default_endpoint_probe_failure_blocks_cleanup(tmp_path, monkeypatch):
+    """The production endpoint adapter preserves uncertain socket failures."""
+    record(tmp_path)
+    (tmp_path / "a.b[1].123.session.sock").write_text("endpoint")
+    process = Mock(return_value=State.STOPPED)
+    monkeypatch.setattr(
+        "topsailai.context.session_activity.stat.S_ISSOCK",
+        Mock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "topsailai.context.session_activity.socket.socket",
+        Mock(side_effect=PermissionError("probe denied")),
+    )
+
+    probe = SessionActivityProbe((tmp_path,), process)
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+    assert not probe.can_clean("a.b[1]")
+    process.assert_not_called()
+
+
+def test_each_owner_pid_requires_its_own_metadata(tmp_path):
+    """Auxiliary files for another PID cannot borrow one owner's metadata."""
+    record(tmp_path, pid=123)
+    record(tmp_path, pid=456, suffix="stdout")
+
+    assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe(
+        "a.b[1]"
+    ).state == State.UNKNOWN
 
 
 def test_unknown_suffix_still_fails_closed(tmp_path):

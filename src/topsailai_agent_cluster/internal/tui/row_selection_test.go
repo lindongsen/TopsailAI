@@ -82,7 +82,7 @@ func runLine(t *testing.T, stub InteractiveAPI, state *interactiveState, line st
 	t.Helper()
 	var output, diagnostics strings.Builder
 	if _, err := executeInteractiveLine(context.Background(), stub, state, line, nil, &output, &output, &diagnostics, InteractiveOptions{}); err != nil {
-		if writeErr := writeInteractiveError(&diagnostics, line, err); writeErr != nil {
+		if writeErr := writeInteractiveError(&diagnostics, ColorPolicy{}, line, err); writeErr != nil {
 			t.Fatalf("writeInteractiveError: %v", writeErr)
 		}
 	}

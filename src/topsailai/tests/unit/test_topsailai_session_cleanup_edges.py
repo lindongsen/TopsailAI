@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -22,6 +23,13 @@ def test_disk_and_orphan_guard(tmp_path, monkeypatch, state):
     """Files without stdout are not disposable when any owner is protected."""
     path = tmp_path / "s.123.session.stderr"
     path.write_text("keep")
+    metadata = {
+        "session_id": "s",
+        "pid": 123,
+        "hostname": socket.gethostname(),
+        "status": "completed",
+    }
+    (tmp_path / "s.123.session.meta").write_text(json.dumps(metadata))
     probe = SessionActivityProbe((tmp_path,), lambda pid: state)
     monkeypatch.setattr(session_cleanup, "is_file_in_use", lambda path: False)
     deleted, _ = session_cleanup.clean_orphaned_session_files(str(tmp_path), activity_probe=probe)
@@ -35,7 +43,13 @@ def test_disk_and_orphan_guard(tmp_path, monkeypatch, state):
 def test_meta_retention_guard(tmp_path, monkeypatch, state):
     """Both old and excess metadata remain when owner liveness is uncertain."""
     path = tmp_path / "s.123.session.meta"
-    path.write_text(json.dumps({"session_id": "s", "pid": 123}))
+    metadata = {
+        "session_id": "s",
+        "pid": 123,
+        "hostname": socket.gethostname(),
+        "status": "completed",
+    }
+    path.write_text(json.dumps(metadata))
     os.utime(path, (time.time() - 20 * 86400,) * 2)
     monkeypatch.setattr(session_meta, "FOLDER_WORKSPACE_TASK", str(tmp_path))
     monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")

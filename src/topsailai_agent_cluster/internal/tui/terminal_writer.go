@@ -35,6 +35,36 @@ type safeWriter struct {
 
 func newSafeWriter(target io.Writer) *safeWriter { return &safeWriter{target: target} }
 
+// Unwrap exposes the writer this boundary sanitizes for, so a caller that owns
+// trusted application styling can reach the terminal without passing through the
+// sanitizer. It is deliberately narrow: only the writer chain is exposed, never
+// the sanitizing behaviour, so a caller cannot disable sanitization for anyone
+// else. Use trustedTarget rather than unwrapping by hand.
+func (w *safeWriter) Unwrap() io.Writer { return w.target }
+
+// trustedTarget walks a writer chain down to the writer that actually owns the
+// stream, so trusted application styling is not stripped by a sanitizing
+// boundary in between. A sanitizing writer removes exactly the bytes that carry
+// styling, so writing a styled line through it looks correct at the call site
+// and produces plain text on the terminal.
+//
+// The caller MUST sanitize every interpolated value itself, because this
+// bypasses the sanitizer that would otherwise do it. A writer with no Unwrap is
+// already the boundary and is returned unchanged.
+func trustedTarget(out io.Writer) io.Writer {
+	for {
+		unwrapper, ok := out.(interface{ Unwrap() io.Writer })
+		if !ok {
+			return out
+		}
+		next := unwrapper.Unwrap()
+		if next == nil || next == out {
+			return out
+		}
+		out = next
+	}
+}
+
 func (w *safeWriter) Write(data []byte) (int, error) {
 	var clean strings.Builder
 	for _, value := range data {

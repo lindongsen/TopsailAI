@@ -84,6 +84,12 @@ func (w *recordingWriter) Write(p []byte) (int, error) {
 
 func (w *recordingWriter) Error() error { return w.err }
 
+// Unwrap exposes the writer this decorator forwards to, so trustedTarget can
+// reach the stream that owns it. A recording writer only observes failures; it
+// never sanitizes, so it must not terminate the chain. A write that bypasses it
+// is still reported, because the caller returns the write error directly.
+func (w *recordingWriter) Unwrap() io.Writer { return w.writer }
+
 func newRecordingWriter(writer io.Writer, recorder *startOutputRecorder) *recordingWriter {
 	return &recordingWriter{writer: writer, recorder: recorder}
 }
@@ -285,7 +291,7 @@ func runStartPrompt(ctx context.Context, state interactiveState, draft startDraf
 			return startPromptCancel, interactiveStartRequest{}, parentErr
 		}
 		if errors.Is(err, errStartPromptOverflow) {
-			if writeErr := writeInteractiveError(errOut, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
+			if writeErr := writeInteractiveError(errOut, color, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
 				return startPromptCancel, interactiveStartRequest{}, &startPromptTermination{kind: startPromptFatal, cause: writeErr}
 			}
 			continue
@@ -318,7 +324,7 @@ func runStartPrompt(ctx context.Context, state interactiveState, draft startDraf
 		if !quotedControl {
 			command, _ := splitCommand(trimmed)
 			if _, known := commandHelpCatalog[canonicalCommandName(command)]; known {
-				if writeErr := writeInteractiveError(errOut, "start", fmt.Errorf("command unavailable during start input; cancel before running another command")); writeErr != nil {
+				if writeErr := writeInteractiveError(errOut, color, "start", fmt.Errorf("command unavailable during start input; cancel before running another command")); writeErr != nil {
 					return startPromptCancel, interactiveStartRequest{}, &startPromptTermination{kind: startPromptFatal, cause: writeErr}
 				}
 				continue
@@ -329,7 +335,7 @@ func runStartPrompt(ctx context.Context, state interactiveState, draft startDraf
 			if parseErr == nil {
 				parseErr = fmt.Errorf("start input requires one non-empty value for %s", startFieldName(field))
 			}
-			if writeErr := writeInteractiveError(errOut, "start", parseErr); writeErr != nil {
+			if writeErr := writeInteractiveError(errOut, color, "start", parseErr); writeErr != nil {
 				return startPromptCancel, interactiveStartRequest{}, &startPromptTermination{kind: startPromptFatal, cause: writeErr}
 			}
 			continue

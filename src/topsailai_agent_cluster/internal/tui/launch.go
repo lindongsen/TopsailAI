@@ -85,7 +85,7 @@ func launchAnswerWithEcho(ctx context.Context, lines <-chan lineReadResult, out,
 		}
 		line, err := readStartAnswerWithEcho(ctx, lines, trustedOut, echo, prompt)
 		if errors.Is(err, errStartPromptOverflow) {
-			if writeErr := writeInteractiveError(out, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
+			if writeErr := writeInteractiveError(out, color, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
 				return "", launchAnswerCancel, &startPromptTermination{kind: startPromptFatal, cause: writeErr}
 			}
 			continue
@@ -103,7 +103,7 @@ func launchAnswerWithEcho(ctx context.Context, lines <-chan lineReadResult, out,
 		if outcome != launchAnswerValue {
 			return "", outcome, nil
 		}
-		if handled, handleErr := handleLaunchAnswerControl(out, state, line); handleErr != nil {
+		if handled, handleErr := handleLaunchAnswerControl(out, color, state, line); handleErr != nil {
 			return "", launchAnswerCancel, handleErr
 		} else if handled {
 			continue
@@ -113,7 +113,7 @@ func launchAnswerWithEcho(ctx context.Context, lines <-chan lineReadResult, out,
 }
 
 // handleLaunchAnswerControl prints help or rejects a known command without consuming the answer.
-func handleLaunchAnswerControl(out io.Writer, state *interactiveState, line string) (bool, error) {
+func handleLaunchAnswerControl(out io.Writer, color ColorPolicy, state *interactiveState, line string) (bool, error) {
 	trimmed := strings.TrimSpace(line)
 	if isQuotedLaunchAnswer(trimmed) {
 		return false, nil
@@ -127,7 +127,7 @@ func handleLaunchAnswerControl(out io.Writer, state *interactiveState, line stri
 	}
 	command, _ := splitCommand(trimmed)
 	if _, known := commandHelpCatalog[canonicalCommandName(command)]; known {
-		if err := writeInteractiveError(out, "start", fmt.Errorf("command unavailable during start input; cancel before running another command")); err != nil {
+		if err := writeInteractiveError(out, color, "start", fmt.Errorf("command unavailable during start input; cancel before running another command")); err != nil {
 			return false, &startPromptTermination{kind: startPromptFatal, cause: err}
 		}
 		return true, nil
@@ -176,7 +176,7 @@ func launchTaskAnswer(ctx context.Context, lines <-chan lineReadResult, out, tru
 		}
 		line, err := readStartAnswer(ctx, lines, prompt)
 		if errors.Is(err, errStartPromptOverflow) {
-			if writeErr := writeInteractiveError(out, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
+			if writeErr := writeInteractiveError(out, options.Color, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
 				return "", &startPromptTermination{kind: startPromptFatal, cause: writeErr}
 			}
 			continue
@@ -198,7 +198,7 @@ func launchTaskAnswer(ctx context.Context, lines <-chan lineReadResult, out, tru
 		if outcome != launchAnswerValue {
 			return "", launchOutcomeSignal(outcome)
 		}
-		if handled, handleErr := handleLaunchAnswerControl(out, state, line); handleErr != nil {
+		if handled, handleErr := handleLaunchAnswerControl(out, options.Color, state, line); handleErr != nil {
 			return "", handleErr
 		} else if handled {
 			continue

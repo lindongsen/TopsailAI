@@ -103,7 +103,10 @@ func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *i
 	if state.Scope.Kind != ScopeSession || previous.Kind == ScopeSession {
 		return nil
 	}
-	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, "session selected")
+	// A session entry is not an action result, so it carries no receipt and the
+	// tail keeps its previous behaviour: selecting a session is exactly when the
+	// operator wants to see its output.
+	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, "session selected", nil)
 }
 
 // renderAutomaticSnapshot renders one bounded output snapshot for the selected

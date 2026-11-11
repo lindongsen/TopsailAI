@@ -69,9 +69,9 @@ type DriveSummary struct {
 	State string `json:"state"`
 	// Reason is a bounded standard reason code, never a provider diagnostic.
 	Reason string `json:"reason,omitempty"`
-	// ControllerPID is the reported controller process identity. It is evidence
-	// for display only and is never a routing or signalling authority.
-	ControllerPID int64 `json:"controller_pid,omitempty"`
+	// DrivePID is the reported drive process identity. It is evidence for display
+	// only and is never a routing or signalling authority.
+	DrivePID int64 `json:"drive_pid,omitempty"`
 	// RunID identifies one controller run so a replacement run is distinguishable.
 	RunID string `json:"run_id,omitempty"`
 	// Verified reports whether the controller liveness was actually verified.

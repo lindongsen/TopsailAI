@@ -1,5 +1,7 @@
 """Session management contract and explicit forwarding (author: DawsonLin)."""
 
+import json
+import socket
 from unittest.mock import Mock
 from datetime import datetime
 
@@ -149,7 +151,13 @@ def test_factory_age_cleanup_rechecks_real_activity_probe(tmp_path, monkeypatch,
 
     task = tmp_path / "workspace" / "task"
     task.mkdir(parents=True)
-    (task / "s.123.session.meta").write_text('{"session_id": "s", "pid": 123}')
+    metadata = {
+        "session_id": "s",
+        "pid": 123,
+        "hostname": socket.gethostname(),
+        "status": "completed",
+    }
+    (task / "s.123.session.meta").write_text(json.dumps(metadata))
     observer = Mock(side_effect=[ActivityState(state) for state in states])
     probe = SessionActivityProbe((task,), observer)
     row = SessionData("s", topsailai_home=str(tmp_path))

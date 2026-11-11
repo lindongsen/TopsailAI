@@ -359,7 +359,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			}
 		}
 		if overflow {
-			if writeErr := writeInteractiveError(errOut, "", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
+			if writeErr := writeInteractiveError(errOut, options.Color, "", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
 				return writeErr
 			}
 			if err == io.EOF {
@@ -423,7 +423,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 				if consecutivePromptFailures >= maxConsecutivePromptFailures {
 					return promptFailure
 				}
-				if writeErr := writeInteractiveError(errOut, diagnosticCommandName(line, state.Scope.Kind), promptFailure); writeErr != nil {
+				if writeErr := writeInteractiveError(errOut, options.Color, diagnosticCommandName(line, state.Scope.Kind), promptFailure); writeErr != nil {
 					return writeErr
 				}
 				continue
@@ -457,7 +457,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		}
 		if execErr != nil {
 			commandName := diagnosticCommandName(line, state.Scope.Kind)
-			if writeErr := writeInteractiveError(errOut, commandName, execErr); writeErr != nil {
+			if writeErr := writeInteractiveError(errOut, options.Color, commandName, execErr); writeErr != nil {
 				return writeErr
 			}
 		}
@@ -776,8 +776,12 @@ type nonSyntaxError struct {
 // Error implements error.
 func (e nonSyntaxError) Error() string { return e.message }
 
-// writeInteractiveError renders one actionable three-line diagnostic.
-func writeInteractiveError(out io.Writer, command string, err error) error {
+// writeInteractiveError renders one actionable three-line diagnostic. The
+// colour policy is a parameter rather than ambient state, because the writer it
+// receives is a sanitizing boundary that strips styling: the error line is
+// written through trustedTarget so the red survives, and that bypass makes this
+// function responsible for sanitizing the cause itself.
+func writeInteractiveError(out io.Writer, color ColorPolicy, command string, err error) error {
 	canonical := canonicalCommandName(command)
 	cause := err.Error()
 	usage := ""
@@ -816,7 +820,14 @@ func writeInteractiveError(out io.Writer, command string, err error) error {
 			next = "Run endpoints to list valid endpoint identifiers."
 		}
 	}
-	if _, writeErr := fmt.Fprintln(out, "error:", cause); writeErr != nil {
+	// The error line is the only styled line: usage and next are guidance, not
+	// failures, so colouring them would make a remedy look like a second error.
+	// The cause is sanitized here because trustedTarget bypasses the sanitizing
+	// writer that would otherwise remove an escape sequence from provider text.
+	// sanitizeTerminal is used rather than sanitizeInlineText so a multi-line
+	// cause keeps the line breaks it already had; only escapes are removed.
+	errorLine := "error: " + sanitizeTerminal([]byte(cause))
+	if _, writeErr := fmt.Fprintln(trustedTarget(out), styledString(ansiRed, errorLine, color)); writeErr != nil {
 		return writeErr
 	}
 	if usage != "" {
