@@ -16,15 +16,33 @@ const encodingSampleSize = 32768
 
 // detectEncoding returns the IANA charset name detected from a byte sample.
 // It returns an empty string when detection fails or yields nothing.
+//
+// chardet's DetectBest gathers recognizer results from concurrent goroutines and
+// orders them with an unstable sort, so two runs over identical bytes can return
+// different charsets when confidences tie. That made file reads
+// non-deterministic: the same command returned different content and lengths.
+// DetectAll is used instead and the winner is chosen by an explicit total order
+// (confidence descending, then charset name ascending) so identical input always
+// produces identical output.
 func detectEncoding(sample []byte) string {
 	if len(sample) == 0 {
 		return ""
 	}
-	result, err := chardet.NewTextDetector().DetectBest(sample)
-	if err != nil || result == nil {
+	results, err := chardet.NewTextDetector().DetectAll(sample)
+	if err != nil || len(results) == 0 {
 		return ""
 	}
-	return result.Charset
+	best := results[0]
+	for _, candidate := range results[1:] {
+		if candidate.Confidence > best.Confidence {
+			best = candidate
+			continue
+		}
+		if candidate.Confidence == best.Confidence && candidate.Charset < best.Charset {
+			best = candidate
+		}
+	}
+	return best.Charset
 }
 
 // lookupEncoding resolves an IANA charset name to a decoder.
