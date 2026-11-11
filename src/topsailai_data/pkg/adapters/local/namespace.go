@@ -14,6 +14,13 @@ import (
 // locking. The persistent lock file must never be unlinked on release.
 func AcquireNamespaceLock(root string) (*Lock, error) {
 	path := filepath.Join(root, ".topsailai-data-namespace.lock")
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("namespace lock %q must be regular: %w", path, apperrors.ErrInvalidPath)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect namespace lock %q: %w", path, err)
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open namespace lock %q: %w", path, err)

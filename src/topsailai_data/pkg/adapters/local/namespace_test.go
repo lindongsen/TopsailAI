@@ -91,3 +91,55 @@ func TestNamespaceDestination(t *testing.T) {
 		})
 	}
 }
+
+// TestNamespaceLockRejectsAliases preserves unsafe leaves and their targets.
+func TestNamespaceLockRejectsAliases(t *testing.T) {
+	for _, kind := range []string{"live", "dangling", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, ".topsailai-data-namespace.lock")
+			target := filepath.Join(root, "target")
+			if kind == "directory" {
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if kind == "live" {
+					if err := os.WriteFile(target, []byte("preserve"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			}
+			before, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lock, err := AcquireNamespaceLock(root)
+			if lock != nil {
+				_ = lock.Release()
+				t.Fatal("unsafe namespace leaf acquired")
+			}
+			if !errors.Is(err, apperrors.ErrInvalidPath) {
+				t.Fatalf("got %v, want invalid path", err)
+			}
+			after, err := os.Lstat(path)
+			if err != nil || !os.SameFile(before, after) {
+				t.Fatalf("namespace leaf changed: %v", err)
+			}
+			if kind == "live" {
+				data, err := os.ReadFile(target)
+				if err != nil || string(data) != "preserve" {
+					t.Fatalf("target changed: %q, %v", data, err)
+				}
+			}
+			if kind == "dangling" {
+				if _, err := os.Lstat(target); !os.IsNotExist(err) {
+					t.Fatalf("dangling target created: %v", err)
+				}
+			}
+		})
+	}
+}
