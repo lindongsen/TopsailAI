@@ -479,7 +479,413 @@ run_life_08() {
     end_case
 }
 
-CASES=(LIFE-01 LIFE-02 LIFE-03 LIFE-04 LIFE-05 LIFE-06 LIFE-07 LIFE-08)
+# payload_dir_any prints the payload directory for any status, including deleted
+# and ceased objects. ml_payload_dir only resolves active objects because it
+# reads a plain listing.
+payload_dir_any() {
+    local root="$1" id="$2"
+    local path
+    path=$(TOPSAILAI_DATA_ROOT="${root}" "${ML_BIN}" list --include-deleted --format json 2>/dev/null \
+        | jq -r --arg id "${id}" '.[] | select(.id==$id) | .path' 2>/dev/null || true)
+    if [[ -z "${path}" || "${path}" == "null" ]]; then
+        return 1
+    fi
+    printf '%s/object/%s' "${root}" "${path}"
+}
+
+# RECOVERY_DIR is the preserved, verified recovery artifact set. It is a backup:
+# every case that reads it must prove it did not modify it.
+RECOVERY_DIR="${PROJECT_ROOT}/.tmp/data-recovery/20261111125501"
+
+# recovery_available reports whether the verified recovery artifacts exist.
+recovery_available() {
+    [[ -d "${RECOVERY_DIR}/original" && -d "${RECOVERY_DIR}/staged" \
+        && -f "${RECOVERY_DIR}/original-manifest.json" ]]
+}
+
+# run_life_09 proves that a write failure after the creating record is published
+# leaves an invisible but resolvable incomplete record that a scoped GC removes.
+run_life_09() {
+    begin_case LIFE-09 P0 F
+    local root out
+    root=$(ml_case_root store)
+    out="${ML_ARTIFACTS}/LIFE-09"
+
+    ml_make_markdown "${ML_FIXTURES}/d/life09.md" "lifecycle nine"
+    make_creating_fixture "${ML_FIXTURES}/d/cre9" cre9
+
+    ml_run_ok "${root}" "${out}-create-act" create act --from "${ML_FIXTURES}/d/life09.md"
+    ml_run_fail "${root}" "${out}-create-cre" create cre9 --from "${ML_FIXTURES}/d/cre9/cre9.tar"
+    ml_expect_contains "the write failure is reported" "${out}-create-cre.stderr" \
+        "unsupported tar entry type"
+
+    # The incomplete record is invisible to discovery but resolvable by show.
+    ml_expect "the incomplete record is hidden from list" "act" "$(json_ids "${root}")"
+    ml_expect "the incomplete record is hidden from search" "0" \
+        "$(TOPSAILAI_DATA_ROOT="${root}" "${ML_BIN}" search cre9 --format json 2>/dev/null | jq 'length')"
+    ml_expect "the incomplete record is visible to show" "creating" "$(status_of_show "${root}" cre9)"
+
+    # Both the published record and the partial payload are retained.
+    local meta
+    meta=$(ml_meta_dir "${root}" cre9)
+    ml_expect_file "the creating record is published" "${meta}/metadata.json" file
+    ml_expect_file "the creating tags file is published" "${meta}/tags" file
+    ml_expect "the partial payload boundary is retained" "1" \
+        "$(find "${root}/object" -name 'cre9.md' -type f | wc -l)"
+
+    ml_run_ok "${root}" "${out}-dry" gc --dry-run
+    ml_expect_contains "the dry run announces the incomplete record" "${out}-dry.stdout" \
+        "would clean up creating object cre9"
+    ml_run_ok "${root}" "${out}-gc" gc
+    # The default GC reports cleanup detail on stderr and only prints a summary
+    # line on stdout, so the purge evidence has to be read from stderr.
+    ml_expect_contains "the scoped GC purges the incomplete metadata" "${out}-gc.stderr" \
+        "purged object metadata directory"
+    ml_expect_contains "the purge names the incomplete record" "${out}-gc.stderr" "id=cre9"
+    ml_expect_file "the incomplete metadata is removed" "${meta}" absent
+    ml_expect "the active control survives" "active" "$(status_of "${root}" act)"
+    ml_expect "the active control is still listed" "act" "$(json_ids "${root}")"
+    end_case
+}
+
+# run_life_10 proves that a failure before the creating record is published leaves
+# no discoverable object and no payload, and that the recordless remnant is not
+# misrepresented as a normal GC candidate.
+run_life_10() {
+    begin_case LIFE-10 P0 F
+    local root out
+    root=$(ml_case_root store)
+    out="${ML_ARTIFACTS}/LIFE-10"
+
+    ml_make_markdown "${ML_FIXTURES}/d/life10.md" "lifecycle ten"
+    ml_run_ok "${root}" "${out}-init" list
+    ml_chown_nobody "${root}"
+    chmod 0555 "${root}/object"
+
+    local code=0
+    ml_run_nobody "${root}" "${out}-create" -- create rec --from "${ML_FIXTURES}/d/life10.md" || code=$?
+    chmod 0755 "${root}/object"
+    ml_expect "the pre-publication failure is reported" "1" "${code}"
+    ml_expect_contains "the failure happens before record publication" "${out}-create.stderr" \
+        "create payload boundary directory"
+
+    ml_expect "no object is discoverable" "" "$(json_ids "${root}")"
+    ml_run_fail "${root}" "${out}-show" show rec
+    ml_expect_contains "the recordless remnant is not a normal object" "${out}-show.stderr" \
+        "object not found"
+    ml_expect "no payload file was written" "0" "$(find "${root}/object" -type f | wc -l)"
+
+    local meta
+    meta=$(ml_meta_dir "${root}" rec)
+    ml_expect_file "the recordless lock remnant is preserved as evidence" "${meta}/lock" file
+    ml_expect_file "no metadata record was published" "${meta}/metadata.json" absent
+
+    ml_run_ok "${root}" "${out}-dry" gc --dry-run
+    ml_expect_not_contains "the dry run does not misrepresent the remnant" "${out}-dry.stdout" "rec"
+    ml_note "the recordless lock directory under meta/ is not removed by gc; it is preserved as reconciliation evidence"
+    end_case
+}
+
+# run_life_11 proves that a payload removal fault is surfaced, keeps the object
+# retryable, and that the retry finalizes it without a false success.
+run_life_11() {
+    begin_case LIFE-11 P0 F
+    local root out
+    root=$(ml_case_root store)
+    out="${ML_ARTIFACTS}/LIFE-11"
+
+    ml_make_markdown "${ML_FIXTURES}/d/life11.md" "lifecycle eleven"
+    ml_run_ok "${root}" "${out}-create" create del --from "${ML_FIXTURES}/d/life11.md"
+    ml_run_ok "${root}" "${out}-delete" delete del
+
+    local payload parent
+    payload=$(payload_dir_any "${root}" del)
+    parent=$(dirname "${payload}")
+    ml_chown_nobody "${root}"
+    chmod 0555 "${parent}"
+
+    local code=0
+    ml_run_nobody "${root}" "${out}-finalize-fault" -- delete del || code=$?
+    ml_expect "the payload removal fault is reported" "1" "${code}"
+    ml_expect_contains "the fault names the payload removal" "${out}-finalize-fault.stderr" \
+        "delete actual data"
+    ml_expect "the object stays deleted after the fault" "deleted" "$(status_of "${root}" del)"
+    ml_expect_file "the payload survives the fault" "${payload}" dir
+
+    chmod 0755 "${parent}"
+    ml_run_ok "${root}" "${out}-retry" delete del
+    ml_expect "the retry finalizes the object" "ceased" "$(status_of "${root}" del)"
+    ml_expect_file "the payload is removed by the retry" "${payload}" absent
+    ml_expect_file "the ceased record is retained" "$(ml_meta_dir "${root}" del)/metadata.json" file
+    end_case
+}
+
+# run_life_12 proves that a deleted object with a missing payload refuses recovery
+# without a source, accepts a valid archive, and rejects an invalid one without
+# activating the object.
+run_life_12() {
+    begin_case LIFE-12 P1 F
+    local root out
+    root=$(ml_case_root store)
+    out="${ML_ARTIFACTS}/LIFE-12"
+
+    ml_make_markdown "${ML_FIXTURES}/d/life12.md" "lifecycle twelve"
+    ml_run_ok "${root}" "${out}-create" create del --from "${ML_FIXTURES}/d/life12.md"
+    ml_run_ok "${root}" "${out}-delete" delete del
+
+    local payload
+    payload=$(payload_dir_any "${root}" del)
+    rm -rf "${payload}"
+
+    ml_run_fail "${root}" "${out}-recover-nosource" recover del
+    ml_expect_contains "a missing payload refuses recovery without a source" \
+        "${out}-recover-nosource.stderr" "provide --from to restore"
+    ml_expect "the object stays deleted after the refusal" "deleted" "$(status_of "${root}" del)"
+
+    mkdir -p "${ML_FIXTURES}/d/life12-arc"
+    ml_make_markdown "${ML_FIXTURES}/d/life12-arc/del.md" "restored twelve"
+    tar -cf "${ML_FIXTURES}/d/life12-ok.tar" -C "${ML_FIXTURES}/d/life12-arc" .
+    ml_run_ok "${root}" "${out}-recover-ok" recover del --from "${ML_FIXTURES}/d/life12-ok.tar"
+    ml_expect "a valid archive restores the object" "active" "$(status_of "${root}" del)"
+    ml_run_ok "${root}" "${out}-get" get del del.md
+    ml_expect_contains "the restored content is the archive content" "${out}-get.stdout" \
+        "restored twelve"
+
+    ml_run_ok "${root}" "${out}-delete2" delete del
+    printf 'not a tar archive' > "${ML_FIXTURES}/d/life12-bad.tar"
+    ml_run_fail "${root}" "${out}-recover-bad" recover del --from "${ML_FIXTURES}/d/life12-bad.tar"
+    ml_expect_contains "an invalid archive is rejected" "${out}-recover-bad.stderr" "tar"
+    ml_expect "an invalid archive does not activate the object" "deleted" "$(status_of "${root}" del)"
+    end_case
+}
+
+# run_life_13 proves that recovery refuses every non-deleted state and preserves
+# the source and the record.
+run_life_13() {
+    begin_case LIFE-13 P1 I
+    local root out
+    root=$(ml_case_root store)
+    out="${ML_ARTIFACTS}/LIFE-13"
+
+    ml_make_markdown "${ML_FIXTURES}/d/life13.md" "lifecycle thirteen"
+    make_creating_fixture "${ML_FIXTURES}/d/cre13" cre13
+
+    ml_run_ok "${root}" "${out}-create-act" create act --from "${ML_FIXTURES}/d/life13.md"
+    ml_run_ok "${root}" "${out}-create-cea" create cea --from "${ML_FIXTURES}/d/life13.md"
+    ml_run_ok "${root}" "${out}-delete-cea1" delete cea
+    ml_run_ok "${root}" "${out}-delete-cea2" delete cea
+    ml_run_fail "${root}" "${out}-create-cre" create cre13 --from "${ML_FIXTURES}/d/cre13/cre13.tar"
+
+    business_state "${root}" > "${out}-state-before.txt"
+
+    ml_run_fail "${root}" "${out}-recover-active" recover act
+    ml_expect_contains "recovering an active object is refused" "${out}-recover-active.stderr" \
+        "already active"
+    ml_run_fail "${root}" "${out}-recover-ceased" recover cea
+    ml_expect_contains "recovering a ceased object is refused" "${out}-recover-ceased.stderr" "ceased"
+    ml_run_fail "${root}" "${out}-recover-creating" recover cre13
+    ml_expect_contains "recovering a creating object is refused" "${out}-recover-creating.stderr" \
+        "creating"
+
+    business_state "${root}" > "${out}-state-after.txt"
+    ml_expect "no refused recovery changed the store" "identical" \
+        "$(cmp -s "${out}-state-before.txt" "${out}-state-after.txt" && echo identical || echo different)"
+    ml_expect "the active control is intact" "active" "$(status_of "${root}" act)"
+    ml_expect "the ceased control is intact" "ceased" "$(status_of "${root}" cea)"
+    ml_expect "the creating control is intact" "creating" "$(status_of_show "${root}" cre13)"
+    end_case
+}
+
+# run_life_14 proves that the new CLI refuses an unmarked legacy store, claims no
+# automatic migration, and leaves both the clone and the preserved backup intact.
+run_life_14() {
+    begin_case LIFE-14 P0 C
+    local out
+    out="${ML_ARTIFACTS}/LIFE-14"
+    if ! recovery_available; then
+        ml_blocked "verified recovery artifacts are unavailable"
+        end_case
+        return
+    fi
+
+    local root
+    root="${ML_STORES}/${ML_CASE_ID}/legacy"
+    mkdir -p "${root}"
+    cp -a "${RECOVERY_DIR}/original/." "${root}/"
+
+    ml_manifest "${RECOVERY_DIR}/original" > "${out}-backup-before.txt"
+    ml_manifest "${root}" > "${out}-clone-before.txt"
+
+    ml_run_fail "${root}" "${out}-list" list
+    ml_expect_contains "the unmarked legacy store is refused" "${out}-list.stderr" \
+        "migration is unsupported"
+    ml_expect_contains "the refusal names the fresh-root requirement" "${out}-list.stderr" \
+        "fresh root"
+
+    ml_manifest "${root}" > "${out}-clone-after.txt"
+    ml_expect "the refused invocation left the clone untouched" "identical" \
+        "$(cmp -s "${out}-clone-before.txt" "${out}-clone-after.txt" && echo identical || echo different)"
+    ml_manifest "${RECOVERY_DIR}/original" > "${out}-backup-after.txt"
+    ml_expect "the preserved backup was not modified" "identical" \
+        "$(cmp -s "${out}-backup-before.txt" "${out}-backup-after.txt" && echo identical || echo different)"
+    ml_note "no automatic migration is attempted; conversion is rehearsed separately on a copy in LIFE-15"
+    end_case
+}
+
+# run_life_15 proves that the converted copy carries current Hash records and
+# relative references while preserving payloads, tags, descriptions, statuses and
+# statistics, without touching the conversion source.
+run_life_15() {
+    begin_case LIFE-15 P0 C
+    local out
+    out="${ML_ARTIFACTS}/LIFE-15"
+    if ! recovery_available; then
+        ml_blocked "verified recovery artifacts are unavailable"
+        end_case
+        return
+    fi
+
+    local root
+    root="${ML_STORES}/${ML_CASE_ID}/converted"
+    mkdir -p "${root}"
+    cp -a "${RECOVERY_DIR}/staged/." "${root}/"
+
+    ml_manifest "${RECOVERY_DIR}/staged" > "${out}-source-before.txt"
+
+    ml_run_ok "${root}" "${out}-list" list --format json
+    ml_expect "every active object is preserved" "109" "$(jq 'length' "${out}-list.stdout")"
+    ml_run_ok "${root}" "${out}-list-all" list --include-deleted --format json
+    ml_expect "every lifecycle record is preserved" "121" "$(jq 'length' "${out}-list-all.stdout")"
+    ml_expect "the active count is preserved" "109" \
+        "$(jq '[.[]|select(.status=="active")]|length' "${out}-list-all.stdout")"
+    ml_expect "the ceased count is preserved" "11" \
+        "$(jq '[.[]|select(.status=="ceased")]|length' "${out}-list-all.stdout")"
+    ml_expect "the deleted count is preserved" "1" \
+        "$(jq '[.[]|select(.status=="deleted")]|length' "${out}-list-all.stdout")"
+    ml_expect "every record uses the current schema version" "0" \
+        "$(jq '[.[]|select(.schema_version!=2)]|length' "${out}-list-all.stdout")"
+    ml_expect "every data reference is relative" "0" \
+        "$(jq '[.[]|select(.data_ref|startswith("/"))]|length' "${out}-list-all.stdout")"
+    # The conversion source itself carries 16 empty descriptions, so the correct
+    # invariant is that descriptions are preserved verbatim, not that all of them
+    # are non-empty.
+    ml_expect "every description is preserved verbatim" \
+        "$(jq '[.[]|select(.description=="")]|length' "${RECOVERY_DIR}/stage-list.json")" \
+        "$(jq '[.[]|select(.description=="")]|length' "${out}-list-all.stdout")"
+    ml_expect "a known object keeps its tags" "shell,bash,cli,argument-forwarding" \
+        "$(jq -r '.[]|select(.id=="note--shell-wrapper-argument-quoting")|.tags|join(",")' "${out}-list-all.stdout")"
+
+    ml_run_ok "${root}" "${out}-stat" stat note--shell-wrapper-argument-quoting
+    ml_expect_contains "the preserved statistics survive the conversion" "${out}-stat.stdout" \
+        "write_count: 1"
+
+    # The payload tree must be byte-identical to the preserved original.
+    ( cd "${RECOVERY_DIR}/original" && find object -type f -print0 | sort -z | xargs -0 -r sha256sum ) \
+        > "${out}-payload-original.txt"
+    ( cd "${root}" && find object -type f -print0 | sort -z | xargs -0 -r sha256sum ) \
+        > "${out}-payload-converted.txt"
+    ml_expect "no payload file was rewritten" "identical" \
+        "$(cmp -s "${out}-payload-original.txt" "${out}-payload-converted.txt" && echo identical || echo different)"
+
+    ml_manifest "${RECOVERY_DIR}/staged" > "${out}-source-after.txt"
+    ml_expect "the conversion source was not modified" "identical" \
+        "$(cmp -s "${out}-source-before.txt" "${out}-source-after.txt" && echo identical || echo different)"
+    end_case
+}
+
+# run_life_16 verifies the preserved backup against its recorded manifest and
+# rehearses a restore on a separate copy read through the CLI.
+run_life_16() {
+    begin_case LIFE-16 P0 C
+    local out
+    out="${ML_ARTIFACTS}/LIFE-16"
+    if ! recovery_available; then
+        ml_blocked "verified recovery artifacts are unavailable"
+        end_case
+        return
+    fi
+
+    local total=0 missing=0 mismatches=0 path expected actual
+    while IFS=$'\t' read -r path expected; do
+        total=$((total + 1))
+        if [[ ! -f "${RECOVERY_DIR}/original/${path}" ]]; then
+            missing=$((missing + 1))
+            continue
+        fi
+        actual=$(sha256sum "${RECOVERY_DIR}/original/${path}" | awk '{print $1}')
+        if [[ "${actual}" != "${expected}" ]]; then
+            mismatches=$((mismatches + 1))
+        fi
+    done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' "${RECOVERY_DIR}/original-manifest.json")
+    ml_expect "the backup manifest covers every recorded file" "782" "${total}"
+    ml_expect "no recorded backup file is missing" "0" "${missing}"
+    ml_expect "every recorded backup file matches its digest" "0" "${mismatches}"
+
+    local root
+    root="${ML_STORES}/${ML_CASE_ID}/restored"
+    mkdir -p "${root}"
+    cp -a "${RECOVERY_DIR}/staged/." "${root}/"
+    ml_run_ok "${root}" "${out}-list" list --format json
+    ml_expect "the restored copy exposes every active object" "109" "$(jq 'length' "${out}-list.stdout")"
+    ml_run_ok "${root}" "${out}-list-all" list --include-deleted --format json
+    ml_expect "the restored copy keeps every lifecycle record" "121" \
+        "$(jq 'length' "${out}-list-all.stdout")"
+
+    # tar -tf prints directory entries without a trailing slash, so the listing
+    # has to be filtered by the tar type flag instead of by a trailing slash.
+    local id file failed=0 checked=0
+    while IFS= read -r id; do
+        while IFS= read -r file; do
+            checked=$((checked + 1))
+            if ! TOPSAILAI_DATA_ROOT="${root}" "${ML_BIN}" get "${id}" "${file}" > /dev/null 2>&1; then
+                failed=$((failed + 1))
+            fi
+        done < <(TOPSAILAI_DATA_ROOT="${root}" "${ML_BIN}" get-archive "${id}" 2>/dev/null \
+            | tar -tvf - 2>/dev/null | awk '$1 !~ /^d/ {print $NF}' \
+            | sed 's|^\./||' | grep -v "^${id}\.md$" || true)
+    done < <(jq -r '.[]|select(.status=="active")|.id' "${out}-list-all.stdout")
+    ml_expect "no accessible payload file fails to read" "0" "${failed}"
+    ml_note "checked ${checked} payload files through get"
+    end_case
+}
+
+# run_life_17 proves that a purged ceased identity is unavailable everywhere and
+# that a fresh create reuses the id without stale lock or statistic leakage.
+run_life_17() {
+    begin_case LIFE-17 P1 I
+    local root out
+    root=$(ml_case_root store)
+    out="${ML_ARTIFACTS}/LIFE-17"
+
+    ml_make_markdown "${ML_FIXTURES}/d/life17.md" "lifecycle seventeen"
+    ml_run_ok "${root}" "${out}-create" create gone --from "${ML_FIXTURES}/d/life17.md"
+    ml_run_ok "${root}" "${out}-get" get gone gone.md
+    ml_run_ok "${root}" "${out}-delete1" delete gone
+    ml_run_ok "${root}" "${out}-delete2" delete gone
+    ml_expect "the object is ceased before the purge" "ceased" "$(status_of "${root}" gone)"
+
+    ml_run_ok "${root}" "${out}-purge" gc --status ceased
+    ml_expect "the purged identity is gone from every listing" "" "$(json_ids "${root}")"
+    ml_run_fail "${root}" "${out}-show" show gone
+    ml_expect_contains "the purged identity is not resolvable" "${out}-show.stderr" "object not found"
+    ml_run_fail "${root}" "${out}-get-after" get gone gone.md
+    ml_run_fail "${root}" "${out}-stat-after" stat gone
+
+    ml_run_ok "${root}" "${out}-recreate" create gone --from "${ML_FIXTURES}/d/life17.md"
+    ml_expect "a fresh create reuses the purged id" "active" "$(status_of "${root}" gone)"
+    ml_run_ok "${root}" "${out}-stat-fresh" stat gone
+    ml_expect_contains "the fresh object starts with a clean write counter" \
+        "${out}-stat-fresh.stdout" "write_count: 1"
+    ml_expect_contains "the fresh object has no inherited read counter" \
+        "${out}-stat-fresh.stdout" "read_count: 0"
+    ml_run_ok "${root}" "${out}-get-fresh" get gone gone.md
+    ml_expect_contains "the fresh object serves its own content" "${out}-get-fresh.stdout" \
+        "lifecycle seventeen"
+    end_case
+}
+
+CASES=(LIFE-01 LIFE-02 LIFE-03 LIFE-04 LIFE-05 LIFE-06 LIFE-07 LIFE-08
+    LIFE-09 LIFE-10 LIFE-11 LIFE-12 LIFE-13 LIFE-14 LIFE-15 LIFE-16 LIFE-17)
 for case_id in "${CASES[@]}"; do
     if ! selected "${case_id}" "$@"; then
         continue
@@ -493,6 +899,15 @@ for case_id in "${CASES[@]}"; do
         LIFE-06) run_life_06 ;;
         LIFE-07) run_life_07 ;;
         LIFE-08) run_life_08 ;;
+        LIFE-09) run_life_09 ;;
+        LIFE-10) run_life_10 ;;
+        LIFE-11) run_life_11 ;;
+        LIFE-12) run_life_12 ;;
+        LIFE-13) run_life_13 ;;
+        LIFE-14) run_life_14 ;;
+        LIFE-15) run_life_15 ;;
+        LIFE-16) run_life_16 ;;
+        LIFE-17) run_life_17 ;;
     esac
 done
 
