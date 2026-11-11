@@ -219,7 +219,7 @@ def ring():
 `scripts/watch-trigger-bell.py` is the complete file; read it rather than retyping this
 excerpt, so the installed script and the documented behaviour cannot drift apart.
 
-Three details make it correct rather than merely short:
+Four details make it correct rather than merely short:
 
 - **It finds the real PulseAudio socket.** The trigger environment deliberately omits
   `PULSE_SERVER`, so the script discovers accessible `/tmp/pulse-*/native` sockets instead
@@ -227,6 +227,9 @@ Three details make it correct rather than merely short:
 - **It plays as the desktop audio user when needed.** A root-owned trigger drops only the
   audio subprocess to the socket owner's UID and primary group; the notification therefore
   reaches the existing desktop audio session without changing its volume or output device.
+  The switch happens in a `preexec_fn` hook rather than `subprocess.run(user=..., group=...)`,
+  because the installed trigger runs under `/usr/bin/python3` (3.8) and those keywords only
+  exist from Python 3.9.
 - **Missing audio support is not a failure.** The script exits 0 when `paplay`, a sound file,
   or an accessible audio socket is unavailable, because a headless run has no operator to
   alert and a non-zero exit would only add a diagnostic row to the table.

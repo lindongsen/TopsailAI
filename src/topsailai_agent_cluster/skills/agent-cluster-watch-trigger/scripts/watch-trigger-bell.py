@@ -43,6 +43,18 @@ def pulse_sockets():
     return [(path, uid) for _, path, uid in sorted(sockets)]
 
 
+def privilege_dropper(uid, gid):
+    """Return a preexec hook that switches to the desktop audio account.
+
+    Python 3.8 does not accept `user`/`group` in subprocess.run, so the
+    account switch is performed inside the child before exec.
+    """
+    def drop():
+        os.setgid(gid)
+        os.setuid(uid)
+    return drop
+
+
 def play(player, socket_path, uid):
     """Play the bell through one PulseAudio socket and report success."""
     environment = os.environ.copy()
@@ -50,7 +62,7 @@ def play(player, socket_path, uid):
     options = {}
     if uid != os.geteuid():
         account = pwd.getpwuid(uid)
-        options.update(user=uid, group=account.pw_gid)
+        options["preexec_fn"] = privilege_dropper(uid, account.pw_gid)
     try:
         result = subprocess.run(
             [player, SOUND_FILE],
@@ -62,7 +74,7 @@ def play(player, socket_path, uid):
             env=environment,
             **options,
         )
-    except (OSError, KeyError, subprocess.TimeoutExpired):
+    except (OSError, KeyError, RuntimeError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
 
