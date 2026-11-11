@@ -62,6 +62,33 @@ mount point. It never compares the scope path with `Config.ConfigDir`, because
 config directory is not passed down, so the check has nothing to compare
 against.
 
+## Re-verified in the second live run
+
+The defect was reproduced again on the same Windows host with a freshly built
+binary, and the exact leak was measured:
+
+```
+scope  = C:\connector
+config = C:\connector\config
+
+file.list config            -> identity      file  85
+                               policy.yaml   file  123
+                               policy.yaml.bak file 129
+file.read config/identity   -> denied: path "config/identity" is one of the Node's own files
+file.stat config/identity   -> denied
+file.read config/policy.yaml-> denied
+```
+
+So the deny list protects the **contents** and the startup check that the design
+requires is missing, which leaves the **names and sizes** of the Node's own
+credential files readable. The Node started normally at `generation=7` with this
+policy, confirming the startup refusal does not exist.
+
+Note that the leak is only reachable when the config directory is inside a scope.
+In the normal layout (`scope = C:\connector\scope`, `config = C:\connector\config`)
+the path `../config` is refused at the grammar layer as `invalid_argument`, so the
+defect needs a specific misconfiguration to trigger. That is why it is rated low.
+
 ## Detection failure
 
 The design document states the rule and the enforcement checklist repeats it,

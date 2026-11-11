@@ -312,6 +312,15 @@ against the value it currently holds and keeps no history of previous values. A
 Node that accepted an old token after regeneration would defeat the purpose of
 regenerating.
 
+The running Node learns about the change by reading its identity file once per
+second, so "immediately" means "within one poll interval", not "before the
+`regenerate` command returns". The window is bounded and short, and it is stated
+here rather than left as an implied instant. Polling is used because the standard
+library has no portable filesystem notification API and the design forbids a
+third-party dependency; the comparison is on the file's content, because a
+regenerated pair has the same byte length as the pair it replaces and can land in
+the same modification-time tick.
+
 Two consequences must be stated rather than discovered:
 
 - **Regeneration disconnects the Node.** The live channel was authenticated with
@@ -740,7 +749,7 @@ These are accepted for the first version and must be stated rather than hidden.
 | Risk | Consequence | Mitigation |
 |---|---|---|
 | A leaked `client_token` never expires | Every CLI is compromised until the secret is rotated | Rotate the Server's environment and restart; audit every request. This is the accepted cost of the shared-secret model |
-| A leaked `node-token` never expires | Anyone holding it can operate on that Node until the pair is regenerated | `connector-node regenerate` invalidates it immediately and needs no Server involvement |
+| A leaked `node-token` never expires | Anyone holding it can operate on that Node until the pair is regenerated | `connector-node regenerate` invalidates it within one poll interval and needs no Server involvement; a running Node adopts the new pair without a restart |
 | A leaked `tunnel_token` never expires | Anyone holding it can open a channel and impersonate a Node | Rotate the Server's environment and restart; the blast radius is every Node |
 | No per-caller attribution | An audit record cannot say which operator sent a request | Accepted; per-caller identity needs a fourth mechanism, not a change to this one |
 | Server sees the `node-token` in transit | A compromised Server can replay it while it holds the request | The Server never stores it; the value lives only for the request being forwarded |
@@ -763,7 +772,7 @@ later change has to argue against it rather than silently reverse it.
 | Signed tokens with expiry, or shared secrets? | Shared secrets | The human specified `tunnel_token`, `client_token` and a Node-generated `node-id.node-token`. A shared secret removes the canonical encoding, the signature library, the clock window and the revocation list, which is a large reduction in the code that can be wrong. The cost is that no secret expires, which is recorded in the residual risks rather than softened. |
 | Does any secret carry a permission? | No | A token says "you may talk to me"; the policy file says "and you may do this". A token that carried permissions would have to be reissued whenever the policy changed, and a policy change would silently invalidate live credentials. |
 | Who generates the `node-id.node-token` pair? | The Node, at first start | The Server must never be the identity authority, because an identity authority can also deny identity. A Node that names itself works without the Server being reachable. |
-| May the Node regenerate the pair? | Yes, on local operator command | `connector-node regenerate` issues a new pair and invalidates the old one immediately. The Server cannot trigger it, because a Server that could force regeneration could also force a denial of service. |
+| May the Node regenerate the pair? | Yes, on local operator command | `connector-node regenerate` issues a new pair and invalidates the old one within one poll interval. A running Node watches its identity file and adopts the new pair, dropping the channel authenticated with the retired one. The Server cannot trigger it, because a Server that could force regeneration could also force a denial of service. |
 | Does regeneration keep the `node-id`? | Optional, via `--keep-id` | Keeping the name avoids reconfiguring the CLI's routing target; changing it avoids a name that has been exposed. Both forms always change the `node-token`, because a regeneration that kept the secret would not be a regeneration. |
 | Where do `tunnel_token` and `client_token` live? | Server environment | The human specified environment variables. They are read once at startup, never written to a config file, never logged, and an empty value is a startup failure rather than an "authentication disabled" mode. |
 | Is there a grace period during rotation? | No | A grace period is a second valid credential, and the point of rotating is to end the first one. Rotation is therefore a coordinated change, which is documented rather than improvised. |
@@ -820,8 +829,10 @@ request path.
       a mismatch is refused.
 - [ ] `file.write` and `command.exec` are refused at dispatch even when a caller
       sends one, so the refusal does not depend on the advertisement.
-- [ ] `connector-node regenerate` invalidates the previous `node-token`
-      immediately, and the Node keeps no history of accepted values.
+- [ ] `connector-node regenerate` invalidates the previous `node-token` within one
+      poll interval, and the Node keeps no history of accepted values.
+- [ ] A running Node adopts a regenerated pair from its identity file, so
+      regeneration does not require a restart.
 - [ ] Regeneration drops the live channel, so a connection cannot survive the
       credential that authenticated it.
 - [ ] The Windows build compiles, and the Windows-specific path rules are covered
