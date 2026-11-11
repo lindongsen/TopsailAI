@@ -24,10 +24,15 @@ type ModelProfile struct {
 	// ProviderDisplayName is the provider's own model label, descriptive only:
 	// the cluster never parses it, and it is never an addressing key.
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`
-	// Current reports whether the session is using this profile now. It is an
-	// observation, not a stored fact: the catalog read derives it, so no second
-	// source of truth exists that could disagree with the provider.
-	Current bool `json:"current,omitempty"`
+	// CurrentState reports whether the session is using this profile now. It is
+	// an observation, not a stored fact: the catalog read derives it, so no
+	// second source of truth exists that could disagree with the provider.
+	//
+	// It is a closed-vocabulary string rather than a bool because a bool cannot
+	// express "not observed". A provider document that carries no current-model
+	// field would then be forced into a definite "no", which states that the
+	// session is not using the profile when the truth is that nobody looked.
+	CurrentState string `json:"current_state"`
 	// Available reports whether the profile can be selected right now.
 	Available bool `json:"available"`
 	// UnavailableReason is a bounded standard reason code when Available is
@@ -107,6 +112,35 @@ const (
 	// ModelProfileUnsupportedProtocol means the provider cannot run this entry.
 	ModelProfileUnsupportedProtocol = "unsupported_protocol"
 )
+
+// Standard model-profile current-state values. The vocabulary is closed, because
+// the value states a fact about the session and a free-form string would let an
+// adapter invent a fourth answer the renderer cannot interpret.
+//
+// ModelCurrentUnknown is a first-class value rather than an absent field. A
+// provider that reports no current-model information has not observed that the
+// session is using nothing; it has observed nothing at all, and the two claims
+// need different wording because only one of them is a fact about the session.
+const (
+	// ModelCurrentYes means the session is using this profile now.
+	ModelCurrentYes = "yes"
+	// ModelCurrentNo means the session is not using this profile.
+	ModelCurrentNo = "no"
+	// ModelCurrentUnknown means the Endpoint did not observe which profile the
+	// session is using. It is never a failure and never a definite negative.
+	ModelCurrentUnknown = "unknown"
+)
+
+// ValidateModelCurrentState rejects a current state outside the closed
+// vocabulary instead of guessing what an unknown value was meant to mean.
+func ValidateModelCurrentState(value string) error {
+	switch value {
+	case ModelCurrentYes, ModelCurrentNo, ModelCurrentUnknown:
+		return nil
+	default:
+		return fmt.Errorf("invalid model current state %q", value)
+	}
+}
 
 // Bounds for one model catalog read. They are deliberately small: a catalog is an
 // operator-facing menu, not a bulk export.

@@ -164,7 +164,7 @@ func TestModelCatalogRowsAreNumberedFromOne(t *testing.T) {
 		CurrentProfileID: "mp-2",
 		Profiles: []protocol.ModelProfile{
 			{ModelProfileID: "mp-1", ProviderDisplayName: "fast", Available: true},
-			{ModelProfileID: "mp-2", ProviderDisplayName: "deep", Available: true, Current: true},
+			{ModelProfileID: "mp-2", ProviderDisplayName: "deep", Available: true, CurrentState: protocol.ModelCurrentYes},
 			{ModelProfileID: "mp-3", ProviderDisplayName: "legacy", Available: false, UnavailableReason: protocol.ModelProfileDisabled},
 		},
 	}
@@ -326,4 +326,148 @@ func TestModelCatalogTruncationIsLabelled(t *testing.T) {
 // legacyRunnerForTest builds the runner the standalone command uses.
 func legacyRunnerForTest(api CommandAPI) CommandRunner {
 	return CommandRunner{API: api, Policy: LegacyPolicy}
+}
+
+// modelCatalogCurrentColumn extracts the CURRENT cell of every data row from one
+// rendered catalog.
+//
+// The column is located by its header rather than by a fixed index, so a layout
+// change cannot silently make the assertion read a different column. Cells are
+// trimmed because the renderer pads them to the measured width.
+func modelCatalogCurrentColumn(t *testing.T, rendered string) []string {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+	// The table is framed by a full-width rule, so the header is not the first
+	// line. It is located by its own content, which also keeps the assertion
+	// correct if the frame is ever removed.
+	headerIndex := -1
+	for index, line := range lines {
+		if strings.Contains(line, " │ ") && strings.Contains(line, "CURRENT") {
+			headerIndex = index
+			break
+		}
+	}
+	if headerIndex < 0 {
+		t.Fatalf("rendered table has no CURRENT header: %q", rendered)
+	}
+	header := strings.Split(lines[headerIndex], " │ ")
+	position := -1
+	for index, name := range header {
+		if strings.TrimSpace(name) == "CURRENT" {
+			position = index
+			break
+		}
+	}
+	if position < 0 {
+		t.Fatalf("header %q has no CURRENT column", lines[headerIndex])
+	}
+	values := make([]string, 0, len(lines))
+	for _, line := range lines[headerIndex+1:] {
+		// Separator and rule rows carry no cell delimiter, so they are skipped
+		// rather than counted as data.
+		if !strings.Contains(line, " │ ") {
+			continue
+		}
+		cells := strings.Split(line, " │ ")
+		if position >= len(cells) {
+			t.Fatalf("row %q has no cell at position %d", line, position)
+		}
+		values = append(values, strings.TrimSpace(cells[position]))
+	}
+	return values
+}
+
+// TestModelCatalogCurrentColumnKeepsUnknownApartFromNo proves the rendered CURRENT
+// cell states "unknown" when the Endpoint did not observe which profile is in use.
+//
+// This is the regression guard for the original defect. The column used to render
+// every row as "no", because the adapter never assigned the field and Go's zero value
+// is false. A test that only asserted "not yes" would pass on that defect, so each
+// case names the exact expected cell.
+//
+// The empty string and an unrecognized value are included deliberately: they are what
+// an older document or a future adapter would produce, and both must degrade to
+// "unknown" rather than to a definite negative.
+func TestModelCatalogCurrentColumnKeepsUnknownApartFromNo(t *testing.T) {
+	cases := []struct {
+		name  string
+		state string
+		want  string
+	}{
+		{name: "observed yes", state: protocol.ModelCurrentYes, want: protocol.ModelCurrentYes},
+		{name: "observed no", state: protocol.ModelCurrentNo, want: protocol.ModelCurrentNo},
+		{name: "not observed", state: protocol.ModelCurrentUnknown, want: protocol.ModelCurrentUnknown},
+		{name: "absent field", state: "", want: protocol.ModelCurrentUnknown},
+		{name: "unrecognized value", state: "not_observed", want: protocol.ModelCurrentUnknown},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			view := NewModelCatalogView("ep-1", "res_1", protocol.ModelCatalog{
+				Profiles: []protocol.ModelProfile{{
+					ModelProfileID:      "mp-1",
+					ProviderDisplayName: "fast",
+					CurrentState:        testCase.state,
+					Available:           true,
+				}},
+			})
+			var out bytes.Buffer
+			if err := RenderModelCatalog(&out, view, TableOptions{}); err != nil {
+				t.Fatalf("render failed: %v", err)
+			}
+			values := modelCatalogCurrentColumn(t, out.String())
+			if len(values) != 1 {
+				t.Fatalf("CURRENT cells = %#v, want one row", values)
+			}
+			if values[0] != testCase.want {
+				t.Fatalf("CURRENT cell = %q, want %q", values[0], testCase.want)
+			}
+		})
+	}
+}
+
+// TestModelCatalogCurrentColumnSeparatesUnknownFromNoInOneTable proves the two
+// states stay distinguishable inside a single table.
+//
+// A per-row test cannot detect a renderer that collapses the whole column to one
+// value, because every row would agree with itself. Rendering both states side by
+// side is what proves the cell is derived per row rather than from a shared default.
+func TestModelCatalogCurrentColumnSeparatesUnknownFromNoInOneTable(t *testing.T) {
+	view := NewModelCatalogView("ep-1", "res_1", protocol.ModelCatalog{
+		Profiles: []protocol.ModelProfile{
+			{ModelProfileID: "mp-1", ProviderDisplayName: "fast", CurrentState: protocol.ModelCurrentYes, Available: true},
+			{ModelProfileID: "mp-2", ProviderDisplayName: "deep", CurrentState: protocol.ModelCurrentNo, Available: true},
+			{ModelProfileID: "mp-3", ProviderDisplayName: "other", CurrentState: protocol.ModelCurrentUnknown, Available: true},
+		},
+	})
+	var out bytes.Buffer
+	if err := RenderModelCatalog(&out, view, TableOptions{}); err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	values := modelCatalogCurrentColumn(t, out.String())
+	want := []string{protocol.ModelCurrentYes, protocol.ModelCurrentNo, protocol.ModelCurrentUnknown}
+	if len(values) != len(want) {
+		t.Fatalf("CURRENT cells = %#v, want %#v", values, want)
+	}
+	for index := range want {
+		if values[index] != want[index] {
+			t.Fatalf("CURRENT cells = %#v, want %#v", values, want)
+		}
+	}
+}
+
+// TestModelCatalogViewCarriesCurrentStateThrough proves the view projection copies
+// the protocol value instead of deriving its own.
+//
+// A second derivation would be a second source of truth, and the two could disagree
+// about whether a profile is in use.
+func TestModelCatalogViewCarriesCurrentStateThrough(t *testing.T) {
+	view := NewModelCatalogView("ep-1", "res_1", protocol.ModelCatalog{
+		Profiles: []protocol.ModelProfile{{ModelProfileID: "mp-1", CurrentState: protocol.ModelCurrentUnknown}},
+	})
+	if len(view.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(view.Rows))
+	}
+	if view.Rows[0].CurrentState != protocol.ModelCurrentUnknown {
+		t.Fatalf("row current state = %q, want %q", view.Rows[0].CurrentState, protocol.ModelCurrentUnknown)
+	}
 }

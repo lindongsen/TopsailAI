@@ -31,7 +31,7 @@ type ModelCatalogViewRow struct {
 	No                  int    `json:"no"`
 	ModelProfileID      string `json:"model_profile_id"`
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`
-	Current             bool   `json:"current"`
+	CurrentState        string `json:"current_state"`
 	Available           bool   `json:"available"`
 	UnavailableReason   string `json:"unavailable_reason,omitempty"`
 }
@@ -67,7 +67,7 @@ func NewModelCatalogView(endpointID, sessionID string, catalog protocol.ModelCat
 		view.Rows = append(view.Rows, ModelCatalogViewRow{
 			ModelProfileID:      profile.ModelProfileID,
 			ProviderDisplayName: profile.ProviderDisplayName,
-			Current:             profile.Current,
+			CurrentState:        profile.CurrentState,
 			Available:           profile.Available,
 			UnavailableReason:   profile.UnavailableReason,
 		})
@@ -108,11 +108,21 @@ func modelCatalogCells(row ModelCatalogViewRow) map[string]string {
 }
 
 // modelCurrentCell states whether the session uses this profile now.
+//
+// The three states are kept apart because only two of them are facts about the
+// session. "unknown" means the Endpoint did not observe which profile is in use,
+// so rendering it as "no" would state that the session is using nothing, which is
+// a claim nobody made. Any value outside the vocabulary is treated the same way,
+// so an unrecognized or empty state can never claim a definite negative.
 func modelCurrentCell(row ModelCatalogViewRow) string {
-	if row.Current {
-		return "yes"
+	switch row.CurrentState {
+	case protocol.ModelCurrentYes:
+		return protocol.ModelCurrentYes
+	case protocol.ModelCurrentNo:
+		return protocol.ModelCurrentNo
+	default:
+		return protocol.ModelCurrentUnknown
 	}
-	return "no"
 }
 
 // modelAvailableCell states the adapter verdict and its standard reason.
