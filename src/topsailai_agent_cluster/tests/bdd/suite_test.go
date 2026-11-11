@@ -28,6 +28,7 @@ var featurePaths = []string{
 	"../../features/bidirectional_channel.feature",
 	"../../features/output_follow.feature",
 	"../../features/output_scope.feature",
+	"../../features/endpoint_access_policy.feature",
 	"../../features/messages.feature",
 	"../../features/model_command.feature",
 }
@@ -75,6 +76,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerBidirectionalSteps(ctx)
 	registerFollowSteps(ctx)
 	registerOutputScopeSteps(ctx)
+	registerEndpointAccessPolicySteps(ctx)
 	registerQReturnsToWorkspaceSteps(ctx)
 	registerMessagesSteps(ctx)
 	registerModelSteps(ctx)

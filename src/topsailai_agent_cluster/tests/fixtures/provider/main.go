@@ -33,6 +33,12 @@ func main() {
 	alwaysFail := flag.Bool("always-fail", false, "fail every discovery call")
 	flag.Parse()
 	if *readOutput != "" {
+		if *recordFile != "" {
+			if err := appendInvocationRecord(*recordFile, map[string]any{"operation": "output.read", "target_resource_id": *readOutput, "pid": os.Getpid()}); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(3)
+			}
+		}
 		data := "provider output marker"
 		truncated := false
 		if *maxBytes > 0 && len(data) > *maxBytes {
@@ -81,19 +87,12 @@ func main() {
 			*recordFile = logPath
 		}
 		if *recordFile != "" {
-			file, err := os.OpenFile(*recordFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(3)
-			}
 			endNS := time.Now().UnixNano()
 			record := map[string]any{"command_id": *executeID, "operation": *operation, "timestamp_ns": endNS, "start_ns": startNS, "end_ns": endNS, "pid": os.Getpid(), "target_resource_id": *targetResourceID, "target_generation": *targetGeneration, "payload": *payload}
-			if err := json.NewEncoder(file).Encode(record); err != nil {
-				_ = file.Close()
+			if err := appendInvocationRecord(*recordFile, record); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(3)
 			}
-			_ = file.Close()
 		}
 		if os.Getenv("AGENT_CLUSTER_TEST_CRASH_AFTER_INVOCATION_STARTED") == "1" {
 			os.Exit(97)
@@ -116,6 +115,16 @@ func main() {
 		result.Sessions = []map[string]string{{"session_id": "fixture-session", "generation": "fixture-generation", "state": "idle", "agent_id": "fixture-agent"}}
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(result)
+}
+
+// appendInvocationRecord appends one JSON record to the fixture evidence file.
+func appendInvocationRecord(path string, record map[string]any) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	return json.NewEncoder(file).Encode(record)
 }
 
 func configuredFailureThreshold(value int) (int, bool) {
