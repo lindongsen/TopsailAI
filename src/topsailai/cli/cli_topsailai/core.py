@@ -23,6 +23,11 @@ if TYPE_CHECKING:
 
 import cli_topsailai.state as state
 from cli_topsailai.colors import Colors
+from cli_topsailai.constants import (
+    REFRESH_ALL_COMMAND_SPELLINGS,
+    REFRESH_COMMAND_SPELLINGS,
+    SESSION_COMMAND_SPELLINGS,
+)
 from cli_topsailai.doc_scope import (
     build_doc_list,
     get_docs_dir,
@@ -938,12 +943,13 @@ def prompt_selection(
             # Workspace scope: "r all" / "refresh all" opts in to showing rows
             # whose exact session metadata records status=completed. This must
             # be checked before the plain r/refresh binding below.
-            if state.current_scope == "workspace" and lower_input in (
-                "r all", "/r all", "refresh all", "/refresh all"
+            if (
+                state.current_scope == "workspace"
+                and lower_input in REFRESH_ALL_COMMAND_SPELLINGS
             ):
                 return ("refresh", "all")
 
-            if lower_input in ("r", "/r", "refresh", "/refresh"):
+            if lower_input in REFRESH_COMMAND_SPELLINGS:
                 return ("refresh", None)
             if lower_input.startswith("/clean") or lower_input.startswith("clean"):
                 parts = user_input.split()
@@ -1090,15 +1096,12 @@ def prompt_selection(
                 action = handle_yaml_command(instruction, variables)
                 return (action, None)
 
-            if (
-                lower_input in ("/session", "session")
-                or lower_input.startswith("/session ")
-                or lower_input.startswith("session ")
-            ):
+            if first_token in SESSION_COMMAND_SPELLINGS:
                 parts = user_input.split(None, 1)
                 if len(parts) < 2:
                     print(
-                        f"{Colors.RED}[ERROR] Usage: /session {{number|session_id}}{Colors.RESET}"
+                        f"{Colors.RED}[ERROR] Usage: /session {{number|session_id}} "
+                        f"(alias: /messages){Colors.RESET}"
                     )
                     continue
                 arg = parts[1].strip()
@@ -1189,13 +1192,15 @@ def prompt_selection(
                 if state.current_scope == "project":
                     print(
                         f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
-                        f"Please enter a number, r [limit], recent [limit], /refresh, /session {{number}}, "
+                        f"Please enter a number, r [limit], recent [limit], /refresh "
+                        f"(alias: /list, /l), /session {{number}} (alias: /messages), "
                         f"/agent {{number|folder}}, /resume {{number}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
                     )
                 else:
                     print(
                         f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
-                        f"Please enter a number, /refresh, r all, /session {{number}}, "
+                        f"Please enter a number, /refresh (alias: /list, /l), r all, "
+                        f"/session {{number}} (alias: /messages), "
                         f"/agent {{number|folder}}, /resume {{number}}, "
                         f"{'/kill <number>, /meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, /driver meta <number>, ' if state.current_scope == 'workspace' else ''}"
                         f"/clean, {'/send, ' if state.current_scope != 'workspace' else ''}/help, or 'q'.{Colors.RESET}"

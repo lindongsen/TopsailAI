@@ -82,7 +82,17 @@ The CLI has five scopes, derived from the original design notes in `../../topsai
 
 In `workspace`, `session` and `project` scope, the leading `/` of a command is optional: `meta 1` and `/meta 1` are the same command, and the same holds for every other command in those scopes, including `q`/`quit`/`exit`, `r`/`recent`, `p`/`projects`, `models`, `scopes`, `clean`, `help`, `session`, `agent`, `resume`, `retrieve`, `stream`, `send` and the YAML-configured commands. Only the first token is normalized, so the rest of the line — a message body, a JSON payload or a path — is passed through unchanged. The `!<command>` shell escape is never normalized.
 
-`runtime` and `doc` scope keep their existing spellings; this rule does not extend to them.
+Command aliases follow the same rule, so each alias is accepted with and without the leading `/`:
+
+| Command | Aliases | Scope |
+|---|---|---|
+| `/session <number\|session_id>` | `messages`, `/messages` | `workspace`, `project` |
+| `/refresh` | `list`, `/list`, `l`, `/l` | `workspace`, `project`, `doc` |
+| `/refresh all` | `list all`, `/list all`, `l all`, `/l all` | `workspace` |
+
+`r` and `/r` remain the pre-existing short form of `/refresh`. The aliases are additional spellings of the same command, not separate commands: they share the same behavior, arguments and errors. In project scope `r [limit]` and `recent [limit]` keep their limit argument, while `list` and `l` accept no limit, exactly like `/refresh`. The restricted managed-project view still accepts only `r`, `p`, `q`, `cd` and `p agent <number>`, so the aliases are rejected there.
+
+`runtime` scope keeps its existing spellings and has its own command set, so these aliases do not apply there. `doc` scope shares the same prompt loop as `workspace` and `project` scope, so an alias binds wherever its base command already binds: `list` and `l` refresh the doc list, and `messages` reaches the same binding `/session` already has there, even though `/session` is not part of the documented doc-scope command set.
 
 ## Session Output Files
 
@@ -144,8 +154,8 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/driver log <number>` | Read the bounded driver log snapshot. |
 | `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
 | `/kill <number>` | Send SIGTERM to the row's live session PID after y/N confirmation (ordinary workspace only). A row whose process is no longer alive has no signalable PID, even when its metadata PID is displayed. |
-| `/refresh` | Re-scan the task directory and refresh the list. `r all` or `/refresh all` also includes rows whose metadata status is `completed`; a plain `r` or `/refresh` restores the default hidden view. |
-| `/session <number\|session_id>` | Retrieve full context messages for a session. A row without a session id (a temporary session displayed as `(temp)`) is served through its control channel when one exists; see [Workspace session history](#workspace-session-history). |
+| `/refresh` (alias `/list`, `/l`) | Re-scan the task directory and refresh the list. `r all`, `/refresh all`, `list all` or `l all` also includes rows whose metadata status is `completed`; a plain `r`, `/refresh`, `list` or `l` restores the default hidden view. |
+| `/session <number\|session_id>` (alias `/messages`) | Retrieve full context messages for a session. A row without a session id (a temporary session displayed as `(temp)`) is served through its control channel when one exists; see [Workspace session history](#workspace-session-history). |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
 | `/resume <number>` | Resume the selected running session with the effective model selection. |
 | `/models` | List registry entries and select the workspace default or active-project override. |
@@ -211,7 +221,7 @@ When the CLI is showing the documentation list (`[doc]>`), the following command
 | Command | Description |
 |---|---|
 | `<number>` | Read the selected usage documentation file. |
-| `/refresh` | Re-scan the `docs/usage/` directory and refresh the list. |
+| `/refresh` (alias `/list`, `/l`) | Re-scan the `docs/usage/` directory and refresh the list. |
 | `/help` | Show available commands. |
 | `q`, `quit`, or `cd` | Return to workspace scope. |
 
@@ -222,8 +232,8 @@ When the CLI is showing the project scope (`[project]>`), the following commands
 | Command | Description |
 |---|---|
 | `<number>` | Watch the selected session log file. |
-| `/session <number>` | Retrieve the full session context for the selected entry. |
-| `/refresh` | Reload the project session list. |
+| `/session <number>` (alias `/messages`) | Retrieve the full session context for the selected entry. |
+| `/refresh` (alias `/list`, `/l`) | Reload the project session list. |
 | `/agent <number\|folder>` | Launch an agent in the selected project workspace. |
 | `/resume <number> [-d DRIVER]` | Resume the selected idle session; chats is the default driver. |
 | `r [limit]` or `recent [limit]` | Refresh the recent project session list. If `[limit]` is provided, update the maximum number of records shown (default 30). |
