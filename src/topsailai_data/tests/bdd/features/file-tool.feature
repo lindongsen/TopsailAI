@@ -621,31 +621,34 @@ Feature: File and folder capabilities inside a data object
       | nope |
     Then the command fails with "unknown file subcommand"
 
-  Scenario: Reject a metadata marker as a write target
+  Scenario: Write a user payload named like a metadata lock
     Given an isolated topsailai-data store
     And an object "demo" with files:
       | path    | content  |
       | demo.md | markdown |
     When I run the file command with arguments:
       | write |
-      | demo.tags |
+      | demo.lock |
       | --object |
       | demo |
       | --content |
       | x |
-    Then the command fails with "reserved metadata marker"
+    Then the command succeeds
+    And object "demo" file "demo.lock" equals "x"
 
-  Scenario: Reject a metadata marker as a read target
+  Scenario: Read a user payload named like an old statistic record
     Given an isolated topsailai-data store
     And an object "demo" with files:
       | path    | content  |
       | demo.md | markdown |
+      | .stat.json | user statistic |
     When I run the file command with arguments:
       | read |
       | .stat.json |
       | --object |
       | demo |
-    Then the command fails with "reserved metadata marker"
+    Then the command succeeds
+    And stdout contains "user statistic"
 
   Scenario: Write a file from redirected stdin
     Given an isolated topsailai-data store

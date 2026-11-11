@@ -12,7 +12,7 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
 
-const statFileName = ".stat.json"
+const statFileName = "stat.json"
 
 // StatFilePath returns the path of the stat file inside objectDir.
 func StatFilePath(objectDir string) string {

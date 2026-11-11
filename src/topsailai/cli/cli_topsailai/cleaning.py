@@ -4,14 +4,148 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional, Tuple
 
 from cli_topsailai.colors import Colors, colored, cprint
 from cli_topsailai.formatting import format_size, format_timestamp_full, print_header
 from cli_topsailai.log_files import is_file_in_use
-from cli_topsailai.session_cleanup import find_related_files_for_path
+from cli_topsailai.process_liveness import (
+    ProcessState,
+    pid_state,
+    socket_heartbeat_alive,
+)
+from cli_topsailai.session_cleanup import (
+    _extract_session_prefix,
+    find_related_files_for_path,
+)
 from cli_topsailai.agent_launch_background import _is_active_launch_log
 
+
+#: On-disk identity of a temporary session. The filename parser reports no
+#: session id for ``topsailai.{pid}.session.stdout``, while the control socket is
+#: named with the literal ``topsailai`` prefix.
+_TEMP_SESSION_ID = "topsailai"
+
+#: Liveness verdicts. ``UNKNOWN`` is deliberately distinct from ``DEAD``: an
+#: unanswerable question is not proof of absence, so it must never authorize a
+#: deletion.
+_LIVE = "live"
+_DEAD = "dead"
+_UNKNOWN = "unknown"
+
+
+def _home_for_task_dir(task_dir: str) -> Optional[str]:
+    """Return the ``TOPSAILAI_HOME`` that owns *task_dir*, or ``None``.
+
+    The control socket lives at ``{home}/workspace/task``, so the home is
+    recovered from the directory layout instead of reading the environment.
+    A directory that does not follow the layout returns ``None`` and the
+    heartbeat probe then falls back to the configured home.
+    """
+    normalized = os.path.normpath(os.path.abspath(task_dir))
+    workspace_dir = os.path.dirname(normalized)
+    if os.path.basename(normalized) != "task":
+        return None
+    if os.path.basename(workspace_dir) != "workspace":
+        return None
+    return os.path.dirname(workspace_dir)
+
+
+def _owner_identity(path: str) -> Optional[Tuple[str, int]]:
+    """Return the ``(session_id, pid)`` that owns *path*, or ``None``.
+
+    ``None`` means the filename carries no session owner at all, which is the
+    case for diagnostic launch logs and for generic ``*.stdout`` files. Such a
+    file has no session lifecycle to protect, so only the open-descriptor check
+    applies to it.
+
+    Every session-related suffix is normalized through the existing
+    ``_extract_session_prefix`` helper, so ``.session.pipe`` and
+    ``.session.agent2llm_inject_messages.jsonl`` resolve to the same owner as
+    ``.session.stdout``. Parsing only ``.session.stdout`` would leave the pipe
+    and the inject file without an owner, and their liveness would then never
+    be checked.
+    """
+    prefix = _extract_session_prefix(os.path.basename(path))
+    if prefix is None:
+        return None
+    session_id, _, pid_text = prefix.rpartition(".")
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        return None
+    return (session_id or _TEMP_SESSION_ID, pid)
+
+
+def _owner_liveness(
+    path: str,
+    *,
+    home: Optional[str] = None,
+    cache: Optional[Dict[Tuple[str, int], str]] = None,
+) -> str:
+    """Classify the session that owns *path* as live, dead or unknown.
+
+    The control channel is consulted first because a session may run in a
+    sibling container that shares this filesystem: the local process table
+    cannot see that owner and would report a live session as dead, while the
+    channel answers for its own process. The process table is the fallback, and
+    it is three-state so an unverifiable owner stays ``UNKNOWN``.
+
+    Args:
+        path: Absolute path to a session-related file.
+        home: ``TOPSAILAI_HOME`` used to locate the control socket.
+        cache: Optional per-operation memo keyed by owner identity, so a
+            session with several related files is probed only once.
+
+    Returns:
+        ``live``, ``dead`` or ``unknown``.
+    """
+    identity = _owner_identity(path)
+    if identity is None:
+        # No session owner is encoded in the filename, so there is no session
+        # liveness to prove. The caller still applies the open-descriptor check.
+        return _DEAD
+    if cache is not None and identity in cache:
+        return cache[identity]
+
+    session_id, pid = identity
+    verdict = _UNKNOWN
+    if socket_heartbeat_alive(session_id, pid, home=home) is True:
+        verdict = _LIVE
+    else:
+        state = pid_state(pid)
+        if state is ProcessState.ALIVE:
+            verdict = _LIVE
+        elif state is ProcessState.DEAD:
+            verdict = _DEAD
+        else:
+            verdict = _UNKNOWN
+
+    if cache is not None:
+        cache[identity] = verdict
+    return verdict
+
+
+def _deletion_block_reason(
+    path: str,
+    *,
+    home: Optional[str] = None,
+    cache: Optional[Dict[Tuple[str, int], str]] = None,
+) -> Optional[str]:
+    """Return why *path* must not be deleted, or ``None`` when it may be.
+
+    A file is deletable only when its owning session is provably gone and no
+    process holds it open. Both conditions fail closed: an unverifiable owner
+    and an unreadable descriptor table both block the deletion.
+    """
+    liveness = _owner_liveness(path, home=home, cache=cache)
+    if liveness == _LIVE:
+        return "owning session is still alive"
+    if liveness == _UNKNOWN:
+        return "owning session liveness cannot be verified"
+    if is_file_in_use(path):
+        return "file is still held open by a process"
+    return None
 
 
 def _launch_log_records(task_dir: str) -> List[dict]:
@@ -44,8 +178,9 @@ def _expand_to_related_files(task_dir: str, selected: List[dict]) -> List[dict]:
 
     Files sharing the same ``{session_id}.{pid}`` prefix (stdout, stderr,
     pipe, inject JSONL, and task outputs) are grouped and returned as a
-    single deduplicated list. Files that are still held open by a process
-    are skipped.
+    single deduplicated list. A file is skipped when its owning session is
+    still alive, when that liveness cannot be verified, or when a process
+    still holds it open.
 
     Args:
         task_dir: Directory containing the log files.
@@ -59,6 +194,10 @@ def _expand_to_related_files(task_dir: str, selected: List[dict]) -> List[dict]:
     # Keep the inventory snapshot for files that were already selected, so the
     # mutation-time revalidation can still detect a change made after inventory.
     snapshot = {f["path"]: f["mtime"] for f in selected}
+    home = _home_for_task_dir(task_dir)
+    # One probe per owning session: a session with several related files must
+    # not pay a heartbeat per file.
+    liveness_cache: Dict[Tuple[str, int], str] = {}
 
     for f in selected:
         related_paths = find_related_files_for_path(task_dir, f["path"])
@@ -66,8 +205,9 @@ def _expand_to_related_files(task_dir: str, selected: List[dict]) -> List[dict]:
             if path in seen:
                 continue
             seen.add(path)
-            if is_file_in_use(path):
-                print(f"[WARN] Skipping in-use related file: {path}")
+            reason = _deletion_block_reason(path, home=home, cache=liveness_cache)
+            if reason is not None:
+                print(f"[WARN] Skipping related file ({reason}): {path}")
                 continue
             try:
                 stat_info = os.stat(path)
@@ -88,7 +228,8 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
 
     Shows a confirmation prompt before deletion. When a file is deleted,
     all related session files sharing the same ``{session_id}.{pid}`` prefix
-    are also removed, provided none of them are currently in use.
+    are also removed, provided the owning session is provably gone and none of
+    them are currently in use.
 
     Args:
         task_dir: Directory containing the log files.
@@ -99,6 +240,9 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
     """
     now = time.time()
     threshold_seconds = 3 * 24 * 60 * 60  # 72 hours
+    home = _home_for_task_dir(task_dir)
+    # One probe per owning session across the whole inventory pass.
+    liveness_cache: Dict[Tuple[str, int], str] = {}
 
     expired_files = []
     for f in files:
@@ -114,8 +258,9 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
         if age <= threshold_seconds:
             continue
 
-        if is_file_in_use(f["path"]):
-            print(f"[WARN] Skipping in-use expired file: {f['path']}")
+        reason = _deletion_block_reason(f["path"], home=home, cache=liveness_cache)
+        if reason is not None:
+            print(f"[WARN] Skipping expired file ({reason}): {f['path']}")
             continue
 
         expired_files.append({
@@ -130,7 +275,9 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
         record for record in _launch_log_records(task_dir)
         if now - record["mtime"] > threshold_seconds
         and not _is_active_launch_log(Path(record["path"]))
-        and not is_file_in_use(record["path"])
+        and _deletion_block_reason(
+            record["path"], home=home, cache=liveness_cache
+        ) is None
     )
 
     expired_files = _expand_to_related_files(task_dir, expired_files)
@@ -220,12 +367,26 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
 
     deleted_count = 0
     failed_files = []
+    # Deletion-time probes must be fresh: a session may have started using the
+    # file while the operator was reading the confirmation prompt.
+    revalidation_cache: Dict[Tuple[str, int], str] = {}
 
     for ef in expired_files:
         # Revalidate immediately before deletion: the file may have become an
         # active launch log, or been replaced, since the inventory was built.
         if _is_active_launch_log(Path(ef["path"])):
             cprint(f"[WARN] Skipping active launch log: {ef['filename']}", color=Colors.YELLOW)
+            continue
+        # Liveness is re-probed here, not reused from the inventory pass, so a
+        # session that became live after the prompt cannot lose its files.
+        reason = _deletion_block_reason(
+            ef["path"], home=home, cache=revalidation_cache
+        )
+        if reason is not None:
+            cprint(
+                f"[WARN] Skipping {ef['filename']} ({reason})",
+                color=Colors.YELLOW,
+            )
             continue
         try:
             current = os.stat(ef["path"])
@@ -256,7 +417,9 @@ def clean_by_numbers(task_dir: str, files: List[dict], indices: List[int]) -> in
 
     Validates each index, shows a confirmation prompt, then deletes the
     selected files along with all related session files sharing the same
-    ``{session_id}.{pid}`` prefix.
+    ``{session_id}.{pid}`` prefix. A file is skipped when its owning session is
+    still alive, when that liveness cannot be verified, or when a process still
+    holds it open.
 
     Args:
         task_dir: Directory containing the log files.
@@ -361,8 +524,24 @@ def clean_by_numbers(task_dir: str, files: List[dict], indices: List[int]) -> in
 
     deleted_count = 0
     failed_files = []
+    home = _home_for_task_dir(task_dir)
+    # Deletion-time probes must be fresh: a session may have started using the
+    # file while the operator was reading the confirmation prompt.
+    revalidation_cache: Dict[Tuple[str, int], str] = {}
 
     for f in valid_files:
+        # Revalidate immediately before deletion. The inventory check ran before
+        # the confirmation prompt, so a session that became live in between must
+        # still keep its files.
+        reason = _deletion_block_reason(
+            f["path"], home=home, cache=revalidation_cache
+        )
+        if reason is not None:
+            cprint(
+                f"[WARN] Skipping {f['filename']} ({reason})",
+                color=Colors.YELLOW,
+            )
+            continue
         try:
             os.remove(f["path"])
             deleted_count += 1

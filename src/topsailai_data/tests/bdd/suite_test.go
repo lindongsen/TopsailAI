@@ -131,16 +131,13 @@ func registerSteps(ctx *godog.ScenarioContext) {
 		return listOutputHasTimeOrder(ctx, strings.ToLower(format), map[string]string{"ascending": "asc", "descending": "desc"}[order])
 	})
 	ctx.Step(`^the (JSON|YAML) search result contains exactly IDs "([^"]*)"$`, func(ctx context.Context, format, ids string) error {
-		return listOutputHasIDs(ctx, strings.ToLower(format), ids)
+		return searchOutputHasExactIDs(ctx, strings.ToLower(format), ids)
 	})
 	ctx.Step(`^the (JSON|YAML) search result contains IDs "([^"]*)"$`, func(ctx context.Context, format, ids string) error {
 		return listOutputContainsAllTags(ctx, strings.ToLower(format), ids)
 	})
 	ctx.Step(`^the (JSON|YAML) search result has exactly IDs "([^"]*)"$`, func(ctx context.Context, format, ids string) error {
 		return listOutputHasIDs(ctx, strings.ToLower(format), ids)
-	})
-	ctx.Step(`^I add classify tags "([^"]+)" to "([^"]+)" at level "([^"]+)"$`, func(ctx context.Context, tags, name, classify string) error {
-		return addClassifyTags(ctx, name, classify, tags)
 	})
 	ctx.Step(`^I record public metadata for "([^"]+)"$`, recordPublicMetadata)
 	ctx.Step(`^the JSON list contains object "([^"]+)" with path classify "([^"]+)"$`, jsonObjectPathClassifyMatches)

@@ -148,7 +148,7 @@ func TestNewWiresStatConfiguration(t *testing.T) {
 	}
 
 	obj := createTestObject(t, mgr, "stat-config-disabled")
-	stat, err := local.ReadStat(obj.DataRef)
+	stat, err := local.ReadStat(objectStatDir(t, mgr, obj.ID))
 	if err != nil {
 		t.Fatalf("ReadStat failed: %v", err)
 	}
@@ -667,7 +667,7 @@ func TestDeleteObjectCreating(t *testing.T) {
 
 	now := time.Now()
 	objectPath := buildObjectPathForTest(t, now, nil, "creating")
-	objectDir := filepath.Join(mgr.Root(), objectPath)
+	objectDir := filepath.Join(mgr.Root(), "object", objectPath)
 	if err := os.MkdirAll(objectDir, 0o755); err != nil {
 		t.Fatalf("mkdir object dir: %v", err)
 	}
@@ -676,13 +676,14 @@ func TestDeleteObjectCreating(t *testing.T) {
 	}
 
 	if err := mgr.meta.Create(ctx, &models.Object{
-		ID:        "creating",
-		Name:      "creating",
-		Path:      objectPath,
-		Status:    models.ObjectStatusCreating,
-		CreatedAt: now,
-		UpdatedAt: now,
-		DataRef:   objectDir,
+		ID:            "creating",
+		Name:          "creating",
+		Path:          objectPath,
+		Status:        models.ObjectStatusCreating,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		DataRef:       objectPath,
+		SchemaVersion: models.CurrentSchemaVersion,
 	}); err != nil {
 		t.Fatalf("Create metadata failed: %v", err)
 	}
@@ -831,45 +832,6 @@ func TestRemoveTagInvalid(t *testing.T) {
 	}
 }
 
-func TestRemoveInheritedTagFails(t *testing.T) {
-	mgr := newTestManager(t)
-	ctx := context.Background()
-
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
-		t.Fatalf("CreateObject failed: %v", err)
-	}
-
-	obj, err := mgr.GetObject(ctx, "obj", false)
-	if err != nil {
-		t.Fatalf("GetObject failed: %v", err)
-	}
-
-	// Derive the time-prefix classify directory from the object's path instead
-	// of hard-coding a time value. The object path is {year}/{monthday}/{hourminute}/{name}.
-	classifyTagPath := filepath.Join(mgr.Root(), filepath.Dir(obj.Path))
-	if err := os.MkdirAll(classifyTagPath, 0o755); err != nil {
-		t.Fatalf("mkdir classify path: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(classifyTagPath, filepath.Base(classifyTagPath)+".tags"), []byte("inherited\n"), 0o644); err != nil {
-		t.Fatalf("write classify tags: %v", err)
-	}
-
-	obj, err = mgr.GetObject(ctx, "obj", false)
-	if err != nil {
-		t.Fatalf("GetObject after classify tag failed: %v", err)
-	}
-	if !hasTag(obj.Tags, "inherited") {
-		t.Fatalf("expected inherited tag, got %v", obj.Tags)
-	}
-
-	err = mgr.RemoveTag(ctx, "obj", "inherited")
-	if err == nil {
-		t.Fatal("expected error removing inherited tag")
-	}
-	if !errors.Is(err, apperrors.ErrInvalidArgument) {
-		t.Fatalf("expected ErrInvalidArgument, got %v", err)
-	}
-}
 func TestRestoreObject(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
@@ -1073,7 +1035,7 @@ func TestRestoreObjectRejectsNonDeleted(t *testing.T) {
 
 	now := time.Now()
 	creatingPath := buildObjectPathForTest(t, now, nil, "creating-obj")
-	creatingDir := filepath.Join(mgr.Root(), creatingPath)
+	creatingDir := filepath.Join(mgr.Root(), "object", creatingPath)
 	if err := os.MkdirAll(creatingDir, 0o755); err != nil {
 		t.Fatalf("mkdir creating object dir: %v", err)
 	}
@@ -1087,13 +1049,14 @@ func TestRestoreObjectRejectsNonDeleted(t *testing.T) {
 			name: "creating",
 			setup: func() error {
 				return mgr.meta.Create(ctx, &models.Object{
-					ID:        "creating-obj",
-					Name:      "creating-obj",
-					Path:      creatingPath,
-					Status:    models.ObjectStatusCreating,
-					CreatedAt: now,
-					UpdatedAt: now,
-					DataRef:   creatingDir,
+					ID:            "creating-obj",
+					Name:          "creating-obj",
+					Path:          creatingPath,
+					Status:        models.ObjectStatusCreating,
+					CreatedAt:     now,
+					UpdatedAt:     now,
+					DataRef:       creatingPath,
+					SchemaVersion: models.CurrentSchemaVersion,
 				})
 			},
 			id: "creating-obj",
@@ -1237,20 +1200,21 @@ func TestListCreatingObjects(t *testing.T) {
 
 	now := time.Now()
 	objectPath := buildObjectPathForTest(t, now, nil, "creating")
-	objectDir := filepath.Join(mgr.Root(), objectPath)
+	objectDir := filepath.Join(mgr.Root(), "object", objectPath)
 	if err := os.MkdirAll(objectDir, 0o755); err != nil {
 		t.Fatalf("mkdir object dir: %v", err)
 	}
 
 	meta := mgr.meta
 	if err := meta.Create(ctx, &models.Object{
-		ID:        "creating",
-		Name:      "creating",
-		Path:      objectPath,
-		Status:    models.ObjectStatusCreating,
-		CreatedAt: now,
-		UpdatedAt: now,
-		DataRef:   objectDir,
+		ID:            "creating",
+		Name:          "creating",
+		Path:          objectPath,
+		Status:        models.ObjectStatusCreating,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		DataRef:       objectPath,
+		SchemaVersion: models.CurrentSchemaVersion,
 	}); err != nil {
 		t.Fatalf("Create metadata failed: %v", err)
 	}
@@ -1495,7 +1459,7 @@ func TestMoveObjectRemovesOldPathAndEmptyParents(t *testing.T) {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
-	oldObjectDir := filepath.Join(mgr.Root(), obj.Path)
+	oldObjectDir := filepath.Join(mgr.Root(), "object", obj.Path)
 	oldNestedDir := filepath.Dir(oldObjectDir)
 	oldClassifyDir := filepath.Dir(oldNestedDir)
 
@@ -1541,7 +1505,7 @@ func TestGCRemovesEmptyParents(t *testing.T) {
 	}
 
 	// Backdate the ceased_at timestamp so the object is eligible for GC.
-	metaPath := filepath.Join(mgr.Root(), obj.Path, "metadata.json")
+	metaPath := filepath.Join(objectStatDir(t, mgr, obj.ID), "metadata.json")
 	metaBytes, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("read metadata.json failed: %v", err)
@@ -1559,7 +1523,7 @@ func TestGCRemovesEmptyParents(t *testing.T) {
 		t.Fatalf("write metadata.json failed: %v", err)
 	}
 
-	objectDir := filepath.Join(mgr.Root(), obj.Path)
+	objectDir := filepath.Join(mgr.Root(), "object", obj.Path)
 	classifyDir := filepath.Dir(objectDir)
 
 	if err := mgr.GC(ctx); err != nil {
@@ -1580,19 +1544,20 @@ func TestGCCleanupRemovesEmptyParents(t *testing.T) {
 
 	now := time.Now()
 	objectPath := buildObjectPathForTest(t, now, []string{"demo"}, "orphan")
-	objectDir := filepath.Join(mgr.Root(), objectPath)
+	objectDir := filepath.Join(mgr.Root(), "object", objectPath)
 	if err := os.MkdirAll(objectDir, 0o755); err != nil {
 		t.Fatalf("mkdir object dir: %v", err)
 	}
 
 	if err := mgr.meta.Create(ctx, &models.Object{
-		ID:        "orphan",
-		Name:      "orphan",
-		Path:      objectPath,
-		Status:    models.ObjectStatusCreating,
-		CreatedAt: now,
-		UpdatedAt: now,
-		DataRef:   objectDir,
+		ID:            "orphan",
+		Name:          "orphan",
+		Path:          objectPath,
+		Status:        models.ObjectStatusCreating,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		DataRef:       objectPath,
+		SchemaVersion: models.CurrentSchemaVersion,
 	}); err != nil {
 		t.Fatalf("Create metadata failed: %v", err)
 	}
@@ -1623,19 +1588,18 @@ func TestDeleteObjectRetainsMetadataAndParents(t *testing.T) {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
-	objectDir := filepath.Join(mgr.Root(), obj.Path)
+	objectDir := filepath.Join(mgr.Root(), "object", obj.Path)
 	classifyDir := filepath.Dir(objectDir)
 
 	if err := mgr.DeleteObject(ctx, "keepme"); err != nil {
 		t.Fatalf("DeleteObject failed: %v", err)
 	}
 
-	// Deleted objects retain metadata, so the object directory and its parents
-	// must remain even though actual data was removed.
+	// Soft deletion retains both payload and independent hash metadata.
 	if _, err := os.Stat(objectDir); err != nil {
 		t.Fatalf("deleted object directory should be retained: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(objectDir, "metadata.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(objectStatDir(t, mgr, obj.ID), "metadata.json")); err != nil {
 		t.Fatalf("deleted object metadata should be retained: %v", err)
 	}
 	if _, err := os.Stat(classifyDir); err != nil {
@@ -1709,13 +1673,23 @@ func TestCreateObjectTarMissingMarkdown(t *testing.T) {
 	}
 }
 
+// objectStatDir resolves the identity-addressed metadata fixture.
+func objectStatDir(t *testing.T, mgr *Manager, id models.ObjectID) string {
+	t.Helper()
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := layout.ObjectMetaPath(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func readObjectStat(t *testing.T, mgr *Manager, id models.ObjectID) *models.ObjectStat {
 	t.Helper()
-	obj, err := mgr.meta.Get(context.Background(), id, true)
-	if err != nil {
-		t.Fatalf("get object %s for stat: %v", id, err)
-	}
-	stat, err := local.ReadStat(obj.DataRef)
+	stat, err := local.ReadStat(objectStatDir(t, mgr, id))
 	if err != nil {
 		t.Fatalf("read object %s stat: %v", id, err)
 	}
@@ -1812,8 +1786,8 @@ func TestManagerStatTrackingGuardsAndEnumeration(t *testing.T) {
 		t.Fatalf("Get object failed: %v", err)
 	}
 	obj.Status = models.ObjectStatusDeleted
-	mgr.recordRead(obj)
-	mgr.recordWrite(obj)
+	mgr.recordRead(ctx, obj, nil)
+	mgr.recordWrite(ctx, obj)
 	afterDeleted := readObjectStat(t, mgr, "guarded-stat")
 	if afterDeleted.ReadCount != before.ReadCount || afterDeleted.WriteCount != before.WriteCount {
 		t.Fatalf("non-active recording changed stat: before=%+v after=%+v", before, afterDeleted)
@@ -1825,14 +1799,14 @@ func TestStatLifecycleFreezeRecoverAndResume(t *testing.T) {
 	ctx := context.Background()
 	obj := createTestObject(t, mgr, "stat-lifecycle")
 
-	beforeDelete, err := local.ReadStat(obj.DataRef)
+	beforeDelete, err := local.ReadStat(objectStatDir(t, mgr, obj.ID))
 	if err != nil {
 		t.Fatalf("ReadStat before delete failed: %v", err)
 	}
 	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatalf("DeleteObject failed: %v", err)
 	}
-	frozen, err := local.ReadStat(obj.DataRef)
+	frozen, err := local.ReadStat(objectStatDir(t, mgr, obj.ID))
 	if err != nil {
 		t.Fatalf("ReadStat after delete failed: %v", err)
 	}
@@ -1842,7 +1816,7 @@ func TestStatLifecycleFreezeRecoverAndResume(t *testing.T) {
 	if _, err := mgr.ReadActualFile(ctx, obj.ID, obj.Name+".md"); err == nil {
 		t.Fatal("deleted object read should fail")
 	}
-	afterRejectedRead, err := local.ReadStat(obj.DataRef)
+	afterRejectedRead, err := local.ReadStat(objectStatDir(t, mgr, obj.ID))
 	if err != nil {
 		t.Fatalf("ReadStat after rejected read failed: %v", err)
 	}
@@ -1853,7 +1827,7 @@ func TestStatLifecycleFreezeRecoverAndResume(t *testing.T) {
 	if err := mgr.RestoreObject(ctx, obj.ID, nil); err != nil {
 		t.Fatalf("RestoreObject failed: %v", err)
 	}
-	restored, err := local.ReadStat(obj.DataRef)
+	restored, err := local.ReadStat(objectStatDir(t, mgr, obj.ID))
 	if err != nil {
 		t.Fatalf("ReadStat after restore failed: %v", err)
 	}
@@ -1865,7 +1839,7 @@ func TestStatLifecycleFreezeRecoverAndResume(t *testing.T) {
 		t.Fatalf("ReadActualFile after restore failed: %v", err)
 	}
 	_ = reader.Close()
-	resumed, err := local.ReadStat(obj.DataRef)
+	resumed, err := local.ReadStat(objectStatDir(t, mgr, obj.ID))
 	if err != nil {
 		t.Fatalf("ReadStat after resumed read failed: %v", err)
 	}
@@ -1874,7 +1848,7 @@ func TestStatLifecycleFreezeRecoverAndResume(t *testing.T) {
 	}
 }
 
-func TestStatLifecycleCleanupRemovesStatFiles(t *testing.T) {
+func TestStatLifecycleRetentionAndCleanup(t *testing.T) {
 	t.Run("finalize", func(t *testing.T) {
 		mgr := newTestManager(t)
 		ctx := context.Background()
@@ -1885,8 +1859,11 @@ func TestStatLifecycleCleanupRemovesStatFiles(t *testing.T) {
 		if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 			t.Fatalf("finalize failed: %v", err)
 		}
-		if _, err := os.Stat(local.StatFilePath(obj.DataRef)); !os.IsNotExist(err) {
-			t.Fatalf("finalize left an orphan stat file: %v", err)
+		if stat := readObjectStat(t, mgr, obj.ID); stat.WriteCount != 1 {
+			t.Fatalf("finalization changed retained statistics: %+v", stat)
+		}
+		if _, err := os.Stat(local.StatFilePath(objectStatDir(t, mgr, obj.ID))); err != nil {
+			t.Fatalf("finalization removed retained statistics: %v", err)
 		}
 	})
 
@@ -1900,16 +1877,16 @@ func TestStatLifecycleCleanupRemovesStatFiles(t *testing.T) {
 		if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 			t.Fatalf("finalize failed: %v", err)
 		}
-		if err := local.WriteStat(obj.DataRef, &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, ReadCount: 3}); err != nil {
+		if err := local.WriteStat(objectStatDir(t, mgr, obj.ID), &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, ReadCount: 3}); err != nil {
 			t.Fatalf("restore residual stat for GC test: %v", err)
 		}
 		if err := mgr.GCObjects(ctx, true); err != nil {
 			t.Fatalf("GCObjects failed: %v", err)
 		}
-		if _, err := os.Stat(local.StatFilePath(obj.DataRef)); !os.IsNotExist(err) {
+		if _, err := os.Stat(local.StatFilePath(objectStatDir(t, mgr, obj.ID))); !os.IsNotExist(err) {
 			t.Fatalf("ceased GC left an orphan stat file: %v", err)
 		}
-		if _, err := os.Stat(obj.DataRef); !os.IsNotExist(err) {
+		if _, err := os.Stat(objectStatDir(t, mgr, obj.ID)); !os.IsNotExist(err) {
 			t.Fatalf("ceased GC left object directory: %v", err)
 		}
 	})
@@ -1919,8 +1896,8 @@ func TestStatLifecycleCleanupRemovesStatFiles(t *testing.T) {
 		ctx := context.Background()
 		now := time.Now()
 		path := buildObjectPathForTest(t, now, nil, "stat-creating")
-		dir := filepath.Join(mgr.Root(), path)
-		obj := &models.Object{ID: "stat-creating", Name: "stat-creating", Path: path, Status: models.ObjectStatusCreating, CreatedAt: now, UpdatedAt: now, DataRef: dir}
+		dir := objectStatDir(t, mgr, "stat-creating")
+		obj := &models.Object{ID: "stat-creating", Name: "stat-creating", Path: path, Status: models.ObjectStatusCreating, CreatedAt: now, UpdatedAt: now, DataRef: path, SchemaVersion: models.CurrentSchemaVersion}
 		if err := mgr.meta.Create(ctx, obj); err != nil {
 			t.Fatalf("create creating metadata failed: %v", err)
 		}
@@ -1944,7 +1921,7 @@ func TestWriteActualFileRejectsSameFileWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	obj := createTestObject(t, mgr, "same-file-manager")
 
-	destination := filepath.Join(obj.DataRef, obj.Name+".md")
+	destination := filepath.Join(payloadDirForTest(t, mgr, obj.DataRef), obj.Name+".md")
 	before, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatalf("read destination before write: %v", err)
@@ -1972,12 +1949,12 @@ func TestUpdateActualDataRejectsArchiveInsideObjectWithoutMutation(t *testing.T)
 	mgr := newTestManager(t)
 	ctx := context.Background()
 	obj := createTestObject(t, mgr, "archive-overlap")
-	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	markerPath := filepath.Join(payloadDirForTest(t, mgr, obj.DataRef), obj.Name+".md")
 	before, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	archivePath := filepath.Join(obj.DataRef, "input.tar")
+	archivePath := filepath.Join(payloadDirForTest(t, mgr, obj.DataRef), "input.tar")
 	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{obj.Name + ".md": []byte("replacement")}), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2005,12 +1982,12 @@ func TestRestoreObjectRejectsArchiveInsideDeletedObjectWithoutMutation(t *testin
 	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatal(err)
 	}
-	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	markerPath := filepath.Join(payloadDirForTest(t, mgr, obj.DataRef), obj.Name+".md")
 	before, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	archivePath := filepath.Join(obj.DataRef, "recover.tar")
+	archivePath := filepath.Join(payloadDirForTest(t, mgr, obj.DataRef), "recover.tar")
 	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{obj.Name + ".md": []byte("replacement")}), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2036,4 +2013,18 @@ func TestRestoreObjectRejectsArchiveInsideDeletedObjectWithoutMutation(t *testin
 	if !bytes.Equal(after, before) {
 		t.Fatal("marker changed after rejected recovery")
 	}
+}
+
+// payloadDirForTest resolves a local reference for filesystem assertions.
+func payloadDirForTest(t *testing.T, mgr *Manager, ref string) string {
+	t.Helper()
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := layout.ResolveObjectRef(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

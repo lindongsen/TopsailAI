@@ -19,7 +19,7 @@ This document describes the architecture, core interfaces, file layout conventio
 - Separate metadata storage from actual data storage so adapters can be mixed and matched.
 - Support highly extensible adapter interfaces.
 - Implement the local adapter first, with clear file-system semantics.
-- Support recursive tag inheritance and time-based directory layouts.
+- Support independent object tags and time-based payload directory layouts.
 
 ### Non-Goals
 
@@ -34,15 +34,13 @@ This document describes the architecture, core interfaces, file layout conventio
 | Object | A logical data unit identified by a stable ID and a name. |
 | Object folder | A directory whose name equals the object name and which contains the required `object.md` file. |
 | Object file | The `object.md` file inside an object folder. It is **actual data**, not metadata; its existence marks the folder as an object boundary. |
-| Object tag file | An optional `{object}.tags` file containing one tag per line. Tags apply only to that object. |
 | Classify | A directory level used for organization after the time prefix. A classify path is the sequence of directories between the time prefix and the object folder. |
-| Classify tag file | An optional `{classify}.tags` file inside a classify directory. Tags apply recursively to all objects under that classify directory. |
-| Classify tag | A tag stored in the `classify_tag` relation table or a `{classify}.tags` file, inherited by all objects under the associated classify path. |
+| Tag | A simple string attached to an object. The local adapter stores tags in the independent `tags` file under the object's Hash metadata directory. |
 | Metadata | The set `{object ID, object name, path, description, creation time, update time, status, tags}` that describes an object. |
 | Actual data | The payload associated with an object. The `object.md` file is the primary actual-data carrier; additional files and sub-directories inside the object folder are also actual data. |
 | Adapter | A pluggable implementation of a storage interface. |
 | Schema version | A monotonically increasing integer that identifies the persistent storage format. Starts at `1`. |
-| Object lock | An advisory lock file (`{object}.lock`) inside an object folder, used to serialize write operations on that object. |
+| Object lock | An advisory `lock` file in the Hash metadata directory, used to coordinate cooperating operations on that object. |
 | Soft delete | A deletion strategy that marks an object as `deleted` while preserving its actual data, then later transitions it to `ceased` and removes the actual data. |
 | Status | The lifecycle state of an object: `creating`, `active`, `deleted`, or `ceased`. |
 
@@ -77,7 +75,7 @@ The `Manager` orchestrates metadata and actual data operations. It does not know
 
 - Validating object names and paths.
 - Coordinating metadata writes with actual data writes.
-- Enforcing business rules such as recursive tag inheritance and depth limits.
+- Enforcing business rules such as tag validation and depth limits.
 
 ### 4.3 Adapter Interfaces
 
@@ -118,14 +116,14 @@ type Object struct {
 
 - `ID`: stable, opaque identifier. In the local adapter it equals the object name; in database adapters it is typically the same value stored as the primary key.
 - `Name`: the object name, equal to the object folder name.
-- `Path`: the full relative path of the object folder, e.g. `2026/0714/2323/xyz` or `2026/0714/2323/projects/demo/xyz`.
+- `Path`: the path relative to the local `object/` payload root, e.g. `2026/0714/2323/xyz` or `2026/0714/2323/projects/demo/xyz`.
 - `Description`: a short human-readable summary of the object. A description is required when an object is created; it may be supplied explicitly via `--description` or extracted automatically from the YAML frontmatter in `{name}.md`.
-- `Tags`: merged set of inherited tags and object-specific tags.
+- `Tags`: the complete tag set returned by the adapter, loaded from the independent `tags` file locally. The local `metadata.json` does not contain tags.
 - `Status`: lifecycle state. New objects start as `creating`, transition to `active` once actual data is written, and are removed through `deleted` to `ceased`.
-- `SchemaVersion`: persistent storage format version of this object record. Starts at `1` and is updated on migration.
+- `SchemaVersion`: persistent storage format version of this object record. New local records use the current version; incompatible local records are refused.
 - `CreatedAt`: creation timestamp, used to generate the time path.
-- `UpdatedAt`: last modification timestamp. Required in the model and in database adapters. In the local file-system adapter it is not persisted separately; the adapter returns `CreatedAt` or the file modification time, never a zero value.
-- `DataRef`: opaque reference returned by the actual-data adapter. The metadata adapter stores it but does not interpret it.
+- `UpdatedAt`: last modification timestamp, persisted in the local metadata record independently of payload file modification times.
+- `DataRef`: adapter-specific reference. Locally it equals `Path`, is relative to `object/`, and is validated against object identity; it is never an absolute host path.
 
 #### Description and YAML frontmatter fallback
 
@@ -143,62 +141,27 @@ When an object with an empty existing description is updated without an explicit
 
 ### 5.3 Tag
 
-Tags are simple strings. Duplicates are removed and order is preserved as read from files.
+Tags are simple strings. Duplicates are removed and order is preserved.
+
+The local adapter stores tags only in the independent `tags` file in the object's Hash metadata directory. The public `Object.Tags` field remains available, but `metadata.json` contains no tag field. Tags do not inherit from classify directories, and `meta/classify/` is not created. Tags survive soft deletion and finalization until metadata purge. Tag-file and metadata-record replacement are individually atomic, not a cross-file transaction; a failed later publication may leave an earlier tag replacement visible.
 
 ### 5.4 Schema Version and Persistence Format
 
 Every persistent storage backend must record a `schema_version`. The value is a monotonically increasing integer that identifies the on-disk or on-database format. The initial version is `1`.
 
-- The local adapter stores `schema_version` in a root-level index file `{ROOT}/topsailai_data.json` (or equivalent metadata file) and in each object record it returns.
-- Database adapters store `schema_version` in the `objects` table and in a dedicated `schema_migrations` table.
-- When a newer binary opens an older store, it must run migrations in order until the stored version matches the binary's expected version. Migrations are idempotent and recorded in `schema_migrations`.
-- If an older binary opens a newer store, it must refuse to operate and return a clear error.
-
-The `Object.SchemaVersion` field reflects the version of the record at the time it was read. New objects are created with the current schema version.
+The local adapter stores `SchemaVersion` in each Hash metadata record and accepts only the current schema version. This layout cutover does not migrate or import an old store. An incompatible record is rejected rather than rewritten. New objects use the current schema version. A future database adapter may maintain its own migration history; that does not imply local migration support.
 
 ## 6. Adapter Interfaces
 
 ### 6.1 MetadataAdapter
 
-```go
-type MetadataAdapter interface {
-    Init(ctx context.Context) error
-    Create(ctx context.Context, obj Object) (ObjectID, error)
-    Get(ctx context.Context, id ObjectID) (Object, error)
-    Update(ctx context.Context, id ObjectID, obj Object) error
-    Delete(ctx context.Context, id ObjectID) error
-    List(ctx context.Context, opts ListOptions) ([]Object, error)
-    Close() error
-}
-```
+The authoritative signatures are in `pkg/adapters/interfaces.go`. Metadata operations use stable object IDs and object records. The interface includes create/get/update, soft delete, finalization, ceased-only purge, list/search, tag changes, restore, and GC candidate enumeration. Payload removal is coordinated separately by the manager; metadata purge never deletes payload data.
 
 ### 6.2 ActualDataAdapter
 
 The actual-data adapter supports two access patterns: **archive** (entire object folder as a tar stream) and **single file** (a named file inside the object).
 
-```go
-type ActualDataAdapter interface {
-    Init(ctx context.Context) error
-
-    // Archive access: read or write the whole object folder as a tar archive.
-    WriteArchive(ctx context.Context, id ObjectID, reader io.Reader) error
-    ReadArchive(ctx context.Context, id ObjectID) (io.ReadCloser, error)
-
-    // Single-file access: read or write one file inside the object.
-    WriteFile(ctx context.Context, id ObjectID, filename string, reader io.Reader) error
-    ReadFile(ctx context.Context, id ObjectID, filename string) (io.ReadCloser, error)
-
-    // Move relocates the actual data to a new adapter-specific reference.
-    // The metadata manager is responsible for updating the Object.Path.
-    Move(ctx context.Context, id ObjectID, newRef string) error
-
-    Delete(ctx context.Context, id ObjectID) error
-    Exists(ctx context.Context, id ObjectID) (bool, error)
-    Close() error
-}
-```
-
-`Move` only handles the actual-data payload; it does **not** update metadata. For the local adapter, `newRef` is the new full object folder path (e.g. `2026/0714/2323/projects/demo/xyz`). For remote adapters, `newRef` is adapter-specific, such as an S3 object key. The caller (the manager) is responsible for computing `newRef` from the user's classify input and for updating `Object.Path` after the adapter reports success.
+The authoritative signatures are in `pkg/adapters/interfaces.go`. Location-aware actual-data methods accept a reference string rather than an object ID. Archive/file writes and Move return the resulting reference. Locally references are canonical paths relative to `object/`. Move copies to the destination; the manager publishes the new metadata before deleting the source. Remote references remain adapter-specific.
 
 The local adapter implements both patterns over the object folder. Remote adapters such as S3 may store payloads as single blobs or object-storage keys.
 
@@ -218,28 +181,28 @@ The local adapter stores everything on the local file system. It is split into a
 
 ### 7.1 Root Directory
 
-All data lives under a configurable root directory. The default root is controlled by the environment variable `TOPSAILAI_DATA_ROOT`. If unset, the CLI fails with a clear error.
+The configured store container has sibling `object/` and `meta/` trees. `TOPSAILAI_DATA_ROOT` selects that container; the CLI defaults to `${HOME}/.topsailai/data` when unset. Relative configuration paths are resolved at construction. Existing old-layout stores are not migrated by this cutover.
 
 ### 7.2 Object Folder Layout
 
 An object named `xyz` is stored as:
 
 ```text
-{ROOT}/2026/0714/2323/xyz/
+{ROOT}/object/2026/0714/2323/xyz/
     xyz.md          (mandatory actual data)
-    xyz.tags        (optional object-specific tags)
     <other files>   (optional actual data)
     <sub-directories> (optional actual data)
 ```
 
 - `xyz.md` is mandatory. It is **actual data** and expresses the real information of the object. Its existence also marks `xyz/` as an object folder.
-- `xyz.tags` is optional. Tags listed here apply only to this object.
 - Additional files and sub-directories are considered actual data of the object.
+- Object metadata lives at `meta/<h[0:2]>/<h[2:4]>/<h[4:6]>/<h>/`, where `h` is the lowercase SHA256 of the exact object ID. The leaf contains `metadata.json`, `tags`, `lock`, `stat.json`, and `stat.lock` as needed.
+- The payload folder contains user data only. User files named `metadata.json`, `stat.json`, `.stat.json`, or ending in `.tags`/`.lock` are ordinary actual data, not internal metadata.
 
 ### 7.3 ObjectID and Path in the Local Adapter
 
 - `ObjectID` equals the object folder name. For object `xyz`, the ID is `xyz`.
-- `Path` is the full relative path from the root to the object folder, e.g. `2026/0714/2323/xyz`.
+- `Path` and `DataRef` are equal canonical paths relative to `object/`, e.g. `2026/0714/2323/xyz`.
 - Because the ID is the folder name, two objects with the same name cannot coexist at different paths in the local adapter. This is a known limitation of the local adapter; database adapters do not have this restriction.
 - When an object is moved to a different classify path, its `Path` changes but its `ID` and `Name` remain the same.
 
@@ -256,14 +219,14 @@ Examples:
 - `2026/0714/2323/xyz`
 - `2026/0714/2323/projects/demo/xyz`
 
-After the time prefix, users may add custom classify directories. The total depth from the root to the object folder must not exceed 11 levels, and the object folder itself counts toward that limit.
+After the time prefix, users may add custom classify directories. The total depth from `object/` to the object folder must not exceed 11 levels, and the object folder itself counts toward that limit.
 
 ### 7.5 Depth Limit
 
-The root directory itself is level 0. The time prefix contributes 4 levels (`year`, `monthday`, `hourminute`, `object-name`). Therefore up to 7 additional classify levels may be inserted between `hourminute` and the object name.
+The payload root `object/` itself is level 0; the store-container level is not counted. The time prefix contributes 4 levels (`year`, `monthday`, `hourminute`, `object-name`). Therefore up to 7 additional classify levels may be inserted between `hourminute` and the object name.
 
 ```text
-level 0: {ROOT}
+level 0: {ROOT}/object
 level 1: 2026
 level 2: 0714
 level 3: 2323
@@ -283,61 +246,15 @@ This path has 12 levels below the root and therefore exceeds the limit.
 
 ### 7.6 UpdatedAt in the Local Adapter
 
-The `UpdatedAt` field is part of the `Object` model and is required by the interface. In the local file-system adapter it is not persisted to a separate file in this phase. The adapter **must not** return a zero value. Instead it returns one of the following, in order of preference:
+The local adapter persists `CreatedAt` and `UpdatedAt` in the Hash metadata record. Payload timestamps are not the authority for object timestamps.
 
-1. The file modification time of the object folder or `object.md`, if available.
-2. `CreatedAt` as a fallback.
+### 7.7 Metadata Enumeration and Payload Boundaries
 
-Future iterations may add a dedicated metadata file to persist `UpdatedAt` independently.
+Normal Get resolves metadata by the ID hash. List and Search enumerate Hash metadata records and load their independent tag files, without discovering objects by scanning payload Markdown. Creating objects remain hidden from normal queries. A nested Markdown file does not create another metadata record.
 
-### 7.7 Tag Files
+The payload scanner and namespace checks still recognize a directory containing its same-named Markdown file as a payload boundary and stop descending there. This protects private object subdirectories; it is not the metadata query source. Collection operations remain unindexed: the accepted 100000-object measurements were List 17.023s and Search 22.384s, with about 1.2 GB cumulative allocations per operation, not peak memory. Scale optimization is deferred separately.
 
-A tag file contains one tag per line. Lines whose first non-space character is `#` are comments and are ignored. Empty lines are ignored. Leading and trailing whitespace is trimmed from each tag.
-
-Example `xyz.tags`:
-
-```text
-# project tags
-project-alpha
-urgent
-```
-
-### 7.8 Classify Tag Inheritance
-
-If a classify directory contains a file named `{classify-name}.tags`, the tags in that file apply **recursively** to every object folder under that directory. Inherited tags are merged with object-specific tags and with tags inherited from intermediate classify directories; duplicates are removed.
-
-Example:
-
-```text
-{ROOT}/2026/0714/2323/
-    2323.tags
-    xyz/
-        xyz.md
-        xyz.tags
-    abc/
-        abc.md
-```
-
-If `2323.tags` contains `daily`, `xyz.tags` contains `demo`, and `abc/` has no object-specific tags, then:
-
-- Object `xyz` has tags `[daily, demo]`.
-- Object `abc` has tags `[daily]`.
-
-If `2026/0714/0714.tags` contains `archive`, then all object folders under `2026/0714/` (including those under `2026/0714/2323/`) inherit `archive` in addition to any closer inherited tags.
-
-### 7.9 Metadata Scan Rules
-
-When scanning for objects:
-
-1. Walk the root directory recursively.
-2. For each directory, check whether it contains a file named `{directory-name}.md`.
-3. If such a file exists, the directory is an object folder. Record its metadata (ID = folder name, name, full path, creation time, merged inherited tags) and stop descending into it.
-4. If no such file exists, continue scanning sub-directories.
-5. A file such as `xyz/abc/xyz.md` does **not** make `abc` an object folder; only `xyz/xyz.md` makes `xyz` an object folder.
-
-This rule ensures that an object's private sub-directories are not treated as independent objects. The `object.md` file is actual data, but its presence is used as the object-boundary signal during scanning.
-
-### 7.10 Actual Data Storage
+### 7.8 Actual Data Storage
 
 For the local adapter, actual data is stored inside the object folder. The adapter treats the entire object folder as the payload container.
 
@@ -347,37 +264,23 @@ For the local adapter, actual data is stored inside the object folder. The adapt
 
 Future adapters may store payloads as single blobs or object-storage keys.
 
-### 7.11 Object Locking
+### 7.9 Object Locking
 
-Each object folder may contain an advisory lock file named `{object}.lock` (e.g. `xyz.lock`). The lock is advisory: it only coordinates processes that honor the convention.
+Each object uses the `lock` file in its Hash metadata leaf. Locks coordinate cooperating processes only. Namespace custody serializes creation, relocation, and metadata-leaf removal; lock order is namespace then object. Mutations re-read the record after acquiring custody.
 
-- Write operations (`Create`, `Update`, `Delete`, `Move`, `WriteFile`, `WriteArchive`) acquire the object lock by default before modifying the object folder or metadata.
-- Read operations (`Get`, `List`, `ReadFile`, `ReadArchive`) do **not** acquire the lock by default, allowing concurrent reads.
-- If the lock file cannot be acquired because another process holds it, the operation returns `ErrObjectLocked` after a configurable timeout.
-- Locks are meaningful only for `active` objects. `gc` and delete-finalization may proceed on `creating` or `deleted` objects without acquiring the lock. `recover` operates on `deleted` objects and does not acquire the lock.
-- An `active` object cannot be deleted or moved while another process holds its lock.
-- The lock file is created on first write and removed when the object transitions to `ceased`.
+- Writes, soft deletion, finalization, recovery, and GC acquire object custody.
+- Optional read locking retains shared custody until the returned stream is closed.
+- Statistics use `stat.lock` for the complete read-modify-write operation and revalidate active status under object custody.
+- Finalization removes payload but retains the metadata leaf and its lock files. Only purge removes the leaf.
+- These locks do not guarantee safety against hostile concurrent path replacement or power loss.
 
-### 7.12 Soft Delete Markers
+### 7.10 Soft Delete and Finalization
 
-Deletion follows a soft-delete lifecycle with four states: `creating`, `active`, `deleted`, and `ceased`.
+Lifecycle status is stored in Hash `metadata.json`, not payload `.deleted` or `.ceased` files. Soft delete changes active to deleted and retains payload, tags, and statistics. Finalization removes the entire payload directory before setting ceased. If removal fails, the deleted record remains for retry; if status publication fails after removal, the deleted record also remains retryable. Ceased metadata and tags remain until purge. Statistics are best effort, not a durable event ledger.
 
-In the local adapter:
+Deleted and ceased objects are excluded from normal list/search; `--include-deleted` enables inspection. Show resolves metadata by ID and only renders actual-data sections for active objects.
 
-1. `delete <id>` first creates a marker file `{object}.deleted` (e.g. `xyz.deleted`) inside the object folder. The object's metadata status is updated to `deleted`. Actual data is preserved so the object can be restored with `recover`.
-2. The object remains in `deleted` status until it is finalized. Finalization can happen explicitly through `gc --status deleted`, implicitly when `delete <id>` is run again, or when the retention/cleanup policy triggers.
-3. During finalization, the actual data is removed via the actual-data adapter (`Delete`).
-4. After actual data removal succeeds, the marker is renamed or replaced to `{object}.ceased` (e.g. `xyz.ceased`) and the metadata status is updated to `ceased`.
-
-In database adapters:
-
-1. Update the `objects.status` column from `active` to `deleted`. Actual data is preserved for recovery.
-2. Finalize the object by deleting the actual data via the actual-data adapter.
-3. Update `objects.status` from `deleted` to `ceased`.
-
-Objects with status `deleted` or `ceased` are excluded from normal `List` and `Get` results. A dedicated `--include-deleted` flag or `TOPSAILAI_DATA_INCLUDE_DELETED=1` environment variable may be used to inspect them.
-
-### 7.13 Lifecycle State-Operation Matrix
+### 7.11 Lifecycle State-Operation Matrix
 
 The following table maps each object status to the operations that may be performed on it. Operations that are not allowed return an error appropriate for the context (for example, `ErrObjectNotFound` for invisible objects or `ErrObjectLocked` for a locked `active` object).
 
@@ -395,7 +298,7 @@ The following table maps each object status to the operations that may be perfor
 
 ## 8. CLI Commands
 
-The CLI is named `topsaildata`. Commands include:
+The CLI is named `topsailai-data`. Commands include:
 
 | Command | Purpose |
 |---------|---------|
@@ -438,13 +341,11 @@ Errors are wrapped with context using `fmt.Errorf("...: %w", err)` so callers ca
 
 ### 9.1 Boundary Cases
 
-- An object folder missing its `object.md` is not recognized as an object.
-- A tag file with only comments or empty lines contributes no tags.
-- Duplicate tags in the same file or across inherited and object tags are deduplicated.
+- A payload folder missing its same-name Markdown boundary is invalid; a metadata record is not discovered or recreated from arbitrary payload files.
+- Duplicate tags on one object are deduplicated; the first occurrence wins.
 - Creating an object whose path already exists returns `ErrObjectExists`.
 - Deleting an active object marks it as `deleted` and preserves actual data; finalization removes actual data and transitions the object to `ceased`.
 - Scanning stops at object boundaries; nested `object.md` files are ignored.
-- Classify tags are inherited recursively; closer tag files override or augment more distant ones, with deduplication.
 - Moving an object updates its `Path` but preserves its `ID` and `Name`.
 - The `show` command resolves an object through its metadata record and therefore works for any status. Actual data content and folder structure are displayed only when the object's status is `active`; for `deleted` and `ceased` objects only metadata is shown.
 - In the local adapter, two objects cannot share the same name at different paths.
@@ -476,13 +377,6 @@ A database-backed metadata adapter implements the same `MetadataAdapter` interfa
 | `object_id` | string, FK → objects | Part of composite primary key. |
 | `tag` | string | Part of composite primary key. |
 
-#### classify_tag table
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `classify_path` | string, primary key | Full classify path, e.g. `notes/work`. |
-| `tag` | string, primary key | Inherited tag. |
-
 #### schema_migrations table
 
 | Column | Type | Notes |
@@ -490,27 +384,26 @@ A database-backed metadata adapter implements the same `MetadataAdapter` interfa
 | `version` | integer, primary key | Applied migration version. |
 | `applied_at` | timestamp, not null | When the migration was applied. |
 
-### 10.2 Tag Inheritance
+### 10.2 Tag Storage
 
-Tags are inherited along the classify hierarchy. When an object is stored at path `2026/0714/2323/notes/work/xyz`, its effective tags are the union of:
+Tags are stored per object in the `object_tags` table and nowhere else. There is no
+classify-level tag table and no inheritance: the rows for one `object_id` are the
+complete tag set of that object.
 
-1. Tags from `classify_tag` rows whose `classify_path` is a prefix of `notes/work` (e.g. `notes` and `notes/work`).
-2. Tags from `object_tags` for `object_id = 'xyz'`.
-
-Prefix matching is performed by comparing path segments, not raw strings, to avoid false matches such as `notes` matching `notes2`. The final tag list is deduplicated.
-
-The exact query strategy (join, sub-query, or materialized cache) is an implementation detail. The important contract is that `Object.Tags` returned by the adapter is the fully merged set of inherited classify tags and object-specific tags.
+The contract is that `Object.Tags` returned by the adapter equals the `object_tags`
+rows for that object, deduplicated. No adapter may synthesize tags from the object's
+path or from any ancestor directory.
 
 ### 10.3 Object Boundary in the Database Adapter
 
-The database adapter does not scan directories. Object boundaries are implicit: every row in `objects` is one object. The rule that "scanning stops at `object/object.md`" is replaced by the rule that "each row represents one object, and no row may have a `path` that is a descendant of another object's `path`".
+A future database adapter represents objects by rows rather than payload scans. As with local metadata enumeration, nested payload files do not create metadata records. Payload namespace validation must prevent one object from owning a descendant of another object's payload path.
 
 ## 11. Extensibility
 
 New adapters are added by implementing `MetadataAdapter` or `ActualDataAdapter`. The manager does not change when a new adapter is introduced. Configuration selects adapters via environment variables:
 
 - `TOPSAILAI_DATA_METADATA_ADAPTER`: e.g. `local`, `postgres`.
-- `TOPSAILAI_DATA_ACTUAL_ADAPTER`: e.g. `local`, `s3`.
+- `TOPSAILAI_DATA_ACTUAL_DATA_ADAPTER`: e.g. `local`, `s3`.
 
 Adapter-specific settings use the `TOPSAILAI_DATA_{ADAPTER}_{KEY}` pattern. For example:
 
@@ -521,18 +414,12 @@ Adapter-specific settings use the `TOPSAILAI_DATA_{ADAPTER}_{KEY}` pattern. For 
 A factory function maps adapter names to constructors:
 
 ```go
-type MetadataAdapterFactory func(cfg map[string]string) (MetadataAdapter, error)
+type MetadataAdapterFactory func(ctx context.Context, cfg map[string]string) (MetadataAdapter, error)
 ```
 
 ### 11.1 Cross-Adapter DataRef
 
-When metadata and actual data use different adapters, the manager coordinates the write:
-
-1. The manager generates a stable `ObjectID`.
-2. The actual-data adapter writes the payload and returns an opaque `DataRef`.
-3. The metadata adapter stores the metadata along with the `DataRef`.
-
-The metadata adapter treats `DataRef` as an opaque string and never interprets it. The actual-data adapter is the only component that resolves `DataRef` back to a payload.
+The manager coordinates a stable ID, an adapter-specific payload reference, and lifecycle metadata. The current local implementation determines its relative reference before publishing creating metadata, writes payload, then publishes active metadata. Local records validate `Path` and `DataRef` against the same object identity. Other adapters must define their reference resolution and failure semantics explicitly; this document does not promise unsupported remote combinations.
 
 ## 12. Manager Operation Flows
 
@@ -540,86 +427,34 @@ The `Manager` is responsible for orchestrating metadata and actual data adapters
 
 ### 12.1 Create Object
 
-1. Validate object name and classify path (depth, characters).
-2. Ask the metadata adapter whether the object already exists. If yes, return `ErrObjectExists`.
-3. Acquire the object lock (write mode) by default.
-4. Create metadata with status `creating` and a placeholder `DataRef` (empty or adapter-specific). This makes the incomplete object visible to recovery without exposing it as a normal result.
-5. Write the actual data via the actual-data adapter. During creation, `WriteArchive`, `WriteFile`, `put`, and `put-archive` are allowed while status is `creating`. If this step fails:
-   - The metadata remains in `creating` status.
-   - Release the object lock.
-   - Return the error; a later `gc` command can remove the orphaned metadata.
-6. Update the metadata with the returned `DataRef` and set status to `active` and `UpdatedAt` to now. If this fails:
-   - Attempt to delete the actual data written in step 5.
-   - The metadata remains in `creating` status.
-   - Release the object lock.
-   - Return the metadata error wrapped with a cleanup note.
-7. Release the object lock.
+1. Validate the name, tags, classify path, mandatory Markdown, and description before publication.
+2. Acquire namespace custody and check the destination boundary and existing ID. Active, creating, and deleted IDs cannot be replaced; a ceased ID is purged under custody before replacement.
+3. Acquire the Hash object lock and reserve the payload directory with its same-name Markdown boundary.
+4. Publish creating metadata with relative `Path`/`DataRef`, then write the archive.
+5. Publish active metadata and record the write statistic. Failures after creating publication retain the creating record and partial payload for GC; errors are returned, not converted to success. Failure before record publication can leave a boundary or Hash leaf without a record; it is not automatically a normal GC candidate.
+6. Release custody.
 
-The manager reads the entire tar archive into memory before writing it through the actual-data adapter. This allows it to inspect the archive for the mandatory `{name}.md` marker and to extract the description from YAML frontmatter before the archive is persisted. For large archives, this means memory usage is proportional to the archive size.
-
-Objects in `creating` status are excluded from normal `List`, `Get`, and search results. Run `gc` to remove incomplete metadata and any partial actual data. Re-running `create` with the same name while a `creating` object exists returns `ErrObjectExists` unless `--force` is used.
+Creation inspects the archive in memory before persistence, so memory use is proportional to archive size.
 
 ### 12.2 Update Actual Data
 
-1. Read the existing metadata to obtain the current `DataRef`.
-2. Acquire the object lock (write mode).
-3. Write the new actual data via the actual-data adapter. The adapter returns a new `DataRef`.
-4. Update the metadata with the new `DataRef` and set `UpdatedAt` to now.
-5. If the metadata update fails, attempt to delete the new actual data and return the error.
-6. After metadata update succeeds, the old actual data may be garbage-collected by the adapter or left for a background cleanup task.
-7. Release the object lock.
+Acquire Hash object custody, re-read active metadata, write using the relative reference, then publish the updated timestamp. Single-file replacement is atomic; archive replacement is not a whole-object transaction. If later metadata publication fails, report the error without deleting the existing payload. A failed publication does not promise rollback of already written content.
 
-A background cleanup process or the `gc` command may later remove old `ceased` metadata entries and any leftover empty directories, subject to the configurable retention window `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`.
+### 12.3 Delete Object
 
-### 12.3 Delete Object (Soft Delete)
-
-1. Read the existing metadata to obtain the `DataRef`.
-2. Acquire the object lock (write mode).
-3. Mark the object as `deleted`:
-   - Local adapter: create `xyz.deleted` and update the local index/status.
-   - Database adapter: update `objects.status` to `'deleted'`.
-4. Release the object lock.
-
-Actual data is preserved so the object can be restored with `recover`.
-
-### 12.3.1 Finalize Deleted Object
-
-1. Read the existing metadata to obtain the `DataRef`.
-2. Acquire the object lock (write mode).
-3. Delete the actual data via the actual-data adapter using the `DataRef`.
-4. If actual-data deletion fails, the object remains in `deleted` status and can be retried later. Log the error. Running `delete <id>` on an already `deleted` object re-attempts actual-data deletion and proceeds to `ceased` if successful. The `gc` command may also finalize stale `deleted` objects whose actual data is already gone.
-5. After actual data is removed, mark the object as `ceased`:
-   - Local adapter: rename `xyz.deleted` to `xyz.ceased` and remove the object from the active index.
-   - Database adapter: update `objects.status` to `'ceased'`.
-6. Release the object lock.
+Under namespace and object custody, re-read the record. Active becomes deleted without removing payload. A second delete on a deleted object removes the payload directory, then publishes ceased. A cleanup error preserves the retry record and is returned. Finalization retains metadata, tags, and lock files; it is not purge.
 
 ### 12.4 Move Object
 
-1. Read the existing metadata.
-2. Verify the object status is `active`; only `active` objects may be moved.
-3. Acquire the object lock (write mode).
-4. Compute the new full path from the object's creation time, the supplied classify directories, and the object name. If the adapter supports it, call `ActualDataAdapter.Move(ctx, id, newRef)` with that computed reference. If the adapter does not support move, rewrite the payload and obtain a new `DataRef`.
-5. Update the metadata `Path`, `DataRef` (if adapter-specific), and `UpdatedAt`.
-6. Release the object lock.
+Under namespace and object custody, re-read active metadata and validate the destination. Copy payload with its boundary established first, publish the new relative `Path`/`DataRef`, then delete the source. ID, name, and tags remain unchanged. Publication failure retains the original reference and source; source-cleanup failure after publication is returned while the new reference remains authoritative.
 
-### 12.5 Failure Strategy Summary
+### 12.5 Failure Strategy
 
-- Actual data is written before metadata so that a dangling `DataRef` never points to missing data.
-- Metadata is deleted before actual data so that the object becomes invisible to users even if payload cleanup fails.
-- Soft delete provides a recoverable intermediate state (`deleted`) between `active` and `ceased`.
-- Lock acquisition failures return `ErrObjectLocked` immediately without side effects.
-- All cleanup attempts are logged; failures during cleanup do not hide the original error.
+Each file publication may be atomic, but tags plus metadata, archive replacement, and cross-directory move are not multi-file transactions. Retain recovery records when cleanup fails, return the original failure with context, and do not claim all-or-nothing rollback or power-loss durability.
 
 ### 12.6 Recover Object
 
-1. Verify the object status is `deleted`; only `deleted` objects may be recovered.
-2. Acquire the object lock (write mode).
-3. Mark the object as `active`:
-   - Local adapter: remove `xyz.deleted` and update the local index/status.
-   - Database adapter: update `objects.status` to `'active'`.
-4. Release the object lock.
-
-Actual data is preserved during soft delete, so recovery restores the object to `active` without rewriting data.
+Acquire namespace and object custody, re-read deleted status, verify actual data or apply an explicitly supplied archive, then restore active metadata. Recovery preserves tags and resumes statistics. Active, creating, and ceased objects cannot be recovered.
 
 ### 12.7 Garbage Collect Objects
 
@@ -635,9 +470,9 @@ Actual data is preserved during soft delete, so recovery restores the object to 
 ## 13. Configuration and Environment Variables
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `TOPSAILAI_DATA_ROOT` | yes (local) | none | Root directory for the local adapter. |
+| `TOPSAILAI_DATA_ROOT` | no | `${HOME}/.topsailai/data` | Root directory for the local adapter. |
 | `TOPSAILAI_DATA_METADATA_ADAPTER` | no | `local` | Metadata adapter name. |
-| `TOPSAILAI_DATA_ACTUAL_ADAPTER` | no | `local` | Actual data adapter name. |
+| `TOPSAILAI_DATA_ACTUAL_DATA_ADAPTER` | no | `local` | Actual data adapter name. |
 | `TOPSAILAI_DATA_LOG_LEVEL` | no | `INFO` | Log level for the CLI. |
 | `TOPSAILAI_DATA_READ_LOCK` | no | `0` | If `1`, read operations acquire the object lock. |
 | `TOPSAILAI_DATA_INCLUDE_DELETED` | no | `false` | If `true`, list/search operations include objects with status `deleted` or `ceased`. |
@@ -664,44 +499,32 @@ Key test areas:
 
 - Object creation with valid and invalid names.
 - Time-path generation and depth enforcement.
-- Tag parsing, recursive inheritance, and deduplication.
+- Tag validation, deduplication, and independent tag-file persistence.
 - Metadata scanning and object-boundary detection.
 - Actual data archive read/write, single-file read/write, and deletion.
 - Adapter factory selection.
 - Object locking and soft-delete state transitions.
-- Schema version migration and downgrade refusal.
+- Schema compatibility refusal without old-store migration.
 
 Integration tests verify CLI commands against a temporary root directory configured via the `TOPSAILAI_DATA_ROOT` environment variable.
 
 ## 16. Project Structure
 
 ```text
-/TopsailAI/src/topsailai_data/
-├── README.md
-├── Makefile
-├── docs/
-│   └── DESIGN.md
-├── cli/
-│   └── topsaildata/
-│       └── main.go
-├── src/
-│   ├── manager.go
-│   ├── models.go
-│   ├── errors.go
-│   ├── adapters/
-│   │   ├── interfaces.go
-│   │   └── local/
-│   │       ├── metadata.go
-│   │       ├── actual.go
-│   │       ├── tags.go
-│   │       ├── scan.go
-│   │       ├── lock.go
-│   │       └── local_test.go
-│   └── cmd/
-│       └── commands.go
-└── tests/
-    └── integration/
-        └── cli_test.go
+project/
+├── cmd/topsailai-data/
+├── docs/DESIGN.md
+├── pkg/
+│   ├── adapters/local/
+│   ├── cli/
+│   ├── config/
+│   ├── errors/
+│   ├── filetool/
+│   ├── manager/
+│   ├── models/
+│   └── objectfs/
+├── skills/topsailai-data/
+└── tests/bdd/
 ```
 
 ## 17. Future Work
@@ -713,7 +536,7 @@ Integration tests verify CLI commands against a temporary root directory configu
 
 ## 18. Summary
 
-`topsailai_data` separates metadata from actual data through adapter interfaces, enabling flexible backend combinations. The local adapter uses a time-based directory layout, mandatory `object.md` files as actual-data carriers, optional tag files, and recursive classify tag inheritance. Object creation requires non-empty markdown content and a description, which may be supplied explicitly or extracted from YAML frontmatter. Object boundaries are detected by the presence of a same-named `.md` file, and scanning stops at those boundaries. The metadata model includes `ID`, `Name`, `Path`, `Description`, `CreatedAt`, `UpdatedAt`, `Status`, `SchemaVersion`, and `Tags`, with `ObjectID` stable across moves. A database metadata adapter can implement the same interface using an `objects` table, an `object_tags` table, and a `classify_tag` relationship table. The design prioritizes extensibility, clear conventions, and testability.
+`topsailai_data` separates metadata from actual data through adapter interfaces, enabling flexible backend combinations. The local adapter uses a time-based directory layout and mandatory `object.md` files as actual-data carriers. Tags are stored in each object's independent Hash metadata `tags` file, excluded from `metadata.json`, with no classify tag inheritance. Object creation requires non-empty markdown content and a description, which may be supplied explicitly or extracted from YAML frontmatter. Payload namespace boundaries use same-named `.md` files; normal object queries enumerate Hash metadata rather than payload files. The metadata model includes `ID`, `Name`, `Path`, `Description`, `CreatedAt`, `UpdatedAt`, `Status`, `SchemaVersion`, and `Tags`, with `ObjectID` stable across moves. A database metadata adapter can implement the same interface using an `objects` table and an `object_tags` table. The design prioritizes extensibility, clear conventions, and testability.
 
 
 ## 19. Write-source safety
@@ -776,11 +599,7 @@ object store apply unchanged:
   file followed by a rename, so a failed write leaves the previous content
   intact.
 - Read and write operations update the object's usage statistics.
-- Reserved metadata markers (`{object}.tags`, `{object}.lock`,
-  `{object}.deleted`, `{object}.ceased`, `.stat.json`) are rejected as read and
-  write targets, so a caller cannot bypass lifecycle management by editing a
-  marker through the file commands. The mandatory `{object}.md` file is actual
-  data and remains readable and writable.
+- Hash metadata is outside the payload root and cannot be addressed through file commands. User files named `metadata.json`, `stat.json`, `.stat.json`, or `<object>.lock` are ordinary actual data. The mandatory `<object>.md` remains actual data; `.topsailai-data-write-*` remains reserved for internal replacements.
 
 `mkdirs` creates every missing level of the requested path and writes an
 `AGENTS.md` marker into each level it creates. Object storage has no meaningful

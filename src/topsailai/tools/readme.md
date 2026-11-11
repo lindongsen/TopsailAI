@@ -115,3 +115,36 @@ LLM argument mistakes are routine, so tolerance is a design decision, not a defe
 `tools/file_tool_utils/file_read_line.py` - `read_file_lines()` coerces a non-positive `start_num` to `1`.
 `tools/file_tool_utils/file_write_code_block.py` - `overwrite_code_block()` raises on `start_num < 1`.
 The per-tool argument table lives in those two docstrings; `tools/file_tool.py` `PROMPT` only states that the two tools differ and why.
+
+## Keep LLM-Mistake Compatibility Parameters Out of the Docstring
+
+Some parameters exist only to absorb a specific mistake the LLM is known to make. They are not part of the tool's intended interface, and documenting them turns a private safety net into a public feature.
+
+### Rule
+
+- A parameter that exists only to absorb an LLM mistake MUST NOT appear in the function docstring.
+- Document it in a code comment at the exact branch that handles it, stating which mistake it absorbs and what the call is forwarded to.
+- A parameter that is a genuine part of the interface MUST be documented, even when it is rarely used.
+
+### Why
+
+- The docstring is the LLM-facing contract. A documented compatibility parameter invites the model to use it deliberately, which converts a rare accident into a normal calling pattern and multiplies the paths that must stay correct.
+- A compatibility branch is usually narrow: it fires only when the other arguments keep their defaults. Once the LLM treats it as a supported option, it will combine it with non-default arguments, and the branch silently stops matching.
+- The comment keeps the knowledge where a maintainer needs it, without spending prompt tokens or advertising the shortcut.
+
+### How to tell the two apart
+
+Ask whether a correct caller would ever pass the parameter on purpose.
+
+- If yes, it is interface: document it. Example: `cmd_tool.exec_cmd(cwd=...)` is declared in `TOOLS_INFO` and a caller legitimately chooses a working directory, so it belongs in the docstring.
+- If no, it is mistake absorption: comment it. Example: `file_tool.read_file(files=...)` exists only because the model sometimes passes `files=[...]` to `read_file` instead of calling `read_files`; a correct caller never does that, so the docstring stays silent and the branch carries the explanation.
+
+### Required practice
+
+- Keep the compatibility branch narrow and explicit: require the other arguments to hold their defaults, so the shortcut cannot hijack a legitimate call.
+- Never let a compatibility parameter change the meaning of a documented parameter.
+- When a compatibility parameter is removed, delete its comment with it; a comment describing a branch that no longer exists is worse than no comment.
+
+### Reference implementation
+
+`tools/file_tool.py` - `read_file()` keeps `files` undocumented and explains it in a comment above the forwarding branch.

@@ -195,3 +195,32 @@ func TestStatLockUnsafeLeaves(t *testing.T) {
 		})
 	}
 }
+
+// TestRecordStatCancellation leaves counters unchanged while another writer holds custody.
+func TestRecordStatCancellation(t *testing.T) {
+	dir := t.TempDir()
+	held, err := acquireStatLock(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if err := RecordStat(ctx, dir, true, time.Now(), 0); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("record cancellation: %v", err)
+	}
+	stat, err := ReadStat(dir)
+	if err != nil || stat.WriteCount != 0 {
+		t.Fatalf("canceled increment: %+v %v", stat, err)
+	}
+	if err := held.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordStat(context.Background(), dir, true, time.Now(), 0); err != nil {
+		t.Fatal(err)
+	}
+	stat, err = ReadStat(dir)
+	if err != nil || stat.WriteCount != 1 {
+		t.Fatalf("subsequent increment: %+v %v", stat, err)
+	}
+}

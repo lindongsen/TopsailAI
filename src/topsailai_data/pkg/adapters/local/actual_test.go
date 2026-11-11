@@ -15,6 +15,16 @@ import (
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 )
 
+// actualFixtureRef converts an absolute fixture path into its adapter reference.
+func actualFixtureRef(t *testing.T, root, path string) string {
+	t.Helper()
+	ref, err := filepath.Rel(filepath.Join(root, "object"), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.ToSlash(ref)
+}
+
 func TestActualDataAdapterInitCreatesRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "data-root")
 	adapter := NewActualDataAdapter(root)
@@ -32,10 +42,10 @@ func TestActualDataAdapterExists(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
-	exists, err := adapter.Exists(ctx, ref)
+	exists, err := adapter.Exists(ctx, actualFixtureRef(t, root, ref))
 	if err != nil {
 		t.Fatalf("Exists returned error for empty dir: %v", err)
 	}
@@ -43,20 +53,20 @@ func TestActualDataAdapterExists(t *testing.T) {
 		t.Fatal("Exists should be false for empty object directory")
 	}
 
-	// Only metadata markers should not count as actual data.
+	// Former metadata names are ordinary payload files.
 	_ = os.WriteFile(filepath.Join(ref, "metadata.json"), []byte("{}"), 0o644)
-	_ = os.WriteFile(filepath.Join(ref, "obj.tags"), []byte("tag\n"), 0o644)
-	exists, err = adapter.Exists(ctx, ref)
+	_ = os.WriteFile(filepath.Join(ref, "obj.lock"), []byte("lock\n"), 0o644)
+	exists, err = adapter.Exists(ctx, actualFixtureRef(t, root, ref))
 	if err != nil {
 		t.Fatalf("Exists returned error for metadata-only dir: %v", err)
 	}
-	if exists {
-		t.Fatal("Exists should be false when only metadata markers are present")
+	if !exists {
+		t.Fatal("user metadata-named files must count as actual data")
 	}
 
 	// Actual data file makes Exists true.
 	_ = os.WriteFile(filepath.Join(ref, "obj.md"), []byte("hello"), 0o644)
-	exists, err = adapter.Exists(ctx, ref)
+	exists, err = adapter.Exists(ctx, actualFixtureRef(t, root, ref))
 	if err != nil {
 		t.Fatalf("Exists returned error for dir with object.md: %v", err)
 	}
@@ -67,7 +77,7 @@ func TestActualDataAdapterExists(t *testing.T) {
 	// Subdirectory also counts as actual data.
 	_ = os.Remove(filepath.Join(ref, "obj.md"))
 	_ = os.MkdirAll(filepath.Join(ref, "assets"), 0o755)
-	exists, err = adapter.Exists(ctx, ref)
+	exists, err = adapter.Exists(ctx, actualFixtureRef(t, root, ref))
 	if err != nil {
 		t.Fatalf("Exists returned error for dir with subdirectory: %v", err)
 	}
@@ -76,8 +86,8 @@ func TestActualDataAdapterExists(t *testing.T) {
 	}
 
 	// Missing directory returns false without error.
-	missing := filepath.Join(root, "missing")
-	exists, err = adapter.Exists(ctx, missing)
+	missing := filepath.Join(root, "object", "2026", "1111", "1200", "missing")
+	exists, err = adapter.Exists(ctx, actualFixtureRef(t, root, missing))
 	if err != nil {
 		t.Fatalf("Exists returned error for missing dir: %v", err)
 	}
@@ -93,8 +103,8 @@ func TestActualDataAdapterExistsRejectsEmptyRef(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty ref")
 	}
-	if !errors.Is(err, apperrors.ErrInvalidArgument) {
-		t.Fatalf("expected ErrInvalidArgument, got %v", err)
+	if !errors.Is(err, apperrors.ErrInvalidPath) {
+		t.Fatalf("expected ErrInvalidPath, got %v", err)
 	}
 }
 
@@ -104,7 +114,7 @@ func TestActualDataAdapterWriteArchiveRoundTrip(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
 	var buf bytes.Buffer
@@ -132,11 +142,11 @@ func TestActualDataAdapterWriteArchiveRoundTrip(t *testing.T) {
 		t.Fatalf("close tar writer: %v", err)
 	}
 
-	newRef, err := adapter.WriteArchive(ctx, ref, bytes.NewReader(buf.Bytes()))
+	newRef, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		t.Fatalf("WriteArchive failed: %v", err)
 	}
-	if newRef != ref {
+	if newRef != actualFixtureRef(t, root, ref) {
 		t.Fatalf("expected ref %q, got %q", ref, newRef)
 	}
 
@@ -157,7 +167,7 @@ func TestActualDataAdapterWriteArchivePreservesExistingObjectMD(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 	_ = os.WriteFile(filepath.Join(ref, "obj.md"), []byte("preserved"), 0o644)
 
@@ -170,7 +180,7 @@ func TestActualDataAdapterWriteArchivePreservesExistingObjectMD(t *testing.T) {
 	_, _ = tw.Write([]byte(content))
 	_ = tw.Close()
 
-	if _, err := adapter.WriteArchive(ctx, ref, bytes.NewReader(buf.Bytes())); err != nil {
+	if _, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), bytes.NewReader(buf.Bytes())); err != nil {
 		t.Fatalf("WriteArchive failed: %v", err)
 	}
 
@@ -189,7 +199,7 @@ func TestActualDataAdapterWriteArchiveRejectsMissingObjectMD(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
 	var buf bytes.Buffer
@@ -200,7 +210,7 @@ func TestActualDataAdapterWriteArchiveRejectsMissingObjectMD(t *testing.T) {
 	_, _ = tw.Write([]byte(content))
 	_ = tw.Close()
 
-	_, err := adapter.WriteArchive(ctx, ref, bytes.NewReader(buf.Bytes()))
+	_, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), bytes.NewReader(buf.Bytes()))
 	if !errors.Is(err, apperrors.ErrMissingMarkdown) {
 		t.Fatalf("expected ErrMissingMarkdown, got %v", err)
 	}
@@ -212,7 +222,7 @@ func TestActualDataAdapterWriteArchiveRejectsObjectMDDirectory(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
 	var buf bytes.Buffer
@@ -220,7 +230,7 @@ func TestActualDataAdapterWriteArchiveRejectsObjectMDDirectory(t *testing.T) {
 	_ = tw.WriteHeader(&tar.Header{Name: "obj.md", Mode: 0o755, Typeflag: tar.TypeDir})
 	_ = tw.Close()
 
-	_, err := adapter.WriteArchive(ctx, ref, bytes.NewReader(buf.Bytes()))
+	_, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), bytes.NewReader(buf.Bytes()))
 	if !errors.Is(err, apperrors.ErrMissingMarkdown) {
 		t.Fatalf("expected ErrMissingMarkdown, got %v", err)
 	}
@@ -232,16 +242,16 @@ func TestActualDataAdapterReadArchiveRoundTrip(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 	_ = os.WriteFile(filepath.Join(ref, "obj.md"), []byte("# Hello"), 0o644)
 	_ = os.WriteFile(filepath.Join(ref, "note.txt"), []byte("plain text"), 0o644)
 	_ = os.MkdirAll(filepath.Join(ref, "assets"), 0o755)
 	_ = os.WriteFile(filepath.Join(ref, "assets/data"), []byte("nested"), 0o644)
-	_ = os.WriteFile(filepath.Join(ref, "obj.tags"), []byte("tag\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(ref, "obj.lock"), []byte("lock\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(ref, "metadata.json"), []byte("{}"), 0o644)
 
-	reader, err := adapter.ReadArchive(ctx, ref)
+	reader, err := adapter.ReadArchive(ctx, actualFixtureRef(t, root, ref))
 	if err != nil {
 		t.Fatalf("ReadArchive failed: %v", err)
 	}
@@ -279,11 +289,11 @@ func TestActualDataAdapterReadArchiveRoundTrip(t *testing.T) {
 	if found["assets/data"] != "nested" {
 		t.Fatalf("assets/data content mismatch: %q", found["assets/data"])
 	}
-	if _, ok := found["obj.tags"]; ok {
-		t.Fatal("metadata marker obj.tags should not appear in archive")
+	if found["obj.lock"] != "lock\n" {
+		t.Fatal("user obj.lock missing or changed in archive")
 	}
-	if _, ok := found["metadata.json"]; ok {
-		t.Fatal("metadata marker metadata.json should not appear in archive")
+	if found["metadata.json"] != "{}" {
+		t.Fatal("user metadata.json missing or changed in archive")
 	}
 }
 
@@ -293,7 +303,7 @@ func TestActualDataAdapterWriteArchiveRejectsTraversal(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
 	cases := []struct {
@@ -322,7 +332,7 @@ func TestActualDataAdapterWriteArchiveRejectsTraversal(t *testing.T) {
 			_, _ = tw.Write([]byte("data"))
 			_ = tw.Close()
 
-			_, err := adapter.WriteArchive(ctx, ref, bytes.NewReader(buf.Bytes()))
+			_, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), bytes.NewReader(buf.Bytes()))
 			if err == nil {
 				t.Fatal("expected error for traversal tar entry")
 			}
@@ -339,7 +349,7 @@ func TestActualDataAdapterWriteArchiveRejectsSymlinkAndUnsupportedTypes(t *testi
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
 	cases := []struct {
@@ -367,7 +377,7 @@ func TestActualDataAdapterWriteArchiveRejectsSymlinkAndUnsupportedTypes(t *testi
 			_ = tw.WriteHeader(tc.hdr)
 			_ = tw.Close()
 
-			_, err := adapter.WriteArchive(ctx, ref, bytes.NewReader(buf.Bytes()))
+			_, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), bytes.NewReader(buf.Bytes()))
 			if err == nil {
 				t.Fatal("expected error for unsupported tar entry")
 			}
@@ -381,20 +391,20 @@ func TestActualDataAdapterWriteFileAndReadFile(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
 	// Binary payload with null bytes.
 	payload := []byte{0x00, 0x01, 0x02, 0xff, 0xfe}
-	newRef, err := adapter.WriteFile(ctx, ref, "binary.bin", bytes.NewReader(payload))
+	newRef, err := adapter.WriteFile(ctx, actualFixtureRef(t, root, ref), "binary.bin", bytes.NewReader(payload))
 	if err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
-	if newRef != ref {
+	if newRef != actualFixtureRef(t, root, ref) {
 		t.Fatalf("expected ref %q, got %q", ref, newRef)
 	}
 
-	reader, err := adapter.ReadFile(ctx, ref, "binary.bin")
+	reader, err := adapter.ReadFile(ctx, actualFixtureRef(t, root, ref), "binary.bin")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
@@ -408,11 +418,11 @@ func TestActualDataAdapterWriteFileAndReadFile(t *testing.T) {
 	}
 
 	// Nested file path.
-	_, err = adapter.WriteFile(ctx, ref, "nested/dir/file.txt", strings.NewReader("nested text"))
+	_, err = adapter.WriteFile(ctx, actualFixtureRef(t, root, ref), "nested/dir/file.txt", strings.NewReader("nested text"))
 	if err != nil {
 		t.Fatalf("WriteFile nested failed: %v", err)
 	}
-	reader, err = adapter.ReadFile(ctx, ref, "nested/dir/file.txt")
+	reader, err = adapter.ReadFile(ctx, actualFixtureRef(t, root, ref), "nested/dir/file.txt")
 	if err != nil {
 		t.Fatalf("ReadFile nested failed: %v", err)
 	}
@@ -429,10 +439,10 @@ func TestActualDataAdapterReadFileNotFound(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
-	_, err := adapter.ReadFile(ctx, ref, "missing.txt")
+	_, err := adapter.ReadFile(ctx, actualFixtureRef(t, root, ref), "missing.txt")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -441,40 +451,29 @@ func TestActualDataAdapterReadFileNotFound(t *testing.T) {
 	}
 }
 
-func TestActualDataAdapterDeletePreservesMarkers(t *testing.T) {
+func TestActualDataAdapterDeleteRemovesWholePayload(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 	_ = os.WriteFile(filepath.Join(ref, "obj.md"), []byte("marker"), 0o644)
 	_ = os.WriteFile(filepath.Join(ref, "metadata.json"), []byte("{}"), 0o644)
-	_ = os.WriteFile(filepath.Join(ref, "obj.tags"), []byte("tag\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(ref, "obj.lock"), []byte("lock\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(ref, "data.txt"), []byte("data"), 0o644)
 	_ = os.MkdirAll(filepath.Join(ref, "extra"), 0o755)
 	_ = os.WriteFile(filepath.Join(ref, "extra/file"), []byte("x"), 0o644)
 
-	if err := adapter.Delete(ctx, ref); err != nil {
+	if err := adapter.Delete(ctx, actualFixtureRef(t, root, ref)); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(ref, "obj.md")); err != nil {
-		t.Fatalf("obj.md should be preserved: %v", err)
+	if _, err := os.Stat(ref); !os.IsNotExist(err) {
+		t.Fatalf("whole payload directory should be removed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(ref, "metadata.json")); err != nil {
-		t.Fatalf("metadata.json should be preserved: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(ref, "obj.tags")); err != nil {
-		t.Fatalf("obj.tags should be preserved: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(ref, "data.txt")); !os.IsNotExist(err) {
-		t.Fatal("data.txt should be removed")
-	}
-	if _, err := os.Stat(filepath.Join(ref, "extra")); !os.IsNotExist(err) {
-		t.Fatal("extra directory should be removed")
-	}
+
 }
 
 func TestActualDataAdapterMove(t *testing.T) {
@@ -483,17 +482,17 @@ func TestActualDataAdapterMove(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	oldRef := filepath.Join(root, "old", "obj")
+	oldRef := filepath.Join(root, "object", "2026", "1111", "1200", "old", "obj")
 	_ = os.MkdirAll(oldRef, 0o755)
 	_ = os.WriteFile(filepath.Join(oldRef, "obj.md"), []byte("data"), 0o644)
 	_ = os.WriteFile(filepath.Join(oldRef, "extra.txt"), []byte("extra"), 0o644)
 
-	newRef := filepath.Join(root, "new", "obj")
-	movedRef, err := adapter.Move(ctx, oldRef, newRef)
+	newRef := filepath.Join(root, "object", "2026", "1111", "1200", "new", "obj")
+	movedRef, err := adapter.Move(ctx, actualFixtureRef(t, root, oldRef), actualFixtureRef(t, root, newRef))
 	if err != nil {
 		t.Fatalf("Move failed: %v", err)
 	}
-	if movedRef != newRef {
+	if movedRef != actualFixtureRef(t, root, newRef) {
 		t.Fatalf("expected moved ref %q, got %q", newRef, movedRef)
 	}
 	// Move copies the object directory; the caller is responsible for deleting
@@ -509,9 +508,9 @@ func TestActualDataAdapterMove(t *testing.T) {
 	}
 
 	// Moving to existing target should fail.
-	otherRef := filepath.Join(root, "other", "obj")
+	otherRef := filepath.Join(root, "object", "2026", "1111", "1200", "other", "obj")
 	_ = os.MkdirAll(otherRef, 0o755)
-	_, err = adapter.Move(ctx, newRef, otherRef)
+	_, err = adapter.Move(ctx, actualFixtureRef(t, root, newRef), actualFixtureRef(t, root, otherRef))
 	if err == nil {
 		t.Fatal("expected error moving to existing target")
 	}
@@ -526,13 +525,13 @@ func TestActualDataAdapterMoveCopiesDirectoryTree(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	oldRef := filepath.Join(root, "old", "obj")
+	oldRef := filepath.Join(root, "object", "2026", "1111", "1200", "old", "obj")
 	_ = os.MkdirAll(filepath.Join(oldRef, "subdir"), 0o755)
 	_ = os.WriteFile(filepath.Join(oldRef, "obj.md"), []byte("data"), 0o644)
 	_ = os.WriteFile(filepath.Join(oldRef, "subdir", "file.txt"), []byte("nested"), 0o644)
 
-	newRef := filepath.Join(root, "new", "obj")
-	if _, err := adapter.Move(ctx, oldRef, newRef); err != nil {
+	newRef := filepath.Join(root, "object", "2026", "1111", "1200", "new", "obj")
+	if _, err := adapter.Move(ctx, actualFixtureRef(t, root, oldRef), actualFixtureRef(t, root, newRef)); err != nil {
 		t.Fatalf("Move failed: %v", err)
 	}
 
@@ -606,13 +605,13 @@ func TestActualDataAdapterMoveRejectsEmptyRefs(t *testing.T) {
 	adapter := NewActualDataAdapter(t.TempDir())
 
 	_, err := adapter.Move(ctx, "", "dst")
-	if !errors.Is(err, apperrors.ErrInvalidArgument) {
-		t.Fatalf("expected ErrInvalidArgument for empty oldRef, got %v", err)
+	if !errors.Is(err, apperrors.ErrInvalidPath) {
+		t.Fatalf("expected ErrInvalidPath for empty oldRef, got %v", err)
 	}
 
 	_, err = adapter.Move(ctx, "src", "")
-	if !errors.Is(err, apperrors.ErrInvalidArgument) {
-		t.Fatalf("expected ErrInvalidArgument for empty newRef, got %v", err)
+	if !errors.Is(err, apperrors.ErrInvalidPath) {
+		t.Fatalf("expected ErrInvalidPath for empty newRef, got %v", err)
 	}
 }
 
@@ -626,8 +625,8 @@ func TestValidateActualFilename(t *testing.T) {
 		{"absolute", "/etc/passwd", apperrors.ErrInvalidArgument},
 		{"dotdot prefix", "../escape.txt", apperrors.ErrInvalidPath},
 		{"dotdot in middle", "sub/../../escape.txt", apperrors.ErrInvalidPath},
-		{"reserved metadata marker", "obj.tags", apperrors.ErrInvalidName},
-		{"reserved metadata marker json", "metadata.json", apperrors.ErrInvalidName},
+		{"user lock name", "obj.lock", nil},
+		{"user metadata name", "metadata.json", nil},
 		{"valid nested", "nested/file.txt", nil},
 		{"valid object md", "obj.md", nil},
 	}
@@ -653,11 +652,12 @@ func TestValidateActualFilename(t *testing.T) {
 
 func TestActualDataAdapterWriteFileRejectsInvalidFilename(t *testing.T) {
 	ctx := context.Background()
-	adapter := NewActualDataAdapter(t.TempDir())
-	ref := filepath.Join(t.TempDir(), "obj")
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	_ = os.MkdirAll(ref, 0o755)
 
-	_, err := adapter.WriteFile(ctx, ref, "../escape.txt", strings.NewReader("x"))
+	_, err := adapter.WriteFile(ctx, actualFixtureRef(t, root, ref), "../escape.txt", strings.NewReader("x"))
 	if !errors.Is(err, apperrors.ErrInvalidPath) {
 		t.Fatalf("expected ErrInvalidPath, got %v", err)
 	}
@@ -691,18 +691,18 @@ func TestActualDataAdapterMovePreservesMetadataMarkers(t *testing.T) {
 	adapter := NewActualDataAdapter(root)
 	_ = adapter.Init(ctx)
 
-	oldRef := filepath.Join(root, "old", "obj")
+	oldRef := filepath.Join(root, "object", "2026", "1111", "1200", "old", "obj")
 	_ = os.MkdirAll(oldRef, 0o755)
 	_ = os.WriteFile(filepath.Join(oldRef, "obj.md"), []byte("data"), 0o644)
-	_ = os.WriteFile(filepath.Join(oldRef, "obj.tags"), []byte("tag\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(oldRef, "obj.lock"), []byte("lock\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(oldRef, "metadata.json"), []byte("{}"), 0o644)
 
-	newRef := filepath.Join(root, "new", "obj")
-	if _, err := adapter.Move(ctx, oldRef, newRef); err != nil {
+	newRef := filepath.Join(root, "object", "2026", "1111", "1200", "new", "obj")
+	if _, err := adapter.Move(ctx, actualFixtureRef(t, root, oldRef), actualFixtureRef(t, root, newRef)); err != nil {
 		t.Fatalf("Move failed: %v", err)
 	}
 
-	for _, name := range []string{"obj.md", "obj.tags", "metadata.json"} {
+	for _, name := range []string{"obj.md", "obj.lock", "metadata.json"} {
 		if _, err := os.Stat(filepath.Join(newRef, name)); err != nil {
 			t.Fatalf("%s not copied: %v", name, err)
 		}
@@ -717,7 +717,7 @@ func TestActualDataAdapterWriteFileRejectsSameFileAliases(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatalf("mkdir object: %v", err)
 	}
@@ -768,7 +768,7 @@ func TestActualDataAdapterWriteFileRejectsSameFileAliases(t *testing.T) {
 			}
 			defer source.Close()
 
-			_, err = adapter.WriteFile(ctx, ref, "obj.md", source)
+			_, err = adapter.WriteFile(ctx, actualFixtureRef(t, root, ref), "obj.md", source)
 			if !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
 				t.Fatalf("expected ErrSourceDestinationSameFile, got %v", err)
 			}
@@ -791,7 +791,7 @@ func TestActualDataAdapterWriteFileDistinctSourceSucceeds(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatalf("mkdir object: %v", err)
 	}
@@ -811,7 +811,7 @@ func TestActualDataAdapterWriteFileDistinctSourceSucceeds(t *testing.T) {
 	}
 	defer source.Close()
 
-	if _, err := adapter.WriteFile(ctx, ref, "obj.md", source); err != nil {
+	if _, err := adapter.WriteFile(ctx, actualFixtureRef(t, root, ref), "obj.md", source); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 	got, err := os.ReadFile(destination)
@@ -848,7 +848,7 @@ func TestActualDataAdapterWriteFileFailureCleansTemporaryFile(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -858,7 +858,7 @@ func TestActualDataAdapterWriteFileFailureCleansTemporaryFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := adapter.WriteFile(ctx, ref, "data.txt", &failingReader{data: []byte("partial")})
+	_, err := adapter.WriteFile(ctx, actualFixtureRef(t, root, ref), "data.txt", &failingReader{data: []byte("partial")})
 	if err == nil {
 		t.Fatal("expected injected read failure")
 	}
@@ -884,7 +884,7 @@ func TestActualDataAdapterReadArchiveAndExistsHideWriteTemporaryFiles(t *testing
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -896,14 +896,14 @@ func TestActualDataAdapterReadArchiveAndExistsHideWriteTemporaryFiles(t *testing
 		t.Fatal(err)
 	}
 
-	exists, err := adapter.Exists(ctx, ref)
+	exists, err := adapter.Exists(ctx, actualFixtureRef(t, root, ref))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !exists {
 		t.Fatal("object.md should count as actual data")
 	}
-	reader, err := adapter.ReadArchive(ctx, ref)
+	reader, err := adapter.ReadArchive(ctx, actualFixtureRef(t, root, ref))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -952,22 +952,23 @@ func TestCleanupStaleWriteTempsRemovesOnlyExpiredReservedFiles(t *testing.T) {
 
 func TestActualDataAdapterExistsIgnoresOnlyWriteTemporaryFiles(t *testing.T) {
 	ctx := context.Background()
-	adapter := NewActualDataAdapter(t.TempDir())
-	ref := filepath.Join(t.TempDir(), "obj")
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{writeTempPrefix + "root", "metadata.json", "obj.tags"} {
+	for _, name := range []string{writeTempPrefix + "root"} {
 		if err := os.WriteFile(filepath.Join(ref, name), []byte("internal"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	exists, err := adapter.Exists(ctx, ref)
+	exists, err := adapter.Exists(ctx, actualFixtureRef(t, root, ref))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if exists {
-		t.Fatal("metadata and temporary files alone must not count as actual data")
+		t.Fatal("reserved temporary files alone must not count as actual data")
 	}
 }
 
@@ -975,7 +976,7 @@ func TestActualDataAdapterMoveSkipsWriteTemporaryFiles(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	oldRef := filepath.Join(root, "old", "obj")
+	oldRef := filepath.Join(root, "object", "2026", "1111", "1200", "old", "obj")
 	if err := os.MkdirAll(filepath.Join(oldRef, "nested"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -988,8 +989,8 @@ func TestActualDataAdapterMoveSkipsWriteTemporaryFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	newRef := filepath.Join(root, "new", "obj")
-	if _, err := adapter.Move(ctx, oldRef, newRef); err != nil {
+	newRef := filepath.Join(root, "object", "2026", "1111", "1200", "new", "obj")
+	if _, err := adapter.Move(ctx, actualFixtureRef(t, root, oldRef), actualFixtureRef(t, root, newRef)); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{
@@ -1042,7 +1043,7 @@ func TestActualDataAdapterWriteArchiveRejectsOverlappingSource(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1081,7 +1082,7 @@ func TestActualDataAdapterWriteArchiveRejectsOverlappingSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer source.Close()
-	if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+	if _, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
 		t.Fatalf("expected ErrSourceDestinationSameFile, got %v", err)
 	}
 
@@ -1110,7 +1111,7 @@ func TestActualDataAdapterWriteArchiveRejectsObjectDirectorySource(t *testing.T)
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1127,7 +1128,7 @@ func TestActualDataAdapterWriteArchiveRejectsObjectDirectorySource(t *testing.T)
 		t.Fatal(err)
 	}
 	defer source.Close()
-	if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+	if _, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
 		t.Fatalf("expected overlap error, got %v", err)
 	}
 	assertFileBytes(t, marker, []byte("original"))
@@ -1141,7 +1142,7 @@ func TestActualDataAdapterWriteArchiveRejectsSymlinkToObjectDirectory(t *testing
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1158,7 +1159,7 @@ func TestActualDataAdapterWriteArchiveRejectsSymlinkToObjectDirectory(t *testing
 		t.Fatal(err)
 	}
 	defer source.Close()
-	if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+	if _, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
 		t.Fatalf("expected overlap error, got %v", err)
 	}
 	assertFileBytes(t, marker, []byte("original"))
@@ -1168,7 +1169,7 @@ func TestActualDataAdapterWriteArchiveRejectsNonRegularSourceBeforeMutation(t *t
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1185,7 +1186,7 @@ func TestActualDataAdapterWriteArchiveRejectsNonRegularSourceBeforeMutation(t *t
 		t.Fatal(err)
 	}
 	defer source.Close()
-	if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrInvalidArgument) {
+	if _, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), source); !errors.Is(err, apperrors.ErrInvalidArgument) {
 		t.Fatalf("expected invalid source error, got %v", err)
 	}
 	assertFileBytes(t, marker, []byte("original"))
@@ -1195,7 +1196,7 @@ func TestActualDataAdapterWriteArchiveAcceptsRegularFileAliases(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	ref := filepath.Join(root, "obj")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1226,7 +1227,7 @@ func TestActualDataAdapterWriteArchiveAcceptsRegularFileAliases(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer source.Close()
-			if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+			if _, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
 				t.Fatalf("expected overlap error, got %v", err)
 			}
 			assertFileBytes(t, marker, []byte("original"))
@@ -1238,9 +1239,9 @@ func TestActualDataAdapterWriteArchiveCreatesMissingTargetRef(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewActualDataAdapter(root)
-	ref := filepath.Join(root, "new-object")
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "new-object")
 	archive := bytes.NewReader(buildLocalTar(t, map[string][]byte{"new-object.md": []byte("created")}))
-	if _, err := adapter.WriteArchive(ctx, ref, archive); err != nil {
+	if _, err := adapter.WriteArchive(ctx, actualFixtureRef(t, root, ref), archive); err != nil {
 		t.Fatalf("expected missing target ref to be created, got %v", err)
 	}
 	assertFileBytes(t, filepath.Join(ref, "new-object.md"), []byte("created"))

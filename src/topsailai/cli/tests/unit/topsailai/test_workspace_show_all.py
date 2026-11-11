@@ -154,6 +154,24 @@ def test_json_item_exposes_completed_without_changing_status(task_dir):
     assert item["status"] == "idle"
 
 
+def test_json_item_qualifies_task_rows(task_dir):
+    """A task row carries the same qualifier the table shows as "(task)"."""
+    rows = log_files.discover_workspace_log_files(str(task_dir), include_completed=True)
+    formatting.enrich_workspace_rows(rows, str(task_dir.parent.parent))
+    task = next(row for row in rows if row["is_task"])
+    session = next(row for row in rows if not row["is_task"])
+
+    task_item = core._workspace_json_item(task, 1)
+    session_item = core._workspace_json_item(session, 2)
+
+    assert task_item["is_task"] is True
+    assert task_item["session_qualifier"] == "task"
+    assert session_item["is_task"] is False
+    assert session_item["session_qualifier"] is None
+    # The qualifier must not change the item schema between row kinds.
+    assert set(task_item) == set(session_item)
+
+
 @pytest.mark.parametrize("command", ["r all", "/r all", "refresh all", "/refresh all"])
 def test_prompt_selection_accepts_all_spellings(monkeypatch, command):
     """Every documented spelling opts in to completed rows."""

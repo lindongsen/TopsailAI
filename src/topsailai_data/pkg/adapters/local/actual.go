@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,33 +15,13 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/errors"
 )
 
-// metadataMarkerNames lists file and directory names that must be preserved
-// during actual-data operations. These names are reserved for object
-// lifecycle and metadata management.
-var metadataMarkerNames = map[string]bool{
-	"metadata.json": true,
-	statFileName:    true,
-}
-
 const (
 	writeTempPrefix = ".topsailai-data-write-"
 	writeTempMaxAge = 24 * time.Hour
 )
 
-// metadataMarkerSuffixes lists name suffixes that identify reserved marker
-// files. A name matching any suffix is treated as metadata and excluded from
-// actual-data read/write/delete operations. Note that ".md" is intentionally
-// not reserved: the mandatory object.md file is actual data, not metadata.
-var metadataMarkerSuffixes = []string{
-	".tags",
-	".lock",
-	".deleted",
-	".ceased",
-}
-
 // actualDataAdapter implements pkg/adapters.ActualDataAdapter using the local
-// filesystem. The DataRef for this adapter is the absolute path to the object
-// directory.
+// filesystem. DataRef is canonical and relative to the object tree.
 type actualDataAdapter struct {
 	root string
 }
@@ -55,21 +36,22 @@ func (a *actualDataAdapter) Init(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if err := os.MkdirAll(a.root, 0o755); err != nil {
-		return fmt.Errorf("create actual-data root %q: %w", a.root, err)
+	layout, err := NewStoreLayout(a.root)
+	if err != nil {
+		return err
 	}
-	return nil
+	return layout.Init()
 }
 
 // Exists reports whether the object directory contains any actual data files.
-// Metadata-only files (metadata.json, lock files, lifecycle markers) are ignored;
-// everything else, including the mandatory {name}.md marker, counts as actual data.
+// Only reserved replacement files are ignored; ordinary dotfiles count as data.
 func (a *actualDataAdapter) Exists(ctx context.Context, ref string) (bool, error) {
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
-	if ref == "" {
-		return false, fmt.Errorf("%w: ref is empty", errors.ErrInvalidArgument)
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return false, err
 	}
 	entries, err := os.ReadDir(ref)
 	if err != nil {
@@ -86,31 +68,33 @@ func (a *actualDataAdapter) Exists(ctx context.Context, ref string) (bool, error
 		if isMetadataMarker(name) {
 			continue
 		}
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
 		return true, nil
 	}
 	return false, nil
 }
 
 // WriteArchive replaces the actual data of an object with the contents of a
-// tar archive stream. Existing actual-data files are removed first; metadata
-// marker files and the mandatory object Markdown are preserved. After
+// tar archive stream. Existing actual-data files are removed first; reserved
+// replacement files and the mandatory object Markdown are preserved. After
 // extraction, the mandatory Markdown must exist as a regular file. The
-// returned ref is the absolute object path.
+// returned ref remains relative to the object tree.
 func (a *actualDataAdapter) WriteArchive(ctx context.Context, ref string, r io.Reader) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	if ref == "" {
-		return "", fmt.Errorf("%w: ref is empty", errors.ErrInvalidArgument)
+	resultRef := ref
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return "", err
 	}
 	if err := rejectArchiveSourceOverlap(ref, r); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		return "", fmt.Errorf("create object directory %q: %w", ref, err)
+	}
+	if _, err := resolvePayloadFile(ref, filepath.Base(ref)+".md"); err != nil {
+		return "", err
 	}
 	if err := a.clearActualData(ref); err != nil {
 		return "", err
@@ -129,7 +113,7 @@ func (a *actualDataAdapter) WriteArchive(ctx context.Context, ref string, r io.R
 	if !markerInfo.Mode().IsRegular() {
 		return "", fmt.Errorf("%w: archive must leave regular file %s", errors.ErrMissingMarkdown, markerName)
 	}
-	return ref, nil
+	return resultRef, nil
 }
 
 // rejectArchiveSourceOverlap rejects file-backed archive sources that are part
@@ -198,8 +182,9 @@ func (a *actualDataAdapter) ReadArchive(ctx context.Context, ref string) (io.Rea
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if ref == "" {
-		return nil, fmt.Errorf("%w: ref is empty", errors.ErrInvalidArgument)
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return nil, err
 	}
 	pr, pw := io.Pipe()
 	go func() {
@@ -211,14 +196,16 @@ func (a *actualDataAdapter) ReadArchive(ctx context.Context, ref string) (io.Rea
 
 // WriteFile writes a single file into the object's actual data. Parent
 // directories are created as needed. The file path must be relative and must
-// not traverse outside the object directory. The returned ref is the absolute
-// object path.
+// not traverse outside the object directory. The returned ref remains relative
+// to the object tree.
 func (a *actualDataAdapter) WriteFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	if ref == "" {
-		return "", fmt.Errorf("%w: ref is empty", errors.ErrInvalidArgument)
+	resultRef := ref
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return "", err
 	}
 	if err := validateActualFilename(filename); err != nil {
 		return "", err
@@ -236,6 +223,10 @@ func (a *actualDataAdapter) WriteFile(ctx context.Context, ref string, filename 
 		if err != nil && !os.IsNotExist(err) {
 			return "", fmt.Errorf("stat destination %q: %w", fullPath, err)
 		}
+	}
+	fullPath, err = resolvePayloadFile(ref, filename)
+	if err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return "", fmt.Errorf("create parent directories for %q: %w", fullPath, err)
@@ -275,7 +266,7 @@ func (a *actualDataAdapter) WriteFile(ctx context.Context, ref string, filename 
 		return "", fmt.Errorf("replace file %q: %w", fullPath, err)
 	}
 	cleanup = false
-	return ref, nil
+	return resultRef, nil
 }
 
 // ReadFile returns a stream that reads a single file from the object's actual
@@ -284,13 +275,17 @@ func (a *actualDataAdapter) ReadFile(ctx context.Context, ref string, filename s
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if ref == "" {
-		return nil, fmt.Errorf("%w: ref is empty", errors.ErrInvalidArgument)
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateActualFilename(filename); err != nil {
 		return nil, err
 	}
-	fullPath := filepath.Join(ref, filename)
+	fullPath, err := resolvePayloadFile(ref, filename)
+	if err != nil {
+		return nil, err
+	}
 	f, err := os.Open(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -302,18 +297,21 @@ func (a *actualDataAdapter) ReadFile(ctx context.Context, ref string, filename s
 }
 
 // Move copies the object directory from oldRef to newRef. For the local adapter
-// newRef is the new absolute object directory path. The returned ref is newRef
+// newRef is the new relative object directory reference. The returned ref is newRef
 // on success. The caller is responsible for deleting the old directory and for
 // cleaning up any empty parent directories.
 func (a *actualDataAdapter) Move(ctx context.Context, oldRef string, newRef string) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	if oldRef == "" {
-		return "", fmt.Errorf("%w: oldRef is empty", errors.ErrInvalidArgument)
+	resultRef := newRef
+	oldRef, err := a.resolveRef(oldRef)
+	if err != nil {
+		return "", err
 	}
-	if newRef == "" {
-		return "", fmt.Errorf("%w: newRef is empty", errors.ErrInvalidArgument)
+	newRef, err = a.resolveRef(newRef)
+	if err != nil {
+		return "", err
 	}
 	if _, err := os.Stat(oldRef); err != nil {
 		if os.IsNotExist(err) {
@@ -329,13 +327,31 @@ func (a *actualDataAdapter) Move(ctx context.Context, oldRef string, newRef stri
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat target path %q: %w", newRef, err)
 	}
+	if filepath.Base(oldRef) != filepath.Base(newRef) {
+		return "", fmt.Errorf("move cannot rename object: %w", errors.ErrInvalidArgument)
+	}
+	marker := filepath.Base(oldRef) + ".md"
+	markerPath, err := resolvePayloadFile(oldRef, marker)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(markerPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("move requires regular Markdown boundary: %w", errors.ErrMissingMarkdown)
+	}
+	if err := os.Mkdir(newRef, 0o755); err != nil {
+		return "", fmt.Errorf("reserve move target: %w", err)
+	}
+	if err := copyFile(markerPath, filepath.Join(newRef, marker), info.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("establish move boundary: %w", err)
+	}
 	if err := copyDir(oldRef, newRef); err != nil {
 		return "", fmt.Errorf("copy object directory from %q to %q: %w", oldRef, newRef, err)
 	}
-	return newRef, nil
+	return resultRef, nil
 }
 
-// copyDir recursively copies src to dst. dst must not already exist.
+// copyDir recursively copies regular payload entries without following aliases.
 func copyDir(src, dst string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
@@ -360,6 +376,9 @@ func copyDir(src, dst string) error {
 		info, err := entry.Info()
 		if err != nil {
 			return fmt.Errorf("get info for %q: %w", srcPath, err)
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("unsafe copy source %q: %w", srcPath, errors.ErrInvalidPath)
 		}
 		if entry.IsDir() {
 			if err := copyDir(srcPath, dstPath); err != nil {
@@ -427,21 +446,38 @@ func RemoveEmptyParents(dir, root string) error {
 			}
 			return fmt.Errorf("remove empty directory %q: %w", parent, err)
 		}
+		slog.Info("removed empty payload parent", "path", parent)
 		current = parent
 	}
 }
 
-// Delete removes all actual-data files and directories inside the object
-// directory while preserving metadata marker files and the mandatory object
-// marker file ({folder-name}.md).
+// resolveRef converts a canonical reference to its confined payload directory.
+func (a *actualDataAdapter) resolveRef(ref string) (string, error) {
+	layout, err := NewStoreLayout(a.root)
+	if err != nil {
+		return "", err
+	}
+	return layout.ResolveObjectRef(ref)
+}
+
+// Delete removes the complete payload, including its mandatory Markdown boundary.
+// The caller must retain namespace and object custody until metadata is updated.
 func (a *actualDataAdapter) Delete(ctx context.Context, ref string) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if ref == "" {
-		return fmt.Errorf("%w: ref is empty", errors.ErrInvalidArgument)
+	dir, err := a.resolveRef(ref)
+	if err != nil {
+		return err
 	}
-	return a.clearActualData(ref)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove object payload %q: %w", dir, err)
+	}
+	slog.Info("removed object payload", "path", dir, "ref", ref)
+	if err := RemoveEmptyParents(dir, filepath.Join(a.root, "object")); err != nil {
+		return fmt.Errorf("clean empty payload parents: %w", err)
+	}
+	return nil
 }
 
 // clearActualData removes all entries inside dir that are not metadata markers.
@@ -535,23 +571,15 @@ func (a *actualDataAdapter) Close() error {
 	return nil
 }
 
-// isMetadataMarker reports whether name is a reserved metadata marker.
+// isMetadataMarker identifies only reserved internal replacement files.
 func isMetadataMarker(name string) bool {
-	if metadataMarkerNames[name] || strings.HasPrefix(name, writeTempPrefix) {
-		return true
-	}
-	for _, suffix := range metadataMarkerSuffixes {
-		if strings.HasSuffix(name, suffix) {
-			return true
-		}
-	}
-	return false
+	return strings.HasPrefix(name, writeTempPrefix)
 }
 
 // validateActualFilename checks that filename is a safe relative path inside
 // an object directory.
 func validateActualFilename(filename string) error {
-	if filename == "" {
+	if filename == "" || filename == "." || strings.ContainsAny(filename, `\:`) {
 		return fmt.Errorf("%w: empty filename", errors.ErrInvalidArgument)
 	}
 	if filepath.IsAbs(filename) {
@@ -642,7 +670,13 @@ func (a *actualDataAdapter) untar(dir string, r io.Reader) error {
 			continue
 		}
 
-		target := filepath.Join(dir, hdr.Name)
+		if clean == "." && hdr.Typeflag == tar.TypeDir {
+			continue
+		}
+		target, err := resolvePayloadFile(dir, hdr.Name)
+		if err != nil {
+			return err
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {

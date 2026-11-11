@@ -122,7 +122,7 @@ func runShow(ctx context.Context, mgr *manager.Manager, args []string) error {
 		return fmt.Errorf("show: %w", err)
 	}
 	printObject(obj)
-	stat, statErr := readObjectStat(obj)
+	stat, statErr := readObjectStat(mgr, obj)
 	if statErr != nil {
 		return fmt.Errorf("show: read stat: %w", statErr)
 	}
@@ -142,7 +142,15 @@ func runShow(ctx context.Context, mgr *manager.Manager, args []string) error {
 
 	fmt.Println()
 	fmt.Println("--- folder structure ---")
-	if err := printObjectTree(obj.Name, obj.DataRef); err != nil {
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		return fmt.Errorf("show: resolve layout: %w", err)
+	}
+	dir, err := layout.ResolveObjectRef(obj.DataRef)
+	if err != nil {
+		return fmt.Errorf("show: resolve payload: %w", err)
+	}
+	if err := printObjectTree(obj.Name, dir); err != nil {
 		fmt.Fprintf(os.Stderr, "show: read folder structure: %v\n", err)
 	}
 	return nil
@@ -180,7 +188,7 @@ func printObjectTree(objectName, dir string) error {
 		return err
 	}
 
-	// Filter out metadata marker files, keeping the mandatory object marker.
+	// Filter internal temporary entries, keeping the mandatory object marker.
 	var visible []os.DirEntry
 	for _, entry := range entries {
 		name := entry.Name()
@@ -239,17 +247,9 @@ func printObjectTreeEntries(dir string, entries []os.DirEntry, prefix string) er
 	return nil
 }
 
-// isMetadataMarkerName reports whether name is a reserved metadata marker.
+// isMetadataMarkerName reports reserved internal temporary entries only.
 func isMetadataMarkerName(name string) bool {
-	if name == "metadata.json" || name == ".stat.json" || strings.HasPrefix(name, ".topsailai-data-write-") {
-		return true
-	}
-	for _, suffix := range []string{".tags", ".lock", ".deleted", ".ceased"} {
-		if strings.HasSuffix(name, suffix) {
-			return true
-		}
-	}
-	return false
+	return strings.HasPrefix(name, ".topsailai-data-write-")
 }
 
 // runStat implements the "stat" command and its "top" subcommand.
@@ -277,7 +277,7 @@ func runStatOne(ctx context.Context, mgr *manager.Manager, args []string) error 
 	if err != nil {
 		return fmt.Errorf("stat: %w", err)
 	}
-	stat, err := readObjectStat(obj)
+	stat, err := readObjectStat(mgr, obj)
 	if err != nil {
 		return fmt.Errorf("stat: %w", err)
 	}
@@ -345,7 +345,7 @@ func runStatTop(ctx context.Context, mgr *manager.Manager, args []string) error 
 		if *status != "all" && string(obj.Status) != *status {
 			continue
 		}
-		stat, err := readObjectStat(obj)
+		stat, err := readObjectStat(mgr, obj)
 		if err != nil {
 			return fmt.Errorf("stat top: read %s: %w", obj.ID, err)
 		}
@@ -427,12 +427,20 @@ func compareTimePointers(a, b *time.Time) int {
 	return 0
 }
 
-// readObjectStat loads stat data directly from the local object reference.
-func readObjectStat(obj *models.Object) (*models.ObjectStat, error) {
-	if obj == nil || obj.DataRef == "" {
+// readObjectStat resolves identity-addressed statistics independently of payload.
+func readObjectStat(mgr *manager.Manager, obj *models.Object) (*models.ObjectStat, error) {
+	if obj == nil {
 		return &models.ObjectStat{}, nil
 	}
-	return local.ReadStat(obj.DataRef)
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		return nil, err
+	}
+	dir, err := layout.ObjectMetaPath(obj.ID)
+	if err != nil {
+		return nil, err
+	}
+	return local.ReadStat(dir)
 }
 
 // printStatHuman prints a human-readable stat section.
@@ -486,7 +494,7 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
-	if err := printObjectList(objects, *format, *withStat); err != nil {
+	if err := printObjectList(mgr, objects, *format, *withStat); err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
 	return nil
@@ -688,7 +696,7 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
-	if err := printObjectList(objects, *format, *withStat); err != nil {
+	if err := printObjectList(mgr, objects, *format, *withStat); err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
 	return nil
@@ -938,7 +946,7 @@ func validateSortOption(sort string) error {
 }
 
 // printObjectList prints objects using the requested format.
-func printObjectList(objects []*models.Object, format string, withStat bool) error {
+func printObjectList(mgr *manager.Manager, objects []*models.Object, format string, withStat bool) error {
 	items := make([]listObject, 0, len(objects))
 	for _, obj := range objects {
 		tags := obj.Tags
@@ -958,7 +966,7 @@ func printObjectList(objects []*models.Object, format string, withStat bool) err
 			DataRef:       obj.DataRef,
 		}
 		if withStat {
-			stat, err := readObjectStat(obj)
+			stat, err := readObjectStat(mgr, obj)
 			if err != nil {
 				return err
 			}

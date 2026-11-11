@@ -34,7 +34,6 @@ func TestValidateObjectName(t *testing.T) {
 		{"..", apperrors.ErrInvalidName},
 		{"CON", apperrors.ErrInvalidName},
 		{"NUL", apperrors.ErrInvalidName},
-		{"hello.tags", apperrors.ErrInvalidName},
 		{"hello.lock", apperrors.ErrInvalidName},
 		{"hello.deleted", apperrors.ErrInvalidName},
 		{"hello.ceased", apperrors.ErrInvalidName},

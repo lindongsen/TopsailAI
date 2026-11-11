@@ -13,21 +13,24 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
 
+// createObjectDir publishes current-layout fixtures through the metadata adapter.
 func createObjectDir(t *testing.T, root string, obj *models.Object) string {
 	t.Helper()
-	objectDir := filepath.Join(root, obj.Path)
-	if err := os.MkdirAll(objectDir, 0o755); err != nil {
-		t.Fatalf("create object dir: %v", err)
+	obj.DataRef = obj.Path
+	obj.SchemaVersion = models.CurrentSchemaVersion
+	adapter := NewMetadataAdapter(root)
+	if err := adapter.Init(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	data, err := json.MarshalIndent(obj, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal metadata: %v", err)
+	if err := adapter.Create(context.Background(), obj); err != nil {
+		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(objectDir, "metadata.json"), data, 0o644); err != nil {
-		t.Fatalf("write metadata: %v", err)
+	objectDir := filepath.Join(root, "object", filepath.FromSlash(obj.Path))
+	if err := os.MkdirAll(objectDir, 0755); err != nil {
+		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(objectDir, obj.Name+".md"), []byte("# "+obj.Name), 0o644); err != nil {
-		t.Fatalf("write marker: %v", err)
+	if err := os.WriteFile(filepath.Join(objectDir, obj.Name+".md"), []byte("# "+obj.Name), 0644); err != nil {
+		t.Fatal(err)
 	}
 	return objectDir
 }
@@ -56,7 +59,7 @@ func TestMetadataAdapterCreateAndGet(t *testing.T) {
 		Status:    models.ObjectStatusActive,
 		CreatedAt: now,
 		UpdatedAt: now,
-		DataRef:   filepath.Join(root, objectPath),
+		DataRef:   objectPath,
 	}
 	if err := adapter.Create(ctx, obj); err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -172,8 +175,8 @@ func TestMetadataAdapterUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after update failed: %v", err)
 	}
-	if len(got.Tags) != 1 || got.Tags[0] != "new" {
-		t.Fatalf("tags not updated: %v", got.Tags)
+	if len(got.Tags) != 1 || got.Tags[0] != "old" {
+		t.Fatalf("metadata update changed independent tags: %v", got.Tags)
 	}
 	if got.Description != "updated description" {
 		t.Fatalf("description not updated: got %q, want %q", got.Description, "updated description")
@@ -670,11 +673,6 @@ func TestMetadataAdapterAddAndRemoveTag(t *testing.T) {
 	}
 	createObjectDir(t, root, obj)
 
-	// Add inherited tag.
-	classifyDir := filepath.Join(root, filepath.Dir(objectPath))
-	_ = os.MkdirAll(classifyDir, 0o755)
-	_ = WriteTagsFile(filepath.Join(classifyDir, "classify.tags"), []string{"inherited"})
-
 	if err := adapter.AddTag(ctx, obj.ID, "own"); err != nil {
 		t.Fatalf("AddTag failed: %v", err)
 	}
@@ -683,20 +681,46 @@ func TestMetadataAdapterAddAndRemoveTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after add failed: %v", err)
 	}
-	if !hasAllTags(got.Tags, []string{"inherited", "own"}) {
-		t.Fatalf("expected inherited and own tags, got %v", got.Tags)
+	if !hasAllTags(got.Tags, []string{"own"}) {
+		t.Fatalf("expected own tag, got %v", got.Tags)
 	}
 
 	// Adding duplicate should be no-op.
 	if err := adapter.AddTag(ctx, obj.ID, "own"); err != nil {
 		t.Fatalf("AddTag duplicate failed: %v", err)
 	}
+	got, err = adapter.Get(ctx, obj.ID, false)
+	if err != nil {
+		t.Fatalf("Get after duplicate add failed: %v", err)
+	}
+	if len(got.Tags) != 1 {
+		t.Fatalf("expected exactly one tag, got %v", got.Tags)
+	}
 
-	// Remove inherited tag should fail.
-	if err := adapter.RemoveTag(ctx, obj.ID, "inherited"); err == nil {
-		t.Fatal("expected error removing inherited tag")
-	} else if !errors.Is(err, apperrors.ErrInvalidArgument) {
-		t.Fatalf("expected ErrInvalidArgument, got %v", err)
+	// Tags have a separate disk authority, not a JSON field.
+	layout, err := NewStoreLayout(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := layout.ObjectMetaPath(obj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(meta, "tags")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(meta, "metadata.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for key := range fields {
+		if key == "Tags" || key == "tags" {
+			t.Fatal("disk metadata duplicates tag authority")
+		}
 	}
 
 	// Remove own tag.
@@ -853,8 +877,6 @@ func TestMetadataAdapterScanObjectsBoundary(t *testing.T) {
 
 	now := time.Now()
 	objectPath, _ := BuildObjectPath(now, nil, "parent")
-	objectDir := filepath.Join(root, objectPath)
-	_ = os.MkdirAll(objectDir, 0o755)
 
 	obj := &models.Object{
 		ID:        models.ObjectID("parent"),
@@ -864,9 +886,7 @@ func TestMetadataAdapterScanObjectsBoundary(t *testing.T) {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	data, _ := json.MarshalIndent(obj, "", "  ")
-	_ = os.WriteFile(filepath.Join(objectDir, "metadata.json"), data, 0o644)
-	_ = os.WriteFile(filepath.Join(objectDir, "parent.md"), []byte("# parent"), 0o644)
+	objectDir := createObjectDir(t, root, obj)
 
 	// Nested object.md inside parent should not create a second object.
 	nested := filepath.Join(objectDir, "nested")
@@ -911,37 +931,36 @@ func TestMetadataAdapterPurgeRemovesCeasedObject(t *testing.T) {
 		Name:          name,
 		Path:          objectPath,
 		Status:        models.ObjectStatusCeased,
-		SchemaVersion: 1,
+		SchemaVersion: models.CurrentSchemaVersion,
 		CreatedAt:     now,
 		UpdatedAt:     now,
-		DataRef:       objectDir,
+		DataRef:       objectPath,
 	}
-	data, err := json.MarshalIndent(obj, "", "  ")
+	createObjectDir(t, root, &obj)
+	layout, err := NewStoreLayout(root)
 	if err != nil {
-		t.Fatalf("marshal metadata: %v", err)
+		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(objectDir, "metadata.json"), data, 0o644); err != nil {
-		t.Fatalf("write metadata: %v", err)
+	meta, err := layout.ObjectMetaPath(id)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(objectDir, name+".md"), []byte("data"), 0o644); err != nil {
-		t.Fatalf("write marker: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(objectDir, name+".ceased"), []byte{}, 0o644); err != nil {
-		t.Fatalf("write ceased marker: %v", err)
-	}
-	if err := WriteStat(objectDir, &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, ReadCount: 2}); err != nil {
-		t.Fatalf("write stat: %v", err)
+	if err := WriteStat(meta, &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, ReadCount: 2}); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := adapter.Purge(ctx, id); err != nil {
 		t.Fatalf("purge ceased object: %v", err)
 	}
 
-	if _, err := os.Stat(StatFilePath(objectDir)); !os.IsNotExist(err) {
+	if _, err := os.Stat(StatFilePath(meta)); !os.IsNotExist(err) {
 		t.Fatalf("expected stat file to be removed, got err=%v", err)
 	}
-	if _, err := os.Stat(objectDir); !os.IsNotExist(err) {
-		t.Fatalf("expected object directory to be removed, got err=%v", err)
+	if _, err := os.Stat(meta); !os.IsNotExist(err) {
+		t.Fatalf("metadata leaf remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "object", filepath.FromSlash(objectPath), name+".md")); err != nil {
+		t.Fatalf("metadata purge touched payload: %v", err)
 	}
 }
 
@@ -971,18 +990,12 @@ func TestMetadataAdapterPurgeRejectsNonCeased(t *testing.T) {
 		Name:          name,
 		Path:          objectPath,
 		Status:        models.ObjectStatusActive,
-		SchemaVersion: 1,
+		SchemaVersion: models.CurrentSchemaVersion,
 		CreatedAt:     now,
 		UpdatedAt:     now,
-		DataRef:       objectDir,
+		DataRef:       objectPath,
 	}
-	data, err := json.MarshalIndent(obj, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal metadata: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(objectDir, "metadata.json"), data, 0o644); err != nil {
-		t.Fatalf("write metadata: %v", err)
-	}
+	createObjectDir(t, root, &obj)
 
 	if err := adapter.Purge(ctx, id); err == nil {
 		t.Fatal("expected error purging active object, got nil")

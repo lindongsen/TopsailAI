@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/topsailai/topsailai_data/pkg/adapters/local"
+	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
 
-func setObjectStat(t *testing.T, obj *models.Object, readCount, writeCount uint64, readAt time.Time) {
+func setObjectStat(t *testing.T, mgr *manager.Manager, obj *models.Object, readCount, writeCount uint64, readAt time.Time) {
 	t.Helper()
 	stat := &models.ObjectStat{
 		SchemaVersion: models.ObjectStatSchemaVersion,
@@ -21,7 +22,15 @@ func setObjectStat(t *testing.T, obj *models.Object, readCount, writeCount uint6
 	if !readAt.IsZero() {
 		stat.LastReadAt = &readAt
 	}
-	if err := local.WriteStat(obj.DataRef, stat); err != nil {
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := layout.ObjectMetaPath(obj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.WriteStat(dir, stat); err != nil {
 		t.Fatalf("write stat: %v", err)
 	}
 }
@@ -30,7 +39,7 @@ func TestStatOneAndShowSection(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 	obj := createTestObject(t, ctx, mgr, "observed")
 	when := time.Date(2026, 8, 24, 9, 30, 0, 0, time.Local)
-	setObjectStat(t, obj, 7, 3, when)
+	setObjectStat(t, mgr, obj, 7, 3, when)
 
 	out := captureStdout(t, func() {
 		if err := Run(ctx, mgr, []string{"stat", string(obj.ID), "--format", "json"}); err != nil {
@@ -63,9 +72,9 @@ func TestStatTopSortingLimitStatusAndFormats(t *testing.T) {
 	cold := createTestObject(t, ctx, mgr, "cold")
 	hot := createTestObject(t, ctx, mgr, "hot")
 	deleted := createTestObject(t, ctx, mgr, "deleted-stat")
-	setObjectStat(t, cold, 1, 8, time.Now().Add(-time.Hour))
-	setObjectStat(t, hot, 9, 2, time.Now())
-	setObjectStat(t, deleted, 20, 1, time.Now())
+	setObjectStat(t, mgr, cold, 1, 8, time.Now().Add(-time.Hour))
+	setObjectStat(t, mgr, hot, 9, 2, time.Now())
+	setObjectStat(t, mgr, deleted, 20, 1, time.Now())
 	if err := mgr.DeleteObject(ctx, deleted.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -96,7 +105,7 @@ func TestStatTopSortingLimitStatusAndFormats(t *testing.T) {
 func TestListAndSearchWithStat(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 	obj := createTestObject(t, ctx, mgr, "listed-stat", "stat-tag")
-	setObjectStat(t, obj, 4, 2, time.Now())
+	setObjectStat(t, mgr, obj, 4, 2, time.Now())
 
 	for _, args := range [][]string{{"list", "--with-stat", "--format", "json"}, {"search", "stat-tag", "--with-stat"}} {
 		out := captureStdout(t, func() {
@@ -114,10 +123,8 @@ func TestStatTopMissingStatSortsFirstAscending(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 	without := createTestObject(t, ctx, mgr, "without-stat")
 	with := createTestObject(t, ctx, mgr, "with-stat")
-	setObjectStat(t, with, 2, 0, time.Now())
-	if err := local.WriteStat(without.DataRef, &models.ObjectStat{}); err != nil {
-		t.Fatalf("zero stat: %v", err)
-	}
+	setObjectStat(t, mgr, with, 2, 0, time.Now())
+	setObjectStat(t, mgr, without, 0, 0, time.Time{})
 
 	out := captureStdout(t, func() {
 		if err := runStatTop(context.Background(), mgr, []string{"--order", "asc", "--format", "json"}); err != nil {
@@ -130,5 +137,27 @@ func TestStatTopMissingStatSortsFirstAscending(t *testing.T) {
 	}
 	if len(rows) < 2 || rows[0].ID != "without-stat" {
 		t.Fatalf("zero stat should rank first ascending: %+v", rows)
+	}
+}
+
+// TestCutoverShowUserMetadataNames keeps user files distinct from internal metadata.
+func TestCutoverShowUserMetadataNames(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+	createTestObject(t, ctx, mgr, "named-files")
+	names := []string{"stat.json", "metadata.json", "user.lock", "notes.tags", "meta/guide.md"}
+	for _, name := range names {
+		if err := mgr.WriteActualFile(ctx, "named-files", name, strings.NewReader("user content")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"show", "named-files"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, name := range []string{"stat.json", "metadata.json", "user.lock", "notes.tags", "meta", "guide.md"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("show omitted %s: %s", name, out)
+		}
 	}
 }

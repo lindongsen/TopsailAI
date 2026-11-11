@@ -128,54 +128,6 @@ func TestScannerIgnoresNonObjectDirectories(t *testing.T) {
 	}
 }
 
-func TestScannerTagInheritance(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 7, 14, 23, 23, 0, 0, time.UTC)
-
-	path, err := BuildObjectPath(now, []string{"work"}, "obj")
-	if err != nil {
-		t.Fatalf("BuildObjectPath failed: %v", err)
-	}
-	objectDir := filepath.Join(root, path)
-	if err := os.MkdirAll(objectDir, 0o755); err != nil {
-		t.Fatalf("mkdir object failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(objectDir, "obj.md"), []byte("data"), 0o644); err != nil {
-		t.Fatalf("write obj.md failed: %v", err)
-	}
-
-	// Add classify tag.
-	classifyDir := filepath.Join(root, filepath.Dir(path))
-	if err := os.MkdirAll(classifyDir, 0o755); err != nil {
-		t.Fatalf("mkdir classify failed: %v", err)
-	}
-	if err := WriteTagsFile(filepath.Join(classifyDir, "work.tags"), []string{"work-tag"}); err != nil {
-		t.Fatalf("write classify tags failed: %v", err)
-	}
-
-	// Add object tag.
-	if err := WriteTagsFile(filepath.Join(objectDir, "obj.tags"), []string{"own-tag"}); err != nil {
-		t.Fatalf("write object tags failed: %v", err)
-	}
-
-	scanner := NewScanner(root)
-	objects, err := scanner.Scan(context.Background())
-	if err != nil {
-		t.Fatalf("Scan failed: %v", err)
-	}
-	if len(objects) != 1 {
-		t.Fatalf("expected 1 object, got %d", len(objects))
-	}
-
-	tags := objects[0].Tags
-	if len(tags) != 2 {
-		t.Fatalf("expected 2 tags, got %v", tags)
-	}
-	if tags[0] != "work-tag" || tags[1] != "own-tag" {
-		t.Fatalf("unexpected tag order: %v", tags)
-	}
-}
-
 func TestCreatedAtFromObjectPathInvalid(t *testing.T) {
 	cases := []string{
 		"",

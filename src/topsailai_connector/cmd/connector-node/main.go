@@ -19,7 +19,6 @@ import (
 
 	"topsailai_connector/internal/node"
 	"topsailai_connector/internal/protocol"
-	"topsailai_connector/internal/security"
 )
 
 func main() {
@@ -125,21 +124,27 @@ func runNodeWithSignals(arguments []string, signals <-chan os.Signal) error {
 	ctx, stop := contextFromSignals(signals)
 	defer stop()
 
-	return serveNode(ctx, runtime, identity, logger)
+	return serveNode(ctx, runtime, logger)
 }
 
 // serveNode builds the dispatcher and the dialer and serves until the context
 // ends.
 //
 // The context is a parameter so a test can drive the whole tail of the process
-// without signalling the test binary. The identity is a parameter rather than a
-// second read of the file, so the value the dialer validates is the value the
-// deny list was built from: reading it twice would let a regeneration between the
-// two reads leave the process serving under an identity it no longer owns.
-func serveNode(ctx context.Context, runtime *node.Runtime, identity security.NodeIdentity, logger *slog.Logger) error {
-	dispatcher := node.NewDispatcher(runtime.Authority(), identity, logger)
+// without signalling the test binary.
+//
+// The identity comes from the runtime's holder rather than from a second read of
+// the file, so the value the dialer validates is the value the deny list was built
+// from. The holder is shared with the dispatcher, so a pair regenerated while the
+// Node runs is adopted by both components at once: the dialer announces the new
+// identity and the dispatcher checks requests against it, which is what makes
+// `connector-node regenerate` invalidate the previous token immediately.
+func serveNode(ctx context.Context, runtime *node.Runtime, logger *slog.Logger) error {
+	holder := runtime.IdentityHolder()
 
-	dialer, err := node.NewDialer(runtime.Config(), identity, dispatcher, logger)
+	dispatcher := node.NewDispatcherWithHolder(runtime.Authority(), holder, logger)
+
+	dialer, err := node.NewDialerWithHolder(runtime.Config(), holder, dispatcher, logger)
 	if err != nil {
 		return err
 	}

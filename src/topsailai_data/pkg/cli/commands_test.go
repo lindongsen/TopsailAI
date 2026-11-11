@@ -14,11 +14,41 @@ import (
 	"testing"
 	"time"
 
+	"github.com/topsailai/topsailai_data/pkg/adapters/local"
 	"github.com/topsailai/topsailai_data/pkg/config"
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
+	"gopkg.in/yaml.v3"
 )
+
+// cliPayloadDir resolves a relative adapter reference for filesystem assertions.
+func cliPayloadDir(t *testing.T, mgr *manager.Manager, obj *models.Object) string {
+	t.Helper()
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := layout.ResolveObjectRef(obj.DataRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// cliMetadataDir locates the ID-addressed metadata fixture.
+func cliMetadataDir(t *testing.T, mgr *manager.Manager, id models.ObjectID) string {
+	t.Helper()
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := layout.ObjectMetaPath(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
 
 func setupManager(t *testing.T) (*manager.Manager, string, context.Context) {
 	t.Helper()
@@ -365,7 +395,7 @@ func TestRecoverRejectsNonDeleted(t *testing.T) {
 			name: "creating",
 			setup: func() (models.ObjectID, error) {
 				obj := createTestObject(t, ctx, mgr, "creating-obj")
-				metaPath := filepath.Join(mgr.Root(), obj.Path, "metadata.json")
+				metaPath := filepath.Join(cliMetadataDir(t, mgr, obj.ID), "metadata.json")
 				metaBytes, err := os.ReadFile(metaPath)
 				if err != nil {
 					return "", err
@@ -441,12 +471,12 @@ func TestRecoverRejectsOverlappingArchiveWithoutMutation(t *testing.T) {
 	if err := Run(ctx, mgr, []string{"delete", string(obj.ID)}); err != nil {
 		t.Fatal(err)
 	}
-	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	markerPath := filepath.Join(cliPayloadDir(t, mgr, obj), obj.Name+".md")
 	before, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	archivePath := filepath.Join(obj.DataRef, "recover.tar")
+	archivePath := filepath.Join(cliPayloadDir(t, mgr, obj), "recover.tar")
 	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{obj.Name + ".md": []byte("replacement")}), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +578,7 @@ func TestRecoverRestoresDeletedWithFromArchive(t *testing.T) {
 		t.Fatalf("expected active, got %s", obj.Status)
 	}
 
-	content, err := os.ReadFile(filepath.Join(mgr.Root(), string(obj.Path), "restorearchive.md"))
+	content, err := os.ReadFile(filepath.Join(cliPayloadDir(t, mgr, obj), "restorearchive.md"))
 	if err != nil {
 		t.Fatalf("read restored file: %v", err)
 	}
@@ -789,18 +819,30 @@ func TestListOutputFormatAndPagination(t *testing.T) {
 		t.Fatalf("list output should not use table separators: %s", out)
 	}
 
+	var complete []listObject
+	if err := yaml.Unmarshal([]byte(out), &complete); err != nil {
+		t.Fatal(err)
+	}
+
 	// Test offset/limit.
 	out = captureStdout(t, func() {
 		if err := Run(ctx, mgr, []string{"list", "--offset", "1", "--limit", "2"}); err != nil {
 			t.Fatalf("list offset/limit: %v", err)
 		}
 	})
-	if !strings.Contains(out, "obj2") || !strings.Contains(out, "obj3") {
-		t.Fatalf("offset/limit output missing expected objects: %s", out)
+	var page []listObject
+	if err := yaml.Unmarshal([]byte(out), &page); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(out, "obj1") || strings.Contains(out, "obj5") {
-		t.Fatalf("offset/limit output should not contain out-of-range objects: %s", out)
+	if len(complete) != 5 || len(page) != 2 {
+		t.Fatalf("unexpected pagination sizes: full=%d page=%d", len(complete), len(page))
 	}
+	for i := range page {
+		if page[i].ID != complete[i+1].ID {
+			t.Fatalf("page[%d]=%s, expected %s", i, page[i].ID, complete[i+1].ID)
+		}
+	}
+
 }
 
 func TestListFormatJSON(t *testing.T) {
@@ -873,7 +915,7 @@ func TestListEmpty(t *testing.T) {
 }
 
 func TestShowReadsMarkdownAndTree(t *testing.T) {
-	mgr, root, ctx := setupManager(t)
+	mgr, _, ctx := setupManager(t)
 
 	content := []byte("# Hello\n\nThis is the object content.\n")
 	obj := createTestObject(t, ctx, mgr, "hello")
@@ -887,7 +929,7 @@ func TestShowReadsMarkdownAndTree(t *testing.T) {
 		t.Fatalf("put extra.txt: %v", err)
 	}
 
-	subDir := filepath.Join(root, obj.Path, "attachments")
+	subDir := filepath.Join(cliPayloadDir(t, mgr, obj), "attachments")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("mkdir attachments: %v", err)
 	}
@@ -1234,12 +1276,12 @@ func TestPutArchiveSuccess(t *testing.T) {
 func TestPutArchiveRejectsOverlappingSourceWithoutMutation(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 	obj := createTestObject(t, ctx, mgr, "putarch-overlap")
-	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	markerPath := filepath.Join(cliPayloadDir(t, mgr, obj), obj.Name+".md")
 	before, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	archivePath := filepath.Join(obj.DataRef, "input.tar")
+	archivePath := filepath.Join(cliPayloadDir(t, mgr, obj), "input.tar")
 	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{obj.Name + ".md": []byte("replacement")}), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1301,41 +1343,6 @@ func TestTagRemoveSuccess(t *testing.T) {
 	}
 	if len(got.Tags) != 1 || got.Tags[0] != "beta" {
 		t.Fatalf("expected tags [beta], got %v", got.Tags)
-	}
-}
-
-func TestTagRemoveInheritedTagBlocked(t *testing.T) {
-	mgr, root, ctx := setupManager(t)
-
-	// Create the object under a classify directory so that a classify tag file
-	// with the matching directory name applies recursively.
-	obj := createTestObject(t, ctx, mgr, "inhtest")
-	if err := Run(ctx, mgr, []string{"move", string(obj.ID), "demo"}); err != nil {
-		t.Fatalf("move object under demo: %v", err)
-	}
-
-	// Derive the classify directory from the object's current path so the test
-	// does not depend on the current date/time.
-	obj, err := mgr.GetObject(ctx, obj.ID, false)
-	if err != nil {
-		t.Fatalf("get moved object: %v", err)
-	}
-	classifyDir := filepath.Join(root, filepath.Dir(obj.Path))
-	if err := os.WriteFile(filepath.Join(classifyDir, "demo.tags"), []byte("inherited\n"), 0644); err != nil {
-		t.Fatalf("write classify tags: %v", err)
-	}
-
-	got, err := mgr.GetObject(ctx, obj.ID, false)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if len(got.Tags) != 1 || got.Tags[0] != "inherited" {
-		t.Fatalf("expected inherited tag, got %v", got.Tags)
-	}
-
-	err = Run(ctx, mgr, []string{"tag", "remove", string(obj.ID), "inherited"})
-	if err == nil {
-		t.Fatalf("expected error removing inherited tag")
 	}
 }
 
@@ -1811,7 +1818,7 @@ func TestPutRejectsSameFileWithoutDataLoss(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 	obj := createTestObject(t, ctx, mgr, "same-file-cli")
 
-	destination := filepath.Join(obj.DataRef, obj.Name+".md")
+	destination := filepath.Join(cliPayloadDir(t, mgr, obj), obj.Name+".md")
 	before, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatalf("read destination before put: %v", err)
@@ -1872,16 +1879,16 @@ func TestPrintObjectTreeHidesNestedWriteTemporaryFiles(t *testing.T) {
 func TestPutArchiveRejectsObjectDirectorySourceWithoutMutation(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 	obj := createTestObject(t, ctx, mgr, "putarch-directory")
-	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	markerPath := filepath.Join(cliPayloadDir(t, mgr, obj), obj.Name+".md")
 	before, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	controlPath := filepath.Join(obj.DataRef, "control.txt")
+	controlPath := filepath.Join(cliPayloadDir(t, mgr, obj), "control.txt")
 	if err := os.WriteFile(controlPath, []byte("control"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Run(ctx, mgr, []string{"put-archive", string(obj.ID), obj.DataRef}); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+	if err := Run(ctx, mgr, []string{"put-archive", string(obj.ID), cliPayloadDir(t, mgr, obj)}); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
 		t.Fatalf("expected overlap error, got %v", err)
 	}
 	assertCLIFileBytes(t, markerPath, before)
@@ -1894,13 +1901,13 @@ func TestPutArchiveRejectsSymlinkToObjectDirectoryWithoutMutation(t *testing.T) 
 	}
 	mgr, _, ctx := setupManager(t)
 	obj := createTestObject(t, ctx, mgr, "putarch-directory-alias")
-	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	markerPath := filepath.Join(cliPayloadDir(t, mgr, obj), obj.Name+".md")
 	before, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	alias := filepath.Join(filepath.Dir(obj.DataRef), "object-directory-alias")
-	if err := os.Symlink(obj.DataRef, alias); err != nil {
+	alias := filepath.Join(filepath.Dir(cliPayloadDir(t, mgr, obj)), "object-directory-alias")
+	if err := os.Symlink(cliPayloadDir(t, mgr, obj), alias); err != nil {
 		t.Fatal(err)
 	}
 	if err := Run(ctx, mgr, []string{"put-archive", string(obj.ID), alias}); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
@@ -1912,12 +1919,12 @@ func TestPutArchiveRejectsSymlinkToObjectDirectoryWithoutMutation(t *testing.T) 
 func TestPutArchiveMissingSourceDoesNotMutateObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 	obj := createTestObject(t, ctx, mgr, "putarch-missing-source")
-	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	markerPath := filepath.Join(cliPayloadDir(t, mgr, obj), obj.Name+".md")
 	before, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	missing := filepath.Join(filepath.Dir(obj.DataRef), "missing-source.tar")
+	missing := filepath.Join(filepath.Dir(cliPayloadDir(t, mgr, obj)), "missing-source.tar")
 	err = Run(ctx, mgr, []string{"put-archive", string(obj.ID), missing})
 	if err == nil {
 		t.Fatal("expected missing source error")

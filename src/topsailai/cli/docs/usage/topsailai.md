@@ -163,13 +163,46 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/models clear` | Clear the model selection for the current workspace or project scope. |
 | `/env.search <term> [term...]` | Fuzzy-search configurable environment variables case-insensitively. Multiple terms use OR semantics. The command checks `{TOPSAILAI_HOME}/.env.local`, then `{TOPSAILAI_HOME}/.env`, then the TopsailAI project `env_template`. It displays matching `NAME=VALUE` assignments from every source while suppressing names already found in a higher-priority source. Within one source, an uncommented assignment takes precedence over a commented assignment of the same name regardless of line order; equal-status duplicates retain the first assignment. Each group starts with `> Source: PATH`, and groups are separated by a blank line. Displayed names become TAB-completion candidates for subsequent `/env.get`, `/env.set`, and `/env.search` input in the current CLI process. Values can contain secrets and are intentionally shown by this command. |
 | `/send <number> [message]` | Project scope only: send a message to the running session associated with the selected entry. Not available in workspace scope. |
-| `/clean` | Remove expired files from the task directory. |
+| `/clean` | Remove expired files from the task directory. Files whose owning session is alive or unverifiable are skipped; see [Clean safety rules](#clean-safety-rules). |
 | `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |
 | `scopes` | Display detailed introductions and available actions for each scope. |
 | `/help` | Show available commands. |
 | `q` | Quit the CLI. |
 
 Workspace scope rejects `/send` and its `send` alias. Select a numbered log to enter runtime scope, then use `/send [message]` for the watched session. Session-scope messaging remains available.
+
+### Clean safety rules
+
+`/clean` and `/clean <number> [number...]` delete session files, so every
+deletion is gated on the owning session being provably gone. The guard answers
+"is the owning session alive" before it answers "is this file held open",
+because a session running in a sibling container is invisible to the local
+process table while its control channel still answers.
+
+The owner is resolved from the `{session_id}.{pid}` prefix of every
+session-related suffix, so `.session.stdout`, `.session.stderr`,
+`.session.pipe`, `.task.stdout`, `.task.stderr` and
+`.session.agent2llm_inject_messages.jsonl` all resolve to the same session. A
+file is skipped when any of the following holds:
+
+| Condition | Reported reason |
+|---|---|
+| The control channel answers a heartbeat | `owning session is still alive` |
+| The owner PID is `ALIVE` in the local process table | `owning session is still alive` |
+| Liveness cannot be determined | `owning session liveness cannot be verified` |
+| A process still holds the file open | `file is still held open by a process` |
+
+An unverifiable owner is never treated as an absent owner, so an unanswerable
+probe blocks the deletion instead of authorizing it. Files whose names carry no
+session owner, such as `.agent-launch.log` records and generic `*.stdout` files,
+have no session lifecycle to protect and are governed by the open-descriptor
+check and the active launch lease alone.
+
+Liveness is re-probed immediately before each deletion rather than reused from
+the inventory pass, so a session that starts using a file while the confirmation
+prompt is open keeps its files. `/clean` without arguments additionally requires
+a file to be older than three days, and both forms require an explicit `y`
+confirmation that defaults to `N`.
 
 ### Workspace task list columns
 
@@ -488,7 +521,7 @@ The `docs list --json` document is a JSON array of document records, ordered old
 
 The `docs read --json` document is one result object containing `status`, `content`, `path`, `rel_path`, and `options`. `status` is `ok`, `not_found`, or `conflict`. `content` is the document text for `ok` and `null` otherwise. `options` lists the candidate `folder/name.md` paths for `conflict` and is `null` otherwise. Exit code is `0` for `ok` and `1` for `not_found` or `conflict`, so a caller never has to distinguish an error message from document content on stdout.
 
-The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `process_generation`, `status`, `completed`, `driver`, `created_at`, `project_workspace`, and `hostname`. `session_name`, `project_workspace`, and `pid` follow the same primary-then-metadata resolution documented in [Field resolution and metadata fallback](#field-resolution-and-metadata-fallback), so `pid` may be the metadata PID of an exited row. `hostname` is the origin host recorded in the row's exact metadata record, which lets callers distinguish sessions that appear in a task directory shared between several hosts or containers; it is the raw stored value, so it is `""` when the record is absent or the stored value is not a string, and the local hostname is never substituted for a missing value. The document-level `host` is the host running the CLI, so `hostname` and `host` differ for a row produced elsewhere. `hostname` is display evidence only and grants no signal authority. `process_generation` is the positive operating-system process generation required by non-interactive `workspace kill`; it is present only when an ordinary session process is currently verified to hold that exact session stdout file, and otherwise is `null`. A non-null `pid` therefore never implies signal authority, and callers must not substitute a PID, timestamp, row number, or older generation. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
+The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `session_qualifier`, `pid`, `process_generation`, `status`, `completed`, `driver`, `created_at`, `project_workspace`, and `hostname`. `session_qualifier` is `task` for a task row and `null` for an ordinary session row, so a machine consumer can tell the two row kinds apart without re-deriving the filename convention; the key is always present, so the item schema never changes shape between row kinds. `session_name`, `project_workspace`, and `pid` follow the same primary-then-metadata resolution documented in [Field resolution and metadata fallback](#field-resolution-and-metadata-fallback), so `pid` may be the metadata PID of an exited row. `hostname` is the origin host recorded in the row's exact metadata record, which lets callers distinguish sessions that appear in a task directory shared between several hosts or containers; it is the raw stored value, so it is `""` when the record is absent or the stored value is not a string, and the local hostname is never substituted for a missing value. The document-level `host` is the host running the CLI, so `hostname` and `host` differ for a row produced elsewhere. `hostname` is display evidence only and grants no signal authority. `process_generation` is the positive operating-system process generation required by non-interactive `workspace kill`; it is present only when an ordinary session process is currently verified to hold that exact session stdout file, and otherwise is `null`. A non-null `pid` therefore never implies signal authority, and callers must not substitute a PID, timestamp, row number, or older generation. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
 
 The `project list --json` document is a JSON array of managed project records, ordered oldest-first by `created_at`. Each record contains the stored fields `name`, `path`, `created_at`, and `updated_at`, plus the 1-based `no` row number that matches the table row. An empty registry returns `[]` and exit code `0`, so callers never have to parse a warning message. The public parser tolerates unknown arguments, so an unrecognized option is ignored and the default table is printed; the usage error with exit code `2` applies only when the internal handler receives an option other than `--json`.
 

@@ -21,7 +21,7 @@ func TestNamespaceCreateParentPreservesChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(child.DataRef, "child.md")
+	path := filepath.Join(payloadDirForTest(t, m, child.DataRef), "child.md")
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestNamespaceRejectsNestedCreateAndMove(t *testing.T) {
 		t.Fatalf("nested move: %v", err)
 	}
 	for _, obj := range []string{parent.DataRef, child.DataRef} {
-		if _, err := os.Stat(filepath.Join(obj, filepath.Base(obj)+".md")); err != nil {
+		if _, err := os.Stat(filepath.Join(payloadDirForTest(t, m, obj), filepath.Base(obj)+".md")); err != nil {
 			t.Fatal(err)
 		}
 	}

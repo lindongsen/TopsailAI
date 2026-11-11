@@ -163,6 +163,7 @@ TOOLS = dict(
 PROMPT = """
 # About sandbox_tool
 When the user mentions accessing the sandbox, you need to first use the `list_sandbox` to decide one target, and then use `call_sandbox` to execute command in it.
+Use `copy2sandbox` to copy a local file or folder into that same target before running a command that needs it.
 """
 
 FLAG_TOOL_ENABLED = False

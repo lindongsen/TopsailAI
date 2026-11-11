@@ -2,6 +2,7 @@ package local
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/topsailai/topsailai_data/pkg/models"
@@ -18,17 +19,13 @@ func SortObjectsByTimePath(objects []*models.Object, ascending bool) {
 		return
 	}
 
-	// Use a stable sort so equal time prefixes keep input order.
-	for i := 0; i < len(objects)-1; i++ {
-		for j := i + 1; j < len(objects); j++ {
-			cmp := compareTimePath(objects[i].Path, objects[j].Path)
-			if ascending && cmp > 0 {
-				objects[i], objects[j] = objects[j], objects[i]
-			} else if !ascending && cmp < 0 {
-				objects[i], objects[j] = objects[j], objects[i]
-			}
+	sort.SliceStable(objects, func(i, j int) bool {
+		cmp := compareTimePath(objects[i].Path, objects[j].Path)
+		if ascending {
+			return cmp < 0
 		}
-	}
+		return cmp > 0
+	})
 }
 
 // compareTimePath compares the time prefixes of two object paths.

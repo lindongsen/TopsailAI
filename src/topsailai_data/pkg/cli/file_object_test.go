@@ -10,6 +10,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -92,17 +96,37 @@ func TestFileCommandRejectsPathEscape(t *testing.T) {
 	}
 }
 
-// TestFileCommandRejectsMetadataMarker proves a caller cannot bypass lifecycle
-// management by editing a metadata marker through the file commands.
-func TestFileCommandRejectsMetadataMarker(t *testing.T) {
+// TestFileCommandUserMetadataNames verifies payload names cannot overwrite internal metadata.
+func TestFileCommandUserMetadataNames(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
 	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
-
-	for _, marker := range []string{"demo.tags", "demo.lock", "demo.deleted", "demo.ceased", ".stat.json"} {
-		err := runFileCommandError(t, ctx, mgr, "write", marker, "--content", "x", "--object", "demo")
-		if err == nil {
-			t.Fatalf("%s: expected a metadata marker rejection", marker)
+	metaPath := filepath.Join(cliMetadataDir(t, mgr, "demo"), "metadata.json")
+	before, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"demo.lock", "demo.deleted", "demo.ceased", ".stat.json", "stat.json", "metadata.json", "meta/tags"} {
+		runFileCommand(t, ctx, mgr, "write", name, "--content", "user-data", "--object", "demo")
+		out := runFileCommand(t, ctx, mgr, "read", name, "--object", "demo")
+		if !strings.Contains(out, "user-data") {
+			t.Fatalf("%s: missing user content: %s", name, out)
 		}
+	}
+	after, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var beforeRecord, afterRecord map[string]any
+	if err := json.Unmarshal(before, &beforeRecord); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(after, &afterRecord); err != nil {
+		t.Fatal(err)
+	}
+	delete(beforeRecord, "UpdatedAt")
+	delete(afterRecord, "UpdatedAt")
+	if !reflect.DeepEqual(beforeRecord, afterRecord) {
+		t.Fatalf("payload writes changed internal metadata beyond UpdatedAt: before=%v after=%v", beforeRecord, afterRecord)
 	}
 }
 
@@ -136,7 +160,7 @@ func objectStatOf(t *testing.T, ctx context.Context, mgr *manager.Manager, id st
 	if err != nil {
 		t.Fatalf("get object %s: %v", id, err)
 	}
-	stat, err := readObjectStat(obj)
+	stat, err := readObjectStat(mgr, obj)
 	if err != nil {
 		t.Fatalf("read stat for %s: %v", id, err)
 	}

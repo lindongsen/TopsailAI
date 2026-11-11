@@ -133,7 +133,15 @@ def _read_memory(title: str, count_read: bool) -> str | None:
 
 
 def read_memory(title:str) -> str|None:
-    """Read a memory and record one successful read."""
+    """Read a memory and record one successful read.
+
+    Args:
+        title (str): The memory title to read, exactly as listed by `list_memories`.
+            The stored title carries a time prefix; pass the full prefixed stem.
+
+    Returns:
+        str: The memory content, or None when no memory matches the title.
+    """
     title, error = resolve_str_param(title, "title")
     if error:
         return error

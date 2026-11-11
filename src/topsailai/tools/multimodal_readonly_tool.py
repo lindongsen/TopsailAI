@@ -13,6 +13,11 @@ from topsailai.ai_base.multimodal import (
     build_audio_content,
     build_video_content,
 )
+from topsailai.ai_base.multimodal.constants import (
+    IMAGE_MIME_TYPES,
+    AUDIO_MIME_TYPES,
+    VIDEO_MIME_TYPES,
+)
 from topsailai.utils import env_tool
 from .tool_utils.parameter import invalid_request, resolve_str_param
 
@@ -226,17 +231,34 @@ TOOLS = dict(
     recognize_video=recognize_video,
 )
 
+def _format_supported_exts(mime_types: dict) -> str:
+    """Render supported extensions as a comma-separated uppercase list.
+
+    The PROMPT must not hardcode a format list: a hand-written list drifts from
+    the MIME mapping that actually accepts or rejects a file, so the LLM is told
+    a format is unsupported while the code accepts it, or the reverse. Deriving
+    the list from the mapping keeps one source of truth.
+
+    Args:
+        mime_types: Mapping of file extension to MIME type.
+
+    Returns:
+        str: Extensions without the leading dot, uppercase, sorted, comma-separated.
+    """
+    return ", ".join(sorted(ext.lstrip(".").upper() for ext in mime_types))
+
+
 # Tool prompt for agent context
-PROMPT = """
+PROMPT = f"""
 # About multimodal_readonly_tool
 This tool provides multimodal recognition capabilities via multimodal LLM.
 Use recognize_image to get a description of an image.
 Use recognize_voice to transcribe and analyze audio content.
 Use recognize_video to describe the content of a video.
 
-Supported image formats: PNG, JPG, JPEG, GIF, WEBP, BMP, TIFF.
-Supported audio formats: MP3, WAV, OGG, M4A.
-Supported video formats: MP4, AVI, MOV, WEBM.
+Supported image formats: {_format_supported_exts(IMAGE_MIME_TYPES)}.
+Supported audio formats: {_format_supported_exts(AUDIO_MIME_TYPES)}.
+Supported video formats: {_format_supported_exts(VIDEO_MIME_TYPES)}.
 Media source can be a local file path or a URL.
 
 ## Model Selection Guidance

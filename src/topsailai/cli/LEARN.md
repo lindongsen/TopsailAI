@@ -524,3 +524,34 @@ the committed set independent of concurrent staging, and re-check the result
 afterwards with `git show --name-only HEAD` rather than trusting the pre-commit
 check. A pre-commit verification is a necessary condition, never a sufficient
 one.
+
+## A range replacement must be bounded by the logical block, not by a line count
+
+### Trigger
+
+Two edits in one task damaged files even though each targeted a small change.
+Replacing lines 11-20 of `cleaning.py` to add one import silently dropped the
+`_is_active_launch_log` import that sat at line 18, leaving two call sites
+referencing an undefined name. Replacing lines 279-311 of `test_clean.py` to
+change three fixture strings instead deleted the `if __name__ == "__main__"`
+block and the whole `TestLaunchLogLifecycle` class header plus its `_make_log`
+helper, and duplicated the class header and its decorators at the top of the
+range. Both were caught only by reading the file back and by `git diff`.
+
+### Action taken
+
+Restored the dropped import and the deleted class block, removed the duplicated
+lines, and re-verified with `ast.parse` plus `git diff --numstat`. The final
+`test_clean.py` diff is `+189/-3`, where the three deletions are exactly the
+three fixture strings that were meant to change.
+
+### Why this prevents recurrence
+
+A line range is a claim about where a logical block starts and ends, and an
+off-by-a-few boundary silently converts an edit into a deletion. Before
+replacing a range, print the range with absolute numbers and confirm that its
+first and last lines belong to the block being changed; never derive the end
+from a line count or from "a few lines after the start". After the write,
+compare `git diff --numstat` against the intended change: an unexpected deletion
+count is a failure, not formatting noise. Reading the file back is the only step
+that caught both incidents, so it is mandatory rather than optional.

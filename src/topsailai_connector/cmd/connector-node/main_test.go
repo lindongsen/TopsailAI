@@ -377,12 +377,11 @@ func openNodeRuntime(t *testing.T) *node.Runtime {
 // binary.
 func TestServeNodeStopsOnACancelledContext(t *testing.T) {
 	runtime := openNodeRuntime(t)
-	identity, _ := runtime.NewIdentity()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := serveNode(ctx, runtime, identity, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+	if err := serveNode(ctx, runtime, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("serveNode() error = %v, want nil for a cancelled context", err)
 	}
 }
@@ -390,14 +389,22 @@ func TestServeNodeStopsOnACancelledContext(t *testing.T) {
 // TestServeNodeRefusesAnUnusableIdentity checks that the tail refuses to build a
 // dialer from an identity the Server could never accept, because a Node that
 // dialled with a malformed identity would appear connected and serve nothing.
+//
+// The check is exercised through the dialer constructor rather than through
+// serveNode, because serveNode takes the identity from the runtime's holder and a
+// runtime cannot be opened with an unusable identity: Open refuses it first. The
+// constructor is the guard that still runs when a caller supplies its own holder.
 func TestServeNodeRefusesAnUnusableIdentity(t *testing.T) {
 	runtime := openNodeRuntime(t)
 
 	// An empty id is refused by ValidateNodeID. A short id is not, which is the
 	// recorded defect in issues/issue-node-id-length-not-enforced.md.
 	broken := security.NodeIdentity{ID: "", Token: security.Secret("tokenvalue")}
-	if err := serveNode(context.Background(), runtime, broken, slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
-		t.Fatal("serveNode() = nil error, want a refusal for an unusable identity")
+	holder := node.NewIdentityHolder(broken)
+	dispatcher := node.NewDispatcherWithHolder(runtime.Authority(), holder, nil)
+
+	if _, err := node.NewDialerWithHolder(runtime.Config(), holder, dispatcher, nil); err == nil {
+		t.Fatal("NewDialerWithHolder() = nil error, want a refusal for an unusable identity")
 	}
 }
 
@@ -406,12 +413,11 @@ func TestServeNodeRefusesAnUnusableIdentity(t *testing.T) {
 // Node whose Server is down must wait rather than exit.
 func TestServeNodeRetriesUntilTheContextEnds(t *testing.T) {
 	runtime := openNodeRuntime(t)
-	identity, _ := runtime.NewIdentity()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	if err := serveNode(ctx, runtime, identity, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+	if err := serveNode(ctx, runtime, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("serveNode() error = %v, want nil after the context ended", err)
 	}
 }
