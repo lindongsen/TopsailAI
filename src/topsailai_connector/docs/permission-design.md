@@ -629,6 +629,64 @@ that sends `%2e%2e` gets a literal `%2e%2e` component, which is not `..` and is 
 a traversal. Decoding would create a second grammar to reason about, and the second
 grammar is where the bug lives.
 
+### Depth and path length
+
+Depth is not a separate rule. A path is bounded by two numbers and nothing else:
+`MaxPathLength` (4096 bytes for the whole path) and `maxComponentLength` (255
+bytes for one component). There is no component count limit, and `os.Root` imposes
+none either, so a deeply nested tree is readable exactly as a shallow one is.
+
+That is the intended behaviour, because depth is a dimension a caller actually
+uses. A real project tree is many levels deep, so a depth limit would be a limit on
+the product rather than on an attack. The fence does not need one: an escape is
+refused wherever it happens, because the check is the open rather than a scan of
+the path.
+
+The measured ceilings, with the measurement stated rather than implied:
+
+| Platform | Deepest tree that could be created | Absolute path length | Limit that stopped it | How it was measured |
+|---|---|---|---|---|
+| Linux | 2025 levels | 4096 bytes | `PATH_MAX` | Measured on the build host by creating nested directories until `mkdir` failed with `ENAMETOOLONG` |
+| Windows | 114 levels | 246 characters | `MAX_PATH` (260) | Measured on a real Windows Server 2022 host over SSH |
+
+The Windows figure cannot be reproduced on a Linux build host, and wine is not a
+substitute: wine resolves paths through the Linux filesystem, so it does not
+enforce `MAX_PATH` and a 500 level tree passes there. The Windows number therefore
+comes from a real Windows host, and a change to it must be re-measured on one.
+
+The two platforms differ by an order of magnitude, and the difference is the
+kernel's, not the Node's. On Windows the default `MAX_PATH` is 260 characters, so a
+tree that Linux accepts is refused by Windows long before the grammar limit is
+reached. The extended-length `\\?\` prefix would raise the Windows limit, but the
+grammar rejects it as an absolute path, which is the correct trade: a prefix that
+changes how the rest of the path is interpreted is exactly the kind of second
+grammar this design refuses to add.
+
+Two consequences follow, and both are stated rather than discovered:
+
+- **A path the grammar accepts can still be refused by the kernel.** `MaxPathLength`
+  and `PATH_MAX` are the same order of magnitude, so the grammar is not a promise
+  that the filesystem will accept the path. The security property is that such a
+  path never succeeds; the refusal code depends on how the kernel reports it.
+- **Beyond the filesystem ceiling the refusal is `not_found`, not
+  `invalid_argument`.** The kernel reports an over-long path as missing, and
+  `classifyOpenError` relays that classification rather than inventing a different
+  one. A caller therefore cannot tell "too long" from "absent" at that boundary,
+  which is consistent with the rule that a refusal does not become an existence
+  oracle.
+
+Depth does not weaken the fence. A symlink or junction planted at the bottom of a
+deep tree is refused exactly as one at the root is, because `os.Root` resolves the
+whole path rather than a prefix of it.
+
+The Linux case is covered by a test and by the live script: a symlink at depth 20
+pointing outside the scope returns `denied` for `file.read`, and `file.stat`
+reports the link without following it. The Windows case was observed on a real
+Windows host with a junction at depth 20 and behaved the same way, but that
+observation is not reproducible from a Linux build host, so the automated coverage
+for it is the Windows test binary compiled by `make test-windows-compile` rather
+than a run on this host.
+
 ### Windows specifics
 
 Windows is supported in the first version, and the fence is the same `os.Root`
@@ -818,6 +876,11 @@ request path.
       leading `/` is rejected before it reaches the filesystem.
 - [ ] A symlink that escapes the scope is refused, and `file.stat` reports a
       symlink without following it.
+- [ ] A deeply nested path is readable, and a symlink or junction at depth is
+      refused exactly as one at the root is. Depth is not a separate rule, so a
+      depth limit would be a limit on the product rather than on an attack.
+- [ ] A path over `MaxPathLength` is refused as `invalid_argument` before it
+      reaches the filesystem, and a path the kernel refuses is never a success.
 - [ ] A target that is not a regular file is refused for `read`, and a target that
       is not a directory is refused for `list`.
 - [ ] The Node's own config, secret and policy files are denied by resolved path,
