@@ -77,8 +77,56 @@ func TestMetadataRecordRejectsIncompatible(t *testing.T) {
 	if _, err := encodeMetadataRecord(&models.Object{}); err == nil {
 		t.Fatal("invalid object accepted")
 	}
-	obj := &models.Object{ID: "probe", Name: "probe", SchemaVersion: models.CurrentSchemaVersion, CreatedAt: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)}
+	obj := &models.Object{ID: "probe", Name: "probe", Path: "2026/1111/0900/probe", DataRef: "2026/1111/0900/probe", Status: models.ObjectStatusActive, SchemaVersion: models.CurrentSchemaVersion, CreatedAt: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)}
 	if _, err := encodeMetadataRecord(obj); err == nil {
 		t.Fatal("invalid timestamp accepted")
+	}
+}
+
+// TestMetadataRecordLocationContract rejects unsafe or mismatched disk references.
+func TestMetadataRecordLocationContract(t *testing.T) {
+	base := models.Object{ID: "probe", Name: "probe", Path: "2026/1111/0900/probe", DataRef: "2026/1111/0900/probe", Status: models.ObjectStatusActive, SchemaVersion: models.CurrentSchemaVersion}
+	for _, status := range []models.ObjectStatus{models.ObjectStatusCreating, models.ObjectStatusActive, models.ObjectStatusDeleted, models.ObjectStatusCeased} {
+		obj := base.Clone()
+		obj.Status = status
+		data, err := encodeMetadataRecord(&obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeMetadataRecord(data); err != nil {
+			t.Fatalf("valid state %s: %v", status, err)
+		}
+	}
+	for _, kind := range []string{"status", "missing", "absolute", "traversal", "prefix", "identity", "reference"} {
+		t.Run(kind, func(t *testing.T) {
+			obj := base.Clone()
+			switch kind {
+			case "status":
+				obj.Status = "unknown"
+			case "missing":
+				obj.Path, obj.DataRef = "", ""
+			case "absolute":
+				obj.Path = "/2026/1111/0900/probe"
+			case "traversal":
+				obj.Path = "2026/1111/0900/../probe"
+			case "prefix":
+				obj.Path = "year/1111/0900/probe"
+			case "identity":
+				obj.Path, obj.DataRef = "2026/1111/0900/other", "2026/1111/0900/other"
+			case "reference":
+				obj.DataRef = "2026/1111/0900/other"
+			}
+			if _, err := encodeMetadataRecord(&obj); err == nil {
+				t.Fatal("unsafe object encoded")
+			}
+			record := metadataRecord{ID: obj.ID, Name: obj.Name, Path: obj.Path, DataRef: obj.DataRef, Status: obj.Status, SchemaVersion: obj.SchemaVersion}
+			data, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := decodeMetadataRecord(data); !errors.Is(err, apperrors.ErrCorruptedMetadata) {
+				t.Fatalf("unsafe disk record accepted: %v", err)
+			}
+		})
 	}
 }

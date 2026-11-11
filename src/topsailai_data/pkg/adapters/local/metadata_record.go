@@ -70,7 +70,7 @@ func decodeMetadataRecord(data []byte) (*models.Object, error) {
 }
 
 // validateMetadataIdentity enforces the local ID/name and schema contract.
-// Payload path containment is validated separately when resolving the local ref.
+// Local path syntax and identity are checked here; filesystem containment is checked on access.
 func validateMetadataIdentity(obj *models.Object) error {
 	if err := ValidateObjectName(string(obj.ID)); err != nil {
 		return err
@@ -80,6 +80,18 @@ func validateMetadataIdentity(obj *models.Object) error {
 	}
 	if obj.SchemaVersion != models.CurrentSchemaVersion {
 		return fmt.Errorf("unsupported object schema %d: %w", obj.SchemaVersion, apperrors.ErrCorruptedMetadata)
+	}
+	switch obj.Status {
+	case models.ObjectStatusCreating, models.ObjectStatusActive, models.ObjectStatusDeleted, models.ObjectStatusCeased:
+	default:
+		return fmt.Errorf("unknown object status %q: %w", obj.Status, apperrors.ErrCorruptedMetadata)
+	}
+	parts, err := validateObjectRef(obj.Path)
+	if err != nil {
+		return fmt.Errorf("invalid metadata path: %w", err)
+	}
+	if parts[len(parts)-1] != obj.Name || obj.DataRef != obj.Path {
+		return fmt.Errorf("metadata path and reference differ from object identity: %w", apperrors.ErrCorruptedMetadata)
 	}
 	return nil
 }

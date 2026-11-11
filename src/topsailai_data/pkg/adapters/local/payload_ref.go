@@ -17,23 +17,9 @@ func (l StoreLayout) ResolveObjectRef(ref string) (string, error) {
 	if l.storeRoot == "" {
 		return "", fmt.Errorf("uninitialized store layout: %w", apperrors.ErrInvalidPath)
 	}
-	if ref == "" || strings.ContainsAny(ref, `\:`) || filepath.IsAbs(ref) {
-		return "", fmt.Errorf("non-relative object reference %q: %w", ref, apperrors.ErrInvalidPath)
-	}
-	parts := strings.Split(ref, "/")
-	if len(parts) < TimePrefixDepth+1 || len(parts) > MaxDepth {
-		return "", fmt.Errorf("object reference depth %d: %w", len(parts), apperrors.ErrInvalidPath)
-	}
-	if !isTimePrefixSegments(parts[0], parts[1], parts[2]) {
-		return "", fmt.Errorf("invalid time prefix in reference %q: %w", ref, apperrors.ErrInvalidPath)
-	}
-	for _, part := range parts {
-		if err := ValidateClassifySegment(part); err != nil {
-			return "", fmt.Errorf("invalid reference segment: %w: %v", apperrors.ErrInvalidPath, err)
-		}
-	}
-	if err := ValidateObjectName(parts[len(parts)-1]); err != nil {
-		return "", fmt.Errorf("invalid reference name: %w: %v", apperrors.ErrInvalidPath, err)
+	parts, err := validateObjectRef(ref)
+	if err != nil {
+		return "", err
 	}
 	current := l.ObjectRoot()
 	if err := checkPayloadDirectory(current); err != nil {
@@ -61,4 +47,27 @@ func checkPayloadDirectory(path string) error {
 		return fmt.Errorf("payload path %q is not a directory: %w", path, apperrors.ErrInvalidPath)
 	}
 	return nil
+}
+
+// validateObjectRef checks canonical local reference syntax without filesystem access.
+func validateObjectRef(ref string) ([]string, error) {
+	if ref == "" || strings.ContainsAny(ref, `\:`) || filepath.IsAbs(ref) {
+		return nil, fmt.Errorf("non-relative object reference %q: %w", ref, apperrors.ErrInvalidPath)
+	}
+	parts := strings.Split(ref, "/")
+	if len(parts) < TimePrefixDepth+1 || len(parts) > MaxDepth {
+		return nil, fmt.Errorf("object reference depth %d: %w", len(parts), apperrors.ErrInvalidPath)
+	}
+	if !isTimePrefixSegments(parts[0], parts[1], parts[2]) {
+		return nil, fmt.Errorf("invalid time prefix in reference %q: %w", ref, apperrors.ErrInvalidPath)
+	}
+	for _, part := range parts {
+		if err := ValidateClassifySegment(part); err != nil {
+			return nil, fmt.Errorf("invalid reference segment: %w: %v", apperrors.ErrInvalidPath, err)
+		}
+	}
+	if err := ValidateObjectName(parts[len(parts)-1]); err != nil {
+		return nil, fmt.Errorf("invalid reference name: %w: %v", apperrors.ErrInvalidPath, err)
+	}
+	return parts, nil
 }
