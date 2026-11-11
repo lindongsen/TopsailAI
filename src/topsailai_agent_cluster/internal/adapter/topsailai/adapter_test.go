@@ -2,8 +2,11 @@ package topsailai
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"topsailai_agent_cluster/internal/adapter"
@@ -30,7 +33,20 @@ func (m *fakeMapper) GetOrCreateResourceID(_ context.Context, adapterID, provide
 	if mapping, ok := m.byKey[providerKey]; ok {
 		return mapping, nil
 	}
-	mapping := ResourceMapping{AdapterID: adapterID, ProviderKey: providerKey, ResourceID: "res_" + providerKey}
+	resourceSuffix := providerKey
+	if target, err := decodeProviderSessionKey(providerKey); err == nil {
+		resourceSuffix = target.SessionID
+		if target.ProviderRowKey != "" {
+			resourceSuffix += "_" + base64.RawURLEncoding.EncodeToString([]byte(target.ProviderRowKey))
+		}
+		if target.PID > 0 {
+			resourceSuffix += fmt.Sprintf("_%d", target.PID)
+		}
+		if target.IsTask {
+			resourceSuffix += "_task"
+		}
+	}
+	mapping := ResourceMapping{AdapterID: adapterID, ProviderKey: providerKey, ResourceID: "res_" + resourceSuffix}
 	m.byKey[providerKey] = mapping
 	m.byID[mapping.ResourceID] = mapping
 	return mapping, nil
@@ -40,6 +56,16 @@ func (m *fakeMapper) LookupResourceID(_ context.Context, resourceID string) (Res
 	mapping, ok := m.byID[resourceID]
 	if !ok {
 		return ResourceMapping{}, errors.New("mapping not found")
+	}
+	// Older unit fixtures predate row-level provider mappings. Convert only
+	// session fixtures here; model-profile keys intentionally keep their own
+	// provider representation so model mapping tests still exercise it.
+	if !strings.HasPrefix(mapping.ProviderKey, sessionRowProviderKeyPrefix) && !strings.HasPrefix(mapping.ProviderKey, modelProviderKeyPrefix) {
+		providerKey, err := providerSessionKey(workspaceItem{SessionID: mapping.ProviderKey})
+		if err != nil {
+			return ResourceMapping{}, err
+		}
+		mapping.ProviderKey = providerKey
 	}
 	return mapping, nil
 }

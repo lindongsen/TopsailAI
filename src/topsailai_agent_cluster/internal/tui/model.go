@@ -17,6 +17,7 @@ type SessionRow struct {
 	ClusterSessionID         string `json:"cluster_session_id"`
 	ProviderSessionID        string `json:"provider_session_id,omitempty"`
 	ProviderDisplayName      string `json:"provider_display_name,omitempty"`
+	ProviderSessionQualifier string `json:"provider_session_qualifier,omitempty"`
 	ProviderProjectWorkspace string `json:"provider_project_workspace,omitempty"`
 	ProviderGeneration       string `json:"provider_generation"`
 	State                    string `json:"state"`
@@ -69,6 +70,7 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 				ClusterSessionID:         session.ClusterSessionID,
 				ProviderSessionID:        session.ProviderSessionID,
 				ProviderDisplayName:      session.ProviderDisplayName,
+				ProviderSessionQualifier: session.ProviderSessionQualifier,
 				ProviderProjectWorkspace: session.ProviderProjectWorkspace,
 				ProviderGeneration:       session.ProviderGeneration,
 				State:                    session.State,
@@ -113,16 +115,28 @@ func FindSession(id string, endpoints []protocol.Endpoint, reports map[string]pr
 			}
 		}
 	}
+	var matchedEndpoint protocol.Endpoint
+	var matchedReport protocol.InventoryReport
+	var matchedSession *protocol.Session
 	for _, endpoint := range endpoints {
 		report, ok := reports[endpoint.EndpointID]
 		if !ok {
 			continue
 		}
 		for index := range report.Sessions {
-			if report.Sessions[index].ProviderSessionID != "" && report.Sessions[index].ProviderSessionID == id {
-				return endpoint, report, &report.Sessions[index], nil
+			if report.Sessions[index].ProviderSessionID == "" || report.Sessions[index].ProviderSessionID != id {
+				continue
 			}
+			if matchedSession != nil {
+				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("multiple sessions match provider session ID %q; use the cluster session ID or a row number", id)
+			}
+			matchedEndpoint = endpoint
+			matchedReport = report
+			matchedSession = &report.Sessions[index]
 		}
+	}
+	if matchedSession != nil {
+		return matchedEndpoint, matchedReport, matchedSession, nil
 	}
 	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint or session %q was not found", id)
 }

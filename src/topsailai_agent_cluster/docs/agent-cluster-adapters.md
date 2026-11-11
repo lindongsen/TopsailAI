@@ -129,6 +129,22 @@ hostname filter to resume. Such a row reports `process_generation` as `null`,
 because this host cannot verify a process it cannot see, so it is found but not
 live and remains a valid resume candidate.
 
+A workspace session identifier can now appear in several rows. The adapter maps
+each row independently with its provider-returned opaque row key plus the private
+selectors `session_id`, `pid` and `is_task`; those values are encoded only inside
+the Endpoint resource mapping and never become a cluster ID or a Server routing
+field. The adapter stores the row key verbatim and never parses its file-like
+shape. `session_qualifier` is
+forwarded as descriptive data so the CLI can render `[qualifier]session_name`.
+An empty qualifier leaves the name unchanged.
+
+Output reads always use the provider interface rather than opening provider files.
+The adapter invokes `runtime logs -s SESSION -p PID`; an `is_task=true` row adds
+`--is-task`. Snapshot and follow use the same selectors. Provider errors remain
+provider errors and are not bypassed by parsing file names or reading log paths in
+the cluster. Other provider operations continue to receive the clean session
+selector required by their public CLI contract.
+
 Workspace JSON items are documented with no, filename, session_name, session_id, is_task, pid, status, created_at and project_workspace. Provider metadata paths must not be exposed by default in cluster summaries. Status values and reliability require fixture validation; do not map a generic status directly to task success.
 
 Runtime JSON fields are documented as ok, exit_code, action, session_id, pid, delivery_state, error_code, message, bytes_written, request_id, response and delivery_unknown. Normalize by parsing the document and checking its semantics as well as process exit. Preserve precise provider error codes in a bounded namespaced detail.

@@ -26,8 +26,13 @@ func (r *recordingRunner) Run(_ context.Context, _ string, args []string, _ []by
 func newInspectAdapter(t *testing.T, runner *recordingRunner) *Adapter {
 	t.Helper()
 	mapper := newFakeMapper()
-	mapper.byKey["provider-session"] = ResourceMapping{AdapterID: "a1", ProviderKey: "provider-session", ResourceID: "res_provider-session"}
-	mapper.byID["res_provider-session"] = mapper.byKey["provider-session"]
+	providerKey, err := providerSessionKey(workspaceItem{SessionID: "provider-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping := ResourceMapping{AdapterID: "a1", ProviderKey: providerKey, ResourceID: "res_provider-session"}
+	mapper.byKey[providerKey] = mapping
+	mapper.byID[mapping.ResourceID] = mapping
 	result, err := newWithRunner(Config{AdapterID: "a1", Executable: "/provider", MaxOutput: 4096, ResourceMapper: mapper, PlatformProbe: func() (PlatformCapabilities, error) {
 		return PlatformCapabilities{ProcAvailable: true, PidfdAvailable: true}, nil
 	}}, runner)

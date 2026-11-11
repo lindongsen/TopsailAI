@@ -647,7 +647,7 @@ The measured ceilings, with the measurement stated rather than implied:
 | Platform | Deepest tree that could be created | Absolute path length | Limit that stopped it | How it was measured |
 |---|---|---|---|---|
 | Linux | 2025 levels | 4096 bytes | `PATH_MAX` | Measured on the build host by creating nested directories until `mkdir` failed with `ENAMETOOLONG` |
-| Windows | 114 levels | 246 characters | `MAX_PATH` (260) | Measured on a real Windows Server 2022 host over SSH |
+| Windows | 114 levels | 246 characters | `MAX_PATH` (260) | Measured twice on a real Windows Server 2022 host: level 115 failed with `Could not find a part of the path` |
 
 The Windows figure cannot be reproduced on a Linux build host, and wine is not a
 substitute: wine resolves paths through the Linux filesystem, so it does not
@@ -681,11 +681,23 @@ whole path rather than a prefix of it.
 
 The Linux case is covered by a test and by the live script: a symlink at depth 20
 pointing outside the scope returns `denied` for `file.read`, and `file.stat`
-reports the link without following it. The Windows case was observed on a real
-Windows host with a junction at depth 20 and behaved the same way, but that
-observation is not reproducible from a Linux build host, so the automated coverage
-for it is the Windows test binary compiled by `make test-windows-compile` rather
-than a run on this host.
+reports the link without following it.
+
+The Windows case was measured on a real Windows Server 2022 host, not inferred. A
+junction at depth 20 pointing at the Node's own config directory returned `denied`
+for `file.read` with the reason `path escapes from parent`, and `file.stat` on the
+junction returned `success` reporting the link without following it. The same run
+read a file at every depth from 1 to 114 and compared the decoded content with the
+payload that level was written with, so a successful open returning the wrong file
+would have failed rather than passed. Depth 115 returned `not_found`, which is the
+filesystem ceiling rather than a grammar refusal.
+
+That run is reproducible only on a Windows host. The Linux build host cannot
+execute the Windows path rules, and wine is not a substitute because it resolves
+paths through the Linux filesystem. The automated coverage that does run on the
+build host is the Windows test binary compiled by `make test-windows-compile`; the
+live Windows evidence is recorded here rather than asserted by a test that cannot
+run.
 
 ### Windows specifics
 

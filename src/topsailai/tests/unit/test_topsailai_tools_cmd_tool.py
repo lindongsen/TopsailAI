@@ -76,6 +76,74 @@ class TestExecCmd:
                 call_kwargs = mock_exec.call_args[1]
                 assert call_kwargs['cwd'] == "/home"
 
+    def test_cwd_signature_default_is_none(self):
+        """The cwd default must be None, never an import-time folder snapshot."""
+        import inspect
+        from topsailai.tools.cmd_tool import exec_cmd
+
+        default = inspect.signature(exec_cmd).parameters["cwd"].default
+        assert default is None
+
+    @pytest.mark.parametrize("empty_cwd", [None, ""])
+    def test_cwd_empty_falls_back_to_project_folder(self, empty_cwd):
+        """An omitted or empty cwd resolves to the project folder."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            with patch('topsailai.tools.cmd_tool.EnvReaderInstance') as mock_env:
+                mock_env.project_folder = "/project/folder"
+                from topsailai.tools.cmd_tool import exec_cmd
+                exec_cmd(["ls"], cwd=empty_cwd)
+
+        assert mock_exec.call_args.kwargs["cwd"] == "/project/folder"
+
+    def test_cwd_omitted_falls_back_to_project_folder(self):
+        """Omitting cwd entirely also resolves to the project folder."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            with patch('topsailai.tools.cmd_tool.EnvReaderInstance') as mock_env:
+                mock_env.project_folder = "/project/folder"
+                from topsailai.tools.cmd_tool import exec_cmd
+                exec_cmd(["ls"])
+
+        assert mock_exec.call_args.kwargs["cwd"] == "/project/folder"
+
+    def test_cwd_resolved_at_call_time_not_import_time(self):
+        """Changing the project folder after import must affect the next call."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            with patch('topsailai.tools.cmd_tool.EnvReaderInstance') as mock_env:
+                from topsailai.tools.cmd_tool import exec_cmd
+
+                mock_env.project_folder = "/first/folder"
+                exec_cmd(["ls"])
+                assert mock_exec.call_args.kwargs["cwd"] == "/first/folder"
+
+                mock_env.project_folder = "/second/folder"
+                exec_cmd(["ls"])
+                assert mock_exec.call_args.kwargs["cwd"] == "/second/folder"
+
+    def test_cwd_empty_project_folder_becomes_none(self):
+        """An empty project folder must degrade to None, not the fatal empty string."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            with patch('topsailai.tools.cmd_tool.EnvReaderInstance') as mock_env:
+                mock_env.project_folder = ""
+                from topsailai.tools.cmd_tool import exec_cmd
+                exec_cmd(["ls"])
+
+        assert mock_exec.call_args.kwargs["cwd"] is None
+
+    def test_cwd_explicit_value_wins_over_project_folder(self):
+        """An explicit cwd must never be replaced by the project folder."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            with patch('topsailai.tools.cmd_tool.EnvReaderInstance') as mock_env:
+                mock_env.project_folder = "/project/folder"
+                from topsailai.tools.cmd_tool import exec_cmd
+                exec_cmd(["ls"], cwd="/explicit")
+
+        assert mock_exec.call_args.kwargs["cwd"] == "/explicit"
+
     @pytest.mark.parametrize(
         ("value", "expected"),
         [(10, 10), (10.9, 10), ("30", 30), (" 15 ", 15), ("1e2", 100), (0, 0), (-1, -1)],
@@ -262,22 +330,33 @@ class TestToolsConstant:
         assert callable(TOOLS["exec_cmd"])
 
     def test_exec_cmd_schema_requires_cmd(self):
-        """The native tool schema exposes cmd as a required parameter."""
+        """The module schema exposes cmd as a required parameter.
+
+        Only the parameter contract is asserted here. The function name is
+        rewritten to the registered name by get_tools_for_chat(), so asserting
+        the module-local short name would depend on test execution order.
+        """
         from topsailai.tools.cmd_tool import TOOLS_INFO
 
-        function = TOOLS_INFO["exec_cmd"]["function"]
-        parameters = function["parameters"]
-        assert function["name"] == "exec_cmd"
+        parameters = TOOLS_INFO["exec_cmd"]["function"]["parameters"]
         assert "cmd" in parameters["properties"]
         assert parameters["required"] == ["cmd"]
 
     def test_registered_exec_cmd_schema_requires_cmd(self):
-        """The aggregated native schema retains the required cmd contract."""
+        """The aggregated native schema retains the required cmd contract.
+
+        The registered name joins the module name and the function name with
+        CONN_CHAR, so the function name keeps its own underscore:
+        cmd_tool + "-" + exec_cmd.
+        """
         from topsailai.tools.base.common import get_tools_for_chat
         from topsailai.tools.cmd_tool import exec_cmd
 
-        schema = get_tools_for_chat({"cmd_tool-exec_cmd": exec_cmd})
-        parameters = schema["cmd_tool-exec_cmd"]["function"]["parameters"]
+        registered_name = "cmd_tool-exec_cmd"
+        schema = get_tools_for_chat({registered_name: exec_cmd})
+        function = schema[registered_name]["function"]
+        parameters = function["parameters"]
+        assert function["name"] == registered_name
         assert "cmd" in parameters["properties"]
         assert parameters["required"] == ["cmd"]
 

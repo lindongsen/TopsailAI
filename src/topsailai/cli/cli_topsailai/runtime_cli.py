@@ -103,6 +103,8 @@ def build_parser(control_actions=None):
         parser.add_argument(*flags, dest=dest, type=kind, action=UniqueValue,
                             default=argparse.SUPPRESS)
     parser.add_argument("--json", action="store_true", help="emit one public JSON result")
+    parser.add_argument("--is-task", action="store_true",
+                        help="read task stdout instead of session stdout; logs only")
     parser.add_argument("--stdin", action="store_true", help="read bounded non-TTY UTF-8 input")
     parser.add_argument("-f", "--follow", action="store_true",
                         help="keep printing appended log records until interrupted")
@@ -168,9 +170,10 @@ def normalize(args):
                 payload_text is not None or args.stdin or hasattr(args, "timeout") or
                 not 1 <= count <= 10000 or (args.follow and args.json)):
             raise RuntimeUsageError("Invalid logs arguments")
-        return RuntimeRequest("logs", lines=count, follow=args.follow)
-    if hasattr(args, "lines") or args.follow:
-        raise RuntimeUsageError("Line counts and follow apply only to logs")
+        return RuntimeRequest("logs", lines=count, follow=args.follow,
+                              is_task=args.is_task)
+    if hasattr(args, "lines") or args.follow or args.is_task:
+        raise RuntimeUsageError("Log options apply only to logs")
     if instruction is not None:
         if args.positionals or message is not None or payload_text is not None:
             raise RuntimeUsageError("Conflicting instruction sources")

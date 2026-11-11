@@ -270,3 +270,35 @@ func TestProviderSessionIDContextIsPreserved(t *testing.T) {
 		t.Fatalf("cancelled context still requested output: %+v", stub.outputRequests)
 	}
 }
+
+// TestDuplicateProviderSessionIDFailsClosed proves sibling rows are never
+// silently collapsed onto the first row when an operator types their shared
+// provider session ID.
+func TestDuplicateProviderSessionIDFailsClosed(t *testing.T) {
+	endpoints := []protocol.Endpoint{{EndpointID: "e1"}}
+	reports := map[string]protocol.InventoryReport{"e1": {ReportComplete: true, Sessions: []protocol.Session{
+		{ClusterSessionID: "res-manager", ProviderSessionID: "shared"},
+		{ClusterSessionID: "res-task", ProviderSessionID: "shared", ProviderSessionQualifier: "task"},
+	}}}
+	_, _, session, err := FindSession("shared", endpoints, reports)
+	if err == nil || session != nil || !strings.Contains(err.Error(), "multiple sessions") {
+		t.Fatalf("session=%#v err=%v", session, err)
+	}
+	loaded := reportLoad{endpoints: endpoints, reports: reports}
+	_, _, _, err = findSessionInEndpoint(loaded, "e1", "shared")
+	if err == nil || !strings.Contains(err.Error(), "multiple sessions") {
+		t.Fatalf("scoped err=%v", err)
+	}
+	state := interactiveState{}
+	outcome, err := resolveSessionInEndpoint(&state, loaded, "e1", "shared")
+	if err == nil || outcome != outcomeCancelled || !strings.Contains(err.Error(), "multiple sessions") {
+		t.Fatalf("resolve outcome=%q err=%v", outcome, err)
+	}
+	state.Rows = map[int]SessionRow{
+		1: {ClusterSessionID: "res-manager", ProviderSessionID: "shared"},
+		2: {ClusterSessionID: "res-task", ProviderSessionID: "shared", ProviderSessionQualifier: "task"},
+	}
+	if row, ok := rowByProviderSessionID(&state, "shared"); ok || row.ClusterSessionID != "" {
+		t.Fatalf("ambiguous row=%#v ok=%t", row, ok)
+	}
+}

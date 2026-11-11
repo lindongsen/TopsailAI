@@ -1942,3 +1942,71 @@ func assertCLIFileBytes(t *testing.T, path string, want []byte) {
 		t.Fatalf("%s changed: got %q, want %q", path, got, want)
 	}
 }
+
+// TestListIncludeDeletedFromConfig verifies that the documented
+// TOPSAILAI_DATA_INCLUDE_DELETED configuration value takes effect when the
+// --include-deleted flag is absent, and that the explicit flag still wins.
+func TestListIncludeDeletedFromConfig(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+	mgr.Config().IncludeDeleted = true
+
+	if _, err := mgr.CreateObject(ctx, "cfgdel", manager.CreateObjectOptions{
+		Data:        tarBytes("cfgdel.md", []byte("# cfgdel\n")),
+		Description: "config include deleted",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "cfgdel"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"list"}); err != nil {
+			t.Fatalf("list: %v", err)
+		}
+	})
+	if !strings.Contains(out, "cfgdel") {
+		t.Fatalf("configured include-deleted did not expose the deleted object: %s", out)
+	}
+
+	// An explicit flag value must override the configured default.
+	out = captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"list", "--include-deleted=false"}); err != nil {
+			t.Fatalf("list with explicit flag: %v", err)
+		}
+	})
+	if strings.Contains(out, "cfgdel") {
+		t.Fatalf("explicit --include-deleted=false did not override the config: %s", out)
+	}
+
+	// Search must honour the same configuration value.
+	out = captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"search", "cfgdel"}); err != nil {
+			t.Fatalf("search: %v", err)
+		}
+	})
+	if !strings.Contains(out, "cfgdel") {
+		t.Fatalf("configured include-deleted did not affect search: %s", out)
+	}
+}
+
+// TestListRejectsNegativePagination verifies that negative offset and limit
+// values are rejected instead of being silently clamped to zero.
+func TestListRejectsNegativePagination(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	for _, args := range [][]string{
+		{"list", "--offset", "-1"},
+		{"list", "--limit", "-1"},
+		{"search", "anything", "--offset", "-1"},
+		{"search", "anything", "--limit", "-1"},
+	} {
+		err := Run(ctx, mgr, args)
+		if err == nil {
+			t.Fatalf("expected rejection for %v", args)
+		}
+		if !strings.Contains(err.Error(), "offset") && !strings.Contains(err.Error(), "limit") {
+			t.Fatalf("error for %v does not name the invalid option: %v", args, err)
+		}
+	}
+}

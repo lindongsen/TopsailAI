@@ -30,6 +30,10 @@ type Session struct {
 	ProviderPID int64 `json:"provider_pid,omitempty"`
 	// ProviderDisplayName is the provider session name, descriptive only.
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`
+	// ProviderSessionQualifier distinguishes sibling provider rows that share a
+	// session name. It is descriptive only and never participates in routing,
+	// capability selection, or authorization.
+	ProviderSessionQualifier string `json:"provider_session_qualifier,omitempty"`
 	// ProviderProjectWorkspace is the workspace the session is working on, as
 	// reported by the provider. It is descriptive report data only: it never
 	// participates in routing, capability selection, or authorization.

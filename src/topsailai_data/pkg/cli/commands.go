@@ -482,9 +482,12 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err := validateSortOption(*sort); err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
+	if err := validatePagination(*offset, *limit); err != nil {
+		return fmt.Errorf("list: %w", err)
+	}
 
 	opts := models.ListOptions{
-		IncludeDeleted: *includeDeleted,
+		IncludeDeleted: resolveIncludeDeleted(mgr, fs, *includeDeleted),
 		Offset:         *offset,
 		Limit:          *limit,
 		Sort:           *sort,
@@ -681,6 +684,9 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err := validateSortOption(*sort); err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
+	if err := validatePagination(*offset, *limit); err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
 
 	terms, err := parseSearchQuery(fs.Args()[0])
 	if err != nil {
@@ -688,7 +694,7 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	}
 
 	objects, err := mgr.SearchObjects(ctx, terms, models.ListOptions{
-		IncludeDeleted: *includeDeleted,
+		IncludeDeleted: resolveIncludeDeleted(mgr, fs, *includeDeleted),
 		Offset:         *offset,
 		Limit:          *limit,
 		Sort:           *sort,
@@ -943,6 +949,33 @@ func validateSortOption(sort string) error {
 	default:
 		return fmt.Errorf("unsupported sort %q (expected time:desc or time:asc)", sort)
 	}
+}
+
+// validatePagination rejects negative offset or limit values. The metadata
+// adapter silently clamps negative values, which would hide a caller mistake
+// such as "--offset -1" behind an empty successful result.
+func validatePagination(offset, limit int) error {
+	if offset < 0 {
+		return fmt.Errorf("invalid offset %d (must be zero or positive)", offset)
+	}
+	if limit < 0 {
+		return fmt.Errorf("invalid limit %d (must be zero or positive)", limit)
+	}
+	return nil
+}
+
+// resolveIncludeDeleted combines the --include-deleted flag with the
+// TOPSAILAI_DATA_INCLUDE_DELETED configuration value. The flag wins when it is
+// set explicitly; otherwise the configured default applies. Without this the
+// documented environment variable would be parsed but never take effect.
+func resolveIncludeDeleted(mgr *manager.Manager, fs *pflag.FlagSet, flagValue bool) bool {
+	if fs.Changed("include-deleted") {
+		return flagValue
+	}
+	if cfg := mgr.Config(); cfg != nil {
+		return cfg.IncludeDeleted
+	}
+	return flagValue
 }
 
 // printObjectList prints objects using the requested format.

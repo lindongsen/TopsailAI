@@ -515,12 +515,21 @@ func tableCells(row SessionRow, location *time.Location) map[string]string {
 		columnNo:         strconv.Itoa(row.No),
 		columnState:      escapeCell(row.State),
 		columnDrive:      escapeCell(driveCell(row)),
-		columnName:       escapeCell(row.ProviderDisplayName),
+		columnName:       escapeCell(providerSessionDisplayName(row.ProviderDisplayName, row.ProviderSessionQualifier)),
 		columnID:         escapeCell(row.ProviderSessionID),
 		columnWorkspace:  escapeCell(row.ProviderProjectWorkspace),
 		columnEndpoint:   escapeCell(endpoint),
 		columnDataStatus: escapeCell(dataStatusCell(row, location)),
 	}
+}
+
+// providerSessionDisplayName decorates a provider name only when the provider
+// supplied a qualifier. The qualifier is presentation evidence, not an identity.
+func providerSessionDisplayName(name, qualifier string) string {
+	if qualifier == "" {
+		return name
+	}
+	return "[" + qualifier + "]" + name
 }
 
 // projectCells orders the keyed values into one layout.
