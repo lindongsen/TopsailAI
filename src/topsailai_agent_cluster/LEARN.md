@@ -765,3 +765,20 @@ being built, because the editor is the interesting case. The fallback is the pip
 which is exactly the path a developer's own terminal never takes. The nil dereference therefore
 appears only in a test that was written for a different purpose, and only because that test happened
 to inject a reader without an echo.
+
+## A newer committed revision must acknowledge an older pending publication
+
+Trigger: while reviewing `inventory_ack`, the first storage check acknowledged an idempotent retry only
+when the committed JSON exactly matched the submitted report. If Server had already committed revision
+8 while Endpoint retried revision 7 after losing its ACK, revision 7 was correctly not written but was
+also never acknowledged, so Endpoint would retry an obsolete report forever.
+
+Action: define acknowledgement against the latest-value contract rather than byte equality alone. An
+exact same-revision document is represented, a higher committed revision supersedes an older submitted
+revision, and a same-revision document with different content is a conflict that must not be
+acknowledged. Test all three cases together because each comparison protects a different boundary.
+
+Why this prevents recurrence: latest-only storage deliberately discards older states, so requiring the
+old bytes to remain stored contradicts its retention model. At the same time, revision equality alone
+cannot prove content identity. Combining revision ordering with content equality at the equal-revision
+boundary lets retries converge without hiding conflicting immutable reports.

@@ -29,6 +29,8 @@ const (
 	FrameInventory = "inventory"
 	// FrameInventoryRefresh requests a fresh Endpoint collection.
 	FrameInventoryRefresh = "inventory_refresh"
+	// FrameInventoryAck acknowledges that Server storage represents the revision.
+	FrameInventoryAck = "inventory_ack"
 	// FrameCommand carries an immutable command intent.
 	FrameCommand = "command"
 	// FrameReceipt carries a receipt.

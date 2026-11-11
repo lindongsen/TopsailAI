@@ -98,11 +98,21 @@ func main() {
 			logger.Error("decode inventory frame", "error", unmarshalErr)
 			return
 		}
-		if storeErr := store.ReplaceInventory(context.Background(), peer.EndpointID, report, time.Now().UnixMilli()); storeErr != nil {
+		committedRevision, changed, represented, storeErr := store.ReplaceInventoryCommitted(context.Background(), peer.EndpointID, report, time.Now().UnixMilli())
+		if storeErr != nil {
 			logger.Error("store inventory frame", "endpoint_id", peer.EndpointID, "error", storeErr)
 			return
 		}
-		broker.Publish(peer.EndpointID, report.SnapshotRevision)
+		if !represented {
+			logger.Error("committed inventory does not represent the submitted report", "endpoint_id", peer.EndpointID, "submitted_revision", report.SnapshotRevision, "committed_revision", committedRevision)
+			return
+		}
+		if changed {
+			broker.Publish(peer.EndpointID, committedRevision)
+		}
+		if ackErr := channelService.SendCommand(context.Background(), peer.EndpointID, channel.Frame{Type: channel.FrameInventoryAck, ProtocolVersion: channel.ProtocolVersion, SnapshotRevision: committedRevision}); ackErr != nil {
+			logger.Warn("send inventory acknowledgement", "endpoint_id", peer.EndpointID, "snapshot_revision", committedRevision, "error", ackErr)
+		}
 	}
 	runtime := newRuntimeHooks(logger)
 	commandService := &serverapi.CommandService{Store: store, Transport: serverapi.ChannelTransport{Channel: channelService}, DispatchDelay: runtime.DispatchDelay, HoldPhase: runtime.HoldPhase, HoldDir: runtime.HoldDir, Logger: logger, Hold: func(_ string, phase, _ string) error {

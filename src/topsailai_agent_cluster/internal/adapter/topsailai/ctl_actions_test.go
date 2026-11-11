@@ -432,3 +432,25 @@ func providerInstructionNames(t *testing.T) map[string]bool {
 	}
 	return names
 }
+
+func TestDescribeRevisionChangesWithControlActionCatalog(t *testing.T) {
+	set := newTestControlSet(t, `{"actions":[{"name":"probe","permission":"control","command":["runtime","control","probe"]}]}`)
+	instance, err := New(Config{AdapterID: "fixture", Executable: "topsailai", ControlActions: set, PlatformProbe: func() (PlatformCapabilities, error) { return PlatformCapabilities{}, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := instance.Describe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := set.Reload([]byte(`{"actions":[{"name":"restart","permission":"control","command":["runtime","control","restart"]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := instance.Describe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Capabilities.Revision == after.Capabilities.Revision {
+		t.Fatalf("revision did not change: %q", before.Capabilities.Revision)
+	}
+}

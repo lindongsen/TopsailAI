@@ -140,22 +140,6 @@ func main() {
 	} else {
 		logger.Info("control action file is not configured; no ctl. action is advertised and every ctl. operation is refused")
 	}
-	if controlActions != nil {
-		stopControlReload, watchErr := controlActions.WatchReload(ctx, func(reloadErr error) {
-			if reloadErr != nil {
-				logger.Error("reload control action file", "error", reloadErr)
-				return
-			}
-			logger.Info("reloaded control action file", "actions", controlActions.Len(), "names", controlActions.Names())
-		})
-		if watchErr != nil {
-			logger.Error("watch control action file", "error", watchErr)
-			_ = client.Close()
-			_ = store.Close()
-			os.Exit(1)
-		}
-		defer stopControlReload()
-	}
 	registered := make(map[string]bool)
 	for _, item := range cfg.Adapters {
 		if registered[item.ProviderType] {
@@ -305,6 +289,26 @@ func main() {
 		_ = client.Close()
 		_ = store.Close()
 		os.Exit(1)
+	}
+	if controlActions != nil {
+		stopControlReload, watchErr := controlActions.WatchReload(ctx, func(reloadErr error) {
+			if reloadErr != nil {
+				logger.Error("reload control action file", "error", reloadErr)
+				return
+			}
+			if refreshErr := service.RefreshDescriptors(ctx, "topsailai"); refreshErr != nil {
+				logger.Error("publish reloaded control action capabilities", "actions", controlActions.Len(), "names", controlActions.Names(), "error", refreshErr)
+				return
+			}
+			logger.Info("reloaded control action file and scheduled capability inventory", "actions", controlActions.Len(), "names", controlActions.Names())
+		})
+		if watchErr != nil {
+			logger.Error("watch control action file", "error", watchErr)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		defer stopControlReload()
 	}
 	if err := service.Run(ctx); err != nil {
 		logger.Error("endpoint service stopped", "error", err)

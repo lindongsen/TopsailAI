@@ -146,3 +146,66 @@ func TestReplaceInventoryRejectsOlderObservedReport(t *testing.T) {
 		t.Fatalf("stale report replaced latest report: %#v", got)
 	}
 }
+
+func TestReplaceInventoryCommittedReturnsRepresentedRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertEndpoint(ctx, protocol.Endpoint{EndpointID: "endpoint-1", InstanceID: "instance-1", DisplayName: "endpoint-1", ConnectionState: "online", ObservedAtMS: 1, CapabilityRevision: "unknown"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	latest := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: "endpoint-local", SnapshotRevision: 7, ObservedAtMS: 200, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "fixture-main", ProviderType: "fixture"}}}
+	committed, changed, represented, err := store.ReplaceInventoryCommitted(ctx, "endpoint-1", latest, 201)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed != 7 || !changed || !represented {
+		t.Fatalf("committed revision=%d changed=%t represented=%t, want 7, true, true", committed, changed, represented)
+	}
+	staleByTime := latest
+	staleByTime.SnapshotRevision = 99
+	staleByTime.ObservedAtMS = 199
+	committed, changed, represented, err = store.ReplaceInventoryCommitted(ctx, "endpoint-1", staleByTime, 202)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed != 7 || changed || represented {
+		t.Fatalf("committed revision=%d changed=%t represented=%t after stale report, want 7, false, false", committed, changed, represented)
+	}
+	committed, changed, represented, err = store.ReplaceInventoryCommitted(ctx, "endpoint-1", latest, 203)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed != 7 || changed || !represented {
+		t.Fatalf("committed revision=%d changed=%t represented=%t after retry, want 7, false, true", committed, changed, represented)
+	}
+	different := latest
+	different.Adapters[0].DisplayName = "different"
+	committed, changed, represented, err = store.ReplaceInventoryCommitted(ctx, "endpoint-1", different, 204)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed != 7 || changed || represented {
+		t.Fatalf("committed revision=%d changed=%t represented=%t for conflicting retry, want 7, false, false", committed, changed, represented)
+	}
+	newer := latest
+	newer.SnapshotRevision = 8
+	newer.ObservedAtMS = 201
+	committed, changed, represented, err = store.ReplaceInventoryCommitted(ctx, "endpoint-1", newer, 205)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed != 8 || !changed || !represented {
+		t.Fatalf("committed revision=%d changed=%t represented=%t for newer report, want 8, true, true", committed, changed, represented)
+	}
+	committed, changed, represented, err = store.ReplaceInventoryCommitted(ctx, "endpoint-1", latest, 206)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed != 8 || changed || !represented {
+		t.Fatalf("committed revision=%d changed=%t represented=%t for superseded retry, want 8, false, true", committed, changed, represented)
+	}
+}

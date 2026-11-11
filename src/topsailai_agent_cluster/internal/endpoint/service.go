@@ -42,6 +42,11 @@ type ReportCollector interface {
 	Collect(context.Context, int64) (protocol.InventoryReport, error)
 }
 
+// DescriptorRefresher refreshes adapter descriptors without running discovery.
+type DescriptorRefresher interface {
+	RefreshDescriptors(context.Context, string, int64) (protocol.InventoryReport, error)
+}
+
 // CommandExecutor executes an immutable command through Endpoint-local policy.
 type CommandExecutor interface {
 	Execute(context.Context, protocol.ImmutableIntent, string) (protocol.ExecutionReceipt, error)
@@ -61,6 +66,10 @@ type OutputFollower interface {
 }
 
 const defaultCollectionDelay = 5 * time.Second
+
+// inventoryRetryDelay bounds how long a committed inventory acknowledgement may
+// be absent before the Endpoint retries the same immutable revision.
+const inventoryRetryDelay = 5 * time.Second
 
 // maxConcurrentFollows bounds how many output follows one Endpoint streams at
 // once. Each follow holds a provider child process and a transport slot, so an
@@ -113,6 +122,9 @@ type Service struct {
 	followMu          sync.Mutex
 	activeFollows     map[string]context.CancelFunc
 	followSlots       chan struct{}
+	inventoryTrigger  chan struct{}
+	inventoryMu       sync.Mutex
+	pendingInventory  *protocol.InventoryReport
 }
 
 // NewService constructs an Endpoint lifecycle service from explicit dependencies.
@@ -126,7 +138,61 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.Heartbeater != nil && deps.HeartbeatInterval <= 0 {
 		deps.HeartbeatInterval = 5 * time.Second
 	}
-	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, accessPolicy: deps.AccessPolicy, endpointID: deps.EndpointID, pendingReceipts: make(map[string]protocol.ExecutionReceipt), activeFollows: make(map[string]context.CancelFunc), followSlots: make(chan struct{}, maxConcurrentFollows)}, nil
+	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, accessPolicy: deps.AccessPolicy, endpointID: deps.EndpointID, pendingReceipts: make(map[string]protocol.ExecutionReceipt), activeFollows: make(map[string]context.CancelFunc), followSlots: make(chan struct{}, maxConcurrentFollows), inventoryTrigger: make(chan struct{}, 1)}, nil
+}
+
+// RefreshDescriptors updates cached capabilities for one provider and schedules
+// immediate publication of the resulting inventory without provider discovery.
+func (s *Service) RefreshDescriptors(ctx context.Context, providerType string) error {
+	refresher, ok := s.collector.(DescriptorRefresher)
+	if !ok {
+		return errors.New("collector does not support descriptor refresh")
+	}
+	report, err := refresher.RefreshDescriptors(ctx, providerType, time.Now().UnixMilli())
+	if err != nil {
+		return err
+	}
+	s.rememberInventory(report)
+	select {
+	case s.inventoryTrigger <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (s *Service) rememberInventory(report protocol.InventoryReport) {
+	s.inventoryMu.Lock()
+	defer s.inventoryMu.Unlock()
+	if s.pendingInventory == nil || report.SnapshotRevision > s.pendingInventory.SnapshotRevision {
+		copy := report
+		s.pendingInventory = &copy
+	}
+}
+
+func (s *Service) acknowledgeInventory(revision int64) {
+	s.inventoryMu.Lock()
+	defer s.inventoryMu.Unlock()
+	if s.pendingInventory != nil && revision >= s.pendingInventory.SnapshotRevision {
+		s.pendingInventory = nil
+	}
+}
+
+func (s *Service) sendPendingInventory(ctx context.Context) {
+	s.inventoryMu.Lock()
+	if s.pendingInventory == nil {
+		s.inventoryMu.Unlock()
+		return
+	}
+	report := *s.pendingInventory
+	s.inventoryMu.Unlock()
+	payload, err := json.Marshal(report)
+	if err != nil {
+		s.logError("marshal inventory", err)
+		return
+	}
+	if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameInventory, ProtocolVersion: channel.ProtocolVersion, Payload: json.RawMessage(payload), SnapshotRevision: report.SnapshotRevision}); err != nil {
+		s.logTransportError("publish inventory", err)
+	}
 }
 
 // Run starts all Endpoint loops and waits until the context is cancelled.
@@ -136,12 +202,13 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
-	loopCount := 4
+	loopCount := 5
 	if s.heartbeat != nil {
 		loopCount++
 	}
 	s.wg.Add(loopCount)
 	go s.collectionLoop(runCtx)
+	go s.inventoryRetryLoop(runCtx)
 	go s.channelLoop(runCtx)
 	go s.resendRecordedReceipts(runCtx)
 	go s.recoverAcceptedCommands(runCtx)
@@ -269,12 +336,9 @@ func (s *Service) heartbeatLoop(ctx context.Context) {
 
 func (s *Service) collectionLoop(ctx context.Context) {
 	defer s.wg.Done()
-	publish := func() {
+	collect := func() {
 		report, err := s.collector.Collect(ctx, time.Now().UnixMilli())
 		if err != nil {
-			// A cancelled cycle is an aborted collection, not a failure: the
-			// Endpoint is shutting down or the request was abandoned, so there
-			// is nobody to publish to and nothing to report as broken.
 			if ctx.Err() != nil {
 				s.loggerInfo("inventory collection aborted")
 				return
@@ -282,40 +346,40 @@ func (s *Service) collectionLoop(ctx context.Context) {
 			s.logError("collect inventory", err)
 			return
 		}
-		payload, err := json.Marshal(report)
-		if err != nil {
-			s.logError("marshal inventory", err)
-			return
-		}
-		if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameInventory, ProtocolVersion: channel.ProtocolVersion, Payload: json.RawMessage(payload), SnapshotRevision: report.SnapshotRevision}); err != nil {
-			// An offline channel is a connectivity state, not a publish failure:
-			// the next cycle retries and the Server keeps the last committed
-			// report. Logging it at ERROR made a healthy restart look broken.
-			s.logTransportError("publish inventory", err)
-		}
+		s.rememberInventory(report)
+		s.sendPendingInventory(ctx)
 	}
-	// The first publish must wait for the connection, otherwise every start and
-	// restart writes a spurious ERROR before the channel is established. The
-	// sibling recoverAcceptedCommands loop gates on the same helper.
 	if !s.waitForChannelReady(ctx) {
 		s.loggerInfo("inventory collection stopped before channel ready")
 		return
 	}
-	publish()
-	// Schedule the next cycle only after the previous one finished. A fixed
-	// ticker silently drops ticks while a slow collection is still running, so
-	// the effective period becomes the collection duration and the configured
-	// delay stops meaning anything. Waiting after completion keeps the
-	// configured delay honest and prevents overlapping collections.
+	collect()
 	for {
 		timer := time.NewTimer(s.collectionDelay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-s.inventoryTrigger:
+			timer.Stop()
+			s.sendPendingInventory(ctx)
 		case <-timer.C:
+			collect()
 		}
-		publish()
+	}
+}
+
+func (s *Service) inventoryRetryLoop(ctx context.Context) {
+	defer s.wg.Done()
+	ticker := time.NewTicker(inventoryRetryDelay)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.sendPendingInventory(ctx)
+		}
 	}
 }
 
@@ -347,6 +411,7 @@ func (s *Service) channelLoop(ctx context.Context) {
 				if reconnectErr := reconnecting.Reconnect(ctx); reconnectErr == nil {
 					s.loggerInfo("endpoint channel reconnected")
 					s.resendPendingReceipts(ctx)
+					s.sendPendingInventory(ctx)
 					break
 				} else if errors.Is(reconnectErr, channel.ErrAwaitingServerDial) {
 					// The Server dials in this direction, so the Endpoint cannot
@@ -357,6 +422,7 @@ func (s *Service) channelLoop(ctx context.Context) {
 						return
 					}
 					s.resendPendingReceipts(ctx)
+					s.sendPendingInventory(ctx)
 					break
 				} else {
 					s.logError("reconnect endpoint channel", reconnectErr)
@@ -371,6 +437,8 @@ func (s *Service) channelLoop(ctx context.Context) {
 			continue
 		}
 		switch frame.Type {
+		case channel.FrameInventoryAck:
+			s.acknowledgeInventory(frame.SnapshotRevision)
 		case channel.FrameReceiptAck:
 			key := frame.FrameID
 			if key == "" {
@@ -413,6 +481,7 @@ func (s *Service) publishRefresh(ctx context.Context, requestID string) {
 		s.logError("refresh inventory", err)
 		return
 	}
+	s.rememberInventory(report)
 	payload, err := json.Marshal(report)
 	if err != nil {
 		s.logError("marshal refreshed inventory", err)

@@ -10,6 +10,11 @@ import (
 func (c *Collector) compose(observedAtMS int64) protocol.InventoryReport {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.composeLocked(observedAtMS)
+}
+
+// composeLocked composes a report while the caller owns c.mu.
+func (c *Collector) composeLocked(observedAtMS int64) protocol.InventoryReport {
 	ids := make([]string, 0, len(c.sources))
 	for id := range c.sources {
 		ids = append(ids, id)

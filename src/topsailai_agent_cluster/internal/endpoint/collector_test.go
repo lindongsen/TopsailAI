@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -208,5 +209,83 @@ func TestValidateReportRejectsInvalidInventory(t *testing.T) {
 	valid := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: "g", SnapshotRevision: 1, ObservedAtMS: 1, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded}
 	if err := ValidateReport(valid); err != nil {
 		t.Fatalf("valid report rejected: %v", err)
+	}
+}
+
+type descriptorRefreshAdapter struct {
+	mu            sync.Mutex
+	descriptor    adapter.Descriptor
+	describeCalls int
+	discoverCalls int
+	result        adapter.DiscoverResult
+}
+
+func (a *descriptorRefreshAdapter) Describe(context.Context) (adapter.Descriptor, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.describeCalls++
+	return a.descriptor, nil
+}
+func (a *descriptorRefreshAdapter) Discover(context.Context, adapter.DiscoverRequest) (adapter.DiscoverResult, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.discoverCalls++
+	return a.result, nil
+}
+func (a *descriptorRefreshAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
+	return adapter.InspectResult{}, nil
+}
+func (a *descriptorRefreshAdapter) Execute(context.Context, adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
+	return adapter.ExecuteResult{}, adapter.ErrUnsupported
+}
+func (a *descriptorRefreshAdapter) ReadOutput(context.Context, adapter.OutputRequest) (adapter.OutputResult, error) {
+	return adapter.OutputResult{}, adapter.ErrUnsupported
+}
+func (a *descriptorRefreshAdapter) QueryCommand(context.Context, adapter.CommandQuery) (adapter.CommandResult, error) {
+	return adapter.CommandResult{}, adapter.ErrUnsupported
+}
+func (a *descriptorRefreshAdapter) Watch(context.Context) (<-chan adapter.Event, error) {
+	return nil, adapter.ErrUnsupported
+}
+func (a *descriptorRefreshAdapter) Close() error { return nil }
+
+func TestRefreshDescriptorsRecomposesCachedInventoryWithoutDiscovery(t *testing.T) {
+	provider := &descriptorRefreshAdapter{
+		descriptor: adapter.Descriptor{DisplayName: "old", Version: "v1", Capabilities: protocol.CapabilityDescriptor{Revision: "old"}},
+		result:     adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{ClusterSessionID: "session-1", AdapterID: "a"}}},
+	}
+	collector, err := NewCollector(context.Background(), []Binding{{AdapterID: "a", ProviderType: "fixture", DisplayName: "old", Version: "v1", Capabilities: provider.descriptor.Capabilities, Adapter: provider}}, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := collector.Collect(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.descriptor = adapter.Descriptor{DisplayName: "new", Version: "v2", Capabilities: protocol.CapabilityDescriptor{Revision: "new", Capabilities: []protocol.Capability{{Name: "ctl.probe"}}}}
+	provider.mu.Unlock()
+
+	refreshed, err := collector.RefreshDescriptors(context.Background(), "fixture", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	describeCalls, discoverCalls := provider.describeCalls, provider.discoverCalls
+	provider.mu.Unlock()
+	if describeCalls != 1 || discoverCalls != 1 {
+		t.Fatalf("describe calls=%d discover calls=%d, want 1 and 1", describeCalls, discoverCalls)
+	}
+	if refreshed.SnapshotRevision <= first.SnapshotRevision {
+		t.Fatalf("revision=%d, want newer than %d", refreshed.SnapshotRevision, first.SnapshotRevision)
+	}
+	if len(refreshed.Adapters) != 1 || refreshed.Adapters[0].DisplayName != "new" || refreshed.Adapters[0].Version != "v2" || refreshed.Adapters[0].Capabilities.Revision != "new" {
+		t.Fatalf("descriptor was not refreshed: %#v", refreshed.Adapters)
+	}
+	if len(refreshed.Sessions) != 1 || refreshed.Sessions[0].ClusterSessionID != "session-1" {
+		t.Fatalf("cached sessions changed: %#v", refreshed.Sessions)
+	}
+	if refreshed.Adapters[0].LastSuccessAtMS == nil || *refreshed.Adapters[0].LastSuccessAtMS != 100 {
+		t.Fatalf("session freshness changed: %#v", refreshed.Adapters[0])
 	}
 }
