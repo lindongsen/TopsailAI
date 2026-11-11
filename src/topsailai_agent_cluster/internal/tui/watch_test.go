@@ -457,6 +457,23 @@ func (f *fakeWatchSession) counts() (int, int) {
 
 // TestReadLineWithWatchAppliesRefreshWhileIdle proves a tick with no keypress
 // prints the refresh and redraws the prompt.
+func TestReplWatchPrefixesEveryRenderedRefresh(t *testing.T) {
+	controller := &watchController{color: ColorPolicy{}}
+	state := &interactiveState{Scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "ep-1", Hostname: "node"}}
+	state.setRows(nil)
+	watch := &replWatch{controller: controller, state: state}
+	for _, table := range []string{"first table\n", "updated table\n"} {
+		controller.pending = &watchResult{output: []byte(table)}
+		payload, err := watch.Idle()
+		if err != nil {
+			t.Fatalf("Idle: %v", err)
+		}
+		if !strings.HasPrefix(string(payload), "endpoint[node/ep-1].watching> "+table) {
+			t.Fatalf("refresh payload=%q, want scope marker before %q", payload, table)
+		}
+	}
+}
+
 func TestReadLineWithWatchAppliesRefreshWhileIdle(t *testing.T) {
 	input := &watchEditorInput{reader: strings.NewReader("help\r"), idlePolls: 1}
 	var out strings.Builder
