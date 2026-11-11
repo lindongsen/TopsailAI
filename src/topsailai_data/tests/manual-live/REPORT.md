@@ -44,10 +44,12 @@ Per-module totals: CFG 14, OBJ 24, FILE 23, LIFE 17, STAT 17, SAFE 18.
 | SAFE-17 | P0 | I | `actual removal requires the reviewed cleanup.sh preview and explicit approval` |
 | SAFE-18 | P0 | P | `human acceptance review is required; the same agent cannot certify its own work` |
 
-SAFE-12 additionally depends on an approved scale budget. The proposed budget is
-2000 objects, 1 MiB payload per object, under 3 GiB disk, list and search each
-under 60 s, and peak RSS under 512 MiB. That budget is not approved, so the case
-stays BLOCKED rather than being run against an unagreed target.
+SAFE-12 additionally depends on a scale budget. That budget is now approved as
+the standard budget for a future run on an environment with multiple operating
+systems: 2000 objects, 1 MiB payload per object, under 3 GiB disk, list and
+search each under 60 s, and peak RSS under 512 MiB. The case still stays BLOCKED
+because cross-OS platform evidence cannot be obtained on this single host, and
+approving a budget does not change that. No new scale test is run for SAFE-12.
 
 SAFE-17 is blocked because the actual removal step is irreversible. The
 `cleanup.sh` preview has been produced and reviewed by the executor, but a human
@@ -157,9 +159,10 @@ Prevention: every read against the live store must set
 `terminal-start.sh` all enforce this, and SAFE-13 proves zero writes with a
 before and after manifest of 1106 files.
 
-Whether to restore the two counters from the protected backup is an open
-decision. That would be a write to the live store and needs explicit human
-authorization.
+Decision: the two counters are **not** restored. A one increment in `read_count`
+and the updated `last_read_at` are harmless, while restoring them would require
+writing to the live store, so the risk outweighs the benefit. The current state
+is kept as is. See the decision record at the end of this report.
 
 ## SAFE-18 pending human acceptance
 
@@ -226,11 +229,36 @@ Supporting scripts and case scripts:
 - Sibling project changes under `src/topsailai_agent_cluster/` were left
   untouched and never staged.
 
-## Open decisions
+## Decision record
 
-1. SAFE-12 scale budget: approve or revise the proposed 2000 objects, 1 MiB
-   payload, under 3 GiB disk, list and search under 60 s, peak RSS under 512 MiB.
-2. Live store statistics: decide whether the two legacy `object/.stat.json` read
-   counters should be restored from the protected backup. This is a write to the
-   live store and needs explicit authorization.
-3. SAFE-18 human acceptance: name the reviewer and the review time.
+The three open items were decided by the human on 2026-11-11. The decisions are
+recorded here so the BLOCKED status is not mistaken for an unresolved question.
+
+### SAFE-12 scale budget: approved, case stays BLOCKED
+
+The proposed budget is approved as the standard budget for a future run on an
+environment with multiple operating systems:
+
+- 2000 objects
+- 1 MiB payload per object
+- under 3 GiB disk
+- `list` and `search` under 60 s each
+- peak RSS under 512 MiB
+
+SAFE-12 remains **BLOCKED** and is not counted as PASS. The reason is unchanged:
+cross-OS platform evidence cannot be obtained on this single host, and approving
+a budget does not change that. No new scale test is to be run for SAFE-12.
+
+### Live store legacy statistics: not restored
+
+The two legacy `object/.stat.json` read counters are **not** restored. A one
+increment in `read_count` and the updated `last_read_at` are harmless, while
+restoring them would require writing to the live store, so the risk outweighs
+the benefit. The current state is kept as is.
+
+### SAFE-18 human acceptance: stays BLOCKED
+
+SAFE-18 remains **BLOCKED** pending a human acceptance review. The reviewer and
+the review time are arranged separately by the human. This agent implemented and
+executed the cases, so it does not self-certify and does not sign on the human's
+behalf.
