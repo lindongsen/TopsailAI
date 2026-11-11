@@ -702,7 +702,7 @@ func TestUnitBB2SingleDecimalRejectionFixtures(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected local rejection")
 			}
-			if writeErr := writeInteractiveError(&diagnostics, "cd", err); writeErr != nil {
+			if writeErr := writeInteractiveError(&diagnostics, ColorPolicy{}, "cd", err); writeErr != nil {
 				t.Fatalf("write diagnostics: %v", writeErr)
 			}
 			if diagnostics.String() != tc.want {

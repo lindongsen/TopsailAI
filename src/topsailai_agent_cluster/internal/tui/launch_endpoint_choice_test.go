@@ -270,7 +270,7 @@ func TestResolveLaunchEndpointValueRejectsAmbiguousHostname(t *testing.T) {
 func TestWriteInteractiveErrorOmitsUsageForNonSyntaxFailure(t *testing.T) {
 	var out strings.Builder
 	err := nonSyntaxError{message: `endpoint "topsail" was not found`, next: "Run endpoints to list valid endpoint identifiers."}
-	if writeErr := writeInteractiveError(&out, "start", err); writeErr != nil {
+	if writeErr := writeInteractiveError(&out, ColorPolicy{}, "start", err); writeErr != nil {
 		t.Fatal(writeErr)
 	}
 	text := out.String()

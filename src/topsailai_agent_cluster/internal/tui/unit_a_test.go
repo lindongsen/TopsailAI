@@ -295,12 +295,12 @@ func TestUnitAHelpAndErrorWriterBranches(t *testing.T) {
 		t.Fatal("interactive-only help target unexpectedly succeeded")
 	}
 	out.Reset()
-	if err := writeInteractiveError(&out, "send", fmt.Errorf("usage: send <text>")); err != nil {
+	if err := writeInteractiveError(&out, ColorPolicy{}, "send", fmt.Errorf("usage: send <text>")); err != nil {
 		t.Fatal(err)
 	}
 	assertActionableError(t, out.String(), "error: invalid arguments")
 	out.Reset()
-	if err := writeInteractiveError(&out, "send", fmt.Errorf("command cmd-1 result unknown; use status cmd-1 to query; timeout")); err != nil {
+	if err := writeInteractiveError(&out, ColorPolicy{}, "send", fmt.Errorf("command cmd-1 result unknown; use status cmd-1 to query; timeout")); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "next: Run status cmd-1 to query the existing command.") {
