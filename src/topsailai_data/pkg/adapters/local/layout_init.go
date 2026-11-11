@@ -89,18 +89,36 @@ func (l StoreLayout) prepareLayoutMarker() error {
 	if err != nil {
 		return fmt.Errorf("encode layout marker: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	return publishLayoutMarker(path, append(data, '\n'))
+}
+
+// publishLayoutMarker publishes only a fully written marker under the namespace lock.
+func publishLayoutMarker(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".layout-marker-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create layout marker: %w", err)
+		return fmt.Errorf("create temporary layout marker: %w", err)
 	}
-	defer f.Close()
-	if _, err := f.Write(append(data, '\n')); err != nil {
+	defer func() {
+		_ = f.Close()
+		if err := os.Remove(f.Name()); err == nil {
+			slog.Info("removed temporary layout marker", "path", f.Name())
+		} else if !os.IsNotExist(err) {
+			slog.Error("remove temporary layout marker", "path", f.Name(), "error", err)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("write layout marker: %w", err)
 	}
 	if err := f.Sync(); err != nil {
 		return fmt.Errorf("sync layout marker: %w", err)
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close layout marker: %w", err)
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		return fmt.Errorf("publish layout marker: %w", err)
+	}
+	return nil
 }
 
 // requireFreshLayoutRoot reads at most two entries to reject nonempty stores.

@@ -117,3 +117,33 @@ func TestLayoutInitSymlinkAndContention(t *testing.T) {
 		t.Fatalf("zero layout accepted: %v", err)
 	}
 }
+
+// TestLayoutMarkerPublicationFailure preserves destination contents and cleans staging.
+func TestLayoutMarkerPublicationFailure(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, layoutMarkerName)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(path, "keep")
+	if err := os.WriteFile(sentinel, []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishLayoutMarker(path, []byte("{}\n")); err == nil {
+		t.Fatal("publication over directory succeeded")
+	}
+	data, err := os.ReadFile(sentinel)
+	if err != nil || string(data) != "unchanged" {
+		t.Fatalf("destination changed: %q, %v", data, err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != layoutMarkerName {
+		t.Fatalf("temporary marker leaked: %v", entries)
+	}
+	if err := publishLayoutMarker(filepath.Join(root, "missing", layoutMarkerName), nil); err == nil {
+		t.Fatal("missing parent accepted")
+	}
+}
