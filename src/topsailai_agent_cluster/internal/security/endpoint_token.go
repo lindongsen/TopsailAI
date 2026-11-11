@@ -12,8 +12,9 @@ type endpointTokenContextKey struct{}
 // The token travels in the context rather than in a function parameter because
 // every hop between the operator API and the channel frame builder already
 // threads a context, while the token is a transport credential that no
-// intermediate layer interprets. This mirrors WithAuthenticatedScopes, so the
-// two credentials that cross the Server are carried the same way.
+// intermediate layer interprets. The operator identity crosses the Server the
+// same way, so both credentials are carried by the context rather than by a
+// parameter that every hop would have to repeat.
 //
 // The Server never validates this value. It only forwards it, because
 // authorization belongs to the Endpoint that owns the machine.

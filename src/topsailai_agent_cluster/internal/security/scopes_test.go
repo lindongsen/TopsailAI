@@ -1,7 +1,6 @@
 package security
 
 import (
-	"context"
 	"net/http/httptest"
 	"testing"
 )
@@ -25,16 +24,6 @@ func TestScopeSetUnrestricted(t *testing.T) {
 	}
 	if NewScopeSet("view").Unrestricted() {
 		t.Fatalf("configured scope set must be restricted")
-	}
-}
-
-func TestAuthenticatedScopesRoundTrip(t *testing.T) {
-	ctx := WithAuthenticatedScopes(context.Background(), NewScopeSet(ScopeView))
-	if !AuthenticatedScopes(ctx).Has(ScopeView) {
-		t.Fatalf("expected view scope to survive context round trip")
-	}
-	if AuthenticatedScopes(context.Background()).Unrestricted() != true {
-		t.Fatalf("absent scopes must be unrestricted")
 	}
 }
 

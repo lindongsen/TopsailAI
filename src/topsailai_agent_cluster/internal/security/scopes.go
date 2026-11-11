@@ -2,7 +2,6 @@
 package security
 
 import (
-	"context"
 	"strings"
 )
 
@@ -52,24 +51,6 @@ func (s ScopeSet) Has(scope string) bool {
 // credential to exactly the listed scopes.
 func (s ScopeSet) Unrestricted() bool {
 	return len(s) == 0
-}
-
-type scopesContextKey struct{}
-
-// WithAuthenticatedScopes attaches the authenticated operator scopes to a request context.
-func WithAuthenticatedScopes(ctx context.Context, scopes ScopeSet) context.Context {
-	return context.WithValue(ctx, scopesContextKey{}, scopes)
-}
-
-// AuthenticatedScopes returns the operator scopes attached by the authentication
-// boundary. An absent set is unrestricted, matching a credential with no
-// configured scope restriction.
-func AuthenticatedScopes(ctx context.Context) ScopeSet {
-	scopes, ok := ctx.Value(scopesContextKey{}).(ScopeSet)
-	if !ok {
-		return ScopeSet{}
-	}
-	return scopes
 }
 
 // KnownScope reports whether name is a defined operator scope.

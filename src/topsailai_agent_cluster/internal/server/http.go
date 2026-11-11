@@ -126,13 +126,12 @@ func (h *Handler) authenticated(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		identity, scopes, ok := h.Authenticator.AuthenticateScopes(r)
+		identity, ok := h.Authenticator.Authenticate(r)
 		if !ok {
 			h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 			return
 		}
 		ctx := security.WithAuthenticatedIdentity(r.Context(), identity)
-		ctx = security.WithAuthenticatedScopes(ctx, scopes)
 		// The Endpoint token is carried, never validated here. Authorization
 		// belongs to the Endpoint that owns the machine, so the Server only
 		// forwards this credential and never decides what it permits.
