@@ -1,6 +1,6 @@
 ---
 name: agent-cluster-watch-trigger
-description: Use when a user wants a local script to run automatically when a watched Agent Cluster session becomes blocked on input, or when they ask what environment variables such a script receives, why it did not run, or how to make `watch --trigger` fire. Covers the `watch --trigger` command surface, the default script path, the thirteen `AGENT_CLUSTER_*` payload variables, the whitelisted child environment, the five second timeout, the foreground-only limits of the mechanism, and a ready-to-install Python script that rings one terminal bell on `running -> waiting_input`.
+description: Use when a user wants a local script to run automatically when a watched Agent Cluster session becomes blocked on input, or when they ask what environment variables such a script receives, why it did not run, or how to make `watch --trigger` fire. Covers the `watch --trigger` command surface, the default script path, the thirteen `AGENT_CLUSTER_*` payload variables, the whitelisted child environment, the five second timeout, the foreground-only limits of the mechanism, and a ready-to-install Python script that plays one system bell sound on `running -> waiting_input`.
 version: 1.1.0
 author: DawsonLin
 license: Apache-2.0
@@ -189,19 +189,18 @@ curl -sS -X POST https://example.invalid/hook \
 notify-send "agent needs input" "$AGENT_CLUSTER_SESSION_NAME"
 ```
 
-### Ring the terminal bell
+### Play an audible notification
 
-The shipped script `scripts/watch-trigger-bell.py` rings one bell on the documented
-transition. It is the smallest useful trigger, and it demonstrates the only channel that
-actually reaches the operator.
+The shipped script `scripts/watch-trigger-bell.py` plays the system bell sound on the documented
+transition. It uses the system audio service instead of a terminal BEL, because the trigger
+runner captures the script's terminal streams and the terminal BEL was not audible to the
+operator.
 
 ```python
-import signal
-
 PREVIOUS_STATE = "running"
 STATE = "waiting_input"
-BELL = b"\a"
-TERMINAL_DEVICE = "/dev/tty"
+SOUND_FILE = "/usr/share/sounds/freedesktop/stereo/bell.oga"
+PULSE_SOCKET_PATTERN = "/tmp/pulse-*/native"
 
 
 def should_ring(previous_state, state):
@@ -210,17 +209,11 @@ def should_ring(previous_state, state):
 
 
 def ring():
-    """Write one bell to the controlling terminal."""
-    try:
-        signal.signal(signal.SIGTTOU, signal.SIG_IGN)
-    except (AttributeError, ValueError, OSError):
-        pass
-    try:
-        with open(TERMINAL_DEVICE, "wb", buffering=0) as terminal:
-            terminal.write(BELL)
-        return True
-    except OSError:
+    """Play the system bell through an available desktop audio service."""
+    player = shutil.which("paplay")
+    if player is None or not os.path.isfile(SOUND_FILE):
         return False
+    return any(play(player, socket_path, uid) for socket_path, uid in pulse_sockets())
 ```
 
 `scripts/watch-trigger-bell.py` is the complete file; read it rather than retyping this
@@ -228,14 +221,15 @@ excerpt, so the installed script and the documented behaviour cannot drift apart
 
 Three details make it correct rather than merely short:
 
-- **It writes to `/dev/tty`, not to stdout.** `print("\a")` would be captured and discarded
-  with the rest of the script's output, so the operator would hear nothing. The terminal
-  device is the only channel the runner does not own.
-- **It ignores `SIGTTOU`.** The runner puts the script in its own process group, so a
-  terminal with `TOSTOP` set would otherwise stop the script on that write.
-- **A missing terminal is not a failure.** The script exits 0 without a bell, because a
-  headless run has no operator to alert and a non-zero exit would only add a diagnostic row
-  to the table.
+- **It finds the real PulseAudio socket.** The trigger environment deliberately omits
+  `PULSE_SERVER`, so the script discovers accessible `/tmp/pulse-*/native` sockets instead
+  of relying on the caller's default.
+- **It plays as the desktop audio user when needed.** A root-owned trigger drops only the
+  audio subprocess to the socket owner's UID and primary group; the notification therefore
+  reaches the existing desktop audio session without changing its volume or output device.
+- **Missing audio support is not a failure.** The script exits 0 when `paplay`, a sound file,
+  or an accessible audio socket is unavailable, because a headless run has no operator to
+  alert and a non-zero exit would only add a diagnostic row to the table.
 
 The state check is a guard, not a second detection path: `watch` already fires only on
 `running -> waiting_input`. It keeps the script correct when it is invoked by hand or by a
@@ -318,7 +312,7 @@ Check these in order. Each one has a distinct symptom.
 - **Reading a credential from the environment.** The environment is a whitelist and carries
   no credential. A script that needs one reads its own file.
 - **Printing to the terminal.** Output is discarded, and the editor owns the terminal. A
-  bell or a message must go to `/dev/tty` or to a file, never to stdout.
+  notification should use the system audio service or write to a file, never to stdout.
 - **`eval`-ing a payload value.** `SESSION_NAME` and `PROJECT_WORKSPACE` are provider text.
   Quote them, never evaluate them.
 - **Killing a PID.** The payload carries no PID on purpose. Use the cluster session ID with
@@ -332,7 +326,7 @@ Check these in order. Each one has a distinct symptom.
 - [ ] The script has a shebang and the executable bit set.
 - [ ] The script reads only the documented `AGENT_CLUSTER_*` variables and the six
       inherited basics.
-- [ ] The script writes to a file, sends a message, or rings `/dev/tty` instead of printing
+- [ ] The script uses the system audio service or writes to a file instead of printing
       to stdout, which the runner discards.
 - [ ] The script quotes every payload value and never evaluates one.
 - [ ] The script finishes well inside five seconds, or does its slow work in the background.
@@ -345,9 +339,9 @@ Check these in order. Each one has a distinct symptom.
 ## File Structure Description
 
 - **bin/**: None. This skill documents an existing CLI capability and needs no executable.
-- **scripts/**: `watch-trigger-bell.py` is a ready-to-install trigger that rings one terminal
-  bell on `running -> waiting_input`. It is a reference implementation of the payload check
-  and of the `/dev/tty` output channel; install it by pointing a one-line bash wrapper at it
-  from the default path.
+- **scripts/**: `watch-trigger-bell.py` is a ready-to-install trigger that plays one system
+  bell sound on `running -> waiting_input`. It is a reference implementation of the payload
+  check and the system-audio output channel; install it by pointing a one-line bash wrapper
+  at it from the default path.
 - **references/**: None. The payload table and the execution contract above are complete.
 - **assets/**: None.
