@@ -33,19 +33,18 @@ def _render_command(item: Dict[str, Any], is_yaml: bool = False) -> None:
     example = item.get("example", "")
 
     alias_str = ""
-    if is_yaml:
-        aliases = item.get("alias", [])
-        if isinstance(aliases, str):
-            aliases = [aliases]
-        if aliases:
-            alias_str = (
-                " "
-                + colored(
-                    "(alias: " + ", ".join(str(a) for a in aliases) + ")",
-                    Colors.WHITE,
-                    dim=True,
-                )
+    aliases = item.get("alias", [])
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    if aliases:
+        alias_str = (
+            " "
+            + colored(
+                "(alias: " + ", ".join(str(a) for a in aliases) + ")",
+                Colors.WHITE,
+                dim=True,
             )
+        )
 
     print(f"\n  {colored(cmd, Colors.YELLOW, bold=True)}{alias_str}")
     print(f"      {colored(desc, Colors.WHITE)}")
@@ -210,12 +209,14 @@ def print_help(
         },
         {
             "cmd": "/refresh",
+            "alias": ["list", "l"],
             "desc": "Re-scan the task directory and refresh the file list. In workspace scope, r all or /refresh all also shows rows whose session metadata records status=completed.",
             "example": "Example: r all",
             "scopes": ["workspace", "project", "doc"],
         },
         {
             "cmd": "/session <number>",
+            "alias": ["messages"],
             "desc": "Retrieve detailed messages for the session ID of the selected file.",
             "example": "Example: /session 3",
             "scopes": ["workspace"],

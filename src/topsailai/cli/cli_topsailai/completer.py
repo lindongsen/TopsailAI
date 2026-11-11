@@ -70,8 +70,23 @@ def get_available_completions() -> List[str]:
     """Return all available command completions for the current scope."""
     completions: List[str] = []
 
-    # Built-in commands (always available)
-    builtins = ["/refresh", "/refresh all", "/clean", "/help", "/session", "/ctx.btw", "q", "quit"]
+    # Built-in commands. The refresh and session commands (and their aliases)
+    # belong to the workspace, project and doc scopes; runtime scope has its
+    # own command set and would otherwise advertise commands it rejects.
+    builtins = ["/clean", "/help", "/ctx.btw", "q", "quit"]
+    if cli_state.current_scope != "runtime":
+        builtins.extend(
+            [
+                "/refresh",
+                "/refresh all",
+                "/list",
+                "/list all",
+                "/l",
+                "/l all",
+                "/session",
+                "/messages",
+            ]
+        )
     completions.extend(builtins)
     if cli_state.current_scope != "workspace":
         completions.append("/send")
