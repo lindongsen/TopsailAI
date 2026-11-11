@@ -146,28 +146,50 @@ func (w *World) SubmitRealCommandWithID(commandID, operation, target, generation
 }
 
 func (w *World) submitRealCommand(commandID, operation, target, generation, payload string) (string, error) {
-	return w.submitRealCommandWithToken(commandID, operation, target, generation, payload, "v1", "")
+	return w.submitRealCommandWithToken(commandID, commandSubmission{Operation: operation, Target: target, Generation: generation, Payload: payload})
+}
+
+// commandSubmission describes one immutable command a scenario submits.
+//
+// The two version fields are separate because they are separate contract values:
+// operation_version is what the Endpoint matches against the advertised
+// capability version, while payload_schema_version is what the adapter uses to
+// decode the payload. command.exec and agent.model.select declare "1" for both,
+// so a helper that derived one from the other would look correct today and break
+// the first time an operation versions them independently.
+type commandSubmission struct {
+	Operation            string
+	Target               string
+	Generation           string
+	Payload              string
+	OperationVersion     string
+	PayloadSchemaVersion string
+	EndpointToken        string
 }
 
 // SubmitRealCommandWithToken submits one immutable command that presents an
-// Endpoint token and a caller-selected payload schema version.
+// Endpoint token and caller-selected contract versions.
 //
-// Two operations in the permission matrix do not use the default schema version:
-// command.exec and agent.model.select both declare "1". The Endpoint token is the
-// second, independent credential the Endpoint verifies, so a scenario that proves
-// authorization has to present one; the Server forwards it unchanged and never
-// interprets it as permission.
-func (w *World) SubmitRealCommandWithToken(operation, target, generation, payload, payloadSchemaVersion, endpointToken string) (string, error) {
-	return w.submitRealCommandWithToken(fmt.Sprintf("bdd-real-%d", time.Now().UnixNano()), operation, target, generation, payload, payloadSchemaVersion, endpointToken)
+// The Endpoint token is the second, independent credential the Endpoint verifies,
+// so a scenario that proves authorization has to present one; the Server forwards
+// it unchanged and never interprets it as permission.
+func (w *World) SubmitRealCommandWithToken(submission commandSubmission) (string, error) {
+	return w.submitRealCommandWithToken(fmt.Sprintf("bdd-real-%d", time.Now().UnixNano()), submission)
 }
 
-func (w *World) submitRealCommandWithToken(commandID, operation, target, generation, payload, payloadSchemaVersion, endpointToken string) (string, error) {
+func (w *World) submitRealCommandWithToken(commandID string, submission commandSubmission) (string, error) {
 	if w.realCluster == nil {
 		return "", fmt.Errorf("real cluster is not running")
 	}
+	operationVersion := submission.OperationVersion
+	if operationVersion == "" {
+		operationVersion = "v1"
+	}
+	payloadSchemaVersion := submission.PayloadSchemaVersion
 	if payloadSchemaVersion == "" {
 		payloadSchemaVersion = "v1"
 	}
+	target, generation := submission.Target, submission.Generation
 	if target != "" {
 		resolvedTarget, resolvedGeneration, err := w.resolveRealTarget(target, generation)
 		if err != nil {
@@ -176,18 +198,25 @@ func (w *World) submitRealCommandWithToken(commandID, operation, target, generat
 		target, generation = resolvedTarget, resolvedGeneration
 	}
 	var raw json.RawMessage
-	if payload == "" {
+	if submission.Payload == "" {
 		raw = json.RawMessage(`{}`)
-	} else if !json.Valid([]byte(payload)) {
+	} else if !json.Valid([]byte(submission.Payload)) {
 		return "", fmt.Errorf("invalid command payload")
 	} else {
-		raw = json.RawMessage(payload)
+		raw = json.RawMessage(submission.Payload)
 	}
-	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": "fixture-main", "operation": operation, "operation_version": "v1", "capability_revision": "v1", "payload_schema_version": payloadSchemaVersion, "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
+	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": "fixture-main", "operation": submission.Operation, "operation_version": operationVersion, "capability_revision": "v1", "payload_schema_version": payloadSchemaVersion, "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
+	// agent.start is the only operation that carries a profile revision, and the
+	// Endpoint compares it against the descriptor revision before the policy hook
+	// runs. Omitting it would reject every start with profile_revision_mismatch,
+	// so a start scenario would pass while proving nothing about authorization.
+	if submission.Operation == protocol.OperationAgentStart {
+		intent["profile_revision"] = "v1"
+	}
 	if target != "" {
 		intent["target"] = map[string]any{"kind": "session", "resource_id": target, "provider_generation": generation}
 	}
-	status, body, err := w.realCluster.RequestWithEndpointTokenE(http.MethodPost, "/api/v1/commands", intent, endpointToken)
+	status, body, err := w.realCluster.RequestWithEndpointTokenE(http.MethodPost, "/api/v1/commands", intent, submission.EndpointToken)
 	if err != nil {
 		return "", err
 	}
