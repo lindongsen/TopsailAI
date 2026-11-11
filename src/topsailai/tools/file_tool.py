@@ -583,15 +583,19 @@ deleting the file tail is destructive.
   whole file.
 - `0`, `null`, or empty text: also no upper bound, so every line from
   `start_num` through the end of the file is read.
-- A positive number: the last line to read, inclusive. It MUST be greater than
-  `start_num`; `end_num == start_num` is rejected as an ambiguous range.
+- A positive number: the last line to read, inclusive. `end_num == start_num`
+  reads exactly one line; `end_num < start_num` is rejected as an inverted
+  range.
 - Any other negative number is rejected.
+- `start_num` is 1-based and MUST be >= 1; `0` and negative values are rejected.
 
 `overwrite_lines_in_file`:
 - Omitted, `0`, `null`, or empty text: only `start_num` is replaced.
 - `-1`: replaces from `start_num` through the end of the file.
-- A positive number: the last line to replace, inclusive.
+- A positive number: the last line to replace, inclusive. `end_num == start_num`
+  replaces exactly one line.
 - Any other negative number is rejected.
+- `start_num` is 1-based and MUST be >= 1.
 
 `overwrite_lines_in_file` is destructive, so `0` never means "to the end of the file".
 To replace through the end of the file you MUST pass `-1` explicitly.

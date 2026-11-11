@@ -12,7 +12,11 @@ from contextlib import contextmanager
 
 import chardet
 
-from topsailai.tools.tool_utils.parameter import resolve_end_num, resolve_finite_int
+from topsailai.tools.tool_utils.parameter import (
+    invalid_request,
+    resolve_end_num,
+    resolve_finite_int,
+)
 
 
 _ENCODING_SAMPLE_SIZE = 32768
@@ -310,14 +314,15 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=-1, **_) -> s
 
     Args:
         file_path (str): The path to the file to read from
-        start_num (int): The starting line number (1-based). Lines before this number
-                        will be excluded. Must be >= 1.
+        start_num (int): The starting line number (1-based). Must be >= 1;
+                        ``0`` and negative values are rejected.
         end_num (int): The ending line number (1-based, inclusive). Defaults to
                        ``-1``, which reads through the end of the file.
                        ``0``, ``None``, or blank text also means no end line, so
                        every line from ``start_num`` through the end of the file
-                       is read. A positive number must be greater than
-                       ``start_num`` and reads through that line, inclusive.
+                       is read. A positive number reads through that line,
+                       inclusive; ``end_num == start_num`` reads exactly one
+                       line, and ``end_num < start_num`` is rejected.
                        Any other negative value is rejected.
 
     Returns:
@@ -344,18 +349,22 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=-1, **_) -> s
     if error:
         return error
     try:
-        if not start_num:
-            start_num = 1
+        # ``start_num`` is 1-based, so ``0`` and negative values are rejected
+        # instead of being silently coerced to 1. A silent coercion would make
+        # ``read_file_lines(path, -5)`` read the whole file, which contradicts
+        # the documented contract and hides a caller mistake.
+        if start_num < 1:
+            return invalid_request("start_num", start_num, "must be >= 1")
 
         # ``0`` and ``-1`` mean "no end line", so every line from ``start_num``
         # to the end of the file is read. The loop guard below already treats
         # them as "no upper bound", so no sentinel rewrite is needed here.
-        # A positive ``end_num`` must be strictly greater than ``start_num``:
-        # ``end_num == start_num`` is ambiguous, so it is rejected instead of
-        # being guessed as a single-line read.
-        if end_num > 0 and start_num >= end_num:
+        # A positive ``end_num`` reads through that line, inclusive, so
+        # ``end_num == start_num`` reads exactly one line. Only an inverted
+        # range is rejected.
+        if end_num > 0 and start_num > end_num:
             return (
-                f"Error: Invalid range: start_num ({start_num}) >= "
+                f"Error: Invalid range: start_num ({start_num}) > "
                 f"end_num ({end_num}); use 0 or -1 to read through the end"
             )
 

@@ -326,6 +326,16 @@ def output_contains(ctx, expected):
     assert expected in response["text"], f"{expected!r} missing from {response['text'][:200]!r}"
 
 
+@then(parsers.parse('the tool output does not contain {unexpected}'))
+def output_does_not_contain(ctx, unexpected):
+    """A bounded range must not leak lines outside the requested window."""
+    response = ctx["response"]
+    assert response["kind"] != "raised", f"tool raised: {response}"
+    assert unexpected not in response["text"], (
+        f"{unexpected!r} unexpectedly present in {response['text'][:200]!r}"
+    )
+
+
 @then(parsers.parse('the command succeeds and prints {expected}'))
 def command_succeeds(ctx, expected):
     """The shell command ran with the coerced control arguments."""

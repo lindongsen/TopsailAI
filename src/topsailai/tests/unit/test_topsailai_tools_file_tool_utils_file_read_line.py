@@ -464,15 +464,14 @@ class TestReadFileLines:
         assert "3-line3" in lines[1]
         assert "4-line4" in lines[2]
 
-    def test_start_equals_end_is_rejected(self, tmp_path):
-        """A positive end_num equal to start_num is an ambiguous range."""
+    def test_start_equals_end_reads_one_line(self, tmp_path):
+        """A positive end_num equal to start_num reads exactly one line."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("line1\nline2\nline3\n")
 
         result = read_file_lines(str(test_file), 2, 2)
 
-        assert "Invalid range" in result
-        assert "start_num (2) >= end_num (2)" in result
+        assert result == "2-line2"
 
     def test_range_at_beginning(self, tmp_path):
         """Test reading from the beginning."""
@@ -587,17 +586,17 @@ class TestReadFileLines:
         assert lines[1] == "2:---"
         assert lines[2] == "3-bbb"
 
-    def test_start_num_zero(self, tmp_path):
-        """Test start_num=0 is treated as 1."""
+    @pytest.mark.parametrize("start_num", [0, -1, -5, "0", "-1"])
+    def test_start_num_below_one_is_rejected(self, tmp_path, start_num):
+        """start_num is 1-based, so 0 and negative values are rejected."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("line1\nline2\nline3\n")
 
-        result = read_file_lines(str(test_file), 0, 2)
-        lines = result.split("\n")
+        result = read_file_lines(str(test_file), start_num, 2)
 
-        assert len(lines) == 2
-        assert "1-line1" in lines[0]
-        assert "2-line2" in lines[1]
+        assert result["status"] == "invalid_request"
+        assert "start_num" in result["reason"]
+        assert "must be >= 1" in result["reason"]
 
     def test_string_numeric_inputs(self, tmp_path):
         """Test string numeric inputs for start_num and end_num."""
@@ -675,12 +674,11 @@ class TestReadFileLines:
         test_file = tmp_path / "test.txt"
         test_file.write_bytes(b"line1\rline2\rline3\r")
 
-        result = read_file_lines(str(test_file), 2, 3)
+        result = read_file_lines(str(test_file), 2, 2)
         lines = result.split("\n")
 
-        assert len(lines) == 2
+        assert len(lines) == 1
         assert lines[0] == "2-line2"
-        assert lines[1] == "3-line3"
 
     def test_latin1_encoding(self, tmp_path):
         """Test Latin-1 encoded file is decoded correctly."""
@@ -688,12 +686,11 @@ class TestReadFileLines:
         content = "café\nnaïve\nseñor\n".encode("latin-1")
         test_file.write_bytes(content)
 
-        result = read_file_lines(str(test_file), 2, 3)
+        result = read_file_lines(str(test_file), 2, 2)
         lines = result.split("\n")
 
-        assert len(lines) == 2
+        assert len(lines) == 1
         assert lines[0] == "2-naïve"
-        assert lines[1] == "3-señor"
 
 
 class TestTools:
