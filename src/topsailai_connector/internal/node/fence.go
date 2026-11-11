@@ -119,7 +119,7 @@ func OpenScope(name string, path string, denyPaths []string) (*Scope, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scope %q: resolve %q: %w", name, path, err)
 	}
-	if resolved != path {
+	if !samePath(resolved, path) {
 		return nil, fmt.Errorf("scope %q: %q resolves to %q; a scope root must not be a symlink", name, path, resolved)
 	}
 
@@ -452,7 +452,7 @@ func isHomeDirectory(path string) bool {
 	if err != nil {
 		resolvedHome = home
 	}
-	return filepath.Clean(path) == filepath.Clean(resolvedHome)
+	return samePath(path, resolvedHome)
 }
 
 // ModifiedAtOf is a helper for tests and callers that need the timestamp of an
