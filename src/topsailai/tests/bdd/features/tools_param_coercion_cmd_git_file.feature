@@ -287,12 +287,13 @@ Feature: Tools accept string-typed parameters from the LLM
     And the tool output contains LINE05
     And the tool output does not contain LINE06
 
-  Scenario Outline: read_file_lines rejects a start line below one
+  Scenario Outline: read_file_lines coerces a start line below one
     When the tool read_file_lines is called on the test file with parameters start_num set to <start_num> and end_num set to 4
-    Then the tool returns a machine-readable parameter error
-    And the parameter error names the start_num parameter
+    Then the tool call is accepted and produces a result
+    And the tool output contains LINE01
+    And the tool output contains LINE04
 
-    Examples: unusable start lines
+    Examples: cosmetic start lines
       | start_num |
       | 0         |
       | -1        |

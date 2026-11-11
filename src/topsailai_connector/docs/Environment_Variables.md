@@ -92,8 +92,8 @@ override a variable:
 |---|---|---|
 | `connector-server` | `run` (default) | Load and validate the configuration, bind the listener and serve until a signal arrives |
 | `connector-node` | `run` (default) | Load the configuration, the policy and the identity, dial the Server and serve until a signal arrives |
-| `connector-node` | `id` | Print the `node-id.node-token` pair and nothing else |
-| `connector-node` | `regenerate` | Replace the pair; `--keep-id` keeps the node id |
+| `connector-node` | `id` | Print the `node-id.node-token` pair and nothing else. Reads only `CONNECTOR_NODE_CONFIG_DIR` |
+| `connector-node` | `regenerate` | Replace the pair; `--keep-id` keeps the node id. Reads only `CONNECTOR_NODE_CONFIG_DIR` |
 | `connector-server` | `cli` | Call one operation on one Node and print the result |
 
 The Server validates `CONNECTOR_SERVER_TUNNEL_TOKEN` and
@@ -101,6 +101,15 @@ The Server validates `CONNECTOR_SERVER_TUNNEL_TOKEN` and
 missing, empty, padded with whitespace or shorter than 16 bytes. The Node
 validates `CONNECTOR_NODE_SERVER_URL` and `CONNECTOR_NODE_TUNNEL_TOKEN` the same
 way, then loads the policy file and opens every scope it defines.
+
+`id` and `regenerate` are the exception, and the exception is deliberate. Neither
+dials the Server, so neither requires `CONNECTOR_NODE_SERVER_URL` or
+`CONNECTOR_NODE_TUNNEL_TOKEN`; both read only `CONNECTOR_NODE_CONFIG_DIR`. The
+first-run order depends on this: the operator runs `id` to learn the pair before
+the tunnel token exists, so a full configuration load would make the documented
+order impossible. The dial path keeps the strict load, because a Node that
+started without a secret would be a Node whose operator believes it is serving
+something it is not.
 
 The Server binds its listener before it logs that it is listening, so a bind
 failure is reported as a startup failure instead of a process that prints
@@ -141,12 +150,16 @@ without knowing whether it is correct.
 
 ### Node
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `CONNECTOR_NODE_SERVER_URL` | none | Server channel address. Required |
-| `CONNECTOR_NODE_TUNNEL_TOKEN` | none | The `tunnel_token` this Node presents in `hello`. Required |
-| `CONNECTOR_NODE_CONFIG_DIR` | platform config directory | Where the Node keeps its identity file and policy file |
-| `CONNECTOR_NODE_POLICY_FILE` | `<config>/policy.yaml` | Path to the policy file. A missing file is a startup failure |
+| Variable | Default | Required by | Purpose |
+|---|---|---|---|
+| `CONNECTOR_NODE_SERVER_URL` | none | `run` | Server channel address |
+| `CONNECTOR_NODE_TUNNEL_TOKEN` | none | `run` | The `tunnel_token` this Node presents in `hello` |
+| `CONNECTOR_NODE_CONFIG_DIR` | platform config directory | `run`, `id`, `regenerate` | Where the Node keeps its identity file and policy file |
+| `CONNECTOR_NODE_POLICY_FILE` | `<config>/policy.yaml` | `run` | Path to the policy file. A missing file is a startup failure |
+
+`id` and `regenerate` read only `CONNECTOR_NODE_CONFIG_DIR`. They never dial, so
+they never need a dial target or a tunnel token, and requiring one would make the
+documented first-run order impossible.
 
 The Node's identity — the `node-id.node-token` pair — is **not** an environment
 variable. It lives in `<config>/identity` with `0600` on POSIX and an owner-only

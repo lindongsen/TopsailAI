@@ -477,3 +477,105 @@ func TestRunNodeWithSignalsRejectsBadFlags(t *testing.T) {
 		t.Fatal("runNodeWithSignals() = nil error, want a flag refusal")
 	}
 }
+
+// TestRunIDNeedsOnlyTheConfigDirectory checks that `id` works with no dial target
+// and no tunnel token, because the documented first-run order runs `id` before
+// the tunnel token is configured.
+//
+// This is the regression test for the defect where `id` called the full
+// LoadConfig and therefore refused to print the pair until both dial variables
+// were set. The failure was not cosmetic: README step 2 runs `id` and step 3
+// supplies the tunnel token, so the documented order could not be executed at
+// all, and the error message named a server address, which reads as "the Node
+// needs a Server before it can have an identity" and inverts the design.
+func TestRunIDNeedsOnlyTheConfigDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("CONNECTOR_NODE_SERVER_URL", "")
+	t.Setenv("CONNECTOR_NODE_TUNNEL_TOKEN", "")
+	t.Setenv("CONNECTOR_NODE_CONFIG_DIR", configDir)
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", "")
+
+	printed, err := captureStdout(t, func() error { return run([]string{"id"}) })
+	if err != nil {
+		t.Fatalf("run(id) with only the config directory = %v, want nil", err)
+	}
+
+	trimmed := strings.TrimSpace(printed)
+	if trimmed == "" {
+		t.Fatal("run(id) printed nothing, want the pair")
+	}
+	if strings.Count(trimmed, ".") != 1 {
+		t.Fatalf("run(id) printed %q, want exactly one dot", trimmed)
+	}
+
+	identity, err := node.LoadIdentity(node.IdentityPath(configDir))
+	if err != nil {
+		t.Fatalf("LoadIdentity() = %v, want nil", err)
+	}
+	if identity.String() != trimmed {
+		t.Fatalf("run(id) printed %q, want the stored pair %q", trimmed, identity.String())
+	}
+}
+
+// TestRunRegenerateNeedsOnlyTheConfigDirectory checks that `regenerate` works
+// with no dial target and no tunnel token, for the same reason as `id`:
+// regeneration rewrites a local file and never dials.
+func TestRunRegenerateNeedsOnlyTheConfigDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("CONNECTOR_NODE_SERVER_URL", "")
+	t.Setenv("CONNECTOR_NODE_TUNNEL_TOKEN", "")
+	t.Setenv("CONNECTOR_NODE_CONFIG_DIR", configDir)
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", "")
+
+	before, err := captureStdout(t, func() error { return run([]string{"id"}) })
+	if err != nil {
+		t.Fatalf("run(id) = %v, want nil", err)
+	}
+
+	after, err := captureStdout(t, func() error {
+		return run([]string{"regenerate", "--keep-id"})
+	})
+	if err != nil {
+		t.Fatalf("run(regenerate) with only the config directory = %v, want nil", err)
+	}
+
+	beforePair := strings.TrimSpace(before)
+	afterPair := strings.TrimSpace(after)
+	if beforePair == afterPair {
+		t.Fatal("run(regenerate) printed the same pair, want a new token")
+	}
+
+	beforeID, _, ok := strings.Cut(beforePair, ".")
+	if !ok {
+		t.Fatalf("run(id) printed %q, want a pair", beforePair)
+	}
+	afterID, _, ok := strings.Cut(afterPair, ".")
+	if !ok {
+		t.Fatalf("run(regenerate) printed %q, want a pair", afterPair)
+	}
+	if beforeID != afterID {
+		t.Fatalf("run(regenerate --keep-id) changed the node id from %q to %q", beforeID, afterID)
+	}
+}
+
+// TestRunStillRejectsAnIncompleteEnvironment checks that narrowing `id` and
+// `regenerate` did not relax the dial path.
+//
+// The dial path must keep refusing to start without a secret, because a Node
+// that started without one would be a Node whose operator believes it is serving
+// something it is not. This test exists so a later change cannot widen the
+// narrowing into a general relaxation.
+func TestRunStillRejectsAnIncompleteEnvironment(t *testing.T) {
+	t.Setenv("CONNECTOR_NODE_SERVER_URL", "")
+	t.Setenv("CONNECTOR_NODE_TUNNEL_TOKEN", "")
+	t.Setenv("CONNECTOR_NODE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", "")
+
+	err := run([]string{"run"})
+	if err == nil {
+		t.Fatal("run(run) = nil error, want a configuration refusal")
+	}
+	if !strings.Contains(err.Error(), "CONNECTOR_NODE_SERVER_URL") {
+		t.Fatalf("run(run) = %v, want a message naming the missing dial target", err)
+	}
+}

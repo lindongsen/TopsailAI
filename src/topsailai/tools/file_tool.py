@@ -587,7 +587,8 @@ deleting the file tail is destructive.
   reads exactly one line; `end_num < start_num` is rejected as an inverted
   range.
 - Any other negative number is rejected.
-- `start_num` is 1-based and MUST be >= 1; `0` and negative values are rejected.
+- `start_num` is 1-based. A non-positive value is treated as `1`, so a cosmetic
+  argument mistake still reads from the first line.
 
 `overwrite_lines_in_file`:
 - Omitted, `0`, `null`, or empty text: only `start_num` is replaced.

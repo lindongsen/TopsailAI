@@ -587,16 +587,17 @@ class TestReadFileLines:
         assert lines[2] == "3-bbb"
 
     @pytest.mark.parametrize("start_num", [0, -1, -5, "0", "-1"])
-    def test_start_num_below_one_is_rejected(self, tmp_path, start_num):
-        """start_num is 1-based, so 0 and negative values are rejected."""
+    def test_start_num_below_one_is_coerced_to_one(self, tmp_path, start_num):
+        """A non-positive start_num is LLM fault tolerance, not an error."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("line1\nline2\nline3\n")
 
         result = read_file_lines(str(test_file), start_num, 2)
+        lines = result.split("\n")
 
-        assert result["status"] == "invalid_request"
-        assert "start_num" in result["reason"]
-        assert "must be >= 1" in result["reason"]
+        assert len(lines) == 2
+        assert lines[0] == "1-line1"
+        assert lines[1] == "2-line2"
 
     def test_string_numeric_inputs(self, tmp_path):
         """Test string numeric inputs for start_num and end_num."""

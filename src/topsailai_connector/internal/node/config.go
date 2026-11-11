@@ -75,6 +75,27 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 	}, nil
 }
 
+// ResolveConfigDir returns the absolute config directory from a lookup function,
+// creating it when it does not exist.
+//
+// It exists because two subcommands need the config directory and nothing else.
+// `id` prints the identity pair and `regenerate` replaces it; neither dials the
+// Server, so neither may require a dial target or a tunnel token. Loading the
+// whole configuration for them made the documented first-run order impossible:
+// the operator is told to run `id` before the tunnel token exists, and
+// LoadConfig refuses that order.
+//
+// This is deliberately narrower than LoadConfig, not a relaxation of it. The
+// dial path still calls LoadConfig and still refuses to start without a secret,
+// because a Node that started without one would be a Node whose operator
+// believes it is serving something it is not.
+func ResolveConfigDir(lookup func(string) string) (string, error) {
+	if lookup == nil {
+		return "", fmt.Errorf("environment lookup is nil")
+	}
+	return resolveConfigDir(lookup("CONNECTOR_NODE_CONFIG_DIR"))
+}
+
 // validateServerURL checks that the channel address is a WebSocket URL with a
 // host. A plain `ws://` address is accepted because a Node on a loopback network
 // has nothing to protect, but the scheme is checked so a typo such as `http://`

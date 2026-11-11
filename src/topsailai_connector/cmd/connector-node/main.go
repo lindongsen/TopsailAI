@@ -172,18 +172,26 @@ func contextFromSignals(signals <-chan os.Signal) (context.Context, context.Canc
 // into a script. It prints a secret, so the operator must treat the output as
 // one: it must not be pasted into a ticket, a chat message or a retained shell
 // history.
+//
+// Only the config directory is resolved, not the whole configuration. `id` never
+// dials, so requiring a dial target or a tunnel token would make the documented
+// first-run order impossible: the operator is told to run `id` before the tunnel
+// token is configured, and a full configuration load refuses that order. The
+// dial path keeps its own strict load, because a Node that started without a
+// secret would be a Node whose operator believes it is serving something it is
+// not.
 func runID(arguments []string) error {
 	flags := flag.NewFlagSet("id", flag.ContinueOnError)
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
 
-	config, err := node.LoadConfig(os.Getenv)
+	configDir, err := node.ResolveConfigDir(os.Getenv)
 	if err != nil {
 		return err
 	}
 
-	identity, _, err := node.EnsureIdentity(node.IdentityPath(config.ConfigDir))
+	identity, _, err := node.EnsureIdentity(node.IdentityPath(configDir))
 	if err != nil {
 		return err
 	}
@@ -204,12 +212,16 @@ func runRegenerate(arguments []string) error {
 		return err
 	}
 
-	config, err := node.LoadConfig(os.Getenv)
+	// Only the config directory is resolved, for the same reason as `id`:
+	// regeneration rewrites the identity file and never dials, so requiring a
+	// dial target or a tunnel token would make a local credential change depend
+	// on a Server the operator may not have configured yet.
+	configDir, err := node.ResolveConfigDir(os.Getenv)
 	if err != nil {
 		return err
 	}
 
-	identity, err := node.RegenerateIdentity(node.IdentityPath(config.ConfigDir), *keepID)
+	identity, err := node.RegenerateIdentity(node.IdentityPath(configDir), *keepID)
 	if err != nil {
 		return err
 	}
