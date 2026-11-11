@@ -28,6 +28,7 @@ var featurePaths = []string{
 	"../../features/bidirectional_channel.feature",
 	"../../features/output_follow.feature",
 	"../../features/output_scope.feature",
+	"../../features/messages.feature",
 	"../../features/model_command.feature",
 }
 
@@ -75,6 +76,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerFollowSteps(ctx)
 	registerOutputScopeSteps(ctx)
 	registerQReturnsToWorkspaceSteps(ctx)
+	registerMessagesSteps(ctx)
 	registerModelSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {

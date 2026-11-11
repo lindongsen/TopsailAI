@@ -194,7 +194,7 @@ func TestAPIClientSurfacesFailureCode(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewAPIClient(server.URL, "")
-	_, err := client.GetMessages(context.Background(), "e1", "x", 0)
+	_, err := client.GetMessages(context.Background(), "e1", "x", 0, 0)
 	if err == nil {
 		t.Fatal("404 response succeeded")
 	}

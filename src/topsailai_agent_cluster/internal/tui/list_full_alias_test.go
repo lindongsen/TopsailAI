@@ -47,18 +47,18 @@ func TestListFullAliasInheritsListGrammar(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			filter, clean, full, err := parseListArguments(listFullRest(testCase.rest))
+			parsed, err := parseListArguments(listFullRest(testCase.rest))
 			if err != nil {
 				t.Fatalf("parseListArguments: %v", err)
 			}
-			if !full {
+			if !parsed.Full {
 				t.Fatal("full was not implied by the shorthand")
 			}
-			if clean != testCase.wantClean {
-				t.Fatalf("clean=%v want=%v", clean, testCase.wantClean)
+			if parsed.Clean != testCase.wantClean {
+				t.Fatalf("clean=%v want=%v", parsed.Clean, testCase.wantClean)
 			}
-			if filter != testCase.wantFilter {
-				t.Fatalf("filter=%q want=%q", filter, testCase.wantFilter)
+			if parsed.Filter != testCase.wantFilter {
+				t.Fatalf("filter=%q want=%q", parsed.Filter, testCase.wantFilter)
 			}
 		})
 	}
@@ -68,7 +68,7 @@ func TestListFullAliasInheritsListGrammar(t *testing.T) {
 // usage error, because the shorthand already states full and a second flag is a
 // contradiction rather than a harmless duplicate.
 func TestListFullAliasRejectsRepeatedFullFlag(t *testing.T) {
-	if _, _, _, err := parseListArguments(listFullRest("--full")); err == nil {
+	if _, err := parseListArguments(listFullRest("--full")); err == nil {
 		t.Fatal("repeated --full was accepted")
 	}
 }
@@ -205,7 +205,7 @@ func TestTableOptionsForOrsFullIntoBoundary(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			boundary := &fullBoundaryWriter{full: testCase.boundaryFull}
-			options := tableOptionsFor(boundary, ColorPolicy{}, false, testCase.commandFull, nil)
+			options := tableOptionsFor(boundary, ColorPolicy{}, listArguments{Full: testCase.commandFull}, nil)
 			if options.Full != testCase.wantFull {
 				t.Fatalf("Full=%v want=%v", options.Full, testCase.wantFull)
 			}

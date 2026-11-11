@@ -236,7 +236,7 @@ func rerenderNavigatedList(parent context.Context, api InteractiveAPI, state *in
 	if state.Scope.Kind == ScopeSession {
 		return nil
 	}
-	return interactiveList(parent, api, state, "", false, false, out, io.Discard, color)
+	return interactiveList(parent, api, state, listArguments{}, out, io.Discard, color)
 }
 
 // isASCIIDecimal recognizes unsigned ASCII decimal syntax without accepting signs or whitespace.

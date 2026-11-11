@@ -103,6 +103,21 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// prose, not an output line and not a history row, and conflating them would
 	// let an unrelated setting silently reshape a conversation.
 	maxChars := flags.Int("max-chars", 0, "maximum characters per message returned by messages; 0 keeps the adapter default")
+	// -c is the short spelling of --max-chars. Both surfaces accept it, so an
+	// operator who learned it in the interactive REPL can use it here too. It is a
+	// separate flag rather than an alias entry because Go's flag package has no
+	// alias mechanism, and the two spellings are reconciled after parsing so they
+	// can never disagree about one quantity.
+	maxCharsShort := flags.Int("c", 0, "short form of --max-chars")
+	// --max-tokens bounds one message body in model tokens, which is the bound an
+	// operator usually wants: a token is the unit that makes a conversation
+	// expensive and noisy, while a character count says nothing about how much of
+	// the model's context a message occupies. An absent value selects the cluster
+	// default rather than "no bound", because an unbounded conversation is noise.
+	maxTokens := flags.Int("max-tokens", 0, "maximum tokens per message returned by messages; 0 means no bound, and an absent value uses the default of 5000")
+	// -t is the short spelling of --max-tokens, reconciled with it after parsing so
+	// the two can never disagree about one quantity.
+	maxTokensShort := flags.Int("t", 0, "short form of --max-tokens")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -164,6 +179,44 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
+	// A negative numeric option is rejected at the boundary rather than passed
+	// down, because every consumer reads a non-positive bound as "no bound". A
+	// negative bound would therefore silently widen the result instead of
+	// narrowing it, and the operator would see a complete conversation while
+	// believing it was bounded.
+	if err := rejectNegativeNumericFlags(*maxChars, *maxCharsShort, *maxTokens, *maxTokensShort, *historyLimit, *maxBytes, *lines); err != nil {
+		return err
+	}
+	// The two spellings of the per-message bound are reconciled into one value
+	// before any command reads it, so -c and --max-chars can never disagree. Two
+	// different values are rejected instead of resolved by precedence, because
+	// either choice would silently ignore a bound the operator stated.
+	messageBound, err := reconcileMaxChars(*maxChars, *maxCharsShort)
+	if err != nil {
+		return err
+	}
+	// The token bound is reconciled the same way, and an absent value selects the
+	// cluster default. The default is resolved here because this is the first layer
+	// that can tell an absent flag from a stated zero: zero is a meaningful request
+	// for no bound, so applying the default to it would silently override the
+	// operator's own instruction.
+	tokenBound, err := resolveMaxTokens(flags, *maxTokens, *maxTokensShort)
+	if err != nil {
+		return err
+	}
+	// A bound above the protocol maximum is rejected rather than clamped, so the
+	// two surfaces agree about one value. The adapter clamps, which means a caller
+	// who asked for 999999999 receives a 100000 bound while the command reports
+	// success and prints no diagnostic; the operator then believes a bound was
+	// honoured that was silently replaced. The interactive surface already rejects
+	// this value, so accepting it here made the same request succeed in a script
+	// and fail in the REPL.
+	if messageBound > protocol.MaxMessagesMaxChars {
+		return fmt.Errorf("--max-chars %d exceeds the maximum of %d", messageBound, protocol.MaxMessagesMaxChars)
+	}
+	if tokenBound > protocol.MaxMessagesMaxTokens {
+		return fmt.Errorf("--max-tokens %d exceeds the maximum of %d", tokenBound, protocol.MaxMessagesMaxTokens)
+	}
 	switch flags.Arg(0) {
 	case "help":
 		if flags.NArg() > 2 {
@@ -174,18 +227,21 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			target = flags.Arg(1)
 		}
 		return tui.PrintNonInteractiveCommandHelp(output, target)
-	case "list", tui.ListFullAlias:
-		// lf is the shorthand of "list --full", so it implies the full layout
-		// instead of requiring the flag. Resolving it here keeps one render path:
-		// the shorthand cannot drift into a second implementation, and it can
-		// never silently degrade into the ordinary truncated table that looks
-		// complete while hiding the tail of every over-wide value.
-		shorthand := flags.Arg(0) == tui.ListFullAlias
-		listClean, listFull, err := parseListArgs(flags.Args()[1:], shorthand)
+	case "list", tui.ListFullAlias, tui.ListBriefAlias:
+		// lf is the shorthand of "list --full" and lb is the shorthand of
+		// "list --brief", so each implies its own flag instead of requiring it.
+		// Resolving them here keeps one render path: a shorthand cannot drift into
+		// a second implementation, and it can never silently degrade into the
+		// ordinary layout that looks complete while hiding what the operator asked
+		// for. The two shorthands are separate spellings rather than one spelling
+		// with a mode, because they select opposite layouts and a single word
+		// cannot state which one was meant.
+		shorthand := listShorthand(flags.Arg(0))
+		listClean, listFull, listBrief, err := parseListArgs(flags.Args()[1:], shorthand)
 		if err != nil {
 			return err
 		}
-		return list(ctx, api, output, errors, *filter, listClean, listFull, *jsonMode, tui.OutputColorPolicy(output))
+		return list(ctx, api, output, errors, *filter, listClean, listFull, listBrief, *jsonMode, tui.OutputColorPolicy(output))
 	case "refresh":
 		if err := parseRefreshArgs(flags.Args()[1:]); err != nil {
 			return err
@@ -199,14 +255,14 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.OutputColorPolicy(output))
 	case "history":
 		if flags.NArg() != 2 {
-			return fmt.Errorf("usage: history <endpoint-id-or-hostname>")
+			return fmt.Errorf("usage: history <endpoint-id-or-hostname> [--limit N]")
 		}
 		return history(ctx, api, output, errors, flags.Arg(1), *historyLimit, *jsonMode, tui.OutputColorPolicy(output))
 	case "messages":
 		if flags.NArg() != 3 {
-			return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id>")
+			return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id> [-c N|--max-chars N]")
 		}
-		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *maxChars, *jsonMode, tui.OutputColorPolicy(output))
+		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), messageBound, tokenBound, *jsonMode, tui.OutputColorPolicy(output))
 	case "model":
 		if flags.NArg() < 3 || flags.NArg() > 4 {
 			return fmt.Errorf("usage: model <endpoint-id-or-hostname> <session-id> [profile]")
@@ -383,21 +439,129 @@ func resolveInteractiveLines(flags *flag.FlagSet, value int) (int, error) {
 	return value, nil
 }
 
+// rejectNegativeNumericFlags rejects a negative value for any numeric option.
+//
+// Every consumer of these options reads a non-positive value as "no bound", so a
+// negative value would widen the result instead of narrowing it. The operator
+// would then see a complete conversation or a complete output snapshot while
+// believing the request was bounded, which is the opposite of what the flag says.
+// The check lives at the boundary because the same convention is repeated in the
+// adapter, the client and the Server, and a single rejected value cannot drift.
+func rejectNegativeNumericFlags(maxChars, maxCharsShort, maxTokens, maxTokensShort, historyLimit, maxBytes, lines int) error {
+	checks := []struct {
+		name  string
+		value int
+	}{
+		{"--max-chars", maxChars},
+		{"-c", maxCharsShort},
+		{"--max-tokens", maxTokens},
+		{"-t", maxTokensShort},
+		{"--limit", historyLimit},
+		{"--max-bytes", maxBytes},
+		{"--lines", lines},
+	}
+	for _, check := range checks {
+		if check.value < 0 {
+			return fmt.Errorf("%s %d is negative; a bound must be zero or a positive count", check.name, check.value)
+		}
+	}
+	return nil
+}
+
+// reconcileMaxChars folds the two spellings of the per-message bound into one
+// value, so -c and --max-chars can never disagree about one quantity.
+//
+// Two different non-zero values are rejected instead of resolved by precedence,
+// because either choice would silently ignore a bound the operator stated. Zero
+// means "not supplied" for both spellings, so "-c 0" and "--max-chars 0" agree
+// and both mean "no bound", which is the meaning every consumer already applies.
+func reconcileMaxChars(maxChars, maxCharsShort int) (int, error) {
+	if maxChars != 0 && maxCharsShort != 0 && maxChars != maxCharsShort {
+		return 0, fmt.Errorf("--max-chars %d and -c %d disagree; state the bound once", maxChars, maxCharsShort)
+	}
+	if maxCharsShort != 0 {
+		return maxCharsShort, nil
+	}
+	return maxChars, nil
+}
+
+// reconcileMaxTokens folds the two spellings of the per-message token bound into
+// one value, so -t and --max-tokens can never disagree about one quantity.
+//
+// Two different non-zero values are rejected instead of resolved by precedence,
+// because either choice would silently ignore a bound the operator stated. Zero
+// means "not supplied" for both spellings, so "-t 0" and "--max-tokens 0" agree and
+// both mean "no bound".
+func reconcileMaxTokens(maxTokens, maxTokensShort int) (int, error) {
+	if maxTokens != 0 && maxTokensShort != 0 && maxTokens != maxTokensShort {
+		return 0, fmt.Errorf("--max-tokens %d and -t %d disagree; state the bound once", maxTokens, maxTokensShort)
+	}
+	if maxTokensShort != 0 {
+		return maxTokensShort, nil
+	}
+	return maxTokens, nil
+}
+
+// resolveMaxTokens folds the two spellings of the token bound into one value and
+// applies the cluster default when neither was stated.
+//
+// The default is resolved here because this is the first layer that can tell an
+// absent flag from a stated zero. Zero is a meaningful request for no bound, so
+// applying the default to it would silently override the operator's own
+// instruction, and a caller who asked for no bound would receive 5000 instead.
+func resolveMaxTokens(flags *flag.FlagSet, maxTokens, maxTokensShort int) (int, error) {
+	bound, err := reconcileMaxTokens(maxTokens, maxTokensShort)
+	if err != nil {
+		return 0, err
+	}
+	if !flagSupplied(flags, "max-tokens") && !flagSupplied(flags, "t") {
+		return protocol.DefaultMessagesMaxTokens, nil
+	}
+	return bound, nil
+}
+
+// flagSupplied reports whether one option was stated on the command line.
+//
+// It exists because a zero value cannot distinguish "not supplied" from "supplied
+// zero", and the two mean different things for a bound: an absent token bound
+// selects the cluster default, while an explicit zero asks for no bound at all.
+// Reading the parsed value alone would silently override the operator's own
+// instruction to disable the bound.
+func flagSupplied(flags *flag.FlagSet, name string) bool {
+	supplied := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			supplied = true
+		}
+	})
+	return supplied
+}
+
 // globalOptionNames lists the options the top-level flag set owns. Only these are
 // hoisted, so an option a subcommand owns (for example list --clean) keeps its
 // position and its meaning.
+//
+// Every option registered on the top-level flag set MUST appear here. A flag that
+// is registered but absent from this map is accepted only before the subcommand,
+// because Go's flag package stops parsing at the first positional argument. The
+// operator then sees a usage error for a flag the help text documents, which reads
+// as "the flag does not exist" rather than "the flag is in the wrong place".
+// TestGlobalOptionNamesCoverEveryRegisteredFlag enforces this, so a new flag
+// cannot be added without deciding whether it is hoistable.
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
-	"no-progress": true,
-	"profile":     true, "profile-revision": true, "folder": true, "task": true,
+	"no-progress": true, "no-truncate": true, "limit": true, "max-chars": true, "c": true,
+	"max-tokens": true, "t": true,
+	"profile": true, "profile-revision": true, "folder": true, "task": true,
 	"generation": true, "i": true, "follow": true, "f": true,
 }
 
 // booleanGlobalOptions lists the hoisted options that take no value, so hoisting
 // never swallows the following argument as if it were that option's value.
 var booleanGlobalOptions = map[string]bool{
-	"json": true, "yes": true, "no-color": true, "no-progress": true, "i": true, "follow": true, "f": true,
+	"json": true, "yes": true, "no-color": true, "no-progress": true, "no-truncate": true,
+	"i": true, "follow": true, "f": true,
 }
 
 // hoistTrailingFlags moves recognized global options that appear after the
@@ -447,12 +611,46 @@ func hoistTrailingFlags(args []string) []string {
 		// A value-taking option written as a separate pair takes its value with
 		// it, otherwise hoisting would leave the value behind as a positional.
 		// A boolean option never consumes the next argument.
-		if !hasValue && !booleanGlobalOptions[name] && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+		if !hasValue && !booleanGlobalOptions[name] && i+1 < len(args) && takesSeparateValue(args[i+1]) {
 			i++
 			hoisted = append(hoisted, args[i])
 		}
 	}
 	return append(hoisted, rest...)
+}
+
+// takesSeparateValue reports whether the argument after a value-taking option is
+// that option's value rather than another option.
+//
+// A following option is never a value, but a negative number is: "--max-chars -5"
+// states one option and one value, while "--max-chars --json" states two options.
+// Treating every leading dash as an option made a negative value fall through to
+// the positional list, so the flag then consumed the subcommand name and reported
+// `invalid value "messages" for flag -max-chars`, which names neither the real
+// problem nor the real argument.
+func takesSeparateValue(next string) bool {
+	if next == "--" {
+		return false
+	}
+	if !strings.HasPrefix(next, "-") {
+		return true
+	}
+	return isNegativeNumber(next)
+}
+
+// isNegativeNumber reports whether the argument is a negative number rather than
+// an option. The first character after the dash must be a digit or a decimal
+// point, so a word such as "-inf" is never mistaken for a value.
+func isNegativeNumber(arg string) bool {
+	if len(arg) < 2 || arg[0] != '-' {
+		return false
+	}
+	rest := arg[1:]
+	if (rest[0] < '0' || rest[0] > '9') && rest[0] != '.' {
+		return false
+	}
+	_, err := strconv.ParseFloat(rest, 64)
+	return err == nil
 }
 
 // splitOptionName reports the option name without its leading dashes and whether
@@ -465,46 +663,89 @@ func splitOptionName(arg string) (string, bool) {
 	return name, false
 }
 
+// listShorthand names the list spelling the operator typed, so a usage error can
+// answer with that spelling and the implied flag can be derived from it. It is a
+// type rather than a bool because there are now two shorthands that imply
+// opposite layouts, and a bool could only express "some shorthand".
+type listShorthand string
+
+const (
+	// listShorthandNone is the canonical "list" spelling, which implies nothing.
+	listShorthandNone listShorthand = ""
+	// listShorthandFull is "lf", which implies --full.
+	listShorthandFull listShorthand = tui.ListFullAlias
+	// listShorthandBrief is "lb", which implies --brief.
+	listShorthandBrief listShorthand = tui.ListBriefAlias
+)
+
+// listShorthandFor classifies the command word the operator typed.
+func listShorthandFor(spelling string) listShorthand {
+	switch spelling {
+	case tui.ListFullAlias:
+		return listShorthandFull
+	case tui.ListBriefAlias:
+		return listShorthandBrief
+	default:
+		return listShorthandNone
+	}
+}
+
 // parseListArgs parses the standalone list tail. --full is the per-command
-// request to render without truncation, and shorthand states that the operator
-// typed lf, which already implies it. A repeated flag is a usage error rather
-// than a harmless duplicate, because the operator who typed it twice cannot tell
-// which one took effect, and the shorthand rejects it for the same reason logf
-// rejects a repeated follow flag: the combination is a contradiction. The
-// spelling is a parameter rather than being inferred from a pre-set full value,
-// so the two meanings cannot be confused.
-func parseListArgs(args []string, shorthand bool) (bool, bool, error) {
+// request to render without truncation and --brief is the per-command request to
+// render only the identifying columns; the two are independent axes, so they
+// combine. shorthand states which spelling the operator typed, because that
+// spelling already implies one of the two flags.
+//
+// A repeated flag is a usage error rather than a harmless duplicate, because the
+// operator who typed it twice cannot tell which one took effect. A shorthand
+// rejects the flag it already implies for the same reason logf rejects a repeated
+// follow flag: the combination is a contradiction. It accepts the other flag,
+// because that one states something the shorthand did not.
+func parseListArgs(args []string, shorthand listShorthand) (bool, bool, bool, error) {
 	clean := false
-	full := shorthand
+	full := shorthand == listShorthandFull
+	brief := shorthand == listShorthandBrief
 	for _, arg := range args {
 		switch arg {
 		case "--clean":
 			if clean {
-				return false, false, listUsageError(shorthand)
+				return false, false, false, listUsageError(shorthand)
 			}
 			clean = true
 		case "--full":
 			if full {
-				if shorthand {
-					return false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] (full is implied; drop --full)")
+				if shorthand == listShorthandFull {
+					return false, false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] (full is implied; drop --full)")
 				}
-				return false, false, listUsageError(shorthand)
+				return false, false, false, listUsageError(shorthand)
 			}
 			full = true
+		case "--brief":
+			if brief {
+				if shorthand == listShorthandBrief {
+					return false, false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lb [--clean] (brief is implied; drop --brief)")
+				}
+				return false, false, false, listUsageError(shorthand)
+			}
+			brief = true
 		default:
-			return false, false, listUsageError(shorthand)
+			return false, false, false, listUsageError(shorthand)
 		}
 	}
-	return clean, full, nil
+	return clean, full, brief, nil
 }
 
 // listUsageError names the spelling the operator typed, so a usage error never
 // answers with a command they did not run.
-func listUsageError(shorthand bool) error {
-	if shorthand {
-		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean]")
+func listUsageError(shorthand listShorthand) error {
+	switch shorthand {
+	case listShorthandFull:
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] [--brief]")
+	case listShorthandBrief:
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [--full]")
+	default:
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full] [--brief]")
 	}
-	return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full]")
 }
 
 // parseRefreshArgs rejects every positional argument, so a typo cannot silently
@@ -557,8 +798,8 @@ func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 // resource ID, because a stopped session is absent from the inventory and has no
 // resource ID. That is also why this read needs no generation: it addresses
 // persisted provider data, not a live process.
-func messages(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target, sessionID string, maxChars int, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).Messages(ctx, output, errors, target, sessionID, maxChars, jsonMode, color)
+func messages(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target, sessionID string, maxChars, maxTokens int, jsonMode bool, color tui.ColorPolicy) error {
+	return legacyRunner(api).Messages(ctx, output, errors, target, sessionID, maxChars, maxTokens, jsonMode, color)
 }
 
 // model renders the model profiles one session can select.
@@ -659,11 +900,14 @@ func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 // list renders the session table. full is the per-command request to disable
 // truncation, and it is ORed with the boundary value rather than replacing it,
 // so the startup --no-truncate option survives a command that did not repeat it.
-func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, full, jsonMode bool, color tui.ColorPolicy) error {
+// brief selects the identifying column set; it is a separate axis from full, so
+// the two combine instead of overriding each other.
+func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, full, brief, jsonMode bool, color tui.ColorPolicy) error {
 	options := tui.TableOptionsFor(output)
 	options.Color = color
 	options.Clean = clean
 	options.Full = options.Full || full
+	options.Brief = brief
 	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, options)
 }
 

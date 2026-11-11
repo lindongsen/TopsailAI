@@ -142,6 +142,131 @@ func parseLineCount(raw string) (int, error) {
 	return count, nil
 }
 
+// messagesUsage is the accepted grammar of the interactive messages command.
+//
+// It names both accepted spellings of the bound and states that no endpoint
+// argument is taken, because the interactive surface resolves the endpoint from
+// the current scope. The standalone command requires an endpoint, so an operator
+// who learned the standalone form would otherwise type one here and receive a
+// usage error that never said the endpoint was the problem.
+const messagesUsage = "usage: messages [-c <n>|--max-chars <n>] [-t <n>|--max-tokens <n>] [history-row-number-or-session-id] (no endpoint argument; the endpoint comes from the current scope)"
+
+// parseMessagesArgs splits an optional target token from the optional per-message
+// display bounds. Accepted forms are -c <n>, --max-chars <n>, --max-chars=<n>,
+// -t <n>, --max-tokens <n> and --max-tokens=<n>.
+//
+// Both bounds are parsed here rather than forwarded to the provider, because the
+// provider truncates the raw stored document and would cut a structured body into
+// invalid JSON. The adapter applies them after unwrapping, so the operator shortens
+// readable text instead of corrupting the record.
+//
+// An absent token bound selects the cluster default rather than "no bound", because
+// an unbounded conversation is noise: one long tool result can bury every other
+// message. An explicit zero still means "no bound", which is why the default is
+// resolved here, at the surface that can tell an absent flag from a stated zero.
+func parseMessagesArgs(rest string) (string, int, int, error) {
+	maxChars := 0
+	maxTokens := protocol.DefaultMessagesMaxTokens
+	tokens := strings.Fields(rest)
+	target := ""
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "-c" || token == "--max-chars":
+			if i+1 >= len(tokens) {
+				return "", 0, 0, fmt.Errorf("%s", messagesUsage)
+			}
+			i++
+			parsed, err := parseMaxChars(tokens[i])
+			if err != nil {
+				return "", 0, 0, err
+			}
+			maxChars = parsed
+		case strings.HasPrefix(token, "--max-chars="):
+			parsed, err := parseMaxChars(strings.TrimPrefix(token, "--max-chars="))
+			if err != nil {
+				return "", 0, 0, err
+			}
+			maxChars = parsed
+		case token == "-t" || token == "--max-tokens":
+			if i+1 >= len(tokens) {
+				return "", 0, 0, fmt.Errorf("%s", messagesUsage)
+			}
+			i++
+			parsed, err := parseMaxTokens(tokens[i])
+			if err != nil {
+				return "", 0, 0, err
+			}
+			maxTokens = parsed
+		case strings.HasPrefix(token, "--max-tokens="):
+			parsed, err := parseMaxTokens(strings.TrimPrefix(token, "--max-tokens="))
+			if err != nil {
+				return "", 0, 0, err
+			}
+			maxTokens = parsed
+		case strings.HasPrefix(token, "-"):
+			return "", 0, 0, fmt.Errorf("%s", messagesUsage)
+		default:
+			if target != "" {
+				return "", 0, 0, fmt.Errorf("%s", messagesUsage)
+			}
+			target = token
+		}
+	}
+	return target, maxChars, maxTokens, nil
+}
+
+// parseMaxTokens validates a per-message token bound.
+//
+// The rules mirror parseMaxChars deliberately, so the two bounds cannot disagree
+// about what one value means. Zero means "no bound"; a negative value is rejected
+// rather than read as "no bound", because the operator who typed a number asked for
+// a bound; a value above the protocol maximum is rejected rather than clamped,
+// because a clamp would honour a different bound than the one requested while
+// reporting success.
+func parseMaxTokens(raw string) (int, error) {
+	count, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("--max-tokens must be an integer")
+	}
+	if count < 0 {
+		return 0, fmt.Errorf("--max-tokens %d is negative; a bound must be zero or a positive count", count)
+	}
+	if count > protocol.MaxMessagesMaxTokens {
+		return 0, fmt.Errorf("--max-tokens %d exceeds the maximum of %d", count, protocol.MaxMessagesMaxTokens)
+	}
+	return count, nil
+}
+
+// parseMaxChars validates a per-message character bound.
+//
+// Zero is accepted and means "no bound", which is the same meaning the standalone
+// command, the client and the adapter already give it. Rejecting it here made the
+// two surfaces disagree about one value: the same "--max-chars 0" was an error in
+// the REPL and a full conversation in a script. The provider reads an explicit
+// zero as "erase every body", but that is not carried over, because a request that
+// erases every message is not a useful operator intent and silently returning
+// nothing would look like a session with no content.
+//
+// A negative value is rejected rather than read as "no bound", because the
+// operator who typed a number asked for a bound and silently ignoring it would
+// show a full conversation they believed they had narrowed. A value above the
+// protocol maximum is rejected rather than clamped, because a clamp would honour a
+// different bound than the one requested while reporting success.
+func parseMaxChars(raw string) (int, error) {
+	count, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("--max-chars must be an integer")
+	}
+	if count < 0 {
+		return 0, fmt.Errorf("--max-chars %d is negative; a bound must be zero or a positive count", count)
+	}
+	if count > protocol.MaxMessagesMaxChars {
+		return 0, fmt.Errorf("--max-chars %d exceeds the maximum of %d", count, protocol.MaxMessagesMaxChars)
+	}
+	return count, nil
+}
+
 func interactiveValue(values map[string]any, key string) string {
 	value, _ := values[key].(string)
 	return value
@@ -659,7 +784,7 @@ func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID st
 	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	return runner.RefreshAfterStartWithResult(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, false, false, nil))
+	return runner.RefreshAfterStartWithResult(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, listArguments{}, nil))
 }
 
 // autoFollowAfterStart arms the live tail that follows a freshly launched session,

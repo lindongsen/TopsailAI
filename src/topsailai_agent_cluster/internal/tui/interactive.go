@@ -496,6 +496,13 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	if rawName == listFullAlias {
 		rawName, rest = "list", listFullRest(rest)
 	}
+	// The lb shorthand is resolved here for the same reason: it carries the brief
+	// flag inside the command word. Rewriting the tail into "--brief <tail>" keeps
+	// list's single parser authoritative, so the shorthand cannot drift into a
+	// second grammar or silently degrade into the ordinary wide table.
+	if rawName == listBriefAlias {
+		rawName, rest = "list", listBriefRest(rest)
+	}
 	// The send prefix is resolved before tokenisation: splitCommand splits on the
 	// first literal space, so ">hello world" would otherwise yield the token
 	// ">hello". The prefix is disjoint from every command word, so this branch can
@@ -547,11 +554,11 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return true, nil
 	case "list":
-		filter, clean, full, err := parseListArguments(rest)
+		arguments, err := parseListArguments(rest)
 		if err != nil {
 			return false, err
 		}
-		return false, interactiveList(ctx, api, state, filter, clean, full, trustedOut, errOut, options.Color)
+		return false, interactiveList(ctx, api, state, arguments, trustedOut, errOut, options.Color)
 	case "endpoints":
 		// The endpoint table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and refresh.
@@ -565,9 +572,11 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// cells, so it renders through the trusted writer like list and history.
 		return false, interactiveModel(ctx, api, state, rest, lineResults, out, trustedOut, errOut, options)
 	case "messages":
-		// A conversation is provider prose, so it renders through the untrusted
-		// writer: every body already passed the provider output boundary.
-		return false, interactiveMessages(ctx, api, state, rest, out, errOut, options.Color)
+		// The conversation renderer applies trusted styling to its own headers
+		// and sanitizes every provider body itself, so it renders through the
+		// trusted writer. The untrusted writer would strip the styling it emits,
+		// which is exactly the failure that made the prompt lose its colour.
+		return false, interactiveMessages(ctx, api, state, rest, trustedOut, errOut, options.Color)
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":
@@ -833,8 +842,11 @@ func loadReports(ctx context.Context, api InteractiveAPI, endpointFilter string)
 	return loaded, nil
 }
 
-func interactiveList(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, clean, full bool, out, errors io.Writer, color ColorPolicy) error {
-	scoped, err := scopedListFilter(state, filter)
+// interactiveList renders the session table for one parsed list tail. The parsed
+// arguments are passed as one value rather than as three positional booleans, so
+// a caller cannot swap clean, full and brief while still compiling.
+func interactiveList(parent context.Context, api InteractiveAPI, state *interactiveState, arguments listArguments, out, errors io.Writer, color ColorPolicy) error {
+	scoped, err := scopedListFilter(state, arguments.Filter)
 	if err != nil {
 		return err
 	}
@@ -845,7 +857,7 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	staged := make([]SessionRow, 0)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, tableOptionsFor(out, color, clean, full, func(rows []SessionRow) { staged = append(staged, rows...) }))
+	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, tableOptionsFor(out, color, arguments, func(rows []SessionRow) { staged = append(staged, rows...) }))
 	if err != nil {
 		state.Rows = nil
 		return err
@@ -854,40 +866,61 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	return nil
 }
 
+// listArguments is the parsed interactive list tail. It is a struct rather than a
+// tuple of positional values because clean, full and brief are all booleans: a
+// positional signature would let a caller swap two of them and still compile,
+// which is a silent layout bug rather than a type error.
+type listArguments struct {
+	Filter string
+	Clean  bool
+	Full   bool
+	Brief  bool
+}
+
+// listUsage is the interactive usage line. One constant keeps every rejection
+// message identical, so an operator never has to compare two spellings of the
+// same grammar.
+const listUsage = "usage: list [endpoint] [--clean] [--full] [--brief]"
+
 // parseListArguments parses the interactive list tail. --full is the per-command
-// request to render without truncation, and it is a flag rather than a separate
-// command so it inherits list's filter argument and scope availability unchanged.
+// request to render without truncation and --brief is the per-command request to
+// render only the identifying columns; both are flags rather than separate
+// commands so they inherit list's filter argument and scope availability
+// unchanged. The two are independent axes, so they combine: a brief table that is
+// also untruncated is a coherent request.
+//
 // A repeated flag is a usage error instead of a harmless duplicate, because the
 // operator who typed it twice cannot tell which one took effect.
-func parseListArguments(rest string) (string, bool, bool, error) {
-	parts := strings.Fields(rest)
-	filter := ""
-	clean := false
-	full := false
-	for _, part := range parts {
-		if part == "--clean" {
-			if clean {
-				return "", false, false, fmt.Errorf("usage: list [endpoint] [--clean] [--full]")
+func parseListArguments(rest string) (listArguments, error) {
+	parsed := listArguments{}
+	for _, part := range strings.Fields(rest) {
+		switch part {
+		case "--clean":
+			if parsed.Clean {
+				return listArguments{}, fmt.Errorf("%s", listUsage)
 			}
-			clean = true
-			continue
-		}
-		if part == "--full" {
-			if full {
-				return "", false, false, fmt.Errorf("usage: list [endpoint] [--clean] [--full]")
+			parsed.Clean = true
+		case "--full":
+			if parsed.Full {
+				return listArguments{}, fmt.Errorf("%s", listUsage)
 			}
-			full = true
-			continue
+			parsed.Full = true
+		case "--brief":
+			if parsed.Brief {
+				return listArguments{}, fmt.Errorf("%s", listUsage)
+			}
+			parsed.Brief = true
+		default:
+			if strings.HasPrefix(part, "-") {
+				return listArguments{}, fmt.Errorf("option %q is available only in non-interactive mode; JSON output is available only with the standalone command", part)
+			}
+			if parsed.Filter != "" {
+				return listArguments{}, fmt.Errorf("%s", listUsage)
+			}
+			parsed.Filter = part
 		}
-		if strings.HasPrefix(part, "-") {
-			return "", false, false, fmt.Errorf("option %q is available only in non-interactive mode; JSON output is available only with the standalone command", part)
-		}
-		if filter != "" {
-			return "", false, false, fmt.Errorf("usage: list [endpoint] [--clean] [--full]")
-		}
-		filter = part
 	}
-	return filter, clean, full, nil
+	return parsed, nil
 }
 
 func rejectInteractiveOption(command, rest string) error {
@@ -1018,7 +1051,7 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 			return err
 		}
 	}
-	err = renderListRows(out, errors, loaded, scoped, false, tableOptionsFor(out, color, false, false, func(rows []SessionRow) { staged = append(staged, rows...) }))
+	err = renderListRows(out, errors, loaded, scoped, false, tableOptionsFor(out, color, listArguments{}, func(rows []SessionRow) { staged = append(staged, rows...) }))
 	if err != nil {
 		state.Rows = nil
 		return err

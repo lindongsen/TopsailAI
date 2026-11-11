@@ -261,7 +261,7 @@ func (c *watchController) render(loaded reportLoad) ([]SessionRow, []byte, error
 	var buffer bytes.Buffer
 	safe := &watchWriter{safeWriter: &safeWriter{target: &buffer, keepSGR: c.color.Enabled}, layout: c.layoutSource()}
 	var rows []SessionRow
-	options := tableOptionsFor(safe, c.color, false, false, func(rendered []SessionRow) {
+	options := tableOptionsFor(safe, c.color, listArguments{}, func(rendered []SessionRow) {
 		rows = append(rows, rendered...)
 	})
 	if err := renderListRows(safe, io.Discard, loaded, c.filter, false, options); err != nil {

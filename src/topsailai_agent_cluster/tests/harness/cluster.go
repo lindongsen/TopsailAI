@@ -63,6 +63,14 @@ type FaultInjection struct {
 	// default omits, such as context.inject, declares the list here instead of
 	// changing what every deployment advertises.
 	AdvertisedCapabilities []string
+	// MessagesBody and MessagesCount configure the fixture's conversation
+	// content. They are emitted by appendFaultEnvironment, which is the only
+	// seam that reaches the Endpoint and therefore the fixture child: the
+	// Endpoint does not receive ClusterOptions.Environment, so a body set there
+	// would be silently ignored and a scenario would assert against the default
+	// body while appearing to prove the configured one.
+	MessagesBody  string
+	MessagesCount int
 }
 
 // serverReadinessWait bounds how long StartCluster waits for the Server health
@@ -468,6 +476,12 @@ func appendFaultEnvironment(env []string, faults FaultInjection) []string {
 	}
 	if faults.ProviderInvocationLog != "" {
 		env = append(env, "AGENT_CLUSTER_TEST_PROVIDER_INVOCATION_LOG="+faults.ProviderInvocationLog)
+	}
+	if faults.MessagesBody != "" {
+		env = append(env, "AGENT_CLUSTER_TEST_MESSAGES_BODY="+faults.MessagesBody)
+	}
+	if faults.MessagesCount > 0 {
+		env = append(env, fmt.Sprintf("AGENT_CLUSTER_TEST_MESSAGES_COUNT=%d", faults.MessagesCount))
 	}
 	return env
 }

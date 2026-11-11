@@ -17,9 +17,10 @@ created: 2026-10-27
 - `docs/API.md`: implemented Server HTTP surface and response envelope; implemented contract.
 - `docs/Environment_Variables.md`: every variable, its flag, its default and the three deployment configuration sources; implemented contract.
 - `docs/cli-command-surface-rules.md`: rules the operator CLI command surface must follow; implemented contract.
+- `docs/agent-cluster-endpoint-access-policy.md`: the Endpoint-local policy directory that decides which cluster operations each caller may exercise on an Endpoint; discussion draft.
 
-The five `agent-cluster-*.md` documents are discussion drafts, not an approved final specification;
-the three documents marked as an implemented contract describe behaviour that exists in the code.
+The `agent-cluster-*.md` documents are discussion drafts, not an approved final specification;
+the documents marked as an implemented contract describe behaviour that exists in the code.
 Naming, machine-level Endpoint scope, required lifecycle support and the absence of periodic stdout
 snapshot refresh are human-confirmed decisions; other proposals remain under discussion.
 Implementation and verification planning is tracked separately in
@@ -152,7 +153,7 @@ and confines every provider detail to one adapter section. See
 
 | Component | Owns | Must not own |
 |---|---|---|
-| Server | Endpoint registry, standard capabilities/resources, authorization, latest inventory, standard command routing, audit | Adapter registry/configuration/selection or provider-specific interpretation of reported metadata, provider flags, local paths, PID selection, agent execution |
+| Server | Endpoint registry, standard capabilities/resources, caller authentication and request routing, latest inventory, standard command routing, audit | Adapter registry/configuration/selection or provider-specific interpretation of reported metadata, provider flags, local paths, PID selection, agent execution, operation authorization |
 | Endpoint | Local inventory authority, provider bindings, execution journal, local policy, bounded collection, stream relay | Cross-endpoint scheduling or assumptions about Server UI |
 | Adapter | Provider discovery, identity mapping, semantic translation, supported operations, output normalization | Server credentials, network routing, cluster RBAC |
 | CLI/TUI | Selection, filtering, status display, confirmation, user intent | Backend polling logic or provider-specific shell commands |
@@ -289,9 +290,10 @@ Each side verifies the certificate of the side it accepts. In the `endpoint-init
 
 Server dial addresses are operator configuration, not protocol data: `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` maps `endpoint_id=wss://address` pairs. A command can never choose where the Server connects.
 
-Both components expose HTTP APIs. Server exposes the operator API and, in the `endpoint-initiated` direction, the Endpoint connection entry point. Endpoint exposes the same local application services over a loopback-only API for health, inventory, command status and diagnostics. Remote access to the Endpoint API is disabled by default. It is not a second bypass around Server authorization: any enabled direct write path requires explicit endpoint-local authorization and the same journal and policy checks.
+Both components expose HTTP APIs. Server exposes the operator API and, in the `endpoint-initiated` direction, the Endpoint connection entry point. Endpoint exposes the same local application services over a loopback-only API for health, inventory, command status and diagnostics. Remote access to the Endpoint API is disabled by default. It is not a second bypass around the Endpoint access policy: any enabled direct write path requires the same caller token, the same journal and the same policy checks.
 
-Transport bindings must preserve command IDs, target identity, revisions, authorization context and result semantics.
+Transport bindings must preserve command IDs, target identity, revisions, the caller's
+`endpoint-token` and result semantics.
 
 Use HTTP requests for queries and command admission, SSE for TUI state/command updates, and a separate demand-driven output subscription for selected sessions. Large output must not block command/heartbeat delivery; use bounded priority queues and independent output flow control, or a separate output connection if required by load testing.
 
@@ -300,7 +302,9 @@ Use HTTP requests for queries and command admission, SSE for TUI state/command u
 - Endpoint is authoritative for observations and command admission/execution at that endpoint.
 - Provider runtime is authoritative for agent behavior. Endpoint cannot infer task success from its own successful CLI invocation.
 - Server holds a last-observed inventory projection, not live truth during disconnection.
-- Server is authoritative for operator identity, authorization and cluster admission.
+- Server is authoritative for caller identity and cluster admission, and for routing a request to the
+  addressed Endpoint. It is not authoritative for whether an operation is permitted: that decision
+  belongs to the Endpoint that would perform the work.
 - An unavailable observation is `unknown/stale`, not an empty inventory or a failed agent.
 - TUI presents connection health, observation freshness, agent state and task state separately.
 
@@ -340,14 +344,16 @@ Every successful accepted update performs one transactional conditional INSERT/U
 ## Security baseline
 
 - Enroll an Endpoint with a one-time short-lived credential; issue an endpoint-bound client certificate. Authenticate persistent channels with mTLS; require TLS for remote APIs.
-- Use operator authentication plus scopes such as view, read_output, send_message, control and endpoint_admin. Authorize each target and operation at Server admission and revalidate current permission immediately before dispatch.
-- Endpoint rechecks identity, validity, local provider/workspace allowlists, target generation and allowed operation. Server authorization does not override local safety policy.
+- Use caller authentication to admit a caller to the cluster, and nothing more. The Server verifies the `server-token`, that the addressed Endpoint exists, and that a live channel reaches it; it then forwards the request unchanged. It does not authorize operations, so it can neither grant nor revoke what an Endpoint serves.
+- A CLI presents two independent credentials: the `server-token`, verified by the Server and terminating there, and the `endpoint-token`, verified by the Endpoint and forwarded opaquely by the Server. A request without an `endpoint-token` is refused by the Endpoint rather than falling back to a default policy.
+- The CLI resolves each Endpoint's token from its own configuration file, never from the Server. Distribution stays local because a Server-side path would make the Server a token holder, and a holder can hand tokens out. The map lives in the same per-user file that already carries the Server URL and the `server-token`, so one precedence rule and one parser cover every setting. A CLI with no entry for the addressed Endpoint refuses locally as a configuration error instead of sending an unauthenticated request.
 - Revocation closes existing sessions and invalidates queued dispatch; certificates rotate without changing endpoint identity.
 - Never expose an arbitrary remote shell, executable path, environment override, filesystem path, socket path or unvalidated raw provider action in the generic API. The only command execution surface is the standard `command.exec` operation, which runs one argv array matched against an Endpoint-global allowlist in a session working directory with a minimal environment, bounded lifetime and bounded output. It is not a shell: no command string is parsed, no shell is invoked, and arguments are confined to the resolved directory.
 - Provider binaries and binding configuration are trusted local admin configuration. Execute argv directly without a shell, under a least-privilege account; bound child lifetime and output and clean up exact owned processes.
 - Journal/audit references and payload hashes, not full prompts, secrets or complete stdout by default. Restrict output access, encrypt stored sensitive payloads and use bounded retention.
 - Treat stdout and provider metadata as untrusted: strip terminal control sequences for TUI rendering, cap frame/text size and nesting, and redact sensitive local metadata from fleet listings.
 - Existing CLI PID/liveness checks are not authenticated process identity. MVP assumes trusted local per-user provider storage; do not claim protection against a hostile local user or compromised Endpoint.
+- An Endpoint decides which cluster operations it serves, through one local policy directory. Each file describes exactly one token and is selected by the `endpoint-token` that caller presents, so the policy is per-token rather than per-Endpoint. The token is the only dimension that can select a policy: a caller Endpoint ID is asserted rather than proven, and a policy keyed on it would let any caller claim the most permissive identity. A token file declares the `endpoints` that accept it, the `scopes` it is granted and the `permissions` it is granted; `scopes` and `permissions` are additive, while `endpoints` is the only narrowing declaration and is verifiable because the Endpoint knows its own identity. One file set therefore serves the whole fleet. The directory defaults to permissive when absent, refuses a token with no matching file, and can deny one token explicitly. Tokens are provisioned by the operator through a maintenance script rather than issued by the Server, because a Server holding the token table would become a second authorizer. A refused operation returns the shared `policy_denied` code with the operation named, the scope vocabulary stays closed so an existing policy file never fails to load, and a `permissions` entry naming an operation the Endpoint does not serve is accepted with a load warning so one file set serves a version-skewed fleet. See `docs/agent-cluster-endpoint-access-policy.md`.
 
 ## Scale assumptions and cost model
 

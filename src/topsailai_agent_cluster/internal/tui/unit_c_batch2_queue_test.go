@@ -230,7 +230,8 @@ func TestUnitCBatch2PrefetchedHelpQuit(t *testing.T) {
 // unitC19MainHelp pins the workspace overview separately from wizard help.
 func unitC19MainHelp() string {
 	return "Current scope: workspace\n\nCommands:\n" +
-		"  list [endpoint] [--clean] [--full]    list sessions across all endpoints\n" +
+		"  list [endpoint] [--clean] [--full] [--brief]\n" +
+		"                                        list sessions across all endpoints\n" +
 		"  endpoints [endpoint-id]               list every registered endpoint with its connection state and freshness\n" +
 		"  cd [target]                           navigate to an endpoint or session\n" +
 		"  show [endpoint-or-session]            show endpoint or session details\n" +
@@ -243,7 +244,7 @@ func unitC19MainHelp() string {
 		"  refresh                               refresh inventories\n" +
 		unitC19WatchHelpLine() +
 		"  history [endpoint]                    read provider session history for one endpoint and number its rows\n" +
-		"  messages [session]                    read one session's conversation by row number or session ID\n" +
+		"  messages [-c N] [-t N] [session]      read one session's conversation by row number or session ID\n" +
 		"  model [session] [profile]             list the model profiles one session can select, by row number or session ID\n" +
 		"  help [command]                        show help\n" +
 		"  quit                                  leave interactive mode\n" +

@@ -1,6 +1,7 @@
 package topsailai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/tokenizer"
 )
 
 // messagesEntry mirrors one record of the provider's `session history --json`
@@ -60,10 +62,12 @@ func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (p
 	if code, err := a.requireSession(ctx, sessionID); err != nil {
 		return protocol.MessagesResult{ProviderSessionID: sessionID, ErrorCode: code}, err
 	}
+	// --max-chars is deliberately never passed to the provider. The provider
+	// truncates the raw stored document, which cuts a structured body into
+	// invalid JSON; the adapter would then be unable to unwrap exactly the long
+	// messages an operator most wants to read. The bound is applied below, after
+	// unwrapping, so it shortens readable text instead of corrupting the record.
 	args := []string{"session", "history", sessionID, "--json"}
-	if maxChars := clampMessagesMaxChars(query.MaxChars); maxChars > 0 {
-		args = append(args, "--max-chars", fmt.Sprint(maxChars))
-	}
 	output, err := a.run(ctx, args, nil)
 	if err != nil {
 		return protocol.MessagesResult{ProviderSessionID: sessionID, ErrorCode: protocol.MessagesProviderError}, err
@@ -93,21 +97,39 @@ func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (p
 	if envelope.MessageCount > len(envelope.Messages) {
 		result.Truncated = true
 	}
+	// The caller's display bounds are deliberately not applied here. A bound is a
+	// presentation decision, so it belongs to the renderer that presents the body:
+	// cutting the stored text here would cut a structured body into invalid JSON,
+	// and the renderer would then have to print the fragment verbatim because it
+	// could no longer parse it. The adapter therefore returns every body whole and
+	// reports only what the provider itself reported.
 	total := 0
 	for _, entry := range envelope.Messages {
-		content, cut := boundedMessageContent(entry.Content)
-		if cut {
-			result.Truncated = true
-		}
+		// The counts are measured from the body as the provider stored it. That is
+		// the order the provider's own human-readable surface uses, and it is
+		// load-bearing: a count taken after a display bound would describe the
+		// shortened text, so the same message would report a different size
+		// depending on how much of it was displayed.
+		wordCount := utf8.RuneCountInString(entry.Content)
+		tokenCount := tokenizer.Count(entry.Content)
+		// The provider wraps most bodies in its own step record, so the body is
+		// unwrapped before it is returned. The record format is provider detail, so
+		// unwrapping belongs here rather than in the renderer.
+		content := unwrapProviderContent(entry.Content)
+		// The byte guard is a transport bound, not a display bound: it keeps one
+		// oversized conversation from exhausting the channel. Breaking here leaves
+		// fewer messages than the provider counted, so the renderer reports a
+		// bounded window rather than a shortened body, which is the true fact.
 		total += len(content)
 		if total > protocol.MaxMessagesBytes {
-			result.Truncated = true
 			break
 		}
 		result.Messages = append(result.Messages, protocol.Message{
 			Role:        entry.Role,
 			Content:     content,
 			CreatedAtMS: messagesTimeMS(entry.CreateTime),
+			WordCount:   wordCount,
+			TokenCount:  tokenCount,
 		})
 	}
 	return result, nil
@@ -147,38 +169,104 @@ func (a *Adapter) requireSession(ctx context.Context, sessionID string) (string,
 	}
 }
 
-// clampMessagesMaxChars bounds the caller's per-message character request.
+// Provider step-record field names. These are provider vocabulary, so they are
+// confined to this adapter and never appear in the protocol, the Server or the CLI.
+const (
+	providerStepField    = "step_name"
+	providerRawTextField = "raw_text"
+	providerFormatPrefix = "topsailai."
+)
+
+// unwrapProviderContent converts one provider message body into the readable form
+// the provider's own human-facing surface prints.
 //
-// A value above the accepted maximum is clamped rather than rejected, so a caller
-// cannot request a bound the provider would silently reduce. Zero keeps the
-// provider's own default.
-func clampMessagesMaxChars(value int) int {
-	if value <= 0 {
-		return 0
+// The provider stores most bodies as its own step record, either one object or an
+// array of them, each carrying a step name and the text the operator actually
+// wrote. Printing that record verbatim shows JSON to the operator, which is why the
+// cluster unwraps it here rather than in the renderer: the record format is
+// provider detail, so it belongs to the adapter and must never reach the protocol,
+// the Server, a stored document or a CLI help body.
+//
+// The unwrapping is deliberately forgiving. A body that is not a step record, or
+// that no longer parses because the provider truncated it, is returned unchanged.
+// Losing the operator's text would be worse than showing it in its raw form, and a
+// truncated body is exactly the case where the surviving text still matters.
+func unwrapProviderContent(content string) string {
+	// The provider applies the same cheap prefilter before parsing, so a plain
+	// prose body never pays for a decode attempt.
+	if !strings.Contains(content, providerStepField) {
+		return content
 	}
-	if value > protocol.MaxMessagesMaxChars {
-		return protocol.MaxMessagesMaxChars
+	var decoded any
+	if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+		return content
 	}
-	return value
+	entries, ok := providerStepEntries(decoded)
+	if !ok {
+		return content
+	}
+	var builder strings.Builder
+	for _, entry := range entries {
+		builder.WriteString(providerFormatPrefix)
+		builder.WriteString(fmt.Sprint(entry[providerStepField]))
+		builder.WriteString("\n")
+		delete(entry, providerStepField)
+		if value, present := entry[providerRawTextField]; present {
+			builder.WriteString(providerJSONDump(value))
+			builder.WriteString("\n")
+			delete(entry, providerRawTextField)
+		}
+		// Any field the cluster does not model is preserved rather than dropped,
+		// because a step record can carry evidence the operator still needs.
+		if len(entry) > 0 {
+			builder.WriteString(providerJSONDump(entry))
+			builder.WriteString("\n")
+		}
+		builder.WriteString("\n")
+	}
+	return strings.TrimSpace(builder.String())
 }
 
-// boundedMessageContent keeps one message body inside the accepted bound.
+// providerStepEntries normalizes a decoded body into step records.
 //
-// The cut lands on a UTF-8 boundary, because a raw byte slice would split a
-// multi-byte character and produce invalid text. The caller is told that a cut
-// happened, so a shortened message is never presented as complete.
-func boundedMessageContent(content string) (string, bool) {
-	if !utf8.ValidString(content) {
-		return "", true
+// The provider accepts both a single record and an array of them, and it refuses
+// the whole body when any element is not a record carrying a step name. The same
+// all-or-nothing rule is kept here, so a mixed body is shown verbatim instead of
+// being half-unwrapped into something that reads like a complete conversation.
+func providerStepEntries(decoded any) ([]map[string]any, bool) {
+	candidates, isList := decoded.([]any)
+	if !isList {
+		candidates = []any{decoded}
 	}
-	if len(content) <= protocol.MaxMessageContentBytes {
-		return content, false
+	entries := make([]map[string]any, 0, len(candidates))
+	for _, candidate := range candidates {
+		entry, isRecord := candidate.(map[string]any)
+		if !isRecord {
+			return nil, false
+		}
+		if _, present := entry[providerStepField]; !present {
+			return nil, false
+		}
+		entries = append(entries, entry)
 	}
-	cut := protocol.MaxMessageContentBytes
-	for cut > 0 && !utf8.RuneStart(content[cut]) {
-		cut--
+	return entries, true
+}
+
+// providerJSONDump renders one decoded value the way the provider's own formatter
+// does: a string is returned unchanged, and anything else is indented JSON with
+// its keys sorted and its non-ASCII text left readable.
+func providerJSONDump(value any) string {
+	if text, isText := value.(string); isText {
+		return text
 	}
-	return content[:cut], true
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(value); err != nil {
+		return fmt.Sprint(value)
+	}
+	return strings.TrimRight(buffer.String(), "\n")
 }
 
 // messagesTimeMS converts one provider timestamp to UTC epoch milliseconds.

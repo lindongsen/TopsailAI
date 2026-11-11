@@ -7,6 +7,12 @@ require gopkg.in/natefinch/lumberjack.v2 v2.2.1
 require golang.org/x/term v0.35.0
 
 require (
+	github.com/dlclark/regexp2 v1.10.0 // indirect
+	github.com/pkoukk/tiktoken-go v0.1.8 // indirect
+	github.com/pkoukk/tiktoken-go-loader v0.0.2 // indirect
+)
+
+require (
 	github.com/coder/websocket v1.8.14
 	github.com/cucumber/gherkin/go/v42 v42.0.0 // indirect
 	github.com/cucumber/godog v0.16.0
