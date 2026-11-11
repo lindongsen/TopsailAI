@@ -82,6 +82,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerMessagesSteps(ctx)
 	registerModelSteps(ctx)
 	registerEndpointPermissionMatrixSteps(ctx)
+	registerEndpointControlActionSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone

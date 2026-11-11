@@ -132,3 +132,25 @@ Feature: endpoint command authorization
     And a credential permitted only to view
     When the command exec operation is submitted with an allowlisted argv and that credential
     Then the command is refused with policy denied and the provider is not invoked
+
+  # The provider control family is a separate cluster because the catalog reaches
+  # only the TopsailAI adapter: the generic fixture adapter is constructed without
+  # one, so a ctl. operation there would be refused as unsupported before the
+  # policy hook ran and the scenario would prove nothing about authorization.
+  #
+  # The catalog entry is real, so the positive scenario proves the whole path from
+  # the advertised capability through the policy hook to a provider argv. The
+  # negative scenario therefore cannot be satisfied by an unconfigured action, an
+  # unadvertised capability or a missing adapter: all three are present.
+
+  Scenario: an allowed control action reaches the provider once
+    Given a real cluster that publishes a control action catalog
+    And a credential permitted to invoke the fixture control action
+    When the fixture control action is submitted with that credential
+    Then the control action is accepted and the provider is invoked once
+
+  Scenario: a control action without its permission is refused before the provider
+    Given a real cluster that publishes a control action catalog
+    And a credential permitted only to view the control action
+    When the fixture control action is submitted with that credential
+    Then the control action is refused with policy denied and the provider is not invoked
