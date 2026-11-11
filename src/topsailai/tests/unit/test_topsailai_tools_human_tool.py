@@ -43,14 +43,26 @@ class TestModuleConstants(unittest.TestCase):
         """PROMPT must describe blocked-task decision usage."""
         self.assertIsInstance(human_tool.PROMPT, str)
         self.assertIn('blocked', human_tool.PROMPT.lower())
-        self.assertIn('invalid_request', human_tool.PROMPT)
 
     def test_registered_contract_documents_always_free_text(self):
-        """The tool contract documents always-accepted free-text answers."""
+        """The docstring owns the always-accepted free-text contract."""
         self.assertIn('always accepted', human_tool.ask_decision.__doc__)
-        self.assertIn('always accepted', human_tool.PROMPT)
         self.assertNotIn('invalid_answer', human_tool.ask_decision.__doc__)
-        self.assertNotIn('invalid_answer', human_tool.PROMPT)
+
+    def test_prompt_does_not_restate_the_docstring(self):
+        """PROMPT must not duplicate per-argument rules owned by the docstring."""
+        self.assertNotIn('always accepted', human_tool.PROMPT)
+        self.assertNotIn('invalid_request', human_tool.PROMPT)
+        self.assertNotIn('Usage Guidelines', human_tool.PROMPT)
+        self.assertNotIn('Return Value', human_tool.PROMPT)
+        self.assertNotIn('option_index', human_tool.PROMPT)
+
+    def test_docstring_owns_the_status_contract(self):
+        """Every status and result key removed from PROMPT stays in the docstring."""
+        doc = human_tool.ask_decision.__doc__
+        for token in ('answered', 'timeout', 'cancelled', 'unavailable',
+                      'invalid_request', 'option_index', 'asked_at', 'reason'):
+            self.assertIn(token, doc)
 
 
 @pytest.mark.parametrize(

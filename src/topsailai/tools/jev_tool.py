@@ -96,11 +96,9 @@ PROMPT = """
 ## jev_tool (evaluate)
 
 Use this tool for fast, structured semantic decisions over the current Agent2LLM
-conversation and completed tool results. Pass a JSON-object string containing
-1–32 named ``noul``, ``choice``, or ``score`` questions. Choice criteria are a
-non-empty object; score criteria are an ordered array of 2–10 string, object, or
-array levels. System messages are not sent. The service configuration is
-controlled only by TOPSAILAI_JEV_* settings.
+conversation and completed tool results.
+
+The service configuration is controlled only by TOPSAILAI_JEV_* settings.
 """
 
 TOOLS = {"evaluate": evaluate}

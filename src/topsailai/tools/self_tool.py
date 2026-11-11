@@ -93,14 +93,12 @@ def get_self_info() -> dict:
 PROMPT = """
 ## self_tool (get_self_info)
 
-Report who you are and how this run is configured, by reading your own session
-metadata file. Call it with no arguments to get your session id and name,
-category, agent name, type and role, model, project workspace, working
-directory, start time, status, task id, and the absolute paths of your related
-session files such as the events log.
+Call `get_self_info` with no arguments to learn this agent's own identity and
+runtime configuration.
 
-`status` is `ok`, `not_found`, or `invalid_meta`. Read `self` for the stored
-fields and `files` for absolute paths; use `file_tool` to read those files.
+The `files` paths it returns are absolute; read them with `file_tool`. Historical
+details such as past messages and recorded events are recoverable from those
+files, so read them before claiming that earlier context is unavailable.
 """
 
 TOOLS = dict(
