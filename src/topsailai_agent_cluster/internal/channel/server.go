@@ -477,7 +477,7 @@ func (s *Server) RequestOutput(ctx context.Context, endpointID string, request p
 	s.Mu.Lock()
 	s.pendingOutput[requestID] = pendingOutputRequest{endpointID: endpointID, response: response}
 	s.Mu.Unlock()
-	if err := s.SendCommand(ctx, endpointID, Frame{Type: FrameOutputRequest, ProtocolVersion: ProtocolVersion, RequestID: requestID, OutputRequest: &request}); err != nil {
+	if err := s.SendCommand(ctx, endpointID, Frame{Type: FrameOutputRequest, ProtocolVersion: ProtocolVersion, RequestID: requestID, OutputRequest: &request, EndpointToken: security.EndpointToken(ctx)}); err != nil {
 		s.Mu.Lock()
 		delete(s.pendingOutput, requestID)
 		s.Mu.Unlock()
@@ -521,7 +521,7 @@ func (s *Server) RequestFollow(ctx context.Context, endpointID string, request p
 	}
 	s.pendingFollow[requestID] = pendingFollowRequest{endpointID: endpointID, events: events, done: done}
 	s.Mu.Unlock()
-	if err := s.SendCommand(ctx, endpointID, Frame{Type: FrameOutputFollowRequest, ProtocolVersion: ProtocolVersion, RequestID: requestID, OutputFollowRequest: &request}); err != nil {
+	if err := s.SendCommand(ctx, endpointID, Frame{Type: FrameOutputFollowRequest, ProtocolVersion: ProtocolVersion, RequestID: requestID, OutputFollowRequest: &request, EndpointToken: security.EndpointToken(ctx)}); err != nil {
 		s.releaseFollow(requestID)
 		return nil, err
 	}

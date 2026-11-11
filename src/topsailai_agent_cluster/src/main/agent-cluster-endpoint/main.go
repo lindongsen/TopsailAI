@@ -251,7 +251,18 @@ func main() {
 		}
 	})
 	if err == nil {
-		executor.PolicyHook = func(_ context.Context, intent protocol.ImmutableIntent) error {
+		executor.PolicyHook = func(hookCtx context.Context, intent protocol.ImmutableIntent) error {
+			// The access policy decides whether the caller behind this command may
+			// exercise this operation on this machine. It runs before the
+			// command.exec allowlist because the two answer different questions:
+			// the policy answers "may this caller ask", while the allowlist
+			// answers "may this argv run". A caller that may not ask must not
+			// learn whether its argv would have been allowed.
+			if accessPolicy.Policy != nil {
+				if permitErr := accessPolicy.Policy.Permit(cfg.EndpointID, security.EndpointToken(hookCtx), intent.Operation); permitErr != nil {
+					return permitErr
+				}
+			}
 			if intent.Operation != protocol.OperationCommandExec {
 				return nil
 			}

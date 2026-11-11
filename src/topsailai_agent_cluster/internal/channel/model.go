@@ -43,7 +43,7 @@ func (s *Server) RequestModelCatalog(parent context.Context, endpointID string, 
 	s.pendingModelCatalog[id] = pendingModelCatalogRequest{peer: peer, response: response}
 	s.Mu.Unlock()
 	defer func() { s.Mu.Lock(); delete(s.pendingModelCatalog, id); s.Mu.Unlock() }()
-	frame := Frame{Type: FrameModelCatalogRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), ModelCatalogQuery: &query}
+	frame := Frame{Type: FrameModelCatalogRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), ModelCatalogQuery: &query, EndpointToken: security.EndpointToken(parent)}
 	if err := wsjson.Write(ctx, peer.Conn, frame); err != nil {
 		return protocol.ModelCatalog{}, err
 	}

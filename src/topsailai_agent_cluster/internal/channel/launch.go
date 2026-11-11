@@ -37,7 +37,7 @@ func (s *Server) RequestLaunchOptions(parent context.Context, endpointID string,
 	s.pendingLaunch[id] = pendingLaunchRequest{peer: peer, response: response}
 	s.Mu.Unlock()
 	defer func() { s.Mu.Lock(); delete(s.pendingLaunch, id); s.Mu.Unlock() }()
-	frame := Frame{Type: FrameLaunchRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), LaunchQuery: &query}
+	frame := Frame{Type: FrameLaunchRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), LaunchQuery: &query, EndpointToken: security.EndpointToken(parent)}
 	if err := wsjson.Write(ctx, peer.Conn, frame); err != nil {
 		return protocol.LaunchOptions{}, err
 	}

@@ -17,6 +17,42 @@ import (
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
 )
 
+// endpointTokenHeader carries the caller's Endpoint token on a read request.
+//
+// A read is an HTTP GET, so it has no request body to carry the token. The token
+// travels in a header rather than a query parameter because a URL is recorded by
+// Server access logs, reverse proxies and shell history, while a header is not
+// recorded by default.
+const endpointTokenHeader = "X-Endpoint-Token"
+
+// requireRegisteredEndpoint refuses an unknown endpoint identifier before the
+// transport is consulted, and writes the rejection itself.
+//
+// Reachability has two distinct failures and they must not share one answer. An
+// identifier that was never registered is a caller mistake, so it is reported as
+// not found. A registered identifier with no live connection is an outage, so it
+// is reported as unavailable. Collapsing both into one code would tell an
+// operator to investigate a machine that does not exist, and would hide a typo
+// behind an outage report.
+//
+// This is a reachability check, not an authorization check: it decides whether
+// the Server can route the request at all, never whether the caller may make it.
+func (h *Handler) requireRegisteredEndpoint(w http.ResponseWriter, r *http.Request, endpointID string) bool {
+	if h.Store == nil {
+		return true
+	}
+	_, known, err := h.Store.GetEndpoint(r.Context(), endpointID)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		return false
+	}
+	if !known {
+		h.writeError(w, http.StatusNotFound, "endpoint_not_found", "endpoint "+endpointID+" is not registered")
+		return false
+	}
+	return true
+}
+
 // Handler serves authenticated Server APIs backed by durable storage.
 // OutputRequester forwards bounded output snapshot requests to an Endpoint.
 type OutputRequester interface {
@@ -97,6 +133,10 @@ func (h *Handler) authenticated(next http.Handler) http.Handler {
 		}
 		ctx := security.WithAuthenticatedIdentity(r.Context(), identity)
 		ctx = security.WithAuthenticatedScopes(ctx, scopes)
+		// The Endpoint token is carried, never validated here. Authorization
+		// belongs to the Endpoint that owns the machine, so the Server only
+		// forwards this credential and never decides what it permits.
+		ctx = security.WithEndpointToken(ctx, r.Header.Get(endpointTokenHeader))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -117,9 +157,6 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
 		return
 	}
-	if !h.authorizeOutputRead(w, r, operationOutputSnapshot) {
-		return
-	}
 	if h.Output == nil {
 		h.writeError(w, http.StatusServiceUnavailable, "endpoint_offline", "Endpoint output channel is unavailable")
 		return
@@ -128,6 +165,9 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 	endpointID, resourceID := q.Get("endpoint_id"), q.Get("resource_id")
 	if endpointID == "" || resourceID == "" {
 		h.writeError(w, http.StatusBadRequest, "invalid_target", "endpoint_id and resource_id are required")
+		return
+	}
+	if !h.requireRegisteredEndpoint(w, r, endpointID) {
 		return
 	}
 	maxBytes := parseInt(q.Get("max_bytes"), 64<<10)
@@ -159,9 +199,6 @@ func (h *Handler) outputFollow(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
 		return
 	}
-	if !h.authorizeOutputRead(w, r, operationOutputFollow) {
-		return
-	}
 	follower, ok := h.Output.(OutputFollower)
 	if !ok {
 		// A transport without streaming support reports unsupported instead of
@@ -174,6 +211,9 @@ func (h *Handler) outputFollow(w http.ResponseWriter, r *http.Request) {
 	endpointID, resourceID := q.Get("endpoint_id"), q.Get("resource_id")
 	if endpointID == "" || resourceID == "" {
 		h.writeError(w, http.StatusBadRequest, "invalid_target", "endpoint_id and resource_id are required")
+		return
+	}
+	if !h.requireRegisteredEndpoint(w, r, endpointID) {
 		return
 	}
 	maxBytes := parseInt(q.Get("max_bytes"), 64<<10)

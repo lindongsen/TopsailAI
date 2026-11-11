@@ -192,20 +192,22 @@ func TestMessagesDisconnectIsNotReportedAsProviderError(t *testing.T) {
 	}
 }
 
-// TestMessagesRequiresReadOutputScope proves a conversation is not reachable with
-// the weaker view scope that history uses. A history row is metadata; a
-// conversation is content, so an operator who may list the fleet must not thereby
-// read what was said.
-func TestMessagesRequiresReadOutputScope(t *testing.T) {
+// TestMessagesForwardsCredentialWithoutScope proves the Server no longer
+// refuses a conversation read on permission grounds.
+//
+// Authorization belongs to the Endpoint that owns the machine. A Server-side
+// refusal would be a second authority the Endpoint could not revoke, so a
+// credential narrowed to an unrelated scope must still reach the transport: the
+// Endpoint decides, and it answers with policy_denied.
+func TestMessagesForwardsCredentialWithoutScope(t *testing.T) {
 	for _, item := range []struct {
 		name   string
 		scopes security.ScopeSet
-		status int
 	}{
-		{name: "unrestricted", scopes: security.ScopeSet{}, status: http.StatusOK},
-		{name: "read_output", scopes: security.NewScopeSet(security.ScopeReadOutput), status: http.StatusOK},
-		{name: "view only", scopes: security.NewScopeSet(security.ScopeView), status: http.StatusForbidden},
-		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage), status: http.StatusForbidden},
+		{name: "unrestricted", scopes: security.ScopeSet{}},
+		{name: "view", scopes: security.NewScopeSet(security.ScopeView)},
+		{name: "read_output only", scopes: security.NewScopeSet(security.ScopeReadOutput)},
+		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage)},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			h := &Handler{
@@ -216,30 +218,45 @@ func TestMessagesRequiresReadOutputScope(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer test")
 			out := httptest.NewRecorder()
 			h.ServeHTTP(out, req)
-			if out.Code != item.status {
-				t.Fatalf("status=%d want=%d body=%s", out.Code, item.status, out.Body.String())
-			}
-			if item.status == http.StatusForbidden && !strings.Contains(out.Body.String(), `"permission_denied"`) {
-				t.Fatalf("body=%s want code permission_denied", out.Body.String())
+			if out.Code == http.StatusForbidden {
+				t.Fatalf("the Server refused a conversation read on permission grounds: %s", out.Body.String())
 			}
 		})
 	}
 }
 
-// TestMessagesAuthorizationPrecedesTransport proves an unauthorized caller cannot
-// infer Endpoint reachability. The handler is built without a messages channel, so
-// a missing check would answer 503 unavailable instead of 403 permission_denied.
-func TestMessagesAuthorizationPrecedesTransport(t *testing.T) {
+// TestMessagesForwardsEndpointToken proves the Endpoint token crosses the
+// Server unchanged, so the Endpoint can decide which policy applies.
+func TestMessagesForwardsEndpointToken(t *testing.T) {
+	requester := &messagesTokenRequester{}
 	h := &Handler{
-		Authenticator: security.BearerAuthenticator{Token: "test", Scopes: security.NewScopeSet(security.ScopeView)},
+		Authenticator: security.BearerAuthenticator{Token: "test"},
+		Output:        requester,
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages?endpoint_id=e&session_id=s", nil)
 	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set(endpointTokenHeader, "endpoint-secret")
 	out := httptest.NewRecorder()
 	h.ServeHTTP(out, req)
-	if out.Code != http.StatusForbidden {
-		t.Fatalf("status=%d want=%d body=%s", out.Code, http.StatusForbidden, out.Body.String())
+	if requester.token != "endpoint-secret" {
+		t.Fatalf("forwarded token=%q want endpoint-secret", requester.token)
 	}
+}
+
+// messagesTokenRequester records the Endpoint token the Server forwarded. It
+// implements the snapshot method as well, because the handler field is typed as
+// the snapshot requester and a single-surface double would not satisfy it.
+type messagesTokenRequester struct {
+	token string
+}
+
+func (r *messagesTokenRequester) RequestOutput(context.Context, string, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{}, nil
+}
+
+func (r *messagesTokenRequester) RequestMessages(ctx context.Context, _ string, _ protocol.MessagesQuery) (protocol.MessagesResult, error) {
+	r.token = security.EndpointToken(ctx)
+	return protocol.MessagesResult{}, nil
 }
 
 // messagesMaxCharsRequester records the query the Server forwarded, so a test can

@@ -179,20 +179,22 @@ func TestHistoryDisconnectIsNotReportedAsProviderError(t *testing.T) {
 	}
 }
 
-// TestHistoryRequiresViewScope proves history metadata is not reachable with any
-// valid credential. A history row carries the session name, the recorded task
-// text and the project workspace, so a credential narrowed to an unrelated scope
-// must be refused before the transport is consulted.
-func TestHistoryRequiresViewScope(t *testing.T) {
+// TestHistoryForwardsCredentialWithoutViewScope proves the Server no longer
+// refuses a history read on permission grounds.
+//
+// Authorization belongs to the Endpoint that owns the machine. A Server-side
+// refusal would be a second authority the Endpoint could not revoke, so a
+// credential narrowed to an unrelated scope must still reach the transport: the
+// Endpoint decides, and it answers with policy_denied.
+func TestHistoryForwardsCredentialWithoutViewScope(t *testing.T) {
 	for _, item := range []struct {
 		name   string
 		scopes security.ScopeSet
-		status int
 	}{
-		{name: "unrestricted", scopes: security.ScopeSet{}, status: http.StatusOK},
-		{name: "view", scopes: security.NewScopeSet(security.ScopeView), status: http.StatusOK},
-		{name: "read_output only", scopes: security.NewScopeSet(security.ScopeReadOutput), status: http.StatusForbidden},
-		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage), status: http.StatusForbidden},
+		{name: "unrestricted", scopes: security.ScopeSet{}},
+		{name: "view", scopes: security.NewScopeSet(security.ScopeView)},
+		{name: "read_output only", scopes: security.NewScopeSet(security.ScopeReadOutput)},
+		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage)},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			h := &Handler{
@@ -203,30 +205,45 @@ func TestHistoryRequiresViewScope(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer test")
 			out := httptest.NewRecorder()
 			h.ServeHTTP(out, req)
-			if out.Code != item.status {
-				t.Fatalf("status=%d want=%d body=%s", out.Code, item.status, out.Body.String())
-			}
-			if item.status == http.StatusForbidden && !strings.Contains(out.Body.String(), `"permission_denied"`) {
-				t.Fatalf("body=%s want code permission_denied", out.Body.String())
+			if out.Code == http.StatusForbidden {
+				t.Fatalf("the Server refused a history read on permission grounds: %s", out.Body.String())
 			}
 		})
 	}
 }
 
-// TestHistoryAuthorizationPrecedesTransport proves an unauthorized caller cannot
-// infer Endpoint reachability. The handler is built without a history channel, so
-// a missing check would answer 503 unavailable instead of 403 permission_denied.
-func TestHistoryAuthorizationPrecedesTransport(t *testing.T) {
+// TestHistoryForwardsEndpointToken proves the Endpoint token crosses the Server
+// unchanged, so the Endpoint can decide which policy applies.
+func TestHistoryForwardsEndpointToken(t *testing.T) {
+	requester := &historyTokenRequester{}
 	h := &Handler{
-		Authenticator: security.BearerAuthenticator{Token: "test", Scopes: security.NewScopeSet(security.ScopeSendMessage)},
+		Authenticator: security.BearerAuthenticator{Token: "test"},
+		Output:        requester,
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=e", nil)
 	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set(endpointTokenHeader, "endpoint-secret")
 	out := httptest.NewRecorder()
 	h.ServeHTTP(out, req)
-	if out.Code != http.StatusForbidden {
-		t.Fatalf("status=%d want=%d body=%s", out.Code, http.StatusForbidden, out.Body.String())
+	if requester.token != "endpoint-secret" {
+		t.Fatalf("forwarded token=%q want endpoint-secret", requester.token)
 	}
+}
+
+// historyTokenRequester records the Endpoint token the Server forwarded. It
+// implements the snapshot method as well, because the handler field is typed as
+// the snapshot requester and a history-only double would not satisfy it.
+type historyTokenRequester struct {
+	token string
+}
+
+func (r *historyTokenRequester) RequestOutput(context.Context, string, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{}, nil
+}
+
+func (r *historyTokenRequester) RequestHistory(ctx context.Context, _ string, _ protocol.HistoryQuery) (protocol.HistoryResult, error) {
+	r.token = security.EndpointToken(ctx)
+	return protocol.HistoryResult{}, nil
 }
 
 // historyLimitRequester records the query the Server forwarded, so a test can

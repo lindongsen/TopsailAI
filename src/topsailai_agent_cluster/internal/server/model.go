@@ -19,15 +19,9 @@ type ModelCatalogRequester interface {
 // projection and never caches a result. The Server forwards the target verbatim and
 // returns the adapter's answer unchanged: it does not interpret a profile name, a
 // provider name or an availability verdict.
-//
-// The authorization check runs before the transport is consulted, so an
-// unauthorized caller cannot infer Endpoint reachability from the response.
 func (h *Handler) modelCatalog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET required")
-		return
-	}
-	if !h.authorizeModelCatalogRead(w, r) {
 		return
 	}
 	q := r.URL.Query()

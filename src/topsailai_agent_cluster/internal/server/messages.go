@@ -20,15 +20,9 @@ type MessagesRequester interface {
 // query and returns the adapter's answer unchanged, never caching it and never
 // correlating it with the inventory, because a stopped session is absent from the
 // inventory and has no cluster resource ID.
-//
-// The authorization check runs before the transport is consulted, so an
-// unauthorized caller cannot infer Endpoint reachability from the response.
 func (h *Handler) messages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, 405, "method_not_allowed", "GET required")
-		return
-	}
-	if !h.authorizeMessagesRead(w, r) {
 		return
 	}
 	endpointID := r.URL.Query().Get("endpoint_id")

@@ -43,7 +43,7 @@ func (s *Server) RequestMessages(parent context.Context, endpointID string, quer
 	s.pendingMessages[id] = pendingMessagesRequest{peer: peer, response: response}
 	s.Mu.Unlock()
 	defer func() { s.Mu.Lock(); delete(s.pendingMessages, id); s.Mu.Unlock() }()
-	frame := Frame{Type: FrameMessagesRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), MessagesQuery: &query}
+	frame := Frame{Type: FrameMessagesRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), MessagesQuery: &query, EndpointToken: security.EndpointToken(parent)}
 	if err := wsjson.Write(ctx, peer.Conn, frame); err != nil {
 		return protocol.MessagesResult{}, err
 	}

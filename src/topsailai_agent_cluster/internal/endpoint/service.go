@@ -10,6 +10,7 @@ import (
 
 	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
 	endpointstorage "topsailai_agent_cluster/internal/storage/endpoint"
 )
 
@@ -448,6 +449,12 @@ func (s *Service) executeFrame(ctx context.Context, frame channel.Frame) {
 	if s.executor == nil || frame.Intent == nil {
 		return
 	}
+	// The caller token travels in the context so the executor policy hook can
+	// decide whether this token may exercise this operation. It is attached here
+	// rather than passed as a parameter because the executor already threads a
+	// context through every hop, and the token is a credential no layer between
+	// the frame and the policy hook interprets.
+	ctx = security.WithEndpointToken(ctx, frame.EndpointToken)
 	hash, err := protocol.CanonicalHash(*frame.Intent)
 	if err != nil {
 		s.logError("hash command intent", err)
