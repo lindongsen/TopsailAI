@@ -83,11 +83,14 @@ class TestFileToolInsertDataToFile:
         assert content == "Line 1\nLine 2\nLine 3\nNew Line\n"
 
     def test_insert_content_to_file_empty_file(self, test_file):
-        """Test inserting data into an empty file"""
+        """Test inserting data into an empty file still reports the diff"""
         with open(test_file, 'w') as f:
             f.write("")
         result = insert_content_to_file(test_file, "New Line", line_num=0, before_or_after="after")
-        assert result == ""
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
+        assert "New Line" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "New Line\n"

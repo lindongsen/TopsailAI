@@ -472,9 +472,9 @@ def insert_content_to_file(file_path: str, content: str, line_num: int, before_o
 
         _insert_data_to_file(file_path=file_path, data=content, line_num=line_num, before_or_after=before_or_after)
 
-        if not raw_content:
-            return ""
-
+        # The temp file mirrors the pre-edit state, so it is legitimately empty when
+        # the target file was empty. Diffing against it still yields the inserted
+        # lines; returning "" here would hide a successful edit from the LLM.
         diff_content = file_diff.compare_files_strived(tmp_file, file_path)
         return diff_content
 
@@ -600,4 +600,9 @@ deleting the file tail is destructive.
 
 `overwrite_lines_in_file` is destructive, so `0` never means "to the end of the file".
 To replace through the end of the file you MUST pass `-1` explicitly.
+
+## `content` Must Be a String
+`overwrite_lines_in_file` requires `content` to be a string. A non-string value
+such as `0`, `[]`, `{}` or `42` is rejected with `invalid_request` and the file is
+left untouched. Pass an explicit empty string `""` to delete the replaced lines.
 """

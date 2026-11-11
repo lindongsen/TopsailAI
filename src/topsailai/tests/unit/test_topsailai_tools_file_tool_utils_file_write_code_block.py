@@ -800,5 +800,48 @@ class TestStringFirstLineParameters:
             )
         assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
 
+
+class TestNonStringContent:
+    """Non-string ``content`` must be rejected instead of deleting lines.
+
+    ``content`` is required. A falsy non-string such as ``0``, ``[]`` or ``{}``
+    previously fell through to the empty-content branch and silently deleted the
+    replaced lines, while ``42`` raised ``AttributeError``. Only an explicit empty
+    string may delete lines.
+    """
+
+    @pytest.mark.parametrize("content", [0, 0.0, [], {}, False, 42, 3.14, ["a"], {"k": "v"}])
+    def test_non_string_content_is_rejected(self, tmp_path, content):
+        """Every non-string content returns invalid_request and leaves the file intact."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, content)
+
+        assert isinstance(result, dict)
+        assert result["status"] == "invalid_request"
+        assert "content" in result["reason"]
+        assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+
+    def test_none_content_is_rejected(self, tmp_path):
+        """An omitted content is still rejected."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, None)
+
+        assert result["status"] == "invalid_request"
+        assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+
+    def test_empty_string_content_still_deletes_lines(self, tmp_path):
+        """An explicit empty string remains the documented way to delete lines."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+        overwrite_code_block(str(target), 2, 2, "")
+
+        assert target.read_text(encoding="utf-8") == "one\nthree\n"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

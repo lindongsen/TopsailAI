@@ -2,6 +2,7 @@ import pytest
 
 from topsailai.tools.file_tool_utils.file_diff import (
     compare_files,
+    compare_files_strived,
     format_diff_block,
     get_unified_diff,
 )
@@ -448,6 +449,71 @@ class TestGetUnifiedDiff:
         result = get_unified_diff(str(file1), str(file2))
 
         assert isinstance(result, str)
+
+
+class TestCompareFilesStrived:
+    """Test compare_files_strived failure reporting.
+
+    Every write tool returns this value to the LLM as its only feedback, and it is
+    called *after* the edit has been written. A failed computation must therefore
+    never be reported as "Nothing Changed", because that tells the model its edit
+    had no effect.
+    """
+
+    def test_identical_files_returns_empty_string(self, tmp_path):
+        """Identical files produce no diff and no error."""
+        file1 = tmp_path / "file1.txt"
+        file2 = tmp_path / "file2.txt"
+        file1.write_text("line1\nline2\n")
+        file2.write_text("line1\nline2\n")
+
+        result = compare_files_strived(str(file1), str(file2))
+
+        assert result == ""
+
+    def test_different_files_returns_diff(self, tmp_path):
+        """A real change is reported as a unified diff."""
+        file1 = tmp_path / "file1.txt"
+        file2 = tmp_path / "file2.txt"
+        file1.write_text("line1\nline2\n")
+        file2.write_text("line1\nchanged\n")
+
+        result = compare_files_strived(str(file1), str(file2))
+
+        assert "changed" in result
+        assert "@@" in result
+
+    def test_missing_file_reports_error_not_nothing_changed(self, tmp_path):
+        """A missing file must be reported as an error, never as no change."""
+        file1 = tmp_path / "file1.txt"
+        file1.write_text("line1\n")
+
+        result = compare_files_strived(str(file1), str(tmp_path / "missing.txt"))
+
+        assert "Nothing Changed" not in result
+        assert result.startswith("Error: cannot compute diff")
+        assert "FileNotFoundError" in result
+
+    def test_undecodable_file_reports_error_not_nothing_changed(self, tmp_path):
+        """A file that is not valid UTF-8 must be reported as an error."""
+        file1 = tmp_path / "file1.txt"
+        file2 = tmp_path / "file2.txt"
+        file1.write_text("line1\n")
+        file2.write_bytes(b"\xff\xfe\x00invalid")
+
+        result = compare_files_strived(str(file1), str(file2))
+
+        assert "Nothing Changed" not in result
+        assert result.startswith("Error: cannot compute diff")
+        assert "UnicodeDecodeError" in result
+
+    def test_error_mentions_the_edit_was_already_written(self, tmp_path):
+        """The error must tell the model the edit already happened."""
+        result = compare_files_strived(
+            str(tmp_path / "missing1.txt"), str(tmp_path / "missing2.txt")
+        )
+
+        assert "already written" in result
 
 
 if __name__ == "__main__":

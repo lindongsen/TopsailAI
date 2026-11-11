@@ -41,6 +41,8 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
                        the rest of the file.
         content (str): The new content to insert in place of the replaced lines.
                        Can be a single line or multi-line string.
+                       MUST be a string; a non-string value is rejected with
+                       ``invalid_request`` and the file is left untouched.
                        Pass an empty string to delete lines.
 
     Returns:
@@ -68,8 +70,11 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
     end_num, error = resolve_end_num(end_num, "end_num")
     if error:
         return error
-    # ``content`` is required; an omitted value must never delete lines silently.
-    if content is None:
+    # ``content`` is required and must be a string. A falsy non-string such as
+    # ``0``, ``[]`` or ``{}`` would otherwise fall through to the empty-content
+    # branch and silently delete the replaced lines, while ``42`` would raise
+    # ``AttributeError``. Only an explicit empty string may delete lines.
+    if not isinstance(content, str):
         return invalid_request("content", content, "must be a string")
 
     with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
