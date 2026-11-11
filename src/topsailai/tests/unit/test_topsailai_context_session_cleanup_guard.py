@@ -1,5 +1,6 @@
 """Persisted cleanup safety contracts (author: DawsonLin)."""
 import json
+import socket
 from datetime import datetime, timedelta
 from unittest.mock import Mock
 
@@ -22,8 +23,11 @@ def manager(tmp_path, observer):
 
 
 def owner(task, sid, pid):
-    """Publish valid stopped/live ownership fixtures."""
-    (task / f"{sid}.{pid}.session.meta").write_text(json.dumps({"session_id": sid, "pid": pid}))
+    """Publish valid finalized ownership fixtures."""
+    data = {
+        "session_id": sid, "pid": pid, "hostname": socket.gethostname(), "status": "completed",
+    }
+    (task / f"{sid}.{pid}.session.meta").write_text(json.dumps(data))
 
 
 def add_session(mgr, home, sid, pid, task):
@@ -244,3 +248,31 @@ def test_stopped_oldest_excess_is_evicted(tmp_path):
     assert mgr.exists_session("s001")
     assert mgr.exists_session("s100")
     assert len(mgr.list_sessions()) == 100
+
+
+def test_retention_preserves_foreign_active_session_and_messages(tmp_path):
+    """Creating an excess session cannot delete a remote owner or its history."""
+    mgr, task = manager(tmp_path, lambda pid: State.STOPPED)
+    owner(task, "remote", 9001)
+    remote_meta = task / "remote.9001.session.meta"
+    data = json.loads(remote_meta.read_text())
+    data["hostname"] = "remote-host"
+    remote_meta.write_text(json.dumps(data))
+    remote = SessionData(session_id="remote", task="keep", topsailai_home=str(tmp_path))
+    remote.create_time = datetime.now() - timedelta(days=100)
+    assert mgr.create_session(remote)
+    with mgr.chat_history.SessionLocal() as db:
+        db.add(Message(msg_id="remote-message", message="keep", msg_size=4))
+        db.add(SessionMessage(msg_id="remote-message", session_id="remote"))
+        db.commit()
+
+    for index in range(100):
+        add_session(mgr, tmp_path, f"local-{index:03}", index + 1, task)
+
+    assert mgr.exists_session("remote")
+    assert [item.msg_id for item in mgr.get_messages_by_session("remote")] == ["remote-message"]
+    with mgr.chat_history.SessionLocal() as db:
+        mapping = db.query(SessionMessage).filter_by(
+            msg_id="remote-message", session_id="remote",
+        ).one_or_none()
+        assert mapping is not None

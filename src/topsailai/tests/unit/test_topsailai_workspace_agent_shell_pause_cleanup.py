@@ -10,6 +10,7 @@ Purpose: Verify startup cleanup removes both the hard-interrupt flag and the
 """
 
 import json
+import socket
 from unittest.mock import patch
 
 import pytest
@@ -90,8 +91,14 @@ def test_cleanup_logs_removal_failure_without_raising(tmp_path):
 
 def test_pause_marker_is_a_recognized_session_owner(tmp_path):
     """An unconsumed pause marker must not block session cleanup."""
+    metadata = {
+        "session_id": "session",
+        "pid": 123,
+        "hostname": socket.gethostname(),
+        "status": "completed",
+    }
     (tmp_path / "session.123.session.meta").write_text(
-        json.dumps({"session_id": "session", "pid": 123, "status": "completed"}),
+        json.dumps(metadata),
         encoding="utf-8",
     )
     _flag(tmp_path, "agent2llm_pause.flag")
@@ -103,8 +110,14 @@ def test_pause_marker_is_a_recognized_session_owner(tmp_path):
 
 def test_unknown_suffix_still_blocks_session_cleanup(tmp_path):
     """The pause registration must not widen the owner whitelist."""
+    metadata = {
+        "session_id": "session",
+        "pid": 123,
+        "hostname": socket.gethostname(),
+        "status": "completed",
+    }
     (tmp_path / "session.123.session.meta").write_text(
-        json.dumps({"session_id": "session", "pid": 123, "status": "completed"}),
+        json.dumps(metadata),
         encoding="utf-8",
     )
     _flag(tmp_path, "agent2llm_pause_flag_typo")
