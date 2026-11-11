@@ -368,3 +368,29 @@ func TestTableSanitizesProjectWorkspace(t *testing.T) {
 		t.Fatalf("escape sequence reached the table: %q", out.String())
 	}
 }
+
+// TestTableDecoratesOnlyQualifiedSessionNames keeps the provider qualifier a
+// presentation detail and proves it reaches the rendered session-name cell.
+func TestTableDecoratesOnlyQualifiedSessionNames(t *testing.T) {
+	if got := providerSessionDisplayName("Daily work", ""); got != "Daily work" {
+		t.Fatalf("plain name=%q", got)
+	}
+	if got := providerSessionDisplayName("Daily work", "task"); got != "[task]Daily work" {
+		t.Fatalf("qualified name=%q", got)
+	}
+	rows := []SessionRow{
+		{No: 1, EndpointID: "ep", ProviderDisplayName: "Daily work", CollectionStatus: protocol.CollectionSucceeded},
+		{No: 2, EndpointID: "ep", ProviderDisplayName: "Daily work", ProviderSessionQualifier: "task", CollectionStatus: protocol.CollectionSucceeded},
+	}
+	var out, errors strings.Builder
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if got := plainCell(t, lines[3], columnName); got != "Daily work" {
+		t.Fatalf("plain rendered name=%q", got)
+	}
+	if got := plainCell(t, lines[4], columnName); got != "[task]Daily work" {
+		t.Fatalf("qualified rendered name=%q", got)
+	}
+}

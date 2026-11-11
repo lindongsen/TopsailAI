@@ -518,6 +518,13 @@ func resolveSessionInEndpoint(state *interactiveState, loaded reportLoad, endpoi
 			return enterValidatedSession(state, endpoint, report, session)
 		}
 	}
+	byProviderID := sessionsByProviderID(report.Sessions, target)
+	switch len(byProviderID) {
+	case 1:
+		return enterValidatedSession(state, endpoint, report, byProviderID[0])
+	case 2:
+		return outcomeCancelled, fmt.Errorf("multiple sessions match provider session ID %q on endpoint %q; use the cluster session ID or a row number", target, endpointID)
+	}
 	byName := make([]protocol.Session, 0, 1)
 	for _, session := range report.Sessions {
 		if session.ProviderDisplayName != "" && session.ProviderDisplayName == target {
@@ -532,6 +539,22 @@ func resolveSessionInEndpoint(state *interactiveState, loaded reportLoad, endpoi
 	default:
 		return outcomeCancelled, fmt.Errorf("multiple sessions match %q on endpoint %q; use the session ID", target, endpointID)
 	}
+}
+
+// sessionsByProviderID returns zero, one, or two matches; two is the
+// ambiguity sentinel, because callers only need to distinguish unique from many.
+func sessionsByProviderID(sessions []protocol.Session, target string) []protocol.Session {
+	matches := make([]protocol.Session, 0, 2)
+	for _, session := range sessions {
+		if session.ProviderSessionID == "" || session.ProviderSessionID != target {
+			continue
+		}
+		matches = append(matches, session)
+		if len(matches) == 2 {
+			return matches
+		}
+	}
+	return matches
 }
 
 // enterValidatedSession changes scope only after freshness validation succeeds.
@@ -612,10 +635,12 @@ func findSessionInEndpoint(loaded reportLoad, endpointID, target string) (protoc
 	// The provider session identifier is hidden from the interactive table but is
 	// still a valid selector, so it must also be accepted as input; the cluster
 	// resource ID keeps precedence above.
-	for _, session := range report.Sessions {
-		if session.ProviderSessionID != "" && session.ProviderSessionID == target {
-			return endpoint, report, session, nil
-		}
+	byProviderID := sessionsByProviderID(report.Sessions, target)
+	switch len(byProviderID) {
+	case 1:
+		return endpoint, report, byProviderID[0], nil
+	case 2:
+		return protocol.Endpoint{}, protocol.InventoryReport{}, protocol.Session{}, fmt.Errorf("multiple sessions match provider session ID %q on endpoint %q; use the cluster session ID or a row number", target, endpointID)
 	}
 	byName := make([]protocol.Session, 0, 1)
 	for _, session := range report.Sessions {

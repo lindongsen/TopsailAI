@@ -146,7 +146,10 @@ type workspaceResponse struct {
 
 type workspaceItem struct {
 	SessionID         string          `json:"session_id"`
+	ProviderRowKey    string          `json:"filename"`
 	SessionName       string          `json:"session_name"`
+	SessionQualifier  string          `json:"session_qualifier"`
+	IsTask            bool            `json:"is_task"`
 	ProcessGeneration json.RawMessage `json:"process_generation"`
 	State             string          `json:"state"`
 	Status            string          `json:"status"`
@@ -324,7 +327,11 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if item.SessionID == "" {
 			continue
 		}
-		resourceID, err := a.resourceID(ctx, item.SessionID)
+		providerKey, err := providerSessionKey(item)
+		if err != nil {
+			return adapter.DiscoverResult{}, err
+		}
+		resourceID, err := a.resourceID(ctx, providerKey)
 		if err != nil {
 			return adapter.DiscoverResult{}, err
 		}
@@ -338,7 +345,7 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 			stateReason = protocol.StateReasonLivenessUnverified
 		}
 		observedAtMS := time.Now().UnixMilli()
-		result.Sessions = append(result.Sessions, protocol.Session{ClusterSessionID: resourceID, ProviderSessionID: item.SessionID, ProviderPID: item.PID, ProviderDisplayName: item.SessionName, ProviderProjectWorkspace: item.ProjectWorkspace, ProviderAgentID: item.AgentID, ProviderGeneration: generation, AdapterID: a.config.AdapterID, State: state, StateReason: stateReason, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
+		result.Sessions = append(result.Sessions, protocol.Session{ClusterSessionID: resourceID, ProviderSessionID: item.SessionID, ProviderPID: item.PID, ProviderDisplayName: item.SessionName, ProviderSessionQualifier: item.SessionQualifier, ProviderProjectWorkspace: item.ProjectWorkspace, ProviderAgentID: item.AgentID, ProviderGeneration: generation, AdapterID: a.config.AdapterID, State: state, StateReason: stateReason, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
 	}
 	if response.Total != nil && *response.Total > len(response.Items) {
 		result.Complete = false
@@ -398,7 +405,11 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	// session is intended, and the provider applies no host filter to resume. Such
 	// a row still reports an empty generation, because this host cannot verify a
 	// process it cannot see, so it is found but not live.
-	output, err := a.run(ctx, []string{"workspace", "list", "-s", mapping.ProviderKey, "--json"}, nil)
+	target, err := decodeProviderSessionKey(mapping.ProviderKey)
+	if err != nil {
+		return adapter.InspectResult{}, err
+	}
+	output, err := a.run(ctx, []string{"workspace", "list", "-s", target.SessionID, "--json"}, nil)
 	if err != nil {
 		return adapter.InspectResult{}, err
 	}
@@ -407,7 +418,7 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 		return adapter.InspectResult{}, fmt.Errorf("decode workspace list JSON: %w", err)
 	}
 	for _, item := range response.Items {
-		if item.SessionID != mapping.ProviderKey {
+		if !target.matchesWorkspaceItem(item) {
 			continue
 		}
 		generation, err := workspaceGeneration(item.ProcessGeneration)
@@ -635,26 +646,6 @@ func runtimeMessage(payload []byte) (string, error) {
 	return "", errors.New("runtime payload requires text or message")
 }
 
-// providerTarget resolves the private provider key for one opaque public target.
-//
-// The caller context is honoured rather than replaced with context.Background():
-// a long-running follow must be cancellable, and a lookup that ignores
-// cancellation would keep a provider child alive after the operator stopped
-// watching.
-func (a *Adapter) providerTarget(ctx context.Context, target *protocol.CommandTarget) (string, error) {
-	if target == nil {
-		return "", errors.New("target is required")
-	}
-	if a.mapper == nil {
-		return "", errors.New("durable resource mapper is required")
-	}
-	mapping, err := a.mapper.LookupResourceID(ctx, target.ResourceID)
-	if err != nil {
-		return "", err
-	}
-	return mapping.ProviderKey, nil
-}
-
 func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte, error) {
 	output, err := a.runner.Run(ctx, a.config.Executable, args, stdin)
 	if len(output) > a.config.MaxOutput {
@@ -668,7 +659,7 @@ func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte,
 
 // ReadOutput returns one bounded runtime log snapshot.
 func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest) (adapter.OutputResult, error) {
-	key, err := a.providerTarget(ctx, &request.Target)
+	target, err := a.providerSessionTarget(ctx, &request.Target)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}
@@ -676,7 +667,7 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 	if lines <= 0 || lines > 10000 {
 		lines = 20
 	}
-	output, err := a.run(ctx, []string{"runtime", "logs", "-s", key, "-n", fmt.Sprint(lines), "--json"}, nil)
+	output, err := a.run(ctx, runtimeLogArgs(target, lines, false), nil)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}
@@ -690,13 +681,13 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 		} `json:"response"`
 	}
 	if err := json.Unmarshal(output, &envelope); err != nil {
-		return adapter.OutputResult{}, fmt.Errorf("decode runtime logs for %q: %w", key, err)
+		return adapter.OutputResult{}, fmt.Errorf("decode runtime logs for %q: %w", target.SessionID, err)
 	}
 	if !envelope.OK || envelope.ErrorCode != "" {
-		return adapter.OutputResult{}, fmt.Errorf("runtime logs for %q failed (ok=%t, error_code=%q)", key, envelope.OK, envelope.ErrorCode)
+		return adapter.OutputResult{}, fmt.Errorf("runtime logs for %q failed (ok=%t, error_code=%q)", target.SessionID, envelope.OK, envelope.ErrorCode)
 	}
 	if envelope.Response == nil || envelope.Response.Lines == nil {
-		return adapter.OutputResult{}, fmt.Errorf("runtime logs for %q: missing response.lines", key)
+		return adapter.OutputResult{}, fmt.Errorf("runtime logs for %q: missing response.lines", target.SessionID)
 	}
 	response := envelope.Response
 	return adapter.OutputResult{Lines: response.Lines, Truncated: response.Truncated || response.ScanLimited, ScanLimited: response.ScanLimited, ObservedAtMS: time.Now().UnixMilli()}, nil
@@ -714,7 +705,7 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 // than the budget is truncated and labelled rather than ending the stream, so an
 // oversized provider line cannot be reported as a provider failure.
 func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
-	key, err := a.providerTarget(ctx, &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration})
+	target, err := a.providerSessionTarget(ctx, &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration})
 	if err != nil {
 		return err
 	}
@@ -729,7 +720,7 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 	if limit > followMaxRecordBytes {
 		limit = followMaxRecordBytes
 	}
-	args := []string{"runtime", "logs", "-s", key, "-n", fmt.Sprint(lines), "--follow"}
+	args := runtimeLogArgs(target, lines, true)
 	return a.followRunner.Follow(ctx, a.config.Executable, args, limit, func(record followRecord) error {
 		return emit(protocol.OutputChunk{Lines: []string{record.Line}, Truncated: record.Truncated, ObservedAtMS: time.Now().UnixMilli()})
 	})

@@ -125,12 +125,19 @@ func resolveRowSelectionInEndpoint(state *interactiveState, token, endpointID st
 // the token. Provider identifiers are numeric strings, so a token that is not a
 // valid row number may still name a session the operator copied from the list.
 func rowByProviderSessionID(state *interactiveState, token string) (SessionRow, bool) {
+	var match SessionRow
+	found := false
 	for _, row := range state.Rows {
-		if row.ProviderSessionID != "" && row.ProviderSessionID == token {
-			return row, true
+		if row.ProviderSessionID == "" || row.ProviderSessionID != token {
+			continue
 		}
+		if found {
+			return SessionRow{}, false
+		}
+		match = row
+		found = true
 	}
-	return SessionRow{}, false
+	return match, found
 }
 
 // resolveSessionToken maps an operator token to a session row. A bare row number
