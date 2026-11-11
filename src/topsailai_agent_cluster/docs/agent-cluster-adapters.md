@@ -27,6 +27,80 @@ Two habits follow, and both are mandatory when adding an adapter:
   record format named in `internal/protocol`, in a Server route, in a stored document or in a CLI
   help body is a defect, even when it is only a comment.
 
+## A provider is its own component
+
+Human decision on 2026-11-11, wording normalized, meaning preserved:
+
+> 同意A，就是要把adapter拆出来能够单独开发，独立接入。让endpoint成为抽象层。
+
+> 同意建议，就是你说的意思A。先放同仓库，写好文档，做好约定。同意建议，先做好接缝。
+
+An adapter is a component, not a branch inside the Endpoint. It can be developed, tested and compiled on
+its own, and it is plugged into the Endpoint through one registration line. The Endpoint is the
+abstraction layer and never names a provider.
+
+The component lives in its own folder, `internal/adapter/<name>/`, and exposes one constructor:
+
+```go
+func NewProvider() adapter.Provider
+```
+
+The composition root in `src/main/agent-cluster-endpoint/` lists the providers it links. That list is the
+only place in the Endpoint that names a provider, and adding a provider is a new folder plus one line.
+There must be no `switch` on `provider_type` anywhere in the Endpoint.
+
+### What a provider may import
+
+Only the contract packages: `protocol`, `security` and `adapter`. A provider must not import
+`endpoint`, `storage`, `channel`, `server`, `config`, `logging` or `tui`, and must not import another
+provider. This is what keeps it independently buildable and independently testable.
+
+### What a provider receives
+
+Everything arrives through `adapter.Config`, including an opaque `Settings` map carried in the
+`AGENT_CLUSTER_ADAPTERS` element. The Endpoint never interprets a `Settings` key; the provider validates
+its own keys and fails startup on a malformed value.
+
+A provider must not read process environment variables for its own configuration. Environment is
+external configuration read once at the process boundary, and the Endpoint is that boundary. Reading the
+environment to construct a child process environment is a different purpose and remains allowed, which
+is what `runner.go`, `follow.go` and `exec_command.go` already do.
+
+### What a provider must not do
+
+- Write log files. It returns errors, and the Endpoint owns logging and retention.
+- Learn that a Server exists. No Server address, credential or route reaches a provider.
+- Persist cluster state. Durable resource identity is supplied through `adapter.ResourceMapper`, which
+  the Endpoint implements.
+- Emulate an unsupported capability with an unrelated operation. It reports `adapter.ErrUnsupported`.
+- Require an Endpoint, a Server, a channel or a database to run its tests.
+
+### Where the `ctl.<action>` catalog belongs
+
+The catalog mechanism is neutral and the catalog content is provider-specific, so the two are split:
+
+- The loader, parser and validator belong to the neutral layer, because `ctl.` is a standard operation
+  family defined by the cluster (`internal/security/scopes.go`). Keeping them in a provider package
+  forces the Endpoint to import that provider just to load a standard family.
+- The catalog file belongs to the provider's configuration, because an entry names a provider argv such
+  as `["runtime","control","heartbeat",...]`.
+- The catalog is per-adapter, named through `Settings`, not one global file. A single global catalog
+  would advertise one provider's actions from another provider's binding.
+
+The Endpoint never interprets the catalog. It checks advertised capabilities only, so a catalog edit
+reaches admission through `Describe` and reaches the operator through the inventory.
+
+### Module split is a later step
+
+The Go toolchain forbids an external module from importing a package under `internal/`, so a real module
+split requires moving `protocol`, `security` and `adapter` into a public SDK directory. That move freezes
+the `Adapter` interface, and one changed method signature then breaks every provider.
+
+The interface is still evolving and these documents are discussion drafts, so the order is: build the
+seam, let the interface stabilise, then split the module. Reversing the order pins an interface that is
+not finished. The chosen form is a linkable module in the same repository, not a separate process and
+not a runtime plugin.
+
 ## Verified TopsailAI integration surface
 
 This table describes help/documentation inspected on 2026-10-27, not successful live operations. Installed behavior and compatibility must be verified before implementing an adapter release.

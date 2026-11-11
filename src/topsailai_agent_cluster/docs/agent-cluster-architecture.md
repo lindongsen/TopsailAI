@@ -9,7 +9,7 @@ created: 2026-10-27
 
 ## Document index
 
-- `docs/agent-cluster-architecture.md`: goals, boundaries, topology, storage, security, container deployment and design decisions; discussion draft.
+- `docs/agent-cluster-architecture.md`: goals, boundaries, topology, storage, security, container deployment, the adapter seam and design decisions; discussion draft.
 - `docs/agent-cluster-protocol.md`: abstract resources, capability negotiation, APIs, commands, synchronization and recovery; discussion draft.
 - `docs/agent-cluster-adapters.md`: Endpoint-private TopsailAI mapping and integration questions; discussion draft.
 - `docs/agent-cluster-database.md`: three Server business tables, constraints, transactions and retention; discussion draft.
@@ -23,7 +23,9 @@ the three documents marked as an implemented contract describe behaviour that ex
 Naming, machine-level Endpoint scope, required lifecycle support and the absence of periodic stdout
 snapshot refresh are human-confirmed decisions; other proposals remain under discussion.
 Implementation and verification planning is tracked separately in
-`.task/plan_20261027T153140_agent-cluster-delivery.md` (project-relative path).
+`.task/plan_20261027T153140_agent-cluster-delivery.md` (project-relative path). The adapter seam and
+provider independence work is planned in `.task/plan_20261111T061542_adapter-seam-and-sdk.md`
+(project-relative path).
 
 ## Human requirements and sources
 
@@ -176,6 +178,90 @@ maintenance, because that is an Agent outage rather than an Endpoint restart. A 
 installs and does not restart the container. Where Agents must survive an Endpoint restart, the Agents
 have to run outside the Endpoint's lifecycle boundary, and that is a deployment decision the protocol
 cannot make for the operator.
+
+## Adapter seam and independent provider development
+
+Human decision on 2026-11-11, wording normalized, meaning preserved:
+
+> 同意A，就是要把adapter拆出来能够单独开发，独立接入。让endpoint成为抽象层。
+
+> 同意建议，就是你说的意思A。先放同仓库，写好文档，做好约定。同意建议，先做好接缝。
+
+An adapter must be a component that can be developed, tested and compiled on its own, and plugged into
+the Endpoint without editing Endpoint code. The Endpoint remains the abstraction layer. The chosen form
+is a linkable module in the same repository, not a separate process and not a runtime plugin.
+
+The layering is fixed:
+
+| Layer | Location | Owns | Must not own |
+|---|---|---|---|
+| Endpoint abstraction | `internal/endpoint/` | Collection, execution, channel, policy, journal | Any provider name, flag, file or record format |
+| Adapter contract | `internal/adapter/` | `Adapter`, `Provider`, `Registry`, `Config` | Any provider implementation |
+| Provider component | `internal/adapter/<name>/` | Its factory, its configuration, its tests | Endpoint, storage, channel, Server, logging |
+| Composition root | `src/main/agent-cluster-endpoint/` | Naming every provider once | Provider behaviour |
+
+The composition root naming providers is correct and unavoidable. Go offers no runtime plugin loading
+that this project accepts, so something must link them. The rule is that this knowledge is confined to
+one file and one registration line, never spread through the startup flow.
+
+A provider is registered through one interface, so adding one is a new folder plus one line:
+
+```go
+// Deps carries the Endpoint-owned services a provider needs but must not construct.
+type Deps struct {
+    ResourceMapper ResourceMapper
+}
+
+type Provider interface {
+    Type() string
+    NewAdapter(context.Context, Config, Deps) (Adapter, error)
+}
+```
+
+`Deps` exists because `Config` is built from operator configuration and must stay a pure description
+of one binding, while `ResourceMapper` is a live Endpoint service. A provider cannot construct a
+mapper itself, because durable resource identity belongs to the Endpoint, so the mapper is supplied
+through `Deps` rather than folded into `Config`. Folding it into `Config` would make one struct mean
+two different things: parsed configuration and runtime dependency.
+
+The Endpoint must not contain a `switch` on `provider_type`. A provider type that is not registered
+fails closed at startup, exactly as an unknown type does today.
+
+Configuration reaches a provider through `adapter.Config`, including an opaque `Settings` map carried
+in the `AGENT_CLUSTER_ADAPTERS` element. The Endpoint never interprets a `Settings` key. A provider
+validates its own keys and fails startup on a malformed value. A provider must not read process
+environment variables for its own configuration, because environment is external configuration read
+once at the process boundary and the Endpoint is that boundary. Reading the environment to construct a
+child process environment is a different purpose and remains allowed.
+
+The conventions that make independent development possible are mandatory for every provider:
+
+- Import only the contract packages. Never import `endpoint`, `storage`, `channel`, `server`, `config`,
+  `logging` or `tui`, and never import another provider.
+- Receive everything through `Config`. Read no configuration from the process environment.
+- Return errors instead of writing log files, so the Endpoint owns logging and retention.
+- Never learn that a Server exists. No Server address, credential or route reaches a provider.
+- Never persist cluster state. Durable resource identity is supplied through `adapter.ResourceMapper`,
+  which the Endpoint implements.
+- Report an unsupported capability as `adapter.ErrUnsupported` rather than emulating it with an
+  unrelated operation.
+- Keep tests runnable without an Endpoint, a Server, a channel or a database.
+
+The `ctl.<action>` catalog is a standard operation family, so its loader, parser and validator belong to
+the neutral layer, not to a provider package. Its content is provider-specific, because an entry names a
+provider argv, so the file belongs to the provider's configuration. The catalog is per-adapter rather
+than one global file, because a single global catalog would advertise one provider's actions from
+another provider's binding.
+
+A real module split is a later step, and the order is load-bearing. The Go toolchain forbids an external
+module from importing a package under `internal/`, so a split requires physically moving `protocol`,
+`security` and `adapter` into a public SDK directory. That move freezes the `Adapter` interface: one
+changed method signature then breaks every provider. The interface is still evolving and these documents
+are discussion drafts, so the seam is built first, the interface stabilises second, and the module split
+comes last. Doing it in the reverse order pins an interface that is not finished.
+
+See `.task/plan_20261111T061542_adapter-seam-and-sdk.md` for the verified dependency facts, the three
+current leaks and the execution units.
 
 ## Transport and connectivity
 
