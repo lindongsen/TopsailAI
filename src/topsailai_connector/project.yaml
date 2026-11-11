@@ -57,6 +57,11 @@ workspace_project_structure: |
     - bdd/ # Behavior Driven Development (Gherkin) tests for user-visible behavior
     - e2e/ # Complete or auxiliary scripts for E2E
 
+  - skills/ # Operator and user facing skills, one folder per audience
+    - connector-client/ # For the person calling a Node: the cli command, flags, error codes
+    - connector-server-operations/ # For the Server operator: deploy, configure, rotate, troubleshoot
+    - connector-node-setup/ # For the person running a Node: identity, policy file, start, regenerate
+
   - ".task/" # The last/current task info, The Folder's maintainer is AI
     - plan_xxx.md
     - code_xxx.md

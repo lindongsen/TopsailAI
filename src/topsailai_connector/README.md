@@ -78,6 +78,22 @@ case-insensitive deny-list comparison; they are listed in
 | `docs/Environment_Variables.md` | Configuration surface and the accepted trade-off of secrets in the environment |
 | `docs/cases/` | Test cases, including the adversarial ones |
 
+## Skills
+
+Three skills describe how to use the system from each audience's point of view.
+Each one is self-contained: a reader who has never seen this repository can follow
+it without opening the source.
+
+| Skill | Audience | Answers |
+|---|---|---|
+| `skills/connector-client/` | The person calling a Node | The `cli` command, its flags, the three read operations, every error code |
+| `skills/connector-server-operations/` | The Server operator | Deploy, configure, expose the two surfaces differently, rotate secrets, troubleshoot |
+| `skills/connector-node-setup/` | The person running a Node | First-run order, the policy file, scope path rules, start, regenerate |
+
+The Server has two skills rather than one because the two audiences are different
+people with different questions. A client never needs to know how to rotate a
+secret, and an operator never needs the client's flag syntax.
+
 ## Layout
 
 ```
@@ -93,6 +109,7 @@ topsailai_connector/
 ├── docs/                   # design documents
 ├── features/               # user-visible behaviour
 ├── issues/                 # pending, resolved and ignored issues
+├── skills/                 # operator and user facing skills
 └── tests/                  # integration, bdd and shared fixtures
 ```
 
