@@ -133,6 +133,8 @@ def exec_cmd(
         timeout (int, optional): Timeout in seconds. If the command does not finish
                                  within this time, a exception will be raised.
                                  Defaults to 120.
+        cwd (str, optional): Working directory the command runs in. Defaults to the
+                             project folder.
         env: (dict, optional): environment variables
     Returns:
         tuple: (code, stdout, stderr)

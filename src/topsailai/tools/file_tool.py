@@ -301,7 +301,10 @@ def read_file(file_path:str="", seek:int=0, size:int=-1, files=None):
     if error:
         return error
 
-    # compatibility on LLM mistake
+    # Arg 'files' is not documented on purpose: it exists only to absorb an LLM
+    # mistake where the model passes `files=[...]` to read_file instead of calling
+    # read_files. When file_path is empty and seek/size keep their defaults, forward
+    # the call so the mistake still produces the intended result.
     if not file_path and files and seek == 0 and size == -1:
         return read_files(files)
 
