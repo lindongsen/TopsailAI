@@ -123,6 +123,7 @@ test-windows-compile:
 	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/policy.test.exe ./internal/node/policy/
 	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/protocol.test.exe ./internal/protocol/
 	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/security.test.exe ./internal/security/
+	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/connector-node.test.exe ./cmd/connector-node/
 	@echo "compiled the windows test binaries"
 
 check: vet test-unit coverage integration bdd e2e build-windows test-windows-compile
