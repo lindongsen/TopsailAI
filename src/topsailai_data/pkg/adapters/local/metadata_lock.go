@@ -14,6 +14,17 @@ import (
 // Namespace mutations use AcquireMetadataLockUnderNamespace instead and retain
 // namespace custody until all directory removal or replacement is complete.
 func (l StoreLayout) AcquireMetadataLock(id models.ObjectID, exclusive bool) (*Lock, error) {
+	return l.acquireGatedMetadataLock(id, exclusive, false)
+}
+
+// AcquireExistingMetadataLock never creates directories for absent records.
+// Callers re-read status and reference after acquisition before using the object.
+func (l StoreLayout) AcquireExistingMetadataLock(id models.ObjectID, exclusive bool) (*Lock, error) {
+	return l.acquireGatedMetadataLock(id, exclusive, true)
+}
+
+// acquireGatedMetadataLock validates existence while namespace custody is held.
+func (l StoreLayout) acquireGatedMetadataLock(id models.ObjectID, exclusive, existing bool) (*Lock, error) {
 	if _, err := l.ObjectMetaPath(id); err != nil {
 		return nil, err
 	}
@@ -21,7 +32,14 @@ func (l StoreLayout) AcquireMetadataLock(id models.ObjectID, exclusive bool) (*L
 	if err != nil {
 		return nil, err
 	}
-	lock, acquireErr := l.AcquireMetadataLockUnderNamespace(id, exclusive)
+	var lock *Lock
+	var acquireErr error
+	if existing {
+		_, acquireErr = l.readMetadataRecord(id)
+	}
+	if acquireErr == nil {
+		lock, acquireErr = l.AcquireMetadataLockUnderNamespace(id, exclusive)
+	}
 	if err := gate.Release(); err != nil {
 		if lock != nil {
 			err = errors.Join(err, lock.Release())
