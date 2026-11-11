@@ -647,7 +647,7 @@ class TestInsertDataToFile:
             shutil.rmtree(temp_dir)
 
     def test_insert_content_to_file_empty_file(self):
-        """Verify insert_content_to_file returns empty string for empty file."""
+        """Verify insert_content_to_file reports the diff for an empty file."""
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, "test_empty.txt")
         
@@ -656,7 +656,8 @@ class TestInsertDataToFile:
                 f.write("")
             
             result = insert_content_to_file(temp_path, "XXX", 1, "after")
-            assert result == ""
+            assert "XXX" in result
+            assert "---" in result
         finally:
             shutil.rmtree(temp_dir)
 

@@ -128,17 +128,29 @@ def get_unified_diff(file1_path, file2_path):
 
 
 def compare_files_strived(file1_path, file2_path, context_lines=3) -> str:
-    #try:
-    #    return compare_files(file1_path=file1_path, file2_path=file2_path, context_lines=context_lines)
-    #except Exception:
-    #    pass
+    """Return a unified diff, or an explicit error when the diff cannot be computed.
 
+    The three write tools return this value directly to the LLM as their only
+    feedback, and every caller invokes it *after* the edit has been written.
+    Reporting "Nothing Changed" for a failed computation would tell the model that
+    its edit had no effect, so a failure must be reported as a failure.
+
+    Args:
+        file1_path (str): Path to the "before" file.
+        file2_path (str): Path to the "after" file.
+        context_lines (int): Retained for call compatibility; unused.
+
+    Returns:
+        str: Unified diff, an empty string when the files are identical, or an
+            explicit error string when the diff could not be computed.
+    """
     try:
         return get_unified_diff(file1_path=file1_path, file2_path=file2_path)
-    except Exception:
-        pass
-
-    return "\n---\nNothing Changed"
+    except Exception as exc:
+        return (
+            f"Error: cannot compute diff ({type(exc).__name__}: {exc}). "
+            "The edit was already written; read the file to verify the result."
+        )
 
 
 # Usage example
