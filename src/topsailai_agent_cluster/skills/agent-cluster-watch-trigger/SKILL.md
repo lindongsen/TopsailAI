@@ -1,7 +1,7 @@
 ---
 name: agent-cluster-watch-trigger
-description: Use when a user wants a local script to run automatically when a watched Agent Cluster session becomes blocked on input, or when they ask what environment variables such a script receives, why it did not run, or how to make `watch --trigger` fire. Covers the `watch --trigger` command surface, the default script path, the thirteen `AGENT_CLUSTER_*` payload variables, the whitelisted child environment, the five second timeout, and the foreground-only limits of the mechanism.
-version: 1.0.0
+description: Use when a user wants a local script to run automatically when a watched Agent Cluster session becomes blocked on input, or when they ask what environment variables such a script receives, why it did not run, or how to make `watch --trigger` fire. Covers the `watch --trigger` command surface, the default script path, the thirteen `AGENT_CLUSTER_*` payload variables, the whitelisted child environment, the five second timeout, the foreground-only limits of the mechanism, and a ready-to-install Python script that rings one terminal bell on `running -> waiting_input`.
+version: 1.1.0
 author: DawsonLin
 license: Apache-2.0
 metadata:
@@ -189,6 +189,58 @@ curl -sS -X POST https://example.invalid/hook \
 notify-send "agent needs input" "$AGENT_CLUSTER_SESSION_NAME"
 ```
 
+### Ring the terminal bell
+
+The shipped script `scripts/watch-trigger-bell.py` rings one bell on the documented
+transition. It is the smallest useful trigger, and it demonstrates the only channel that
+actually reaches the operator.
+
+```python
+import signal
+
+PREVIOUS_STATE = "running"
+STATE = "waiting_input"
+BELL = b"\a"
+TERMINAL_DEVICE = "/dev/tty"
+
+
+def should_ring(previous_state, state):
+    """Return True only for the running -> waiting_input transition."""
+    return previous_state == PREVIOUS_STATE and state == STATE
+
+
+def ring():
+    """Write one bell to the controlling terminal."""
+    try:
+        signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+    except (AttributeError, ValueError, OSError):
+        pass
+    try:
+        with open(TERMINAL_DEVICE, "wb", buffering=0) as terminal:
+            terminal.write(BELL)
+        return True
+    except OSError:
+        return False
+```
+
+`scripts/watch-trigger-bell.py` is the complete file; read it rather than retyping this
+excerpt, so the installed script and the documented behaviour cannot drift apart.
+
+Three details make it correct rather than merely short:
+
+- **It writes to `/dev/tty`, not to stdout.** `print("\a")` would be captured and discarded
+  with the rest of the script's output, so the operator would hear nothing. The terminal
+  device is the only channel the runner does not own.
+- **It ignores `SIGTTOU`.** The runner puts the script in its own process group, so a
+  terminal with `TOSTOP` set would otherwise stop the script on that write.
+- **A missing terminal is not a failure.** The script exits 0 without a bell, because a
+  headless run has no operator to alert and a non-zero exit would only add a diagnostic row
+  to the table.
+
+The state check is a guard, not a second detection path: `watch` already fires only on
+`running -> waiting_input`. It keeps the script correct when it is invoked by hand or by a
+future caller, and it costs one string comparison.
+
 ### Install and run
 
 ```bash
@@ -200,6 +252,29 @@ printf '%s %s %s\n' "$(date -Is)" "$AGENT_CLUSTER_ENDPOINT_ID" "$AGENT_CLUSTER_S
 SCRIPT
 chmod +x "$HOME/.topsailai/topsailai-agent-cluster.on-state-change.trigger"
 ```
+
+To install the shipped bell script instead of writing your own, point the default path at it
+with a one-line bash wrapper. The wrapper keeps the shebang `bash` and the body a single
+executable command:
+
+```bash
+mkdir -p "$HOME/.topsailai"
+cat > "$HOME/.topsailai/topsailai-agent-cluster.on-state-change.trigger" <<'SCRIPT'
+#!/bin/bash
+exec /usr/bin/python3 /absolute/path/to/scripts/watch-trigger-bell.py
+SCRIPT
+chmod +x "$HOME/.topsailai/topsailai-agent-cluster.on-state-change.trigger"
+```
+
+Both paths in the wrapper must be absolute, because the runner starts the script in the
+directory the CLI was launched from, not in the skill folder. `exec` replaces the shell with
+the interpreter, so the runner sees one process instead of a shell waiting on a child, and a
+timeout kills the interpreter directly rather than orphaning it.
+
+The wrapper is required rather than optional: the default path is a single fixed file, so the
+trigger must live there to be found by a bare `watch --trigger`. Keeping the Python logic in
+the skill folder also means an edit to the shipped script takes effect on the next transition
+without reinstalling the wrapper.
 
 Then inside the REPL:
 
@@ -242,7 +317,8 @@ Check these in order. Each one has a distinct symptom.
   completes between two collections is invisible.
 - **Reading a credential from the environment.** The environment is a whitelist and carries
   no credential. A script that needs one reads its own file.
-- **Printing to the terminal.** Output is discarded, and the editor owns the terminal.
+- **Printing to the terminal.** Output is discarded, and the editor owns the terminal. A
+  bell or a message must go to `/dev/tty` or to a file, never to stdout.
 - **`eval`-ing a payload value.** `SESSION_NAME` and `PROJECT_WORKSPACE` are provider text.
   Quote them, never evaluate them.
 - **Killing a PID.** The payload carries no PID on purpose. Use the cluster session ID with
@@ -256,7 +332,8 @@ Check these in order. Each one has a distinct symptom.
 - [ ] The script has a shebang and the executable bit set.
 - [ ] The script reads only the documented `AGENT_CLUSTER_*` variables and the six
       inherited basics.
-- [ ] The script writes to a file or sends a message instead of printing to the terminal.
+- [ ] The script writes to a file, sends a message, or rings `/dev/tty` instead of printing
+      to stdout, which the runner discards.
 - [ ] The script quotes every payload value and never evaluates one.
 - [ ] The script finishes well inside five seconds, or does its slow work in the background.
 - [ ] The script tolerates `AGENT_CLUSTER_STALE=true` and `AGENT_CLUSTER_UNVERIFIED=true`
@@ -268,6 +345,9 @@ Check these in order. Each one has a distinct symptom.
 ## File Structure Description
 
 - **bin/**: None. This skill documents an existing CLI capability and needs no executable.
-- **scripts/**: None. The trigger script is written by the operator, not shipped here.
+- **scripts/**: `watch-trigger-bell.py` is a ready-to-install trigger that rings one terminal
+  bell on `running -> waiting_input`. It is a reference implementation of the payload check
+  and of the `/dev/tty` output channel; install it by pointing a one-line bash wrapper at it
+  from the default path.
 - **references/**: None. The payload table and the execution contract above are complete.
 - **assets/**: None.
