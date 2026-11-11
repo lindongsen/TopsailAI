@@ -213,6 +213,33 @@ func driveSummary(driver *workspaceDriver, observedAtMS int64) *protocol.DriveSu
 	return summary
 }
 
+// normalizeSessionState maps the provider's session vocabulary onto the standard
+// states declared by the protocol.
+//
+// The provider reports "input" for a live process that holds its session pipe,
+// which is the state an operator reacts to. Forwarding that word verbatim made
+// the cluster contract depend on one provider's spelling: the TUI ordered
+// "waiting_input", which no producer emitted, while the real value fell into the
+// unrecognized-state fallback. Mapping here keeps one vocabulary on the wire and
+// lets a second adapter report the same standard value.
+//
+// An unrecognized value becomes unknown rather than being forwarded as if it
+// were standard, because a consumer cannot interpret a word the contract does
+// not define. The unverified override is applied by the caller after this
+// mapping, so an empty generation still reports unknown with its own reason.
+func normalizeSessionState(state string) string {
+	switch state {
+	case protocol.SessionStateRunning:
+		return protocol.SessionStateRunning
+	case "input", protocol.SessionStateWaitingInput:
+		return protocol.SessionStateWaitingInput
+	case protocol.SessionStateIdle:
+		return protocol.SessionStateIdle
+	default:
+		return protocol.SessionStateUnknown
+	}
+}
+
 // boundedDriveReason keeps a provider reason code short enough to store and
 // render. Provider diagnostics stay local; only a bounded code is published.
 func boundedDriveReason(reason string) string {
@@ -301,9 +328,9 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if err != nil {
 			return adapter.DiscoverResult{}, err
 		}
-		state := item.State
-		if state == "" {
-			state = item.Status
+		state := normalizeSessionState(item.State)
+		if item.State == "" {
+			state = normalizeSessionState(item.Status)
 		}
 		stateReason := ""
 		if generation == "" {
@@ -387,9 +414,9 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 		if err != nil {
 			return adapter.InspectResult{}, fmt.Errorf("decode workspace generation: %w", err)
 		}
-		state := item.State
-		if state == "" {
-			state = item.Status
+		state := normalizeSessionState(item.State)
+		if item.State == "" {
+			state = normalizeSessionState(item.Status)
 		}
 		// Found means the provider still lists the record; Live means it also
 		// proved a process holds the session output file. A record without a

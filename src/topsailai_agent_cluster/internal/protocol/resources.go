@@ -76,11 +76,26 @@ type DriveSummary struct {
 	ObservedAtMS int64 `json:"observed_at_ms"`
 }
 
-// SessionStateUnknown means the provider reported the record but could not
-// verify the liveness of the process behind it. It is a real observation of an
-// unverified session, not an unavailable observation: the record exists, only
-// its liveness is unproven.
-const SessionStateUnknown = "unknown"
+// Standard session states. They are provider-neutral: an adapter maps its own
+// vocabulary onto these values and keeps provider-specific detail local, so the
+// cluster contract never depends on one provider's spelling.
+const (
+	// SessionStateRunning means the provider proved a live process that is not
+	// waiting for input.
+	SessionStateRunning = "running"
+	// SessionStateWaitingInput means the provider proved a live process that is
+	// waiting for input. It is the state an operator reacts to, so it is a
+	// standard value rather than a provider word.
+	SessionStateWaitingInput = "waiting_input"
+	// SessionStateIdle means the provider reported no live process for the
+	// record. The record still exists, so it remains addressable by resume.
+	SessionStateIdle = "idle"
+	// SessionStateUnknown means the provider reported the record but could not
+	// verify the liveness of the process behind it. It is a real observation of
+	// an unverified session, not an unavailable observation: the record exists,
+	// only its liveness is unproven.
+	SessionStateUnknown = "unknown"
+)
 
 // StateReasonLivenessUnverified means the provider listed the session but could
 // not confirm that a process still holds its output file, so no generation was
