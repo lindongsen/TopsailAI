@@ -198,7 +198,7 @@ func parseCtlDottedArguments(action, rest string) (string, json.RawMessage, erro
 // The operator may answer with the number, the action name, or an empty line to
 // cancel. An empty answer cancels instead of selecting the first action, because
 // a control action is a mutating request and must never be chosen by accident.
-func promptCtlAction(parent context.Context, api InteractiveAPI, state *interactiveState, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) (string, error) {
+func promptCtlAction(parent context.Context, api InteractiveAPI, state *interactiveState, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) (string, error) {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	descriptor, err := api.GetCapabilities(ctx, state.EndpointID)
@@ -220,21 +220,51 @@ func promptCtlAction(parent context.Context, api InteractiveAPI, state *interact
 	if _, err := fmt.Fprintln(out, "Enter a number or an action name; empty cancels."); err != nil {
 		return "", err
 	}
+	// Only a resolved selection echoes, because the echo must name the action
+	// that will actually be sent. An empty answer cancels and an unknown answer
+	// is rejected, so neither echoes: an echo would claim a selection that was
+	// never made. The echo resolves through the same function that selects the
+	// action, so the echoed name and the returned name cannot disagree.
+	echo := func(answer string) string {
+		name, ok := resolveCtlActionName(names, answer)
+		if !ok {
+			return ""
+		}
+		return RenderAnswerEcho(name, options.Color)
+	}
 	markRecoverablePromptFailure(parent)
-	answer, err := readStartAnswer(parent, lines, "ctl.action> ")
+	answer, err := readStartAnswerWithEcho(parent, lines, trustedOut, echo, "ctl.action> ")
 	if err != nil {
 		return "", err
+	}
+	name, ok := resolveCtlActionName(names, answer)
+	if ok {
+		return name, nil
 	}
 	trimmed := strings.TrimSpace(answer)
 	if trimmed == "" {
 		return "", fmt.Errorf("ctl cancelled")
 	}
+	return "", fmt.Errorf("unknown control action %q; %s", trimmed, ctlInteractiveUsage)
+}
+
+// resolveCtlActionName maps one answer to an advertised action name.
+//
+// The operator may answer with the number or the exact name. The same function
+// resolves the answer for selection and for the echo, so the name shown beside
+// the answer is always the name that is returned. An empty or unknown answer
+// reports false, which is what keeps a cancel or a rejected answer from echoing.
+func resolveCtlActionName(names []string, answer string) (string, bool) {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		return "", false
+	}
 	for index, name := range names {
 		if trimmed == fmt.Sprintf("%d", index+1) || trimmed == name {
-			return name, nil
+			return name, true
 		}
 	}
-	return "", fmt.Errorf("unknown control action %q; %s", trimmed, ctlInteractiveUsage)
+	return "", false
 }
 
 // promptCtlParameters guides the operator through the parameters of one action.
@@ -334,7 +364,7 @@ func interactiveCtl(parent context.Context, api InteractiveAPI, state *interacti
 	if err := state.requireUsable(); err != nil {
 		return err
 	}
-	action, payload, err := ctlResolveAction(parent, api, state, invocation, lines, out, options)
+	action, payload, err := ctlResolveAction(parent, api, state, invocation, lines, out, trustedOut, options)
 	if err != nil {
 		return err
 	}
@@ -363,12 +393,12 @@ func interactiveCtl(parent context.Context, api InteractiveAPI, state *interacti
 
 // ctlResolveAction returns the action and the payload the command line already
 // determined, prompting for the action when the line names none.
-func ctlResolveAction(parent context.Context, api InteractiveAPI, state *interactiveState, invocation ctlInvocation, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) (string, json.RawMessage, error) {
+func ctlResolveAction(parent context.Context, api InteractiveAPI, state *interactiveState, invocation ctlInvocation, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) (string, json.RawMessage, error) {
 	switch {
 	case invocation.dotted:
 		return parseCtlDottedArguments(invocation.action, invocation.rest)
 	case strings.TrimSpace(invocation.rest) == "":
-		action, err := promptCtlAction(parent, api, state, lines, out, options)
+		action, err := promptCtlAction(parent, api, state, lines, out, trustedOut, options)
 		if err != nil {
 			return "", nil, err
 		}

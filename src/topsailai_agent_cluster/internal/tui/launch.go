@@ -64,12 +64,26 @@ func isQuotedLaunchAnswer(trimmed string) bool {
 // writer; the sanitizing writer would strip the colour and leave this wizard prompt as
 // the only unstyled prompt in the session.
 func launchAnswer(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, state *interactiveState, field string, color ColorPolicy) (string, launchAnswerOutcome, error) {
+	return launchAnswerWithEcho(ctx, lines, out, trustedOut, state, field, color, nil)
+}
+
+// launchAnswerWithEcho is launchAnswer with an optional answer echo. The echo is
+// produced by the caller from the accepted answer, so only the caller knows which
+// row a bare number selected. It is written by the reader while the answer row is
+// still current, so the operator reads the selection beside the number instead of
+// matching it against a list that has scrolled away.
+//
+// The echo function returns an empty string for an answer that selects nothing,
+// which is what keeps a control word, a rejected number or a cancel from echoing:
+// the wizard is about to reject or re-ask, and an echo would claim a selection
+// that was never made.
+func launchAnswerWithEcho(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, state *interactiveState, field string, color ColorPolicy, echo func(string) string) (string, launchAnswerOutcome, error) {
 	prompt := RenderNamedPrompt("start."+field+">", color)
 	for {
 		if _, err := io.WriteString(trustedOut, prompt); err != nil {
 			return "", launchAnswerCancel, &startPromptTermination{kind: startPromptFatal, cause: err}
 		}
-		line, err := readStartAnswer(ctx, lines, prompt)
+		line, err := readStartAnswerWithEcho(ctx, lines, trustedOut, echo, prompt)
 		if errors.Is(err, errStartPromptOverflow) {
 			if writeErr := writeInteractiveError(out, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
 				return "", launchAnswerCancel, &startPromptTermination{kind: startPromptFatal, cause: writeErr}
@@ -124,7 +138,16 @@ func handleLaunchAnswerControl(out io.Writer, state *interactiveState, line stri
 // launchAnswerValueOrControl returns the literal value or the REPL control signal.
 // A cancelled answer returns an empty value and no error, because it already reported itself.
 func launchAnswerValueOrControl(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, state *interactiveState, field string, color ColorPolicy) (string, error) {
-	value, outcome, err := launchAnswer(ctx, lines, out, trustedOut, state, field, color)
+	return launchAnswerValueOrControlWithEcho(ctx, lines, out, trustedOut, state, field, color, nil)
+}
+
+// launchAnswerValueOrControlWithEcho is launchAnswerValueOrControl with an
+// optional answer echo, so a guided selection can report the chosen row beside
+// the number the operator typed. The echo is only produced for an accepted
+// value: a cancel, quit or refresh answer echoes nothing, because no choice was
+// made and the echo would claim one.
+func launchAnswerValueOrControlWithEcho(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, state *interactiveState, field string, color ColorPolicy, echo func(string) string) (string, error) {
+	value, outcome, err := launchAnswerWithEcho(ctx, lines, out, trustedOut, state, field, color, echo)
 	if err != nil {
 		return "", err
 	}
@@ -249,19 +272,30 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	selected := catalog.Handlers[0]
 	if len(catalog.Handlers) > 1 {
 		for index, handler := range catalog.Handlers {
-			if _, err := fmt.Fprintf(out, "%d. %s (%s)\n", index+1, handler.DisplayName, handler.AdapterID); err != nil {
+			if _, err := fmt.Fprintf(out, "%d. %s\n", index+1, launchAdapterRowLabel(handler)); err != nil {
 				return err
 			}
 		}
-		answer, err := launchAnswerValueOrControl(ctx, lines, out, trustedOut, state, "adapter", options.Color)
+		// The echo resolves through the same function that selects the handler,
+		// so the label beside the number is the handler the wizard will use. A
+		// non-numeric or out-of-range answer echoes nothing, because the wizard
+		// is about to reject it.
+		echo := func(answer string) string {
+			_, row, resolveErr := resolveLaunchAdapterAnswer(catalog.Handlers, answer)
+			if resolveErr != nil || row == 0 {
+				return ""
+			}
+			return RenderAnswerEcho(launchAdapterRowLabel(catalog.Handlers[row-1]), options.Color)
+		}
+		answer, err := launchAnswerValueOrControlWithEcho(ctx, lines, out, trustedOut, state, "adapter", options.Color, echo)
 		if err != nil || answer == "" {
 			return err
 		}
-		index, err := strconv.Atoi(answer)
-		if err != nil || index < 1 || index > len(catalog.Handlers) {
-			return fmt.Errorf("invalid adapter selection")
+		handler, _, resolveErr := resolveLaunchAdapterAnswer(catalog.Handlers, answer)
+		if resolveErr != nil {
+			return resolveErr
 		}
-		selected = catalog.Handlers[index-1]
+		selected = handler
 	}
 	queryCtx, cancel = commandContext(ctx)
 	projects, queryErr := query.GetLaunchOptions(queryCtx, endpointID, selected.AdapterID)
@@ -275,7 +309,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 			return fmt.Errorf("launch handler changed; start again")
 		}
 		for index, project := range projects.Projects {
-			if _, err := fmt.Fprintf(out, "%d. %s (%s)\n", index+1, project.Name, project.Path); err != nil {
+			if _, err := fmt.Fprintf(out, "%d. %s\n", index+1, launchProjectRowLabel(project)); err != nil {
 				return err
 			}
 		}
@@ -283,15 +317,36 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if _, err := fmt.Fprintln(out, "Choose a project number or enter a folder; empty/cancel cancels."); err != nil {
 		return err
 	}
-	folder, err := launchAnswerValueOrControl(ctx, lines, out, trustedOut, state, "folder", options.Color)
+	// Only a numbered selection echoes, because a literal folder path is already
+	// the content the operator typed; repeating it would add noise without adding
+	// information. The echo resolves through the same function that selects the
+	// project, so an out-of-range number echoes nothing and is then rejected.
+	echo := func(answer string) string {
+		if queryErr != nil || projects.ErrorCode != "" {
+			return ""
+		}
+		project, row, resolveErr := resolveLaunchProjectAnswer(projects.Projects, answer)
+		if resolveErr != nil || row == 0 {
+			return ""
+		}
+		return RenderAnswerEcho(launchProjectRowLabel(project), options.Color)
+	}
+	folder, err := launchAnswerValueOrControlWithEcho(ctx, lines, out, trustedOut, state, "folder", options.Color, echo)
 	if err != nil || folder == "" {
 		return err
 	}
-	if index, parseErr := strconv.Atoi(folder); parseErr == nil {
-		if queryErr != nil || projects.ErrorCode != "" || index < 1 || index > len(projects.Projects) {
+	// A numeric answer is resolved through the same function the echo used, so
+	// the folder that is selected is exactly the row the echo named. A number
+	// with an unavailable project list still fails, because there is no row to
+	// resolve it against and using it as a folder name would silently start in
+	// a directory the operator never chose.
+	if _, row, resolveErr := resolveLaunchProjectAnswer(projects.Projects, folder); resolveErr != nil {
+		return resolveErr
+	} else if row != 0 {
+		if queryErr != nil || projects.ErrorCode != "" {
 			return fmt.Errorf("invalid project selection; use an explicit folder path")
 		}
-		folder = projects.Projects[index-1].Path
+		folder = projects.Projects[row-1].Path
 	}
 	if err := protocol.ValidateFolder(folder); err != nil {
 		return err
@@ -308,4 +363,57 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 		return err
 	}
 	return interactiveStart(ctx, api, state, interactiveStartRequest{EndpointID: endpointID, Profile: selected.AdapterID, ProfileRevision: selected.Revision, Folder: folder, Payload: payload}, out, trustedOut, options)
+}
+
+// launchAdapterRowLabel renders one adapter row as "display name (adapter id)".
+// The numbered list and the answer echo both call it, so the echo can never
+// describe a row differently from the row the operator read. A missing display
+// name falls back to the identifier, because an empty field would make two
+// different handlers look identical.
+func launchAdapterRowLabel(handler protocol.LaunchHandler) string {
+	label := handler.DisplayName
+	if label == "" {
+		label = handler.AdapterID
+	}
+	return fmt.Sprintf("%s (%s)", label, handler.AdapterID)
+}
+
+// launchProjectRowLabel renders one project row as "name (path)". The numbered
+// list and the answer echo both call it, so the echo repeats exactly the row the
+// operator read. A missing name falls back to the path.
+func launchProjectRowLabel(project protocol.Project) string {
+	label := project.Name
+	if label == "" {
+		label = project.Path
+	}
+	return fmt.Sprintf("%s (%s)", label, project.Path)
+}
+
+// resolveLaunchAdapterAnswer maps one adapter answer onto its handler and its
+// 1-based row. Only a number selects a handler, which is the grammar the wizard
+// has always accepted, so an adapter identifier is still rejected instead of
+// silently becoming a second spelling. The echo and the selection both call this
+// function, so a row that echoes is exactly the row that is used.
+func resolveLaunchAdapterAnswer(handlers []protocol.LaunchHandler, answer string) (protocol.LaunchHandler, int, error) {
+	index, parseErr := strconv.Atoi(answer)
+	if parseErr != nil || index < 1 || index > len(handlers) {
+		return protocol.LaunchHandler{}, 0, fmt.Errorf("invalid adapter selection")
+	}
+	return handlers[index-1], index, nil
+}
+
+// resolveLaunchProjectAnswer maps one project answer onto its project and its
+// 1-based row. A non-numeric answer is a literal folder path, which is the
+// grammar the wizard has always accepted, so it reports row 0 and no error and
+// the caller keeps the typed value. A number must be in range, because a number
+// that selects nothing must fail instead of being used as a folder name.
+func resolveLaunchProjectAnswer(projects []protocol.Project, answer string) (protocol.Project, int, error) {
+	index, parseErr := strconv.Atoi(answer)
+	if parseErr != nil {
+		return protocol.Project{}, 0, nil
+	}
+	if index < 1 || index > len(projects) {
+		return protocol.Project{}, 0, fmt.Errorf("invalid project selection; use an explicit folder path")
+	}
+	return projects[index-1], index, nil
 }

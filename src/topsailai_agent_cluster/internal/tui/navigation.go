@@ -439,7 +439,27 @@ func chooseEndpoint(ctx context.Context, state *interactiveState, matches []prot
 	if err := writeConfirmationQuestion(trustedOut, question, color); err != nil {
 		return outcomeCancelled, err
 	}
-	answer, ok := nextPromptLine(ctx, lineSource)
+	// The echo resolves through the same row label the list printed, so the
+	// label beside the number is the endpoint that will be entered. A cancel, an
+	// out-of-range number or an unknown path echoes nothing, because the
+	// transition is about to be refused and an echo would claim it happened.
+	echo := func(answer string) string {
+		trimmed := strings.TrimSpace(answer)
+		if trimmed == "" || strings.EqualFold(trimmed, "cancel") {
+			return ""
+		}
+		if index, parseErr := strconv.Atoi(trimmed); parseErr == nil {
+			if index < 1 || index > len(matches) {
+				return ""
+			}
+			return RenderAnswerEcho(launchEndpointRowLabel(matches[index-1]), color)
+		}
+		if endpoint, ok := matchEndpointPath(matches, trimmed); ok {
+			return RenderAnswerEcho(launchEndpointRowLabel(endpoint), color)
+		}
+		return ""
+	}
+	answer, ok := nextPromptLineWithEcho(ctx, lineSource, trustedOut, echo)
 	if !ok || answer.overflow || answer.err != nil {
 		return cancelTransition(out)
 	}

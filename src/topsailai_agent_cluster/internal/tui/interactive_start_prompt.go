@@ -202,11 +202,25 @@ func writeStartHelp(out, trustedOut io.Writer, field startDraftField, state inte
 var errStartPromptOverflow = errors.New("start prompt input overflow")
 
 func readStartAnswer(ctx context.Context, lines <-chan lineReadResult, prompts ...string) (string, error) {
+	return readStartAnswerWithEcho(ctx, lines, nil, nil, prompts...)
+}
+
+// readStartAnswerWithEcho reads one wizard answer and reports the accepted
+// choice beside it. The echo is produced by the caller, because only the caller
+// knows which row a bare number selected, and it is written by whichever reader
+// owns the answer row.
+//
+// A reader seam appends the echo to the answer row itself. The stream fallback
+// has no row to append to, so it writes the echo on its own line through echoOut
+// instead of dropping it: a piped session must still report what a bare number
+// selected. A nil echo keeps the plain read, so every existing caller is
+// unchanged.
+func readStartAnswerWithEcho(ctx context.Context, lines <-chan lineReadResult, echoOut io.Writer, echo func(string) string, prompts ...string) (string, error) {
 	if lines == nil && promptReader(ctx) == nil {
 		return "", &startPromptTermination{kind: startPromptFatal, cause: errors.New("start input is unavailable")}
 	}
 	if read := promptReader(ctx); read != nil {
-		line, overflow, err := readPromptLine(ctx, prompts...)
+		line, overflow, err := readPromptLineWithEcho(ctx, echo, prompts...)
 		if err == io.EOF {
 			return "", &startPromptTermination{kind: startPromptEOF, cause: err}
 		}
@@ -231,7 +245,13 @@ func readStartAnswer(ctx context.Context, lines <-chan lineReadResult, prompts .
 		if result.overflow {
 			return "", errStartPromptOverflow
 		}
-		return strings.TrimSuffix(result.line, "\r"), nil
+		line := strings.TrimSuffix(result.line, "\r")
+		if echo != nil && line != "" {
+			if writeErr := writeAnswerEchoFallback(echoOut, echo(line)); writeErr != nil {
+				return "", &startPromptTermination{kind: startPromptFatal, cause: writeErr}
+			}
+		}
+		return line, nil
 	}
 }
 
