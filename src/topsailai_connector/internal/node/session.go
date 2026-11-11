@@ -182,21 +182,21 @@ func (s *Session) handleFrame(frame protocol.Frame) (*protocol.Frame, bool, erro
 		// and the loop continues, because a peer that can still send an error is a
 		// peer that can still send a request.
 		s.logger.Warn("connector-node received an error frame",
-			"node_id", s.dispatcher.identity.ID,
+			"node_id", s.dispatcher.holder.Current().ID,
 			"request_id", frame.RequestID,
 		)
 		return nil, true, nil
 
 	case protocol.FrameHello, protocol.FrameHelloConfirm:
 		s.logger.Warn("connector-node received a handshake frame after the handshake",
-			"node_id", s.dispatcher.identity.ID,
+			"node_id", s.dispatcher.holder.Current().ID,
 			"frame_type", string(frame.Type),
 		)
 		return nil, false, nil
 
 	case protocol.FrameResponse:
 		s.logger.Warn("connector-node received a response frame from the server",
-			"node_id", s.dispatcher.identity.ID,
+			"node_id", s.dispatcher.holder.Current().ID,
 			"request_id", frame.RequestID,
 		)
 		return nil, false, nil
@@ -206,7 +206,7 @@ func (s *Session) handleFrame(frame protocol.Frame) (*protocol.Frame, bool, erro
 		// speaks a newer protocol learns that this Node did not understand it
 		// instead of waiting for an answer that will never come.
 		s.logger.Warn("connector-node received an unknown frame type",
-			"node_id", s.dispatcher.identity.ID,
+			"node_id", s.dispatcher.holder.Current().ID,
 			"frame_type", string(frame.Type),
 		)
 		return &protocol.Frame{
@@ -227,7 +227,7 @@ func (s *Session) handleRequest(frame protocol.Frame) *protocol.Frame {
 	request, err := decodeRequestPayload(frame.Payload)
 	if err != nil {
 		s.logger.Warn("connector-node refused a malformed request frame",
-			"node_id", s.dispatcher.identity.ID,
+			"node_id", s.dispatcher.holder.Current().ID,
 			"request_id", frame.RequestID,
 			"reason", err.Error(),
 		)

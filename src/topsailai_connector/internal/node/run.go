@@ -15,7 +15,7 @@ import (
 // is not a Node that serves a subset; it is a Node that must not start.
 type Runtime struct {
 	config    Config
-	identity  security.NodeIdentity
+	holder    *IdentityHolder
 	generated bool
 	authority *Authority
 	logger    *slog.Logger
@@ -60,7 +60,7 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 
 	return &Runtime{
 		config:    config,
-		identity:  identity,
+		holder:    NewIdentityHolder(identity),
 		generated: generated,
 		authority: authority,
 		logger:    logger,
@@ -73,7 +73,17 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 // moment it is created. Printing it on every start would put a credential into a
 // log on every start, which is the leak the design forbids.
 func (r *Runtime) NewIdentity() (security.NodeIdentity, bool) {
-	return r.identity, r.generated
+	return r.holder.Current(), r.generated
+}
+
+// IdentityHolder returns the holder the Node serves from.
+//
+// The process passes this one holder to both the dispatcher and the dialer, so a
+// regenerated pair is adopted by the component that announces the identity and by
+// the component that checks it at the same moment. Two holders would let the Node
+// announce one identity and check another.
+func (r *Runtime) IdentityHolder() *IdentityHolder {
+	return r.holder
 }
 
 // Close releases the runtime's resources. It is safe to call more than once.
@@ -87,7 +97,7 @@ func (r *Runtime) Close() error {
 // IdentityID returns the public half of the identity, which is the value that may
 // be logged, audited and routed on.
 func (r *Runtime) IdentityID() string {
-	return r.identity.ID
+	return r.holder.Current().ID
 }
 
 // Authority returns the Node's permission state.
@@ -112,7 +122,7 @@ func (r *Runtime) Report() {
 		scopes = append(scopes, string(name))
 	}
 	r.logger.Info("connector-node ready",
-		"node_id", r.identity.ID,
+		"node_id", r.holder.Current().ID,
 		"scopes", scopes,
 		"config", r.config.Redacted(),
 	)

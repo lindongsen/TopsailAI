@@ -35,7 +35,7 @@ import (
 // read from the Node's own disk at startup.
 type Dispatcher struct {
 	authority *Authority
-	identity  security.NodeIdentity
+	holder    *IdentityHolder
 	logger    *slog.Logger
 }
 
@@ -46,11 +46,27 @@ type Dispatcher struct {
 // authority is not substituted, because a dispatcher without a policy would have
 // to invent an answer and an invented answer is a policy nobody wrote. Dispatch
 // refuses such a dispatcher instead of trusting it.
+//
+// The identity is wrapped in a holder that nothing replaces, so this constructor
+// describes a Node whose pair cannot change while it runs. The process uses
+// NewDispatcherWithHolder instead, so a regenerated pair is compared against the
+// value the Node currently holds rather than the value it read at startup.
 func NewDispatcher(authority *Authority, identity security.NodeIdentity, logger *slog.Logger) *Dispatcher {
+	return NewDispatcherWithHolder(authority, NewIdentityHolder(identity), logger)
+}
+
+// NewDispatcherWithHolder builds a dispatcher that checks requests against
+// whatever identity the holder currently carries.
+//
+// The holder is shared with the dialer, so the identity the Node announced in
+// `hello` and the identity a request is compared against are the same value. Two
+// holders would let a regeneration be adopted by one and not the other, which
+// would leave the Node announcing one identity and checking another.
+func NewDispatcherWithHolder(authority *Authority, holder *IdentityHolder, logger *slog.Logger) *Dispatcher {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Dispatcher{authority: authority, identity: identity, logger: logger}
+	return &Dispatcher{authority: authority, holder: holder, logger: logger}
 }
 
 // Dispatch performs one request and returns the response a caller sees.
@@ -70,10 +86,17 @@ func (d *Dispatcher) Dispatch(request protocol.Request) protocol.Response {
 		return protocol.Failure(protocol.CodeInternal)
 	}
 
-	if request.NodeID != d.identity.ID {
+	// The identity is read once per request rather than captured at startup, so a
+	// pair regenerated while the Node is running is the pair a request is checked
+	// against. Reading it once here also means the identifier check and the token
+	// check use the same value: two reads could straddle a regeneration and
+	// compare the identifier of one pair with the token of another.
+	identity := d.holder.Current()
+
+	if request.NodeID != identity.ID {
 		return d.refuse(request, protocol.CodeDenied, "request is addressed to another node")
 	}
-	if !d.identity.Token.Equal(request.NodeToken) {
+	if !identity.Token.Equal(request.NodeToken) {
 		// The contract names this unauthenticated rather than denied: the caller
 		// did not prove it may talk to this Node at all, which is a different
 		// answer from "you may talk to this Node but not do that".
@@ -173,7 +196,7 @@ type listResult struct {
 // not to the caller.
 func (d *Dispatcher) refuse(request protocol.Request, code protocol.Code, format string, arguments ...any) protocol.Response {
 	d.logger.Warn("connector-node refused a request",
-		"node_id", d.identity.ID,
+		"node_id", d.holder.Current().ID,
 		"operation", string(request.Operation),
 		"scope", string(request.Scope),
 		"code", code.Name(),

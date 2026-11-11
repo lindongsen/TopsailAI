@@ -47,29 +47,73 @@ var ErrHandshakeRefused = errors.New("the server refused the handshake")
 // consults the Node's authority. The dialer never decides whether an operation is
 // allowed, because that decision belongs to the authority and nowhere else.
 type Dialer struct {
-	config     Config
-	identity   security.NodeIdentity
-	dispatcher *Dispatcher
-	logger     *slog.Logger
+	config       Config
+	holder       *IdentityHolder
+	identityPath string
+	dispatcher   *Dispatcher
+	logger       *slog.Logger
+
+	// identityChanges carries one signal per adopted identity change. It is
+	// created by Run and is nil for a dialer that is never run, which is what a
+	// test that drives a single connection wants: a nil channel never delivers,
+	// so no identity change can drop the connection under test.
+	identityChanges <-chan struct{}
 }
 
-// NewDialer builds a dialer.
+// NewDialer builds a dialer serving one fixed identity.
 //
 // A nil logger falls back to the default logger. A nil dispatcher is not
 // substituted, because a dialer that cannot dispatch would accept requests and
 // then have no answer, and the only safe invented answer is a refusal that the
 // caller cannot distinguish from a policy decision.
+//
+// The identity is wrapped in a holder that nothing replaces, so this constructor
+// describes a Node whose pair cannot change while it runs. The process uses
+// NewDialerWithHolder instead, because a Node that can be regenerated must adopt
+// the new pair rather than keep serving the old one.
 func NewDialer(config Config, identity security.NodeIdentity, dispatcher *Dispatcher, logger *slog.Logger) (*Dialer, error) {
+	return NewDialerWithHolder(config, NewIdentityHolder(identity), dispatcher, logger)
+}
+
+// NewDialerWithHolder builds a dialer that serves whatever identity the holder
+// currently carries.
+//
+// The holder is shared with the dispatcher, so the identity the dialer announces
+// in `hello` and the identity the dispatcher compares a request against are the
+// same value. Two separate holders would let a regeneration be adopted by one and
+// not the other, which would leave the Node announcing one identity and checking
+// another.
+//
+// identityPath is where the watcher looks for a regenerated pair. An empty path
+// disables watching, which is what a test that drives the dialer directly wants.
+func NewDialerWithHolder(config Config, holder *IdentityHolder, dispatcher *Dispatcher, logger *slog.Logger) (*Dialer, error) {
 	if dispatcher == nil {
 		return nil, fmt.Errorf("dispatcher is nil")
 	}
-	if err := security.ValidateNodeID(identity.ID); err != nil {
+	if holder == nil {
+		return nil, fmt.Errorf("identity holder is nil")
+	}
+	if err := security.ValidateNodeID(holder.Current().ID); err != nil {
 		return nil, fmt.Errorf("node identity is unusable: %w", err)
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Dialer{config: config, identity: identity, dispatcher: dispatcher, logger: logger}, nil
+	// An empty config directory means the caller has no identity file to watch.
+	// IdentityPath("") would return the relative name "identity", which would make
+	// the watcher poll whatever directory the process happens to run from, so the
+	// path is left empty instead.
+	identityPath := ""
+	if config.ConfigDir != "" {
+		identityPath = IdentityPath(config.ConfigDir)
+	}
+	return &Dialer{
+		config:       config,
+		holder:       holder,
+		identityPath: identityPath,
+		dispatcher:   dispatcher,
+		logger:       logger,
+	}, nil
 }
 
 // Run connects and serves until the context is cancelled.
@@ -83,10 +127,27 @@ func NewDialer(config Config, identity security.NodeIdentity, dispatcher *Dispat
 // handshake or during a session all return promptly, so a shutdown does not wait
 // for a reconnect delay to expire.
 func (d *Dialer) Run(ctx context.Context) error {
+	// The watcher is started here rather than in the constructor, because a
+	// dialer that is built and never run must not leave a goroutine polling a
+	// file. It stops with the context, so a shutdown leaves nothing behind.
+	changes := make(chan struct{}, 1)
+	go d.watchIdentity(ctx, changes)
+
+	// The channel is stored on the dialer so connectOnce keeps its single
+	// argument. A test that drives one connection directly leaves the field nil,
+	// and a nil channel blocks forever, which is the behaviour such a test wants:
+	// no identity change can arrive because no watcher is running.
+	d.identityChanges = changes
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
+
+		// A change that arrived while no channel was live must not drop the
+		// channel that is about to be established with the new identity: the
+		// reconnect below already dials with the pair the watcher adopted.
+		discardPendingIdentityChange(changes)
 
 		err := d.connectOnce(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -130,11 +191,33 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 	})
 	defer stopWatcher()
 
+	// A regenerated identity drops this channel, because the channel was
+	// authenticated with a credential that no longer exists. The connection is
+	// closed rather than the session being told to stop, because a blocked read
+	// only ends when the socket does.
+	changeCtx, stopChangeWatcher := identityChangeContext(ctx, d.identityChanges)
+	defer stopChangeWatcher()
+
+	// The identifier is captured before the handshake so the log names the pair
+	// this channel was authenticated with. Reading the holder inside the callback
+	// would report the newly adopted pair instead, which is the one the channel
+	// does not have.
+	authenticatedID := d.holder.Current().ID
+	stopIdentityWatcher := context.AfterFunc(changeCtx, func() {
+		d.logger.Info("identity changed; closing the channel authenticated with the retired pair",
+			"node_id", authenticatedID,
+		)
+		if err := conn.Close(); err != nil {
+			d.logger.Debug("closing the channel after an identity change reported an error", "error", err)
+		}
+	})
+	defer stopIdentityWatcher()
+
 	if err := d.handshake(conn); err != nil {
 		return err
 	}
 
-	d.logger.Info("channel established", "node_id", d.identity.ID, "server", d.config.ServerURL)
+	d.logger.Info("channel established", "node_id", authenticatedID, "server", d.config.ServerURL)
 
 	frames, err := NewSocketFrameConn(conn)
 	if err != nil {
@@ -146,6 +229,12 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 	if ctx.Err() != nil {
 		// The read failed because this side closed the connection to honour the
 		// cancellation, so the error describes the shutdown rather than a fault.
+		return nil
+	}
+	if changeCtx.Err() != nil {
+		// The read failed because the identity changed and this side closed the
+		// channel. The reconnect dials with the pair the watcher adopted, so this
+		// is a normal transition rather than a fault worth warning about.
 		return nil
 	}
 	return err
@@ -186,7 +275,7 @@ func (d *Dialer) dial(ctx context.Context) (*websocket.Conn, error) {
 func (d *Dialer) handshake(conn *websocket.Conn) error {
 	hello := protocol.Hello{
 		Version:     protocol.Version,
-		NodeID:      d.identity.ID,
+		NodeID:      d.holder.Current().ID,
 		TunnelToken: []byte(d.config.TunnelToken),
 		Operations:  d.advertisedOperations(),
 		Scopes:      d.advertisedScopes(),
@@ -231,7 +320,7 @@ func (d *Dialer) handshake(conn *websocket.Conn) error {
 		if confirm.Version != protocol.Version {
 			return fmt.Errorf("server speaks protocol %q, this node speaks %q", confirm.Version, protocol.Version)
 		}
-		d.logger.Info("handshake accepted", "node_id", d.identity.ID, "generation", confirm.Generation)
+		d.logger.Info("handshake accepted", "node_id", d.holder.Current().ID, "generation", confirm.Generation)
 	case protocol.FrameError:
 		var refusal protocol.Response
 		if err := json.Unmarshal(answer.Payload, &refusal); err != nil {
