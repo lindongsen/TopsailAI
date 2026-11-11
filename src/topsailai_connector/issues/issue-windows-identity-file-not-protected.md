@@ -97,3 +97,38 @@ Two things must not be lost while it is deferred:
 When this is picked up, the choice is between implementing the ACL and correcting
 the document to state the actual behaviour and its consequence. Correcting the
 document is the smaller change and is required either way.
+
+## Live confirmation on a real Windows host
+
+Measured on Windows Server 2022 (10.0.20348.587) with `connector-node.exe` built
+from `cmd/connector-node` at commit `b544bc19`. The identity file was created by
+the real code path, then its security descriptor was read with `Get-Acl`:
+
+```
+Path   : C:\connector\config\identity
+Owner  : BUILTIN\Administrators
+Group  : i-rxrgnhw9\None
+Access : NT AUTHORITY\SYSTEM Allow  FullControl
+         BUILTIN\Administrators Allow  FullControl
+         BUILTIN\Users Allow  ReadAndExecute, Synchronize
+Sddl   : O:BAG:S-1-5-21-...-513D:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)
+```
+
+`BUILTIN\Users Allow ReadAndExecute` is the finding: every local account can read
+the file that holds the `node-token`. The descriptor is the inherited default of
+the parent directory, which is what the code produces when it never sets one.
+
+The config directory shows the same shape, with `BUILTIN\Users` granted
+`ReadAndExecute`, `AppendData` and `CreateFiles`:
+
+```
+NT AUTHORITY\SYSTEM        FullControl
+BUILTIN\Administrators     FullControl
+BUILTIN\Users              ReadAndExecute, Synchronize
+BUILTIN\Users              AppendData
+BUILTIN\Users              CreateFiles
+CREATOR OWNER              268435456
+```
+
+This confirms the code-reading conclusion with a measurement rather than an
+inference: no ACL is set, and the effective protection is the inherited default.
