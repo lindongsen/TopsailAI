@@ -21,6 +21,6 @@ func (c *APIClient) GetModelCatalog(ctx context.Context, endpointID, resourceID,
 	if generation != "" {
 		path += "&provider_generation=" + url.QueryEscape(generation)
 	}
-	err := c.get(ctx, path, &result)
-	return result, err
+	err := c.get(c.withEndpointToken(ctx, endpointID), path, &result)
+	return result, c.explainRefusal(err, endpointID)
 }

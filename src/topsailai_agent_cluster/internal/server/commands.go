@@ -42,12 +42,18 @@ func (t ChannelTransport) Send(ctx context.Context, envelope protocol.TransportE
 	if t.Channel == nil {
 		return errors.New("channel server is unavailable")
 	}
+	// The Endpoint token travels with the command frame because the Endpoint is
+	// the only authority that decides whether this caller may exercise this
+	// operation. Without it every command would reach the Endpoint with no
+	// credential, and an Endpoint that enforces a policy would refuse a caller
+	// that had configured its token correctly.
 	return t.Channel.SendCommand(ctx, envelope.EndpointInstanceID, channel.Frame{
 		Type:            channel.FrameCommand,
 		ProtocolVersion: channel.ProtocolVersion,
 		FrameID:         envelope.FrameID,
 		RequestID:       envelope.RequestID,
 		Intent:          &envelope.Intent,
+		EndpointToken:   security.EndpointToken(ctx),
 	})
 }
 
