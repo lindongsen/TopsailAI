@@ -240,6 +240,14 @@ Action: add `apply_project_workspace()` / `restore_project_workspace()` in `scri
 
 Why this prevents recurrence: any module that reads an environment variable at import time freezes that value for the process lifetime, so mutating the variable later silently leaves the derived state stale. The fix must pair the assignment with an explicit refresh of the derived state, and the refresh must be conditional so repeated rounds do not rescan the skill folders. A test that only asserts the variable value passes while the agent still sees the old skill prompt, so the test must observe the derived state, not just the variable.
 
+## A default argument that reads the environment freezes the value at import time
+
+Trigger: `tools/cmd_tool.py::exec_cmd` declared `cwd:str=EnvReaderInstance.project_folder`. Python evaluates default arguments once, when the `def` statement executes, so the folder was captured during `import topsailai.tools.cmd_tool` and never refreshed. A probe that set `TOPSAILAI_PROJECT_WORKSPACE=/tmp` after import still ran the command in the import-time folder. The same expression also produced `''` when all three source variables were unset, because `EnvironmentReader.get()` returns the `default` (`None`) only for a missing key while `project_folder` chains three `or` reads that end in `''`; `subprocess.Popen(cwd='')` raises `FileNotFoundError: [Errno 2] No such file or directory: ''`, whereas `cwd=None` legitimately inherits the process working directory.
+
+Action: declare `cwd:str=None` and resolve inside the body with `if not cwd: cwd = EnvReaderInstance.project_folder or None`. The `or None` tail is required because the resolved folder can itself be empty. Cover the signature default, both empty spellings (`None` and `''`), the omitted argument, a post-import folder change, an empty resolved folder, and an explicit value that must win.
+
+Why this prevents recurrence: a default argument is evaluated at definition time, so any environment read placed there silently becomes a process-lifetime constant and no later configuration change can reach it. `if not cwd` alone is also insufficient when the fallback source can return `''`, because the guard re-assigns the same fatal empty string. The negative control matters here: reverting only the signature and the body guard made 4 of the 6 new tests fail, which proves they observe the resolution behavior rather than merely the parameter name.
+
 ## A bare `git commit` commits the whole index, so staged foreign work gets swept in
 
 Trigger: `git add <4 own paths>` followed by a bare `git commit -m "..."` produced commit `c8e93276` containing 6 unrelated `topsailai_connector` files that another agent had already staged. The intent was to commit only the 4 file-tool files, and `git add` did limit what was newly staged, but `git commit` without a pathspec commits every entry already in the index.
