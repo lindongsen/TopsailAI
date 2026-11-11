@@ -72,3 +72,32 @@ See `issues/done/issue-human-decision-input-source-detection-false-negative.md` 
 ### Known deviation
 
 None. `ask_decision` accepts `options` as a JSON-array string (`_resolve_options()` parses it at runtime), so the tool now fully follows this principle.
+
+## Tolerate Cosmetic Arguments on Reads, Reject Them on Destructive Writes
+
+LLM argument mistakes are routine, so tolerance is a design decision, not a defect. The correct amount of tolerance depends on what a wrong value can destroy.
+
+### Rule
+
+- **Read-only tools coerce.** A cosmetic argument mistake must still produce a useful result. `read_file_lines(path, 0)` reads from the first line instead of failing, because a non-positive `start_num` can only mean "start from the beginning".
+- **Destructive tools reject.** A write that can destroy data must fail loudly and let the LLM retry with a corrected argument. `overwrite_lines_in_file(path, 0, 0, content)` raises `Invalid start_num: 0. Must be >= 1.` and leaves the file untouched, because coercing `0` to `1` would silently rewrite the first line of a file the caller never intended to touch.
+- **Never trade a safety guard for consistency.** Read and write tools may legitimately disagree on the same argument value. Reading extra lines is harmless; deleting the file tail is not.
+
+### Why
+
+- A read that fails on a cosmetic mistake costs a full extra LLM round trip and often produces a worse answer than the tolerant path.
+- A write that silently coerces a wrong line number corrupts data with no error signal, and the caller cannot detect the damage afterwards.
+- The asymmetry is intentional and must be documented per tool, so a future reader does not "unify" the two behaviours and remove the guard.
+
+### Required practice
+
+- Coerce only when every possible interpretation of the wrong value leads to the same harmless outcome. `start_num <= 0` always means "the first line", so coercion is unambiguous.
+- Reject when a wrong value has a plausible destructive interpretation. `start_num = 0` on a write could mean "line 1" or "the whole file"; guessing is unacceptable.
+- State the tolerance explicitly in the function docstring and the module `PROMPT`, including which values are coerced and which are rejected.
+- Cover both directions with tests: a read test asserting the coerced result, and a write test asserting the rejection plus an unchanged file.
+
+### Reference implementation
+
+`tools/file_tool_utils/file_read_line.py` - `read_file_lines()` coerces a non-positive `start_num` to `1`.
+`tools/file_tool_utils/file_write_code_block.py` - `overwrite_code_block()` raises on `start_num < 1`.
+See `tools/file_tool.py` section "Line-range `end_num` Convention" for the per-tool argument table.
