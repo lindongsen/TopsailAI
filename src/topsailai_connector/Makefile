@@ -7,11 +7,30 @@
 
 SHELL := /bin/bash
 
-BIN_DIR := bin
-TMP_DIR := .tmp
+# BIN_DIR and TMP_DIR are overridable from the command line, so a release build
+# can write somewhere other than bin/ without editing this file:
+#
+#   make build BIN_DIR=/usr/local/bin
+#   make build BIN_DIR=/tmp/release
+#
+# `?=` rather than `:=` is what makes that work: a command-line assignment wins
+# over a `?=` default, and a plain `:=` would silently ignore it.
+BIN_DIR ?= bin
+TMP_DIR ?= .tmp
 
 SERVER_PKG := ./cmd/connector-server
 NODE_PKG := ./cmd/connector-node
+
+# Component package groups. A component-level test target runs only the packages
+# that belong to that component, so a change to the Node can be verified without
+# waiting for the Server suite and vice versa. The three groups are disjoint and
+# together cover every package under cmd/ and internal/, which is where all unit
+# tests live. The suites under tests/ are not in any group: they are tagged and
+# have their own targets (integration, bdd, e2e), so a component run never
+# silently skips them by pretending to include them.
+SERVER_PKGS := ./internal/server/... ./cmd/connector-server/...
+NODE_PKGS := ./internal/node/... ./cmd/connector-node/...
+SHARED_PKGS := ./internal/protocol/... ./internal/security/...
 
 COVERAGE_FILE := $(TMP_DIR)/coverage.out
 COVERAGE_HTML := $(TMP_DIR)/coverage.html
@@ -22,14 +41,19 @@ UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
 
-.PHONY: help build vet test test-unit coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile
+.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile
 
 help:
 	@echo "Targets:"
 	@echo "  build           Build connector-server and connector-node into $(BIN_DIR)/"
+	@echo "  build-server    Build only connector-server into $(BIN_DIR)/"
+	@echo "  build-node      Build only connector-node into $(BIN_DIR)/"
 	@echo "  vet             Run go vet on every package"
 	@echo "  test            Run the unit test suite"
 	@echo "  test-unit       Run the unit test suite"
+	@echo "  test-server     Run the unit tests of the Server component only"
+	@echo "  test-node       Run the unit tests of the Node component only"
+	@echo "  test-shared     Run the unit tests of the shared packages only"
 	@echo "  coverage        Run the unit suite and report per-package coverage"
 	@echo "  coverage-html   Write an HTML coverage report to $(COVERAGE_HTML)"
 	@echo "  integration     Build the binaries, then run the integration suite"
@@ -40,10 +64,20 @@ help:
 	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
 	@echo "  test-windows-compile  Compile the windows test binaries and run vet for windows"
 	@echo "  clean           Remove build and test artifacts"
+	@echo ""
+	@echo "Variables:"
+	@echo "  BIN_DIR         Where binaries are written. Default bin. Override with"
+	@echo "                  'make build BIN_DIR=/somewhere/else'"
+	@echo "  TMP_DIR         Where test artifacts are written. Default .tmp"
 
-build:
+build: build-server build-node
+
+build-server:
 	@mkdir -p $(BIN_DIR)
 	go build -o $(BIN_DIR)/connector-server $(SERVER_PKG)
+
+build-node:
+	@mkdir -p $(BIN_DIR)
 	go build -o $(BIN_DIR)/connector-node $(NODE_PKG)
 
 vet:
@@ -54,6 +88,23 @@ test: test-unit
 test-unit:
 	@mkdir -p $(TMP_DIR)
 	go test -count=1 -tags '$(UNIT_TAGS)' ./... 2>&1 | tee $(TMP_DIR)/unit-test.log
+
+# Component-level unit runs. Each one covers a disjoint package group, so a
+# failure names the component that broke instead of leaving the reader to work it
+# out from a package path. `make test` remains the full run and is what `check`
+# uses, because a component run alone would not notice a change that broke the
+# other side.
+test-server:
+	@mkdir -p $(TMP_DIR)
+	go test -count=1 -tags '$(UNIT_TAGS)' $(SERVER_PKGS) 2>&1 | tee $(TMP_DIR)/unit-test-server.log
+
+test-node:
+	@mkdir -p $(TMP_DIR)
+	go test -count=1 -tags '$(UNIT_TAGS)' $(NODE_PKGS) 2>&1 | tee $(TMP_DIR)/unit-test-node.log
+
+test-shared:
+	@mkdir -p $(TMP_DIR)
+	go test -count=1 -tags '$(UNIT_TAGS)' $(SHARED_PKGS) 2>&1 | tee $(TMP_DIR)/unit-test-shared.log
 
 # Coverage is reported per package rather than as one number, because a single
 # total hides the package that is actually untested. The profile is written to
