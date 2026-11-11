@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cucumber/godog"
+	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/tests/harness"
 )
 
@@ -90,7 +91,16 @@ func startModelClusterWithScopes(scopes []string) error {
 		Faults:       harness.FaultInjection{ProviderInvocationLog: modelInvocationLog},
 	}
 	if len(scopes) > 0 {
-		options.Environment = map[string]string{"AGENT_CLUSTER_AUTH_SCOPES": strings.Join(scopes, ",")}
+		// The restriction is written on the Endpoint, because the Endpoint is the
+		// only component that decides whether a caller may exercise an operation.
+		// The Server forwards every request and holds no authority to refuse one.
+		token := scopedTokenName(scopes)
+		policyDir, err := writeAccessPolicyDir(map[string][]string{token: scopes})
+		if err != nil {
+			return err
+		}
+		options.EndpointEnvironment = map[string]string{"AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR": policyDir}
+		options.CLIEnvironment = map[string]string{"AGENT_CLUSTER_ENDPOINT_TOKENS": scopedEndpointTokenMap(token)}
 	}
 	cluster, err := harness.StartCluster(activeTest, options)
 	if err != nil {
@@ -246,17 +256,17 @@ func assertProviderReceivedProfileName(expected, ordinal string) error {
 // assertModelSelectRefusedForScope proves a view-only credential can list the
 // catalog but cannot change the model.
 //
-// The refusal may arrive as a 403 from the Server or as a capability refusal
-// before submission, so both channels are accepted. What must not happen is a
-// select invocation reaching the provider, because that would mean the scope
-// check was bypassed.
+// The assertion is the Endpoint's own refusal code, because the Endpoint is the
+// component that decides. A Server-side status would only show that the request
+// was forwarded, and the Endpoint reports this refusal inside the durable receipt
+// rather than as a transport failure.
+//
+// What must not happen is a select invocation reaching the provider, because that
+// would mean the policy was bypassed.
 func assertModelSelectRefusedForScope() error {
 	text := interactiveOutput()
-	if !strings.Contains(text, "control") {
-		return fmt.Errorf("the refusal does not name the missing control permission: %s", text)
-	}
-	if !strings.Contains(text, "403") && !strings.Contains(text, "permission_denied") {
-		return fmt.Errorf("the refusal was not reported as a permission failure: %s", text)
+	if !strings.Contains(text, protocol.PolicyDenied) {
+		return fmt.Errorf("the refusal does not report the %q code: %s", protocol.PolicyDenied, text)
 	}
 	records, err := readModelInvocations()
 	if err != nil {

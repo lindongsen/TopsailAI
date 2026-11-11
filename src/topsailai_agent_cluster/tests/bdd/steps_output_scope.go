@@ -2,9 +2,13 @@ package bdd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cucumber/godog"
+	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	"topsailai_agent_cluster/tests/harness"
 )
@@ -28,10 +32,62 @@ func registerOutputScopeSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the output request returns provider output$`, assertOutputServed)
 }
 
-// startViewOnlyCluster starts a real cluster whose single credential holds only
-// the view scope. Narrowing the scope is the whole point: an empty scope set is
-// unrestricted, so a cluster started without this option would let the request
-// through and the scenario would pass while proving nothing.
+// scopedEndpointID is the Endpoint identity the harness registers, so a scenario
+// can name the same machine in the CLI token map and in the policy file.
+const scopedEndpointID = "endpoint-1"
+
+// scopedTokenName derives the token name from the granted scopes, so two
+// scenarios that grant different scopes never share a token and a leaked token
+// from one scenario cannot satisfy another.
+func scopedTokenName(scopes []string) string {
+	return "bdd-" + strings.Join(scopes, "-") + "-token"
+}
+
+// scopedEndpointTokenMap renders the CLI token map for the fixture Endpoint.
+func scopedEndpointTokenMap(token string) string {
+	return scopedEndpointID + "=" + token
+}
+
+// writeAccessPolicyDir writes one policy file per token into the scenario's
+// temporary directory and returns the directory path.
+//
+// The policy is a directory of files rather than one environment value because
+// that is the only shape the Endpoint reads: one file per caller token. Writing
+// the files is what makes the Endpoint restricted, so a scenario that forgot to
+// write them would run against a permissive Endpoint and prove nothing while
+// appearing to prove the configured restriction.
+func writeAccessPolicyDir(tokens map[string][]string) (string, error) {
+	if activeTest == nil {
+		return "", fmt.Errorf("active BDD test is not initialized")
+	}
+	dir := filepath.Join(activeTest.TempDir(), "endpoint-access.d")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create access policy directory: %w", err)
+	}
+	names := make([]string, 0, len(tokens))
+	for name := range tokens {
+		names = append(names, name)
+	}
+	// Sorted so a failing scenario reproduces the same directory every run.
+	sort.Strings(names)
+	for _, name := range names {
+		lines := []string{"token " + name}
+		if scopes := tokens[name]; len(scopes) > 0 {
+			lines = append(lines, "scopes "+strings.Join(scopes, " "))
+		}
+		path := filepath.Join(dir, name+".conf")
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			return "", fmt.Errorf("write access policy file %q: %w", path, err)
+		}
+	}
+	return dir, nil
+}
+
+// startViewOnlyCluster starts a real cluster whose Endpoint grants one token the
+// view scope only. Narrowing the grant is the whole point: an Endpoint with no
+// policy directory permits every caller, so a cluster started without the policy
+// would let the request through and the scenario would pass while proving
+// nothing.
 func startViewOnlyCluster() error {
 	return startScopedCluster([]string{security.ScopeView})
 }
@@ -43,7 +99,14 @@ func startReadOutputCluster() error {
 	return startScopedCluster([]string{security.ScopeReadOutput})
 }
 
-// startScopedCluster starts a real cluster with an explicitly narrowed scope set.
+// startScopedCluster starts a real cluster whose Endpoint holds one access
+// policy file granting exactly the given scopes to one token, and whose CLI
+// presents that token for the fixture Endpoint.
+//
+// The restriction is written on the Endpoint, not on the Server, because the
+// Endpoint is the only component that decides whether a caller may exercise an
+// operation. A scenario that narrowed the Server instead would prove nothing:
+// the Server forwards every request and holds no authority to refuse one.
 func startScopedCluster(scopes []string) error {
 	if activeTest == nil {
 		return fmt.Errorf("active BDD test is not initialized")
@@ -51,8 +114,14 @@ func startScopedCluster(scopes []string) error {
 	if activeScenario.world == nil {
 		activeScenario.world = &World{}
 	}
+	token := scopedTokenName(scopes)
+	policyDir, err := writeAccessPolicyDir(map[string][]string{token: scopes})
+	if err != nil {
+		return err
+	}
 	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{
-		Environment: map[string]string{"AGENT_CLUSTER_AUTH_SCOPES": strings.Join(scopes, ",")},
+		EndpointEnvironment: map[string]string{"AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR": policyDir},
+		CLIEnvironment:      map[string]string{"AGENT_CLUSTER_ENDPOINT_TOKENS": scopedEndpointTokenMap(token)},
 	})
 	if err != nil {
 		return err
@@ -134,20 +203,19 @@ func assertFollowRefusedForScope() error {
 
 // assertRefusedForScope checks the refusal evidence shared by both surfaces.
 //
-// The assertion names the missing scope, because a generic failure could come
-// from an unrelated defect and would let a broken cluster look like a working
-// authorization check. It also rejects any provider output in the response, so a
-// refusal that leaked data before failing cannot pass.
+// The assertion is the Endpoint's own refusal code, not an HTTP status. A
+// snapshot refusal arrives as 403, but a follow refusal arrives as a terminal
+// record inside a 200 stream, because the stream had already started before the
+// Endpoint could answer. Asserting the code is therefore the only statement that
+// holds for both surfaces, and it is also the statement that matters: the code is
+// what tells the operator the Endpoint refused rather than failed.
+//
+// The assertion also rejects any provider output in the response, so a refusal
+// that leaked data before failing cannot pass.
 func assertRefusedForScope(surface string) error {
 	text := string(activeScenario.lastBody)
-	if activeScenario.lastStatus == 0 {
-		return fmt.Errorf("the %s request succeeded with a credential that lacks read_output: %s", surface, text)
-	}
-	if !strings.Contains(text, security.ScopeReadOutput) {
-		return fmt.Errorf("the %s refusal does not name the missing %q permission: %s", surface, security.ScopeReadOutput, text)
-	}
-	if !strings.Contains(text, "403") {
-		return fmt.Errorf("the %s refusal does not report the forbidden status: %s", surface, text)
+	if !strings.Contains(text, protocol.PolicyDenied) {
+		return fmt.Errorf("the %s refusal does not report the %q code: exit=%d output=%s", surface, protocol.PolicyDenied, activeScenario.lastStatus, text)
 	}
 	if strings.Contains(text, "provider output marker") {
 		return fmt.Errorf("the %s refusal leaked provider output: %s", surface, text)
