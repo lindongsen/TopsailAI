@@ -183,6 +183,12 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 		return nil, errors.ErrMissingDescription
 	}
 
+	namespaceLock, err := local.AcquireNamespaceLock(m.metaRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseNamespaceLock(namespaceLock)
+
 	id := models.ObjectID(name)
 	// The local adapter uses the object name as its stable ID. Reject creation
 	// if an active, creating, or deleted object already uses this ID. A ceased
@@ -207,6 +213,9 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 	}
 
 	objectDir := filepath.Join(m.metaRoot, objectPath)
+	if err := local.CheckNamespaceDestination(m.metaRoot, objectDir); err != nil {
+		return nil, err
+	}
 	obj := &models.Object{
 		ID:            id,
 		Name:          name,
@@ -534,6 +543,12 @@ func (m *Manager) DeleteObject(ctx context.Context, id models.ObjectID) error {
 // prefix is stripped so users may pass either a classify path or a full path.
 // If the trailing segment equals the object name, it is also stripped.
 func (m *Manager) MoveObject(ctx context.Context, id models.ObjectID, classify []string) error {
+	namespaceLock, err := local.AcquireNamespaceLock(m.metaRoot)
+	if err != nil {
+		return err
+	}
+	defer releaseNamespaceLock(namespaceLock)
+
 	obj, err := m.requireActive(ctx, id)
 	if err != nil {
 		return err
@@ -560,6 +575,10 @@ func (m *Manager) MoveObject(ctx context.Context, id models.ObjectID, classify [
 		return fmt.Errorf("acquire write lock: %w", err)
 	}
 	defer lock.Release()
+
+	if err := local.CheckNamespaceDestination(m.metaRoot, newRef); err != nil {
+		return err
+	}
 
 	// Ensure destination parent directories exist before moving.
 	if err := os.MkdirAll(filepath.Dir(newRef), 0o755); err != nil {
