@@ -44,6 +44,10 @@ func runInteractiveWatch() error {
 // assertWatchArmed proves the loop started instead of being rejected. A rejection
 // here is the exact defect this scenario exists to catch: the command is
 // implemented but unreachable because the binary never wires the tick reader.
+//
+// It also proves the marker owns its own row. The table always starts with a
+// full-width rule, so an unterminated marker renders as
+// "workspace.watching> ────────..." and the operator reads the two as one line.
 func assertWatchArmed() error {
 	text := stripFollowSGR(interactiveOutput())
 	if strings.Contains(text, "auto-refresh requires a terminal") {
@@ -55,7 +59,41 @@ func assertWatchArmed() error {
 	if !strings.Contains(text, "workspace.watching> ") {
 		return fmt.Errorf("watch refresh did not show the active scope marker: %s", text)
 	}
+	if err := assertMarkerRowTerminated(text); err != nil {
+		return err
+	}
 	return nil
+}
+
+// assertMarkerRowTerminated proves every rendered marker is followed by a line
+// terminator rather than by table content, so the marker and the table's leading
+// rule never share a row.
+func assertMarkerRowTerminated(text string) error {
+	const marker = "workspace.watching> "
+	rest := text
+	for {
+		index := strings.Index(rest, marker)
+		if index < 0 {
+			return nil
+		}
+		after := rest[index+len(marker):]
+		if after == "" {
+			return fmt.Errorf("watch marker was not followed by a line terminator: %s", text)
+		}
+		if after[0] != '\r' && after[0] != '\n' {
+			return fmt.Errorf("watch marker shares its row with the table: %q", firstLine(after))
+		}
+		rest = after
+	}
+}
+
+// firstLine returns the remainder of one row, so a failure message shows the
+// exact text that was appended to the marker.
+func firstLine(text string) string {
+	if index := strings.IndexAny(text, "\r\n"); index >= 0 {
+		return text[:index]
+	}
+	return text
 }
 
 // assertWatchStopped proves the first keypress ended the loop.
