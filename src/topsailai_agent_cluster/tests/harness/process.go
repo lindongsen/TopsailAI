@@ -29,6 +29,11 @@ type Cluster struct {
 	Record, Record2             string
 	EndpointPath                string
 	EndpointEnv                 []string
+	// CLIEnv holds extra environment entries for every CLI process the harness
+	// starts. It is the client-side configuration seam: the Endpoint token map
+	// lives here because it is the CLI's own configuration, and the Server must
+	// never hold it.
+	CLIEnv []string
 	Certs                       CertFiles
 	TUIPath                     string
 	tuiBuildMu                  sync.Mutex

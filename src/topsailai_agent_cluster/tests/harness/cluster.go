@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,9 +20,22 @@ import (
 
 // ClusterOptions controls the real Server, Endpoint, and fixture process wiring.
 type ClusterOptions struct {
+	// Environment is applied to the Server process only. The Endpoint is a
+	// separate process with its own configuration, so a value that must reach
+	// the Endpoint belongs in EndpointEnvironment instead; setting it here would
+	// be silently ignored and a scenario would assert against the default while
+	// appearing to prove the configured value.
 	Environment map[string]string
-	DelayMS     int
-	Faults      FaultInjection
+	// EndpointEnvironment is applied to the Endpoint process, which is where
+	// Endpoint-local configuration such as the access policy directory lives.
+	EndpointEnvironment map[string]string
+	// CLIEnvironment is applied to every CLI process the harness starts, so a
+	// scenario can configure the client side of a contract. The Endpoint token
+	// map belongs here: it is the CLI's own configuration, and the Server must
+	// never hold it.
+	CLIEnvironment map[string]string
+	DelayMS        int
+	Faults         FaultInjection
 	// ChannelDirection selects which side dials. An empty value keeps the
 	// default endpoint-initiated direction, so existing scenarios are unchanged.
 	ChannelDirection string
@@ -155,9 +169,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		serverEnv = append(serverEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
 	}
 	serverEnv = appendFaultEnvironment(serverEnv, options.Faults)
-	for key, value := range options.Environment {
-		serverEnv = append(serverEnv, key+"="+value)
-	}
+	serverEnv = append(serverEnv, sortedEnvironment(options.Environment)...)
 	cluster.Server, err = StartProcessE(serverBin, serverEnv)
 	if err != nil {
 		return nil, err
@@ -243,8 +255,10 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
 	}
 	endpointEnv = appendFaultEnvironment(endpointEnv, options.Faults)
+	endpointEnv = append(endpointEnv, sortedEnvironment(options.EndpointEnvironment)...)
 	cluster.EndpointPath = endpointBin
 	cluster.EndpointEnv = append([]string(nil), endpointEnv...)
+	cluster.CLIEnv = sortedEnvironment(options.CLIEnvironment)
 	cluster.Endpoint, err = StartProcessE(endpointBin, endpointEnv)
 	if err != nil {
 		return nil, err
@@ -253,6 +267,28 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		return nil, err
 	}
 	return cluster, nil
+}
+
+// sortedEnvironment renders a configuration map as environment entries in a
+// stable order.
+//
+// The order is sorted rather than map order so a failing scenario reproduces the
+// same command line every run; an unstable order makes a diff of two runs look
+// like a configuration change.
+func sortedEnvironment(values map[string]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	entries := make([]string, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, key+"="+values[key])
+	}
+	return entries
 }
 
 // inventoryAdapterID returns the adapter ID the inventory wait should expect.
@@ -511,13 +547,7 @@ func (c *Cluster) RunTUI(args ...string) (stdout string, stderr string, exitCode
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.TUIPath, args...)
 	cmd.Dir = ModuleRootForRun()
-	cmd.Env = append(os.Environ(),
-		"AGENT_CLUSTER_SERVER_URL="+c.URL(""),
-		"AGENT_CLUSTER_TOKEN=secret",
-		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
-		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
-		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
-	)
+	cmd.Env = c.cliEnvironment()
 	var out, stderrBuffer bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderrBuffer
@@ -574,14 +604,7 @@ func (c *Cluster) runTUIInteractiveWithReader(stdin io.Reader, termType string, 
 	}
 	cmd := exec.CommandContext(ctx, "script", "-qec", command, "/dev/null")
 	cmd.Dir = ModuleRootForRun()
-	cmd.Env = append(os.Environ(),
-		"AGENT_CLUSTER_SERVER_URL="+c.URL(""),
-		"AGENT_CLUSTER_TOKEN=secret",
-		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
-		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
-		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
-		"TERM="+termType,
-	)
+	cmd.Env = append(c.cliEnvironment(), "TERM="+termType)
 	cmd.Stdin = stdin
 	var out, stderrBuffer bytes.Buffer
 	cmd.Stdout = &out
@@ -599,6 +622,22 @@ func (c *Cluster) runTUIInteractiveWithReader(stdin io.Reader, termType string, 
 		}
 	}
 	return out.String(), stderrBuffer.String(), exitCode, runErr
+}
+
+// cliEnvironment returns the environment for one CLI process: the connection
+// settings every scenario needs, plus the scenario's own client configuration.
+//
+// The client configuration is appended last so a scenario can override a default
+// rather than being silently shadowed by it.
+func (c *Cluster) cliEnvironment() []string {
+	env := append(os.Environ(),
+		"AGENT_CLUSTER_SERVER_URL="+c.URL(""),
+		"AGENT_CLUSTER_TOKEN=secret",
+		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
+		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
+		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
+	)
+	return append(env, c.CLIEnv...)
 }
 
 // ModuleRootForRun returns the repository root from the harness package working directory.
