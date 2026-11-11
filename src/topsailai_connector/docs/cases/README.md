@@ -17,7 +17,7 @@ one boundary, so a reviewer touching that boundary reads one file.
 | `TestCase_secret-gates.md` | The three secrets and what each one gates | `TC-SEC-` | 28 |
 | `TestCase_node-id-pair.md` | The `node-id.node-token` pair: format, parsing, regeneration | `TC-PAIR-` | 30 |
 | `TestCase_node-authority.md` | The Node as the only authority: scope and permission control | `TC-NODE-` | 52 |
-| `TestCase_operations.md` | `file.list`, `file.stat`, `file.read` semantics | `TC-OP-` | 46 |
+| `TestCase_operations.md` | `file.list`, `file.stat`, `file.read` semantics, depth and path length | `TC-OP-` | 56 |
 | `TestCase_policy-and-scope.md` | Policy file validation and scope mapping | `TC-POL-` | 53 |
 | `TestCase_cli-and-routing.md` | CLI surface, routing, `node-id` agreement | `TC-CLI-` | 38 |
 | `AdversarialCase_path-fence.md` | Attempts to read outside a scope | `AC-PATH-` | 63 |
@@ -25,7 +25,7 @@ one boundary, so a reviewer touching that boundary reads one file.
 | `AdversarialCase_secrets.md` | Attempts to defeat or extract a secret | `AC-SEC-` | 44 |
 | `AdversarialCase_windows-paths.md` | Windows-specific name hazards | `AC-WIN-` | 44 |
 
-463 cases in total. The adversarial files are the larger half on purpose: a
+473 cases in total. The adversarial files are the larger half on purpose: a
 read-only system has one real boundary, so that boundary gets the most cases.
 
 The Node-authority pair is the second-largest group, because the authority is the

@@ -49,11 +49,22 @@ class TestToolRegistration:
         assert getattr(self_tool, "FLAG_TOOL_ENABLED", True) is not False
 
     def test_prompt_documents_the_tool(self):
-        """Test that the module prompt names the tool and its return statuses."""
+        """Test that the module prompt names the tool it routes to."""
         assert "self_tool" in self_tool.PROMPT
         assert "get_self_info" in self_tool.PROMPT
+
+    def test_prompt_points_at_history_recoverable_from_files(self):
+        """Test that PROMPT tells the agent history is recoverable from files."""
+        assert "past messages" in self_tool.PROMPT
+        assert "recorded events" in self_tool.PROMPT
+        assert "file_tool" in self_tool.PROMPT
+
+    def test_prompt_does_not_restate_the_docstring(self):
+        """Test that statuses and field names stay in the docstring only."""
         for status in ("ok", "not_found", "invalid_meta"):
-            assert status in self_tool.PROMPT
+            assert status not in self_tool.PROMPT
+        assert "meta_file" not in self_tool.PROMPT
+        assert "session metadata file" not in self_tool.PROMPT
 
     def test_prompt_stays_concise(self):
         """Test that the rejected verbose sections do not come back."""

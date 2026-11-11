@@ -292,7 +292,22 @@ def ask_decision(
         default: Fallback answer used on timeout/no-input/cancellation.
 
     Returns:
-        dict: status (answered|timeout|cancelled|unavailable|invalid_request), answer, option_index, elapsed, asked_at.
+        dict: Always a dictionary, never an exception. Keys are ``status``,
+        ``answer``, ``option_index``, ``elapsed``, and ``asked_at``; an invalid
+        request also carries ``reason``.
+
+    Status values:
+        ``answered``: The user replied; ``answer`` holds the reply and
+        ``option_index`` is the matched option index or ``-1``.
+        ``timeout``: No reply within the allowed window; ``answer`` holds
+        ``default``.
+        ``cancelled``: The user aborted with Ctrl+C, EOF, or ``/cancel``;
+        ``answer`` holds ``default``.
+        ``unavailable``: No usable input channel, or a nested sub-agent cannot
+        prompt; ``answer`` holds ``default``.
+        ``invalid_request``: An argument is invalid; ``answer`` holds
+        ``default`` and ``reason`` names the invalid argument. Correct the
+        arguments before retrying.
     """
     start = time.time()
     asked_at = datetime.fromtimestamp(start).isoformat(timespec="seconds")
@@ -390,41 +405,6 @@ structured human decision to continue. Typical situations:
 - Missing authorization for a risky operation.
 - Multiple mutually-exclusive branches where only one can proceed.
 - Confirmation required before committing a destructive action.
-
-### Usage Guidelines
-
-- Provide a clear, concise `question` describing exactly what blocks progress.
-- Use `options` to present discrete choices whenever possible. The user can
-  select by index number, matching text, or provide a custom free-text answer.
-- Custom free-text answers are always accepted.
-- Enter `/cancel` to cancel and use the configured `default` fallback.
-- Pass `default` as a safe fallback when the user does not respond or cancels.
-- Set `timeout_seconds` to integer seconds when the task cannot afford to block
-  indefinitely; a value less than or equal to zero waits indefinitely.
-
-### Return Value
-
-The tool ALWAYS returns a structured dictionary (never raises):
-
-```json
-{
-  "status": "answered|timeout|cancelled|unavailable|invalid_request",
-  "answer": "string or null",
-  "option_index": -1,
-  "elapsed": 1,
-  "asked_at": "2026-08-14T16:52:00"
-}
-```
-
-Interpretation:
-
-- `answered`: User provided a response (`answer` holds it).
-- `timeout`: No response within the allowed window; `answer` holds `default`.
-- `cancelled`: User aborted (Ctrl+C/EOF/`/cancel`); `answer` holds `default`.
-- `unavailable`: No usable input channel, or a nested sub-agent cannot prompt;
-  `answer` holds `default`.
-- `invalid_request`: An argument is invalid; `answer` holds `default` and
-  `reason` identifies the invalid argument. Correct the arguments before retrying.
 """
 
 TOOLS = dict(
