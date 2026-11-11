@@ -68,7 +68,7 @@ func driveDetailLines(drive *protocol.DriveSummary) []detailLine {
 	lines := []detailLine{
 		{"drive_state", drive.State},
 		{"drive_verified", fmt.Sprint(drive.Verified)},
-		{"drive_observed_at_ms", fmt.Sprint(drive.ObservedAtMS)},
+		{"drive_observed_at", formatDateTime(drive.ObservedAtMS, nil)},
 	}
 	if drive.Reason != "" {
 		lines = append(lines, detailLine{"drive_reason", drive.Reason})

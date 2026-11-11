@@ -43,8 +43,9 @@ BLOCKED for the live CLI path, with the reason below, and replaced by automated 
   envelope classes — body present, empty array, Chinese text, truncated, scan limit, flat legacy
   shape, missing `lines`, `null` lines, `ok:false` with `error_code`, wrong `error_code` type,
   malformed JSON, and a failed subprocess.
-- The live normal path was verified separately: `logs` returned `observed_at_ms: 1793859570861`,
-  `truncated: true`, and a body containing `LIVE_TMUX_ERR08_READY` in 2.574 s.
+- The live normal path was verified separately: `logs` returned `observed_at_ms: 1793859570861`
+  (recorded before the readable-time change; the label is now `observed_at` with a date and clock
+  time), `truncated: true`, and a body containing `LIVE_TMUX_ERR08_READY` in 2.574 s.
 
 BLOCKED is not PASS. Both facts must stay visible.
 

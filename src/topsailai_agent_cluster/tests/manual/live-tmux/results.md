@@ -50,13 +50,13 @@ Run against revision `f7257e00`; evidence under `.tmp/live-tmux-audit/e5/evidenc
 | ERG-01 `cd 1` | PASS | prompt `session[ai-dev/20261027152208]>`, 0.128s |
 | ERG-02 `cd ..` | PASS | prompt `endpoint[ai-dev/live-tmux-endpoint]>` |
 | ERG-03 `list` | PASS | five numbered rows, `DATA_STATUS ok` |
-| ERG-04 `logs 1` | PASS | `observed_at_ms: 1793885072943`, `truncated: true`, genuine stdout body |
+| ERG-04 `logs 1` | PASS | `observed_at_ms: 1793885072943` (recorded before the readable-time change; the label is now `observed_at` with a date and clock time), `truncated: true`, genuine stdout body |
 | ERG-05 `show 1` | PASS | `session: res_8b4fcbe92110e131e21549aa1fedccc0 ... generation=473390102 state=running` |
 | ERG-06 `logs 9` | PASS | `error: row 9 is out of range; valid rows are 1-5`, rejected locally |
 | ERG-07 `status` with no prior command | PASS | `error: no command has been submitted in this CLI yet; run an action such as start, then run status without an argument` |
 | ERG-08 `start` in workspace | PASS | numbered endpoint list plus `Choose an endpoint number or enter an endpoint ID; empty/cancel cancels.`; a bare `1` advanced to `start.folder>` |
 | E6-01 `show <provider-session-id>` | PASS | `session: res_d65da5099709a45885a0e5cf76bb5cad ... generation=473390102 state=running`, `capabilities: 8` |
-| E6-02 `logs <provider-session-id>` in session scope | PASS | `observed_at_ms: 1793887855005`, `truncated: true`, genuine stdout body |
+| E6-02 `logs <provider-session-id>` in session scope | PASS | `observed_at_ms: 1793887855005` (recorded before the readable-time change; the label is now `observed_at` with a date and clock time), `truncated: true`, genuine stdout body |
 | E6-03 `show wa-5dcbd9b23d57` | PASS | `session: res_0d661da703fc8449bd250e2326ebd4ee ... generation=483566876 state=running` |
 | E6-04 `show 77` | PASS | `error: row 77 is out of range; valid rows are 1-4` |
 | E6-05 `cd 1` after the E6 fix | PASS | prompt `session[ai-dev/20261027152208]>` |

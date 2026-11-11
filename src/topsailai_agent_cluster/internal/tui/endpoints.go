@@ -121,16 +121,13 @@ func orDash(value string) string {
 	return value
 }
 
-// formatObservedAt renders the last observation time, or "-" when the endpoint
-// has never reported one.
+// formatObservedAt renders the last observation time as a clock time, or "-" when
+// the endpoint has never reported one.
+//
+// The layout comes from formatClockTime, so the endpoint table and the session
+// table cannot disagree about how a table cell renders a time.
 func formatObservedAt(value int64, location *time.Location) string {
-	if value <= 0 {
-		return "-"
-	}
-	if location == nil {
-		location = time.Local
-	}
-	return time.UnixMilli(value).In(location).Format("15:04:05")
+	return formatClockTime(value, location)
 }
 
 // connectionStateStyle is the single connection-state-to-colour mapping shared by

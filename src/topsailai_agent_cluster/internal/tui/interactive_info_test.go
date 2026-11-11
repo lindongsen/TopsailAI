@@ -247,12 +247,12 @@ func TestInfoRendersDriveDetail(t *testing.T) {
 		"drive_verified: true",
 		"controller_pid: 4321",
 		"drive_run_id: run-abc",
-		"drive_observed_at_ms: 1700000000000",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("missing %q in info output: %q", want, rendered)
 		}
 	}
+	assertRenderedInstant(t, rendered, "drive_observed_at", 1700000000000)
 }
 
 // TestInfoReportsAbsentDriveAsNotReported proves an unreported controller is

@@ -66,10 +66,11 @@ func TestRenderFunctionsProduceStableEvidence(t *testing.T) {
 		t.Fatalf("json=%q err=%v", jsonOut.String(), err)
 	}
 	var rowsOut bytes.Buffer
-	RenderRows(&rowsOut, []SessionRow{{EndpointID: "e1", State: "idle", Stale: true, LastSuccessAtMS: ptr(3)}})
-	if !strings.Contains(rowsOut.String(), "stale") || !strings.Contains(rowsOut.String(), "last_success_at_ms=3") {
+	RenderRows(&rowsOut, []SessionRow{{EndpointID: "e1", State: "idle", Stale: true, LastSuccessAtMS: ptr(1700000000000)}})
+	if !strings.Contains(rowsOut.String(), "stale") {
 		t.Fatalf("rows=%q", rowsOut.String())
 	}
+	assertRenderedInstant(t, rowsOut.String(), "last_success_at", 1700000000000)
 	var detailOut bytes.Buffer
 	RenderDetail(&detailOut, Detail{Endpoint: protocol.Endpoint{EndpointID: "e1"}, Inventory: protocol.InventoryReport{}, CommandHistory: nil})
 	if !strings.Contains(detailOut.String(), "no commands") {
