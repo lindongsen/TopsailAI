@@ -585,8 +585,300 @@ run_obj_16() {
     end_case
 }
 
+run_obj_17() {
+    begin_case OBJ-17 P1 I
+    local root="${ML_STORES}/OBJ-17/store"
+    local out="${ML_CASE_DIR}/OBJ-17"
+    local n
+    for n in p1 p2 p3; do
+        ml_make_markdown "${ML_FIXTURES}/obj17/${n}.md" "obj17 ${n}" "# ${n}"
+        ml_run_ok "${root}" "${out}-create-${n}" create "${n}" --from "${ML_FIXTURES}/obj17/${n}.md"
+        sleep 1.1
+    done
+
+    # Ordering is by the time prefix only. Objects created in the same minute
+    # share a prefix, so asc and desc agree on that tie; the order must still be
+    # stable across repeated runs.
+    ml_run_ok "${root}" "${out}-desc" list --format json
+    ml_run_ok "${root}" "${out}-asc" list --sort time:asc --format json
+    local desc asc
+    desc=$(jq -r '[.[].id]|join(",")' "${out}-desc.stdout")
+    asc=$(jq -r '[.[].id]|join(",")' "${out}-asc.stdout")
+    # Repeat the same query to prove the order is deterministic, not incidental.
+    ml_run_ok "${root}" "${out}-desc2" list --format json
+    ml_run_ok "${root}" "${out}-asc2" list --sort time:asc --format json
+    ml_expect "descending order is deterministic" "${desc}" \
+        "$(jq -r '[.[].id]|join(",")' "${out}-desc2.stdout")"
+    ml_expect "ascending order is deterministic" "${asc}" \
+        "$(jq -r '[.[].id]|join(",")' "${out}-asc2.stdout")"
+    # All three objects share one time prefix, so the tie makes asc equal desc.
+    ml_expect "same-prefix tie makes asc equal desc" "${desc}" "${asc}"
+    ml_expect "all three objects are listed" "3" "$(jq 'length' "${out}-desc.stdout")"
+
+    # Pagination windows must not lose or duplicate entries.
+    ml_run_ok "${root}" "${out}-page0" list --offset 0 --limit 1 --format json
+    ml_run_ok "${root}" "${out}-page1" list --offset 1 --limit 1 --format json
+    ml_run_ok "${root}" "${out}-page2" list --offset 2 --limit 1 --format json
+    local p0 p1 p2
+    p0=$(jq -r '.[0].id' "${out}-page0.stdout")
+    p1=$(jq -r '.[0].id' "${out}-page1.stdout")
+    p2=$(jq -r '.[0].id' "${out}-page2.stdout")
+    ml_expect "pages cover the full list" "${desc}" "${p0},${p1},${p2}"
+    ml_expect "each page holds one entry" "1" "$(jq 'length' "${out}-page1.stdout")"
+
+    # A limit of zero means no limit, as observed; an offset past the end is empty.
+    ml_run_ok "${root}" "${out}-limit0" list --limit 0 --format json
+    ml_expect "limit zero returns every object" "3" "$(jq 'length' "${out}-limit0.stdout")"
+    ml_run_ok "${root}" "${out}-beyond" list --offset 99 --format json
+    ml_expect "offset past the end is empty" "[]" "$(tr -d '[:space:]' < "${out}-beyond.stdout")"
+    end_case
+}
+
+run_obj_18() {
+    begin_case OBJ-18 P1 I
+    local root="${ML_STORES}/OBJ-18/store"
+    local out="${ML_CASE_DIR}/OBJ-18"
+    ml_make_markdown "${ML_FIXTURES}/obj18/name.md" "obj18 name" "# name match"
+    ml_make_markdown "${ML_FIXTURES}/obj18/tag.md" "obj18 tag" "# tag match"
+    ml_make_markdown "${ML_FIXTURES}/obj18/cls.md" "obj18 classify" "# classify match"
+    ml_make_markdown "${ML_FIXTURES}/obj18/body.md" "obj18 body" "# uniquebodytoken"
+
+    ml_run_ok "${root}" "${out}-c1" create findbyname --from "${ML_FIXTURES}/obj18/name.md"
+    ml_run_ok "${root}" "${out}-c2" create tagged --tag findbytag --from "${ML_FIXTURES}/obj18/tag.md"
+    ml_run_ok "${root}" "${out}-c3" create classified --classify findbyclass \
+        --from "${ML_FIXTURES}/obj18/cls.md"
+    ml_run_ok "${root}" "${out}-c4" create bodyonly --from "${ML_FIXTURES}/obj18/body.md"
+
+    # Name, tag and classify are searched case-insensitively.
+    ml_run_ok "${root}" "${out}-name" search FINDBYNAME --format json
+    ml_expect "name match is case-insensitive" "findbyname" "$(jq -r '.[].id' "${out}-name.stdout")"
+    ml_run_ok "${root}" "${out}-tag" search FINDBYTAG --format json
+    ml_expect "tag match is case-insensitive" "tagged" "$(jq -r '.[].id' "${out}-tag.stdout")"
+    ml_run_ok "${root}" "${out}-cls" search FINDBYCLASS --format json
+    ml_expect "classify match is case-insensitive" "classified" "$(jq -r '.[].id' "${out}-cls.stdout")"
+
+    # Internal file bodies are not indexed.
+    ml_run_ok "${root}" "${out}-body" search uniquebodytoken --format json
+    ml_expect "file bodies are not indexed" "[]" "$(tr -d '[:space:]' < "${out}-body.stdout")"
+
+    # OR union is deduplicated.
+    ml_run_ok "${root}" "${out}-or" search 'findbyname|findbytag' --format json
+    ml_expect "OR union returns both objects" "2" "$(jq 'length' "${out}-or.stdout")"
+    ml_expect "OR union is deduplicated" "2" "$(jq '[.[].id]|unique|length' "${out}-or.stdout")"
+    end_case
+}
+
+run_obj_19() {
+    begin_case OBJ-19 P1 I
+    local root="${ML_STORES}/OBJ-19/store"
+    local out="${ML_CASE_DIR}/OBJ-19"
+    ml_make_markdown "${ML_FIXTURES}/obj19/note.md" "obj19" "# obj19"
+    ml_run_ok "${root}" "${out}-create" create obj19 --from "${ML_FIXTURES}/obj19/note.md"
+    local before
+    before=$(json_count "${root}")
+
+    ml_run_fail "${root}" "${out}-space" search 'a b'
+    ml_expect_contains "spaces are rejected" "${out}-space.stderr" "cannot contain spaces or tabs"
+    ml_run_fail "${root}" "${out}-tab" search "$(printf 'a\tb')"
+    ml_expect_contains "tabs are rejected" "${out}-tab.stderr" "cannot contain spaces or tabs"
+    ml_run_fail "${root}" "${out}-backslash" search 'a\b'
+    ml_expect_contains "backslash escapes are rejected" "${out}-backslash.stderr" \
+        "cannot contain backslash escapes"
+    ml_run_fail "${root}" "${out}-emptyterm" search 'a||b'
+    ml_expect_contains "empty OR term is rejected" "${out}-emptyterm.stderr" "empty term"
+
+    ml_run_fail "${root}" "${out}-format" list --format xml
+    ml_expect_contains "invalid format is rejected" "${out}-format.stderr" "unsupported format"
+    ml_run_fail "${root}" "${out}-sort" list --sort bogus
+    ml_expect_contains "invalid sort is rejected" "${out}-sort.stderr" "unsupported sort"
+    ml_run_fail "${root}" "${out}-offset" list --offset -1
+    ml_expect_contains "negative offset is rejected" "${out}-offset.stderr" "invalid offset"
+    ml_run_fail "${root}" "${out}-limit" list --limit -1
+    ml_expect_contains "negative limit is rejected" "${out}-limit.stderr" "invalid limit"
+
+    # Rejections must not mutate the store.
+    ml_expect "store is unchanged after rejections" "${before}" "$(json_count "${root}")"
+    ml_expect "object is still active" "active" "$(json_field "${root}" obj19 status)"
+    end_case
+}
+
+run_obj_20() {
+    begin_case OBJ-20 P1 I
+    local root="${ML_STORES}/OBJ-20/store"
+    local out="${ML_CASE_DIR}/OBJ-20"
+    ml_make_markdown "${ML_FIXTURES}/obj20/note.md" "obj20" "# obj20"
+    ml_run_ok "${root}" "${out}-c1" create both --tag tag-aa,tag-bb --from "${ML_FIXTURES}/obj20/note.md"
+    ml_run_ok "${root}" "${out}-c2" create onlyaa --tag tag-aa --from "${ML_FIXTURES}/obj20/note.md"
+    ml_run_ok "${root}" "${out}-c3" create onlybb --tag tag-bb --from "${ML_FIXTURES}/obj20/note.md"
+
+    ml_run_ok "${root}" "${out}-single" list --tag tag-aa --format json
+    ml_expect "single tag filter returns both matches" "2" "$(jq 'length' "${out}-single.stdout")"
+    ml_expect "single tag filter excludes the other object" "false" \
+        "$(jq '[.[].id]|index("onlybb")!=null' "${out}-single.stdout")"
+
+    # Multiple tags are AND semantics.
+    ml_run_ok "${root}" "${out}-multi" list --tag tag-aa,tag-bb --format json
+    ml_expect "multiple tags use AND semantics" "both" "$(jq -r '.[].id' "${out}-multi.stdout")"
+
+    # Pagination and format still apply to a filtered list.
+    ml_run_ok "${root}" "${out}-paged" list --tag tag-aa --limit 1 --format json
+    ml_expect "filtered pagination returns one entry" "1" "$(jq 'length' "${out}-paged.stdout")"
+    ml_run_ok "${root}" "${out}-yaml" list --tag tag-aa
+    ml_expect_contains "filtered yaml output is a sequence" "${out}-yaml.stdout" "- id:"
+    end_case
+}
+
+run_obj_21() {
+    begin_case OBJ-21 P0 I
+    local root="${ML_STORES}/OBJ-21/store"
+    local out="${ML_CASE_DIR}/OBJ-21"
+    ml_make_markdown "${ML_FIXTURES}/obj21/note.md" "obj21" "# obj21"
+    ml_run_ok "${root}" "${out}-create" create obj21 --tag keep --from "${ML_FIXTURES}/obj21/note.md"
+    ml_run_ok "${root}" "${out}-create2" create control --tag other --from "${ML_FIXTURES}/obj21/note.md"
+
+    # Adding the same tag twice is idempotent.
+    ml_run_ok "${root}" "${out}-add1" tag add obj21 keep
+    ml_run_ok "${root}" "${out}-add2" tag add obj21 keep
+    ml_expect "duplicate add is idempotent" "keep" "$(json_field "${root}" obj21 tags | jq -r 'join(",")')"
+
+    # Removing an absent tag is an error and changes nothing.
+    ml_run_fail "${root}" "${out}-remove-absent" tag remove obj21 nope
+    ml_expect_contains "absent tag removal is refused" "${out}-remove-absent.stderr" "tag not found"
+    ml_expect "tags are unchanged after refusal" "keep" \
+        "$(json_field "${root}" obj21 tags | jq -r 'join(",")')"
+
+    # A classify tag file must not contribute inherited tags.
+    local cls
+    cls=$(dirname "$(ml_payload_dir "${root}" obj21)")
+    printf 'inherited\n' > "${cls}/$(basename "${cls}").tags"
+    ml_run_ok "${root}" "${out}-list" list --format json
+    ml_expect "classify tags are not inherited" "keep" \
+        "$(json_field "${root}" obj21 tags | jq -r 'join(",")')"
+    ml_run_ok "${root}" "${out}-search" search inherited --format json
+    ml_expect "inherited tag is not searchable" "[]" "$(tr -d '[:space:]' < "${out}-search.stdout")"
+
+    # Other objects are unaffected.
+    ml_expect "control object tags are unchanged" "other" \
+        "$(json_field "${root}" control tags | jq -r 'join(",")')"
+    end_case
+}
+
+run_obj_22() {
+    begin_case OBJ-22 P1 I
+    local root="${ML_STORES}/OBJ-22/store"
+    local out="${ML_CASE_DIR}/OBJ-22"
+    ml_make_markdown "${ML_FIXTURES}/obj22/note.md" "obj22" "# obj22"
+    ml_run_ok "${root}" "${out}-create" create obj22 --from "${ML_FIXTURES}/obj22/note.md"
+
+    ml_run_fail "${root}" "${out}-empty" tag add obj22 ''
+    ml_expect_contains "empty tag is rejected" "${out}-empty.stderr" "at least one tag is required"
+    ml_run_fail "${root}" "${out}-space" tag add obj22 '   '
+    ml_expect_contains "whitespace tag is rejected" "${out}-space.stderr" "at least one tag is required"
+    ml_run_fail "${root}" "${out}-comment" tag add obj22 '#comment'
+    ml_expect_contains "comment-prefixed tag is rejected" "${out}-comment.stderr" \
+        "comment-prefix tag: invalid tag"
+
+    # Valid spellings round-trip, including an internal space.
+    ml_run_ok "${root}" "${out}-valid" tag add obj22 'two words'
+    ml_expect "tag with an internal space is stored" "two words" \
+        "$(json_field "${root}" obj22 tags | jq -r 'join(",")')"
+    ml_run_ok "${root}" "${out}-unicode" tag add obj22 '标签'
+    ml_expect "unicode tag is stored" "two words,标签" \
+        "$(json_field "${root}" obj22 tags | jq -r 'join(",")')"
+
+    # Rejections must not leave a malformed tag record.
+    ml_run_ok "${root}" "${out}-list" list --format json
+    ml_expect "no empty tag was stored" "false" \
+        "$(jq '[.[]|select(.id=="obj22")|.tags[]|select(.=="")]|length>0' "${out}-list.stdout")"
+    end_case
+}
+
+run_obj_23() {
+    begin_case OBJ-23 P0 I
+    local root="${ML_STORES}/OBJ-23/store"
+    local out="${ML_CASE_DIR}/OBJ-23"
+    ml_make_markdown "${ML_FIXTURES}/obj23/note.md" "obj23" "# obj23"
+    printf 'attachment payload\n' > "${ML_FIXTURES}/obj23/attach.txt"
+
+    ml_run_ok "${root}" "${out}-create" create obj23 --tag movetag --from "${ML_FIXTURES}/obj23/note.md"
+    ml_run_ok "${root}" "${out}-put" put obj23 attach.txt --from "${ML_FIXTURES}/obj23/attach.txt"
+    local id_before created_before tags_before path_before
+    id_before=$(json_field "${root}" obj23 id)
+    created_before=$(json_field "${root}" obj23 created_at)
+    tags_before=$(json_field "${root}" obj23 tags | jq -r 'join(",")')
+    path_before=$(json_field "${root}" obj23 path)
+
+    ml_run_ok "${root}" "${out}-move" move obj23 work/deep
+    local path_after ref_after
+    path_after=$(json_field "${root}" obj23 path)
+    ref_after=$(json_field "${root}" obj23 data_ref)
+    ml_expect "path changed" "changed" "$([[ "${path_after}" != "${path_before}" ]] && echo changed || echo "${path_after}")"
+    ml_expect "ID is preserved" "${id_before}" "$(json_field "${root}" obj23 id)"
+    ml_expect "name is preserved" "obj23" "$(json_field "${root}" obj23 name)"
+    ml_expect "creation time is preserved" "${created_before}" "$(json_field "${root}" obj23 created_at)"
+    ml_expect "tags are preserved" "${tags_before}" \
+        "$(json_field "${root}" obj23 tags | jq -r 'join(",")')"
+    ml_expect "new data_ref is authoritative" "${path_after}" "${ref_after}"
+    ml_expect_file "payload exists at the new path" "${root}/object/${path_after}" dir
+    ml_expect_file "old payload path is cleaned" "${root}/object/${path_before}" absent
+
+    # Content survives the move byte-exactly.
+    ml_run_ok "${root}" "${out}-get-marker" get obj23 obj23.md
+    ml_expect_sha "marker content survives the move" "${out}-get-marker.stdout" \
+        "$(sha256sum "${ML_FIXTURES}/obj23/note.md" | awk '{print $1}')"
+    ml_run_ok "${root}" "${out}-get-attach" get obj23 attach.txt
+    ml_expect_sha "attachment survives the move" "${out}-get-attach.stdout" \
+        "$(sha256sum "${ML_FIXTURES}/obj23/attach.txt" | awk '{print $1}')"
+    end_case
+}
+
+run_obj_24() {
+    begin_case OBJ-24 P0 I
+    local root="${ML_STORES}/OBJ-24/store"
+    local out="${ML_CASE_DIR}/OBJ-24"
+    ml_make_markdown "${ML_FIXTURES}/obj24/note.md" "obj24" "# obj24"
+    ml_run_ok "${root}" "${out}-create" create obj24 --from "${ML_FIXTURES}/obj24/note.md"
+    ml_run_ok "${root}" "${out}-control" create control24 --from "${ML_FIXTURES}/obj24/note.md"
+    local path_before control_before
+    path_before=$(json_field "${root}" obj24 path)
+    control_before=$(json_field "${root}" control24 path)
+
+    # Occupied destination: a stray directory already sits at the target path.
+    local time_prefix
+    time_prefix=$(dirname "${path_before}")
+    mkdir -p "${root}/object/${time_prefix}/occ/obj24"
+    printf 'junk\n' > "${root}/object/${time_prefix}/occ/obj24/junk.txt"
+    ml_run_fail "${root}" "${out}-occupied" move obj24 occ
+    ml_expect_contains "occupied destination is refused" "${out}-occupied.stderr" "is not empty"
+    ml_expect "source path is unchanged after refusal" "${path_before}" \
+        "$(json_field "${root}" obj24 path)"
+
+    # Invalid classify segment.
+    ml_run_fail "${root}" "${out}-reserved" move obj24 CON
+    ml_expect_contains "reserved classify segment is refused" "${out}-reserved.stderr" \
+        "invalid classify segment"
+
+    # Depth 12 exceeds the limit.
+    ml_run_fail "${root}" "${out}-deep" move obj24 a/b/c/d/e/f/g/h
+    ml_expect_contains "over-deep destination is refused" "${out}-deep.stderr" \
+        "exceeds maximum depth"
+
+    # A deleted object cannot be moved.
+    ml_run_ok "${root}" "${out}-delete" delete obj24
+    ml_run_fail "${root}" "${out}-deleted" move obj24 x
+    ml_expect_contains "deleted object cannot be moved" "${out}-deleted.stderr" "not active"
+    ml_expect "deleted status is preserved" "deleted" "$(json_field "${root}" obj24 status)"
+
+    # Unrelated objects are untouched by every refusal.
+    ml_expect "control object path is unchanged" "${control_before}" \
+        "$(json_field "${root}" control24 path)"
+    ml_expect "control object is still active" "active" "$(json_field "${root}" control24 status)"
+    end_case
+}
+
 CASES=(OBJ-01 OBJ-02 OBJ-03 OBJ-04 OBJ-05 OBJ-06 OBJ-07 OBJ-08 OBJ-09 \
-       OBJ-10 OBJ-11 OBJ-12 OBJ-13 OBJ-14 OBJ-15 OBJ-16)
+       OBJ-10 OBJ-11 OBJ-12 OBJ-13 OBJ-14 OBJ-15 OBJ-16 \
+       OBJ-17 OBJ-18 OBJ-19 OBJ-20 OBJ-21 OBJ-22 OBJ-23 OBJ-24)
 for case_id in "${CASES[@]}"; do
     if ! selected "${case_id}" "$@"; then
         continue
@@ -608,5 +900,18 @@ for case_id in "${CASES[@]}"; do
         OBJ-14) run_obj_14 ;;
         OBJ-15) run_obj_15 ;;
         OBJ-16) run_obj_16 ;;
+        OBJ-17) run_obj_17 ;;
+        OBJ-18) run_obj_18 ;;
+        OBJ-19) run_obj_19 ;;
+        OBJ-20) run_obj_20 ;;
+        OBJ-21) run_obj_21 ;;
+        OBJ-22) run_obj_22 ;;
+        OBJ-23) run_obj_23 ;;
+        OBJ-24) run_obj_24 ;;
     esac
 done
+
+if grep -q '"status":"FAIL"' "${ML_RESULTS}" 2>/dev/null; then
+    exit 1
+fi
+exit 0
