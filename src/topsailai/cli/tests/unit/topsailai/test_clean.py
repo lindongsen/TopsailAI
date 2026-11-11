@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 from cli_topsailai import cleaning
 from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
+from cli_topsailai.process_liveness import ProcessState
 
 
 def _make_file_record(path: str) -> dict:
@@ -279,9 +280,11 @@ class TestCleanByNumbersRelatedFiles(unittest.TestCase):
     def test_deletes_related_files_by_number(self, mock_in_use, mock_input):
         mock_input.return_value = "y"
         with tempfile.TemporaryDirectory() as tmp:
-            stdout = os.path.join(tmp, "s.1.session.stdout")
-            stderr = os.path.join(tmp, "s.1.session.stderr")
-            pipe = os.path.join(tmp, "s.1.session.pipe")
+            # PID 999999 is provably absent, so the owning session is dead and
+            # the related-file expansion is what this test actually exercises.
+            stdout = os.path.join(tmp, "s.999999.session.stdout")
+            stderr = os.path.join(tmp, "s.999999.session.stderr")
+            pipe = os.path.join(tmp, "s.999999.session.pipe")
             for p in [stdout, stderr, pipe]:
                 with open(p, "w") as f:
                     f.write("x")
@@ -564,3 +567,186 @@ class TestLaunchLogLeaseIsNotARecord(unittest.TestCase):
             self.assertEqual(deleted, 0)
             self.assertTrue(os.path.exists(log))
             self.assertTrue(os.path.exists(lease))
+
+
+class TestSessionLivenessGuard(unittest.TestCase):
+    """Proofs that /clean consults session liveness, not only open descriptors.
+
+    The guard must answer "is the owning session alive" before it answers "is
+    this file held open", because a session running in a sibling container is
+    invisible to the local process table while its control channel still
+    answers.
+    """
+
+    def _make_session_file(self, tmp, name, age_days=4):
+        """Create one session file with an explicit age."""
+        path = os.path.join(tmp, name)
+        with open(path, "w") as handle:
+            handle.write("x")
+        old = time.time() - age_days * 24 * 3600
+        os.utime(path, (old, old))
+        return path
+
+    def test_owner_identity_covers_every_session_suffix(self):
+        """A pipe or inject file must resolve to the same owner as stdout."""
+        expected = ("s", 999999)
+        for suffix in (
+            ".session.stdout",
+            ".session.stderr",
+            ".session.pipe",
+            ".session.agent2llm_inject_messages.jsonl",
+        ):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(
+                    cleaning._owner_identity("/tmp/s.999999" + suffix), expected
+                )
+
+    def test_owner_identity_is_none_without_a_session_owner(self):
+        """Launch logs and generic stdout carry no session lifecycle."""
+        for name in (
+            "workspace-agent-a.agent-launch.log",
+            "old.session.stdout",
+        ):
+            with self.subTest(name=name):
+                self.assertIsNone(cleaning._owner_identity("/tmp/" + name))
+
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=True)
+    def test_heartbeat_alive_blocks_deletion_of_dead_looking_owner(
+        self, _mock_beat, mock_pid_state, _mock_in_use
+    ):
+        """A sibling-container session answers while the local table says dead."""
+        mock_pid_state.return_value = ProcessState.DEAD
+        reason = cleaning._deletion_block_reason("/tmp/s.999999.session.stdout")
+        self.assertEqual(reason, "owning session is still alive")
+
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=None)
+    def test_alive_pid_blocks_deletion(
+        self, _mock_beat, mock_pid_state, _mock_in_use
+    ):
+        """A locally visible live owner blocks deletion."""
+        mock_pid_state.return_value = ProcessState.ALIVE
+        reason = cleaning._deletion_block_reason("/tmp/s.999999.session.stdout")
+        self.assertEqual(reason, "owning session is still alive")
+
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=None)
+    def test_unknown_liveness_blocks_deletion(
+        self, _mock_beat, mock_pid_state, _mock_in_use
+    ):
+        """An unverifiable owner is not proof of absence, so it fails closed."""
+        mock_pid_state.return_value = ProcessState.UNKNOWN
+        reason = cleaning._deletion_block_reason("/tmp/s.999999.session.stdout")
+        self.assertEqual(reason, "owning session liveness cannot be verified")
+
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=False)
+    def test_dead_owner_and_unused_file_is_deletable(
+        self, _mock_beat, mock_pid_state, _mock_in_use
+    ):
+        """The command must still delete genuinely abandoned files."""
+        mock_pid_state.return_value = ProcessState.DEAD
+        self.assertIsNone(
+            cleaning._deletion_block_reason("/tmp/s.999999.session.stdout")
+        )
+
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=True)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=False)
+    def test_dead_owner_but_open_file_blocks_deletion(
+        self, _mock_beat, mock_pid_state, _mock_in_use
+    ):
+        """A dead owner does not authorize deleting a file still in use."""
+        mock_pid_state.return_value = ProcessState.DEAD
+        reason = cleaning._deletion_block_reason("/tmp/s.999999.session.stdout")
+        self.assertEqual(reason, "file is still held open by a process")
+
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=False)
+    def test_ownerless_file_is_governed_by_open_descriptor_only(
+        self, _mock_beat, mock_pid_state, _mock_in_use
+    ):
+        """A launch log has no session owner, so liveness is not consulted."""
+        mock_pid_state.return_value = ProcessState.UNKNOWN
+        self.assertIsNone(
+            cleaning._deletion_block_reason("/tmp/a.agent-launch.log")
+        )
+        mock_pid_state.assert_not_called()
+
+    @mock.patch("cli_topsailai.cleaning.input", return_value="y")
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=True)
+    def test_live_session_pipe_survives_clean_by_numbers(
+        self, _mock_beat, mock_pid_state, _mock_in_use, _mock_input
+    ):
+        """The live-session pipe must not be deleted while its owner answers."""
+        mock_pid_state.return_value = ProcessState.DEAD
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = self._make_session_file(tmp, "s.999999.session.stdout")
+            pipe = self._make_session_file(tmp, "s.999999.session.pipe")
+            files = [_make_file_record(stdout)]
+            deleted = clean_by_numbers(tmp, files, [0])
+            self.assertEqual(deleted, 0)
+            self.assertTrue(os.path.exists(stdout))
+            self.assertTrue(os.path.exists(pipe))
+
+    @mock.patch("cli_topsailai.cleaning.input", return_value="y")
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=False)
+    def test_dead_session_files_are_still_deleted(
+        self, _mock_beat, mock_pid_state, _mock_in_use, _mock_input
+    ):
+        """A provably dead session keeps the command useful."""
+        mock_pid_state.return_value = ProcessState.DEAD
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = self._make_session_file(tmp, "s.999999.session.stdout")
+            pipe = self._make_session_file(tmp, "s.999999.session.pipe")
+            files = [_make_file_record(stdout)]
+            deleted = clean_by_numbers(tmp, files, [0])
+            self.assertEqual(deleted, 2)
+            self.assertFalse(os.path.exists(stdout))
+            self.assertFalse(os.path.exists(pipe))
+
+    @mock.patch("cli_topsailai.cleaning.input", return_value="n")
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive", return_value=False)
+    def test_cancel_deletes_nothing(
+        self, _mock_beat, mock_pid_state, _mock_in_use, _mock_input
+    ):
+        """Declining the prompt must leave every file in place."""
+        mock_pid_state.return_value = ProcessState.DEAD
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = self._make_session_file(tmp, "s.999999.session.stdout")
+            files = [_make_file_record(stdout)]
+            deleted = clean_by_numbers(tmp, files, [0])
+            self.assertEqual(deleted, 0)
+            self.assertTrue(os.path.exists(stdout))
+
+    @mock.patch("cli_topsailai.cleaning.input", return_value="y")
+    @mock.patch("cli_topsailai.cleaning.is_file_in_use", return_value=False)
+    @mock.patch("cli_topsailai.cleaning.pid_state")
+    @mock.patch("cli_topsailai.cleaning.socket_heartbeat_alive")
+    def test_session_that_becomes_live_after_prompt_keeps_its_files(
+        self, mock_beat, mock_pid_state, _mock_in_use, _mock_input
+    ):
+        """Liveness is re-probed at deletion time, not reused from inventory."""
+        mock_pid_state.return_value = ProcessState.DEAD
+        # The inventory pass probes once per owning session and sees a dead
+        # session; the deletion-time probe sees a live one, which is exactly the
+        # window the confirmation prompt opens.
+        mock_beat.side_effect = [False, True]
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = self._make_session_file(tmp, "s.999999.session.stdout")
+            files = [_make_file_record(stdout)]
+            deleted = clean_by_numbers(tmp, files, [0])
+            self.assertEqual(deleted, 0)
+            self.assertTrue(os.path.exists(stdout))

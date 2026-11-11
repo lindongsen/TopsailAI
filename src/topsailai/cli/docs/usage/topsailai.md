@@ -163,13 +163,46 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/models clear` | Clear the model selection for the current workspace or project scope. |
 | `/env.search <term> [term...]` | Fuzzy-search configurable environment variables case-insensitively. Multiple terms use OR semantics. The command checks `{TOPSAILAI_HOME}/.env.local`, then `{TOPSAILAI_HOME}/.env`, then the TopsailAI project `env_template`. It displays matching `NAME=VALUE` assignments from every source while suppressing names already found in a higher-priority source. Within one source, an uncommented assignment takes precedence over a commented assignment of the same name regardless of line order; equal-status duplicates retain the first assignment. Each group starts with `> Source: PATH`, and groups are separated by a blank line. Displayed names become TAB-completion candidates for subsequent `/env.get`, `/env.set`, and `/env.search` input in the current CLI process. Values can contain secrets and are intentionally shown by this command. |
 | `/send <number> [message]` | Project scope only: send a message to the running session associated with the selected entry. Not available in workspace scope. |
-| `/clean` | Remove expired files from the task directory. |
+| `/clean` | Remove expired files from the task directory. Files whose owning session is alive or unverifiable are skipped; see [Clean safety rules](#clean-safety-rules). |
 | `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |
 | `scopes` | Display detailed introductions and available actions for each scope. |
 | `/help` | Show available commands. |
 | `q` | Quit the CLI. |
 
 Workspace scope rejects `/send` and its `send` alias. Select a numbered log to enter runtime scope, then use `/send [message]` for the watched session. Session-scope messaging remains available.
+
+### Clean safety rules
+
+`/clean` and `/clean <number> [number...]` delete session files, so every
+deletion is gated on the owning session being provably gone. The guard answers
+"is the owning session alive" before it answers "is this file held open",
+because a session running in a sibling container is invisible to the local
+process table while its control channel still answers.
+
+The owner is resolved from the `{session_id}.{pid}` prefix of every
+session-related suffix, so `.session.stdout`, `.session.stderr`,
+`.session.pipe`, `.task.stdout`, `.task.stderr` and
+`.session.agent2llm_inject_messages.jsonl` all resolve to the same session. A
+file is skipped when any of the following holds:
+
+| Condition | Reported reason |
+|---|---|
+| The control channel answers a heartbeat | `owning session is still alive` |
+| The owner PID is `ALIVE` in the local process table | `owning session is still alive` |
+| Liveness cannot be determined | `owning session liveness cannot be verified` |
+| A process still holds the file open | `file is still held open by a process` |
+
+An unverifiable owner is never treated as an absent owner, so an unanswerable
+probe blocks the deletion instead of authorizing it. Files whose names carry no
+session owner, such as `.agent-launch.log` records and generic `*.stdout` files,
+have no session lifecycle to protect and are governed by the open-descriptor
+check and the active launch lease alone.
+
+Liveness is re-probed immediately before each deletion rather than reused from
+the inventory pass, so a session that starts using a file while the confirmation
+prompt is open keeps its files. `/clean` without arguments additionally requires
+a file to be older than three days, and both forms require an explicit `y`
+confirmation that defaults to `N`.
 
 ### Workspace task list columns
 
