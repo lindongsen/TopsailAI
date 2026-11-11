@@ -303,6 +303,13 @@ mistaken for a fix.
 > means "no end line, so only `start_num` is replaced", and `-1` means "through
 > the end of the file". The incident below is kept as the historical record that
 > motivated the change; the tool no longer behaves as described in it.
+>
+> **Refined on 2026-11-11.** The sentinel is interpreted per tool instead of
+> globally. `read_file_lines` treats omitted/`0`/`null`/blank as "no upper bound",
+> so `read_file_lines(path)` reads the whole file; `overwrite_lines_in_file` keeps
+> "only `start_num`" because a write is destructive. Fractional negatives such as
+> `-1.5` are rejected by both tools, because truncation toward zero would
+> otherwise turn them into `-1` and silently reach the end of the file.
 
 ### Trigger
 

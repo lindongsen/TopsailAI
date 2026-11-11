@@ -35,12 +35,29 @@ def resolve_finite_int(value: Any, parameter: str) -> tuple[int | None, dict | N
     return int(numeric), None
 
 
+def _is_fractional_negative(value: Any) -> bool:
+    """Report whether a finite numeric value is negative and not an integer.
+
+    ``resolve_finite_int`` truncates toward zero, so ``-1.5`` becomes ``-1`` and
+    would silently mean "through the end of the file". Fractional negatives must
+    be rejected before truncation can hide them. Positive truncation such as
+    ``2.9`` -> ``2`` stays untouched because it cannot reach the file tail.
+    """
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return False
+    return numeric < 0 and numeric != int(numeric)
+
+
 def resolve_end_num(value: Any, parameter: str = "end_num") -> tuple[int | None, dict | None]:
     """Resolve the shared ``end_num`` sentinel used by every line-range tool.
 
-    ``0``, ``None``, and blank text all mean "no end line", so only the start
-    line is addressed. ``-1`` means "through the end of the file". Any other
-    negative value is rejected instead of being guessed.
+    ``0``, ``None``, and blank text mean "no end line"; each tool decides what
+    that implies for its own operation. ``-1`` means "through the end of the
+    file". Any other negative value is rejected instead of being guessed,
+    including fractional values such as ``-1.5`` that would otherwise truncate
+    to ``-1`` and silently reach the end of the file.
     """
     if value is None:
         return 0, None
@@ -49,7 +66,7 @@ def resolve_end_num(value: Any, parameter: str = "end_num") -> tuple[int | None,
     resolved, error = resolve_finite_int(value, parameter)
     if error:
         return None, error
-    if resolved < -1:
+    if resolved < -1 or _is_fractional_negative(value):
         return None, invalid_request(
             parameter, value, "must be -1, 0, or a positive line number"
         )

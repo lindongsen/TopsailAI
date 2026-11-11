@@ -230,6 +230,23 @@ def call_read_file_lines(ctx, start_value, end_value):
     )
 
 
+@when('the tool read_file_lines is called on the test file without end_num')
+def call_read_file_lines_without_end_num(ctx):
+    """An LLM omits end_num entirely, which must read the whole file."""
+    _invoke(ctx, "read_file_lines", file_path=ctx["files"]["active"])
+
+
+@when(parsers.parse('the tool read_file_lines is called on the test file with start_num set to {start_value} only'))
+def call_read_file_lines_without_end_num_with_start(ctx, start_value):
+    """An LLM sends only start_num, which must read through the end."""
+    _invoke(
+        ctx,
+        "read_file_lines",
+        file_path=ctx["files"]["active"],
+        start_num=_expand(ctx, start_value),
+    )
+
+
 @when(parsers.parse('the tool read_file_with_context is called on the test file with pattern {pattern} and parameter {param} set to {value}'))
 def call_with_context_single(ctx, pattern, param, value):
     """One stringified search option."""

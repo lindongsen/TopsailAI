@@ -612,16 +612,18 @@ class TestReadFileLines:
         assert "2-line2" in lines[0]
         assert "3-line3" in lines[1]
 
-    def test_end_num_zero(self, tmp_path):
-        """Test end_num=0 reads only the start line."""
+    def test_end_num_zero_reads_to_end(self, tmp_path):
+        """Test end_num=0 means no upper bound, so it reads to the end."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("line1\nline2\nline3\n")
 
         result = read_file_lines(str(test_file), 1, 0)
         lines = result.split("\n")
 
-        assert len(lines) == 1
+        assert len(lines) == 3
         assert "1-line1" in lines[0]
+        assert "2-line2" in lines[1]
+        assert "3-line3" in lines[2]
 
     def test_end_num_minus_one_reads_to_end(self, tmp_path):
         """Test end_num=-1 reads through the end of the file."""
@@ -636,16 +638,30 @@ class TestReadFileLines:
         assert "2-line2" in lines[1]
         assert "3-line3" in lines[2]
 
-    def test_omitted_end_num_reads_only_start_line(self, tmp_path):
-        """Test omitting end_num reads only the start line."""
+    def test_omitted_end_num_reads_whole_file(self, tmp_path):
+        """Test omitting end_num reads the whole file."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("line1\nline2\nline3\n")
+
+        result = read_file_lines(str(test_file))
+        lines = result.split("\n")
+
+        assert len(lines) == 3
+        assert "1-line1" in lines[0]
+        assert "2-line2" in lines[1]
+        assert "3-line3" in lines[2]
+
+    def test_omitted_end_num_with_start_reads_to_end(self, tmp_path):
+        """Test omitting end_num with a start line reads through the end."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("line1\nline2\nline3\n")
 
         result = read_file_lines(str(test_file), 2)
         lines = result.split("\n")
 
-        assert len(lines) == 1
+        assert len(lines) == 2
         assert "2-line2" in lines[0]
+        assert "3-line3" in lines[1]
 
     def test_start_after_eof(self, tmp_path):
         """Test start_num beyond file length returns empty."""
@@ -875,6 +891,8 @@ class TestStringFirstLineParameters:
         ("end_num", "NaN"), ("end_num", "+inf"),
         ("end_num", "-inf"), ("end_num", "abc"),
         ("end_num", -2), ("end_num", "-2"),
+        ("end_num", -1.5), ("end_num", -1.9),
+        ("end_num", -1.01), ("end_num", "-1.5"),
     ])
     def test_read_lines_rejects_invalid_numeric_values(
             self, tmp_path, parameter, value):
@@ -888,12 +906,12 @@ class TestStringFirstLineParameters:
         assert parameter in result["reason"]
 
     @pytest.mark.parametrize("end_num", ["", "   ", None])
-    def test_read_lines_blank_end_num_reads_only_start_line(
+    def test_read_lines_blank_end_num_reads_to_end(
             self, tmp_path, end_num):
-        """Blank or None end_num means no end line, so only start_num is read."""
+        """Blank or None end_num means no upper bound, so it reads to the end."""
         target = tmp_path / "lines.txt"
         target.write_text("one\ntwo\nthree\n", encoding="utf-8")
-        assert read_file_lines(str(target), 2, end_num) == "2-two"
+        assert read_file_lines(str(target), 2, end_num) == "2-two\n3-three"
 
     @pytest.mark.parametrize("line_number", [-1, 0, 9999, "-1", "0", "9999"])
     def test_around_line_preserves_out_of_range_status(self, tmp_path, line_number):

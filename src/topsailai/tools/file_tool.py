@@ -575,10 +575,21 @@ PROMPT = """
 You MUST confirm the line number using either `read_file_lines` or `read_file_around_line` or `read_file_with_context`.
 
 ## Line-range `end_num` Convention
-`end_num` means the same thing in every line-range tool:
-- Omitted, `0`, `null`, or empty text: no end line, so only `start_num` is addressed.
-- `-1`: through the end of the file.
-- A positive number: the last line to address, inclusive.
+`end_num` is interpreted per tool, because reading extra lines is harmless while
+deleting the file tail is destructive.
+
+`read_file_lines`:
+- Default `-1`: through the end of the file. `read_file_lines(path)` reads the
+  whole file.
+- `0`, `null`, or empty text: also no upper bound, so every line from
+  `start_num` through the end of the file is read.
+- A positive number: the last line to read, inclusive.
+- Any other negative number is rejected.
+
+`overwrite_lines_in_file`:
+- Omitted, `0`, `null`, or empty text: only `start_num` is replaced.
+- `-1`: replaces from `start_num` through the end of the file.
+- A positive number: the last line to replace, inclusive.
 - Any other negative number is rejected.
 
 `overwrite_lines_in_file` is destructive, so `0` never means "to the end of the file".

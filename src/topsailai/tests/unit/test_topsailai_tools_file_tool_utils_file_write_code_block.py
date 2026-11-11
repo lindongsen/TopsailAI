@@ -732,6 +732,8 @@ class TestStringFirstLineParameters:
         ("end_num", "NaN"), ("end_num", "+inf"),
         ("end_num", "-inf"), ("end_num", "abc"),
         ("end_num", -2), ("end_num", "-2"),
+        ("end_num", -1.5), ("end_num", -1.9),
+        ("end_num", -1.01), ("end_num", "-1.5"),
     ])
     def test_rejects_invalid_numeric_values_without_writing(
             self, tmp_path, parameter, value):

@@ -296,7 +296,7 @@ def read_file_around_line(
         return f"Error reading file {file_path}: {str(e)}"
 
 
-def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> str:
+def read_file_lines(file_path: str, start_num: int=1, end_num: int=-1, **_) -> str:
     """Read specific lines from a file and return them as a string.
 
     This function reads a range of lines from a file using 1-based line numbering.
@@ -312,11 +312,12 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
         file_path (str): The path to the file to read from
         start_num (int): The starting line number (1-based). Lines before this number
                         will be excluded. Must be >= 1.
-        end_num (int): The ending line number (1-based, inclusive).
-                       Omitted, ``0``, ``None``, or blank text means no end line,
-                       so only ``start_num`` is read.
-                       ``-1`` reads through the end of the file.
-                       Any other negative value is rejected.
+        end_num (int): The ending line number (1-based, inclusive). Defaults to
+                       ``-1``, which reads through the end of the file.
+                       ``0``, ``None``, or blank text also means no end line, so
+                       every line from ``start_num`` through the end of the file
+                       is read. A positive number reads through that line,
+                       inclusive. Any other negative value is rejected.
 
     Returns:
         str: The concatenated content of the specified lines as a single string.
@@ -326,14 +327,14 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
         This function catches all exceptions and returns them as strings rather than raising
 
     Examples:
+        # Read the whole file
+        content = read_file_lines("example.txt")
+
         # Read lines 1-10 from a file
         content = read_file_lines("example.txt", 1, 10)
 
-        # Read only line 3
-        content = read_file_lines("example.txt", 3)
-
         # Read from line 3 through the end of the file
-        content = read_file_lines("example.txt", 3, -1)
+        content = read_file_lines("example.txt", 3)
     """
     start_num, error = resolve_finite_int(start_num, "start_num")
     if error:
@@ -345,10 +346,9 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
         if not start_num:
             start_num = 1
 
-        # ``0`` means no end line, so only ``start_num`` is addressed.
-        if end_num == 0:
-            end_num = start_num
-
+        # ``0`` means no end line, so every line from ``start_num`` to the end
+        # of the file is read. The loop guard below already treats ``0`` as
+        # "no upper bound", so no sentinel rewrite is needed here.
         if end_num > 0 and start_num > end_num:
             return f"Error: Invalid range: start_num ({start_num}) > end_num ({end_num})"
 
