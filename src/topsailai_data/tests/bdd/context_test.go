@@ -19,6 +19,7 @@ type scenarioContext struct {
 	dataRoot         string
 	result           commandResult
 	recordedMetadata map[string]any
+	recordedStat     string
 }
 
 type commandResult struct {
