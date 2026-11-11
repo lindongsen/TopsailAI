@@ -412,10 +412,18 @@ run_safe_16() {
     end_case
 }
 
-# run_safe_17 previews the owned resource inventory without deleting anything.
+# run_safe_17 previews the owned resource inventory and, when the human has
+# approved the removal, performs the approved cleanup and verifies its effect.
+#
+# ML_SAFE17_APPROVED=1 enables the removal path. Without it the case only
+# previews the inventory and stays BLOCKED, because the removal is irreversible
+# and must not happen without explicit human approval.
 run_safe_17() {
     begin_case SAFE-17 P0 I
-    local out="${ML_ARTIFACTS}/SAFE-17"
+    # Evidence lives under reports/cases because cleanup.sh removes
+    # run-*/artifacts but keeps run-*/reports by default. Writing the evidence
+    # into artifacts would let the approved removal delete its own proof.
+    local out="${ML_CASE_DIR}/SAFE-17"
     mkdir -p "${out}"
 
     # The preview lists what cleanup would consider, and proves that the shared
@@ -442,8 +450,52 @@ run_safe_17() {
     fi
     ml_expect "the protected backup is outside the owned cleanup set" "yes" "yes"
 
-    ml_note "this case only previews the inventory; removal belongs to cleanup.sh and needs explicit approval"
-    ml_blocked "actual removal requires the reviewed cleanup.sh preview and explicit approval"
+    if [[ "${ML_SAFE17_APPROVED:-0}" != "1" ]]; then
+        ml_note "this case only previews the inventory; removal belongs to cleanup.sh and needs explicit approval"
+        ml_blocked "actual removal requires the reviewed cleanup.sh preview and explicit approval"
+        end_case
+        return 0
+    fi
+
+    # Approved path: build owned probe targets, preview them, remove them, and
+    # verify the removal left the protected backup untouched. The probe lives in
+    # its own run directory so the removal cannot touch another case's evidence.
+    # The probe must be a sibling run-* directory because cleanup.sh plans
+    # targets with the glob .tmp/manual-live/run-*, which matches one level only.
+    local probe
+    probe="$(dirname "${ML_BASE}")/run-safe17probe"
+    mkdir -p "${probe}/store" "${probe}/artifacts"
+    printf 'probe payload\n' > "${probe}/store/probe.txt"
+    printf 'probe payload\n' > "${probe}/artifacts/probe.txt"
+    ml_note "approval recorded: ML_SAFE17_APPROVED=1"
+
+    local before_files before_manifest
+    before_files=$(find "${ML_BACKUP}/original" -type f | wc -l | tr -d ' ')
+    before_manifest=$(sha256sum "${ML_BACKUP}/original-manifest.json" | awk '{print $1}')
+
+    local preview="${out}/preview.txt"
+    bash "${SCRIPTS_DIR}/cleanup.sh" --dry-run > "${preview}" 2>&1
+    cat "${preview}" >> "${ML_CASE_LOG}"
+    ml_expect_contains "the preview lists the owned probe store" "${preview}" "${probe}/store"
+    ml_expect_contains "the preview lists the owned probe artifacts" "${preview}" "${probe}/artifacts"
+    ml_expect_contains "the preview removes nothing" "${preview}" "nothing removed"
+
+    local removal="${out}/removal.txt"
+    bash "${SCRIPTS_DIR}/cleanup.sh" > "${removal}" 2>&1
+    cat "${removal}" >> "${ML_CASE_LOG}"
+    ml_expect_contains "the removal logs the probe store deletion" "${removal}" "deleted: ${probe}/store"
+    ml_expect_contains "the removal logs the probe artifacts deletion" "${removal}" "deleted: ${probe}/artifacts"
+    ml_expect_file "the probe store is gone" "${probe}/store" absent
+    ml_expect_file "the probe artifacts are gone" "${probe}/artifacts" absent
+
+    local after_files after_manifest
+    after_files=$(find "${ML_BACKUP}/original" -type f | wc -l | tr -d ' ')
+    after_manifest=$(sha256sum "${ML_BACKUP}/original-manifest.json" | awk '{print $1}')
+    ml_expect "the protected backup file count is unchanged" "${before_files}" "${after_files}"
+    ml_expect "the protected backup manifest is unchanged" "${before_manifest}" "${after_manifest}"
+    ml_expect_file "no sentinel was created in the protected backup" "${sentinel}" absent
+
+    ml_note "the approved cleanup removed only owned probe targets and left the protected backup intact"
     end_case
 }
 
