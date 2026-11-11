@@ -230,7 +230,7 @@ def test_completed_filter_and_json_fields_are_unchanged(tmp_path, monkeypatch):
     assert completed["workspace_completed"] is True
     assert completed["session_name"] == "Done Session"
     assert set(core._workspace_json_item(completed, 1)) == {
-        "no", "filename", "session_name", "session_id", "is_task", "pid",
-        "process_generation", "status", "completed", "driver", "created_at",
-        "project_workspace", "hostname",
+        "no", "filename", "session_name", "session_id", "is_task",
+        "session_qualifier", "pid", "process_generation", "status",
+        "completed", "driver", "created_at", "project_workspace", "hostname",
     }

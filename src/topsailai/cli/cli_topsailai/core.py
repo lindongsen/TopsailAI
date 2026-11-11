@@ -1320,12 +1320,18 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
     hostname = file_info.get("hostname")
     if not isinstance(hostname, str):
         hostname = ""
+    # A task row is a child process log rather than a session of its own, so the
+    # qualifier mirrors the table's "(task)" prefix for machine consumers. The
+    # key is always present and stays null for an ordinary session row, so the
+    # item schema never changes shape between row kinds.
+    is_task = bool(file_info.get("is_task", False))
     return {
         "no": index,
         "filename": file_info.get("filename", ""),
         "session_name": file_info.get("session_name"),
         "session_id": file_info.get("session_id"),
-        "is_task": bool(file_info.get("is_task", False)),
+        "is_task": is_task,
+        "session_qualifier": "task" if is_task else None,
         "pid": pid,
         "process_generation": generation,
         "status": status,
