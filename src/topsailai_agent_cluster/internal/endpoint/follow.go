@@ -25,6 +25,14 @@ func (s *Service) startFollow(ctx context.Context, frame channel.Frame) {
 		s.sendFollowEnd(ctx, requestID, "invalid_request", false)
 		return
 	}
+	// The policy check runs before the follower is consulted, so a refused caller
+	// cannot infer whether this Endpoint can stream. A refusal ends the stream
+	// with a terminal frame rather than a snapshot, because the consumer is
+	// waiting for a stream and a snapshot would look like a complete one.
+	if err := s.permitOperation(frame, protocol.OperationOutputFollow); err != nil {
+		s.sendFollowEnd(ctx, requestID, s.refuseFrame(ctx, frame, protocol.OperationOutputFollow, err), false)
+		return
+	}
 	follower, ok := s.executor.(OutputFollower)
 	if !ok {
 		// The adapter cannot stream. Reporting unsupported is honest; degrading

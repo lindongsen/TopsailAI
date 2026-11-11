@@ -54,6 +54,15 @@ func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery
 
 // launchFrame answers one bounded read-only launch query on the authenticated channel.
 func (s *Service) launchFrame(ctx context.Context, frame channel.Frame) {
+	// The policy check runs before the adapter is consulted, so a refused caller
+	// cannot infer which launch handlers this Endpoint has configured.
+	if err := s.permitOperation(frame, OperationLaunchQuery); err != nil {
+		result := protocol.LaunchOptions{ErrorCode: s.refuseFrame(ctx, frame, OperationLaunchQuery, err)}
+		if sendErr := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameLaunchResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, LaunchOptions: &result}); sendErr != nil {
+			s.logError("publish launch refusal", sendErr)
+		}
+		return
+	}
 	result := protocol.LaunchOptions{ErrorCode: "unsupported"}
 	reader, ok := s.executor.(interface {
 		LaunchOptions(context.Context, protocol.LaunchQuery) (protocol.LaunchOptions, error)

@@ -40,6 +40,15 @@ func (e *Executor) History(ctx context.Context, query protocol.HistoryQuery) (pr
 
 // historyFrame answers one bounded read-only history query on the authenticated channel.
 func (s *Service) historyFrame(ctx context.Context, frame channel.Frame) {
+	// The policy check runs before the adapter is consulted, so a refused caller
+	// cannot infer whether this Endpoint can read history at all.
+	if err := s.permitOperation(frame, OperationHistoryRead); err != nil {
+		result := protocol.HistoryResult{ErrorCode: s.refuseFrame(ctx, frame, OperationHistoryRead, err)}
+		if sendErr := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameHistoryResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, HistoryResult: &result}); sendErr != nil {
+			s.logError("publish history refusal", sendErr)
+		}
+		return
+	}
 	result := protocol.HistoryResult{ErrorCode: protocol.HistoryUnsupported}
 	reader, ok := s.executor.(interface {
 		History(context.Context, protocol.HistoryQuery) (protocol.HistoryResult, error)

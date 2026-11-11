@@ -80,6 +80,14 @@ type ServiceDeps struct {
 	CollectionDelay   time.Duration
 	HeartbeatInterval time.Duration
 	ReceiptDelay      time.Duration
+	// AccessPolicy decides which caller may exercise which operation on this
+	// Endpoint. A nil value permits every caller, which is the state of an
+	// Endpoint that was never pointed at a policy directory.
+	AccessPolicy *AccessPolicy
+	// EndpointID is this Endpoint's own identity, used to evaluate the endpoints
+	// declaration in a policy file. The Endpoint knows its own identity, so the
+	// comparison needs no claim from the caller.
+	EndpointID string
 }
 
 // Service owns Endpoint collection, channel handling, and graceful shutdown.
@@ -93,6 +101,8 @@ type Service struct {
 	collectionDelay   time.Duration
 	heartbeatInterval time.Duration
 	receiptDelay      time.Duration
+	accessPolicy      *AccessPolicy
+	endpointID        string
 	cancel            context.CancelFunc
 	wg                sync.WaitGroup
 	closeOnce         sync.Once
@@ -115,7 +125,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.Heartbeater != nil && deps.HeartbeatInterval <= 0 {
 		deps.HeartbeatInterval = 5 * time.Second
 	}
-	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, pendingReceipts: make(map[string]protocol.ExecutionReceipt), activeFollows: make(map[string]context.CancelFunc), followSlots: make(chan struct{}, maxConcurrentFollows)}, nil
+	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, accessPolicy: deps.AccessPolicy, endpointID: deps.EndpointID, pendingReceipts: make(map[string]protocol.ExecutionReceipt), activeFollows: make(map[string]context.CancelFunc), followSlots: make(chan struct{}, maxConcurrentFollows)}, nil
 }
 
 // Run starts all Endpoint loops and waits until the context is cancelled.
@@ -413,6 +423,14 @@ func (s *Service) publishRefresh(ctx context.Context, requestID string) {
 }
 
 func (s *Service) outputFrame(ctx context.Context, frame channel.Frame) {
+	// The policy check runs before the adapter is consulted, so a refused caller
+	// cannot infer from the response whether this Endpoint has an output-capable
+	// adapter or a reachable session.
+	if err := s.permitOperation(frame, protocol.OperationOutputRead); err != nil {
+		response := protocol.OutputSnapshotResponse{ErrorCode: s.refuseFrame(ctx, frame, protocol.OperationOutputRead, err), ObservedAtMS: time.Now().UnixMilli()}
+		_ = s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameOutputResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, OutputResponse: &response})
+		return
+	}
 	reader, ok := s.executor.(OutputReader)
 	if !ok || frame.OutputRequest == nil {
 		response := protocol.OutputSnapshotResponse{ErrorCode: "unsupported", ObservedAtMS: time.Now().UnixMilli()}
