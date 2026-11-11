@@ -702,11 +702,12 @@ class TestOverwriteCodeBlock:
         assert content == "line1\n\nline3\n"
 
     def test_empty_string_start_num_zero(self, tmp_path):
-        """start_num = 0 should raise."""
+        """start_num = 0 should raise and leave the file untouched."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("a\nb\nc\n")
         with pytest.raises(Exception, match="Invalid start_num"):
             overwrite_code_block(str(test_file), 0, 1, "x\n")
+        assert test_file.read_text() == "a\nb\nc\n"
 
 
 class TestStringFirstLineParameters:
@@ -732,6 +733,8 @@ class TestStringFirstLineParameters:
         ("end_num", "NaN"), ("end_num", "+inf"),
         ("end_num", "-inf"), ("end_num", "abc"),
         ("end_num", -2), ("end_num", "-2"),
+        ("end_num", -1.5), ("end_num", -1.9),
+        ("end_num", -1.01), ("end_num", "-1.5"),
     ])
     def test_rejects_invalid_numeric_values_without_writing(
             self, tmp_path, parameter, value):
@@ -795,6 +798,7 @@ class TestStringFirstLineParameters:
             overwrite_code_block(
                 str(target), start_num, end_num, "changed\n"
             )
+        assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

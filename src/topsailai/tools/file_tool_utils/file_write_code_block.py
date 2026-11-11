@@ -35,12 +35,13 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
                        so ONLY ``start_num`` is replaced.
                        ``-1`` replaces from ``start_num`` through the end of the file.
                        Any other negative value is rejected.
-                       This differs from ``read_file_lines``, where ``0`` means
-                       "read to the end"; a write is destructive, so the
-                       ambiguous value must never delete the rest of the file.
+                       This differs from ``read_file_lines``, where omitting
+                       ``end_num`` reads to the end of the file; a write is
+                       destructive, so the ambiguous value must never delete
+                       the rest of the file.
         content (str): The new content to insert in place of the replaced lines.
                        Can be a single line or multi-line string.
-                       Pass null string to delete lines.
+                       Pass an empty string to delete lines.
 
     Returns:
         str: diff content on success, error message on failure

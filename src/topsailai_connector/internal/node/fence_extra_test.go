@@ -30,14 +30,19 @@ func TestScopeListSkipsVanishedEntry(t *testing.T) {
 
 // TestIsFilesystemRoot checks the root detection on the host platform, so a
 // scope rooted at a volume root is refused before it is opened.
+//
+// The root is derived from the working directory rather than written as a bare
+// separator, because a bare separator is drive-relative on Windows and would be
+// reported as "not a root" for the wrong reason.
 func TestIsFilesystemRoot(t *testing.T) {
-	if !isFilesystemRoot(string(filepath.Separator)) {
-		t.Fatalf("isFilesystemRoot(%q) = false, want true", string(filepath.Separator))
+	root := filesystemRootPath(t)
+	if !isFilesystemRoot(root) {
+		t.Fatalf("isFilesystemRoot(%q) = false, want true", root)
 	}
 
-	root, _ := newScopeFixture(t)
-	if isFilesystemRoot(root) {
-		t.Fatalf("isFilesystemRoot(%q) = true, want false", root)
+	fixture, _ := newScopeFixture(t)
+	if isFilesystemRoot(fixture) {
+		t.Fatalf("isFilesystemRoot(%q) = true, want false", fixture)
 	}
 }
 
@@ -102,9 +107,7 @@ func TestScopeReadRejectsSymlinkLoop(t *testing.T) {
 	root, _ := newScopeFixture(t)
 	scope := openFixtureScope(t, root)
 
-	if err := os.Symlink("loop", filepath.Join(root, "loop")); err != nil {
-		t.Skipf("symlink unsupported here: %v", err)
-	}
+	mustSymlink(t, "loop", filepath.Join(root, "loop"))
 
 	_, _, err := scope.Read("loop", 0, 0)
 	if err == nil {

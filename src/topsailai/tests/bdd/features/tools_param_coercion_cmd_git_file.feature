@@ -273,11 +273,49 @@ Feature: Tools accept string-typed parameters from the LLM
       | 1         | abc     | end_num   |
       | 1         | -inf    | end_num   |
       | 1         | -2      | end_num   |
+      | 1         | -1.5    | end_num   |
+      | 1         | -1.9    | end_num   |
 
   Scenario: read_file_lines answers an inverted range as a business result
     When the tool read_file_lines is called on the test file with parameters start_num set to 5 and end_num set to 2
     Then the tool reports a business problem instead of a parameter error
     And the tool output contains Invalid range
+
+  Scenario: read_file_lines reads a single line when end equals start
+    When the tool read_file_lines is called on the test file with parameters start_num set to 5 and end_num set to 5
+    Then the tool call is accepted and produces a result
+    And the tool output contains LINE05
+    And the tool output does not contain LINE06
+
+  Scenario Outline: read_file_lines coerces a start line below one
+    When the tool read_file_lines is called on the test file with parameters start_num set to <start_num> and end_num set to 4
+    Then the tool call is accepted and produces a result
+    And the tool output contains LINE01
+    And the tool output contains LINE04
+
+    Examples: cosmetic start lines
+      | start_num |
+      | 0         |
+      | -1        |
+      | -5        |
+
+  Scenario: read_file_lines reads the whole file when end_num is omitted
+    When the tool read_file_lines is called on the test file without end_num
+    Then the tool call is accepted and produces a result
+    And the tool output contains LINE01
+    And the tool output contains LINE20
+
+  Scenario: read_file_lines reads through the end when only start_num is given
+    When the tool read_file_lines is called on the test file with start_num set to 15 only
+    Then the tool call is accepted and produces a result
+    And the tool output contains LINE15
+    And the tool output contains LINE20
+
+  Scenario: read_file_lines reads through the end when end_num is zero
+    When the tool read_file_lines is called on the test file with parameters start_num set to 15 and end_num set to 0
+    Then the tool call is accepted and produces a result
+    And the tool output contains LINE15
+    And the tool output contains LINE20
 
   # ------------------------------------------------- read_file_with_context
   Scenario Outline: read_file_with_context reads the case switch as an integer flag

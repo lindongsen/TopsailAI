@@ -21,9 +21,7 @@ func TestScopeStatUsesLstat(t *testing.T) {
 	scope := openFixtureScope(t, root)
 
 	target := filepath.Join(outside, "secret.txt")
-	if err := os.Symlink(target, filepath.Join(root, "outlink")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
+	mustSymlink(t, target, filepath.Join(root, "outlink"))
 
 	entry, err := scope.Stat("outlink")
 	if err != nil {
@@ -247,9 +245,7 @@ func TestTypeOfNamesEveryKind(t *testing.T) {
 	root, _ := newScopeFixture(t)
 	scope := openFixtureScope(t, root)
 
-	if err := os.Symlink("inside.txt", filepath.Join(root, "link")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
+	mustSymlink(t, "inside.txt", filepath.Join(root, "link"))
 
 	cases := map[string]string{
 		"inside.txt": "file",

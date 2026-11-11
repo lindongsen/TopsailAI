@@ -296,7 +296,7 @@ def read_file_around_line(
         return f"Error reading file {file_path}: {str(e)}"
 
 
-def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> str:
+def read_file_lines(file_path: str, start_num: int=1, end_num: int=-1, **_) -> str:
     """Read specific lines from a file and return them as a string.
 
     This function reads a range of lines from a file using 1-based line numbering.
@@ -310,12 +310,16 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
 
     Args:
         file_path (str): The path to the file to read from
-        start_num (int): The starting line number (1-based). Lines before this number
-                        will be excluded. Must be >= 1.
-        end_num (int): The ending line number (1-based, inclusive).
-                       Omitted, ``0``, ``None``, or blank text means no end line,
-                       so only ``start_num`` is read.
-                       ``-1`` reads through the end of the file.
+        start_num (int): The starting line number (1-based). A non-positive
+                        value is treated as ``1`` so a cosmetic LLM argument
+                        mistake still reads from the first line.
+        end_num (int): The ending line number (1-based, inclusive). Defaults to
+                       ``-1``, which reads through the end of the file.
+                       ``0``, ``None``, or blank text also means no end line, so
+                       every line from ``start_num`` through the end of the file
+                       is read. A positive number reads through that line,
+                       inclusive; ``end_num == start_num`` reads exactly one
+                       line, and ``end_num < start_num`` is rejected.
                        Any other negative value is rejected.
 
     Returns:
@@ -326,14 +330,14 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
         This function catches all exceptions and returns them as strings rather than raising
 
     Examples:
+        # Read the whole file
+        content = read_file_lines("example.txt")
+
         # Read lines 1-10 from a file
         content = read_file_lines("example.txt", 1, 10)
 
-        # Read only line 3
-        content = read_file_lines("example.txt", 3)
-
         # Read from line 3 through the end of the file
-        content = read_file_lines("example.txt", 3, -1)
+        content = read_file_lines("example.txt", 3)
     """
     start_num, error = resolve_finite_int(start_num, "start_num")
     if error:
@@ -342,15 +346,26 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
     if error:
         return error
     try:
-        if not start_num:
+        # LLM fault tolerance: a non-positive ``start_num`` means "start from
+        # the first line". Rejecting it would fail a harmless read over a
+        # cosmetic argument mistake, so coerce instead of erroring out. The
+        # observable result is identical to the original ``if not start_num``
+        # form, but covering every non-positive value keeps the behaviour
+        # explicit instead of relying on negative index arithmetic.
+        if start_num < 1:
             start_num = 1
 
-        # ``0`` means no end line, so only ``start_num`` is addressed.
-        if end_num == 0:
-            end_num = start_num
-
+        # ``0`` and ``-1`` mean "no end line", so every line from ``start_num``
+        # to the end of the file is read. The loop guard below already treats
+        # them as "no upper bound", so no sentinel rewrite is needed here.
+        # A positive ``end_num`` reads through that line, inclusive, so
+        # ``end_num == start_num`` reads exactly one line. Only an inverted
+        # range is rejected.
         if end_num > 0 and start_num > end_num:
-            return f"Error: Invalid range: start_num ({start_num}) > end_num ({end_num})"
+            return (
+                f"Error: Invalid range: start_num ({start_num}) > "
+                f"end_num ({end_num}); use 0 or -1 to read through the end"
+            )
 
         start_idx = start_num - 1
         output_lines = []

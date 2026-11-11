@@ -465,9 +465,7 @@ func TestOpenScopeRejectsASymlinkedRoot(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 	link := filepath.Join(parent, "link")
-	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("symlinks are unavailable: %v", err)
-	}
+	mustSymlink(t, real, link)
 
 	if _, err := OpenScope("project", link, nil); err == nil {
 		t.Fatal("OpenScope() = nil error, want a refusal for a symlinked root")

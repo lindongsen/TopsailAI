@@ -3,6 +3,7 @@ package node
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -67,6 +68,11 @@ func TestDeviceOfReportsNoDeviceForAnUnknownSys(t *testing.T) {
 
 // TestDeviceOfReportsADeviceForARealFile checks that a real file reports a
 // device, so the mount-point check has something to compare.
+//
+// The device is not reported on every platform: device_other.go answers "no
+// device" where syscall.Stat_t does not exist, which is what keeps the
+// mount-point rule advisory instead of refusing a legitimate scope. The
+// expectation therefore follows the platform rather than assuming POSIX.
 func TestDeviceOfReportsADeviceForARealFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file")
 	writeFile(t, path, "content")
@@ -75,17 +81,33 @@ func TestDeviceOfReportsADeviceForARealFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lstat: %v", err)
 	}
-	if _, ok := deviceOf(info); !ok {
-		t.Fatal("deviceOf(real file) reported no device, want one")
+
+	_, ok := deviceOf(info)
+	want := runtime.GOOS != "windows"
+	if ok != want {
+		t.Fatalf("deviceOf(real file) reported %v on %s, want %v", ok, runtime.GOOS, want)
 	}
 }
 
 // TestCheckIdentityFileModeReportsAMissingFile checks that a missing identity
 // file is reported rather than treated as acceptable, because the mode check must
 // not pass by being unable to look.
+//
+// The check is skipped on Windows by design, because the permission bits Go
+// reports there are synthesised from the read-only attribute and carry no
+// ownership information. A check that cannot answer the question must not
+// pretend to, so the expectation follows the platform.
 func TestCheckIdentityFileModeReportsAMissingFile(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent")
-	if err := checkIdentityFileMode(missing); err == nil {
+
+	err := checkIdentityFileMode(missing)
+	if runtime.GOOS == "windows" {
+		if err != nil {
+			t.Fatalf("checkIdentityFileMode(missing) = %v on Windows, want nil because the check is skipped", err)
+		}
+		return
+	}
+	if err == nil {
 		t.Fatal("checkIdentityFileMode(missing) = nil error, want a failure")
 	}
 }

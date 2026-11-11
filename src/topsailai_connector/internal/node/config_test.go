@@ -218,3 +218,89 @@ func TestTrimLineTerminatorRemovesOneTerminator(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveConfigDirNeedsOnlyTheConfigDirectory checks that the narrow resolver
+// returns the config directory without requiring a dial target or a tunnel token.
+//
+// It is the unit-level counterpart of the subcommand regression test: `id` and
+// `regenerate` call this function, so a change that made it depend on the dial
+// configuration again would break the documented first-run order at the same
+// place.
+func TestResolveConfigDirNeedsOnlyTheConfigDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	environment := map[string]string{
+		"CONNECTOR_NODE_CONFIG_DIR": configDir,
+	}
+
+	resolved, err := ResolveConfigDir(lookupFrom(environment))
+	if err != nil {
+		t.Fatalf("ResolveConfigDir() = %v, want nil", err)
+	}
+	if resolved != configDir {
+		t.Fatalf("ResolveConfigDir() = %q, want %q", resolved, configDir)
+	}
+}
+
+// TestResolveConfigDirCreatesTheDirectory checks that the narrow resolver creates
+// a missing config directory, because `id` on a fresh machine is the first thing
+// an operator runs and there is nothing to read yet.
+func TestResolveConfigDirCreatesTheDirectory(t *testing.T) {
+	configDir := filepath.Join(t.TempDir(), "absent", "nested")
+	environment := map[string]string{
+		"CONNECTOR_NODE_CONFIG_DIR": configDir,
+	}
+
+	resolved, err := ResolveConfigDir(lookupFrom(environment))
+	if err != nil {
+		t.Fatalf("ResolveConfigDir() = %v, want nil", err)
+	}
+	if resolved != configDir {
+		t.Fatalf("ResolveConfigDir() = %q, want %q", resolved, configDir)
+	}
+
+	info, err := os.Stat(configDir)
+	if err != nil {
+		t.Fatalf("stat created config directory: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("%q is not a directory", configDir)
+	}
+}
+
+// TestResolveConfigDirRejectsBadValues checks that the narrow resolver keeps the
+// config directory checks, because narrowing the loader must not drop a check
+// that protects the directory holding the node token.
+func TestResolveConfigDirRejectsBadValues(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(filePath, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"relative path", "relative/config"},
+		{"path is a file", filePath},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			environment := map[string]string{
+				"CONNECTOR_NODE_CONFIG_DIR": testCase.value,
+			}
+			if _, err := ResolveConfigDir(lookupFrom(environment)); err == nil {
+				t.Fatalf("ResolveConfigDir(%q) = nil error, want a refusal", testCase.value)
+			}
+		})
+	}
+}
+
+// TestResolveConfigDirRejectsANilLookup checks that a nil lookup is reported
+// rather than dereferenced, because a nil lookup is a programming mistake and a
+// panic in a credential path is harder to diagnose than an error.
+func TestResolveConfigDirRejectsANilLookup(t *testing.T) {
+	if _, err := ResolveConfigDir(nil); err == nil {
+		t.Fatal("ResolveConfigDir(nil) = nil error, want a refusal")
+	}
+}

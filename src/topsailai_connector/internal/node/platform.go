@@ -5,6 +5,23 @@ import (
 	"path/filepath"
 )
 
+// samePath reports whether two paths name the same location.
+//
+// The comparison cleans both sides first, because a trailing separator or a
+// redundant dot segment names the same directory as the cleaned form, and then
+// defers the case rule to the platform: Windows compares case-insensitively
+// because its filesystem does, POSIX compares byte for byte because its
+// filesystem does.
+//
+// Every path comparison in this package goes through this function. A raw string
+// comparison is wrong on Windows in both directions: it refuses a legitimate
+// scope whose spelling differs from the resolved one, and it fails to recognise
+// the home directory when the drive letter is spelled in the other case, which
+// would let the home directory become a valid scope root.
+func samePath(left string, right string) bool {
+	return pathEqual(filepath.Clean(left), filepath.Clean(right))
+}
+
 // isFilesystemRoot reports whether a path is the root of a filesystem.
 //
 // The check is written against the path itself rather than against a list of
