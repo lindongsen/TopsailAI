@@ -3,6 +3,7 @@ package topsailai
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,7 +133,16 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 	// scope it requires instead of inheriting one blanket permission. A configured
 	// control action file narrows this list; an omitted action becomes unreachable
 	// because the Endpoint rejects an operation it does not advertise.
-	descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, controlActionCapabilities(a.config.ControlActions)...)
+	controlCapabilities := controlActionCapabilities(a.config.ControlActions)
+	descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, controlCapabilities...)
+	if len(controlCapabilities) > 0 {
+		encoded, err := json.Marshal(controlCapabilities)
+		if err != nil {
+			return adapter.Descriptor{}, fmt.Errorf("encode control action capabilities: %w", err)
+		}
+		digest := sha256.Sum256(encoded)
+		descriptor.Capabilities.Revision = fmt.Sprintf("topsailai-v1-%x", digest[:8])
+	}
 	if a.platformStop {
 		descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, protocol.Capability{Name: protocol.OperationAgentStop, Version: "v1", TargetKinds: []string{"session"}})
 	}

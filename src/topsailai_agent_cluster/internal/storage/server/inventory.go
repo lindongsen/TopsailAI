@@ -10,29 +10,48 @@ import (
 
 // ReplaceInventory atomically replaces one Endpoint's latest report if newer.
 func (s *Store) ReplaceInventory(ctx context.Context, endpointID string, report protocol.InventoryReport, receivedAtMS int64) error {
+	_, _, _, err := s.ReplaceInventoryCommitted(ctx, endpointID, report, receivedAtMS)
+	return err
+}
+
+// ReplaceInventoryCommitted returns the committed revision, whether this call
+// changed the row, and whether committed storage represents the submitted report.
+func (s *Store) ReplaceInventoryCommitted(ctx context.Context, endpointID string, report protocol.InventoryReport, receivedAtMS int64) (int64, bool, bool, error) {
 	if endpointID == "" {
-		return fmt.Errorf("endpoint ID is required")
+		return 0, false, false, fmt.Errorf("endpoint ID is required")
 	}
 	if err := report.Validate(); err != nil {
-		return err
+		return 0, false, false, err
 	}
 	payload, err := json.Marshal(report)
 	if err != nil {
-		return fmt.Errorf("marshal inventory: %w", err)
+		return 0, false, false, fmt.Errorf("marshal inventory: %w", err)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, false, false, err
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `INSERT INTO endpoint_session_state(endpoint_id, schema_version, source_generation, snapshot_revision, observed_at_ms, received_at_ms, sessions_json, create_at_ms, update_at_ms) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(endpoint_id) DO UPDATE SET schema_version=excluded.schema_version, source_generation=excluded.source_generation, snapshot_revision=excluded.snapshot_revision, observed_at_ms=excluded.observed_at_ms, received_at_ms=excluded.received_at_ms, sessions_json=excluded.sessions_json, update_at_ms=excluded.update_at_ms WHERE excluded.observed_at_ms > endpoint_session_state.observed_at_ms OR (excluded.observed_at_ms = endpoint_session_state.observed_at_ms AND excluded.snapshot_revision > endpoint_session_state.snapshot_revision)`, endpointID, report.SchemaVersion, report.SourceGeneration, report.SnapshotRevision, report.ObservedAtMS, receivedAtMS, payload, receivedAtMS, receivedAtMS)
 	if err != nil {
-		return err
+		return 0, false, false, err
 	}
 	if affected, err := result.RowsAffected(); err != nil {
-		return err
+		return 0, false, false, err
 	} else if affected == 0 {
-		return nil
+		if err := tx.Rollback(); err != nil {
+			return 0, false, false, err
+		}
+		var committed int64
+		var committedPayload []byte
+		if err := s.db.QueryRowContext(ctx, `SELECT snapshot_revision, sessions_json FROM endpoint_session_state WHERE endpoint_id = ?`, endpointID).Scan(&committed, &committedPayload); err != nil {
+			return 0, false, false, err
+		}
+		represented := committed > report.SnapshotRevision || (committed == report.SnapshotRevision && string(committedPayload) == string(payload))
+		return committed, false, represented, nil
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, false, false, err
+	}
+	return report.SnapshotRevision, true, true, nil
 }

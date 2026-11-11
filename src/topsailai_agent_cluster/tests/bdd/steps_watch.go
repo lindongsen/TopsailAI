@@ -3,6 +3,7 @@ package bdd
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cucumber/godog"
 )
@@ -28,7 +29,7 @@ func runInteractiveWatch() error {
 	if activeScenario.realCluster == nil {
 		return fmt.Errorf("real cluster is not running")
 	}
-	stdout, stderr, code, err := activeScenario.realCluster.RunTUIInteractiveEditor(watchScript)
+	stdout, stderr, code, err := activeScenario.realCluster.RunTUIInteractiveEditorPaced([]string{"watch\n", "quit\n"}, 250*time.Millisecond)
 	activeScenario.lastBody = []byte(stdout)
 	activeScenario.lastStatus = code
 	if err != nil && code == 0 {
@@ -44,12 +45,15 @@ func runInteractiveWatch() error {
 // here is the exact defect this scenario exists to catch: the command is
 // implemented but unreachable because the binary never wires the tick reader.
 func assertWatchArmed() error {
-	text := interactiveOutput()
+	text := stripFollowSGR(interactiveOutput())
 	if strings.Contains(text, "auto-refresh requires a terminal") {
 		return fmt.Errorf("watch was rejected in a real terminal, so the shipped binary does not wire the tick-capable reader: %s", text)
 	}
 	if !strings.Contains(text, "auto-refresh: 5s projection (any key stops)") {
 		return fmt.Errorf("auto-refresh did not report its default interval and mode: %s", text)
+	}
+	if !strings.Contains(text, "workspace.watching> ") {
+		return fmt.Errorf("watch refresh did not show the active scope marker: %s", text)
 	}
 	return nil
 }

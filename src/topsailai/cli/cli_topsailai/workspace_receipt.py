@@ -46,7 +46,7 @@ RESUME_ERROR_CODES = {
 # is never mistaken for the JSON flag itself.
 _VALUE_FLAGS = frozenset({
     "-m", "--agent-mode", "-s", "--session", "-d", "--driver",
-    "-g", "--generation",
+    "-g", "--generation", "-p", "--pid",
 })
 
 

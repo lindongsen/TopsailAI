@@ -464,7 +464,11 @@ func (w *replWatch) Idle() ([]byte, error) {
 		return []byte("auto-refresh: " + sanitizeInlineText(result.err.Error()) + "\n"), nil
 	}
 	rebound := w.rebind(result.rows)
-	payload := result.output
+	var marker bytes.Buffer
+	if err := RenderWatchingPrompt(&marker, w.state.Scope, w.state.Invalidated, w.controller.color); err != nil {
+		return nil, err
+	}
+	payload := append(marker.Bytes(), result.output...)
 	if rebound {
 		payload = append(payload, []byte("auto-refresh: row numbers rebound; run list to review the new order\n")...)
 	}

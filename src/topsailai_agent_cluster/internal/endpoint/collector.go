@@ -60,12 +60,15 @@ func (c *Collector) Collect(ctx context.Context, observedAtMS int64) (protocol.I
 	if observedAtMS < 1 {
 		return protocol.InventoryReport{}, fmt.Errorf("observation time must be positive")
 	}
-	results := make(chan discoveryResult, len(c.bindings))
-	for _, binding := range c.bindings {
+	c.mu.Lock()
+	bindings := append([]Binding(nil), c.bindings...)
+	c.mu.Unlock()
+	results := make(chan discoveryResult, len(bindings))
+	for _, binding := range bindings {
 		binding := binding
 		go c.discover(ctx, binding, observedAtMS, results)
 	}
-	for range c.bindings {
+	for range bindings {
 		result := <-results
 		if err := c.apply(ctx, result, observedAtMS); err != nil {
 			// The results channel is buffered for every binding, so the remaining
@@ -74,6 +77,54 @@ func (c *Collector) Collect(ctx context.Context, observedAtMS int64) (protocol.I
 		}
 	}
 	return c.compose(observedAtMS), nil
+}
+
+// RefreshDescriptors re-describes only the selected provider bindings and composes
+// a new report from the existing source cache. It never runs provider discovery,
+// so session observations retain their original freshness evidence.
+func (c *Collector) RefreshDescriptors(ctx context.Context, providerType string, observedAtMS int64) (protocol.InventoryReport, error) {
+	if observedAtMS < 1 {
+		return protocol.InventoryReport{}, fmt.Errorf("observation time must be positive")
+	}
+	c.mu.Lock()
+	bindings := append([]Binding(nil), c.bindings...)
+	c.mu.Unlock()
+	type described struct {
+		index      int
+		descriptor adapter.Descriptor
+	}
+	updates := make([]described, 0, len(bindings))
+	for index, binding := range bindings {
+		if providerType != "" && binding.ProviderType != providerType {
+			continue
+		}
+		descriptor, err := binding.Adapter.Describe(ctx)
+		if err != nil {
+			return protocol.InventoryReport{}, fmt.Errorf("describe adapter %q: %w", binding.AdapterID, err)
+		}
+		updates = append(updates, described{index: index, descriptor: descriptor})
+	}
+	if len(updates) == 0 {
+		return protocol.InventoryReport{}, fmt.Errorf("no adapter binding matches provider type %q", providerType)
+	}
+	c.mu.Lock()
+	for _, update := range updates {
+		binding := &c.bindings[update.index]
+		binding.DisplayName = update.descriptor.DisplayName
+		binding.Version = update.descriptor.Version
+		binding.Capabilities = update.descriptor.Capabilities
+		snapshot, ok := c.sources[binding.AdapterID]
+		if !ok {
+			snapshot = endpointstorage.SourceSnapshot{AdapterID: binding.AdapterID, ProviderType: binding.ProviderType, CollectionStatus: protocol.CollectionUnknown}
+		}
+		snapshot.DisplayName = binding.DisplayName
+		snapshot.Version = binding.Version
+		snapshot.Capabilities = binding.Capabilities
+		c.sources[binding.AdapterID] = snapshot
+	}
+	report := c.composeLocked(observedAtMS)
+	c.mu.Unlock()
+	return report, nil
 }
 
 type discoveryResult struct {
@@ -102,12 +153,19 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	previous, hadPrevious := c.sources[item.binding.AdapterID]
+	binding := item.binding
+	for _, current := range c.bindings {
+		if current.AdapterID == item.binding.AdapterID {
+			binding = current
+			break
+		}
+	}
+	previous, hadPrevious := c.sources[binding.AdapterID]
 	lastAttemptMS := item.atMS
 	if item.result.LastAttemptAtMS > 0 {
 		lastAttemptMS = item.result.LastAttemptAtMS
 	}
-	snapshot := endpointstorage.SourceSnapshot{AdapterID: item.binding.AdapterID, ProviderType: item.binding.ProviderType, DisplayName: item.binding.DisplayName, Version: item.binding.Version, Health: "healthy", Capabilities: item.binding.Capabilities, LastAttemptAtMS: lastAttemptMS}
+	snapshot := endpointstorage.SourceSnapshot{AdapterID: binding.AdapterID, ProviderType: binding.ProviderType, DisplayName: binding.DisplayName, Version: binding.Version, Health: "healthy", Capabilities: binding.Capabilities, LastAttemptAtMS: lastAttemptMS}
 	if item.err != nil || !item.result.Complete || item.result.CollectionStatus != protocol.CollectionSucceeded {
 		snapshot.CollectionStatus = protocol.CollectionFailed
 		snapshot.ReportComplete = false
@@ -136,8 +194,8 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 				session := &snapshot.Sessions[index]
 				clusterSessionID := session.ClusterSessionID
 				mapping, lookupErr := c.store.LookupResourceID(ctx, clusterSessionID)
-				if lookupErr != nil || mapping.AdapterID != item.binding.AdapterID {
-					mapping, lookupErr = c.store.GetOrCreateResourceID(ctx, item.binding.AdapterID, clusterSessionID, nowMS)
+				if lookupErr != nil || mapping.AdapterID != binding.AdapterID {
+					mapping, lookupErr = c.store.GetOrCreateResourceID(ctx, binding.AdapterID, clusterSessionID, nowMS)
 				}
 				if lookupErr != nil {
 					// A cancelled store call means the cycle was abandoned, not
@@ -157,7 +215,7 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 				}
 				session.ClusterSessionID = mapping.ResourceID
 				if session.AdapterID == "" {
-					session.AdapterID = item.binding.AdapterID
+					session.AdapterID = binding.AdapterID
 				}
 			}
 		}
@@ -180,7 +238,7 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.sources[item.binding.AdapterID] = snapshot
+	c.sources[binding.AdapterID] = snapshot
 	if c.store != nil {
 		if err := c.store.ApplySourceSnapshot(ctx, snapshot, nowMS); err != nil && ctx.Err() != nil {
 			return ctx.Err()

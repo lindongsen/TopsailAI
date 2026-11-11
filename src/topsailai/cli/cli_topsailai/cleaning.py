@@ -33,6 +33,11 @@ _LIVE = "live"
 _DEAD = "dead"
 _UNKNOWN = "unknown"
 
+#: Age after which an idle session file becomes eligible for cleanup. Both the
+#: interactive ``/clean`` command and the non-interactive ``workspace clean``
+#: command read this one value, so the two paths cannot drift.
+EXPIRED_AGE_SECONDS = 3 * 24 * 60 * 60  # 72 hours
+
 
 def _home_for_task_dir(task_dir: str) -> Optional[str]:
     """Return the ``TOPSAILAI_HOME`` that owns *task_dir*, or ``None``.
@@ -223,29 +228,68 @@ def _expand_to_related_files(task_dir: str, selected: List[dict]) -> List[dict]:
     return expanded
 
 
-def clean_expired_files(task_dir: str, files: List[dict]) -> int:
-    """Clean up session log files that are idle and older than 3 days.
+def _owner_pid(record: dict) -> Optional[int]:
+    """Return the session-instance PID that owns *record*.
 
-    Shows a confirmation prompt before deletion. When a file is deleted,
-    all related session files sharing the same ``{session_id}.{pid}`` prefix
-    are also removed, provided the owning session is provably gone and none of
-    them are currently in use.
+    ``discover_log_files`` reports a task file's own child PID in ``pid`` and
+    the owning session's PID in ``session_pid``. Deletion groups files by the
+    ``{session_id}.{pid}`` prefix, so the owner PID is the identity a PID
+    selector must match; matching the child PID would select a file whose
+    deletion unit belongs to a different PID.
+    """
+    owner = record.get("session_pid")
+    if owner is None:
+        owner = record.get("pid")
+    return owner
+
+
+def collect_expired_files(
+    task_dir: str,
+    files: List[dict],
+    *,
+    session_ids: Optional[List[str]] = None,
+    pids: Optional[List[int]] = None,
+    now: Optional[float] = None,
+) -> List[dict]:
+    """Build the exact inventory of expired, provably idle files.
+
+    This is the single inventory rule shared by the interactive ``/clean``
+    command and the non-interactive ``workspace clean`` command, so the two
+    paths cannot drift on expiry age, session liveness, launch leases, or
+    related-file expansion.
 
     Args:
         task_dir: Directory containing the log files.
-        files: List of file metadata dictionaries.
+        files: Discovered log file records.
+        session_ids: Exact session IDs to restrict the inventory to, or
+            ``None`` for every session. Launch logs carry no session owner, so
+            they are excluded whenever a restriction is active.
+        pids: Exact session-instance PIDs to restrict the inventory to, or
+            ``None`` for every PID. A session ID alone selects every instance
+            of that session, so a PID narrows the inventory to one instance.
+            Launch logs carry no owner PID, so they are excluded whenever a
+            restriction is active.
+        now: Reference timestamp, defaulting to the current time.
 
     Returns:
-        Number of files deleted.
+        Deduplicated file records that may be deleted, each carrying
+        ``filename``, ``path``, ``size`` and ``mtime``.
     """
-    now = time.time()
-    threshold_seconds = 3 * 24 * 60 * 60  # 72 hours
+    reference = time.time() if now is None else now
     home = _home_for_task_dir(task_dir)
     # One probe per owning session across the whole inventory pass.
     liveness_cache: Dict[Tuple[str, int], str] = {}
 
-    expired_files = []
-    for f in files:
+    candidates = files
+    if session_ids is not None:
+        selected = set(session_ids)
+        candidates = [f for f in candidates if f.get("session_id") in selected]
+    if pids is not None:
+        selected_pids = set(pids)
+        candidates = [f for f in candidates if _owner_pid(f) in selected_pids]
+
+    expired_files: List[dict] = []
+    for f in candidates:
         if not os.path.isfile(f["path"]):
             continue
 
@@ -254,8 +298,8 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
         except OSError:
             continue
 
-        age = now - mtime
-        if age <= threshold_seconds:
+        age = reference - mtime
+        if age <= EXPIRED_AGE_SECONDS:
             continue
 
         reason = _deletion_block_reason(f["path"], home=home, cache=liveness_cache)
@@ -271,16 +315,113 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
             "age_hours": age / 3600,
         })
 
-    expired_files.extend(
-        record for record in _launch_log_records(task_dir)
-        if now - record["mtime"] > threshold_seconds
-        and not _is_active_launch_log(Path(record["path"]))
-        and _deletion_block_reason(
-            record["path"], home=home, cache=liveness_cache
-        ) is None
-    )
+    if session_ids is None and pids is None:
+        expired_files.extend(
+            record for record in _launch_log_records(task_dir)
+            if reference - record["mtime"] > EXPIRED_AGE_SECONDS
+            and not _is_active_launch_log(Path(record["path"]))
+            and _deletion_block_reason(
+                record["path"], home=home, cache=liveness_cache
+            ) is None
+        )
 
-    expired_files = _expand_to_related_files(task_dir, expired_files)
+    return _expand_to_related_files(task_dir, expired_files)
+
+
+def delete_collected_files(
+    task_dir: str,
+    entries: List[dict],
+) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """Delete an already-confirmed inventory with mutation-time revalidation.
+
+    Every entry is revalidated immediately before removal, because a session may
+    have started using the file while the operator was reading the confirmation
+    prompt or while a non-interactive caller was preparing the deletion.
+
+    Args:
+        task_dir: Directory containing the log files.
+        entries: Inventory produced by ``collect_expired_files``.
+
+    Returns:
+        Tuple of (deleted paths, list of ``(filename, error)`` failures). The
+        deleted paths are reported from the removal itself, so a caller never
+        has to infer what happened from a count or from a later existence check.
+    """
+    home = _home_for_task_dir(task_dir)
+    # Deletion-time probes must be fresh: a session may have started using the
+    # file while the operator was reading the confirmation prompt.
+    revalidation_cache: Dict[Tuple[str, int], str] = {}
+    deleted_paths: List[str] = []
+    failed_files: List[Tuple[str, str]] = []
+
+    for entry in entries:
+        # Revalidate immediately before deletion: the file may have become an
+        # active launch log, or been replaced, since the inventory was built.
+        if _is_active_launch_log(Path(entry["path"])):
+            cprint(
+                f"[WARN] Skipping active launch log: {entry['filename']}",
+                color=Colors.YELLOW,
+            )
+            continue
+        # Liveness is re-probed here, not reused from the inventory pass, so a
+        # session that became live after the prompt cannot lose its files.
+        reason = _deletion_block_reason(
+            entry["path"], home=home, cache=revalidation_cache
+        )
+        if reason is not None:
+            cprint(
+                f"[WARN] Skipping {entry['filename']} ({reason})",
+                color=Colors.YELLOW,
+            )
+            continue
+        try:
+            current = os.stat(entry["path"])
+        except OSError as e:
+            failed_files.append((entry["filename"], str(e)))
+            cprint(
+                f"[ERROR] Failed to delete {entry['filename']}: {e}",
+                color=Colors.RED,
+            )
+            continue
+        if current.st_mtime != entry["mtime"]:
+            cprint(
+                f"[WARN] Skipping changed file: {entry['filename']}",
+                color=Colors.YELLOW,
+            )
+            continue
+        try:
+            os.remove(entry["path"])
+            deleted_paths.append(entry["path"])
+            cprint(
+                f"[OK] Deleted: {entry['filename']}",
+                color=Colors.GREEN,
+            )
+        except OSError as e:
+            failed_files.append((entry["filename"], str(e)))
+            cprint(
+                f"[ERROR] Failed to delete {entry['filename']}: {e}",
+                color=Colors.RED,
+            )
+
+    return deleted_paths, failed_files
+
+
+def clean_expired_files(task_dir: str, files: List[dict]) -> int:
+    """Clean up session log files that are idle and older than 3 days.
+
+    Shows a confirmation prompt before deletion. When a file is deleted,
+    all related session files sharing the same ``{session_id}.{pid}`` prefix
+    are also removed, provided the owning session is provably gone and none of
+    them are currently in use.
+
+    Args:
+        task_dir: Directory containing the log files.
+        files: List of file metadata dictionaries.
+
+    Returns:
+        Number of files deleted.
+    """
+    expired_files = collect_expired_files(task_dir, files)
 
     if not expired_files:
         cprint(
@@ -290,6 +431,7 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
         )
         return 0
 
+    now = time.time()
     print_header("Clean Expired Log Files")
     cprint(
         f"[WARN] The following {len(expired_files)} file(s) are idle "
@@ -365,45 +507,8 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
         cprint("[INFO] Clean cancelled.", color=Colors.YELLOW)
         return 0
 
-    deleted_count = 0
-    failed_files = []
-    # Deletion-time probes must be fresh: a session may have started using the
-    # file while the operator was reading the confirmation prompt.
-    revalidation_cache: Dict[Tuple[str, int], str] = {}
-
-    for ef in expired_files:
-        # Revalidate immediately before deletion: the file may have become an
-        # active launch log, or been replaced, since the inventory was built.
-        if _is_active_launch_log(Path(ef["path"])):
-            cprint(f"[WARN] Skipping active launch log: {ef['filename']}", color=Colors.YELLOW)
-            continue
-        # Liveness is re-probed here, not reused from the inventory pass, so a
-        # session that became live after the prompt cannot lose its files.
-        reason = _deletion_block_reason(
-            ef["path"], home=home, cache=revalidation_cache
-        )
-        if reason is not None:
-            cprint(
-                f"[WARN] Skipping {ef['filename']} ({reason})",
-                color=Colors.YELLOW,
-            )
-            continue
-        try:
-            current = os.stat(ef["path"])
-        except OSError as e:
-            failed_files.append((ef["filename"], str(e)))
-            cprint(f"[ERROR] Failed to delete {ef['filename']}: {e}", color=Colors.RED)
-            continue
-        if current.st_mtime != ef["mtime"]:
-            cprint(f"[WARN] Skipping changed file: {ef['filename']}", color=Colors.YELLOW)
-            continue
-        try:
-            os.remove(ef["path"])
-            deleted_count += 1
-            cprint(f"[OK] Deleted: {ef['filename']}", color=Colors.GREEN)
-        except OSError as e:
-            failed_files.append((ef["filename"], str(e)))
-            cprint(f"[ERROR] Failed to delete {ef['filename']}: {e}", color=Colors.RED)
+    deleted_paths, failed_files = delete_collected_files(task_dir, expired_files)
+    deleted_count = len(deleted_paths)
 
     cprint(
         f"\n[INFO] Clean complete: {deleted_count} deleted, {len(failed_files)} failed.",

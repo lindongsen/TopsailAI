@@ -301,6 +301,15 @@ func SanitizeInlineText(value string) string {
 
 // RenderPrompt writes a trusted, reset-safe REPL prompt.
 func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorPolicy) error {
+	return renderPrompt(w, scope, invalidated, false, policy)
+}
+
+// RenderWatchingPrompt writes the scope prompt with a watch status marker.
+func RenderWatchingPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorPolicy) error {
+	return renderPrompt(w, scope, invalidated, true, policy)
+}
+
+func renderPrompt(w io.Writer, scope ScopeState, invalidated, watching bool, policy ColorPolicy) error {
 	prompt := scope.Kind.String()
 	switch scope.Kind {
 	case ScopeEndpoint:
@@ -327,6 +336,9 @@ func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorP
 			prompt += "!"
 		}
 		prompt += "]"
+	}
+	if watching {
+		prompt += ".watching"
 	}
 	prompt += ">"
 	if err := writeStyled(w, ansiBoldGreen, prompt, policy); err != nil {
