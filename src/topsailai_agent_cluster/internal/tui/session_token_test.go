@@ -59,7 +59,7 @@ func TestLogsAcceptsTheDisplayedProviderSessionID(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "observed_at_ms:") {
+	if !strings.Contains(output, "observed_at:") {
 		t.Fatalf("missing snapshot evidence: %q", output)
 	}
 	if len(stub.outputRequests) != 1 {
@@ -81,7 +81,7 @@ func TestLogsProviderSessionIDWithoutListStillResolves(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "observed_at_ms:") {
+	if !strings.Contains(output, "observed_at:") {
 		t.Fatalf("missing snapshot evidence: %q", output)
 	}
 	if len(stub.outputRequests) != 1 || stub.outputRequests[0].resourceID != "res-1" {

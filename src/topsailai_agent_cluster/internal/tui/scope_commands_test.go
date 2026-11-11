@@ -148,7 +148,7 @@ func TestLogsAcceptsSessionArgumentInEndpointScope(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "observed_at_ms:") || !strings.Contains(output, "truncated: false") {
+	if !strings.Contains(output, "observed_at:") || !strings.Contains(output, "truncated: false") {
 		t.Fatalf("missing snapshot evidence: %q", output)
 	}
 }
@@ -158,7 +158,7 @@ func TestLogsUsesCurrentSessionInSessionScope(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "observed_at_ms:") {
+	if !strings.Contains(output, "observed_at:") {
 		t.Fatalf("missing snapshot evidence: %q", output)
 	}
 }

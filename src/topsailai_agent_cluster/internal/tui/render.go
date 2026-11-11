@@ -28,9 +28,9 @@ func RenderRows(w io.Writer, rows []SessionRow) {
 		}
 		lastSuccess := "never"
 		if row.LastSuccessAtMS != nil {
-			lastSuccess = fmt.Sprint(*row.LastSuccessAtMS)
+			lastSuccess = formatDateTime(*row.LastSuccessAtMS, nil)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\tcollection_status=%s\tlast_success_at_ms=%s\t%s\n", row.EndpointID, row.AdapterID, row.ClusterSessionID, row.ProviderGeneration, row.State, row.CollectionStatus, lastSuccess, strings.Join(markers, ","))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\tcollection_status=%s\tlast_success_at=%s\t%s\n", row.EndpointID, row.AdapterID, row.ClusterSessionID, row.ProviderGeneration, row.State, row.CollectionStatus, lastSuccess, strings.Join(markers, ","))
 	}
 }
 
@@ -40,11 +40,11 @@ func RenderDetail(w io.Writer, detail Detail) {
 	lastSuccess := "never"
 	for _, adapter := range detail.Inventory.Adapters {
 		if adapter.LastSuccessAtMS != nil {
-			lastSuccess = fmt.Sprint(*adapter.LastSuccessAtMS)
+			lastSuccess = formatDateTime(*adapter.LastSuccessAtMS, nil)
 			break
 		}
 	}
-	fmt.Fprintf(w, "collection_status: %s\nlast_success_at_ms: %s\n", detail.Inventory.CollectionStatus, lastSuccess)
+	fmt.Fprintf(w, "collection_status: %s\nlast_success_at: %s\n", detail.Inventory.CollectionStatus, lastSuccess)
 	if detail.Session != nil {
 		fmt.Fprintf(w, "session: %s adapter=%s provider_generation=%s state=%s\n", detail.Session.ClusterSessionID, detail.Session.AdapterID, detail.Session.ProviderGeneration, detail.Session.State)
 	}
@@ -82,7 +82,7 @@ func RenderSnapshot(w io.Writer, observedAtMS int64, content string, truncated b
 // would receive more lines than the requested limit.
 func RenderSnapshotStyled(w io.Writer, observedAtMS int64, content string, truncated bool, maxLines int, policy ColorPolicy) {
 	bounded, clipped := TrimTailLines(normalizeCarriageReturns(content), maxLines)
-	fmt.Fprintf(w, "observed_at_ms: %d\ntruncated: %t\n%s\n", observedAtMS, truncated || clipped, filterProviderOutput(bounded, policy))
+	fmt.Fprintf(w, "observed_at: %s\ntruncated: %t\n%s\n", formatDateTime(observedAtMS, nil), truncated || clipped, filterProviderOutput(bounded, policy))
 }
 
 // ReceiptForStatus builds a receipt value from a generic command response.

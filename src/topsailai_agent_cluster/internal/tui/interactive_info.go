@@ -141,7 +141,7 @@ func RenderSessionInfo(w io.Writer, endpoint protocol.Endpoint, session protocol
 		{"collection_status", session.CollectionStatus},
 		{"stale", fmt.Sprint(session.Stale)},
 		{"unknown", fmt.Sprint(session.Unknown)},
-		{"observed_at_ms", fmt.Sprint(session.ObservedAtMS)},
+		{"observed_at", formatDateTime(session.ObservedAtMS, nil)},
 		{"endpoint_id", endpoint.EndpointID},
 		{"endpoint_connection_state", endpoint.ConnectionState},
 	}

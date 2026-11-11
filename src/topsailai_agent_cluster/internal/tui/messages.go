@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/tokenizer"
@@ -362,11 +361,13 @@ func messagesRoleCell(role string) string {
 //
 // The layout includes milliseconds, because two records can be written inside the
 // same second and a coarser format would make them look simultaneous. A
-// conversation spans days,
-// so the date is printed as well as the clock: a bare clock time would make two
-// records from different days look adjacent.
+// conversation spans days, so the date is printed as well as the clock: a bare
+// clock time would make two records from different days look adjacent.
+//
+// The layout itself comes from formatDateTimeMillis, so this header and every other
+// human time surface share one definition.
 func formatMessagesTime(value int64) string {
-	return time.UnixMilli(value).In(time.Local).Format("2006-01-02 15:04:05.000")
+	return formatDateTimeMillis(value, nil)
 }
 
 // Messages renders one session's bounded conversation.

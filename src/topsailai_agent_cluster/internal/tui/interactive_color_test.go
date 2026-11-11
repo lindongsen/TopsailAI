@@ -118,7 +118,7 @@ func TestInteractiveSendDegradedSnapshotKeepsProviderColour(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "observed_at_ms:") {
+	if !strings.Contains(output, "observed_at:") {
 		t.Fatalf("automatic snapshot missing: %q", output)
 	}
 	if !strings.Contains(output, "log\x1b[31m") {

@@ -703,6 +703,43 @@ width, truncation state and growth state, so every render path inherits the
 switches without threading a new parameter through each command, and the
 interactive prompt editor keeps the real terminal width as its editing budget.
 
+## Time rendering
+
+Every time the CLI shows a human must be readable. A raw epoch millisecond count
+such as `1793885072943` is not acceptable on a human surface: an operator cannot
+tell whether it is today, last week or a different unit, and comparing two of them
+by eye is hopeless.
+
+The rule applies to every human surface, including a table cell, a detail line, a
+snapshot header and a conversation record. It does not apply to `--json` output,
+which is a machine contract: a JSON field keeps its integer `*_at_ms` value so a
+script, a BDD step or an integration assertion reads the exact instant. A human
+label therefore never ends in `_ms`, because that suffix promises a millisecond
+count and a rendered date and clock time is not one.
+
+Three layouts exist, and each is justified rather than chosen for variety:
+
+| Layout | Form | Used where |
+|---|---|---|
+| clock | `15:04:05` | a table cell, which has a width budget shared with the columns that address a row |
+| date and clock | `2006-01-02 15:04:05` | a detail or standalone line, which has no width budget and can describe an earlier day |
+| date and clock with milliseconds | `2006-01-02 15:04:05.000` | a conversation record, where two records can share one second |
+
+A table cell keeps only the clock because the row's own stale marker already
+carries the "this is not from now" signal, so the date is not the only freshness
+evidence. A detail line prints the date because a bare clock would make yesterday's
+observation look like today's. A conversation record keeps milliseconds because a
+coarser layout would make two records written inside one second look simultaneous.
+
+A time that was never reported renders as `-`, never as `0` and never as an empty
+cell. A zero would read as a real instant at the epoch, and an empty cell would read
+as a formatting gap rather than as an absent observation.
+
+Times are rendered in the operator's local zone, so a value can be compared with
+the clock on the wall in front of them. The layout definitions and the formatters
+live in one place, `internal/tui/timefmt.go`, so no two surfaces can disagree about
+how a time is written.
+
 ## Help option and the literal terminator
 
 `--help` and `-h` are global meta-options, not per-command syntax. They are
@@ -846,3 +883,7 @@ which is what an operator needs in order to review what was actually typed.
   instead of cached data.
 - A new command must be added to the help order, the dispatch switch and the
   availability matrix in the same change.
+- A test must prove no human surface prints a bare epoch number, and it must be
+  seen to fail when a formatter is reverted to a raw value.
+- A test must prove a human time label does not end in `_ms`, so the label never
+  promises a millisecond count for a rendered date and clock time.

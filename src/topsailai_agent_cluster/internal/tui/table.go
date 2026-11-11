@@ -572,15 +572,13 @@ func dataStatusCell(row SessionRow, location *time.Location) string {
 	return base + " (" + stamp + ")"
 }
 
-// formatLastSuccess renders a millisecond timestamp in the given location.
+// formatLastSuccess renders the latest successful collection stamp as a clock
+// time, or "-" when no collection has succeeded yet.
+//
+// The layout comes from formatClockTime, so this cell and the endpoint table
+// cannot disagree about how a table cell renders a time.
 func formatLastSuccess(value *int64, location *time.Location) string {
-	if value == nil {
-		return "-"
-	}
-	if location == nil {
-		location = time.Local
-	}
-	return time.UnixMilli(*value).In(location).Format("15:04:05")
+	return formatClockTime(optionalTimeValue(value), location)
 }
 func escapeCell(value string) string {
 	clean := sanitizeTerminal([]byte(value))
