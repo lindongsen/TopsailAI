@@ -72,7 +72,12 @@ type InteractiveOptions struct {
 	// the REPL silent, so a caller that supplies none loses nothing.
 	ProgressWriter io.Writer
 	// Ticks injects the auto-refresh tick source; nil selects the real ticker.
-	Ticks             WatchTicker
+	Ticks WatchTicker
+	// TriggerRunner executes the watch --trigger script. It is a separate seam
+	// because the REPL must never spawn a process directly: a test needs to
+	// observe the invocation and its environment without running a real script,
+	// and the production runner is the only place that owns process lifetime.
+	TriggerRunner     TriggerRunner
 	watcherExit       func(bool)
 	watcherBeforeDone func()
 }

@@ -190,7 +190,7 @@ func TestParseWatchArgumentsForceFloorNamesTheReason(t *testing.T) {
 func TestWatchControllerCollectsImmediatelyThenOncePerTick(t *testing.T) {
 	stub := newWatchStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
 	// No tick is delivered here: the first result must come from the immediate
 	// collection, so a loop that still waits for a tick fails this test.
@@ -225,7 +225,7 @@ func TestWatchControllerSkipsTickWhileCollecting(t *testing.T) {
 	gate := make(chan struct{})
 	stub.gate = gate
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
 	// Wait until the immediate collection is actually blocked on the gate, so
 	// the tick below is offered to a loop that is inside collect().
@@ -260,7 +260,7 @@ func TestWatchControllerStopCancelsInFlightCollection(t *testing.T) {
 	stub := newWatchStub()
 	stub.gate = make(chan struct{})
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	deadline := time.Now().Add(2 * time.Second)
 	for stub.callCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -290,7 +290,7 @@ func TestWatchControllerReportsRepeatedFailureOnce(t *testing.T) {
 	stub := newWatchStub()
 	stub.setFail(errors.New("endpoint unreachable"))
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
 	first := waitForResult(t, controller)
 	if first.err == nil {
@@ -311,7 +311,7 @@ func TestWatchControllerReportsRecoveryAfterFailure(t *testing.T) {
 	stub := newWatchStub()
 	stub.setFail(errors.New("endpoint unreachable"))
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
 	if result := waitForResult(t, controller); result.err == nil {
 		t.Fatal("expected a reported failure")
@@ -332,7 +332,7 @@ func TestWatchControllerLeavesNoGoroutine(t *testing.T) {
 	before := runtime.NumGoroutine()
 	stub := newWatchStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	controller.Stop()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -352,7 +352,7 @@ func TestWatchControllerRejectsPartialCollection(t *testing.T) {
 	stub := newWatchStub()
 	stub.inventoryErrors = map[string]error{"endpoint-2": errors.New("adapter failed")}
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
 	result := waitForResult(t, controller)
 	if result.err == nil {
@@ -369,7 +369,7 @@ func TestWatchControllerRejectsPartialCollection(t *testing.T) {
 func TestWatchControllerForcedModeUsesForcedCollection(t *testing.T) {
 	stub := refreshScopeStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: 10 * time.Second, Force: true}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: 10 * time.Second, Force: true}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
 	result := waitForResult(t, controller)
 	if result.err != nil {
@@ -386,7 +386,7 @@ func TestWatchControllerForcedModeUsesForcedCollection(t *testing.T) {
 func TestWatchControllerProjectionModeDoesNotForce(t *testing.T) {
 	stub := refreshScopeStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
 	if result := waitForResult(t, controller); result.err != nil {
 		t.Fatalf("projection collection failed: %v", result.err)
@@ -877,14 +877,14 @@ func TestWatchCommandSurface(t *testing.T) {
 }
 
 // TestWatchHelpDocumentsTheStopRule proves help states the syntax and the rule
-// that any keypress stops the loop.
+// that any keypress stops the loop, and that the trigger flag is documented.
 func TestWatchHelpDocumentsTheStopRule(t *testing.T) {
 	var out strings.Builder
 	if err := PrintScopedCommandHelp(&out, "watch", ScopeWorkspace); err != nil {
 		t.Fatalf("PrintScopedCommandHelp: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"watch [interval] [--force]", "workspace, endpoint", "any keypress stops the loop"} {
+	for _, want := range []string{"watch [interval] [--force] [--trigger[=<path>]]", "workspace, endpoint", "any keypress stops the loop", "--trigger: run a script when a session changes from running to waiting_input", "topsailai-agent-cluster.on-state-change.trigger"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q: %q", want, text)
 		}
@@ -923,7 +923,7 @@ func watchRender(t *testing.T, color ColorPolicy, layout TableLayout) []byte {
 	t.Helper()
 	stub := newWatchStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, color, staticLayout(layout))
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, color, staticLayout(layout), nil)
 	defer controller.Stop()
 	result := waitForResult(t, controller)
 	if result.err != nil {
@@ -1013,7 +1013,7 @@ func TestWatchControllerResamplesLayoutOnEveryRender(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		return layout
-	})
+	}, nil)
 	defer controller.Stop()
 	first := waitForResult(t, controller)
 	if first.err != nil {

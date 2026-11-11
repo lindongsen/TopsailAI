@@ -194,7 +194,10 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		defer closeEditor()
 		// Colour follows the output boundary, so a REPL whose stdout is redirected
 		// stays plain even though interactive mode requires a terminal on stdin.
-		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors}
+		// The trigger runner is wired here, at the process boundary, because it is
+		// the only place that may own a child process. The REPL receives it as an
+		// injected dependency, so a test never spawns a real script.
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors, TriggerRunner: tui.NewExecTriggerRunner()}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	// A negative numeric option is rejected at the boundary rather than passed
