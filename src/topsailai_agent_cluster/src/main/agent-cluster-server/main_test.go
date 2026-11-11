@@ -9,8 +9,8 @@ import (
 // TestServerHandlerUsesConfiguredScopes guards the production wiring of operator
 // scopes. The scope set is only enforced when the handler is built with
 // NewHandlerWithScopes; the older constructors delegate to it with a nil scope
-// list, which AuthorizeOperation treats as unrestricted. Reverting this call
-// silently disables every scope check, so the wiring is asserted here rather
+// list, which an empty scope set treats as unrestricted. Reverting this call
+// silently discards the configured scopes, so the wiring is asserted here rather
 // than left to review.
 func TestServerHandlerUsesConfiguredScopes(t *testing.T) {
 	source, err := os.ReadFile("main.go")
