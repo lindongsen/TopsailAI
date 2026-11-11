@@ -12,7 +12,7 @@ programming_language: go
 
 ## Result summary
 
-113 cases were executed against the real compiled CLI: **110 PASS, 3 BLOCKED,
+113 cases were executed against the real compiled CLI: **111 PASS, 2 BLOCKED,
 0 FAIL**.
 
 Every number in this report is counted from the `results.jsonl` file of the
@@ -31,8 +31,8 @@ named run directory. A BLOCKED case is never counted as PASS.
 | E statistics and concurrency | STAT-01..17 | `run-e2full` | 17 | 0 | 0 | `.tmp/manual-live/run-e2full/reports/results.jsonl` |
 | F1 safety | SAFE-01..08 | `run-f1full` | 8 | 0 | 0 | `.tmp/manual-live/run-f1full/reports/results.jsonl` |
 | F2 scale | SAFE-09..12 | `run-f2full` | 3 | 1 | 0 | `.tmp/manual-live/run-f2full/reports/results.jsonl` |
-| F3 live acceptance | SAFE-13..18 | `run-f3full` | 4 | 2 | 0 | `.tmp/manual-live/run-f3full/reports/results.jsonl` |
-| **Total** | **113** | — | **110** | **3** | **0** | — |
+| F3 live acceptance | SAFE-13..18 | `run-f3approved` | 5 | 1 | 0 | `.tmp/manual-live/run-f3approved/reports/results.jsonl` |
+| **Total** | **113** | — | **111** | **2** | **0** | — |
 
 Per-module totals: CFG 14, OBJ 24, FILE 23, LIFE 17, STAT 17, SAFE 18.
 
@@ -41,7 +41,6 @@ Per-module totals: CFG 14, OBJ 24, FILE 23, LIFE 17, STAT 17, SAFE 18.
 | Case | Priority | Environment | Reason recorded in `results.jsonl` |
 |---|---|---|---|
 | SAFE-12 | P2 | I | `cross-OS platform evidence is unavailable on this host` |
-| SAFE-17 | P0 | I | `actual removal requires the reviewed cleanup.sh preview and explicit approval` |
 | SAFE-18 | P0 | P | `human acceptance review is required; the same agent cannot certify its own work` |
 
 SAFE-12 additionally depends on a scale budget. That budget is now approved as
@@ -51,9 +50,16 @@ search each under 60 s, and peak RSS under 512 MiB. The case still stays BLOCKED
 because cross-OS platform evidence cannot be obtained on this single host, and
 approving a budget does not change that. No new scale test is run for SAFE-12.
 
-SAFE-17 is blocked because the actual removal step is irreversible. The
-`cleanup.sh` preview has been produced and reviewed by the executor, but a human
-must approve the inventory before anything is deleted.
+SAFE-17 was blocked because the actual removal step is irreversible and the
+case only previewed the inventory. A human approved the reviewed inventory on
+2026-11-11, so the case now runs its approved removal path through
+`ML_SAFE17_APPROVED=1`. The approved path previews the owned targets, performs
+the removal, and then verifies that every removal is logged, that the owned
+targets are gone, that the protected backup file count and manifest are
+unchanged, and that no sentinel was created inside the protected backup. All
+thirteen assertions passed in `run-f3approved`. Without the approval switch the
+case still previews only and stays BLOCKED, so the default behaviour is
+unchanged.
 
 SAFE-18 is blocked because the agent that implemented and executed these cases
 cannot also certify the acceptance result. A human reviewer must confirm it.
@@ -70,7 +76,7 @@ performed with `terminal-start.sh` and `terminal-interact.sh`, which reported
 readiness, captured the expected output and stopped only its own tmux session.
 
 CFG-14 is therefore **not included in the automated inventory and not counted as
-PASS**. The 113-case inventory and the 110 PASS total exclude it.
+PASS**. The 113-case inventory and the 111 PASS total exclude it.
 
 ## Known limitations
 
@@ -231,7 +237,7 @@ Supporting scripts and case scripts:
 
 ## Decision record
 
-The three open items were decided by the human on 2026-11-11. The decisions are
+The open items were decided by the human on 2026-11-11. The decisions are
 recorded here so the BLOCKED status is not mistaken for an unresolved question.
 
 ### SAFE-12 scale budget: approved, case stays BLOCKED
@@ -262,3 +268,21 @@ SAFE-18 remains **BLOCKED** pending a human acceptance review. The reviewer and
 the review time are arranged separately by the human. This agent implemented and
 executed the cases, so it does not self-certify and does not sign on the human's
 behalf.
+
+### SAFE-17 approved cleanup: executed, case now PASS
+
+The human approved the reviewed cleanup inventory on 2026-11-11, so SAFE-17 no
+longer stays BLOCKED. The case now has an approved removal path behind
+`ML_SAFE17_APPROVED=1`. The approved path previews the owned targets, performs
+the removal, and verifies the removal log, the disappearance of the owned
+targets, the unchanged protected backup file count and manifest, and the absence
+of a sentinel inside the protected backup. All thirteen assertions passed in
+`run-f3approved`, so SAFE-17 is counted as PASS.
+
+The default path is unchanged: without the approval switch the case still
+previews only and stays BLOCKED, which was verified in `run-safe17b`. The
+irreversible removal therefore still requires an explicit approval every time.
+
+Two symlinks that pointed at the protected backup were removed with `rm -f`,
+which deletes the link and never follows it. The protected backup still holds
+782 files and its manifest is unchanged.
