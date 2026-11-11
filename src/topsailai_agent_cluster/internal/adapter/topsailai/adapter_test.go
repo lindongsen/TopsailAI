@@ -130,6 +130,47 @@ func TestDiscoverReportsUnverifiedRowsAsUnknown(t *testing.T) {
 	}
 }
 
+// TestDiscoverNormalizesProviderStateVocabulary proves the provider's own state
+// words never reach the wire. The provider reports "input" for a live process
+// that holds its session pipe, while the cluster contract declares
+// "waiting_input". Forwarding the provider word verbatim made the contract depend
+// on one provider's spelling: the TUI ordered "waiting_input", which no producer
+// emitted, and the real value fell into the unrecognized-state fallback.
+//
+// An unrecognized word becomes unknown rather than being forwarded, because a
+// consumer cannot interpret a state the contract does not define.
+func TestDiscoverNormalizesProviderStateVocabulary(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[` +
+		`{"session_id":"waiting","process_generation":"g1","status":"input"},` +
+		`{"session_id":"working","process_generation":"g2","status":"running"},` +
+		`{"session_id":"resting","process_generation":"g3","status":"idle"},` +
+		`{"session_id":"odd","process_generation":"g4","status":"paused"}` +
+		`],"total":4}`)}
+	a := newTestAdapter(t, runner)
+	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(result.Sessions) != 4 {
+		t.Fatalf("sessions = %#v, want four rows", result.Sessions)
+	}
+	want := map[string]string{
+		"res_waiting": protocol.SessionStateWaitingInput,
+		"res_working": protocol.SessionStateRunning,
+		"res_resting": protocol.SessionStateIdle,
+		"res_odd":     protocol.SessionStateUnknown,
+	}
+	for _, session := range result.Sessions {
+		expected, ok := want[session.ClusterSessionID]
+		if !ok {
+			t.Fatalf("unexpected session %q", session.ClusterSessionID)
+		}
+		if session.State != expected {
+			t.Fatalf("session %q state = %q, want %q", session.ClusterSessionID, session.State, expected)
+		}
+	}
+}
+
 func TestDiscoverAcceptsNumericStringAndNullGenerations(t *testing.T) {
 	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"numeric","process_generation":435912980},{"session_id":"string","process_generation":"g1"},{"session_id":"idle","process_generation":null}]}`)}
 	a := newTestAdapter(t, runner)

@@ -204,6 +204,13 @@ func TestOutputHTTPForwardsLineBudget(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
+			// The Server verifies that the target is registered before it forwards,
+			// so the fixture must register the endpoint. This test asserts the line
+			// budget, not reachability, so an unregistered target would fail for an
+			// unrelated reason.
+			if err := store.UpsertEndpoint(context.Background(), protocol.Endpoint{EndpointID: "e1", InstanceID: "i1", DisplayName: "one", ConnectionState: "online", ObservedAtMS: 1, CapabilityRevision: "c1"}, 1); err != nil {
+				t.Fatal(err)
+			}
 			requester := &recordingOutputRequester{}
 			h := NewHandlerWithCommandsAndBrokerAndOutput(store, "secret", &CommandService{Store: store}, nil, requester)
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/output?endpoint_id=e1&resource_id=res_1&provider_generation=g1"+testCase.query, nil)

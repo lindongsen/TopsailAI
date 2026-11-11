@@ -256,8 +256,11 @@ func unitC19MainHelp() string {
 }
 
 // unitC19WatchHelpLine is the workspace overview line for the auto-refresh command.
+// Its syntax is wider than the block column, so the description hangs on the next
+// line at the shared description column.
 func unitC19WatchHelpLine() string {
-	return "  watch [interval] [--force]            re-render the list on a timer until any key is pressed\n"
+	return "  watch [interval] [--force] [--trigger[=<path>]]\n" +
+		"                                        re-render the list on a timer until any key is pressed; --trigger runs a script when a session starts waiting for input\n"
 }
 
 // unitC19StartHelpLine is a fixed independent overview line shared by two scopes.

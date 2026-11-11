@@ -19,15 +19,9 @@ type ModelCatalogRequester interface {
 // projection and never caches a result. The Server forwards the target verbatim and
 // returns the adapter's answer unchanged: it does not interpret a profile name, a
 // provider name or an availability verdict.
-//
-// The authorization check runs before the transport is consulted, so an
-// unauthorized caller cannot infer Endpoint reachability from the response.
 func (h *Handler) modelCatalog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET required")
-		return
-	}
-	if !h.authorizeModelCatalogRead(w, r) {
 		return
 	}
 	q := r.URL.Query()
@@ -84,6 +78,11 @@ func (h *Handler) writeModelCatalogResultFailure(w http.ResponseWriter, r *http.
 		h.writeError(w, http.StatusBadGateway, protocol.ModelCatalogTooLarge, "provider model catalog exceeded the configured bound")
 	case "endpoint_unavailable":
 		h.writeError(w, http.StatusServiceUnavailable, "endpoint_unavailable", "model catalog query failed: endpoint is not connected")
+	case protocol.PolicyDenied:
+		// The Endpoint refused the caller, so this is not a provider failure and
+		// not an outage. Reporting it as either would send the operator to
+		// investigate a provider that was never invoked.
+		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation agent.model.list is not permitted for this endpoint token")
 	default:
 		h.writeError(w, http.StatusBadGateway, protocol.ModelCatalogProviderError, "provider model catalog read failed")
 	}

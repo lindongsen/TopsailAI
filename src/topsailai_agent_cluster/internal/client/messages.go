@@ -29,6 +29,6 @@ func (c *APIClient) GetMessages(ctx context.Context, endpointID, sessionID strin
 	if maxTokens > 0 {
 		path += "&max_tokens=" + strconv.Itoa(maxTokens)
 	}
-	err := c.get(ctx, path, &result)
-	return result, err
+	err := c.get(c.withEndpointToken(ctx, endpointID), path, &result)
+	return result, c.explainRefusal(err, endpointID)
 }

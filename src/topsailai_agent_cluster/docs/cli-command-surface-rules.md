@@ -292,15 +292,46 @@ spelling that leaves the process no matter which scope they are in.
 The `q` spelling inside the start and launch prompts keeps abandoning the draft and
 leaving the loop, because those are prompt contexts rather than scope contexts.
 
-`watch` is interactive-only for a different reason, and it is not a gap either. It
-adds no behaviour: every tick performs exactly `list` (re-read the persisted
+`watch` is interactive-only for a different reason, and it is not a gap either. Its
+ticks add no behaviour: every tick performs exactly `list` (re-read the persisted
 projection) or `refresh` (forced collection), and both of those are fully
-reachable standalone with `--json`. What `watch` adds is a presentation cadence —
+reachable standalone with `--json`. What the ticks add is a presentation cadence —
 re-rendering a table on a timer while a prompt sits idle, and stopping on the first
 keypress. A non-interactive caller that wants repeated reads writes its own loop
 around `list`, which is strictly more expressive because it controls the exit
 condition and the output format. The loop therefore has no standalone contract to
 pin, and inventing one would duplicate `list` behind a second name.
+
+`--trigger` is the one behaviour `watch` adds, and it is deliberately the only one.
+It runs a local script when a watched session transitions from `running` to
+`waiting_input`, so an operator who is already watching the table can react without
+typing a second command. It stays inside `watch` rather than becoming a standalone
+command because it is a foreground convenience, not a reliability promise: it lives
+in the operator's own client process, so closing the terminal ends it, and it
+observes whatever the Endpoint last collected rather than subscribing to provider
+events. A caller that needs unattended reaction belongs in the Endpoint or in the
+provider's own hook surface, not in a client-side loop.
+
+Three properties keep the addition from turning `watch` into a second automation
+surface:
+
+- The trigger fires only on a real transition. The first observation of a session
+  and a changed provider generation only record a baseline, so starting the loop
+  never fires a script for a session that was already waiting, and a replaced
+  process is never mistaken for a transition.
+- The script runs directly without a shell, in its own process group, with a
+  bounded timeout, and its output never reaches the terminal, because the editor is
+  the only writer. A script that hangs therefore cannot delay a keypress, and a
+  script that prints cannot corrupt the table.
+- The child environment is built from a whitelist rather than inherited, because
+  the client process holds every Endpoint token. A trigger script receives the
+  documented `AGENT_CLUSTER_*` payload and nothing else, so a notification script
+  never receives a cluster credential it did not ask for.
+
+The delay is the Endpoint collection interval, not the watch interval, and a
+transition that completes between two collections is never observed. That is a
+property of sampling rather than a defect to fix: the provider reports a state, not
+an event stream, so a client-side loop can only see states that were sampled.
 
 The loop collects once immediately on start, before the first tick, so the operator
 sees the current inventory at once instead of waiting a whole interval for a table

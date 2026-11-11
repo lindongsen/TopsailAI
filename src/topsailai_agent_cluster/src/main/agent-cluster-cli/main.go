@@ -79,6 +79,13 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	confirmed := flags.Bool("yes", false, "confirm a mutating action")
 	serverURL := flags.String("server-url", envOr("AGENT_CLUSTER_SERVER_URL", "http://127.0.0.1:8080"), "Server API URL")
 	token := flags.String("token", os.Getenv("AGENT_CLUSTER_TOKEN"), "Server bearer token")
+	// --endpoint-token is the token the target Endpoint accepts. It is a separate
+	// credential from --token because the two answer different questions: the
+	// Server token decides whether this CLI may talk to the cluster, while the
+	// Endpoint token decides whether this CLI may act on one machine. The normal
+	// source is the AGENT_CLUSTER_ENDPOINT_TOKENS mapping in the CLI configuration
+	// file, because a token written on a command line stays in the shell history.
+	endpointToken := flags.String("endpoint-token", "", "token the target Endpoint accepts; requires --endpoint")
 	waitTimeoutMS := flags.Int64("wait-timeout-ms", 0, "maximum local wait for command completion in milliseconds")
 	maxBytes := flags.Int("max-bytes", 64<<10, "maximum output snapshot size in bytes")
 	// --lines is one quantity with one meaning: how many trailing output lines a
@@ -154,7 +161,18 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	if !interactiveSelected && flags.NArg() == 0 {
 		return fmt.Errorf("a command is required: list, show, logs, send, stop")
 	}
+	// The Endpoint token mapping is resolved before any command runs, so a
+	// malformed configuration is reported once instead of surfacing as a refusal
+	// from whichever Endpoint the command happened to reach first.
+	endpointTokens, err := parseEndpointTokens(os.Getenv(endpointTokensEnv))
+	if err != nil {
+		return err
+	}
+	if err := applyEndpointTokenFlag(endpointTokens, resolveEndpointTokenTarget(*filter, flags.Args()), *endpointToken); err != nil {
+		return err
+	}
 	api := client.NewAPIClient(*serverURL, *token)
+	api.EndpointTokens = endpointTokens
 	ctx := context.Background()
 	if interactiveSelected {
 		if *jsonMode || *confirmed {
@@ -176,7 +194,10 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		defer closeEditor()
 		// Colour follows the output boundary, so a REPL whose stdout is redirected
 		// stays plain even though interactive mode requires a terminal on stdin.
-		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors}
+		// The trigger runner is wired here, at the process boundary, because it is
+		// the only place that may own a child process. The REPL receives it as an
+		// injected dependency, so a test never spawns a real script.
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors, TriggerRunner: tui.NewExecTriggerRunner()}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	// A negative numeric option is rejected at the boundary rather than passed
@@ -550,6 +571,7 @@ func flagSupplied(flags *flag.FlagSet, name string) bool {
 // cannot be added without deciding whether it is hoistable.
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
+	"endpoint-token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
 	"no-progress": true, "no-truncate": true, "limit": true, "max-chars": true, "c": true,
 	"max-tokens": true, "t": true,

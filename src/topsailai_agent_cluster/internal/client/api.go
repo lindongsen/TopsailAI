@@ -11,19 +11,85 @@ import (
 	"strings"
 
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
 )
+
+// endpointTokenHeader carries the token the target Endpoint accepts.
+//
+// It is a header rather than a query parameter because a URL is recorded by
+// Server access logs, reverse proxies and shell history, while a header is not
+// recorded by default. The Server forwards this header into the channel frame
+// without interpreting it.
+const endpointTokenHeader = "X-Endpoint-Token"
 
 // APIClient calls the authenticated Server operator API.
 type APIClient struct {
 	HTTPClient *http.Client
 	BaseURL    string
 	Token      string
+	// EndpointTokens maps an Endpoint ID to the token that Endpoint accepts.
+	//
+	// The mapping lives on the client because the Server must never hold it: a
+	// Server that could hand out Endpoint tokens would be able to grant access
+	// to every machine, which is exactly the authority this design removes. An
+	// absent entry sends no token, and the Endpoint decides whether that is
+	// acceptable, so a deployment that configures no policy directory keeps
+	// working without any token at all.
+	EndpointTokens map[string]string
 }
 
 // NewAPIClient constructs an API client for baseURL and bearer token.
 func NewAPIClient(baseURL, token string) *APIClient {
 	return &APIClient{HTTPClient: http.DefaultClient, BaseURL: strings.TrimRight(baseURL, "/"), Token: token}
 }
+
+// withEndpointToken attaches the token this Endpoint accepts to the request
+// context, so the transport can carry it without every call site handling
+// credentials.
+//
+// An Endpoint with no configured token is left untouched rather than refused
+// here. The client cannot know whether the target Endpoint requires a token,
+// because an Endpoint with no policy directory accepts every caller. Refusing
+// locally would therefore break a deployment where only some machines enforce a
+// policy, and it would make the client a second authority that could disagree
+// with the Endpoint.
+func (c *APIClient) withEndpointToken(ctx context.Context, endpointID string) context.Context {
+	token := c.EndpointTokens[endpointID]
+	if token == "" {
+		return ctx
+	}
+	return security.WithEndpointToken(ctx, token)
+}
+
+// explainRefusal adds the local cause to a refusal that the Endpoint could only
+// report as a policy decision.
+//
+// When the Endpoint refuses because no token was presented, the real cause is
+// usually that this CLI has no token for that machine. The Endpoint cannot say
+// so, because it cannot distinguish a caller that forgot to configure a token
+// from a caller that deliberately presented none. The client can tell the
+// difference, so it names the missing configuration instead of leaving the
+// operator to guess why a machine they can reach refuses them.
+//
+// The original error is preserved, because the Endpoint's own code and message
+// remain the authoritative statement of what happened.
+func (c *APIClient) explainRefusal(err error, endpointID string) error {
+	if err == nil {
+		return nil
+	}
+	if _, configured := c.EndpointTokens[endpointID]; configured {
+		return err
+	}
+	if !strings.Contains(err.Error(), "policy_denied") {
+		return err
+	}
+	return fmt.Errorf("%w (no endpoint token is configured for %q in %s)", err, endpointID, endpointTokensEnvName)
+}
+
+// endpointTokensEnvName names the CLI configuration key that holds the Endpoint
+// token map. It is repeated here rather than imported from the CLI package
+// because the client is a library and must not depend on a command.
+const endpointTokensEnvName = "AGENT_CLUSTER_ENDPOINT_TOKENS"
 
 // ListEndpoints returns the current endpoint projection.
 func (c *APIClient) ListEndpoints(ctx context.Context) ([]protocol.Endpoint, error) {
@@ -73,8 +139,8 @@ type OutputSnapshot = protocol.OutputSnapshotResponse
 func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
 	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
 	var result protocol.OutputSnapshotResponse
-	err := c.get(ctx, path, &result)
-	return result, err
+	err := c.get(c.withEndpointToken(ctx, endpointID), path, &result)
+	return result, c.explainRefusal(err, endpointID)
 }
 
 // FollowChunk is one streamed output record delivered by FollowOutput. It is an
@@ -98,6 +164,9 @@ func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, ge
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
+	if token := security.EndpointToken(c.withEndpointToken(ctx, endpointID)); token != "" {
+		req.Header.Set(endpointTokenHeader, token)
+	}
 	httpClient := c.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -108,7 +177,7 @@ func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, ge
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		return nil, decodeFailure("server follow failed", resp)
+		return nil, c.explainRefusal(decodeFailure("server follow failed", resp), endpointID)
 	}
 	records := make(chan FollowChunk, 64)
 	go func() {
@@ -153,10 +222,15 @@ func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, ge
 }
 
 // AdmitCommand submits one immutable command intent.
+//
+// The intent names its own Endpoint, so the token that Endpoint accepts is
+// attached here rather than by every caller. A command that reached the Endpoint
+// without its token would be refused by a machine that enforces a policy, and the
+// refusal would look like a permission problem instead of a missing credential.
 func (c *APIClient) AdmitCommand(ctx context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {
 	var result map[string]any
-	err := c.request(ctx, http.MethodPost, "/api/v1/commands", intent, &result)
-	return result, err
+	err := c.request(c.withEndpointToken(ctx, intent.EndpointID), http.MethodPost, "/api/v1/commands", intent, &result)
+	return result, c.explainRefusal(err, intent.EndpointID)
 }
 
 // CancelCommand requests cancellation before dispatch.
@@ -188,6 +262,9 @@ func (c *APIClient) request(ctx context.Context, method, path string, body any, 
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if token := security.EndpointToken(ctx); token != "" {
+		req.Header.Set(endpointTokenHeader, token)
 	}
 	httpClient := c.HTTPClient
 	if httpClient == nil {

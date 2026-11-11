@@ -98,30 +98,43 @@ an anonymous caller and it does not fall back to a default policy, because a mis
 credential must never be weaker than a wrong one.
 
 The two tokens travel in different places. The `server-token` stays in the HTTP
-`Authorization` header, which terminates at the Server. The `endpoint-token` travels inside
-the request body and then inside the channel frame, because it must survive past the Server
-to reach the Endpoint.
+`Authorization` header, which terminates at the Server. The `endpoint-token` must survive
+past the Server to reach the Endpoint, so it is carried in the request and then in the
+channel frame.
 
 ### How each token is carried
 
-The two tokens need different carriage because they terminate at different parties.
+The two tokens need different carriage because they terminate at different parties, and
+the `endpoint-token` needs two different carriage forms because the Server exposes two
+request shapes.
 
 | Hop | `server-token` | `endpoint-token` |
 |---|---|---|
-| CLI to Server | HTTP `Authorization: Bearer <server-token>` | Request body field `endpoint_token` |
+| CLI to Server, command admission | HTTP `Authorization: Bearer <server-token>` | Request body field `endpoint_token` |
+| CLI to Server, read query | HTTP `Authorization: Bearer <server-token>` | HTTP header `X-Endpoint-Token` |
 | Server to Endpoint | Not forwarded; it terminated at the Server | Channel frame field `endpoint_token`, forwarded verbatim |
 | Endpoint to provider | Never present | Never present; it is consumed by the policy check |
 
-The `endpoint-token` must be in the body rather than a header, because the Server
-re-emits the request as a channel frame and a header has no place to live there. It
-must be in the frame rather than in a Server-side lookup, because the Server holds no
-token table and must not acquire one: a Server-side token table would be a second
-authority and would let a Server compromise widen access.
+A command is admitted with `POST /api/v1/commands`, which has a JSON body, so the token
+rides in that body as a field. The six read queries are `GET` routes, and a `GET` request
+has no body, so the token rides in a request header instead.
 
-The CLI therefore needs two independent settings, and neither may default to the
-other. A CLI configured with only a `server-token` can reach the cluster but is
-refused by every Endpoint, which is the correct outcome: cluster admission is not
-machine admission.
+The read queries do not use a query parameter. A query parameter would place the token in
+the URL, and a URL is written to the Server access log, to any reverse-proxy log in front
+of it, and to the shell history of anyone who typed the request by hand. A header is not
+logged by default, so it keeps the credential out of every place a URL is recorded.
+
+The `endpoint-token` must reach the frame rather than be resolved by a Server-side lookup,
+because the Server holds no token table and must not acquire one: a Server-side token table
+would be a second authority and would let a Server compromise widen access.
+
+Both carriage forms converge on the same frame field, so the Endpoint has exactly one place
+to read the credential and cannot accidentally honour a request that arrived through the
+other form without a token.
+
+The CLI therefore needs two independent settings, and neither may default to the other. A
+CLI configured with only a `server-token` can reach the cluster but is refused by every
+Endpoint, which is the correct outcome: cluster admission is not machine admission.
 
 A token may be honoured by one Endpoint or by several, and the file's `endpoints` declaration
 decides which. A CLI therefore resolves the token for the Endpoint it addresses from its own
@@ -274,9 +287,13 @@ a file with it is honoured only where it names.
   unspecified" while looking like a grant.
 - An unknown scope name is rejected at load time, so a typo fails at startup instead of silently
   granting nothing.
-- A permission naming a non-`ctl.` operation must be one of the known operation names, so a typo
-  fails at startup. A `ctl.` permission is accepted as a pattern, because the action inventory is
-  Endpoint-local configuration and may legitimately name an action this build does not know.
+- A permission naming an operation this build does not serve is accepted at load time with a
+  warning, because one file set has to serve a version-skewed fleet and writing a policy before the
+  operation ships is a normal deployment order. The warning is mandatory: this is the only place in
+  the design where a mistake can be silent, so a misspelled operation name would otherwise never
+  take effect and never be reported. A `ctl.` permission is accepted as a pattern without a warning,
+  because the action inventory is Endpoint-local configuration and may legitimately name an action
+  this build does not know.
 - A control character in a line is rejected.
 - Two files declaring the same token are rejected, because the effective policy would depend on
   directory read order.
@@ -519,6 +536,7 @@ Endpoint, so it must exist on the wire, and the CLI must be able to supply it.
 | Channel frame | A new `endpoint_token` field | The Endpoint cannot verify a credential it never receives |
 | Immutable intent | A new `endpoint_token` field | Every command already travels as an intent, so the token rides with it |
 | Six read request structures | A new `endpoint_token` field each | These bypass the intent path and carry their own request shape |
+| Six read HTTP routes | Read the `X-Endpoint-Token` header and copy it into the frame field | A `GET` has no body, so the header is the only carriage that keeps the token out of the URL |
 | CLI | A new `--endpoint-token` flag and a per-Endpoint token map in the CLI configuration | A token names its Endpoints, so the CLI resolves the one for the addressed Endpoint |
 | Server handlers | Forward the field verbatim | The Server must not drop or rewrite it |
 

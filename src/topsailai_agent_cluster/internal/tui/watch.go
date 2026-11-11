@@ -5,10 +5,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 // Watch intervals. The projection mode only re-reads the persisted Server
@@ -27,6 +30,17 @@ const (
 type watchRequest struct {
 	Interval time.Duration
 	Force    bool
+	// TriggerSet records that the operator asked for a trigger script. It is
+	// separate from TriggerPath because a bare --trigger means "use the default
+	// location", which is a different request from naming a path.
+	TriggerSet bool
+	// TriggerPath is the path the operator named, or empty for the default.
+	TriggerPath string
+	// TriggerScript is the resolved absolute path, filled in once at arm time so
+	// the loop never re-resolves a path on every tick. An empty value with
+	// TriggerSet means no usable script was found, and the reason was reported
+	// when the command was armed.
+	TriggerScript string
 }
 
 // WatchTicker supplies the tick source for one loop and releases it on stop.
@@ -51,9 +65,21 @@ type WatchLineReader interface {
 	ReadLineWithWatch(context.Context, string, bool, int, WatchSession) (string, bool, error)
 }
 
+// watchUsage is the interactive usage line. One constant keeps every rejection
+// message identical, so an operator never has to compare two spellings of the
+// same grammar.
+const watchUsage = "usage: watch [interval] [--force] [--trigger[=<path>]]"
+
 // parseWatchArguments decodes the interactive watch grammar.
-// Accepted forms are "watch", "watch <interval>", "watch --force" and
-// "watch <interval> --force".
+// Accepted forms are "watch", "watch <interval>", "watch --force",
+// "watch <interval> --force", and either of those with "--trigger" or
+// "--trigger=<path>" appended.
+//
+// --trigger is a flag with an optional value rather than a positional argument,
+// because the interval is already positional and a bare path would be
+// indistinguishable from it. A bare --trigger selects the default script
+// location, so the operator never has to spell a path that the convention
+// already defines.
 func parseWatchArguments(rest string) (watchRequest, error) {
 	request := watchRequest{Interval: defaultWatchInterval}
 	intervalSet := false
@@ -61,18 +87,33 @@ func parseWatchArguments(rest string) (watchRequest, error) {
 		switch {
 		case token == "--force":
 			if request.Force {
-				return watchRequest{}, fmt.Errorf("usage: watch [interval] [--force]")
+				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}
 			request.Force = true
+		case token == "--trigger":
+			if request.TriggerSet {
+				return watchRequest{}, fmt.Errorf("%s", watchUsage)
+			}
+			request.TriggerSet = true
+		case strings.HasPrefix(token, "--trigger="):
+			if request.TriggerSet {
+				return watchRequest{}, fmt.Errorf("%s", watchUsage)
+			}
+			path := strings.TrimPrefix(token, "--trigger=")
+			if path == "" {
+				return watchRequest{}, fmt.Errorf("%s", watchUsage)
+			}
+			request.TriggerSet = true
+			request.TriggerPath = path
 		case strings.HasPrefix(token, "-"):
 			return watchRequest{}, fmt.Errorf("option %q is available only in non-interactive mode; JSON output is available only with the standalone command", token)
 		default:
 			if intervalSet {
-				return watchRequest{}, fmt.Errorf("usage: watch [interval] [--force]")
+				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}
 			parsed, err := time.ParseDuration(token)
 			if err != nil || parsed <= 0 {
-				return watchRequest{}, fmt.Errorf("usage: watch [interval] [--force]")
+				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}
 			request.Interval = parsed
 			intervalSet = true
@@ -129,10 +170,24 @@ type watchController struct {
 	layoutSource func() TableLayout
 	ctx          context.Context
 	cancel       context.CancelFunc
+	// runner executes the trigger script. A nil runner with a resolved script is
+	// a wiring defect, so the loop reports it instead of silently skipping the
+	// script the operator asked for.
+	runner TriggerRunner
+	// tracker remembers the last observed state per session identity, so the
+	// trigger fires on a transition rather than on a state.
+	tracker triggerTracker
 
 	mu      sync.Mutex
 	pending *watchResult
 	lastErr string
+	// triggerBusy marks a script still running. A transition that arrives while
+	// one is in flight is dropped rather than queued, because a notification
+	// script that cannot keep up must not accumulate a backlog of stale events.
+	triggerBusy bool
+	// triggerDone is closed when the in-flight script finishes, so Stop can wait
+	// for it instead of leaving an orphan process behind.
+	triggerDone chan struct{}
 
 	stopOnce sync.Once
 	done     chan struct{}
@@ -141,8 +196,10 @@ type watchController struct {
 // newWatchController starts one loop. The ticker is injected so tests can drive
 // ticks deterministically; nil selects the real ticker. layoutSource is queried
 // on every render, so the caller passes a live read of the output boundary
-// rather than a snapshot of it.
-func newWatchController(parent context.Context, api InteractiveAPI, filter string, request watchRequest, ticker WatchTicker, color ColorPolicy, layoutSource func() TableLayout) *watchController {
+// rather than a snapshot of it. runner executes the trigger script and is
+// injected for the same reason as the ticker: a test must observe the invocation
+// without starting a real process.
+func newWatchController(parent context.Context, api InteractiveAPI, filter string, request watchRequest, ticker WatchTicker, color ColorPolicy, layoutSource func() TableLayout, runner TriggerRunner) *watchController {
 	if ticker == nil {
 		ticker = realWatchTicker
 	}
@@ -158,6 +215,7 @@ func newWatchController(parent context.Context, api InteractiveAPI, filter strin
 		layoutSource: layoutSource,
 		ctx:          ctx,
 		cancel:       cancel,
+		runner:       runner,
 		done:         make(chan struct{}),
 	}
 	go controller.run()
@@ -208,6 +266,75 @@ func (c *watchController) collect() {
 	c.lastErr = ""
 	c.pending = &watchResult{rows: rows, output: output}
 	c.mu.Unlock()
+	// The trigger runs after the table is published, so a slow script can never
+	// delay the render the operator is waiting for. It runs on this goroutine
+	// rather than the editor thread, so a script that blocks cannot delay a
+	// keypress.
+	c.fireTriggers(rows)
+}
+
+// fireTriggers runs the trigger script for every transition this collection
+// observed. It is a no-op when no script was resolved, so a watch without
+// --trigger keeps its previous behaviour exactly.
+func (c *watchController) fireTriggers(rows []SessionRow) {
+	if c.request.TriggerScript == "" {
+		return
+	}
+	events := c.tracker.observe(rows)
+	if len(events) == 0 {
+		return
+	}
+	if c.runner == nil {
+		c.publishFailure(fmt.Errorf("trigger script %q cannot run: no runner is configured", filepath.Base(c.request.TriggerScript)))
+		return
+	}
+	for _, event := range events {
+		if !c.beginTrigger() {
+			// A script is still running, so this transition is dropped instead of
+			// queued. A notification that cannot keep up must not accumulate a
+			// backlog of events that describe a state the operator already saw.
+			c.publishFailure(fmt.Errorf("trigger script %q is still running, so one %s transition was dropped", filepath.Base(c.request.TriggerScript), event.State))
+			continue
+		}
+		c.runTrigger(event)
+	}
+}
+
+// beginTrigger claims the single in-flight slot and reports whether it was free.
+func (c *watchController) beginTrigger() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.triggerBusy {
+		return false
+	}
+	c.triggerBusy = true
+	c.triggerDone = make(chan struct{})
+	return true
+}
+
+// runTrigger executes one script on its own goroutine and releases the in-flight
+// slot when it finishes. It must not run on the collection goroutine: a script
+// that blocks for its whole lifetime would otherwise stall the next collection
+// and freeze the table the operator is watching. A failure is reported once
+// through the same de-duplicating path as a collection failure, so a script that
+// fails on every transition cannot flood the terminal.
+func (c *watchController) runTrigger(event TriggerEvent) {
+	path := c.request.TriggerScript
+	runner := c.runner
+	go func() {
+		err := runner.RunTrigger(c.ctx, path, triggerEnvironment(event))
+		c.mu.Lock()
+		done := c.triggerDone
+		c.triggerBusy = false
+		c.triggerDone = nil
+		c.mu.Unlock()
+		if done != nil {
+			close(done)
+		}
+		if err != nil {
+			c.publishFailure(err)
+		}
+	}()
 }
 
 // collectionContext bounds one collection. A forced collection inherits the
@@ -298,10 +425,19 @@ func (c *watchController) take() (watchResult, bool) {
 	return result, true
 }
 
-// Stop cancels an in-flight collection and waits for the loop to exit.
+// Stop cancels an in-flight collection and any running trigger script, then
+// waits for the loop to exit. Waiting for the script matters because the script
+// is a child process: returning while it still runs would leave an orphan that
+// outlives the prompt it was armed for.
 func (c *watchController) Stop() {
 	c.stopOnce.Do(c.cancel)
 	<-c.done
+	c.mu.Lock()
+	done := c.triggerDone
+	c.mu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 // replWatch applies a controller result to REPL state. It runs only on the
@@ -386,12 +522,34 @@ func interactiveWatch(api InteractiveAPI, state *interactiveState, rest string, 
 			return fmt.Errorf("auto-refresh --force is unavailable: the API client does not support forced collection")
 		}
 	}
+	// The script is resolved once here, at arm time, so the loop never stats a
+	// path on every tick and an unusable path is reported before the operator
+	// starts watching instead of after the first transition.
+	script, note, err := resolveTriggerScript(request)
+	if err != nil {
+		return err
+	}
+	request.TriggerScript = script
 	state.watch = &request
 	mode := "projection"
 	if request.Force {
 		mode = "forced collection"
 	}
-	_, err = fmt.Fprintf(out, "auto-refresh: %s %s (any key stops)\n", request.Interval, mode)
+	if _, err = fmt.Fprintf(out, "auto-refresh: %s %s (any key stops)\n", request.Interval, mode); err != nil {
+		return err
+	}
+	if !request.TriggerSet {
+		return nil
+	}
+	// The trigger line names the script and the transition it watches, so the
+	// operator never has to guess which script is armed or when it fires. A
+	// missing default script is reported as a note rather than an error, because
+	// the operator asked for the convention rather than for one exact file.
+	if note != "" {
+		_, err = fmt.Fprintln(out, note)
+		return err
+	}
+	_, err = fmt.Fprintf(out, "trigger: %s on %s -> %s\n", script, protocol.SessionStateRunning, protocol.SessionStateWaitingInput)
 	return err
 }
 
@@ -415,9 +573,11 @@ func startWatch(parent context.Context, api InteractiveAPI, state *interactiveSt
 		return nil
 	}
 	// The layout is passed as a live read, not a snapshot, so a terminal resize
-	// during the loop is honoured on the next render.
+	// during the loop is honoured on the next render. The trigger runner is
+	// injected rather than constructed here, so a test can observe the script
+	// invocation without spawning a real process.
 	controller := newWatchController(parent, api, filter, request, options.Ticks, options.Color, func() TableLayout {
 		return OutputLayout(out)
-	})
+	}, options.TriggerRunner)
 	return &replWatch{controller: controller, state: state}
 }

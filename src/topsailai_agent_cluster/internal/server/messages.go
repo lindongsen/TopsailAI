@@ -20,15 +20,9 @@ type MessagesRequester interface {
 // query and returns the adapter's answer unchanged, never caching it and never
 // correlating it with the inventory, because a stopped session is absent from the
 // inventory and has no cluster resource ID.
-//
-// The authorization check runs before the transport is consulted, so an
-// unauthorized caller cannot infer Endpoint reachability from the response.
 func (h *Handler) messages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, 405, "method_not_allowed", "GET required")
-		return
-	}
-	if !h.authorizeMessagesRead(w, r) {
 		return
 	}
 	endpointID := r.URL.Query().Get("endpoint_id")
@@ -99,6 +93,11 @@ func (h *Handler) writeMessagesResultFailure(w http.ResponseWriter, r *http.Requ
 		h.writeError(w, 502, protocol.MessagesResponseTooLarge, "provider messages response exceeded the configured bound")
 	case "endpoint_unavailable":
 		h.writeError(w, 503, "endpoint_unavailable", "messages query failed: endpoint is not connected")
+	case protocol.PolicyDenied:
+		// The Endpoint refused the caller, so this is not a provider failure and
+		// not an outage. Reporting it as either would send the operator to
+		// investigate a provider that was never invoked.
+		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation messages.read is not permitted for this endpoint token")
 	default:
 		h.writeError(w, 502, protocol.MessagesProviderError, "provider messages read failed")
 	}

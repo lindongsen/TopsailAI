@@ -42,12 +42,18 @@ func (t ChannelTransport) Send(ctx context.Context, envelope protocol.TransportE
 	if t.Channel == nil {
 		return errors.New("channel server is unavailable")
 	}
+	// The Endpoint token travels with the command frame because the Endpoint is
+	// the only authority that decides whether this caller may exercise this
+	// operation. Without it every command would reach the Endpoint with no
+	// credential, and an Endpoint that enforces a policy would refuse a caller
+	// that had configured its token correctly.
 	return t.Channel.SendCommand(ctx, envelope.EndpointInstanceID, channel.Frame{
 		Type:            channel.FrameCommand,
 		ProtocolVersion: channel.ProtocolVersion,
 		FrameID:         envelope.FrameID,
 		RequestID:       envelope.RequestID,
 		Intent:          &envelope.Intent,
+		EndpointToken:   security.EndpointToken(ctx),
 	})
 }
 
@@ -209,11 +215,10 @@ func (h *Handler) admitCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	intent.IssuerID = identity
-	requiredPermission, declared := h.declaredPermission(r.Context(), intent.EndpointID, intent.Operation)
-	if err := security.AuthorizeOperation(security.AuthenticatedScopes(r.Context()), intent.Operation, requiredPermission, declared); err != nil {
-		h.writeError(w, http.StatusForbidden, "permission_denied", err.Error())
-		return
-	}
+	// Admission decides reachability only. Whether this caller may exercise this
+	// operation on that machine is the Endpoint's decision, so the Server forwards
+	// the intent and never refuses it on permission grounds. A Server-side refusal
+	// would be a second authority that the Endpoint could not revoke.
 	hash, err := protocol.CanonicalHash(intent)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_intent", err.Error())
@@ -255,29 +260,6 @@ func (h *Handler) admitCommand(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusAccepted
 	}
 	h.write(w, status, 0, "success", record)
-}
-
-// declaredPermission returns the permission an operation declares in the latest
-// reported inventory. The second result reports whether the operation was found
-// at all, so a caller can distinguish "declared no permission" from "not
-// advertised". A missing inventory yields no declaration rather than an error,
-// because admission must not depend on a successful inventory read.
-func (h *Handler) declaredPermission(ctx context.Context, endpointID, operation string) (string, bool) {
-	if h.Store == nil || endpointID == "" || operation == "" {
-		return "", false
-	}
-	report, err := h.Store.GetInventory(ctx, endpointID)
-	if err != nil {
-		return "", false
-	}
-	for _, summary := range report.Adapters {
-		for _, capability := range summary.Capabilities.Capabilities {
-			if capability.Name == operation {
-				return capability.RequiredPermission, true
-			}
-		}
-	}
-	return "", false
 }
 
 func parseCommandLimit(value string) int {

@@ -125,6 +125,10 @@ func TestModelCatalogAdapterFailureCodes(t *testing.T) {
 		{code: protocol.ModelCatalogUnsupported, status: http.StatusNotImplemented},
 		{code: protocol.ModelCatalogTooLarge, status: http.StatusBadGateway},
 		{code: protocol.ModelCatalogProviderError, status: http.StatusBadGateway},
+		// A refusal is neither a capability gap nor a provider failure, so it
+		// must not share their status. Reporting it as a provider failure would
+		// send the operator to investigate a provider that was never invoked.
+		{code: protocol.PolicyDenied, status: http.StatusForbidden},
 	} {
 		h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: modelCatalogCodeRequester{code: item.code}}
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/model-catalog?endpoint_id=e&resource_id=s", nil)
@@ -186,20 +190,22 @@ func TestModelCatalogDisconnectIsNotReportedAsProviderError(t *testing.T) {
 	}
 }
 
-// TestModelCatalogRequiresViewScope proves catalog metadata is not reachable with
-// any valid credential. A profile carries a display name and an availability
-// verdict, so a credential narrowed to an unrelated scope must be refused before
-// the transport is consulted.
-func TestModelCatalogRequiresViewScope(t *testing.T) {
+// TestModelCatalogForwardsCredentialWithoutScope proves the Server no longer
+// refuses a model catalog read on permission grounds.
+//
+// Authorization belongs to the Endpoint that owns the machine. A Server-side
+// refusal would be a second authority the Endpoint could not revoke, so a
+// credential narrowed to an unrelated scope must still reach the transport: the
+// Endpoint decides, and it answers with policy_denied.
+func TestModelCatalogForwardsCredentialWithoutScope(t *testing.T) {
 	for _, item := range []struct {
 		name   string
 		scopes security.ScopeSet
-		status int
 	}{
-		{name: "unrestricted", scopes: security.ScopeSet{}, status: http.StatusOK},
-		{name: "view", scopes: security.NewScopeSet(security.ScopeView), status: http.StatusOK},
-		{name: "read_output only", scopes: security.NewScopeSet(security.ScopeReadOutput), status: http.StatusForbidden},
-		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage), status: http.StatusForbidden},
+		{name: "unrestricted", scopes: security.ScopeSet{}},
+		{name: "view", scopes: security.NewScopeSet(security.ScopeView)},
+		{name: "read_output only", scopes: security.NewScopeSet(security.ScopeReadOutput)},
+		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage)},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			h := &Handler{
@@ -210,30 +216,45 @@ func TestModelCatalogRequiresViewScope(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer test")
 			out := httptest.NewRecorder()
 			h.ServeHTTP(out, req)
-			if out.Code != item.status {
-				t.Fatalf("status=%d want=%d body=%s", out.Code, item.status, out.Body.String())
-			}
-			if item.status == http.StatusForbidden && !strings.Contains(out.Body.String(), `"permission_denied"`) {
-				t.Fatalf("body=%s want code permission_denied", out.Body.String())
+			if out.Code == http.StatusForbidden {
+				t.Fatalf("the Server refused a model catalog read on permission grounds: %s", out.Body.String())
 			}
 		})
 	}
 }
 
-// TestModelCatalogAuthorizationPrecedesTransport proves an unauthorized caller
-// cannot infer Endpoint reachability. The handler is built without a catalog
-// channel, so a missing check would answer 503 unavailable instead of 403.
-func TestModelCatalogAuthorizationPrecedesTransport(t *testing.T) {
+// TestModelCatalogForwardsEndpointToken proves the Endpoint token crosses the
+// Server unchanged, so the Endpoint can decide which policy applies.
+func TestModelCatalogForwardsEndpointToken(t *testing.T) {
+	requester := &modelCatalogTokenRequester{}
 	h := &Handler{
-		Authenticator: security.BearerAuthenticator{Token: "test", Scopes: security.NewScopeSet(security.ScopeSendMessage)},
+		Authenticator: security.BearerAuthenticator{Token: "test"},
+		Output:        requester,
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/model-catalog?endpoint_id=e&resource_id=s", nil)
 	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set(endpointTokenHeader, "endpoint-secret")
 	out := httptest.NewRecorder()
 	h.ServeHTTP(out, req)
-	if out.Code != http.StatusForbidden {
-		t.Fatalf("status=%d want=%d body=%s", out.Code, http.StatusForbidden, out.Body.String())
+	if requester.token != "endpoint-secret" {
+		t.Fatalf("forwarded token=%q want endpoint-secret", requester.token)
 	}
+}
+
+// modelCatalogTokenRequester records the Endpoint token the Server forwarded. It
+// implements the snapshot method as well, because the handler field is typed as
+// the snapshot requester and a single-surface double would not satisfy it.
+type modelCatalogTokenRequester struct {
+	token string
+}
+
+func (r *modelCatalogTokenRequester) RequestOutput(context.Context, string, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{}, nil
+}
+
+func (r *modelCatalogTokenRequester) RequestModelCatalog(ctx context.Context, _ string, _ protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
+	r.token = security.EndpointToken(ctx)
+	return protocol.ModelCatalog{}, nil
 }
 
 // modelCatalogTargetRequester records the query the Server forwarded, so a test

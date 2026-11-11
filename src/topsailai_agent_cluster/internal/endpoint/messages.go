@@ -41,6 +41,15 @@ func (e *Executor) Messages(ctx context.Context, query protocol.MessagesQuery) (
 // messagesFrame answers one bounded read-only conversation query on the
 // authenticated channel.
 func (s *Service) messagesFrame(ctx context.Context, frame channel.Frame) {
+	// The policy check runs before the adapter is consulted, so a refused caller
+	// cannot infer whether this Endpoint can read conversation content at all.
+	if err := s.permitOperation(frame, OperationMessagesRead); err != nil {
+		result := protocol.MessagesResult{ErrorCode: s.refuseFrame(ctx, frame, OperationMessagesRead, err)}
+		if sendErr := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameMessagesResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, MessagesResult: &result}); sendErr != nil {
+			s.logError("publish messages refusal", sendErr)
+		}
+		return
+	}
 	result := protocol.MessagesResult{ErrorCode: protocol.MessagesUnsupported}
 	reader, ok := s.executor.(interface {
 		Messages(context.Context, protocol.MessagesQuery) (protocol.MessagesResult, error)

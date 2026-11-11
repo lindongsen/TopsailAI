@@ -43,6 +43,15 @@ func (e *Executor) ModelCatalog(ctx context.Context, query protocol.ModelCatalog
 // modelCatalogFrame answers one bounded read-only model-catalog query on the
 // authenticated channel.
 func (s *Service) modelCatalogFrame(ctx context.Context, frame channel.Frame) {
+	// The policy check runs before the adapter is consulted, so a refused caller
+	// cannot infer whether this Endpoint can list model profiles at all.
+	if err := s.permitOperation(frame, protocol.OperationAgentModelList); err != nil {
+		result := protocol.ModelCatalog{ErrorCode: s.refuseFrame(ctx, frame, protocol.OperationAgentModelList, err)}
+		if sendErr := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameModelCatalogResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, ModelCatalog: &result}); sendErr != nil {
+			s.logError("publish model catalog refusal", sendErr)
+		}
+		return
+	}
 	result := protocol.ModelCatalog{ErrorCode: protocol.ModelCatalogUnsupported}
 	reader, ok := s.executor.(interface {
 		ModelCatalog(context.Context, protocol.ModelCatalogQuery) (protocol.ModelCatalog, error)

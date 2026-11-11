@@ -80,6 +80,13 @@ func locateInfoSession(loaded reportLoad, endpointID, resourceID string) (protoc
 // scope. An unresolved token is treated as a session identifier: workspace scope
 // searches every endpoint, while endpoint and session scope stay inside the
 // current endpoint so a token cannot silently address another machine.
+//
+// A row number is resolved through the read-only resolver, because info only reads
+// persisted report data. An unverified session row therefore renders its real detail
+// instead of being refused, which is the same reasoning messagesListRow already
+// applies to a conversation read. An endpoint placeholder row still cannot be read
+// here, because info is a session command, but the refusal names the command that
+// does read that row instead of reporting that the row identifies nothing.
 func resolveInfoTarget(state *interactiveState, token string) (string, string, error) {
 	if token == "" {
 		if state.Scope.Kind != ScopeSession {
@@ -91,12 +98,12 @@ func resolveInfoTarget(state *interactiveState, token string) (string, string, e
 		return state.Scope.EndpointID, state.Scope.ClusterSessionID, nil
 	}
 	if state.Scope.Kind == ScopeWorkspace {
-		row, resolved, err := resolveSessionToken(state, token)
+		row, resolved, err := resolveReadSessionToken(state, token)
 		if err != nil {
 			return "", "", err
 		}
 		if resolved {
-			return row.EndpointID, row.ClusterSessionID, nil
+			return infoRowTarget(row)
 		}
 		return "", token, nil
 	}
@@ -104,14 +111,28 @@ func resolveInfoTarget(state *interactiveState, token string) (string, string, e
 	if endpointID == "" {
 		return "", "", fmt.Errorf("no endpoint selected; use cd <number> to enter an endpoint row, or cd <hostname>/<endpoint-id>")
 	}
-	row, resolved, err := resolveSessionTokenInEndpoint(state, token, endpointID)
+	row, resolved, err := resolveReadSessionTokenInEndpoint(state, token, endpointID)
 	if err != nil {
 		return "", "", err
 	}
 	if resolved {
-		return endpointID, row.ClusterSessionID, nil
+		return infoRowTarget(row)
 	}
 	return endpointID, token, nil
+}
+
+// infoRowTarget converts one resolved list row into the endpoint and session that
+// info reads.
+//
+// A row with no session identity is an endpoint placeholder row, which info cannot
+// render because it has no session detail. The refusal names the endpoint and the
+// command that reads it, so the operator is not left with a visible row and no
+// remedy.
+func infoRowTarget(row SessionRow) (string, string, error) {
+	if row.ClusterSessionID == "" {
+		return "", "", fmt.Errorf("row %d is endpoint %q, not a session; use show %s for endpoint detail", row.No, row.EndpointID, row.EndpointID)
+	}
+	return row.EndpointID, row.ClusterSessionID, nil
 }
 
 // RenderSessionInfo writes one session's detail.

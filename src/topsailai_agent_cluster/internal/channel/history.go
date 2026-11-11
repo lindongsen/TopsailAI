@@ -43,7 +43,7 @@ func (s *Server) RequestHistory(parent context.Context, endpointID string, query
 	s.pendingHistory[id] = pendingHistoryRequest{peer: peer, response: response}
 	s.Mu.Unlock()
 	defer func() { s.Mu.Lock(); delete(s.pendingHistory, id); s.Mu.Unlock() }()
-	frame := Frame{Type: FrameHistoryRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), HistoryQuery: &query}
+	frame := Frame{Type: FrameHistoryRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), HistoryQuery: &query, EndpointToken: security.EndpointToken(parent)}
 	if err := wsjson.Write(ctx, peer.Conn, frame); err != nil {
 		return protocol.HistoryResult{}, err
 	}

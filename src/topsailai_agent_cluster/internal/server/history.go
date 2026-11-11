@@ -19,15 +19,9 @@ type HistoryRequester interface {
 // projection and never caches a result. The Server forwards the query verbatim
 // and returns the adapter's answer unchanged: it does not interpret provider
 // status words, re-derive resumability or correlate rows with the inventory.
-//
-// The authorization check runs before the transport is consulted, so an
-// unauthorized caller cannot infer Endpoint reachability from the response.
 func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, 405, "method_not_allowed", "GET required")
-		return
-	}
-	if !h.authorizeHistoryRead(w, r) {
 		return
 	}
 	endpointID := r.URL.Query().Get("endpoint_id")
@@ -87,6 +81,11 @@ func (h *Handler) writeHistoryResultFailure(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, 502, protocol.HistoryResponseTooLarge, "provider history response exceeded the configured bound")
 	case "endpoint_unavailable":
 		h.writeError(w, 503, "endpoint_unavailable", "history query failed: endpoint is not connected")
+	case protocol.PolicyDenied:
+		// The Endpoint refused the caller, so this is not a provider failure and
+		// not an outage. Reporting it as either would send the operator to
+		// investigate a provider that was never invoked.
+		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation history.read is not permitted for this endpoint token")
 	default:
 		h.writeError(w, 502, protocol.HistoryProviderError, "provider history read failed")
 	}

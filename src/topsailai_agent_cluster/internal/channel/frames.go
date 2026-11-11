@@ -99,4 +99,16 @@ type Frame struct {
 	OutputFollowRequest  *protocol.OutputFollowRequest    `json:"output_follow_request,omitempty"`
 	OutputChunk          *protocol.OutputChunk            `json:"output_chunk,omitempty"`
 	OutputEnd            *protocol.OutputEnd              `json:"output_end,omitempty"`
+	// EndpointToken is the caller's Endpoint credential, forwarded verbatim by
+	// the Server and consumed by the Endpoint policy check.
+	//
+	// It lives on the envelope rather than inside each request structure for
+	// three reasons. It is a transport credential, not part of the request
+	// meaning, so it must not enter ImmutableIntent.CanonicalHash: a token
+	// rotation would otherwise change the deduplication identity of an unchanged
+	// command. It must not enter the command journal, which stores the intent, so
+	// keeping it out of the intent keeps the secret out of the audit trail. And
+	// one field covers every frame type, so a new request type cannot be added
+	// without a place to carry the credential.
+	EndpointToken string `json:"endpoint_token,omitempty"`
 }

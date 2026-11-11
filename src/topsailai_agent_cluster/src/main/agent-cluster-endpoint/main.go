@@ -221,13 +221,48 @@ func main() {
 		defer stopReload()
 		logger.Info("loaded command allowlist", "path", cfg.CommandAllowlistFile, "entries", commandAllowlist.Allowlist.Len())
 	}
+	accessPolicy, err := endpointservice.LoadAccessPolicyDir(cfg.EndpointAccessPolicyDir)
+	if err != nil {
+		logger.Error("load endpoint access policy", "path", cfg.EndpointAccessPolicyDir, "error", err)
+		_ = client.Close()
+		_ = store.Close()
+		os.Exit(1)
+	}
+	if cfg.EndpointAccessPolicyDir != "" {
+		stopPolicyReload, watchErr := accessPolicy.WatchReload(ctx, func(reloadErr error) {
+			if reloadErr != nil {
+				logger.Error("reload endpoint access policy", "error", reloadErr)
+				return
+			}
+			logger.Info("reloaded endpoint access policy", "tokens", accessPolicy.Policy.Len())
+		})
+		if watchErr != nil {
+			logger.Error("watch endpoint access policy", "error", watchErr)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		defer stopPolicyReload()
+		logger.Info("loaded endpoint access policy", "path", cfg.EndpointAccessPolicyDir, "tokens", accessPolicy.Policy.Len())
+	}
 	executor, err := endpointservice.NewExecutor(store, registry, func() {
 		if runtime.BeforeInvocation != nil {
 			runtime.BeforeInvocation()
 		}
 	})
 	if err == nil {
-		executor.PolicyHook = func(_ context.Context, intent protocol.ImmutableIntent) error {
+		executor.PolicyHook = func(hookCtx context.Context, intent protocol.ImmutableIntent) error {
+			// The access policy decides whether the caller behind this command may
+			// exercise this operation on this machine. It runs before the
+			// command.exec allowlist because the two answer different questions:
+			// the policy answers "may this caller ask", while the allowlist
+			// answers "may this argv run". A caller that may not ask must not
+			// learn whether its argv would have been allowed.
+			if accessPolicy.Policy != nil {
+				if permitErr := accessPolicy.Policy.Permit(cfg.EndpointID, security.EndpointToken(hookCtx), intent.Operation); permitErr != nil {
+					return permitErr
+				}
+			}
 			if intent.Operation != protocol.OperationCommandExec {
 				return nil
 			}
@@ -264,7 +299,7 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
-	service, err := endpointservice.NewService(endpointservice.ServiceDeps{Collector: collector, Executor: executor, Channel: client, Heartbeater: client, Storage: store, Logger: logger, CollectionDelay: runtime.CollectionDelay, HeartbeatInterval: 5 * time.Second, ReceiptDelay: runtime.ReceiptDelay})
+	service, err := endpointservice.NewService(endpointservice.ServiceDeps{Collector: collector, Executor: executor, Channel: client, Heartbeater: client, Storage: store, Logger: logger, CollectionDelay: runtime.CollectionDelay, HeartbeatInterval: 5 * time.Second, ReceiptDelay: runtime.ReceiptDelay, AccessPolicy: accessPolicy.Policy, EndpointID: cfg.EndpointID})
 	if err != nil {
 		logger.Error("create endpoint service", "error", err)
 		_ = client.Close()

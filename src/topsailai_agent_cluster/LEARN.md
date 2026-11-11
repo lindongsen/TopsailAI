@@ -683,6 +683,52 @@ applies to any surface that is asserted as text but rendered with colour: a PTY-
 with a real `TERM` sees sequences that an in-process unit test with colour disabled never produces,
 so the two layers disagree about what the output is.
 
+## A child process that inherits the environment inherits every credential the parent holds
+
+Trigger: while adding `watch --trigger`, the script was about to be started with the parent's
+environment. The client process carries `AGENT_CLUSTER_ENDPOINT_TOKENS`
+(`src/main/agent-cluster-cli/endpoint_tokens.go:15`), one variable holding the token of every
+Endpoint in the fleet, plus `AGENT_CLUSTER_SERVER_TOKEN` and `AGENT_CLUSTER_AUTH_SCOPES`. A
+notification script that only wanted to post a message would have received cluster-wide authority
+it never asked for, and nothing in the script or its review would have shown that.
+
+Action: when a process starts a child that is not part of the same trust domain, build the child
+environment from a whitelist instead of inheriting it. Name the variables the child is documented
+to receive, add the few runtime basics it needs (`PATH`, `HOME`, locale, `TMPDIR`), and set
+`TERM=dumb` so a script cannot emit terminal control sequences into a surface that is not a
+terminal. A blacklist is not a substitute: it silently stops protecting the moment a new credential
+variable is added, and the addition looks unrelated to the script.
+
+Why this prevents recurrence: inheritance is the default and it is invisible. `exec.Command` with a
+nil `Env` looks like the simplest correct code, and it is correct for a child in the same trust
+domain, which is why the pattern is copied from ordinary subprocess code without a second thought.
+The leak is also one-directional and silent: the script works, the notification arrives, and the
+only defect is an authority the script should not have had. A test that asserts the credential
+variables are absent from the child environment is the only evidence that the whitelist is real,
+because the working script proves nothing about what it was handed.
+
+## A trigger that fires on a state fires again on every tick
+
+Trigger: the first shape of the `watch --trigger` detection was "fire when the state is
+`waiting_input`". Three failures follow from that shape and all three are user-visible: starting the
+loop fires once for every session that was already waiting, a session that stays waiting fires on
+every tick, and a script that fails is retried on the next tick forever. The fix was a baseline map
+keyed by the same identity the row table uses, so only a real transition fires.
+
+Action: when a mechanism reacts to a condition that is sampled rather than delivered, detect the
+edge and not the level. Record a baseline on the first observation and fire nothing, because the
+first observation is not a transition. Reset the baseline without firing when the identity's
+generation changes, because a replaced process is a new subject rather than a transition of the old
+one. Delete baselines for identities that are no longer reported, so the map cannot grow without
+bound. Write the rule as one predicate over `(previous, next)` so a future transition is one added
+clause rather than a second detection path.
+
+Why this prevents recurrence: a level check is shorter, reads correctly, and passes any test that
+only asserts "the script ran". The three failures are all about *when* it ran, so a test that counts
+invocations is the only thing that distinguishes the two designs. The baseline also has to be keyed
+by a stable identity rather than a row number, because a row number is a position that is rebound on
+every render, and a rebound key looks exactly like a transition.
+
 ## A byte-order assertion cannot see a cursor column
 
 Trigger: the guided-answer echo was written by the editor at submit time, and the test asserted that

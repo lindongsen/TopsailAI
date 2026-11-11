@@ -60,50 +60,76 @@ func postCommand(t *testing.T, handler http.Handler, intent protocol.ImmutableIn
 	return rec
 }
 
-func TestCommandAdmissionEnforcesDeclaredPermission(t *testing.T) {
+// TestCommandAdmissionForwardsRegardlessOfDeclaredPermission proves the Server no
+// longer refuses a command on permission grounds.
+//
+// Authorization belongs to the Endpoint that owns the machine. A Server-side
+// refusal would be a second authority the Endpoint could not revoke, so a
+// credential that lacks the declared permission must still be admitted: the
+// Endpoint decides, and it answers with policy_denied.
+func TestCommandAdmissionForwardsRegardlessOfDeclaredPermission(t *testing.T) {
 	capability := protocol.Capability{Name: "ctl.get_session_messages", Version: "v1", RequiredPermission: security.ScopeControl}
 	tests := []struct {
-		name     string
-		scopes   []string
-		wantCode int
+		name   string
+		scopes []string
 	}{
-		{name: "unrestricted credential is admitted", scopes: nil, wantCode: http.StatusAccepted},
-		{name: "credential holding the permission is admitted", scopes: []string{security.ScopeControl}, wantCode: http.StatusAccepted},
-		{name: "credential lacking the permission is rejected", scopes: []string{security.ScopeView}, wantCode: http.StatusForbidden},
+		{name: "unrestricted credential", scopes: nil},
+		{name: "credential holding the permission", scopes: []string{security.ScopeControl}},
+		{name: "credential lacking the permission", scopes: []string{security.ScopeView}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			handler := scopeTestHandler(t, test.scopes, capability)
 			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-scope", EndpointID: "e1", Operation: "ctl.get_session_messages", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{"action":"get_session_messages"}`), ExecuteBeforeAtMS: 100}
 			rec := postCommand(t, handler, intent)
-			if rec.Code != test.wantCode {
-				t.Fatalf("status=%d body=%s, want %d", rec.Code, rec.Body.String(), test.wantCode)
-			}
-			if test.wantCode == http.StatusForbidden && !strings.Contains(rec.Body.String(), "permission_denied") {
-				t.Fatalf("expected permission_denied code, got %s", rec.Body.String())
+			if rec.Code == http.StatusForbidden {
+				t.Fatalf("the Server refused a command on permission grounds: %s", rec.Body.String())
 			}
 		})
 	}
 }
 
-func TestCommandAdmissionRejectsUndeclaredControlOperation(t *testing.T) {
-	// The Endpoint advertises an unrelated capability, so the control operation is
-	// not advertised at all and must fail closed even for an unrestricted credential.
+// TestCommandAdmissionForwardsUndeclaredControlOperation proves the Server no
+// longer refuses a control operation that the Endpoint did not advertise.
+//
+// Advertising is the Endpoint's statement about what it can do, so the Endpoint
+// is the only component that can enforce it. A Server-side refusal would mean the
+// Server had to interpret the advertised capability list, which is exactly the
+// provider knowledge the abstraction boundary forbids.
+func TestCommandAdmissionForwardsUndeclaredControlOperation(t *testing.T) {
 	handler := scopeTestHandler(t, nil, protocol.Capability{Name: "message.send", Version: "v1"})
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-undeclared", EndpointID: "e1", Operation: "ctl.heartbeat", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{}`), ExecuteBeforeAtMS: 100}
 	rec := postCommand(t, handler, intent)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status=%d body=%s, want 403", rec.Code, rec.Body.String())
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("the Server refused an undeclared control operation: %s", rec.Body.String())
 	}
 }
 
-func TestCommandAdmissionKeepsUndeclaredStandardOperationAdmissible(t *testing.T) {
-	// No capability declares a permission today, so a standard operation without a
-	// declaration must keep its previous behaviour and remain admissible.
+// TestCommandAdmissionKeepsStandardOperationAdmissible proves a standard
+// operation without a declared permission keeps its previous behaviour.
+func TestCommandAdmissionKeepsStandardOperationAdmissible(t *testing.T) {
 	handler := scopeTestHandler(t, []string{security.ScopeView}, protocol.Capability{Name: "message.send", Version: "v1"})
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-standard", EndpointID: "e1", Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{"text":"x"}`), ExecuteBeforeAtMS: 100}
 	rec := postCommand(t, handler, intent)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s, want 202", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCommandAdmissionStillRejectsIssuerMismatch proves removing the permission
+// check did not remove the identity check.
+//
+// The issuer check is not authorization: it proves the request was not rewritten
+// in flight to claim another caller's identity. That is an integrity property of
+// the request, so it stays on the Server.
+func TestCommandAdmissionStillRejectsIssuerMismatch(t *testing.T) {
+	handler := scopeTestHandler(t, nil, protocol.Capability{Name: "message.send", Version: "v1"})
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-issuer", EndpointID: "e1", IssuerID: "someone-else", Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{"text":"x"}`), ExecuteBeforeAtMS: 100}
+	rec := postCommand(t, handler, intent)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s, want 403", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "issuer_mismatch") {
+		t.Fatalf("body=%s want code issuer_mismatch", rec.Body.String())
 	}
 }

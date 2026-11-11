@@ -87,13 +87,7 @@ func (c *Cluster) RunTUIFollow(marker string, wait time.Duration, args ...string
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.TUIPath, args...)
 	cmd.Dir = ModuleRootForRun()
-	cmd.Env = append(os.Environ(),
-		"AGENT_CLUSTER_SERVER_URL="+c.URL(""),
-		"AGENT_CLUSTER_TOKEN=secret",
-		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
-		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
-		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
-	)
+	cmd.Env = c.cliEnvironment()
 	var out, stderrBuffer syncBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderrBuffer
@@ -158,13 +152,7 @@ func (c *Cluster) RunTUIFollowThenStopEndpoint(marker string, wait time.Duration
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.TUIPath, args...)
 	cmd.Dir = ModuleRootForRun()
-	cmd.Env = append(os.Environ(),
-		"AGENT_CLUSTER_SERVER_URL="+c.URL(""),
-		"AGENT_CLUSTER_TOKEN=secret",
-		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
-		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
-		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
-	)
+	cmd.Env = c.cliEnvironment()
 	var out, stderrBuffer syncBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderrBuffer

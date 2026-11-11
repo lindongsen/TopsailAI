@@ -40,12 +40,18 @@ type Config struct {
 	CommandAllowlistFile string
 	// ControlActionFile is the Endpoint-local file that selects which ctl. actions
 	// this Endpoint serves. An empty value keeps the reviewed default set in force.
-	ControlActionFile     string
-	ChannelAddress        string
-	ChannelDirection      string
-	EndpointChannelListen string
-	EndpointChannelAddr   string
-	EndpointDialAddresses map[string]string
+	ControlActionFile string
+	// EndpointAccessPolicyDir is the Endpoint-local directory holding one access
+	// policy file per caller token. An empty value, or a directory that holds no
+	// policy file, permits every caller, which keeps existing deployments
+	// working. A directory that holds at least one policy file restricts every
+	// caller to the tokens it lists.
+	EndpointAccessPolicyDir string
+	ChannelAddress          string
+	ChannelDirection        string
+	EndpointChannelListen   string
+	EndpointChannelAddr     string
+	EndpointDialAddresses   map[string]string
 	// TLSSharedCertificate means every Endpoint presents the same Server
 	// certificate, so the certificate no longer proves which Endpoint is
 	// connecting. It is opt-in because that binding is a real security property.
@@ -105,6 +111,9 @@ func Load(args []string, role string) (Config, error) {
 	}
 	if value := os.Getenv("AGENT_CLUSTER_CONTROL_ACTION_FILE"); value != "" {
 		cfg.ControlActionFile = value
+	}
+	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"); value != "" {
+		cfg.EndpointAccessPolicyDir = value
 	}
 	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
 		cfg.ChannelAddress = value
@@ -183,6 +192,7 @@ func Load(args []string, role string) (Config, error) {
 	})
 	flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
 	flags.StringVar(&cfg.ControlActionFile, "control-action-file", cfg.ControlActionFile, "Endpoint-local file selecting which ctl. actions are served")
+	flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
 	flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Endpoint WSS address")
 	flags.StringVar(&cfg.ChannelDirection, "channel-direction", cfg.ChannelDirection, "channel direction: endpoint-initiated, server-initiated or bidirectional")
 	flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")

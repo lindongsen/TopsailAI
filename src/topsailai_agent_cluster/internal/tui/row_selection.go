@@ -36,6 +36,77 @@ func resolveRowSelection(state *interactiveState, token string) (SessionRow, err
 	return row, nil
 }
 
+// resolveReadRowSelection maps a bare ASCII row number to the row it names for a
+// read-only command.
+//
+// This deliberately does not reuse resolveRowSelection, because that helper refuses
+// a row whose generation is empty or whose session identity is absent. Those
+// refusals exist because cd, send, stop, inject and interrupt address a live
+// process, and an empty generation cannot prove which process an operation would
+// reach. A read-only command addresses persisted report data instead: a session the
+// provider listed but could not prove live is still readable, and an endpoint
+// placeholder row still names an endpoint whose detail can be shown. Refusing either
+// would hide exactly the rows an operator most wants to inspect, and would leave a
+// visible list row with no way to read it.
+//
+// The row is returned as rendered, so the caller decides what the row can address.
+// A row with no session identity is an endpoint row, and a row with no generation is
+// an unverified session; both are legitimate read targets.
+func resolveReadRowSelection(state *interactiveState, token string) (SessionRow, error) {
+	number, numeric := parseRowNumber(token)
+	if !numeric {
+		return SessionRow{}, fmt.Errorf("row number exceeds the supported integer range")
+	}
+	if len(state.Rows) == 0 {
+		return SessionRow{}, fmt.Errorf("no list is available for row selection; run list first")
+	}
+	row, ok := state.Rows[number]
+	if !ok {
+		return SessionRow{}, fmt.Errorf("row %d is out of range; valid rows are 1-%d", number, len(state.Rows))
+	}
+	return row, nil
+}
+
+// resolveReadSessionToken maps an operator token to a row for a read-only command.
+//
+// A bare row number wins because it is the documented shorthand. A numeric token
+// that is not a row number is retried as a provider session identifier, because the
+// list displays provider identifiers and they are numeric strings. When no list has
+// been rendered the token is left to the identifier path, which resolves it against
+// the live inventory. Unlike resolveSessionToken this never rejects a row for being
+// unverified or for naming an endpoint, because a read addresses persisted data.
+func resolveReadSessionToken(state *interactiveState, token string) (SessionRow, bool, error) {
+	if !isASCIIDecimal(token) {
+		return SessionRow{}, false, nil
+	}
+	if len(state.Rows) == 0 {
+		return SessionRow{}, false, nil
+	}
+	row, err := resolveReadRowSelection(state, token)
+	if err == nil {
+		return row, true, nil
+	}
+	if match, ok := rowByProviderSessionID(state, token); ok {
+		return match, true, nil
+	}
+	return SessionRow{}, false, err
+}
+
+// resolveReadSessionTokenInEndpoint applies resolveReadSessionToken and then enforces
+// that the resolved row belongs to the current endpoint. A row rendered for another
+// endpoint is rejected instead of being silently retargeted, because the operator
+// selected a number from a different table.
+func resolveReadSessionTokenInEndpoint(state *interactiveState, token, endpointID string) (SessionRow, bool, error) {
+	row, resolved, err := resolveReadSessionToken(state, token)
+	if err != nil || !resolved {
+		return SessionRow{}, resolved, err
+	}
+	if row.EndpointID != endpointID {
+		return SessionRow{}, false, fmt.Errorf("row %d belongs to endpoint %q, not the current endpoint %q; run list in that endpoint first", row.No, row.EndpointID, endpointID)
+	}
+	return row, true, nil
+}
+
 // resolveRowSelectionInEndpoint resolves a row number that must belong to one endpoint.
 // A row rendered for another endpoint is rejected instead of being silently retargeted,
 // because the operator selected a number from a different table.
