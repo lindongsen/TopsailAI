@@ -64,3 +64,20 @@ func waitStatLock(ctx context.Context, f *os.File) error {
 		}
 	}
 }
+
+// RecordStat serializes a complete increment while the caller holds object custody.
+// The metadata directory must already exist; cancellation never allocates it.
+func RecordStat(ctx context.Context, metadataDir string, write bool, now time.Time, debounce time.Duration) (err error) {
+	lock, err := acquireStatLock(ctx, metadataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Release()) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if write {
+		return IncrementWrite(metadataDir, now)
+	}
+	return IncrementRead(metadataDir, now, debounce)
+}

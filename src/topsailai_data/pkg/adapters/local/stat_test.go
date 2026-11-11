@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -120,48 +119,75 @@ func TestWriteStatAtomicallyReplacesFile(t *testing.T) {
 	}
 }
 
-func TestStatFileIsExcludedFromActualData(t *testing.T) {
+// TestStatFileIsSeparateFromActualData preserves user-owned statistic names.
+func TestStatFileIsSeparateFromActualData(t *testing.T) {
 	ctx := context.Background()
-	objectDir := t.TempDir()
-	adapter := NewActualDataAdapter(filepath.Dir(objectDir))
-	if err := os.WriteFile(filepath.Join(objectDir, "obj.md"), []byte("object"), 0o644); err != nil {
-		t.Fatalf("write object marker: %v", err)
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	if err := adapter.Init(ctx); err != nil {
+		t.Fatal(err)
 	}
-	if err := WriteStat(objectDir, &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, ReadCount: 1}); err != nil {
-		t.Fatalf("WriteStat failed: %v", err)
-	}
-
-	if _, err := adapter.ReadFile(ctx, objectDir, statFileName); err == nil {
-		t.Fatal("expected direct stat-file read to be rejected")
-	}
-	reader, err := adapter.ReadArchive(ctx, objectDir)
+	layout, err := NewStoreLayout(root)
 	if err != nil {
-		t.Fatalf("ReadArchive failed: %v", err)
+		t.Fatal(err)
 	}
-	defer reader.Close()
-	archive, err := io.ReadAll(reader)
+	meta, err := layout.ObjectMetaPath("obj")
 	if err != nil {
-		t.Fatalf("read archive: %v", err)
+		t.Fatal(err)
 	}
-	tr := tar.NewReader(bytes.NewReader(archive))
+	if err := os.MkdirAll(meta, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteStat(meta, &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, ReadCount: 7}); err != nil {
+		t.Fatal(err)
+	}
+	ref := "2026/1111/0604/obj"
+	for name, body := range map[string]string{"obj.md": "object", statFileName: "user statistic"} {
+		if _, err := adapter.WriteFile(ctx, ref, name, strings.NewReader(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader, err := adapter.ReadFile(ctx, ref, statFileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil || string(data) != "user statistic" {
+		t.Fatalf("user statistic: %q %v %v", data, readErr, closeErr)
+	}
+	archive, err := adapter.ReadArchive(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	tr := tar.NewReader(archive)
+	found := false
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			t.Fatalf("read tar header: %v", err)
+			t.Fatal(err)
 		}
 		if header.Name == statFileName {
-			t.Fatal("stat file must not appear in actual-data archive")
+			body, err := io.ReadAll(tr)
+			if err != nil || string(body) != "user statistic" {
+				t.Fatalf("archive statistic: %q %v", body, err)
+			}
+			found = true
 		}
 	}
-
-	if err := adapter.Delete(ctx, objectDir); err != nil {
-		t.Fatalf("Delete failed: %v", err)
+	if !found {
+		t.Fatal("archive omitted user statistic")
 	}
-	if _, err := os.Stat(StatFilePath(objectDir)); err != nil {
-		t.Fatalf("stat file should be preserved by actual-data deletion: %v", err)
+	if err := adapter.Delete(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	stat, err := ReadStat(meta)
+	if err != nil || stat.ReadCount != 7 {
+		t.Fatalf("payload deletion changed internal statistic: %+v %v", stat, err)
 	}
 }
 

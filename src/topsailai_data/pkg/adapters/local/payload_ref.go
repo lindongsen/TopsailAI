@@ -71,3 +71,33 @@ func validateObjectRef(ref string) ([]string, error) {
 	}
 	return parts, nil
 }
+
+// resolvePayloadFile rejects interior aliases and special nodes before file access.
+// Caller custody is required against cooperative mutations during validation/use.
+func resolvePayloadFile(dir, filename string) (string, error) {
+	if err := validateActualFilename(filename); err != nil {
+		return "", err
+	}
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(filename)), "/")
+	current := dir
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect payload entry %q: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("payload alias %q: %w", current, apperrors.ErrInvalidPath)
+		}
+		if i < len(parts)-1 && !info.IsDir() {
+			return "", fmt.Errorf("payload parent %q is not a directory: %w", current, apperrors.ErrInvalidPath)
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return "", fmt.Errorf("special payload entry %q: %w", current, apperrors.ErrInvalidPath)
+		}
+	}
+	return current, nil
+}

@@ -158,7 +158,7 @@ func ValidateObjectName(name string) error {
 	if err := validateSegment(name, true); err != nil {
 		return err
 	}
-	if strings.HasSuffix(name, ".tags") || strings.HasSuffix(name, ".lock") ||
+	if strings.HasSuffix(name, ".lock") ||
 		strings.HasSuffix(name, ".deleted") || strings.HasSuffix(name, ".ceased") {
 		return fmt.Errorf("%w: name must not use a reserved marker suffix", errors.ErrInvalidName)
 	}

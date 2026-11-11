@@ -6,10 +6,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	stderrors "errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,7 +54,15 @@ func New(cfg *config.Config) (*Manager, error) {
 	for k, v := range cfg.AdapterConfig {
 		adapterCfg[k] = v
 	}
-	adapterCfg["root"] = cfg.Root
+	storeRoot := cfg.Root
+	if storeRoot != "" {
+		resolvedRoot, err := filepath.Abs(storeRoot)
+		if err != nil {
+			return nil, fmt.Errorf("resolve store root: %w", err)
+		}
+		storeRoot = resolvedRoot
+	}
+	adapterCfg["root"] = storeRoot
 
 	ctx := context.Background()
 	meta, err := adapters.NewMetadataAdapter(ctx, cfg.MetadataAdapter, adapterCfg)
@@ -81,7 +87,7 @@ func New(cfg *config.Config) (*Manager, error) {
 		cfg:       cfg,
 		meta:      meta,
 		actual:    actual,
-		metaRoot:  cfg.Root,
+		metaRoot:  storeRoot,
 	}, nil
 }
 
@@ -183,110 +189,18 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 		return nil, errors.ErrMissingDescription
 	}
 
-	namespaceLock, err := local.AcquireNamespaceLock(m.metaRoot)
-	if err != nil {
-		return nil, err
-	}
-	defer releaseNamespaceLock(namespaceLock)
-
-	id := models.ObjectID(name)
-	// The local adapter uses the object name as its stable ID. Reject creation
-	// if an active, creating, or deleted object already uses this ID. A ceased
-	// object may be overwritten by purging it first.
-	if existing, err := m.meta.Get(ctx, id, true); err == nil {
-		switch existing.Status {
-		case models.ObjectStatusCeased:
-			if err := m.meta.Purge(ctx, id); err != nil {
-				return nil, fmt.Errorf("purge ceased object: %w", err)
-			}
-		default:
-			return nil, fmt.Errorf("%w: %s", errors.ErrObjectExists, id)
-		}
-	} else if !stderrors.Is(err, errors.ErrObjectNotFound) {
-		return nil, fmt.Errorf("check existing object: %w", err)
-	}
-
-	now := time.Now()
-	objectPath, err := local.BuildObjectPath(now, opts.Classify, name)
-	if err != nil {
-		return nil, err
-	}
-
-	objectDir := filepath.Join(m.metaRoot, objectPath)
-	if err := local.CheckNamespaceDestination(m.metaRoot, objectDir); err != nil {
-		return nil, err
-	}
-	obj := &models.Object{
-		ID:            id,
-		Name:          name,
-		Path:          objectPath,
-		Status:        models.ObjectStatusCreating,
-		SchemaVersion: models.CurrentSchemaVersion,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		DataRef:       objectDir,
-		Description:   description,
-	}
-
-	// Step 1: create metadata in creating state.
-	if err := m.meta.Create(ctx, obj); err != nil {
-		return nil, fmt.Errorf("create metadata: %w", err)
-	}
-	lock, err := local.AcquireWriteLock(objectDir)
-	if err != nil {
-		_ = os.RemoveAll(objectDir)
-		_ = m.meta.Delete(ctx, id)
-		return nil, fmt.Errorf("acquire object lock: %w", err)
-	}
-
-	success := false
-	defer func() {
-		if !success {
-			_ = os.RemoveAll(objectDir)
-			_ = m.meta.Delete(ctx, id)
-		}
-		lock.Release()
-	}()
-
-	// Step 2: write initial tags.
-	if len(opts.Tags) > 0 {
-		tagsFile := filepath.Join(objectDir, name+".tags")
-		if err := local.WriteTagsFile(tagsFile, opts.Tags); err != nil {
-			return nil, fmt.Errorf("write tags: %w", err)
-		}
-	}
-
-	// Step 3: write actual data.
-	if _, err := m.actual.WriteArchive(ctx, obj.DataRef, bytes.NewReader(dataBytes)); err != nil {
-		return nil, fmt.Errorf("write actual data: %w", err)
-	}
-
-	// Step 4: promote to active.
-	obj.Status = models.ObjectStatusActive
-	obj.UpdatedAt = time.Now()
-
-	if err := m.meta.Update(ctx, obj); err != nil {
-		return nil, fmt.Errorf("activate object: %w", err)
-	}
-
-	success = true
-	m.recordWrite(obj)
-	return m.GetObject(ctx, id, false)
+	return m.publishCreatedObject(ctx, name, description, opts, dataBytes)
 }
 
 // GetObject retrieves an active object by ID. Deleted and ceased objects are
 // only returned when includeDeleted is true.
 func (m *Manager) GetObject(ctx context.Context, id models.ObjectID, includeDeleted bool) (*models.Object, error) {
 	if m.cfg.ReadLock {
-		objectDir, err := m.objectDir(ctx, id)
+		lock, err := m.acquireExistingObjectLock(id, false)
 		if err != nil {
 			return nil, err
 		}
-		lock, err := local.AcquireReadLock(objectDir)
-		if err != nil {
-			return nil, fmt.Errorf("acquire read lock: %w", err)
-		}
-		defer lock.Release()
+		defer releaseNamespaceLock(lock)
 	}
 	return m.meta.Get(ctx, id, includeDeleted)
 }
@@ -298,32 +212,11 @@ type UpdateObjectOptions struct {
 
 // UpdateObject updates mutable metadata fields of an active object.
 func (m *Manager) UpdateObject(ctx context.Context, id models.ObjectID, opts UpdateObjectOptions) (*models.Object, error) {
-	obj, err := m.GetObject(ctx, id, true)
+	obj, lock, err := m.lockActiveObject(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if obj.Status != models.ObjectStatusActive {
-		return nil, fmt.Errorf("cannot update object %q: %w", id, errors.ErrObjectNotActive)
-	}
-
-	objectDir, err := m.objectDir(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	lock, err := local.AcquireWriteLock(objectDir)
-	if err != nil {
-		return nil, fmt.Errorf("acquire write lock: %w", err)
-	}
-	defer lock.Release()
-
-	// Re-read under lock to avoid stale state.
-	obj, err = m.meta.Get(ctx, id, true)
-	if err != nil {
-		return nil, err
-	}
-	if obj.Status != models.ObjectStatusActive {
-		return nil, fmt.Errorf("cannot update object %q: %w", id, errors.ErrObjectNotActive)
-	}
+	defer releaseNamespaceLock(lock)
 
 	updated := false
 	if opts.Description != nil {
@@ -332,6 +225,14 @@ func (m *Manager) UpdateObject(ctx context.Context, id models.ObjectID, opts Upd
 	} else if obj.Description == "" {
 		// Description was not provided; try to extract it from the marker file's
 		// YAML frontmatter. This is best-effort; failures are ignored.
+		layout, err := local.NewStoreLayout(m.metaRoot)
+		if err != nil {
+			return nil, err
+		}
+		objectDir, err := layout.ResolveObjectRef(obj.DataRef)
+		if err != nil {
+			return nil, err
+		}
 		markerPath := filepath.Join(objectDir, string(id)+".md")
 		if extracted := extractDescriptionFromMarkdown(markerPath); extracted != "" {
 			obj.Description = extracted
@@ -345,7 +246,7 @@ func (m *Manager) UpdateObject(ctx context.Context, id models.ObjectID, opts Upd
 		}
 	}
 
-	m.recordWrite(obj)
+	m.recordWrite(ctx, obj)
 	return obj, nil
 }
 
@@ -364,16 +265,11 @@ func (m *Manager) SearchObjects(ctx context.Context, terms []string, opts models
 // UpdateActualData replaces the actual data of an active object with a tar
 // archive stream.
 func (m *Manager) UpdateActualData(ctx context.Context, id models.ObjectID, r io.Reader) error {
-	obj, err := m.requireActive(ctx, id)
+	obj, lock, err := m.lockActiveObject(ctx, id)
 	if err != nil {
 		return err
 	}
-
-	lock, err := local.AcquireWriteLock(obj.DataRef)
-	if err != nil {
-		return fmt.Errorf("acquire write lock: %w", err)
-	}
-	defer lock.Release()
+	defer releaseNamespaceLock(lock)
 
 	if _, err := m.actual.WriteArchive(ctx, obj.DataRef, r); err != nil {
 		return fmt.Errorf("write archive: %w", err)
@@ -383,22 +279,17 @@ func (m *Manager) UpdateActualData(ctx context.Context, id models.ObjectID, r io
 	if err := m.meta.Update(ctx, obj); err != nil {
 		return err
 	}
-	m.recordWrite(obj)
+	m.recordWrite(ctx, obj)
 	return nil
 }
 
 // WriteActualFile writes a single file into the object's actual data.
 func (m *Manager) WriteActualFile(ctx context.Context, id models.ObjectID, filename string, r io.Reader) error {
-	obj, err := m.requireActive(ctx, id)
+	obj, lock, err := m.lockActiveObject(ctx, id)
 	if err != nil {
 		return err
 	}
-
-	lock, err := local.AcquireWriteLock(obj.DataRef)
-	if err != nil {
-		return fmt.Errorf("acquire write lock: %w", err)
-	}
-	defer lock.Release()
+	defer releaseNamespaceLock(lock)
 
 	if _, err := m.actual.WriteFile(ctx, obj.DataRef, filename, r); err != nil {
 		return fmt.Errorf("write file: %w", err)
@@ -408,134 +299,48 @@ func (m *Manager) WriteActualFile(ctx context.Context, id models.ObjectID, filen
 	if err := m.meta.Update(ctx, obj); err != nil {
 		return err
 	}
-	m.recordWrite(obj)
+	m.recordWrite(ctx, obj)
 	return nil
 }
 
 // ReadActualArchive returns a tar archive stream of the object's actual data.
 func (m *Manager) ReadActualArchive(ctx context.Context, id models.ObjectID) (io.ReadCloser, error) {
-	obj, err := m.requireActive(ctx, id)
+	obj, lock, err := m.readActiveObject(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-
-	if m.cfg.ReadLock {
-		lock, err := local.AcquireReadLock(obj.DataRef)
-		if err != nil {
-			return nil, fmt.Errorf("acquire read lock: %w", err)
-		}
-		m.recordRead(obj)
-		archiveReader, err := m.actual.ReadArchive(ctx, obj.DataRef)
-		if err != nil {
-			_ = lock.Release()
-			return nil, err
-		}
-		// Wrap the reader so the lock is released when the stream is closed.
-		return &lockedReadCloser{
-			ReadCloser: archiveReader,
-			lock:       lock,
-		}, nil
-	}
-
-	m.recordRead(obj)
-	archiveReader, err := m.actual.ReadArchive(ctx, obj.DataRef)
+	reader, err := m.actual.ReadArchive(ctx, obj.DataRef)
 	if err != nil {
+		if lock != nil {
+			releaseNamespaceLock(lock)
+		}
 		return nil, err
 	}
-	return archiveReader, nil
+	m.recordRead(ctx, obj, lock)
+	if lock != nil {
+		return &lockedReadCloser{ReadCloser: reader, lock: lock}, nil
+	}
+	return reader, nil
 }
 
 // ReadActualFile returns a stream for a single file from the object's actual data.
 func (m *Manager) ReadActualFile(ctx context.Context, id models.ObjectID, filename string) (io.ReadCloser, error) {
-	obj, err := m.requireActive(ctx, id)
+	obj, lock, err := m.readActiveObject(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-
-	if m.cfg.ReadLock {
-		lock, err := local.AcquireReadLock(obj.DataRef)
-		if err != nil {
-			return nil, fmt.Errorf("acquire read lock: %w", err)
-		}
-		f, err := m.actual.ReadFile(ctx, obj.DataRef, filename)
-		if err != nil {
-			_ = lock.Release()
-			return nil, err
-		}
-		m.recordRead(obj)
-		return &lockedReadCloser{ReadCloser: f, lock: lock}, nil
-	}
-
-	f, err := m.actual.ReadFile(ctx, obj.DataRef, filename)
+	reader, err := m.actual.ReadFile(ctx, obj.DataRef, filename)
 	if err != nil {
+		if lock != nil {
+			releaseNamespaceLock(lock)
+		}
 		return nil, err
 	}
-	m.recordRead(obj)
-	return f, nil
-}
-
-// DeleteObject soft-deletes an active object or finalizes a deleted object.
-//
-// For an active object, the metadata is marked as deleted and the actual data
-// is preserved so the object can be recovered. The object is not visible to
-// normal list/get operations after this call.
-//
-// For an already-deleted object, the actual data is removed and the metadata
-// is transitioned to ceased. If actual-data removal fails, the object remains
-// in the deleted state and can be retried.
-//
-// Ceased objects are treated as not found. Creating objects must be handled
-// through RecoverObject.
-func (m *Manager) DeleteObject(ctx context.Context, id models.ObjectID) error {
-	obj, err := m.meta.Get(ctx, id, true)
-	if err != nil {
-		return err
+	m.recordRead(ctx, obj, lock)
+	if lock != nil {
+		return &lockedReadCloser{ReadCloser: reader, lock: lock}, nil
 	}
-
-	switch obj.Status {
-	case models.ObjectStatusActive:
-		lock, err := local.AcquireWriteLock(obj.DataRef)
-		if err != nil {
-			return fmt.Errorf("acquire write lock: %w", err)
-		}
-		defer lock.Release()
-
-		if err := m.meta.Delete(ctx, id); err != nil {
-			return fmt.Errorf("mark metadata deleted: %w", err)
-		}
-		return nil
-
-	case models.ObjectStatusDeleted:
-		lock, err := local.AcquireWriteLock(obj.DataRef)
-		if err != nil {
-			return fmt.Errorf("acquire write lock: %w", err)
-		}
-		defer lock.Release()
-
-		if err := m.actual.Delete(ctx, obj.DataRef); err != nil {
-			return fmt.Errorf("delete actual data: %w", err)
-		}
-
-		if err := m.meta.FinalizeDelete(ctx, id); err != nil {
-			return fmt.Errorf("finalize delete: %w", err)
-		}
-		if err := local.RemoveStatFile(obj.DataRef); err != nil {
-			return fmt.Errorf("remove finalized object stat: %w", err)
-		}
-
-		// The object has ceased; remove the advisory lock file and clean up
-		// any empty parent directories.
-		_ = os.Remove(lock.Path())
-		_ = local.RemoveEmptyParents(obj.DataRef, m.metaRoot)
-		return nil
-
-	case models.ObjectStatusCreating:
-		return fmt.Errorf("%w: object %s is %s, use RecoverObject", errors.ErrObjectNotActive, id, obj.Status)
-	case models.ObjectStatusCeased:
-		return fmt.Errorf("%w: object %s is already ceased", errors.ErrObjectNotFound, id)
-	default:
-		return fmt.Errorf("%w: object %s has unexpected status %s", errors.ErrObjectNotActive, id, obj.Status)
-	}
+	return reader, nil
 }
 
 // MoveObject moves an active object to a new classify path. The object name
@@ -543,68 +348,48 @@ func (m *Manager) DeleteObject(ctx context.Context, id models.ObjectID) error {
 // prefix is stripped so users may pass either a classify path or a full path.
 // If the trailing segment equals the object name, it is also stripped.
 func (m *Manager) MoveObject(ctx context.Context, id models.ObjectID, classify []string) error {
-	namespaceLock, err := local.AcquireNamespaceLock(m.metaRoot)
+	obj, release, err := m.lockLifecycleObject(ctx, id)
 	if err != nil {
 		return err
 	}
-	defer releaseNamespaceLock(namespaceLock)
-
-	obj, err := m.requireActive(ctx, id)
-	if err != nil {
-		return err
+	defer release()
+	if obj.Status != models.ObjectStatusActive {
+		return fmt.Errorf("%w: object %s is %s", errors.ErrObjectNotActive, id, obj.Status)
 	}
-
 	classify = normalizeClassifyForMove(obj.CreatedAt, obj.Name, classify)
-
-	newPath, err := local.BuildObjectPath(obj.CreatedAt, classify, obj.Name)
+	newRef, err := local.BuildObjectPath(obj.CreatedAt, classify, obj.Name)
 	if err != nil {
 		return err
 	}
-	newRef := filepath.Join(m.metaRoot, newPath)
 	if newRef == obj.DataRef {
 		return nil
 	}
-
-	// Safety: refuse to move a directory into a subdirectory of itself.
-	if strings.HasPrefix(newRef+string(filepath.Separator), obj.DataRef+string(filepath.Separator)) {
-		return fmt.Errorf("destination is inside the source object folder")
-	}
-
-	lock, err := local.AcquireWriteLock(obj.DataRef)
+	layout, err := local.NewStoreLayout(m.metaRoot)
 	if err != nil {
-		return fmt.Errorf("acquire write lock: %w", err)
-	}
-	defer lock.Release()
-
-	if err := local.CheckNamespaceDestination(m.metaRoot, newRef); err != nil {
 		return err
 	}
-
-	// Ensure destination parent directories exist before moving.
-	if err := os.MkdirAll(filepath.Dir(newRef), 0o755); err != nil {
-		return fmt.Errorf("create destination parent: %w", err)
+	destination, err := layout.ResolveObjectRef(newRef)
+	if err != nil {
+		return err
 	}
-
+	if err := local.CheckNamespaceDestination(layout.ObjectRoot(), destination); err != nil {
+		return err
+	}
 	oldRef := obj.DataRef
 	movedRef, err := m.actual.Move(ctx, oldRef, newRef)
 	if err != nil {
-		return fmt.Errorf("move actual data: %w", err)
+		return fmt.Errorf("copy move target; source remains authoritative: %w", err)
 	}
-
-	obj.Path = newPath
+	obj.Path = newRef
 	obj.DataRef = movedRef
 	obj.UpdatedAt = time.Now()
 	if err := m.meta.Update(ctx, obj); err != nil {
-		// Best-effort rollback: move actual data back to the original reference.
-		_, _ = m.actual.Move(ctx, movedRef, oldRef)
-		return fmt.Errorf("update metadata after move: %w", err)
+		return fmt.Errorf("publish move metadata; source and target retained: %w", err)
 	}
-
-	// After successful metadata update, remove the old directory and clean up
-	// any empty parent directories.
-	_ = os.RemoveAll(oldRef)
-	_ = local.RemoveEmptyParents(oldRef, m.metaRoot)
-	m.recordWrite(obj)
+	if err := m.actual.Delete(ctx, oldRef); err != nil {
+		return fmt.Errorf("move published at %q but old payload %q cleanup failed: %w", movedRef, oldRef, err)
+	}
+	m.recordWrite(ctx, obj)
 	return nil
 }
 
@@ -645,10 +430,11 @@ func isTimePrefix(year, monthDay, hourMinute string) bool {
 // it is written as the object's actual data before the status is changed. If
 // r is nil, the object is only restored when its actual data still exists.
 func (m *Manager) RestoreObject(ctx context.Context, id models.ObjectID, r io.Reader) error {
-	obj, err := m.meta.Get(ctx, id, true)
+	obj, release, err := m.lockLifecycleObject(ctx, id)
 	if err != nil {
 		return err
 	}
+	defer release()
 
 	if obj.Status != models.ObjectStatusDeleted {
 		switch obj.Status {
@@ -662,13 +448,6 @@ func (m *Manager) RestoreObject(ctx context.Context, id models.ObjectID, r io.Re
 			return fmt.Errorf("%w: object %s has unexpected status %s", errors.ErrInvalidStatus, id, obj.Status)
 		}
 	}
-
-	objectDir := filepath.Join(m.metaRoot, obj.Path)
-	lock, err := local.AcquireWriteLock(objectDir)
-	if err != nil {
-		return fmt.Errorf("acquire write lock: %w", err)
-	}
-	defer lock.Release()
 
 	if r != nil {
 		if _, err := m.actual.WriteArchive(ctx, obj.DataRef, r); err != nil {
@@ -690,101 +469,6 @@ func (m *Manager) RestoreObject(ctx context.Context, id models.ObjectID, r io.Re
 	if err := m.meta.Update(ctx, obj); err != nil {
 		return fmt.Errorf("restore deleted object: %w", err)
 	}
-	return nil
-}
-
-// CleanupCreatingObject removes a single creating object that never became
-// active. It is used by the gc command.
-func (m *Manager) CleanupCreatingObject(ctx context.Context, id models.ObjectID) error {
-	obj, err := m.meta.Get(ctx, id, true)
-	if err != nil {
-		return err
-	}
-	if obj.Status != models.ObjectStatusCreating {
-		return fmt.Errorf("%w: object %s is %s, expected creating", errors.ErrObjectNotActive, id, obj.Status)
-	}
-	return m.cleanupCreatingObject(ctx, obj)
-}
-
-// cleanupCreatingObject removes a single creating object that never became
-// active. It is used internally by GC.
-func (m *Manager) cleanupCreatingObject(ctx context.Context, obj *models.Object) error {
-	objectDir := filepath.Join(m.metaRoot, obj.Path)
-	lock, err := local.AcquireWriteLock(objectDir)
-	if err != nil {
-		return fmt.Errorf("acquire write lock: %w", err)
-	}
-	defer lock.Release()
-
-	// Creating objects are incomplete; remove any partial actual data and the
-	// object folder entirely. They are never auto-activated because creation
-	// should always be atomic through the create command.
-	_ = m.actual.Delete(ctx, obj.DataRef)
-	if err := local.RemoveStatFile(objectDir); err != nil {
-		return fmt.Errorf("remove creating object stat: %w", err)
-	}
-	_ = os.RemoveAll(objectDir)
-	_ = local.RemoveEmptyParents(objectDir, m.metaRoot)
-	return nil
-}
-
-// GC permanently removes ceased objects whose retention period has expired.
-// Use GCObjects with force=true to ignore the retention window.
-func (m *Manager) GC(ctx context.Context) error {
-	return m.GCObjects(ctx, false)
-}
-
-// GCObjects removes objects eligible for garbage collection.
-//
-// When force is false, only creating objects and ceased objects whose
-// retention period has expired are removed. When force is true, all ceased
-// objects are removed immediately.
-func (m *Manager) GCObjects(ctx context.Context, force bool) error {
-	candidates, err := m.meta.GC(ctx, m.cfg.CeasedRetentionDuration(), force)
-	if err != nil {
-		return fmt.Errorf("list gc candidates: %w", err)
-	}
-
-	for _, obj := range candidates {
-		if obj.Status == models.ObjectStatusCreating {
-			if err := m.cleanupCreatingObject(ctx, obj); err != nil {
-				return fmt.Errorf("cleanup creating object %s: %w", obj.ID, err)
-			}
-			continue
-		}
-
-		if err := m.gcCeasedObject(ctx, obj); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// gcCeasedObject removes a single ceased (or deleted being finalized) object
-// and cleans up empty parent directories. The lock is acquired and released
-// once per object using defer.
-func (m *Manager) gcCeasedObject(ctx context.Context, obj *models.Object) error {
-	objectDir := filepath.Join(m.metaRoot, obj.Path)
-	lock, err := local.AcquireWriteLock(objectDir)
-	if err != nil {
-		return fmt.Errorf("acquire lock for gc %s: %w", obj.ID, err)
-	}
-	defer lock.Release()
-
-	// Remove actual data if any remains.
-	_ = m.actual.Delete(ctx, obj.DataRef)
-	if err := local.RemoveStatFile(objectDir); err != nil {
-		return fmt.Errorf("remove ceased object stat: %w", err)
-	}
-
-	// Remove metadata and the entire object folder.
-	if err := os.RemoveAll(objectDir); err != nil {
-		return fmt.Errorf("remove object directory %q: %w", objectDir, err)
-	}
-
-	// Clean up any empty parent directories, stopping at the adapter root.
-	_ = local.RemoveEmptyParents(objectDir, m.metaRoot)
 	return nil
 }
 
@@ -810,19 +494,34 @@ func (m *Manager) ListDeletedObjects(ctx context.Context) ([]*models.Object, err
 	return out, nil
 }
 
+// normalizeTags validates every tag and removes duplicates while preserving
+// the caller's order.
+func normalizeTags(tags []string) ([]string, error) {
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	for _, tag := range tags {
+		if err := local.ValidateTag(tag); err != nil {
+			return nil, fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
+		}
+	}
+	return local.MergeTags(nil, tags), nil
+}
+
 // AddTag adds a tag to an active object.
 func (m *Manager) AddTag(ctx context.Context, id models.ObjectID, tag string) error {
 	if err := local.ValidateTag(tag); err != nil {
 		return fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
 	}
-	obj, err := m.requireActive(ctx, id)
+	obj, lock, err := m.lockActiveObject(ctx, id)
 	if err != nil {
 		return err
 	}
+	defer releaseNamespaceLock(lock)
 	if err := m.meta.AddTag(ctx, id, tag); err != nil {
 		return err
 	}
-	m.recordWrite(obj)
+	m.recordWrite(ctx, obj)
 	return nil
 }
 
@@ -831,58 +530,16 @@ func (m *Manager) RemoveTag(ctx context.Context, id models.ObjectID, tag string)
 	if err := local.ValidateTag(tag); err != nil {
 		return fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
 	}
-	obj, err := m.requireActive(ctx, id)
+	obj, lock, err := m.lockActiveObject(ctx, id)
 	if err != nil {
 		return err
 	}
+	defer releaseNamespaceLock(lock)
 	if err := m.meta.RemoveTag(ctx, id, tag); err != nil {
 		return err
 	}
-	m.recordWrite(obj)
+	m.recordWrite(ctx, obj)
 	return nil
-}
-
-const statReadDebounce = time.Minute
-
-// recordRead records a successful actual-data read without affecting its result.
-func (m *Manager) recordRead(obj *models.Object) {
-	if !m.TrackStat || obj == nil || obj.Status != models.ObjectStatusActive {
-		return
-	}
-	objectDir := m.statObjectDir(obj)
-	if objectDir == "" {
-		slog.Warn("skipping object read stat without data reference", "object_id", obj.ID)
-		return
-	}
-	if err := local.IncrementRead(objectDir, time.Now(), statReadDebounce); err != nil {
-		slog.Warn("failed to record object read stat", "object_id", obj.ID, "error", err)
-	}
-}
-
-// recordWrite records a successful object mutation without affecting its result.
-func (m *Manager) recordWrite(obj *models.Object) {
-	if !m.TrackStat || obj == nil || obj.Status != models.ObjectStatusActive {
-		return
-	}
-	objectDir := m.statObjectDir(obj)
-	if objectDir == "" {
-		slog.Warn("skipping object write stat without data reference", "object_id", obj.ID)
-		return
-	}
-	if err := local.IncrementWrite(objectDir, time.Now()); err != nil {
-		slog.Warn("failed to record object write stat", "object_id", obj.ID, "error", err)
-	}
-}
-
-// statObjectDir resolves the local object directory from DataRef or Path.
-func (m *Manager) statObjectDir(obj *models.Object) string {
-	if obj.DataRef != "" {
-		return obj.DataRef
-	}
-	if obj.Path != "" {
-		return filepath.Join(m.metaRoot, obj.Path)
-	}
-	return ""
 }
 
 // requireActive returns the active object or an error if it is not active.

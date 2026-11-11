@@ -27,16 +27,14 @@ type MetadataAdapter interface {
 	// Update replaces the stored metadata for an object.
 	Update(ctx context.Context, obj *models.Object) error
 
-	// Delete removes metadata for an object.
-	// For local adapters this may rename the metadata marker to a deleted/ceased state.
+	// Delete transitions an active metadata record to deleted without removing payload.
 	Delete(ctx context.Context, id models.ObjectID) error
 
-	// FinalizeDelete permanently transitions a deleted object to ceased.
-	// For local adapters this renames the deleted marker to a ceased marker.
+	// FinalizeDelete transitions deleted metadata to ceased after payload removal.
 	FinalizeDelete(ctx context.Context, id models.ObjectID) error
 
-	// Purge permanently removes a ceased object's metadata and any associated
-	// storage. For local adapters this removes the entire object directory.
+	// Purge permanently removes a ceased object's metadata and associated
+	// metadata files. Payload removal is coordinated separately by the manager.
 	// Only objects in the "ceased" state may be purged.
 	Purge(ctx context.Context, id models.ObjectID) error
 
@@ -75,9 +73,9 @@ type MetadataAdapter interface {
 // ActualDataAdapter manages the actual payload data of objects.
 //
 // All location-aware methods accept an adapter-specific reference string (ref)
-// rather than an ObjectID. For the local adapter ref is the absolute object
-// folder path; for remote adapters it may be a bucket key or other opaque
-// handle. Write methods return the resolved ref so the manager can store it
+// rather than an ObjectID. For the local adapter ref is a canonical relative
+// path beneath the store's object directory; remote adapters may use a bucket
+// key or other opaque handle. Write methods return the ref so the manager can store it
 // in metadata.
 type ActualDataAdapter interface {
 	// Init prepares the adapter for use (creates directories, buckets, etc.).
@@ -98,7 +96,8 @@ type ActualDataAdapter interface {
 	ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error)
 
 	// Move relocates the actual data for an object to a new adapter-specific reference.
-	// For local adapters newRef is the new full folder path.
+	// For local adapters newRef is the new relative payload path; source cleanup
+	// is coordinated by the manager after metadata publication.
 	// It returns the adapter-specific reference after the move.
 	Move(ctx context.Context, oldRef string, newRef string) (string, error)
 

@@ -66,8 +66,8 @@ local filesystem under a configurable root directory.
   `work/2026` or `personal/ideas`, tag them, and search later.
 - **Project document storage**: store project artifacts, READMEs, or design
   documents as objects and retrieve them by name or tag.
-- **Tagged data archiving**: organize files with classify tags inherited
-  recursively, then filter lists and searches by tag.
+- **Tagged data archiving**: attach tags to objects and filter lists and
+  searches by tag.
 - **Soft-delete and gc workflows**: delete objects safely (metadata transitions
   through `deleted` to `ceased`), then run `gc` to finalize cleanup after the
   retention window.
@@ -490,7 +490,7 @@ The first section lists the object's stored metadata. All timestamps are formatt
 | `UpdatedAt` | Last modification timestamp. |
 | `DeletedAt` | Present only when the object has been soft-deleted. |
 | `CeasedAt` | Present only when the object has been finalized after deletion. |
-| `Tags` | Merged list of inherited classify tags and object-specific tags. Empty when there are no tags. |
+| `Tags` | The object's complete tag set, loaded from the independent Hash metadata `tags` file. Empty when there are no tags. |
 | `DataRef` | Opaque reference to the actual data, managed by the actual-data adapter. |
 
 #### Markdown content section
@@ -499,7 +499,7 @@ The second section is labeled `--- Markdown ---` and prints the contents of the 
 
 #### Folder structure section
 
-The third section is labeled `--- folder structure ---` and prints a tree-style listing of the object folder. The mandatory `<object>.md` marker file and metadata marker files (`.tags`, `.lock`, `.deleted`, `.ceased`, `metadata.json`) are excluded from the tree so only user actual data is shown.
+The third section is labeled `--- folder structure ---` and prints the payload tree, including `<object>.md` and user files named `metadata.json`, `stat.json`, `.stat.json`, or ending in `.lock`/`.tags`. Internal `.topsailai-data-write-*` temporary files are excluded. Hash metadata lives outside the payload tree.
 
 If the object folder contains no files besides the mandatory `<object>.md`, the section prints:
 
@@ -559,13 +559,13 @@ hello/
 Objects are placed under a time prefix derived from the creation time using local time:
 
 ```text
-{ROOT}/YYYY/MMDD/HHMM/<object>
+{ROOT}/object/YYYY/MMDD/HHMM/<object>
 ```
 
 Example for an object created on 2026-07-14 at 23:23:
 
 ```text
-./data/2026/0714/2323/hello
+./data/object/2026/0714/2323/hello
 ```
 
 ### Object folder contents
@@ -575,19 +575,20 @@ An object named `hello` is stored as a folder `hello` that must contain a file n
 ```text
 hello/
   hello.md          # mandatory actual-data marker
-  hello.tags        # optional object-specific tags
   attachments/      # optional actual data
     screenshot.png
 ```
 
+The store has sibling `object/` and `meta/` trees. For exact object ID `id`, let `h` be its lowercase SHA256. Internal files live at `meta/<h[0:2]>/<h[2:4]>/<h[4:6]>/<h>/`: `metadata.json`, `tags`, `lock`, `stat.json`, and `stat.lock` as needed. `Path` and `DataRef` are equal canonical paths relative to `object/`. Old stores are not migrated by this layout cutover. The payload folder holds user data only.
+
 ### Classify directories
 
-After the time prefix you may add custom classify directories. The total depth from root to the object folder must not exceed 11 levels. The time prefix consumes 3 levels and the object folder consumes 1 level, leaving up to 7 extra classify levels.
+After the time prefix you may add custom classify directories. The total depth from `object/` to the object folder must not exceed 11 levels. The time prefix consumes 3 levels and the object folder consumes 1 level, leaving up to 7 extra classify levels.
 
 Example with classify path `projects/demo`:
 
 ```text
-./data/2026/0714/2323/projects/demo/hello
+./data/object/2026/0714/2323/projects/demo/hello
 ```
 
 Too deep:
@@ -596,49 +597,24 @@ Too deep:
 2026/0714/2323/a/b/c/d/e/f/g/h/hello  # 12 levels, exceeds limit
 ```
 
-### Tag files
+### Tags
 
-- Object tag file: `<object>.tags` inside the object folder.
-- Classify tag file: `<classify-name>.tags` inside a classify directory; applies recursively to all objects under that directory.
+Tags are stored only in the independent `tags` file in the Hash metadata leaf, not in `metadata.json`. There is no classify tag inheritance or `meta/classify/` tree.
 
-Tag file format:
+- `create --tag t1,t2`, `tag add`, and `tag remove` manage the independent tag file.
+- `list`, `search`, and `show` expose these tags through the public object model.
+- Tags survive soft deletion and finalization until metadata purge.
 
-```text
-# this is a comment
-project-alpha
-urgent
-```
+Tags must be non-empty and pass CLI validation; path separators, NUL, and leading or trailing spaces are rejected. Duplicates are removed and the first occurrence wins. Tag-file and record updates are not a cross-file transaction. A payload file named `<name>.tags` is ordinary user data.
 
-Lines starting with `#`, `;`, `//`, or `--` (after optional whitespace) are comments. Empty lines are ignored. Tags are trimmed and deduplicated.
+### Metadata queries and payload boundaries
 
-### Tag inheritance
-
-Classify tag files apply recursively. Object tag files apply only to that object. Inherited and object tags are merged and deduplicated.
-
-```text
-2026/0714/2323/
-  2323.tags            # applies to all objects under 2323/
-  projects/
-    projects.tags      # applies to all objects under projects/
-    demo/
-      demo.tags        # applies to all objects under demo/
-      hello/
-        hello.md
-        hello.tags     # applies only to hello
-```
-
-Object `hello` receives the merged tags from `2323.tags`, `projects.tags`, `demo.tags`, and `hello.tags`.
-
-### Scanning rule
-
-When scanning for objects, the adapter stops at any directory that contains a file named `{directory-name}.md`. Subdirectories inside that folder are not scanned as independent objects.
-
-A file such as `hello/sub/hello.md` does **not** make `sub` an object folder; only `hello/hello.md` makes `hello` an object folder.
+Get locates the object by its ID hash; list/search enumerate Hash metadata records rather than discovering objects through payload scans. Nested Markdown files do not create objects. Payload scanning and namespace validation still stop at a same-name Markdown boundary, protecting object-private subdirectories. Always create through the CLI. Collection queries remain unindexed; large collections require a full metadata traversal.
 
 ## Object Stat Observability (`stat`)
 
-Each object maintains usage statistics in `.stat.json` inside its object
-directory. The record contains `schema_version`, `read_count`, `last_read_at`,
+Each object maintains usage statistics in `stat.json` inside its Hash metadata
+directory, serialized by `stat.lock`. The record contains `schema_version`, `read_count`, `last_read_at`,
 `write_count`, and `last_written_at`. The statistics help identify frequently
 used objects and objects that have not been used recently.
 
@@ -691,8 +667,8 @@ enable them explicitly.
 
 ### Fault tolerance and persistence
 
-- A missing `.stat.json` is treated as a zero-value statistic record.
-- A corrupt `.stat.json` produces a WARN log and is treated as a zero-value
+- A missing `stat.json` is treated as a zero-value statistic record.
+- A corrupt `stat.json` produces a WARN log and is treated as a zero-value
   record instead of crashing the CLI.
 - Statistic records are written atomically through a temporary file followed
   by rename.
@@ -701,10 +677,13 @@ enable them explicitly.
 
 - Soft delete freezes the current statistics. After recovery, the preserved
   counters continue accumulating.
-- Delete finalization and garbage collection of `creating` or `ceased` objects
-  remove `.stat.json` with the object metadata cleanup.
-- `show` treats `.stat.json` as a metadata marker and excludes it from the
-  displayed folder-structure tree.
+- Finalization removes the entire payload directory but retains the Hash metadata leaf, tags, and lock files until purge. Statistics are best effort, not a durable event ledger.
+- Purge removes the metadata leaf and its remaining internal files.
+- User `.stat.json` or `stat.json` files in the payload are ordinary data and remain visible in `show`.
+
+### Object locking
+
+Writes and lifecycle operations use Hash `lock` custody and re-read status after locking. Creation, move, and metadata-leaf removal also use namespace custody, acquired before the object lock. Optional read locks remain held until the read stream closes. Statistics serialize the full read-modify-write and revalidate active status under object custody. These are cooperating-process guarantees, not protection against hostile concurrent path replacement or power loss.
 
 ## Environment variables
 
@@ -742,7 +721,7 @@ TOPSAILAI_DATA_CEASED_RETENTION_DAYS=30
 - **`gc --status ceased`** removes all `ceased` objects immediately, ignoring the retention window. Default `gc` only removes ceased objects after the retention window expires.
 - **Deleted/ceased objects** are hidden from normal `list` and `search` unless `--include-deleted` is used. The `show` command, however, always resolves an object by ID and displays its metadata regardless of status. For `deleted` and `ceased` objects the actual-data sections (`--- Markdown ---` and `--- folder structure ---`) are omitted and replaced with a note that actual data is unavailable, because the payload may have been partially or fully removed.
 - **`recover`** only restores objects whose status is `deleted` back to `active`. It does not operate on `creating`, `active`, or `ceased` objects.
-- **Avoid manual changes**: do not create or rename object folders manually. Use the CLI so that metadata, the `.md` marker, and tag files stay consistent.
+- **Avoid manual changes**: do not create or rename object folders manually. Use the CLI so that metadata and the `.md` marker stay consistent.
 
 ## See also
 
@@ -835,10 +814,7 @@ guarantees apply unchanged:
 - Single-file writes replace the destination atomically, so a failed write
   leaves the previous content intact.
 - Read and write operations update the object's usage statistics.
-- Reserved metadata markers (`<object>.tags`, `<object>.lock`,
-  `<object>.deleted`, `<object>.ceased`, `.stat.json`) are rejected as read and
-  write targets, so a caller cannot bypass lifecycle management. The mandatory
-  `<object>.md` file is actual data and stays readable and writable.
+- Internal Hash metadata is outside the payload root and cannot be reached through file commands. Payload files named `<object>.lock`, `<object>.deleted`, `<object>.ceased`, `.stat.json`, or `metadata.json` are ordinary user data. The mandatory `<object>.md` remains readable and writable; `.topsailai-data-write-*` remains reserved.
 
 ### Writing content from standard input
 

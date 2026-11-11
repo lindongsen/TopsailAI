@@ -17,8 +17,6 @@ type ScannedObject struct {
 	Path string
 	// Name is the object name, equal to the object folder name.
 	Name string
-	// Tags is the merged set of inherited classify tags and object-specific tags.
-	Tags []string
 	// CreatedAt is the object creation time parsed from the time prefix in Path.
 	CreatedAt time.Time
 }
@@ -68,11 +66,6 @@ func (s *Scanner) Scan(ctx context.Context) ([]ScannedObject, error) {
 			return fmt.Errorf("relate object path %q to root: %w", path, err)
 		}
 
-		tags, err := CollectTags(s.root, relPath)
-		if err != nil {
-			return fmt.Errorf("collect tags for %q: %w", relPath, err)
-		}
-
 		createdAt, err := createdAtFromObjectPath(relPath)
 		if err != nil {
 			info, infoErr := d.Info()
@@ -85,7 +78,6 @@ func (s *Scanner) Scan(ctx context.Context) ([]ScannedObject, error) {
 		objects = append(objects, ScannedObject{
 			Path:      relPath,
 			Name:      name,
-			Tags:      tags,
 			CreatedAt: createdAt,
 		})
 

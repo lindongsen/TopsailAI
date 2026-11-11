@@ -18,6 +18,13 @@ Feature: Show and update topsailai-data objects
       | visible-tag |
     Then the command succeeds
     When I run topsailai-data with arguments:
+      | put |
+      | shown-note |
+      | notes.tags |
+      | --from |
+      | tests/bdd/fixtures/markdown/extra.txt |
+    Then the command succeeds
+    When I run topsailai-data with arguments:
       | show |
       | shown-note |
     Then the command succeeds
@@ -28,6 +35,7 @@ Feature: Show and update topsailai-data objects
     And stdout contains "# Smoke test content"
     And stdout contains "shown-note.md"
     And stdout contains "extra.txt"
+    And stdout contains "notes.tags"
     And stdout does not contain "shown-note.tags"
     And stdout does not contain ".stat.json"
     And stdout does not contain ".lock"

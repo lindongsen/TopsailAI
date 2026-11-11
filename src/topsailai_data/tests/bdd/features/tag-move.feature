@@ -25,25 +25,6 @@ Feature: Tag and move topsailai-data objects
     Then the command succeeds
     And the JSON list contains object "tag-object" with tags "base"
 
-  Scenario: Recursive classify tags are inherited and deduplicated
-    Given an isolated topsailai-data store
-    When I create object "inherited-tags" from fixture "markdown/valid.md" with description "Inherited tags" and classify "projects/team/demo"
-    Then the command succeeds
-    When I add classify tags "root-tag,shared" to "inherited-tags" at level "projects"
-    Then the command succeeds
-    When I add classify tags "team-tag,shared" to "inherited-tags" at level "projects/team"
-    Then the command succeeds
-    When I add classify tags "demo-tag,shared" to "inherited-tags" at level "projects/team/demo"
-    Then the command succeeds
-    And the JSON list contains object "inherited-tags" with tags "root-tag,shared,team-tag,demo-tag"
-    When I run topsailai-data with arguments:
-      | tag |
-      | remove |
-      | inherited-tags |
-      | root-tag |
-    Then the command fails
-    And the JSON list contains object "inherited-tags" with tags "root-tag,shared,team-tag,demo-tag"
-
   Scenario: Move preserves identity timestamps markdown and extra actual data
     Given an isolated topsailai-data store
     When I create object "movable-object" from fixture "markdown/valid.md" with description "Movable object" and classify "before/source"

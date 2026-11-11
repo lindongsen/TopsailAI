@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -667,35 +668,50 @@ func TestReadFileRecordsStatistics(t *testing.T) {
 	}
 }
 
-// TestWriteFileRejectsMetadataMarker keeps a caller from overwriting the
-// object's own metadata files.
-func TestWriteFileRejectsMetadataMarker(t *testing.T) {
+// TestWriteFileAllowsMarkerNames keeps user files separate from the internal lock.
+func TestWriteFileAllowsMarkerNames(t *testing.T) {
 	mgr, ctx := newTestManager(t)
 	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
 	fs := newObjectFS(t, ctx, mgr, "demo")
-
-	if err := fs.WriteFile("demo.lock", []byte("x"), 0o644); err == nil {
-		t.Fatal("expected an error when writing a metadata marker")
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// TestReadDirSkipsMetadataMarkers keeps metadata files out of listings.
-func TestReadDirSkipsMetadataMarkers(t *testing.T) {
-	mgr, ctx := newTestManager(t)
-	createObject(t, ctx, mgr, "demo", map[string]string{
-		"demo.md":  "markdown",
-		"notes.md": "body",
-	})
-	fs := newObjectFS(t, ctx, mgr, "demo")
-
+	dir, err := layout.ObjectMetaPath("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(filepath.Join(dir, "lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"demo.lock", "stat.json", "metadata.json"} {
+		if err := fs.WriteFile(name, []byte("user content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		data, err := fs.ReadFile(name)
+		if err != nil || string(data) != "user content" {
+			t.Fatalf("read %s: %q %v", name, data, err)
+		}
+	}
+	after, err := os.Stat(filepath.Join(dir, "lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("user write replaced internal lock")
+	}
 	entries, err := fs.ReadDir("")
 	if err != nil {
-		t.Fatalf("read dir: %v", err)
+		t.Fatal(err)
 	}
+	found := map[string]bool{}
 	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasSuffix(name, ".lock") || strings.HasSuffix(name, ".stat.json") || name == "metadata.json" {
-			t.Fatalf("metadata marker leaked into listing: %q", name)
+		found[entry.Name()] = true
+	}
+	for _, name := range []string{"demo.lock", "stat.json", "metadata.json"} {
+		if !found[name] {
+			t.Fatalf("user file missing from listing: %s", name)
 		}
 	}
 }
@@ -707,17 +723,17 @@ func statOf(t *testing.T, ctx context.Context, mgr *manager.Manager, id string) 
 	if err != nil {
 		t.Fatalf("get object %s: %v", id, err)
 	}
-	stat, err := readStat(obj)
+	layout, err := local.NewStoreLayout(mgr.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := layout.ObjectMetaPath(obj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, err := local.ReadStat(dir)
 	if err != nil {
 		t.Fatalf("read stat for %s: %v", id, err)
 	}
 	return stat
-}
-
-// readStat loads stat data from the object's local reference.
-func readStat(obj *models.Object) (*models.ObjectStat, error) {
-	if obj == nil || obj.DataRef == "" {
-		return &models.ObjectStat{}, nil
-	}
-	return local.ReadStat(obj.DataRef)
 }

@@ -3,8 +3,8 @@ package local
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,8 +14,8 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
 
-// MetadataAdapter stores object metadata as JSON files alongside the actual
-// data directories. It is safe for concurrent use within a single process
+// MetadataAdapter stores hash-addressed records and independent tag files
+// separately from payload directories. It is safe for concurrent use within a single process
 // because advisory locks are acquired by the manager layer.
 type MetadataAdapter struct {
 	root string
@@ -26,58 +26,79 @@ func NewMetadataAdapter(root string) *MetadataAdapter {
 	return &MetadataAdapter{root: root}
 }
 
-// Init ensures the root directory exists.
+// Init validates or creates the object/meta store layout.
 func (a *MetadataAdapter) Init(ctx context.Context) error {
-	return os.MkdirAll(a.root, 0o755)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	root, err := filepath.Abs(a.root)
+	if err != nil {
+		return fmt.Errorf("resolve store root: %w", err)
+	}
+	a.root = root
+	layout, err := NewStoreLayout(root)
+	if err != nil {
+		return err
+	}
+	return layout.Init()
 }
 
-// metadataFile returns the path to the metadata.json file inside an object
-// directory.
+// metadataFile returns the record path inside a hash-addressed metadata directory.
 func (a *MetadataAdapter) metadataFile(objectDir string) string {
 	return filepath.Join(objectDir, "metadata.json")
 }
 
 // Create writes the initial metadata file for a new object.
 func (a *MetadataAdapter) Create(ctx context.Context, obj *models.Object) error {
-	objectDir := filepath.Join(a.root, string(obj.Path))
-	if err := os.MkdirAll(objectDir, 0o755); err != nil {
-		return fmt.Errorf("create object directory: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	metaPath := a.metadataFile(objectDir)
-	if _, err := os.Stat(metaPath); err == nil {
-		return fmt.Errorf("%w: %s", errors.ErrObjectExists, obj.ID)
+	if obj == nil {
+		return fmt.Errorf("nil metadata: %w", errors.ErrInvalidArgument)
 	}
-
 	if obj.SchemaVersion == 0 {
 		obj.SchemaVersion = models.CurrentSchemaVersion
 	}
-	data, err := json.MarshalIndent(obj, "", "  ")
+	data, err := encodeMetadataRecord(obj)
 	if err != nil {
-		return fmt.Errorf("marshal metadata: %w", err)
+		return err
 	}
-	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
-		return fmt.Errorf("write metadata: %w", err)
+	for _, tag := range obj.Tags {
+		if err := validateStoredTag(tag); err != nil {
+			return err
+		}
 	}
-	return nil
+	layout, err := NewStoreLayout(a.root)
+	if err != nil {
+		return err
+	}
+	dir, err := layout.ResolveObjectMetaPath(obj.ID)
+	if err != nil {
+		return err
+	}
+	path := a.metadataFile(dir)
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("%w: %s", errors.ErrObjectExists, obj.ID)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect initial metadata: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create metadata directory: %w", err)
+	}
+	if err := writeObjectTags(dir, obj.Tags); err != nil {
+		return err
+	}
+	return publishMetadataRecord(path, data)
 }
 
 // Get retrieves an object's metadata. Active objects are returned by default.
 // Creating, deleted and ceased objects are only returned when includeDeleted is
 // true, allowing recovery and administrative tools to locate them.
 func (a *MetadataAdapter) Get(ctx context.Context, id models.ObjectID, includeDeleted bool) (*models.Object, error) {
-	obj, objectDir, err := a.findObject(id)
+	obj, _, err := a.findObject(id)
 	if err != nil {
 		return nil, err
 	}
-
-	// Merge tags from .tags files so that show reflects the same effective
-	// tags as list and search.
-	inherited, err := CollectTags(a.root, objectDir)
-	if err != nil {
-		return nil, fmt.Errorf("collect tags for %q: %w", objectDir, err)
-	}
-	obj.Tags = mergeTags(inherited, obj.Tags)
 
 	switch obj.Status {
 	case models.ObjectStatusActive:
@@ -97,142 +118,55 @@ func (a *MetadataAdapter) Get(ctx context.Context, id models.ObjectID, includeDe
 	}
 }
 
-// findObject locates the metadata file for an object by ID anywhere under the
-// root. It returns the parsed object and its directory.
+// findObject loads metadata and tags directly from the ID hash directory.
 func (a *MetadataAdapter) findObject(id models.ObjectID) (*models.Object, string, error) {
-	var found *models.Object
-	var foundDir string
-
-	err := filepath.WalkDir(a.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			return nil
-		}
-
-		// Determine the expected object name from the directory name.
-		name := filepath.Base(path)
-		if name != string(id) {
-			return nil
-		}
-
-		metaPath := a.metadataFile(path)
-		data, err := os.ReadFile(metaPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-
-		var obj models.Object
-		if err := json.Unmarshal(data, &obj); err != nil {
-			return fmt.Errorf("%w: %q: %v", errors.ErrCorruptedMetadata, metaPath, err)
-		}
-		if obj.ID != id {
-			return nil
-		}
-
-		obj.DataRef = path
-		found = &obj
-		foundDir = path
-		// Stop at the first match. The manager ensures unique IDs.
-		return filepath.SkipAll
-	})
+	layout, err := NewStoreLayout(a.root)
 	if err != nil {
 		return nil, "", err
 	}
-	if found == nil {
-		return nil, "", fmt.Errorf("%w: %s", errors.ErrObjectNotFound, id)
+	obj, err := layout.readMetadataRecord(id)
+	if err != nil {
+		return nil, "", err
 	}
-	return found, foundDir, nil
+	dir, err := layout.ResolveObjectMetaPath(id)
+	if err != nil {
+		return nil, "", err
+	}
+	obj.Tags, err = readObjectTags(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	return obj, dir, nil
 }
 
 // Update replaces the metadata file with the provided object.
 func (a *MetadataAdapter) Update(ctx context.Context, obj *models.Object) error {
-	objectDir, err := a.findObjectDir(obj.ID, obj.Path)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if obj == nil {
+		return fmt.Errorf("nil metadata: %w", errors.ErrInvalidArgument)
+	}
+	if _, _, err := a.findObject(obj.ID); err != nil {
+		return err
+	}
+	obj.UpdatedAt = time.Now()
+	layout, err := NewStoreLayout(a.root)
 	if err != nil {
 		return err
 	}
-
-	obj.UpdatedAt = time.Now()
-	data, err := json.MarshalIndent(obj, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal metadata: %w", err)
-	}
-	if err := os.WriteFile(a.metadataFile(objectDir), data, 0o644); err != nil {
-		return fmt.Errorf("write metadata: %w", err)
-	}
-	return nil
+	return layout.writeMetadataRecord(obj)
 }
 
-// findObjectDir locates the directory for the given object ID. If pathHint is
-// non-empty and a directory with that relative path exists under the root and
-// contains a matching metadata file, it is preferred. Otherwise the first
-// directory named after the ID with a matching metadata file is returned.
+// findObjectDir resolves the stable metadata directory; moves do not change it.
 func (a *MetadataAdapter) findObjectDir(id models.ObjectID, pathHint string) (string, error) {
-	var first *models.Object
-	var firstDir string
-	var preferred *models.Object
-	var preferredDir string
-
-	err := filepath.WalkDir(a.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			return nil
-		}
-
-		name := filepath.Base(path)
-		if name != string(id) {
-			return nil
-		}
-
-		metaPath := a.metadataFile(path)
-		data, err := os.ReadFile(metaPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-
-		var o models.Object
-		if err := json.Unmarshal(data, &o); err != nil {
-			return fmt.Errorf("%w: %q: %v", errors.ErrCorruptedMetadata, metaPath, err)
-		}
-		if o.ID != id {
-			return nil
-		}
-
-		if first == nil {
-			first = &o
-			firstDir = path
-		}
-		if pathHint != "" && filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(a.root, pathHint)) {
-			preferred = &o
-			preferredDir = path
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	if preferred != nil {
-		return preferredDir, nil
-	}
-	if first != nil {
-		return firstDir, nil
-	}
-	return "", fmt.Errorf("%w: %s", errors.ErrObjectNotFound, id)
+	_, dir, err := a.findObject(id)
+	return dir, err
 }
 
 // Delete marks an active object as deleted.
 func (a *MetadataAdapter) Delete(ctx context.Context, id models.ObjectID) error {
-	obj, objectDir, err := a.findObject(id)
+	obj, _, err := a.findObject(id)
 	if err != nil {
 		return err
 	}
@@ -243,19 +177,16 @@ func (a *MetadataAdapter) Delete(ctx context.Context, id models.ObjectID) error 
 	obj.Status = models.ObjectStatusDeleted
 	obj.DeletedAt = ptr(time.Now())
 	obj.UpdatedAt = *obj.DeletedAt
-	data, err := json.MarshalIndent(obj, "", "  ")
+	layout, err := NewStoreLayout(a.root)
 	if err != nil {
-		return fmt.Errorf("marshal metadata: %w", err)
+		return err
 	}
-	if err := os.WriteFile(a.metadataFile(objectDir), data, 0o644); err != nil {
-		return fmt.Errorf("write metadata: %w", err)
-	}
-	return nil
+	return layout.writeMetadataRecord(obj)
 }
 
 // FinalizeDelete transitions a deleted object to ceased.
 func (a *MetadataAdapter) FinalizeDelete(ctx context.Context, id models.ObjectID) error {
-	obj, objectDir, err := a.findObject(id)
+	obj, _, err := a.findObject(id)
 	if err != nil {
 		return err
 	}
@@ -266,36 +197,30 @@ func (a *MetadataAdapter) FinalizeDelete(ctx context.Context, id models.ObjectID
 	obj.Status = models.ObjectStatusCeased
 	obj.CeasedAt = ptr(time.Now())
 	obj.UpdatedAt = *obj.CeasedAt
-	data, err := json.MarshalIndent(obj, "", "  ")
+	layout, err := NewStoreLayout(a.root)
 	if err != nil {
-		return fmt.Errorf("marshal metadata: %w", err)
+		return err
 	}
-	if err := os.WriteFile(a.metadataFile(objectDir), data, 0o644); err != nil {
-		return fmt.Errorf("write metadata: %w", err)
-	}
-	return nil
+	return layout.writeMetadataRecord(obj)
 }
 
-// Purge permanently removes a ceased object and its entire directory.
+// Purge removes ceased metadata after the caller has cleaned the payload.
 // Only objects in the "ceased" state may be purged.
 func (a *MetadataAdapter) Purge(ctx context.Context, id models.ObjectID) error {
-	obj, objectDir, err := a.findObject(id)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	obj, dir, err := a.findObject(id)
 	if err != nil {
 		return err
 	}
 	if obj.Status != models.ObjectStatusCeased {
 		return fmt.Errorf("%w: object %s is %s, expected ceased", errors.ErrObjectNotActive, id, obj.Status)
 	}
-
-	if err := RemoveStatFile(objectDir); err != nil {
-		return fmt.Errorf("purge object stat: %w", err)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("purge metadata directory %q: %w", dir, err)
 	}
-	if err := os.RemoveAll(objectDir); err != nil {
-		return fmt.Errorf("purge object directory %q: %w", objectDir, err)
-	}
-	if err := RemoveEmptyParents(objectDir, a.root); err != nil {
-		return fmt.Errorf("cleanup empty parent directories after purge: %w", err)
-	}
+	slog.Info("purged object metadata directory", "id", id, "path", dir)
 	return nil
 }
 
@@ -389,8 +314,7 @@ func (a *MetadataAdapter) GC(ctx context.Context, retention time.Duration, force
 		return nil, err
 	}
 
-	// Find ceased objects through the normal scan, which requires the object
-	// marker file and respects the include-deleted flag.
+	// Find ceased objects through metadata enumeration, independent of payload markers.
 	objects, err := a.scanObjects(ctx, true)
 	if err != nil {
 		return nil, err
@@ -444,53 +368,27 @@ func matchesSearchTerms(obj *models.Object, terms []string) bool {
 // Unlike normal scans, this method does not require the mandatory object
 // marker file ({name}.md) to be present. A creating object may have crashed
 func (a *MetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error) {
-	var creating []*models.Object
-
-	err := filepath.WalkDir(a.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if d.Name() != "metadata.json" {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		var obj models.Object
-		if err := json.Unmarshal(data, &obj); err != nil {
-			return fmt.Errorf("%w: %q: %v", errors.ErrCorruptedMetadata, path, err)
-		}
-		if obj.Status != models.ObjectStatusCreating {
-			return nil
-		}
-
-		// Collect inherited tags based on the object directory.
-		objectDir := filepath.Dir(path)
-		inherited, err := CollectTags(a.root, objectDir)
-		if err != nil {
-			return fmt.Errorf("collect tags for %q: %w", objectDir, err)
-		}
-		obj.Tags = mergeTags(inherited, obj.Tags)
-
-		creating = append(creating, &obj)
-		return nil
-	})
+	layout, err := NewStoreLayout(a.root)
 	if err != nil {
 		return nil, err
 	}
-
+	objects, err := layout.scanMetadataRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	creating := []*models.Object{}
+	for _, obj := range objects {
+		if obj.Status == models.ObjectStatusCreating {
+			creating = append(creating, obj)
+		}
+	}
 	SortObjectsByTimePath(creating, false)
 	return creating, nil
 }
 
 // Restore transitions a deleted object back to active.
 func (a *MetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error {
-	obj, objectDir, err := a.findObject(id)
+	obj, _, err := a.findObject(id)
 	if err != nil {
 		return err
 	}
@@ -501,19 +399,20 @@ func (a *MetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error
 	obj.Status = models.ObjectStatusActive
 	obj.DeletedAt = nil
 	obj.UpdatedAt = time.Now()
-	data, err := json.MarshalIndent(obj, "", "  ")
+	layout, err := NewStoreLayout(a.root)
 	if err != nil {
-		return fmt.Errorf("marshal metadata: %w", err)
+		return err
 	}
-	if err := os.WriteFile(a.metadataFile(objectDir), data, 0o644); err != nil {
-		return fmt.Errorf("write metadata: %w", err)
-	}
-	return nil
+	return layout.writeMetadataRecord(obj)
 }
 
 // AddTag appends a tag to an active object if it is not already present.
+// Tags are stored only in the independent object tag file.
 func (a *MetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag string) error {
-	obj, objectDir, err := a.findObject(id)
+	if err := validateStoredTag(tag); err != nil {
+		return err
+	}
+	obj, dir, err := a.findObject(id)
 	if err != nil {
 		return err
 	}
@@ -521,35 +420,22 @@ func (a *MetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag st
 		return fmt.Errorf("%w: object %s is %s", errors.ErrObjectNotActive, id, obj.Status)
 	}
 
-	// Read current effective tags from .tags files and merge with metadata tags.
-	inherited, err := CollectTags(a.root, objectDir)
-	if err != nil {
-		return fmt.Errorf("collect tags for %q: %w", objectDir, err)
-	}
-	ownTagsFile := filepath.Join(objectDir, string(id)+".tags")
-	ownTags, err := ReadTagsFile(ownTagsFile)
-	if err != nil {
-		return fmt.Errorf("read object tags: %w", err)
-	}
-	effective := mergeTags(inherited, ownTags)
-	for _, existing := range effective {
+	for _, existing := range obj.Tags {
 		if existing == tag {
 			return nil
 		}
 	}
 
-	// Persist the new tag to the object's own .tags file and update metadata.
-	ownTags = append(ownTags, tag)
-	if err := WriteTagsFile(ownTagsFile, ownTags); err != nil {
-		return fmt.Errorf("write object tags: %w", err)
+	obj.Tags = append(obj.Tags, tag)
+	if err := writeObjectTags(dir, obj.Tags); err != nil {
+		return err
 	}
-	obj.Tags = mergeTags(inherited, ownTags)
 	return a.Update(ctx, obj)
 }
 
-// RemoveTag removes a tag from an active object.
+// RemoveTag removes a tag from the independent file of an active object.
 func (a *MetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error {
-	obj, objectDir, err := a.findObject(id)
+	obj, dir, err := a.findObject(id)
 	if err != nil {
 		return err
 	}
@@ -557,27 +443,9 @@ func (a *MetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag
 		return fmt.Errorf("%w: object %s is %s", errors.ErrObjectNotActive, id, obj.Status)
 	}
 
-	ownTagsFile := filepath.Join(objectDir, string(id)+".tags")
-	ownTags, err := ReadTagsFile(ownTagsFile)
-	if err != nil {
-		return fmt.Errorf("read object tags: %w", err)
-	}
-
-	// Tags inherited from classify directories cannot be removed at the object level.
-	// Collect tags from ancestor directories only (exclude the object folder itself).
-	inherited, err := CollectTags(a.root, filepath.Dir(objectDir))
-	if err != nil {
-		return fmt.Errorf("collect inherited tags for %q: %w", objectDir, err)
-	}
-	for _, inheritedTag := range inherited {
-		if inheritedTag == tag {
-			return fmt.Errorf("%w: tag %q is inherited and cannot be removed from object", errors.ErrInvalidArgument, tag)
-		}
-	}
-
 	var updated []string
 	found := false
-	for _, existing := range ownTags {
+	for _, existing := range obj.Tags {
 		if existing == tag {
 			found = true
 			continue
@@ -588,10 +456,10 @@ func (a *MetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag
 		return fmt.Errorf("%w: tag %q not found", errors.ErrTagNotFound, tag)
 	}
 
-	if err := WriteTagsFile(ownTagsFile, updated); err != nil {
-		return fmt.Errorf("write object tags: %w", err)
+	obj.Tags = updated
+	if err := writeObjectTags(dir, obj.Tags); err != nil {
+		return err
 	}
-	obj.Tags = mergeTags(inherited, updated)
 	return a.Update(ctx, obj)
 }
 
@@ -600,61 +468,25 @@ func (a *MetadataAdapter) Close() error {
 	return nil
 }
 
-// scanObjects walks the root and returns all objects with metadata files.
+// scanObjects enumerates metadata records without traversing payloads.
 func (a *MetadataAdapter) scanObjects(ctx context.Context, includeDeleted bool) ([]*models.Object, error) {
-	var objects []*models.Object
-
-	err := filepath.WalkDir(a.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			return nil
-		}
-
-		// Object boundary rule: a directory is an object if it contains a
-		// markdown file with the same name as the directory.
-		name := filepath.Base(path)
-		marker := filepath.Join(path, name+".md")
-		if _, err := os.Stat(marker); err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-
-		metaPath := a.metadataFile(path)
-		data, err := os.ReadFile(metaPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-
-		var obj models.Object
-		if err := json.Unmarshal(data, &obj); err != nil {
-			return fmt.Errorf("%w: %q: %v", errors.ErrCorruptedMetadata, metaPath, err)
-		}
-
-		// Collect inherited tags from ancestor .tags files.
-		inherited, err := CollectTags(a.root, path)
-		if err != nil {
-			return fmt.Errorf("collect tags for %q: %w", path, err)
-		}
-		obj.Tags = mergeTags(inherited, obj.Tags)
-
-		if obj.Status == models.ObjectStatusActive || includeDeleted {
-			objects = append(objects, &obj)
-		}
-
-		// Do not recurse into object directories.
-		return filepath.SkipDir
-	})
+	layout, err := NewStoreLayout(a.root)
 	if err != nil {
 		return nil, err
 	}
-
+	all, err := layout.scanMetadataRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	objects := []*models.Object{}
+	for _, obj := range all {
+		if obj.Status == models.ObjectStatusCreating {
+			continue
+		}
+		if obj.Status == models.ObjectStatusActive || includeDeleted {
+			objects = append(objects, obj)
+		}
+	}
 	SortObjectsByTimePath(objects, false)
 	return objects, nil
 }
@@ -693,27 +525,6 @@ func hasAllTags(tags, required []string) bool {
 		}
 	}
 	return true
-}
-
-// mergeTags combines inherited and explicit tags without duplicates.
-func mergeTags(inherited, explicit []string) []string {
-	seen := make(map[string]struct{}, len(inherited)+len(explicit))
-	var result []string
-	for _, tag := range inherited {
-		if _, ok := seen[tag]; ok {
-			continue
-		}
-		seen[tag] = struct{}{}
-		result = append(result, tag)
-	}
-	for _, tag := range explicit {
-		if _, ok := seen[tag]; ok {
-			continue
-		}
-		seen[tag] = struct{}{}
-		result = append(result, tag)
-	}
-	return result
 }
 
 func ptr(t time.Time) *time.Time {

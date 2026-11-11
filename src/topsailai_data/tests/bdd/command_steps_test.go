@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cucumber/godog"
+	"github.com/topsailai/topsailai_data/pkg/adapters/local"
 	"gopkg.in/yaml.v3"
 )
 
@@ -219,7 +221,15 @@ func putObjectMarkerFromItself(ctx context.Context, name string) error {
 		if !ok {
 			return fmt.Errorf("object %q has no data reference", name)
 		}
-		source := filepath.Join(dataRef, name+".md")
+		layout, err := local.NewStoreLayout(state.dataRoot)
+		if err != nil {
+			return err
+		}
+		dir, err := layout.ResolveObjectRef(dataRef)
+		if err != nil {
+			return err
+		}
+		source := filepath.Join(dir, name+".md")
 		runCLI(ctx, state, []string{"put", name, name + ".md", "--from", source}, strings.NewReader(""))
 		return nil
 	}
@@ -532,6 +542,29 @@ func listOutputHasIDs(ctx context.Context, format, rawIDs string) error {
 	return nil
 }
 
+// searchOutputHasExactIDs compares membership without an undocumented equal-time ordering.
+func searchOutputHasExactIDs(ctx context.Context, format, rawIDs string) error {
+	actual, _, err := listOutputIDs(ctx, format)
+	if err != nil {
+		return err
+	}
+	var want []string
+	if rawIDs != "" {
+		want = strings.Split(rawIDs, ",")
+	}
+	sort.Strings(actual)
+	sort.Strings(want)
+	if len(actual) != len(want) {
+		return fmt.Errorf("%s search IDs=%v want=%v", format, actual, want)
+	}
+	for i := range want {
+		if actual[i] != want[i] {
+			return fmt.Errorf("%s search IDs=%v want=%v", format, actual, want)
+		}
+	}
+	return nil
+}
+
 // listOutputHasTimeOrder verifies each returned path has a non-increasing or non-decreasing time prefix.
 func listOutputHasTimeOrder(ctx context.Context, format, order string) error {
 	_, objects, err := listOutputIDs(ctx, format)
@@ -580,10 +613,6 @@ func listOutputContainsAllTags(ctx context.Context, format, rawIDs string) error
 
 // jsonObjectDataRefMatchesPath verifies that the public data reference resolves to the same moved location as path.
 func jsonObjectDataRefMatchesPath(ctx context.Context, name, classify string) error {
-	state, err := scenarioFrom(ctx)
-	if err != nil {
-		return err
-	}
 	objects, err := listObjects(ctx)
 	if err != nil {
 		return err
@@ -609,7 +638,7 @@ func jsonObjectDataRefMatchesPath(ctx context.Context, name, classify string) er
 		if !ok {
 			return fmt.Errorf("object %q has non-string public data_ref", name)
 		}
-		wantRef := filepath.Join(state.dataRoot, filepath.FromSlash(wantPath))
+		wantRef := wantPath
 		if dataRef != wantRef {
 			return fmt.Errorf("object %q public data_ref=%q want=%q", name, dataRef, wantRef)
 		}
@@ -621,44 +650,6 @@ func jsonObjectDataRefMatchesPath(ctx context.Context, name, classify string) er
 // jsonObjectPathClassifyMatches verifies the complete public path shape for a classify path.
 func jsonObjectPathClassifyMatches(ctx context.Context, name, classify string) error {
 	return objectPathHasClassify(ctx, name, classify)
-}
-
-// addClassifyTags writes a test classify tag file using the object's public path.
-func addClassifyTags(ctx context.Context, name, classify, rawTags string) error {
-	state, err := scenarioFrom(ctx)
-	if err != nil {
-		return err
-	}
-	objects, err := listObjects(ctx)
-	if err != nil {
-		return err
-	}
-	var objectPath string
-	for _, object := range objects {
-		if object["id"] == name {
-			objectPath, _ = object["path"].(string)
-			break
-		}
-	}
-	if objectPath == "" {
-		return fmt.Errorf("object %q not found in public list", name)
-	}
-	parts := strings.Split(objectPath, "/")
-	classifyParts := strings.Split(classify, "/")
-	if len(parts) < 4+len(classifyParts) {
-		return fmt.Errorf("object %q path %q is shorter than classify %q", name, objectPath, classify)
-	}
-	classifyPath := append([]string{}, parts[:3]...)
-	classifyPath = append(classifyPath, classifyParts...)
-	path := filepath.Join(append([]string{state.dataRoot}, classifyPath...)...)
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		return fmt.Errorf("create classify directory: %w", err)
-	}
-	file := filepath.Join(path, filepath.Base(path)+".tags")
-	if err := os.WriteFile(file, []byte(strings.ReplaceAll(rawTags, ",", "\n")+"\n"), 0o644); err != nil {
-		return fmt.Errorf("write classify tags: %w", err)
-	}
-	return nil
 }
 
 // recordPublicMetadata saves identity and creation metadata obtained from public list output.
@@ -778,7 +769,15 @@ func putOverlappingArchive(ctx context.Context, command, name string) error {
 	if dataRef == "" {
 		return fmt.Errorf("object %q has no data reference", name)
 	}
-	archivePath := filepath.Join(dataRef, "overlap.tar")
+	layout, err := local.NewStoreLayout(state.dataRoot)
+	if err != nil {
+		return err
+	}
+	dir, err := layout.ResolveObjectRef(dataRef)
+	if err != nil {
+		return err
+	}
+	archivePath := filepath.Join(dir, "overlap.tar")
 	archive, err := os.Create(archivePath)
 	if err != nil {
 		return fmt.Errorf("create overlapping archive: %w", err)
