@@ -185,11 +185,11 @@ func driveSummary(driver *workspaceDriver, observedAtMS int64) *protocol.DriveSu
 		return nil
 	}
 	summary := &protocol.DriveSummary{
-		Reason:        boundedDriveReason(driver.Reason),
-		ControllerPID: driver.DriverPID,
-		RunID:         driver.RunID,
-		Verified:      driver.Verification == "verified",
-		ObservedAtMS:  observedAtMS,
+		Reason:       boundedDriveReason(driver.Reason),
+		DrivePID:     driver.DriverPID,
+		RunID:        driver.RunID,
+		Verified:     driver.Verification == "verified",
+		ObservedAtMS: observedAtMS,
 	}
 	switch driver.State {
 	case "ON":

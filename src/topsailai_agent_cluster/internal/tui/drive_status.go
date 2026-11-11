@@ -73,8 +73,8 @@ func driveDetailLines(drive *protocol.DriveSummary) []detailLine {
 	if drive.Reason != "" {
 		lines = append(lines, detailLine{"drive_reason", drive.Reason})
 	}
-	if drive.ControllerPID != 0 {
-		lines = append(lines, detailLine{"controller_pid", fmt.Sprint(drive.ControllerPID)})
+	if drive.DrivePID != 0 {
+		lines = append(lines, detailLine{"drive_pid", fmt.Sprint(drive.DrivePID)})
 	}
 	if drive.RunID != "" {
 		lines = append(lines, detailLine{"drive_run_id", drive.RunID})

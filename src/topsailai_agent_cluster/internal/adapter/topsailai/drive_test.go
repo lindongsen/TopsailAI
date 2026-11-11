@@ -32,7 +32,7 @@ func TestDiscoverReportsDriverState(t *testing.T) {
 	if drive.State != protocol.DriveStateRunning || !drive.Verified {
 		t.Fatalf("drive = %#v, want a verified running controller", drive)
 	}
-	if drive.ControllerPID != 4242 || drive.RunID != "run-1" || drive.Reason != "publication_verified" {
+	if drive.DrivePID != 4242 || drive.RunID != "run-1" || drive.Reason != "publication_verified" {
 		t.Fatalf("drive evidence = %#v", drive)
 	}
 	if drive.ObservedAtMS == 0 {

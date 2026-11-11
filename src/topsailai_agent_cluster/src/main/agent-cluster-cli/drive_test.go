@@ -31,7 +31,7 @@ func (s *drivePathStub) GetInventory(context.Context, string) (protocol.Inventor
 			ProviderGeneration: "gen",
 			State:              "running",
 			CollectionStatus:   protocol.CollectionSucceeded,
-			Drive:              &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true, ControllerPID: 4242, ObservedAtMS: 1700000000000},
+			Drive:              &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true, DrivePID: 4242, ObservedAtMS: 1700000000000},
 		}},
 	}, nil
 }
@@ -89,7 +89,7 @@ func TestDriveStatusReadsThePersistedInventory(t *testing.T) {
 	if len(stub.intents) != 0 {
 		t.Fatalf("drive status admitted %d commands", len(stub.intents))
 	}
-	if !strings.Contains(output.String(), "drive_state: running") || !strings.Contains(output.String(), "controller_pid: 4242") {
+	if !strings.Contains(output.String(), "drive_state: running") || !strings.Contains(output.String(), "drive_pid: 4242") {
 		t.Fatalf("drive status output=%q", output.String())
 	}
 }

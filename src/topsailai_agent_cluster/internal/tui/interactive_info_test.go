@@ -231,11 +231,11 @@ func TestInfoRendersDriveDetail(t *testing.T) {
 	session := protocol.Session{
 		ClusterSessionID: "res-1",
 		Drive: &protocol.DriveSummary{
-			State:         protocol.DriveStateRunning,
-			Verified:      true,
-			ControllerPID: 4321,
-			RunID:         "run-abc",
-			ObservedAtMS:  1700000000000,
+			State:        protocol.DriveStateRunning,
+			Verified:     true,
+			DrivePID:     4321,
+			RunID:        "run-abc",
+			ObservedAtMS: 1700000000000,
 		},
 	}
 	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, session); err != nil {
@@ -245,7 +245,7 @@ func TestInfoRendersDriveDetail(t *testing.T) {
 	for _, want := range []string{
 		"drive_state: running",
 		"drive_verified: true",
-		"controller_pid: 4321",
+		"drive_pid: 4321",
 		"drive_run_id: run-abc",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -277,12 +277,12 @@ func TestInfoReportsAbsentDriveAsNotReported(t *testing.T) {
 // silently missing from the other.
 func TestInfoAndDriveStatusShareDriveDetail(t *testing.T) {
 	drive := &protocol.DriveSummary{
-		State:         protocol.DriveStateRunning,
-		Verified:      true,
-		ControllerPID: 4321,
-		RunID:         "run-abc",
-		ObservedAtMS:  1700000000000,
-		Reason:        "launched",
+		State:        protocol.DriveStateRunning,
+		Verified:     true,
+		DrivePID:     4321,
+		RunID:        "run-abc",
+		ObservedAtMS: 1700000000000,
+		Reason:       "launched",
 	}
 	var info strings.Builder
 	if err := RenderSessionInfo(&info, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{ClusterSessionID: "res-1", Drive: drive}); err != nil {
