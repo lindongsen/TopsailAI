@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -121,6 +122,14 @@ func TestLoadInvalidCeasedRetentionDays(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid CEASED_RETENTION_DAYS")
 	}
+	// The message must name the variable and quote the offending value so an
+	// operator can fix the configuration without re-running the CLI.
+	if !strings.Contains(err.Error(), "CEASED_RETENTION_DAYS") {
+		t.Fatalf("error should name the variable, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), `"not-a-number"`) {
+		t.Fatalf("error should quote the offending value, got %q", err.Error())
+	}
 }
 
 func TestLoadNegativeCeasedRetentionDays(t *testing.T) {
@@ -129,6 +138,17 @@ func TestLoadNegativeCeasedRetentionDays(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for negative CEASED_RETENTION_DAYS")
+	}
+	// A negative value has no wrapped cause, so the message must stand on its
+	// own instead of rendering a nil wrap verb such as "%!w(<nil>)".
+	if strings.Contains(err.Error(), "%!") {
+		t.Fatalf("error must not render a nil wrap verb, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "must be non-negative") {
+		t.Fatalf("error should explain the constraint, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), `"-1"`) {
+		t.Fatalf("error should quote the offending value, got %q", err.Error())
 	}
 }
 

@@ -107,8 +107,11 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv(EnvPrefix + "CEASED_RETENTION_DAYS"); v != "" {
 		days, err := strconv.Atoi(v)
-		if err != nil || days < 0 {
-			return nil, fmt.Errorf("invalid %sCEASED_RETENTION_DAYS: %w", EnvPrefix, err)
+		if err != nil {
+			return nil, fmt.Errorf("invalid %sCEASED_RETENTION_DAYS %q: %w", EnvPrefix, v, err)
+		}
+		if days < 0 {
+			return nil, fmt.Errorf("invalid %sCEASED_RETENTION_DAYS %q: must be non-negative", EnvPrefix, v)
 		}
 		cfg.CeasedRetentionDays = days
 	}
