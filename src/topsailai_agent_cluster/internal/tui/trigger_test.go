@@ -233,7 +233,6 @@ func TestTriggerTrackerReportsEveryTransitionInOneCollection(t *testing.T) {
 func TestTriggerEnvironmentForwardsOnlyTheWhitelist(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_ENDPOINT_TOKENS", "ep1=secret-token")
 	t.Setenv("AGENT_CLUSTER_SERVER_TOKEN", "server-secret")
-	t.Setenv("AGENT_CLUSTER_AUTH_SCOPES", "read_output")
 	t.Setenv("UNRELATED_SECRET", "leaked")
 	event := TriggerEvent{
 		Event:              triggerEventName,
@@ -251,7 +250,7 @@ func TestTriggerEnvironmentForwardsOnlyTheWhitelist(t *testing.T) {
 		ObservedAtMS:       "1700000000000",
 	}
 	environment := triggerEnvironment(event)
-	for _, forbidden := range []string{"AGENT_CLUSTER_ENDPOINT_TOKENS", "AGENT_CLUSTER_SERVER_TOKEN", "AGENT_CLUSTER_AUTH_SCOPES", "UNRELATED_SECRET"} {
+	for _, forbidden := range []string{"AGENT_CLUSTER_ENDPOINT_TOKENS", "AGENT_CLUSTER_SERVER_TOKEN", "UNRELATED_SECRET"} {
 		if value, ok := environmentValue(environment, forbidden); ok {
 			t.Fatalf("environment leaked %s=%q to the trigger script", forbidden, value)
 		}

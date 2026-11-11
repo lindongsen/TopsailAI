@@ -36,7 +36,6 @@ type Config struct {
 	ChannelListenAddress string
 	DatabasePath         string
 	AuthToken            string
-	AuthScopes           []string
 	CommandAllowlistFile string
 	// ControlActionFile is the Endpoint-local file that selects which ctl. actions
 	// this Endpoint serves. An empty value keeps the reviewed default set in force.
@@ -102,9 +101,6 @@ func Load(args []string, role string) (Config, error) {
 	}
 	if value := os.Getenv("AGENT_CLUSTER_AUTH_TOKEN"); value != "" {
 		cfg.AuthToken = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_AUTH_SCOPES"); value != "" {
-		cfg.AuthScopes = splitList(value)
 	}
 	if value := os.Getenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"); value != "" {
 		cfg.CommandAllowlistFile = value
@@ -186,10 +182,6 @@ func Load(args []string, role string) (Config, error) {
 	flags.StringVar(&cfg.ListenAddress, "listen-address", cfg.ListenAddress, "deprecated API listen address")
 	flags.StringVar(&cfg.DatabasePath, "database-path", cfg.DatabasePath, "SQLite database path")
 	flags.StringVar(&cfg.AuthToken, "auth-token", cfg.AuthToken, "pre-provisioned bearer token")
-	flags.Func("auth-scopes", "comma-separated operator scopes granted to the bearer token", func(value string) error {
-		cfg.AuthScopes = splitList(value)
-		return nil
-	})
 	flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
 	flags.StringVar(&cfg.ControlActionFile, "control-action-file", cfg.ControlActionFile, "Endpoint-local file selecting which ctl. actions are served")
 	flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
@@ -296,23 +288,7 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("invalid channel direction %q", c.ChannelDirection)
 	}
-	for _, scope := range c.AuthScopes {
-		if !knownScope(scope) {
-			return fmt.Errorf("unknown operator scope %q", scope)
-		}
-	}
 	return nil
-}
-
-// knownScope reports whether the scope is one of the defined operator scopes.
-// An unknown scope is rejected at startup rather than silently ignored, because
-// a typo would otherwise grant less authority than the operator intended.
-func knownScope(scope string) bool {
-	switch scope {
-	case "view", "read_output", "send_message", "control", "endpoint_admin":
-		return true
-	}
-	return false
 }
 
 // splitList splits a comma-separated value and drops empty entries.

@@ -40,12 +40,14 @@ Authorization: Bearer <token>
 A missing or wrong token returns `401 unauthorized`. The token is configured through
 `AGENT_CLUSTER_AUTH_TOKEN`; see `docs/Environment_Variables.md`.
 
-The token may be restricted to a set of operator scopes through `AGENT_CLUSTER_AUTH_SCOPES`. An
-empty scope set leaves the credential unrestricted, which is the single-administrator deployment.
-The recognised scopes are `view`, `read_output`, `send_message`, `control` and `endpoint_admin`.
+The Server token authenticates the CLI but does not grant operation permissions. The Server verifies
+that the requested Endpoint exists and has a live channel, then forwards the request without making
+an authorization decision.
 
-Command admission authorizes the requested operation against the scopes and against the permission
-the Endpoint advertises for that operation. A rejected admission returns `403 permission_denied`.
+Operation authorization belongs to the target Endpoint. The CLI sends that Endpoint's token in
+`X-Endpoint-Token` for read requests and in the forwarded command frame for commands. An Endpoint
+policy refusal returns the machine code `policy_denied`; see
+`docs/agent-cluster-endpoint-access-policy.md`.
 
 ## Health and readiness
 

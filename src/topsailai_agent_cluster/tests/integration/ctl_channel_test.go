@@ -57,39 +57,42 @@ func TestCtlActionReachesTheProvider(t *testing.T) {
 	}
 }
 
-// TestCtlActionRequiresItsDeclaredScope proves a restricted credential cannot
-// invoke an action whose declared permission it does not hold. The reading action
-// requires read_output, so a control-only operator is refused at admission and
-// nothing reaches the Endpoint.
-func TestCtlActionRequiresItsDeclaredScope(t *testing.T) {
-	c := startExecClusterWithScopes(t, "", "control")
+// TestCtlActionIsAuthorizedByTheEndpoint proves the Server admits both commands
+// while the Endpoint policy permits only the explicitly granted action.
+func TestCtlActionIsAuthorizedByTheEndpoint(t *testing.T) {
+	c := startExecClusterWithPolicy(t, "", "ctl-token", "token ctl-token\npermissions ctl.heartbeat\n")
 	defer c.stop(t)
 	status, code := postCtlCommand(t, c, "ctl-read-messages", "ctl.get_session_messages", "v1", map[string]any{})
-	if status != http.StatusForbidden {
-		t.Fatalf("expected 403 for a missing read_output scope, got status=%d code=%s", status, code)
+	if status != http.StatusAccepted {
+		t.Fatalf("Server must route the command, got status=%d code=%s", status, code)
 	}
-	if code != "permission_denied" {
-		t.Fatalf("expected permission_denied, got %q", code)
+	refused := waitCtlCommand(t, c, "ctl-read-messages", func(v ctlCommandView) bool { return v.ErrorCode != "" })
+	if refused.ErrorCode != "policy_denied" || refused.EffectCertainty != "not_applied" {
+		t.Fatalf("expected an Endpoint policy refusal, got %+v", refused)
 	}
-	// The same credential may still invoke an action it does hold, so the refusal
-	// above is scope-specific rather than a blanket denial.
+
 	status, code = postCtlCommand(t, c, "ctl-heartbeat-scoped", "ctl.heartbeat", "v1", map[string]any{})
 	if status != http.StatusAccepted {
-		t.Fatalf("expected the held scope to be admitted, got status=%d code=%s", status, code)
+		t.Fatalf("Server must route the granted command, got status=%d code=%s", status, code)
+	}
+	allowed := waitCtlCommand(t, c, "ctl-heartbeat-scoped", func(v ctlCommandView) bool { return v.Status == "finished" })
+	if allowed.ErrorCode != "" || allowed.EffectCertainty != "acknowledged" {
+		t.Fatalf("expected the granted action to reach the provider, got %+v", allowed)
 	}
 }
 
-// TestCtlActionRejectsUnadvertisedAction proves an action the Endpoint never
-// advertised is refused at admission instead of being forwarded and failing later.
+// TestCtlActionRejectsUnadvertisedAction proves the Server routes the intent but
+// the Endpoint rejects an action absent from its advertised capability catalog.
 func TestCtlActionRejectsUnadvertisedAction(t *testing.T) {
 	c := startExecCluster(t, "")
 	defer c.stop(t)
 	status, code := postCtlCommand(t, c, "ctl-unadvertised", "ctl.not_a_reviewed_action", "v1", map[string]any{})
-	if status != http.StatusForbidden {
-		t.Fatalf("expected 403 for an unadvertised action, got status=%d code=%s", status, code)
+	if status != http.StatusAccepted {
+		t.Fatalf("Server must route the command, got status=%d code=%s", status, code)
 	}
-	if code != "permission_denied" {
-		t.Fatalf("expected permission_denied, got %q", code)
+	view := waitCtlCommand(t, c, "ctl-unadvertised", func(v ctlCommandView) bool { return v.ErrorCode != "" })
+	if view.ErrorCode != "unsupported" || view.EffectCertainty != "not_applied" {
+		t.Fatalf("expected the Endpoint to reject the unadvertised action, got %+v", view)
 	}
 }
 
@@ -120,6 +123,9 @@ func postCtlCommand(t *testing.T, c *execCluster, id, operation, version string,
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer secret")
+	if c.endpointToken != "" {
+		req.Header.Set("X-Endpoint-Token", c.endpointToken)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

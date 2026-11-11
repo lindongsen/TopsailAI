@@ -519,12 +519,9 @@ The Server also stops reading an operation's declared permission from the report
 for authorization. That field remains descriptive report data, and the Endpoint is its only
 consumer.
 
-Two implemented-contract documents still describe the current Server-side checks and must be
-updated in the same change that removes them: `docs/API.md` states that command admission
-authorizes an operation against the caller's scopes, and `docs/Environment_Variables.md`
-documents `AGENT_CLUSTER_AUTH_SCOPES` as an authorization control. They are left unchanged here
-because they describe behaviour that exists in the code today, and a design draft must not claim
-a change that has not been made.
+The Server-side operator scope mechanism has been removed. `docs/API.md` now describes the Server
+as an authenticator and router, and `docs/Environment_Variables.md` no longer lists the former
+Server scope configuration. Endpoint policy is the only operation-authorization authority.
 
 ## What changes on the wire and in the CLI
 

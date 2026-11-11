@@ -4,7 +4,10 @@ package integration_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -94,11 +97,11 @@ func TestMessagesRoundTripMissingSession(t *testing.T) {
 	}
 }
 
-// TestMessagesRoundTripMaxChars proves the per-message bound reaches the provider.
+// TestMessagesRoundTripMaxChars proves the API preserves the complete message body.
 //
-// A distinctive value is used so the effect cannot be confused with the provider
-// default: the fixture shortens the body to five characters and appends an
-// ellipsis, which is exactly what the real provider does.
+// max_chars is a presentation bound applied by the CLI after provider-specific
+// content is decoded. The Server API therefore returns the whole readable body so
+// structured provider records are never cut into invalid fragments in transit.
 func TestMessagesRoundTripMaxChars(t *testing.T) {
 	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
 	if err != nil {
@@ -120,51 +123,61 @@ func TestMessagesRoundTripMaxChars(t *testing.T) {
 	if len(envelope.Data.Messages) == 0 {
 		t.Fatal("no messages returned")
 	}
-	if got := envelope.Data.Messages[0].Content; got != "fixtu..." {
-		t.Fatalf("bounded content %q", got)
+	if got := envelope.Data.Messages[0].Content; got != "fixture message body" {
+		t.Fatalf("complete content %q", got)
 	}
 }
 
-// TestMessagesRoundTripRequiresReadOutput proves the conversation read is gated by
-// read_output rather than by view.
-//
-// A credential that may list sessions must not be able to read their conversation,
-// so the narrowed scope set is the only way to distinguish a working check from a
-// missing one: the default deployment has no scopes and is unrestricted.
-func TestMessagesRoundTripRequiresReadOutput(t *testing.T) {
+// TestMessagesRoundTripRequiresView proves the Endpoint, rather than the Server,
+// refuses a conversation read when the caller's token lacks messages.read.
+func TestMessagesRoundTripRequiresView(t *testing.T) {
+	policyDir := filepath.Join(t.TempDir(), "endpoint-access.d")
+	if err := os.MkdirAll(policyDir, 0o700); err != nil {
+		t.Fatalf("create access policy directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "reader.conf"), []byte("token reader-token\nscopes read_output\n"), 0o600); err != nil {
+		t.Fatalf("write access policy: %v", err)
+	}
 	cluster, err := harness.StartCluster(t, harness.ClusterOptions{
-		ProviderType: "topsailai",
-		Environment:  map[string]string{"AGENT_CLUSTER_AUTH_SCOPES": "view"},
+		ProviderType:        "topsailai",
+		EndpointEnvironment: map[string]string{"AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR": policyDir},
 	})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
 	defer cluster.Stop(t)
 
-	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=endpoint-1&session_id=stopped-session", nil)
+	req, err := http.NewRequest(http.MethodGet, cluster.URL("/api/v1/messages?endpoint_id=endpoint-1&session_id=stopped-session"), nil)
+	if err != nil {
+		t.Fatalf("create messages request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("X-Endpoint-Token", "reader-token")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("request messages: %v", err)
 	}
-	if status != http.StatusForbidden {
-		t.Fatalf("view-only status %d body %s", status, body)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read messages response: %v", err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("Endpoint policy status %d body %s", resp.StatusCode, body)
 	}
 	var envelope messagesEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("decode failure envelope: %v body %s", err, body)
 	}
-	if envelope.Code != "permission_denied" {
+	if envelope.Code != "policy_denied" {
 		t.Fatalf("failure code %v", envelope.Code)
 	}
 }
 
-// TestMessagesRoundTripWithReadOutput proves the same request succeeds once the
-// scope is granted, so the previous rejection is a scope decision rather than a
-// broken route.
-func TestMessagesRoundTripWithReadOutput(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{
-		ProviderType: "topsailai",
-		Environment:  map[string]string{"AGENT_CLUSTER_AUTH_SCOPES": "view,read_output"},
-	})
+// TestMessagesRoundTripWithDefaultPolicy proves the same request succeeds when
+// the Endpoint has no configured access-policy directory.
+func TestMessagesRoundTripWithDefaultPolicy(t *testing.T) {
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
@@ -226,7 +239,7 @@ func TestMessagesRoundTripStandaloneCLI(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("messages exit code %d stderr=%s stdout=%s", code, stderr, stdout)
 	}
-	if !containsAll(stdout, "fixture message body", "user", "assistant") {
+	if !containsAll(stdout, "fixture message body", "Role: USER", "Role: ASSISTANT") {
 		t.Fatalf("rendered conversation missing content: %s", stdout)
 	}
 }

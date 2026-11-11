@@ -12,6 +12,17 @@ ai_agent_driver: "topsailai_agent_chats"
 # Relative paths are resolved based on the current directory at launch time.
 workspace: "."
 
+# Workspace scan configuration for the folder tree appended to the agent context.
+#   include_files:         when true, list files as well as folders. Default: false
+#                          (folders only), which keeps the first-turn context small.
+#   preferred_extensions:  while include_files is false, also list files whose
+#                          extension matches one of these entries. Matching is
+#                          case-insensitive, so ".md" also matches "NOTES.MD".
+#                          A leading dot is optional. Default: [".md"] (markdown
+#                          files stay visible); set [] to list no extra files.
+scan:
+  include_files: false
+
 # Context configuration: each top-level item corresponds to a set of context sources.
 # The launcher merges sources in the following order:
 #   1. "_" (基础配置, base configuration) — always loaded first

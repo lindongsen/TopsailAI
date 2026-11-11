@@ -543,7 +543,7 @@ DEFAULT_CONFIG = {
     "workspace": ".",
     "scan": {
         "include_files": False,
-        "preferred_extensions": [],
+        "preferred_extensions": [".md"],
     },
     "context": {
         "_": [],
@@ -582,10 +582,11 @@ workspace: "."
 #                          (folders only), which keeps the first-turn context small.
 #   preferred_extensions:  while include_files is false, also list files whose
 #                          extension matches one of these entries (case-insensitive).
-#                          A leading dot is optional. Default: [] (no extra files).
+#                          A leading dot is optional. Default: [".md"] (markdown
+#                          files stay visible); set [] to list no extra files.
 scan:
   include_files: false
-  preferred_extensions: []
+  preferred_extensions: [".md"]
 
 # Context configuration: each item corresponds to a set of context sources.
 # Each source is either a file path (string) or a dict describing a command
@@ -708,10 +709,11 @@ workspace: {workspace}
 #                          (folders only), which keeps the first-turn context small.
 #   preferred_extensions:  while include_files is false, also list files whose
 #                          extension matches one of these entries (case-insensitive).
-#                          A leading dot is optional. Default: [] (no extra files).
+#                          A leading dot is optional. Default: [".md"] (markdown
+#                          files stay visible); set [] to list no extra files.
 scan:
   include_files: false
-  preferred_extensions: []
+  preferred_extensions: [".md"]
 
 # Context configuration: each item corresponds to a set of context sources.
 # Each source is either a file path (string) or a dict describing a command
@@ -1821,6 +1823,53 @@ def _resolve_scan_include_files(cli_flag=None, environ=None, settings_flag=None)
     return False
 
 
+# Preferred extensions applied when the scan is in folders-only mode and the
+# user did not configure ``scan.preferred_extensions`` at all. Markdown files
+# are a project's documentation surface, so they stay visible in the compact
+# tree instead of disappearing with every other file.
+_SCAN_DEFAULT_PREFERRED_EXTENSIONS = (".md",)
+
+
+def _scan_preferred_extensions_configured(settings):
+    """Return True when settings.yaml explicitly configures preferred_extensions.
+
+    This distinguishes "the key is absent" (the built-in default applies) from
+    an explicit empty list (the user opted out of every extra file), which a
+    plain ``[]`` return value cannot express.
+    """
+    scan_section = settings.get("scan") if isinstance(settings, dict) else None
+    if not isinstance(scan_section, dict):
+        return False
+    return "preferred_extensions" in scan_section
+
+
+def _resolve_scan_preferred_extensions(settings, include_files, preferred=None):
+    """Return the effective preferred-extension list for the scanned tree.
+
+    The built-in default ``[".md"]`` applies only when both conditions hold:
+    the scan is in folders-only mode and ``scan.preferred_extensions`` is
+    absent from settings.yaml. An explicit value always wins, including an
+    explicit empty list, which is the documented way to opt out. The default is
+    irrelevant while files are listed anyway, so ``include_files`` short
+    circuits to an empty list.
+
+    Args:
+        settings (dict|None): Parsed settings.yaml content.
+        include_files (bool): Effective include-files mode after the CLI flag,
+            environment variable, and settings priority chain.
+        preferred (list|None): Already-normalized value from
+            ``_resolve_scan_settings``.
+
+    Returns:
+        list: Normalized extensions to keep in folders-only mode.
+    """
+    if include_files:
+        return []
+    if _scan_preferred_extensions_configured(settings):
+        return _normalize_preferred_extensions(preferred)
+    return list(_SCAN_DEFAULT_PREFERRED_EXTENSIONS)
+
+
 def _scan_token_counter():
     """Return a callable that counts tokens for a string.
 
@@ -2315,13 +2364,16 @@ def main():
         )
         _apply_self_environs(scan_settings)
         scan_include_setting, scan_preferred = _resolve_scan_settings(scan_settings)
+        scan_include_files = _resolve_scan_include_files(
+            args.include_files, settings_flag=scan_include_setting
+        )
         _scan_folder(
             args.scan,
             exclude_names=args.exclude,
-            include_files=_resolve_scan_include_files(
-                args.include_files, settings_flag=scan_include_setting
+            include_files=scan_include_files,
+            preferred_extensions=_resolve_scan_preferred_extensions(
+                scan_settings, scan_include_files, scan_preferred
             ),
-            preferred_extensions=scan_preferred,
         )
         return
 
@@ -2559,7 +2611,8 @@ def main():
     # Resolve whether the scanned tree lists files as well as folders. The CLI
     # flag wins, then TOPSAILAI_CLI_SCAN_INCLUDE_FILES from the merged environment,
     # then scan.include_files from settings.yaml; the default lists folders
-    # only. scan.preferred_extensions adds selected files in folders-only mode.
+    # only. scan.preferred_extensions adds selected files in folders-only mode,
+    # and defaults to [".md"] when the key is absent.
     scan_include_setting, scan_preferred = _resolve_scan_settings(settings)
     include_files = _resolve_scan_include_files(
         args.include_files, merged_env, settings_flag=scan_include_setting
@@ -2569,7 +2622,9 @@ def main():
         project_folder,
         exclude_names=args.exclude,
         include_files=include_files,
-        preferred_extensions=scan_preferred,
+        preferred_extensions=_resolve_scan_preferred_extensions(
+            settings, include_files, scan_preferred
+        ),
     )
     message_parts = []
     if context_content:

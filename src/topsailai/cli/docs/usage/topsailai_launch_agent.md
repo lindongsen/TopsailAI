@@ -81,7 +81,8 @@ topsailai_launch_agent
 
 The scan lists folders only by default, for both the `--scan` output and the workspace folder tree appended to
 `TOPSAILAI_CONTEXT_USER_MESSAGE`. Files are omitted from the tree, which keeps the first-turn context small on large
-repositories while still showing the directory layout the agent can navigate.
+repositories while still showing the directory layout the agent can navigate. Markdown files are the one exception:
+they stay visible by default (see "Preferred Extensions").
 
 Pass `--include-files` to list files as well:
 
@@ -120,6 +121,9 @@ scan:
   preferred_extensions: [".py", ".md"]
 ```
 
+- **Default:** when `include_files` is `false` and `preferred_extensions` is absent from `settings.yaml`, the scan
+  defaults to `[".md"]`, so markdown files stay visible in the compact tree.
+- **Opting out:** an explicit `preferred_extensions: []` disables the default and lists no extra files.
 - Matching is case-insensitive, so `README.MD` matches `.md`.
 - A leading dot is optional; `py` and `.py` are equivalent.
 - The list is only consulted while `include_files` is false. When files are listed anyway (via `--include-files`,
@@ -498,7 +502,7 @@ ai_agent_driver: "topsailai_agent_chats"
 workspace: "."
 scan:
   include_files: false
-  preferred_extensions: []
+  preferred_extensions: [".md"]
 context:
   _: []
   default: []
@@ -516,8 +520,8 @@ environment:
 - Context sources are either file paths (strings) or command sources (dicts).
 - File paths are relative to `workspace` unless they start with `/`.
 - The optional `scan` section controls the workspace folder tree: `include_files` (boolean, default `false`) lists
-  files as well as folders, and `preferred_extensions` (list of strings) keeps selected files in folders-only mode.
-  See "Scan Mode (Folders Only vs. Files)" and "Preferred Extensions".
+  files as well as folders, and `preferred_extensions` (list of strings) keeps selected files in folders-only mode,
+  defaulting to `[".md"]` when the key is absent. See "Scan Mode (Folders Only vs. Files)" and "Preferred Extensions".
 
 ### Command Context Sources
 

@@ -98,6 +98,108 @@ class TestResolveScanSettings(unittest.TestCase):
         self.assertIn("scan.include_files", stderr.getvalue())
 
 
+class TestResolveScanPreferredExtensions(unittest.TestCase):
+    """Verify the conditional [".md"] default for preferred extensions.
+
+    The default applies only when the scan is in folders-only mode and
+    ``scan.preferred_extensions`` is absent from settings.yaml.
+    """
+
+    def test_absent_key_defaults_to_markdown(self):
+        self.assertEqual(
+            launcher._resolve_scan_preferred_extensions({}, False), [".md"]
+        )
+
+    def test_absent_scan_section_defaults_to_markdown(self):
+        self.assertEqual(
+            launcher._resolve_scan_preferred_extensions({"workspace": "."}, False),
+            [".md"],
+        )
+
+    def test_include_files_true_disables_the_default(self):
+        self.assertEqual(
+            launcher._resolve_scan_preferred_extensions({}, True), []
+        )
+
+    def test_explicit_empty_list_opts_out(self):
+        settings = {"scan": {"include_files": False, "preferred_extensions": []}}
+        self.assertEqual(
+            launcher._resolve_scan_preferred_extensions(settings, False), []
+        )
+
+    def test_explicit_list_wins_over_the_default(self):
+        settings = {"scan": {"preferred_extensions": ["PY"]}}
+        self.assertEqual(
+            launcher._resolve_scan_preferred_extensions(settings, False, [".py"]),
+            [".py"],
+        )
+
+    def test_explicit_list_is_normalized(self):
+        settings = {"scan": {"preferred_extensions": ["MD"]}}
+        self.assertEqual(
+            launcher._resolve_scan_preferred_extensions(settings, False, ["MD"]),
+            [".md"],
+        )
+
+    def test_non_mapping_scan_section_still_defaults(self):
+        self.assertEqual(
+            launcher._resolve_scan_preferred_extensions({"scan": ["bad"]}, False),
+            [".md"],
+        )
+
+    def test_configured_detection_distinguishes_absent_from_empty(self):
+        self.assertFalse(launcher._scan_preferred_extensions_configured({}))
+        self.assertFalse(
+            launcher._scan_preferred_extensions_configured(
+                {"scan": {"include_files": False}}
+            )
+        )
+        self.assertTrue(
+            launcher._scan_preferred_extensions_configured(
+                {"scan": {"preferred_extensions": []}}
+            )
+        )
+
+
+class TestDefaultMarkdownInScan(unittest.TestCase):
+    """Verify the [".md"] default reaches the rendered tree."""
+
+    def _make_tree(self, tmpdir):
+        os.makedirs(os.path.join(tmpdir, "src"))
+        for name, content in (
+            ("README.md", "readme\n"),
+            ("NOTES.MD", "notes\n"),
+            ("main.py", "print('hi')\n"),
+        ):
+            with open(os.path.join(tmpdir, name), "w", encoding="utf-8") as handle:
+                handle.write(content)
+        return tmpdir
+
+    def test_default_keeps_markdown_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            preferred = launcher._resolve_scan_preferred_extensions({}, False)
+            tree = launcher._scan_workspace_files(
+                tmpdir, preferred_extensions=preferred
+            )
+            self.assertIn("README.md", tree)
+            self.assertIn("NOTES.MD", tree)
+            self.assertIn("src", tree)
+            self.assertNotIn("main.py", tree)
+
+    def test_explicit_empty_list_hides_markdown_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            settings = {"scan": {"preferred_extensions": []}}
+            preferred = launcher._resolve_scan_preferred_extensions(settings, False)
+            tree = launcher._scan_workspace_files(
+                tmpdir, preferred_extensions=preferred
+            )
+            self.assertNotIn("README.md", tree)
+            self.assertNotIn("NOTES.MD", tree)
+            self.assertIn("src", tree)
+
+
 class TestResolveScanIncludeFilesSettings(unittest.TestCase):
     """Verify settings.yaml participates in the include-files priority chain."""
 
