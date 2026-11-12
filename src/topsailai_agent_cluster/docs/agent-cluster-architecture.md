@@ -86,7 +86,7 @@ Operator CLI / TUI / future Web UI
            /             |               TopsailAI CLI      Other CLI        SDK / HTTP agent
 ```
 
-The CLI/TUI is a separate client process, even when installed on the server machine. It never reads endpoint files, invokes provider CLIs, or bypasses the Server API. Server and Endpoint each have an API-serving process. The standard Adapter abstraction and its generic CLI runner live inside the Endpoint; each provider CLI is an independently installed, bounded child process owned by its provider project, not another permanent platform service.
+The CLI/TUI is a separate client process, even when installed on the server machine. It never reads endpoint files, invokes provider CLIs, or bypasses the Server API. Server and Endpoint each have an API-serving process. The standard Adapter abstraction and its generic CLI Adapter live inside the Endpoint; each provider CLI is an independently installed, bounded child process owned by its provider project, not another permanent platform service.
 
 ## Strict Server and Endpoint abstraction boundary
 
@@ -232,37 +232,71 @@ response correlation requires the pending request's Endpoint to equal the respon
 
 ## Adapter CLI boundary and independent provider projects
 
-The Endpoint service calls standard Adapter functions. The Adapter is the cluster-owned abstraction
-layer: it defines the standard operations, resources, result semantics and safety boundaries, then a
-generic runner invokes a locally configured provider CLI. The provider CLI implements that standard in
-its own project and translates the request into whatever concrete business mechanism the provider uses.
+The Endpoint service owns the Adapter abstraction and calls its standard functions. A generic CLI
+Adapter implements those functions by directly starting a locally configured provider CLI as a
+bounded child process. The provider CLI implements the language-neutral Adapter CLI protocol and
+translates each request into whatever concrete business mechanism its provider uses.
 
-```text
-Endpoint service
-    -> standard Adapter functions
-    -> generic Adapter CLI runner
-    -> provider CLI
-    -> provider business/runtime layer
+```mermaid
+flowchart LR
+    Operator["Operator CLI / TUI"] --> Server["Server"]
+    Server --> Endpoint["Endpoint service"]
+    Endpoint --> Contract["Endpoint-internal Adapter contract"]
+    Contract --> CLIAdapter["Generic CLI Adapter"]
+    CLIAdapter -->|"direct child-process invocation"| ProviderCLI["Trusted local provider CLI"]
+    ProviderCLI --> ProviderBusiness["Provider business / runtime"]
+    ProviderBusiness --> Agent["Agent sessions and tasks"]
+
+    Endpoint -.->|"owns Cluster IDs, policy, journal and receipts"| Authority["Endpoint authority"]
+    ProviderCLI -.->|"owns provider translation only"| ProviderPrivate["Provider-private behavior"]
 ```
 
-This direction is mandatory. The cluster defines the contract first; a provider implements it. The
-cluster never learns the provider's native command names, flags, files, state labels, SDK calls or
+The direct child-process invocation above is an implementation mechanism such as Go
+`exec.CommandContext`; it is not the public Cluster operation `command.exec`. Public `command.exec`
+is an operator-requested, allowlisted command executed by the Endpoint in a Session working directory.
+The generic CLI Adapter never routes provider invocation through that public operation.
+
+This direction is mandatory. The Cluster defines the contract first; a provider implements it. The
+Cluster never learns the provider's native command names, flags, files, state labels, SDK calls or
 internal process model. A provider may use another CLI, an HTTP API, an SDK, files or processes behind
 its provider CLI without changing the Endpoint.
+
+### Two separate seams
+
+The architecture has two related but distinct seams. They share semantics but not data structures.
+
+```mermaid
+flowchart TB
+    Public["Cluster public protocol types"] --> Endpoint["Endpoint service"]
+    Endpoint -->|"Seam A: in-process function calls"| Internal["Endpoint-internal Adapter DTOs"]
+    Internal --> CLIAdapter["Generic CLI Adapter"]
+    CLIAdapter -->|"Seam B: versioned JSON / JSONL"| Wire["Adapter CLI wire DTOs"]
+    Wire --> ProviderCLI["Provider CLI"]
+```
+
+- **Seam A — Endpoint-internal Adapter contract:** typed function calls used inside the Endpoint.
+  It may carry Endpoint-internal DTOs, but it must keep Cluster authority separate from provider
+  evidence.
+- **Seam B — Adapter CLI protocol:** language-neutral JSON/JSONL exchanged with the provider CLI.
+  It carries provider-private targets, standard operations or queries, payloads and budgets. It never
+  carries an entire Cluster `ImmutableIntent`, `protocol.Session` or `ExecutionReceipt`.
+
+The generic CLI Adapter belongs to the Endpoint and bridges these seams. A provider CLI implements
+only Seam B; it does not import or implement Agent Cluster's internal Go interface.
 
 ### Ownership
 
 | Layer | Owns | Must not own |
 |---|---|---|
-| Endpoint service | Authorization, command journal, deduplication, target and generation revalidation, cluster resource mapping, local policy | Provider commands, provider state labels, provider files or provider business rules |
-| Standard Adapter | Provider-neutral functions, request/result schemas, protocol versioning, error and effect semantics | Any provider-specific translation or executable behavior |
-| Generic CLI runner | Bounded child execution, stdin/stdout framing, stderr diagnostics, deadlines, cancellation and exact-process cleanup | Provider business interpretation |
-| Provider CLI | Translation from the standard Adapter protocol to one provider's behavior | Server routes, cluster credentials, Endpoint database, cluster authorization or cluster resource IDs |
+| Endpoint service | Authorization, local policy, command journal, deduplication, Cluster resource mapping, target preflight, effective capability revision and complete receipts | Provider commands, native state labels, provider files or provider business rules |
+| Endpoint-internal Adapter contract | Provider-neutral functions and Endpoint-internal request/result DTOs | Public transport authority or provider-specific translation |
+| Generic CLI Adapter | Wire encoding/validation, bounded child execution, stderr diagnostics, deadlines, cancellation and exact-process cleanup | Provider business interpretation or Cluster resource minting |
+| Provider CLI | Translation from the standard Adapter CLI protocol to one provider's behavior; final provider-generation revalidation | Server routes, Cluster credentials, Endpoint database, Cluster authorization, journal state or Cluster resource IDs |
 | Provider runtime | Agent-specific execution, sessions, models, output and persistence | Cluster protocol or fleet policy |
 
 The provider CLI is configured by a local administrator. A remote command can select only a standard
 operation and an already configured binding; it can never supply an executable path, provider command,
-working directory, configuration path or environment override.
+working directory, configuration path, test mode or environment override.
 
 ### Process and protocol boundary
 
@@ -275,36 +309,126 @@ The first implementation uses a process per request. A resident provider daemon 
 contract and may be considered only after measured process-start cost justifies a separate lifecycle.
 The provider CLI may be written in any language and released independently from Agent Cluster.
 
-### Identity and authority do not cross the boundary
+### Identity and receipt ownership
 
-The provider CLI returns provider-private resource keys and provider generation evidence. The Endpoint
-maps those keys through its durable `ResourceMapper` and mints the opaque cluster IDs exposed on the
-wire. A provider CLI must never mint, persist or interpret cluster resource IDs.
+The provider CLI returns provider-private resource keys and provider-generation evidence. The Endpoint
+maps those keys through its durable `ResourceMapper` and mints the opaque Cluster IDs exposed on the
+wire. A provider CLI never mints, persists or interprets Cluster resource IDs.
 
-A provider result is evidence, not authority. The Endpoint still decides whether the caller may perform
-the operation, whether the target generation is current, whether a command is a duplicate and whether
-a returned result satisfies the standard schema. A successful provider process exit cannot upgrade an
-unknown effect into a confirmed one.
+```mermaid
+flowchart LR
+    Observation["Provider observation
+provider_resource_key + generation"] --> Mapper["Endpoint ResourceMapper"]
+    Mapper --> ClusterID["Opaque Cluster resource ID"]
+    ClusterID --> Inventory["Standard Cluster inventory"]
+    ClusterID --> Lookup["Endpoint reverse lookup"]
+    Lookup --> Target["Provider target
+provider_resource_key + expected_generation"]
+    Target --> ProviderCLI["Provider CLI"]
+```
 
-### Independent development and replacement
+A provider result is evidence, not Cluster authority. The Endpoint combines provider evidence with
+its own journal facts to create the complete `ExecutionReceipt`.
+
+```mermaid
+flowchart LR
+    Intent["Cluster intent"] --> Endpoint["Endpoint authorization, journal and target mapping"]
+    Endpoint --> Request["Provider operation request"]
+    Request --> ProviderCLI["Provider CLI"]
+    ProviderCLI --> Result["Provider operation result"]
+    Result --> Receipt["Endpoint builds ExecutionReceipt"]
+    Endpoint --> Receipt
+```
+
+The provider request contains an opaque invocation ID, a standard operation, a provider-private target,
+its expected generation, typed payload, deadline and budgets. It excludes the caller's authority,
+Endpoint credentials, Cluster resource ID, request hash, command revision and journal phase. The
+provider result contains provider evidence such as delivery boundary, provider outcome, effect
+certainty, provider response and timing; it excludes Endpoint instance identity and Cluster lifecycle
+state. The Endpoint may conservatively downgrade provider certainty when the process or protocol
+boundary is uncertain, but it never upgrades certainty without evidence.
+
+An `inspect` preflight does not remove the race between inspection and execution. Every mutating
+provider request therefore carries `expected_generation`, and the provider CLI must revalidate that
+generation in the same execution path that applies the operation. A provider that cannot do so must
+report the capability limitation rather than claim safe execution.
+
+### Capability and policy composition
+
+The provider descriptor reports what the provider CLI implements. The Endpoint intersects that
+information with its own supported standard surface and local policy, then computes the effective
+capability revision advertised to the Server.
+
+```mermaid
+flowchart LR
+    Provider["Provider descriptor"] --> Intersect["Endpoint normalization and intersection"]
+    Standard["Cluster standard operation and query registry"] --> Intersect
+    Policy["Endpoint local policy"] --> Intersect
+    Binding["Binding configuration revision"] --> Intersect
+    Intersect --> Effective["Effective capabilities + revision"]
+```
+
+The same rule applies to `ctl.<action>`: the provider CLI advertises implemented actions and their
+schemas, while Endpoint-local policy approves the exposed subset and required permissions. Provider
+argv templates remain provider-private and never appear in Cluster configuration.
+
+### Independent provider projects
+
+Provider implementations are independently built and tested projects under the repository's
+`providers/` directory:
+
+```text
+providers/
+├── topsailai/  # Adapter CLI implementation that calls the TopsailAI business CLI/runtime
+└── mock/       # Reference implementation and controlled fault injection for tests
+```
+
+These projects may share the repository but have independent build metadata, dependencies, tests,
+versions and executable artifacts. They do not import Agent Cluster `internal/` packages and are not
+compiled into the Endpoint. `providers/topsailai` may understand TopsailAI-native commands and data;
+the generic CLI Adapter may not. `providers/mock` supplies both conforming behavior and locally
+configured broken modes for executable-level negative tests.
 
 Adding or replacing a provider installs a provider CLI and changes Endpoint-local binding
 configuration. It requires no Endpoint, Server, database schema, public API or operator CLI source
-change. Provider-specific translation code belongs to the provider project, not under
-`internal/adapter/<provider>` in this repository.
+change. The previous same-repository Go `Provider` registration proposal is superseded: Agent Cluster
+does not use Go runtime plugins, compile provider implementations into the Endpoint, or publish a Go
+SDK as the provider integration boundary.
 
-The previous same-repository Go `Provider` registration proposal is superseded. Agent Cluster does not
-use Go runtime plugins, compile provider implementations into the Endpoint, or publish a Go SDK as the
-provider integration boundary. The portable contract is the versioned CLI protocol plus its schemas
-and executable conformance suite.
+### Trust model
+
+For the MVP, a provider CLI is a locally installed trusted component. Process separation provides a
+module, dependency and failure boundary; it does **not** provide a security sandbox against a malicious
+provider CLI. When the provider CLI runs under the same operating-system identity as the Endpoint,
+statements such as "must not access the Endpoint database" are architectural obligations, not enforced
+isolation guarantees.
+
+```mermaid
+flowchart LR
+    Remote["Remote operator input
+untrusted"] --> Endpoint["Endpoint authorization and validation"]
+    Endpoint --> Runner["Generic CLI Adapter
+reliability boundary"]
+    subgraph TrustedHost["Locally administered trusted host boundary"]
+        Runner --> ProviderCLI["Trusted provider CLI
+not sandboxed"]
+        ProviderCLI --> Business["Provider business/runtime"]
+    end
+```
+
+The generic CLI Adapter still enforces reliability controls: fixed local executable configuration,
+no shell, bounded stdin/stdout/stderr, strict JSON/JSONL validation, deadline and cancellation, and
+cleanup of the exact process group it owns. Remote input cannot enable mock fault modes or replace
+local process configuration. Supporting untrusted providers later requires a separate design for OS
+identities, filesystem and credential permissions, network restrictions and sandbox/container policy.
 
 ### Migration constraint
 
-The existing `internal/adapter/topsailai` implementation remains only as a migration baseline until an
-independent TopsailAI provider CLI passes protocol conformance, fixture parity, BDD, integration and
-live smoke checks. It is removed only after the Endpoint has switched to the generic runner and the
-rollback path has been documented. Provider-specific behavior must not be rewritten into the generic
-runner during migration.
+The existing `internal/adapter/topsailai` implementation remains only as a migration baseline until
+`providers/topsailai` passes protocol conformance, fixture parity, BDD, integration and live smoke
+checks. It is removed only after the Endpoint has switched to the generic CLI Adapter and the rollback
+path has been documented. Provider-specific behavior must not be rewritten into the generic Adapter
+during migration.
 
 ## Transport and connectivity
 

@@ -116,6 +116,10 @@ type ActualDataAdapter interface {
 	// against the current file size. Negative offsets count from the end.
 	WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error)
 
+	// ReplaceFileRange replaces [start,end) with a stream. The caller retains
+	// object custody while the range is resolved and published.
+	ReplaceFileRange(ctx context.Context, ref string, filename string, r io.Reader, start int64, end int64) (string, error)
+
 	// ReadFile returns a stream that reads a single file from the object's actual data.
 	ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error)
 

@@ -24,6 +24,16 @@ import (
 
 // Manager combines a MetadataAdapter and an ActualDataAdapter to implement the
 // complete object lifecycle.
+// FileEdit describes one byte-range replacement in an actual-data file.
+type FileEdit struct {
+	Start       int64
+	End         int64
+	Replacement []byte
+}
+
+// FileEditPlanner scans a file while exclusive object custody is held.
+type FileEditPlanner func(current io.Reader, exists bool) (FileEdit, error)
+
 type Manager struct {
 	// TrackStat controls best-effort object stat recording. It defaults to true.
 	TrackStat bool
@@ -339,6 +349,44 @@ func (m *Manager) WriteActualFileAt(ctx context.Context, id models.ObjectID, fil
 
 	if _, err := m.actual.WriteFileAt(ctx, obj.DataRef, filename, r, seek, insert); err != nil {
 		return fmt.Errorf("write file at offset: %w", err)
+	}
+	obj.UpdatedAt = time.Now()
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return err
+	}
+	m.recordWrite(ctx, obj)
+	return nil
+}
+
+// EditActualFile plans and publishes a byte-range replacement under one lock.
+func (m *Manager) EditActualFile(ctx context.Context, id models.ObjectID, filename string, planner FileEditPlanner) error {
+	obj, lock, err := m.lockActiveObject(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer releaseNamespaceLock(lock)
+
+	rc, err := m.actual.ReadFile(ctx, obj.DataRef, filename)
+	exists := err == nil
+	if err != nil && !stderrors.Is(err, errors.ErrObjectNotFound) {
+		return err
+	}
+	var current io.Reader = strings.NewReader("")
+	if exists {
+		current = rc
+	}
+	edit, err := planner(current, exists)
+	if exists {
+		closeErr := rc.Close()
+		if err == nil && closeErr != nil {
+			return fmt.Errorf("close file after planning edit: %w", closeErr)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := m.actual.ReplaceFileRange(ctx, obj.DataRef, filename, bytes.NewReader(edit.Replacement), edit.Start, edit.End); err != nil {
+		return fmt.Errorf("replace file range: %w", err)
 	}
 	obj.UpdatedAt = time.Now()
 	if err := m.meta.Update(ctx, obj); err != nil {

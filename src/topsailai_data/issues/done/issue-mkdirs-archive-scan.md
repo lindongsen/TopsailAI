@@ -85,3 +85,12 @@ does not need.
 - `exists` on a folder does not stream the archive.
 - Folder visibility, marker creation, and skip-existing behaviour are unchanged.
 - `go test ./...` passes.
+
+## Resolution
+
+Resolved. `ActualDataAdapter` now exposes `StatFile` and `ListFiles`, and
+`ObjectFS.Stat`, `ReadDir`, and `MkdirAll` use those operations instead of
+`ReadActualArchive`. The local adapter performs direct filesystem metadata and
+directory discovery while filtering reserved temporary paths. Counting-adapter
+regression tests prove folder discovery does not call `ReadArchive`; marker
+creation and skip-existing behavior remain unchanged.

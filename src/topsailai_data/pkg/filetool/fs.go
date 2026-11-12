@@ -1,9 +1,12 @@
 package filetool
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ReadSeekCloser combines the reader, seeker, and closer capabilities that the
@@ -15,6 +18,17 @@ type ReadSeekCloser interface {
 	io.Seeker
 	io.Closer
 }
+
+// FileEdit describes one byte-range replacement in an existing file.
+type FileEdit struct {
+	Start       int64
+	End         int64
+	Replacement []byte
+}
+
+// FileEditPlanner scans the current file while its write custody is held and
+// returns the byte range and replacement to publish.
+type FileEditPlanner func(current io.Reader, exists bool) (FileEdit, error)
 
 // FS abstracts the file-system operations used by this package.
 //
@@ -48,6 +62,10 @@ type FS interface {
 	// WriteAt inserts or overwrites a stream at a byte offset resolved against
 	// the current file size. Negative offsets count from the end.
 	WriteAt(path string, r io.Reader, seek int64, insert bool, perm os.FileMode) error
+
+	// EditFile plans and publishes one byte-range replacement while holding
+	// exclusive write custody for the complete operation.
+	EditFile(path string, planner FileEditPlanner, perm os.FileMode) error
 
 	// UpdateFile performs a lock-protected read-modify-write. The callback
 	// receives the current content and whether the file exists, and returns the
@@ -174,6 +192,90 @@ func (OSFS) WriteAt(path string, r io.Reader, seek int64, insert bool, perm os.F
 		if _, err := io.Copy(tmp, old); err != nil {
 			return err
 		}
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+// EditFile plans and publishes one byte-range replacement.
+func (OSFS) EditFile(path string, planner FileEditPlanner, perm os.FileMode) error {
+	fd, err := os.Open(path)
+	exists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var current io.Reader = strings.NewReader("")
+	if exists {
+		current = fd
+	}
+	edit, planErr := planner(current, exists)
+	if exists {
+		closeErr := fd.Close()
+		if planErr == nil && closeErr != nil {
+			return closeErr
+		}
+	}
+	if planErr != nil {
+		return planErr
+	}
+	return replaceOSFileRange(path, edit, perm)
+}
+
+// replaceOSFileRange publishes one byte-range replacement through a temporary file.
+func replaceOSFileRange(path string, edit FileEdit, perm os.FileMode) error {
+	old, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) && edit.Start == 0 && edit.End == 0 {
+			return OSFS{}.WriteFileFrom(path, bytes.NewReader(edit.Replacement), perm)
+		}
+		return err
+	}
+	defer old.Close()
+	info, err := old.Stat()
+	if err != nil {
+		return err
+	}
+	if edit.Start < 0 || edit.End < edit.Start || edit.End > info.Size() {
+		return fmt.Errorf("invalid edit range [%d,%d) for file size %d", edit.Start, edit.End, info.Size())
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".topsailai-file-write-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		_ = tmp.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		return err
+	}
+	if _, err := io.CopyN(tmp, old, edit.Start); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(edit.Replacement); err != nil {
+		return err
+	}
+	if _, err := old.Seek(edit.End, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err := io.Copy(tmp, old); err != nil {
+		return err
+	}
+	if err := old.Close(); err != nil {
+		return err
 	}
 	if err := tmp.Sync(); err != nil {
 		return err

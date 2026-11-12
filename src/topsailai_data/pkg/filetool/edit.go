@@ -2,6 +2,7 @@ package filetool
 
 import (
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -46,59 +47,27 @@ func OverwriteLines(path string, opts OverwriteLinesOptions) (string, error) {
 		return "", invalidParameter("start_num", opts.StartNum, "must be >= 1")
 	}
 
-	before, updated, err := overwriteRange(path, opts)
+	_, diff, err := overwriteRange(path, opts)
 	if err != nil {
 		return "", err
 	}
 
-	return OverwriteWarning + unifiedDiff(before, updated, "before", path), nil
+	return OverwriteWarning + diff, nil
 }
 
-// overwriteRange applies a line-range replacement inside one lock-protected
-// read-modify-write, so a concurrent writer cannot interleave between the read
-// and the write.
+// overwriteRange applies a byte-range replacement inside one lock scope.
 func overwriteRange(path string, opts OverwriteLinesOptions) (string, string, error) {
-	var before, updated string
-	err := updateText(path, opts.FS, func(existing string, exists bool) (string, error) {
+	var diff string
+	target := resolveFS(opts.FS)
+	err := target.EditFile(path, func(current io.Reader, exists bool) (FileEdit, error) {
 		if !exists {
-			return "", fmt.Errorf("%w: %s", ErrFileNotFound, path)
+			return FileEdit{}, fmt.Errorf("%w: %s", ErrFileNotFound, path)
 		}
-		before = existing
-		lines := splitLinesKeepEnds(before)
-
-		startIdx := opts.StartNum - 1
-		if startIdx >= len(lines) {
-			return "", fmt.Errorf("%w: start_num (%d) exceeds file length (%d lines)", ErrInvalidRange, opts.StartNum, len(lines))
-		}
-
-		var endIdx int
-		switch {
-		case opts.EndNum == 0:
-			endIdx = opts.StartNum
-		case opts.EndNum == -1:
-			endIdx = len(lines)
-		default:
-			endIdx = opts.EndNum
-		}
-		if endIdx > len(lines) {
-			endIdx = len(lines)
-		}
-		if startIdx >= endIdx {
-			return "", fmt.Errorf("%w: start_num (%d) > end_num (%d)", ErrInvalidRange, opts.StartNum, opts.EndNum)
-		}
-
-		newLines := splitLinesKeepEnds(opts.Content)
-		if len(newLines) > 0 && !hasLineEnding(newLines[len(newLines)-1]) {
-			newLines[len(newLines)-1] += trailingLineEnding(lines, endIdx)
-		}
-
-		updated = strings.Join(lines[:startIdx], "") + strings.Join(newLines, "") + strings.Join(lines[endIdx:], "")
-		return updated, nil
-	})
-	if err != nil {
-		return "", "", err
-	}
-	return before, updated, nil
+		edit, plannedDiff, err := planOverwriteLines(current, path, opts)
+		diff = plannedDiff
+		return edit, err
+	}, 0o644)
+	return "", diff, err
 }
 
 // InsertContentOptions controls an insertion relative to a line number.
@@ -131,7 +100,7 @@ func InsertContent(path string, opts InsertContentOptions) (string, error) {
 		return "", invalidParameter("line_num", opts.LineNum, "must be >= 1")
 	}
 
-	before, updated, err := insertLineAt(path, opts)
+	before, diff, err := insertLineAt(path, opts)
 	if err != nil {
 		return "", err
 	}
@@ -139,43 +108,27 @@ func InsertContent(path string, opts InsertContentOptions) (string, error) {
 	if before == "" {
 		return "", nil
 	}
-	return unifiedDiff(before, updated, "before", path), nil
+	return diff, nil
 }
 
-// insertLineAt applies an insertion inside one lock-protected read-modify-write, so
-// a concurrent writer cannot interleave between the read and the write.
+// insertLineAt applies an insertion inside one lock scope.
 func insertLineAt(path string, opts InsertContentOptions) (string, string, error) {
-	var before, updated string
-	err := updateText(path, opts.FS, func(existing string, exists bool) (string, error) {
+	var diff string
+	var empty bool
+	target := resolveFS(opts.FS)
+	err := target.EditFile(path, func(current io.Reader, exists bool) (FileEdit, error) {
 		if !exists {
-			return "", fmt.Errorf("%w: %s", ErrFileNotFound, path)
+			return FileEdit{}, fmt.Errorf("%w: %s", ErrFileNotFound, path)
 		}
-		before = existing
-		lines := splitLinesKeepEnds(before)
-
-		content := opts.Content
-		if content != "" && !hasLineEnding(content) {
-			content += "\n"
-		}
-
-		insertIndex := opts.LineNum - 1
-		if !opts.Before {
-			insertIndex++
-		}
-		if insertIndex < 0 {
-			insertIndex = 0
-		}
-		if insertIndex > len(lines) {
-			insertIndex = len(lines)
-		}
-
-		updated = strings.Join(lines[:insertIndex], "") + content + strings.Join(lines[insertIndex:], "")
-		return updated, nil
-	})
-	if err != nil {
+		edit, plannedDiff, wasEmpty, err := planInsertContent(current, path, opts)
+		diff = plannedDiff
+		empty = wasEmpty
+		return edit, err
+	}, 0o644)
+	if empty {
 		return "", "", err
 	}
-	return before, updated, nil
+	return "present", diff, err
 }
 
 // splitLinesKeepEnds splits text into lines while keeping each line terminator.

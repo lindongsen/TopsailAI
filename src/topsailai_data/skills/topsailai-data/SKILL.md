@@ -692,11 +692,14 @@ non-blocking: a competing writer fails with `object is locked by another
 process` and exits non-zero instead of silently discarding an update. Retry
 after the other writer finishes.
 
-`file` reads and writes stream instead of buffering the whole object file, so
-`read`, `read-lines`, `read-around`, `size`, `append`, and `write --from` stay
-bounded in memory regardless of file size. `overwrite-lines` and `insert`
-still build a unified diff from both full snapshots, so their memory grows with
-the file.
+`file` reads and writes stream instead of buffering the whole object file.
+Bounded reads, append, `write --from`, positional writes, and small line edits
+therefore use memory independent of the complete file size. `overwrite-lines`
+and `insert` retain only the changed window plus three context lines for their
+unified diff; a diff containing a very large changed range still naturally
+uses memory and output proportional to that changed range. Folder checks,
+`list-dirs`, and `mkdirs` use direct adapter metadata discovery and do not read
+the object's payload archive.
 
 ## Environment variables
 

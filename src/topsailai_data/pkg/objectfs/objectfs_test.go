@@ -1107,6 +1107,64 @@ func TestConcurrentUpdateFileKeepsEverySuccessfulUpdate(t *testing.T) {
 	}
 }
 
+// TestConcurrentEditFileHoldsCustodyAcrossPlanningAndPublication proves that
+// line-edit range discovery and publication share one exclusive object lock.
+func TestConcurrentEditFileHoldsCustodyAcrossPlanningAndPublication(t *testing.T) {
+	const writers = 16
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "markdown",
+		"notes.md": "one\ntwo\nthree\n",
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	var inPlanner int32
+	var maxInPlanner int32
+	gate := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-gate
+			err := fs.EditFile("notes.md", func(current io.Reader, exists bool) (filetool.FileEdit, error) {
+				inside := atomic.AddInt32(&inPlanner, 1)
+				defer atomic.AddInt32(&inPlanner, -1)
+				for {
+					observed := atomic.LoadInt32(&maxInPlanner)
+					if inside <= observed || atomic.CompareAndSwapInt32(&maxInPlanner, observed, inside) {
+						break
+					}
+				}
+				if !exists {
+					return filetool.FileEdit{}, fmt.Errorf("notes.md disappeared")
+				}
+				if _, err := io.Copy(io.Discard, current); err != nil {
+					return filetool.FileEdit{}, err
+				}
+				time.Sleep(5 * time.Millisecond)
+				return filetool.FileEdit{Start: 4, End: 8, Replacement: []byte("TWO\n")}, nil
+			}, 0o644)
+			if err != nil && !errors.Is(err, apperrors.ErrObjectLocked) {
+				t.Errorf("edit file: unexpected error: %v", err)
+			}
+		}()
+	}
+	close(gate)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxInPlanner); got > 1 {
+		t.Fatalf("%d planners ran concurrently under exclusive custody", got)
+	}
+	data, err := fs.ReadFile("notes.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "one\nTWO\nthree\n" {
+		t.Fatalf("unexpected content %q", data)
+	}
+}
+
 // TestUpdateFileReportsMissingFile proves that the callback learns a file is
 // absent instead of receiving an error. The object-backed implementation reports
 // a missing file through the exists flag, so a caller can create it.
@@ -1228,5 +1286,51 @@ func TestAppendToLargeExistingFileUsesBoundedMemory(t *testing.T) {
 	}
 	if grown > 2<<20 {
 		t.Fatalf("appending to a %d-byte file allocated %d bytes, so the existing content was read back", fileSize, grown)
+	}
+}
+
+// TestObjectLineEditsUseBoundedMemory proves that object-backed overwrite and
+// insert scan and publish a small edit without buffering the complete payload.
+func TestObjectLineEditsUseBoundedMemory(t *testing.T) {
+	const lineCount = 1 << 20
+	large := strings.Repeat("line-00\n", lineCount)
+	for _, tc := range []struct {
+		name string
+		run  func(*ObjectFS) error
+	}{
+		{name: "overwrite", run: func(fs *ObjectFS) error {
+			_, err := filetool.OverwriteLines("large.log", filetool.OverwriteLinesOptions{
+				StartNum: lineCount / 2,
+				Content:  "changed\n",
+				FS:       fs,
+			})
+			return err
+		}},
+		{name: "insert", run: func(fs *ObjectFS) error {
+			_, err := filetool.InsertContent("large.log", filetool.InsertContentOptions{
+				LineNum: lineCount / 2,
+				Content: "inserted",
+				FS:      fs,
+			})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, ctx := newTestManager(t)
+			createObject(t, ctx, mgr, "demo", map[string]string{
+				"demo.md":   "markdown",
+				"large.log": large,
+			})
+			fs := newObjectFS(t, ctx, mgr, "demo")
+
+			before := allocatedBytes()
+			if err := tc.run(fs); err != nil {
+				t.Fatal(err)
+			}
+			allocated := allocatedBytes() - before
+			if allocated > 6<<20 {
+				t.Fatalf("object line edit allocated %d bytes; want at most %d", allocated, 6<<20)
+			}
+		})
 	}
 }

@@ -1439,6 +1439,9 @@ func (e *errorCloseActualDataAdapter) AppendFile(ctx context.Context, ref string
 func (e *errorCloseActualDataAdapter) WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error) {
 	return ref, nil
 }
+func (e *errorCloseActualDataAdapter) ReplaceFileRange(ctx context.Context, ref string, filename string, r io.Reader, start int64, end int64) (string, error) {
+	return ref, nil
+}
 func (e *errorCloseActualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }

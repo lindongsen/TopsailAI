@@ -80,3 +80,13 @@ content at all — it needs a writable handle positioned at the offset.
 - All offset, insert, extension, and truncation cases produce byte-identical
   results to the current implementation.
 - `go test ./...` passes.
+
+## Resolution
+
+Resolved. Positional writes use `FS.WriteAt`, `Manager.WriteActualFileAt`, and
+`ActualDataAdapter.WriteFileAt`. The local adapter resolves the offset while
+the existing object lock is held, streams the unchanged prefix and suffix
+through a same-directory temporary file, and atomically renames the result.
+Negative offsets, insert mode, extension, and truncation retain their previous
+semantics. Failure tests prove the old destination survives and temporary
+files are removed.
