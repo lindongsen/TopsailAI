@@ -8,7 +8,6 @@
 package objectfs
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
@@ -217,22 +216,14 @@ func (f *ObjectFS) Stat(p string) (os.FileInfo, error) {
 		return objectInfo{name: f.objectName(), dir: true}, nil
 	}
 
-	size, readErr := f.fileSize(name)
-	if readErr == nil {
-		return objectInfo{name: path.Base(name), size: size}, nil
+	info, err := f.mgr.StatActualFile(f.ctx, f.id, name)
+	if err != nil {
+		return nil, err
 	}
-
-	// A folder has no readable content, so a failed read falls through to the
-	// folder test. The original read error is returned when the path is neither
-	// a file nor a folder.
-	isDir, dirErr := f.isDir(name)
-	if dirErr != nil {
-		return nil, dirErr
-	}
-	if isDir {
+	if info.IsDir {
 		return objectInfo{name: path.Base(name), dir: true}, nil
 	}
-	return nil, readErr
+	return objectInfo{name: path.Base(name), size: info.Size}, nil
 }
 
 // fileSize reports the byte length of one file without reading its content.
@@ -271,23 +262,17 @@ func (f *ObjectFS) fileSize(name string) (int64, error) {
 // Object storage keeps no folder entries, so a folder exists only when some
 // archived file lives below it.
 func (f *ObjectFS) isDir(name string) (bool, error) {
-	entries, err := f.listAll()
+	info, err := f.mgr.StatActualFile(f.ctx, f.id, name)
 	if err != nil {
 		return false, err
 	}
-	prefix := name + "/"
-	for _, entry := range entries {
-		if strings.HasPrefix(entry, prefix) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return info.IsDir, nil
 }
 
 // ReadDir lists the immediate entries of one folder inside the object.
 //
-// The listing is derived from the object's tar archive so it stays
-// adapter-agnostic instead of assuming a local directory layout.
+// The listing comes from the adapter's names-only index so large file bodies
+// are never streamed merely to discover paths.
 func (f *ObjectFS) ReadDir(p string) ([]os.DirEntry, error) {
 	name, err := normalizeAllowRoot(p)
 	if err != nil {
@@ -397,35 +382,9 @@ func (f *ObjectFS) MkdirAll(p string, _ os.FileMode) error {
 	return nil
 }
 
-// listAll returns every file path inside the object, excluding metadata
-// markers that the adapter already filters from the archive.
+// listAll returns every file path inside the object without reading file data.
 func (f *ObjectFS) listAll() ([]string, error) {
-	rc, err := f.mgr.ReadActualArchive(f.ctx, f.id)
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-
-	reader := tar.NewReader(rc)
-	var paths []string
-	for {
-		header, err := reader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("objectfs: read archive: %w", err)
-		}
-		if header.Typeflag != tar.TypeReg {
-			continue
-		}
-		cleaned := path.Clean(strings.TrimPrefix(header.Name, "./"))
-		if cleaned == "" || cleaned == "." {
-			continue
-		}
-		paths = append(paths, cleaned)
-	}
-	return paths, nil
+	return f.mgr.ListActualFiles(f.ctx, f.id)
 }
 
 // objectName returns the object identifier used as the root entry name.

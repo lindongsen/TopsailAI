@@ -57,6 +57,12 @@ func (s *stubActualDataAdapter) AppendFile(ctx context.Context, ref string, file
 func (s *stubActualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
 	return nil, nil
 }
+func (s *stubActualDataAdapter) StatFile(ctx context.Context, ref string, filename string) (FileInfo, error) {
+	return FileInfo{}, nil
+}
+func (s *stubActualDataAdapter) ListFiles(ctx context.Context, ref string) ([]string, error) {
+	return nil, nil
+}
 func (s *stubActualDataAdapter) Move(ctx context.Context, oldRef string, newRef string) (string, error) {
 	return newRef, nil
 }

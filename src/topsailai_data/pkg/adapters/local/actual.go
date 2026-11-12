@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/topsailai/topsailai_data/pkg/adapters"
 	"github.com/topsailai/topsailai_data/pkg/errors"
 )
 
@@ -345,6 +346,86 @@ func (a *actualDataAdapter) ReadFile(ctx context.Context, ref string, filename s
 		return nil, fmt.Errorf("open file %q: %w", fullPath, err)
 	}
 	return f, nil
+}
+
+// StatFile reports whether one path exists inside the object's actual data.
+//
+// It answers from a single lstat of the resolved payload path, so an existence
+// check costs one file-system lookup instead of a full archive enumeration. A
+// folder is reported as a directory; a regular file reports its byte length.
+// A missing path returns errors.ErrObjectNotFound.
+func (a *actualDataAdapter) StatFile(ctx context.Context, ref string, filename string) (adapters.FileInfo, error) {
+	if ctx.Err() != nil {
+		return adapters.FileInfo{}, ctx.Err()
+	}
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return adapters.FileInfo{}, err
+	}
+	if err := validateActualFilename(filename); err != nil {
+		return adapters.FileInfo{}, err
+	}
+	fullPath, err := resolvePayloadFile(ref, filename)
+	if err != nil {
+		return adapters.FileInfo{}, err
+	}
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return adapters.FileInfo{}, fmt.Errorf("%w: file %q", errors.ErrObjectNotFound, filename)
+		}
+		return adapters.FileInfo{}, fmt.Errorf("stat file %q: %w", fullPath, err)
+	}
+	if info.IsDir() {
+		return adapters.FileInfo{IsDir: true}, nil
+	}
+	return adapters.FileInfo{Size: info.Size()}, nil
+}
+
+// ListFiles returns payload file names without opening or reading file bodies.
+func (a *actualDataAdapter) ListFiles(ctx context.Context, ref string) ([]string, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	dir, err := a.resolveRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	err = filepath.WalkDir(dir, func(fullPath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if fullPath == dir {
+			return nil
+		}
+		if isMetadataMarker(entry.Name()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("get info for %q: %w", fullPath, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, fullPath)
+		if err != nil {
+			return fmt.Errorf("relate path %q to object directory: %w", fullPath, err)
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list payload files in %q: %w", dir, err)
+	}
+	return paths, nil
 }
 
 // Move copies the object directory from oldRef to newRef. For the local adapter
