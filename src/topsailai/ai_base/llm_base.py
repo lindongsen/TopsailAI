@@ -99,6 +99,11 @@ from .llm_control.request_tracking import (
     log_first_byte_timeout as _log_first_byte_timeout,
     record_llm_request_outcome as _record_llm_request_outcome,
 )
+from .llm_control.request_failure_log import (
+    bind_llm_request_operation as _bind_llm_request_operation,
+    log_llm_request_failures as _log_llm_request_failures,
+    record_llm_request_failure as _record_llm_request_failure,
+)
 from .llm_control.response_events import LLMResponseEventMixin
 
 
@@ -563,6 +568,7 @@ class LLMModel(
             tool_choice=tool_choice,
         )
 
+    @_log_llm_request_failures
     def chat(
             self, messages,
             for_raw=False,
@@ -609,6 +615,7 @@ class LLMModel(
             )
 
         operation_id = uuid4().hex
+        _bind_llm_request_operation(operation_id)
         return_mode = "raw" if for_raw else (
             "response_and_parsed" if for_response else "parsed"
         )
@@ -743,12 +750,16 @@ class LLMModel(
                         LLMBackToChatError, LLMRetryExhaustedError):
                     raise
                 except Exception as error:
+                    attempt_duration = time.monotonic() - attempt_started
+                    _record_llm_request_failure(
+                        total_attempt, error, attempt_duration
+                    )
                     hook__aibase__error__llm_chat_attempt(
                         schema_version=1, operation_id=operation_id,
                         attempt_number=total_attempt, loop_attempts=loop_attempts,
                         stream=bool(for_stream), return_mode=return_mode,
                         point_name="hook__aibase__error__llm_chat_attempt", outcome="error",
-                        duration_sec=time.monotonic() - attempt_started,
+                        duration_sec=attempt_duration,
                         error_category=type(error).__name__[:128],
                     )
                     raise

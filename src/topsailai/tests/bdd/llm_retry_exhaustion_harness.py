@@ -167,6 +167,7 @@ class LLMRetryScenario:
         self.back_input_calls = 0
         self.provider_recovery_input_calls = 0
         self.provider_recovery_fail_hooks = 0
+        self.failure_log_lines: list[str] = []
         self.server_thread_stopped = False
         self.boundary_manual_cycles: int | None = None
         self.boundary_total_attempts: int | None = None
@@ -335,7 +336,12 @@ class LLMRetryScenario:
             {"role": "user", "content": "original request"},
         ]
         try:
-            with _skip_retry_backoff():
+            with ExitStack() as stack:
+                stack.enter_context(_skip_retry_backoff())
+                stack.enter_context(patch(
+                    "topsailai.ai_base.llm_control.request_failure_log.print_with_time",
+                    side_effect=self._capture_failure_log,
+                ))
                 self.result = self.model.chat(
                     messages,
                     for_raw=True,
@@ -344,6 +350,10 @@ class LLMRetryScenario:
                 )
         except BaseException as error:  # noqa: BLE001 - scenarios assert control signals
             self.error = error
+
+    def _capture_failure_log(self, text: str, **_: Any) -> None:
+        """Record the production per-request failure summary lines."""
+        self.failure_log_lines.extend(str(text).splitlines())
 
     def run_back_to_fresh_message(self) -> None:
         """Drive Back through AgentChat, then send a new turn over real SSE.
