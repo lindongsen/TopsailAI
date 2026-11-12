@@ -783,6 +783,14 @@ old bytes to remain stored contradicts its retention model. At the same time, re
 cannot prove content identity. Combining revision ordering with content equality at the equal-revision
 boundary lets retries converge without hiding conflicting immutable reports.
 
+## A global CLI flag shown after the command is not necessarily parsed as a flag
+
+Trigger: the first standalone cleanup examples used `clean endpoint-1 res_abc --yes`. This project uses Go's standard `flag` parser, which stops parsing options at the first positional command, so `--yes` remained in the command arguments and the existing misplaced-flag guard rejected the documented example. The implementation was correct, but the new help and command-surface documentation advertised an invocation that could not run.
+
+Action: when documenting a standalone command that uses process-global options, inspect the parser boundary and place those options before the command, as in `agent-cluster-cli --yes clean endpoint-1 res_abc`. Add a help-surface test that checks both the command syntax and the required option rather than validating the command name alone.
+
+Why this prevents recurrence: an option's visual proximity to a command does not prove that the parser for that command receives it. The help can look conventional while every copied invocation fails before dispatch. Checking the actual parser boundary keeps examples executable and prevents documentation from defining a second, unsupported grammar.
+
 ## A whitelisted child environment removes the variables a desktop notification needs
 
 Trigger: the watch trigger script was extended to raise an on-screen popup. A plain `notify-send`

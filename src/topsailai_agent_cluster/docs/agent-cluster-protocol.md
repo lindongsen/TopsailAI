@@ -155,6 +155,7 @@ Suggested semantic operations:
 - `session.read_messages`: read permitted conversation context.
 - `runtime.health`: control-channel health, not model progress.
 - `agent.start`, `agent.resume`, `agent.stop`: required MVP lifecycle operations, with standard agent/session linkage and execution-generation evidence.
+- `workspace.clean`: delete provider-owned expired artifacts for one exact Session. It is a mutating `control` operation with an empty standard payload. The target is the opaque cluster Session ID; provider selectors remain private to the Endpoint. A missing live generation is allowed only after authoritative inspection confirms the exact mapped record still exists. The operation never falls back to a session-only selector and never applies to a different matching row.
 - `agent.drive.start`, `agent.drive.stop`: controller operations, distinct from the agent lifecycle; see the drive semantics section.
 - `output.snapshot`, `output.follow`: independent capabilities; the former never implies the latter.
 - `ctl.<action>`: one advertised provider control action per capability, with a fixed payload schema; see the provider control channel section.

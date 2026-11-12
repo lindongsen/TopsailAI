@@ -665,6 +665,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return false, interactiveResume(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "stop":
 		return false, interactiveStop(ctx, api, state, rest, lineResults, out, trustedOut, options)
+	case "clean":
+		return false, interactiveClean(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "btw":
 		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationContextInject, name, rest, lineResults, out, trustedOut, options)
 	case "interrupt":

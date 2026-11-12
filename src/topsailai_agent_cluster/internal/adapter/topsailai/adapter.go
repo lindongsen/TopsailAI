@@ -112,6 +112,7 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			{Name: protocol.OperationAgentResume, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentDriveStart, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentDriveStop, Version: "v1", TargetKinds: []string{"session"}},
+			{Name: protocol.OperationWorkspaceClean, Version: "v1", TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
 			// command.exec runs an operator-supplied argv array, so it declares the
 			// control permission: an operator who may not control a session must not
 			// be able to run commands in its working directory either.
@@ -516,6 +517,15 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "generation_required")}, errors.New("generation is required for stop")
 		}
 		args = []string{"workspace", "kill", providerKey, "-g", intent.Target.ProviderGeneration, "--json"}
+	case protocol.OperationWorkspaceClean:
+		resolved, resolveErr := a.providerSessionTarget(ctx, intent.Target)
+		if resolveErr != nil {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unknown_target")}, resolveErr
+		}
+		if resolved.SessionID == "" || resolved.PID <= 0 {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "exact_target_required")}, errors.New("workspace clean requires an exact session ID and PID")
+		}
+		args = []string{"workspace", "clean", "-s", resolved.SessionID, "-p", fmt.Sprint(resolved.PID), "--yes", "--json"}
 	case protocol.OperationAgentDriveStart:
 		// The provider selects the unique live row for the session and rejects an
 		// ambiguous target itself. The adapter passes no PID: a cluster generation
@@ -778,12 +788,24 @@ func receiptFromJSON(intent protocol.ImmutableIntent, output []byte) protocol.Ex
 	case "signal_sent":
 		receipt.DeliveryBoundary = protocol.DeliverySignalSent
 		receipt.EffectCertainty = protocol.EffectAcknowledged
-	case "launched", "already_running", "status_read":
-		// The provider verified the controller publication or read its state, so the
-		// request itself is acknowledged. This is not a claim about agent work.
+	case "launched", "already_running", "status_read", "deleted", "nothing_to_delete":
+		// The provider verified the requested operation or confirmed that no
+		// mutation was needed. This acknowledgement is not a claim about agent work.
 		receipt.DeliveryBoundary = protocol.DeliverySubmitted
 		receipt.EffectCertainty = protocol.EffectAcknowledged
 		receipt.Outcome = "succeeded"
+	case "partial":
+		// The provider applied part of the cleanup and reported the failed part.
+		// The external effect is therefore acknowledged even though the aggregate
+		// outcome is partial and must remain visible to the operator.
+		receipt.DeliveryBoundary = protocol.DeliverySubmitted
+		receipt.EffectCertainty = protocol.EffectAcknowledged
+		receipt.Outcome = "partial"
+		receipt.ErrorCode = response.ErrorCode
+	case "not_delivered":
+		receipt.Outcome = "failed"
+		receipt.EffectCertainty = protocol.EffectNotApplied
+		receipt.ErrorCode = response.ErrorCode
 	case "stopped", "already_stopped":
 		// The provider confirmed the recorded controller process is absent, so the
 		// signal is both sent and its exit confirmed.

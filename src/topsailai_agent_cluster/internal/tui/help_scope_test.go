@@ -275,7 +275,7 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 
 func TestHelpOverviewKeepsScopeRestrictions(t *testing.T) {
 	output, diagnostics := runScope(t, scopeStub(), "send {}\nquit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, model, help, quit, exit`) {
+	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, clean, drive, status, refresh, watch, history, messages, model, help, quit, exit`) {
 		t.Fatalf("scope restriction lost: %q", diagnostics)
 	}
 	if strings.Contains(output, "admitted") {

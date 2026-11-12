@@ -339,7 +339,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "drive":
 		return driveWithProgress(ctx, api, output, errors, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
-	case "send", "btw", "interrupt", "start", "resume", "stop":
+	case "send", "btw", "interrupt", "start", "resume", "stop", "clean":
 		// A bare send, btw or start reads a multi-line block from the
 		// command input. On a terminal nothing else would prompt, so the
 		// operator would face a silent wait; the hint goes to the diagnostics
@@ -1165,7 +1165,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	// message is rejected instead of being silently truncated to its first word.
 	positionalLimit := 5
 	textStart := 3
-	if operation == "stop" {
+	if operation == "stop" || operation == "clean" {
 		positionalLimit = 4
 		textStart = 0
 	}
@@ -1181,8 +1181,8 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	}
 	generation := generationFlag
 	payload := json.RawMessage(`{}`)
-	if operation == "stop" {
-		if generation == "" {
+	if operation == "stop" || operation == "clean" {
+		if generation == "" && len(args) >= 4 {
 			generation = args[3]
 		}
 	} else {
@@ -1374,6 +1374,9 @@ func operationName(value string) string {
 	}
 	if value == "stop" {
 		return "agent.stop"
+	}
+	if value == "clean" {
+		return protocol.OperationWorkspaceClean
 	}
 	return "message.send"
 }

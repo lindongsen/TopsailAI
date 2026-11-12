@@ -11,7 +11,11 @@ const (
 	OperationAgentStop          = "agent.stop"
 	OperationAgentDriveStart    = "agent.drive.start"
 	OperationAgentDriveStop     = "agent.drive.stop"
-	OperationOutputRead         = "output.read"
+	// OperationWorkspaceClean removes provider-owned expired artifacts for one
+	// exact session target. Provider selectors and retention rules stay private
+	// to the adapter.
+	OperationWorkspaceClean = "workspace.clean"
+	OperationOutputRead     = "output.read"
 	// OperationOutputFollow streams output records until the consumer stops. It
 	// is a separate capability from OperationOutputRead: a snapshot is one
 	// bounded read, while a follow stays open. Advertising them separately lets a

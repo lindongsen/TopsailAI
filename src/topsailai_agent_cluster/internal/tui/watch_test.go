@@ -456,8 +456,9 @@ func (f *fakeWatchSession) counts() (int, int) {
 	return f.idles, f.stops
 }
 
-// TestReadLineWithWatchAppliesRefreshWhileIdle proves a tick with no keypress
-// prints the refresh and redraws the prompt.
+// TestReplWatchPrefixesEveryRenderedRefresh proves every refresh carries the
+// scope marker on its own row, so the table's leading rule never shares a row
+// with the marker.
 func TestReplWatchPrefixesEveryRenderedRefresh(t *testing.T) {
 	controller := &watchController{color: ColorPolicy{}}
 	state := &interactiveState{Scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "ep-1", Hostname: "node"}}
@@ -469,9 +470,34 @@ func TestReplWatchPrefixesEveryRenderedRefresh(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Idle: %v", err)
 		}
-		if !strings.HasPrefix(string(payload), "endpoint[node/ep-1].watching> "+table) {
-			t.Fatalf("refresh payload=%q, want scope marker before %q", payload, table)
+		if !strings.HasPrefix(string(payload), "endpoint[node/ep-1].watching> \n"+table) {
+			t.Fatalf("refresh payload=%q, want the scope marker on its own row before %q", payload, table)
 		}
+	}
+}
+
+// TestReplWatchMarkerRowCarriesNoTableRule proves the marker row is terminated
+// before the table bytes, because the table always starts with a full-width rule
+// and an unterminated marker would append that rule to the marker row.
+func TestReplWatchMarkerRowCarriesNoTableRule(t *testing.T) {
+	controller := &watchController{color: ColorPolicy{}}
+	state := &interactiveState{Scope: ScopeState{Kind: ScopeWorkspace}}
+	state.setRows(nil)
+	watch := &replWatch{controller: controller, state: state}
+	controller.pending = &watchResult{output: []byte(strings.Repeat("─", 12) + "\n")}
+	payload, err := watch.Idle()
+	if err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	markerRow, _, found := strings.Cut(string(payload), "\n")
+	if !found {
+		t.Fatalf("payload=%q, want the marker row terminated by a newline", payload)
+	}
+	if markerRow != "workspace.watching> " {
+		t.Fatalf("marker row=%q, want the marker alone", markerRow)
+	}
+	if strings.ContainsRune(markerRow, '─') {
+		t.Fatalf("marker row=%q, want no table rule on the marker row", markerRow)
 	}
 }
 

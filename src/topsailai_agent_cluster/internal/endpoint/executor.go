@@ -123,6 +123,17 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			if inspection.Live {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_still_active"))
 			}
+		} else if intent.Operation == protocol.OperationWorkspaceClean && intent.Target.ProviderGeneration == "" {
+			// Cleanup addresses provider-owned expired artifacts by the exact
+			// session/PID mapping rather than a live process generation. Require
+			// the provider to still report that exact row before dispatch.
+			inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
+			if inspectErr != nil {
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_observation_failed"))
+			}
+			if !inspection.Found {
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_not_found"))
+			}
 		} else if intent.Target.ProviderGeneration == "" {
 			// Every other operation addresses a live process, so an empty
 			// generation cannot prove which process it would reach. This is

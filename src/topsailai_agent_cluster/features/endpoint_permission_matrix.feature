@@ -61,6 +61,18 @@ Feature: endpoint command authorization
     When the agent stop command is submitted with that credential
     Then the command is refused with policy denied and the provider is not invoked
 
+  Scenario: an allowed workspace cleanup reaches the provider once
+    Given a real cluster that publishes a live and a stopped session
+    And a credential permitted to clean a workspace
+    When the workspace clean command is submitted with that credential
+    Then the command is accepted and the provider is invoked once
+
+  Scenario: a workspace cleanup without the control permission is refused before the provider
+    Given a real cluster that publishes a live and a stopped session
+    And a credential permitted only to view
+    When the workspace clean command is submitted with that credential
+    Then the command is refused with policy denied and the provider is not invoked
+
   Scenario: an allowed drive start reaches the provider once
     Given a real cluster that publishes a live and a stopped session
     And a credential permitted to start a drive

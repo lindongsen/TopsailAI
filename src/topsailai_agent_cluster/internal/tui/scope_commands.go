@@ -41,6 +41,7 @@ var commandScopeMatrix = []commandScopeRule{
 	// the two conditions are mutually exclusive and session scope stays excluded.
 	{Name: "resume", Workspace: true, Endpoint: true},
 	{Name: "stop", Workspace: true, Endpoint: true, Session: true},
+	{Name: "clean", Workspace: true, Endpoint: true},
 	{Name: "btw", Session: true},
 	{Name: "interrupt", Session: true},
 	{Name: "ctl", Session: true},

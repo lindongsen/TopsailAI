@@ -191,3 +191,35 @@ Consequences that MUST hold:
   asked for is not.
 - Keep the original wording when the exact phrasing is itself the subject, such as a command name, a
   prompt string or a UI label the human typed deliberately.
+
+## Commit each completed logical unit immediately
+
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> 逻辑单元完成并验证后，就可以提交。
+
+For the current workspace-clean task and future project work, a logical unit may be committed as soon
+as its implementation and relevant tests are complete, its complete diff has been reviewed, and no
+known blocker remains. Do not wait for every later unit in a multi-unit task, and do not include
+unrelated concurrent changes in that commit.
+
+## Interactive CLI behaviour must prioritize usability
+
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> 所有 CLI 交互模式的行为都必须考虑易用性。
+
+This is a standing design and review rule for every interactive CLI behaviour. The interactive surface
+must reduce avoidable typing, lookup and repetition by using the operator's current scope, recently
+rendered rows, numbered choices, prompts, context-derived defaults and short discoverable forms where
+those choices remain unambiguous.
+
+Convenience must reuse the canonical operation rather than create different semantics, and it must not
+weaken exact target selection, authorization, destructive confirmation, generation checks, capability
+checks or visible failure reporting. When convenience and certainty conflict, fail closed and explain
+the shortest safe next step. Help, completion, examples, errors and composed-path tests must describe
+and verify the same convenient behaviour.
+
+`clean <row|session>` is the reference pattern: the operator may use the visible list row for speed or
+a Session identifier when no table is available; the row is resolved locally to the real target and is
+never treated as durable identity.

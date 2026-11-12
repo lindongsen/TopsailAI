@@ -35,6 +35,41 @@ Consequences for a new command:
 - Defining behaviour once in the runner and exposing it twice prevents the two
   surfaces from drifting into different semantics.
 
+## Interactive usability is mandatory
+
+Every interactive CLI behaviour MUST be designed for operator ease of use. The interactive surface is
+not a literal copy of the standalone grammar: it is a human-facing convenience layer over the same
+contract, and it should remove avoidable typing, lookup and repetition while preserving the operation's
+meaning and safety.
+
+Consequences for every interactive command:
+
+- Accept the identifiers an operator can readily see and use in the current context. When a table has
+  just rendered stable row numbers, accept those row numbers as well as the underlying resource or
+  Session identifier. Resolve a row through the latest rendered table; never put the row number on the
+  wire or treat it as durable identity.
+- Use the current scope to supply information the operator already selected. Endpoint scope should not
+  require the Endpoint again, and session scope should not require the selected Session again. Reject a
+  conflicting explicit value instead of silently changing scope.
+- Prefer short, discoverable spellings for frequent actions, but rewrite them into the canonical grammar
+  before parsing rather than creating a second implementation. Help, completion, examples and errors
+  must advertise the convenient form consistently.
+- Use prompts, numbered choices and sensible context-derived defaults when they reduce memorization.
+  Omission is allowed only when the remaining choice is unambiguous; otherwise show the available choices
+  or return an actionable error that tells the operator exactly what to enter.
+- Avoid making the operator repeat a successful action merely to observe its effect. A bounded automatic
+  refresh, table render or live-tail handoff may follow the action under the automatic follow-up rules.
+- Preserve safety boundaries. Convenience must never weaken exact target selection, authorization,
+  destructive confirmation, generation checks, capability checks or explicit failure reporting. When
+  convenience and certainty conflict, fail closed and explain the shortest safe next step.
+- Test the composed interactive path, not only its parser helpers: drive the real command entry point and
+  assert the rendered result, prompt behaviour, selected target and zero-submission paths.
+
+`clean <row|session>` is the reference selector pattern. A visible row is the fastest input, while a
+literal Session identifier remains available when no table is present. A numeric token that does not
+name a current row may be retried as a numeric provider Session identifier, but an ambiguous match is
+rejected rather than guessed.
+
 ## Failure semantics
 
 A non-interactive command MUST NOT silently degrade to a weaker behaviour.
@@ -211,6 +246,7 @@ was dispatched rather than rejected as unknown.
 | `agent.start` | `start` | `start` | yes |
 | `agent.resume` | `resume` | not applicable | yes (standalone only: session scope requires a live generation while resume authorizes on a proven absence, so the interactive spelling was removed) |
 | `agent.stop` | `stop` | `stop` | yes |
+| `workspace.clean` | `--yes clean <endpoint> <resource> [generation]` | `clean <row|session>` in workspace and endpoint scopes | yes (destructive confirmation is mandatory; session scope does not offer cleanup; row numbers and literal IDs resolve against the current persisted inventory before exact Endpoint-side inspection) |
 | `agent.drive.start` | `drive start` | `drive start [session]` | yes |
 | `agent.drive.stop` | `drive stop` | `drive stop [session]` | yes |
 | `drive status` | `drive status` | `drive status [session]`, `drive [session]` | yes |

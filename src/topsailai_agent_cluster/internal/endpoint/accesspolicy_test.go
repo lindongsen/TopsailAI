@@ -168,6 +168,9 @@ func TestAccessPolicyControlScopeCoversProviderControlFamily(t *testing.T) {
 	if err := loaded.Policy.Permit("e1", "ctl-secret", security.ProviderControlPrefix+"anything"); err != nil {
 		t.Fatalf("scope control must cover the whole ctl. family: %v", err)
 	}
+	if err := loaded.Policy.Permit("e1", "ctl-secret", protocol.OperationWorkspaceClean); err != nil {
+		t.Fatalf("scope control must cover workspace cleanup: %v", err)
+	}
 	if err := loaded.Policy.Permit("e1", "ctl-secret", protocol.OperationOutputRead); err == nil {
 		t.Fatalf("scope control must not cover a read operation")
 	}

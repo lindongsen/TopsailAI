@@ -356,7 +356,7 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "interrupt", "start", "resume", "stop", "drive", "help"} {
+	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "interrupt", "start", "resume", "stop", "clean", "drive", "help"} {
 		if !strings.Contains(text, " "+command) {
 			t.Fatalf("help missing dispatched command %q: %q", command, text)
 		}
@@ -386,6 +386,13 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] interrupt <endpoint> <resource> [text] [generation]") {
 		t.Fatalf("standalone interrupt help=%q", output.String())
+	}
+	output.Reset()
+	if err := runWithIO([]string{"help", "clean"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("non-interactive help rejected clean: %v", err)
+	}
+	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] clean <endpoint> <resource> [generation]") || !strings.Contains(output.String(), "--yes: required confirmation") {
+		t.Fatalf("standalone clean help=%q", output.String())
 	}
 }
 
@@ -1245,6 +1252,73 @@ func TestActionRejectsExtraStopPositionals(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "extra") {
 		t.Fatalf("error must echo the unexpected argument: %v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+}
+
+// cleanActionStub advertises workspace cleanup so standalone tests can reach
+// the shared immutable-intent path without contacting a Server.
+type cleanActionStub struct {
+	actionPathStub
+}
+
+func (s *cleanActionStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
+	return protocol.CapabilityDescriptor{Revision: "rev-clean", Capabilities: []protocol.Capability{{Name: protocol.OperationWorkspaceClean}}}, nil
+}
+
+// TestStandaloneCleanBuildsExactIntent proves the standalone surface preserves
+// the Endpoint, opaque resource ID and optional generation in the standard
+// workspace.clean intent. Cleanup carries no provider-specific payload.
+func TestStandaloneCleanBuildsExactIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		generation string
+	}{
+		{name: "expired record without generation", args: []string{"clean", "ep-1", "res-1"}},
+		{name: "record with generation", args: []string{"clean", "ep-1", "res-1", "gen-1"}, generation: "gen-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &cleanActionStub{}
+			if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, tc.args, true, false, 100, "", "", "", "", ""); err != nil {
+				t.Fatalf("clean: %v", err)
+			}
+			if len(stub.intents) != 1 {
+				t.Fatalf("intents=%d, want 1", len(stub.intents))
+			}
+			intent := stub.intents[0]
+			if intent.EndpointID != "ep-1" || intent.Operation != protocol.OperationWorkspaceClean || string(intent.Payload) != `{}` {
+				t.Fatalf("intent=%+v", intent)
+			}
+			if intent.Target == nil || intent.Target.Kind != "session" || intent.Target.ResourceID != "res-1" || intent.Target.ProviderGeneration != tc.generation {
+				t.Fatalf("target=%+v", intent.Target)
+			}
+		})
+	}
+}
+
+// TestStandaloneCleanRequiresConfirmation proves a destructive cleanup cannot
+// reach admission without the shared --yes confirmation.
+func TestStandaloneCleanRequiresConfirmation(t *testing.T) {
+	stub := &cleanActionStub{}
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"clean", "ep-1", "res-1"}, false, false, 100, "", "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "confirmation required for clean target=res-1") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+}
+
+// TestStandaloneCleanRejectsExtraPositionals keeps cleanup from treating an
+// accidental argument as provider input or silently weakening exact targeting.
+func TestStandaloneCleanRejectsExtraPositionals(t *testing.T) {
+	stub := &cleanActionStub{}
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"clean", "ep-1", "res-1", "gen-1", "extra"}, true, false, 100, "", "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "unexpected arguments") || !strings.Contains(err.Error(), "extra") {
+		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 0 {
 		t.Fatalf("intents=%d, want 0", len(stub.intents))

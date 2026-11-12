@@ -28,6 +28,7 @@ func registerEndpointPermissionMatrixSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a credential permitted to inject context$`, grantContextInject)
 	ctx.Step(`^a credential permitted to interrupt execution$`, grantExecutionInterrupt)
 	ctx.Step(`^a credential permitted to stop an agent$`, grantAgentStop)
+	ctx.Step(`^a credential permitted to clean a workspace$`, grantWorkspaceClean)
 	ctx.Step(`^a credential permitted to start a drive$`, grantDriveStart)
 	ctx.Step(`^a credential permitted to stop a drive$`, grantDriveStop)
 	ctx.Step(`^a credential permitted to resume an agent$`, grantAgentResume)
@@ -39,6 +40,7 @@ func registerEndpointPermissionMatrixSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the context inject command is submitted with that credential$`, submitContextInject)
 	ctx.Step(`^the execution interrupt command is submitted with that credential$`, submitExecutionInterrupt)
 	ctx.Step(`^the agent stop command is submitted with that credential$`, submitAgentStop)
+	ctx.Step(`^the workspace clean command is submitted with that credential$`, submitWorkspaceClean)
 	ctx.Step(`^the agent drive start command is submitted with that credential$`, submitDriveStart)
 	ctx.Step(`^the agent drive stop command is submitted with that credential$`, submitDriveStop)
 	ctx.Step(`^the agent resume command is submitted against the stopped session with that credential$`, submitAgentResume)
@@ -61,6 +63,10 @@ var permissionMatrixOperations = map[string]permissionMatrixOperation{
 	protocol.OperationContextInject:      {Permission: protocol.OperationContextInject, Target: "fixture-session", Payload: `{"text":"context"}`},
 	protocol.OperationExecutionInterrupt: {Permission: protocol.OperationExecutionInterrupt, Target: "fixture-session", Payload: `{}`},
 	protocol.OperationAgentStop:          {Permission: protocol.OperationAgentStop, Target: "fixture-session", Payload: `{}`},
+	// Cleanup addresses provider-owned expired artifacts by the exact session
+	// mapping rather than a live process generation, so the live row is a valid
+	// target and the policy hook is the only remaining reason to refuse.
+	protocol.OperationWorkspaceClean: {Permission: protocol.OperationWorkspaceClean, Target: "fixture-session", Payload: `{}`},
 	protocol.OperationAgentDriveStart:    {Permission: protocol.OperationAgentDriveStart, Target: "fixture-session", Payload: `{}`},
 	protocol.OperationAgentDriveStop:     {Permission: protocol.OperationAgentDriveStop, Target: "fixture-session", Payload: `{}`},
 	// Resume addresses the stopped row, because resume authorizes on the absence
@@ -192,6 +198,7 @@ func grantSendMessage() error        { return grantPermission(protocol.Operation
 func grantContextInject() error      { return grantPermission(protocol.OperationContextInject) }
 func grantExecutionInterrupt() error { return grantPermission(protocol.OperationExecutionInterrupt) }
 func grantAgentStop() error          { return grantPermission(protocol.OperationAgentStop) }
+func grantWorkspaceClean() error     { return grantPermission(protocol.OperationWorkspaceClean) }
 func grantDriveStart() error         { return grantPermission(protocol.OperationAgentDriveStart) }
 func grantDriveStop() error          { return grantPermission(protocol.OperationAgentDriveStop) }
 func grantAgentResume() error        { return grantPermission(protocol.OperationAgentResume) }
@@ -251,6 +258,9 @@ func submitExecutionInterrupt() error {
 	return submitPermissionMatrixOperation(protocol.OperationExecutionInterrupt)
 }
 func submitAgentStop() error { return submitPermissionMatrixOperation(protocol.OperationAgentStop) }
+func submitWorkspaceClean() error {
+	return submitPermissionMatrixOperation(protocol.OperationWorkspaceClean)
+}
 func submitDriveStart() error {
 	return submitPermissionMatrixOperation(protocol.OperationAgentDriveStart)
 }

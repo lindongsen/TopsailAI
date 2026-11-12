@@ -475,7 +475,12 @@ func (w *replWatch) Idle() ([]byte, error) {
 	if err := RenderWatchingPrompt(&marker, w.state.Scope, w.state.Invalidated, w.controller.color); err != nil {
 		return nil, err
 	}
-	payload := append(marker.Bytes(), result.output...)
+	// The marker owns its own row. The prompt renderer ends with a space and no
+	// newline, while the table always starts with a full-width rule, so without
+	// this newline the rule would be appended to the marker row and the two
+	// would read as one line.
+	payload := append(marker.Bytes(), '\n')
+	payload = append(payload, result.output...)
 	if rebound {
 		payload = append(payload, []byte("auto-refresh: row numbers rebound; run list to review the new order\n")...)
 	}

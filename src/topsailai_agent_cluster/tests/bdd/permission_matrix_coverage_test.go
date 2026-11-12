@@ -33,6 +33,7 @@ var operationScenarioMarkers = map[string]string{
 	protocolOperationAgentStart:         "the agent start command is submitted",
 	protocolOperationAgentResume:        "the agent resume command is submitted",
 	protocolOperationAgentStop:          "the agent stop command is submitted",
+	protocolOperationWorkspaceClean:     "the workspace clean command is submitted",
 	protocolOperationAgentDriveStart:    "the agent drive start command is submitted",
 	protocolOperationAgentDriveStop:     "the agent drive stop command is submitted",
 	protocolOperationAgentModelList:     "the model catalog is read with the",
@@ -57,6 +58,7 @@ const (
 	protocolOperationAgentStart         = protocol.OperationAgentStart
 	protocolOperationAgentResume        = protocol.OperationAgentResume
 	protocolOperationAgentStop          = protocol.OperationAgentStop
+	protocolOperationWorkspaceClean     = protocol.OperationWorkspaceClean
 	protocolOperationAgentDriveStart    = protocol.OperationAgentDriveStart
 	protocolOperationAgentDriveStop     = protocol.OperationAgentDriveStop
 	protocolOperationAgentModelList     = protocol.OperationAgentModelList
