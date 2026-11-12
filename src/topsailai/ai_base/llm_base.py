@@ -59,6 +59,7 @@ from .exception import (
 )
 from .llm_control.exception import (
     JsonError,
+    LLMNullResponseError,
     ModelServiceError,
     LLMServiceSpecialResponseError,
     LLMProviderBadRequestError,
@@ -103,6 +104,10 @@ from .llm_control.request_failure_log import (
     bind_llm_request_operation as _bind_llm_request_operation,
     log_llm_request_failures as _log_llm_request_failures,
     record_llm_request_failure as _record_llm_request_failure,
+)
+from .llm_control.null_response_recovery import (
+    bind_null_response_operation as _bind_null_response_operation,
+    track_null_response_recovery as _track_null_response_recovery,
 )
 from .llm_control.response_events import LLMResponseEventMixin
 
@@ -568,6 +573,7 @@ class LLMModel(
             tool_choice=tool_choice,
         )
 
+    @_track_null_response_recovery
     @_log_llm_request_failures
     def chat(
             self, messages,
@@ -616,6 +622,7 @@ class LLMModel(
 
         operation_id = uuid4().hex
         _bind_llm_request_operation(operation_id)
+        _bind_null_response_operation(operation_id)
         return_mode = "raw" if for_raw else (
             "response_and_parsed" if for_response else "parsed"
         )
@@ -779,6 +786,11 @@ class LLMModel(
                     f"!!! [{i}] RateLimitError, "
                     f"{self.model_config['api_key'][:7]}, {e}"
                 )
+                continue
+            except LLMNullResponseError as e:
+                last_error = e
+                retry_reason = "null_response"
+                print_error(f"!!! [{i}] LLMNullResponseError, {e}")
                 continue
             except TypeError as e:
                 last_error = e

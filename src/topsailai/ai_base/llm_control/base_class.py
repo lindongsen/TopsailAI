@@ -38,6 +38,7 @@ from .message import (
     format_response,
 )
 from .exception import (
+    LLMNullResponseError,
     ModelServiceError,
     LLMServiceSpecialResponseError,
 )
@@ -532,12 +533,12 @@ class LLMModelBase(object):
 
         # check content
         if rsp_content is None:
-            raise TypeError("no response")
+            raise LLMNullResponseError("LLM response content is null")
 
         rsp_content = rsp_content.strip()
 
         if not rsp_content:
-            raise TypeError("null of response")
+            raise LLMNullResponseError("LLM response content is blank")
 
         # special responses that should trigger a retry
         if self._is_special_response_for_retry(rsp_content):

@@ -73,6 +73,26 @@ def get_json_object_from_env(key):
     return parsed
 
 
+NULL_RESPONSE_RECOVERY_DEFAULT_MESSAGE = "continue"
+
+
+def get_null_response_recovery_config(env_reader=None):
+    """Return request-scoped null-response recovery configuration."""
+    if env_reader is None:
+        env_reader = EnvReaderInstance
+    enabled = env_reader.check_bool(
+        "TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_ENABLED",
+        default=True,
+    )
+    message = env_reader.get(
+        "TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_MESSAGE",
+        default=NULL_RESPONSE_RECOVERY_DEFAULT_MESSAGE,
+    )
+    if not isinstance(message, str) or not message.strip():
+        message = NULL_RESPONSE_RECOVERY_DEFAULT_MESSAGE
+    return enabled, message
+
+
 def get_configured_extra_body():
     """Parse provider-specific fields from TOPSAILAI_LLM_EXTRA_BODY."""
     return get_json_object_from_env("TOPSAILAI_LLM_EXTRA_BODY")

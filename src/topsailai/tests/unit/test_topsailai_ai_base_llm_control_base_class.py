@@ -17,6 +17,7 @@ from topsailai.ai_base.llm_control.base_class import (
     LLMModelBase,
 )
 from topsailai.ai_base.llm_control.exception import (
+    LLMNullResponseError,
     LLMServiceSpecialResponseError,
 )
 
@@ -816,6 +817,14 @@ class TestLLMModelBaseSpecialResponses:
                 pass
 
         return TestModel()
+
+    @pytest.mark.parametrize("content", [None, "", "  \n"])
+    def test_check_response_content_null_or_blank_raises_precise_error(
+        self, test_model, content
+    ):
+        """Null and blank provider content use the dedicated exception."""
+        with pytest.raises(LLMNullResponseError):
+            test_model.check_response_content(MagicMock(), content)
 
     @patch.dict(os.environ, {"TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": '["服务器繁忙，请稍后再试。", "服务繁忙"]'}, clear=False)
     def test_check_response_content_exact_match_raises(self, test_model):

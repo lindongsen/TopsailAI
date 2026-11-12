@@ -259,6 +259,8 @@ class SummaryScriptScenario(SummarizeHooksScenario):
             'TOPSAILAI_TASK': '', 'TOPSAILAI_USER_MESSAGE': '', 'SESSION_ID': '',
             'TOPSAILAI_INPUT_PIPE_ENABLED': '0',
             'TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED': '0',
+            'TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_ENABLED': '1',
+            'TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_MESSAGE': '',
         }
         for name, value in values.items():
             monkeypatch.setenv(name, value)
@@ -386,6 +388,8 @@ class SummaryScriptScenario(SummarizeHooksScenario):
         assert self.state()["total_requests"] == 0
         before = len(self.state()["request_bodies"])
         self.retry_delays.clear()
+        if self.case == "empty_provider_exhaustion":
+            self.patch.setenv("TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_ENABLED", "0")
         control_error = None
         try:
             if self.layer == "user2agent":
@@ -420,12 +424,20 @@ class SummaryScriptScenario(SummarizeHooksScenario):
             assert self.stable_history(control_persisted) == self.stable_history(self.persisted_history)
             assert ctx_manager.get_messages_by_session("mixed-session") == self.persisted_history
         control_tokens = self.token_counters(stat)
-        assert control_tokens == self.observed_tokens, (control_tokens, self.observed_tokens)
         bodies = self.state()["request_bodies"]
         assert self.state()["total_requests"] == self.observed_state["total_requests"]
         assert len(bodies) - before == len(self.observed_state["request_bodies"])
-        assert [r["body"] for r in bodies[before:]] == [r["body"]
-            for r in self.observed_state["request_bodies"]]
+        if self.case == "empty_provider_exhaustion":
+            self.assert_null_response_recovery_requests(
+                self.observed_state["request_bodies"],
+                bodies[before:],
+            )
+            assert control_tokens["total_completion_count"] == \
+                self.observed_tokens["total_completion_count"] == 18
+        else:
+            assert control_tokens == self.observed_tokens, (control_tokens, self.observed_tokens)
+            assert [r["body"] for r in bodies[before:]] == [r["body"]
+                for r in self.observed_state["request_bodies"]]
         runtime.messages = copy.deepcopy(self.observed_history)
         if self.layer == "agent2llm":
             runtime.ai_agent.messages = copy.deepcopy(self.observed_history)
@@ -556,15 +568,29 @@ class SummaryScriptScenario(SummarizeHooksScenario):
         assert pending_cleanup() == ()
 
     @staticmethod
+    def assert_null_response_recovery_requests(enabled_rows, disabled_rows):
+        """Verify default guidance starts at retry four and the switch disables it."""
+        guidance = {"role": "user", "content": "continue"}
+        assert len(enabled_rows) == len(disabled_rows) == 18
+        for index, row in enumerate(enabled_rows):
+            messages = row["body"]["messages"]
+            assert messages.count(guidance) == (0 if index < 3 else 1)
+        assert all(
+            guidance not in row["body"]["messages"]
+            for row in disabled_rows
+        )
+
+    @staticmethod
     def assert_exhaustion(error):
         """Validate the real provider retry contract, not a successful empty skip."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
         assert isinstance(error, LLMRetryExhaustedError)
         assert error.attempts == 18 and error.manual_cycle_count == 0
-        assert error.retry_reason == "type_error"
-        assert isinstance(error.last_error, TypeError)
+        from topsailai.ai_base.llm_control.exception import LLMNullResponseError
+        assert error.retry_reason == "null_response"
+        assert isinstance(error.last_error, LLMNullResponseError)
         assert error.__cause__ is error.last_error
-        assert error.last_error.args == ("null of response",)
+        assert error.last_error.args == ("LLM response content is blank",)
 
     def close(self):
         """Verify worker settlement before inherited exact server/client/artifact cleanup."""
