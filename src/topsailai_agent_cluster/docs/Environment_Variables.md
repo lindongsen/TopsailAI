@@ -107,6 +107,7 @@ listener to a trusted address.
 | `AGENT_CLUSTER_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
 | `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
+| `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `--endpoint-access-policy-dir` | empty | Endpoint-local directory holding one access policy file per caller token; empty means every caller is permitted |
 
 ### `AGENT_CLUSTER_ADAPTERS`
 
@@ -326,6 +327,7 @@ File format constraints:
 | `AGENT_CLUSTER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
 | `AGENT_CLUSTER_CONTROL_ACTION_FILE` | No `ctl.` action is advertised and every `ctl.` operation is refused |
+| `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | Every caller is permitted, so the Endpoint has no authorization boundary |
 | `AGENT_CLUSTER_TLS_*` | Remote listeners cannot verify peers |
 | `AGENT_CLUSTER_ADAPTERS` | The Endpoint has no provider to collect from |
 
