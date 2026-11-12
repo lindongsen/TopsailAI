@@ -28,6 +28,13 @@ ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}")
 # session and project scope, so every alias is accepted with and without it.
 SESSION_COMMAND_ALIASES = ("messages",)
 REFRESH_COMMAND_ALIASES = ("list", "l")
+# "exit" is accepted wherever q/quit are accepted, and leaves doc scope the
+# same way q/quit do.
+QUIT_COMMAND_ALIASES = ("exit",)
+# "projects" is the long spelling of the managed-project list command "p".
+MANAGED_PROJECT_ALIASES = ("projects",)
+# "recent" is the long spelling of the project-scope history command "r".
+PROJECT_RECENT_ALIASES = ("recent",)
 
 
 def _command_spellings(name: str, aliases: Tuple[str, ...]) -> Tuple[str, ...]:
@@ -55,6 +62,19 @@ REFRESH_COMMAND_SPELLINGS = _command_spellings(
 REFRESH_ALL_COMMAND_SPELLINGS = tuple(
     spelling + " all" for spelling in REFRESH_COMMAND_SPELLINGS
 )
+
+# Every accepted spelling of the quit command. "q" and "quit" are the existing
+# spellings; "exit" is the declared alias.
+QUIT_COMMAND_SPELLINGS = _command_spellings("quit", QUIT_COMMAND_ALIASES) + (
+    "q",
+    "/q",
+)
+
+# Every accepted spelling of the managed-project list command.
+MANAGED_PROJECT_SPELLINGS = _command_spellings("p", MANAGED_PROJECT_ALIASES)
+
+# Every accepted spelling of the project-scope recent-history command.
+PROJECT_RECENT_SPELLINGS = _command_spellings("r", PROJECT_RECENT_ALIASES)
 
 # Runtime command aliases, declared once so recognition, completion and help
 # cannot drift apart. The key is the bare alias token and the value is the

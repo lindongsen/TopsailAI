@@ -74,7 +74,8 @@ def get_available_completions() -> List[str]:
     # Built-in commands. The refresh and session commands (and their aliases)
     # belong to the workspace, project and doc scopes; runtime scope has its
     # own command set and would otherwise advertise commands it rejects.
-    builtins = ["/clean", "/help", "/ctx.btw", "q", "quit"]
+    # "exit" is advertised next to q/quit because it is the same command.
+    builtins = ["/clean", "/help", "/ctx.btw", "q", "quit", "exit"]
     if cli_state.current_scope != "runtime":
         builtins.extend(
             [
@@ -89,6 +90,19 @@ def get_available_completions() -> List[str]:
             ]
         )
     completions.extend(builtins)
+    # "projects" is the long spelling of the managed-project list command. It is
+    # advertised only in the scopes that accept it, so completion never offers a
+    # spelling the parser rejects.
+    if cli_state.current_scope in ("workspace", "project"):
+        completions.append("/projects")
+    # "recent" is the long spelling of the project-scope history command. It is
+    # advertised only where it is accepted: project scope, and the workspace
+    # managed-project view, where it refreshes the list like "r" does.
+    if cli_state.current_scope == "project" or (
+        cli_state.current_scope == "workspace"
+        and cli_state.workspace_showing_managed_projects
+    ):
+        completions.append("/recent")
     if cli_state.current_scope != "workspace":
         completions.append("/send")
     if cli_state.current_scope == "runtime":
@@ -129,6 +143,26 @@ def get_available_completions() -> List[str]:
             seen.add(c)
             unique.append(c)
     return sorted(unique)
+
+
+def get_completion_candidates(prefix: str) -> List[str]:
+    """Return the completion candidates matching *prefix*.
+
+    The advertised inventory holds one canonical "/"-prefixed spelling per
+    command, because the leading "/" is optional in workspace, project, session
+    and doc scope and the runtime aliases are accepted bare. A prefix that does
+    not start with "/" therefore also matches the bare form of every canonical
+    spelling, so ``list`` completes to ``list`` while ``/list`` completes to
+    ``/list``. Candidates keep first-seen order and never repeat, so cycling
+    with TAB cannot stall on a duplicate spelling.
+    """
+    candidates: List[str] = []
+    for command in get_available_completions():
+        if command.startswith(prefix):
+            candidates.append(command)
+        elif not prefix.startswith("/") and command.lstrip("/").startswith(prefix):
+            candidates.append(command.lstrip("/"))
+    return list(dict.fromkeys(candidates))
 
 
 _environment_completion_names: set[str] = set()
@@ -254,13 +288,7 @@ def tab_completer(text: str, state: int) -> Optional[str]:
                 return matches[state]
             return None
 
-        candidates = get_available_completions()
-        matches = []
-        for c in candidates:
-            if c.startswith(text):
-                matches.append(c)
-            elif not text.startswith("/") and c.lstrip("/").startswith(text):
-                matches.append(c.lstrip("/"))
+        matches = get_completion_candidates(text)
         if state < len(matches):
             return matches[state]
     except (NameError, AttributeError, ImportError):

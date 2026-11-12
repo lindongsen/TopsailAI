@@ -876,9 +876,7 @@ def _read_input_line_tty(
         """
         nonlocal completion_index, buffer, cursor
         prefix = "".join(buffer[:cursor])
-        candidates = [
-            c for c in completer.get_available_completions() if c.startswith(prefix)
-        ]
+        candidates = completer.get_completion_candidates(prefix)
         if not candidates:
             completion_index = -1
             return

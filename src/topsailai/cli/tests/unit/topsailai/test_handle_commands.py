@@ -919,7 +919,11 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "quit")
         self.assertTrue(
-            any("In projects list; supported commands: r, p, q, p agent <number>" in str(call) for call in mock_print.call_args_list)
+            any(
+                "In projects list; supported commands: "
+                "r/recent, p/projects, q/quit/exit, cd, p agent <number>" in str(call)
+                for call in mock_print.call_args_list
+            )
         )
 
     @patch("cli_topsailai.core.input")
@@ -983,11 +987,12 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "quit")
         printed = "\n".join(str(call) for call in mock_print.call_args_list)
-        self.assertIn("In projects list; supported commands: r, p, q, p agent <number>", printed)
-        self.assertEqual(
-            printed.count("In projects list; supported commands: r, p, q, p agent <number>"),
-            len(unsupported_commands),
+        expected_hint = (
+            "In projects list; supported commands: "
+            "r/recent, p/projects, q/quit/exit, cd, p agent <number>"
         )
+        self.assertIn(expected_hint, printed)
+        self.assertEqual(printed.count(expected_hint), len(unsupported_commands))
 
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")

@@ -93,10 +93,21 @@ Command aliases follow the same rule, so each alias is accepted with and without
 | `/refresh all` | `list all`, `/list all`, `l all`, `/l all` | `workspace` |
 | `/ctx.btw [message]` | `btw`, `/btw` | `runtime` |
 | `/agent.models [args...]` | `model`, `/model` | `runtime` |
+| `q` / `quit` | `exit`, `/exit` | all scopes |
+| `p` | `projects`, `/projects` | `workspace`, `project` |
+| `r` (project scope) | `recent`, `/recent` | `project`, workspace managed-project view |
 
-`r` and `/r` remain the pre-existing short form of `/refresh`. The aliases are additional spellings of the same command, not separate commands: they share the same behavior, arguments and errors. In project scope `r [limit]` and `recent [limit]` keep their limit argument, while `list` and `l` accept no limit, exactly like `/refresh`. The restricted managed-project view still accepts only `r`, `p`, `q`, `cd` and `p agent <number>`, so the aliases are rejected there.
+`r` and `/r` remain the pre-existing short form of `/refresh`. The aliases are additional spellings of the same command, not separate commands: they share the same behavior, arguments and errors. In project scope `r [limit]` and `recent [limit]` keep their limit argument, while `list` and `l` accept no limit, exactly like `/refresh`. The restricted managed-project view accepts `r`/`recent`, `p`/`projects`, `q`/`quit`/`exit`, `cd` and `p agent <number>`; the `/session` and `/refresh` aliases (`messages`, `list`, `l`) are rejected there.
 
 `runtime` scope has its own command set, so the `/session` and `/refresh` aliases above do not apply there; its own aliases are `btw` for `/ctx.btw` and `model` for `/agent.models`, and its commands are still accepted with or without the leading `/`, as described above. `doc` scope shares the same prompt loop as `workspace` and `project` scope, so an alias binds wherever its base command already binds: `list` and `l` refresh the doc list, and `messages` reaches the same binding `/session` already has there, even though `/session` is not part of the documented doc-scope command set.
+
+### TAB completion
+
+TAB completes both spellings of every command, so an alias is reachable without typing it in full. The advertised inventory holds one canonical `/`-prefixed spelling per command; a prefix that does not start with `/` also matches the bare form, so `list` completes to `list` while `/list` completes to `/list`. Candidates never repeat, so repeated TAB presses cycle through each spelling once.
+
+The same candidate set is used by all three input surfaces — the readline prompt, the raw TTY editor and the curses dual-pane UI — so a spelling cannot complete on one surface and fail on another.
+
+Completion is scope-aware and never offers a spelling the parser rejects: `projects` completes in `workspace` and `project` scope, `recent` completes in `project` scope and in the workspace managed-project view, `exit` completes wherever `q`/`quit` are accepted, and the runtime aliases `btw` and `model` complete only in `runtime` scope.
 
 ## Session Output Files
 

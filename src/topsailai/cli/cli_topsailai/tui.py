@@ -395,9 +395,7 @@ class CursesStreamUI:
         redrawn.
         """
         prefix = self._input_buffer[: self._cursor_pos]
-        candidates = [
-            c for c in completer.get_available_completions() if c.startswith(prefix)
-        ]
+        candidates = completer.get_completion_candidates(prefix)
         if not candidates:
             self._completion_index = -1
             return False
