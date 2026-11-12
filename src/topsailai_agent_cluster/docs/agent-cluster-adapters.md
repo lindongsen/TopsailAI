@@ -63,6 +63,20 @@ Each project has its own build metadata, dependencies, unit tests, version and e
 does not import Agent Cluster `internal/` packages and is not linked into `agent-cluster-endpoint`.
 Co-location is source-management convenience, not an in-process integration model.
 
+The production package boundary follows the component boundary:
+
+| Package or artifact | Role | Default production installation |
+|---|---|---|
+| `agent-cluster-endpoint` | Endpoint service and generic CLI Adapter | Yes |
+| `agent-cluster-provider-topsailai` | Optional versioned TopsailAI provider executable | Only on nodes that use TopsailAI |
+| Mock provider artifact | Conformance, integration and fault-injection tests | No |
+
+The Endpoint package does not depend on the TopsailAI provider package or any future concrete provider.
+Provider packages install immutable versioned executable paths and do not restart or reconfigure the
+Endpoint. A locally approved binding update activates a verified version; retaining the previous path
+provides rollback. The mock must not be included in default production packages, images or node
+installation recipes.
+
 The mock provider serves three purposes:
 
 - a readable conforming reference implementation;
@@ -78,7 +92,7 @@ configuration select it, so production input cannot activate a testing bypass.
 1. Implement the Cluster-defined protocol; never redefine operation names, query names, states, error
    codes or effect certainty from provider vocabulary.
 2. Keep provider command names, flags, files, state labels and response formats inside the provider
-   project. They must not appear in the generic CLI Adapter or Endpoint service.
+   project. They must not appear in the Generic CLI Adapter or Endpoint service.
 3. Read one request from stdin and write protocol data only to stdout. Write logs and diagnostics to
    stderr, within the advertised and enforced byte budget.
 4. Echo the request ID and protocol version in every response or stream frame. Reject an unsupported
@@ -86,7 +100,9 @@ configuration select it, so production input cannot activate a testing bypass.
 5. Advertise only operations, Cluster-registered queries and control actions the provider CLI can
    actually implement. Return `unsupported` instead of emulating one operation with another.
 6. Return provider-private resource keys and generation evidence. Never mint, persist or interpret
-   Cluster resource IDs.
+   Cluster resource IDs. Keep a resource key stable across restarts, repeated discovery and every
+   claimed protocol-compatible upgrade; an unavoidable identity change requires an approved alias,
+   mapping migration or new binding identity.
 7. Revalidate `expected_generation` in the same execution path that performs a mutating operation; a
    previous `inspect` result alone is not sufficient.
 8. Return provider evidence, not a complete Cluster receipt. Preserve uncertainty when delivery or
@@ -95,7 +111,13 @@ configuration select it, so production input cannot activate a testing bypass.
    configuration. A remote request cannot replace them.
 10. Exit when the request finishes or its input closes. For streaming operations, stop on cancellation
     and emit exactly one terminal frame when the channel remains writable.
-11. Pass executable conformance without an Endpoint, Server, channel or Cluster database.
+11. Treat invocation helpers as children owned by the current call. A durable Agent or other business
+    resource may outlive the provider CLI only after an explicit independent custody handoff; return
+    unknown effect rather than acknowledged success when that handoff is uncertain.
+12. Report truthful total, discovery, mutation and follow concurrency constraints. The Endpoint applies
+    them per binding together with its stricter hard and local limits; the provider process must not
+    assume an in-memory lock coordinates separate invocations.
+13. Pass executable conformance without an Endpoint, Server, channel or Cluster database.
 
 ### Trust model
 

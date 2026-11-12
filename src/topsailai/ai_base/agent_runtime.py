@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Any
 import weakref
 
+from topsailai.ai_base.runtime_data import RuntimeDataStore
 from topsailai.context.tool_stat import ToolStat
 
 if TYPE_CHECKING:
@@ -16,10 +17,12 @@ class AgentRuntime:
         self,
         agent: "AgentBase",
         tool_stat: ToolStat | None = None,
+        runtime_data: RuntimeDataStore | None = None,
     ) -> None:
         """Bind the runtime facade to an agent without owning the agent."""
         self._agent_ref = weakref.ref(agent)
         self.tool_stat = tool_stat if tool_stat is not None else ToolStat()
+        self.runtime_data = runtime_data if runtime_data is not None else RuntimeDataStore()
 
     @property
     def agent(self) -> "AgentBase":

@@ -309,8 +309,8 @@ bin/topsailai-data show hello
 | `create` | `create <object> [--classify dir1/dir2/...] [--description <text>] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. **Markdown content is required** and must contain the mandatory `<object>.md` file; it can be supplied via `--from` or stdin. **A description is required** and may be provided with `--description` or extracted from the `description` field in the YAML frontmatter of `<object>.md`. If neither source provides a description, the command fails. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
 | `update` | `update <id> [--description <text>]` | Update an active object's metadata. Currently supports updating the description. Pass an empty value (`--description ""`) to clear the description. |
-| `list` | `list [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is YAML; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
-| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `\|` in `<query>` for OR logic (e.g. `foo\|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
+| `list` | `list [--tag t1,t2] [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc] [--with-stat]` | List active objects, optionally filtered by tag, paginated, and sorted by the time prefix of the object path. Default format is YAML; use `json` for machine-readable output. Default sort is `time:desc` (newest first). `--with-stat` attaches usage counters without incrementing them. |
+| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc] [--with-stat]` | Search objects by name, tag, or classify path. Use `\|` in `<query>` for OR logic (e.g. `foo\|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). `--with-stat` attaches usage counters without incrementing them. |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Marks the object as `deleted` but preserves actual data so it can be recovered. Finalization removes actual data and transitions the object to `ceased`. |
@@ -324,44 +324,155 @@ bin/topsailai-data show hello
 
 ### Command examples
 
-Create:
+Every example below was executed against a real store. Output is shown as
+printed, so you can compare your own run against it.
+
+#### Create an object
+
+When the content already exists as a file, pass it with `--from`:
 
 ```
-bin/topsailai-data create note --classify work/2026 --description "Work notes for 2026" --tag work,important <<'EOF'
----
-description: Work notes for 2026
----
-
-# Work Notes
-EOF
-bin/topsailai-data create report --description "Monthly report" --from report.md
-bin/topsailai-data create bundle --description "Bundle archive" --from bundle.tar
-echo "---
-description: Inline note
----
-
-inline content" | bin/topsailai-data create inline-note
+bin/topsailai-data create demo --description "Lifecycle demo object" --tag alpha,beta --from ./demo.md
 ```
 
-Update metadata:
-
 ```
-bin/topsailai-data update <id> --description "Updated description"
-bin/topsailai-data update <id> --description ""  # clear description
+created object demo at 2026/1112/1706/demo
 ```
 
-Read metadata:
+The printed path is the object's `Path` relative to `object/`. Add classify
+directories with `--classify`:
 
 ```
-bin/topsailai-data show <id>
-bin/topsailai-data list [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
-bin/topsailai-data search <query> [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
+bin/topsailai-data create note --classify work/2026 --description "Work notes for 2026" --tag work,important --from ./note.md
+```
+
+```
+created object note at 2026/1112/1706/work/2026/note
+```
+
+Use stdin only when the content is generated in memory and has no file:
+
+```
+printf '# Inline\n\ninline content\n' | bin/topsailai-data create inline-note --description "Inline note"
+```
+
+A tar archive is also accepted, which lets you create an object with several
+files at once:
+
+```
+bin/topsailai-data create bundle --description "Bundle archive" --from ./bundle.tar
+```
+
+#### Show one object
+
+```
+bin/topsailai-data show demo
+```
+
+```
+ID:            demo
+Name:          demo
+Path:          2026/1112/1706/demo
+Description:   Lifecycle demo object
+Status:        active
+SchemaVersion: 2
+CreatedAt:     2026-11-12T17:06:15+08:00
+UpdatedAt:     2026-11-12T17:06:15+08:00
+Tags:          alpha, beta
+DataRef:       2026/1112/1706/demo
+
+Stat:
+  ReadCount:     0
+  LastReadAt:    never
+  WriteCount:    1
+  LastWrittenAt: 2026-11-12T17:06:15+08:00
+
+--- Markdown ---
+# Demo
+
+body line
+
+--- folder structure ---
+demo/
+└── demo.md
+no additional files
+```
+
+`show` works for every status. For `deleted` and `ceased` objects the two
+actual-data sections are replaced by a single line:
+
+```
+--- Actual data unavailable for deleted object ---
+```
+
+#### List objects
+
+```
+bin/topsailai-data list
+```
+
+```
+- id: demo
+  name: demo
+  path: 2026/1112/1706/demo
+  description: Lifecycle demo object
+  status: active
+  tags:
+    - alpha
+    - beta
+  created_at: 2026-11-12T17:06:15.819311178+08:00
+  updated_at: 2026-11-12T17:06:15.822979908+08:00
+  schema_version: 2
+  data_ref: 2026/1112/1706/demo
+```
+
+Filter by tag with `--tag`. Repeat the flag, or pass a comma-separated list, to
+require several tags at once. Multiple tags are combined with AND, so an object
+must carry every named tag:
+
+```
+bin/topsailai-data list --tag alpha
+bin/topsailai-data list --tag alpha --tag beta
+bin/topsailai-data list --tag alpha,beta
+```
+
+Requiring a tag the object does not carry yields an empty result:
+
+```
+bin/topsailai-data list --tag alpha,nomatch
+```
+
+```
+[]
+```
+
+#### Search objects
+
+```
+bin/topsailai-data search demo
+```
+
+Search matches object names, tags, and classify paths. Use `|` for OR logic,
+and quote the query so the shell does not treat `|` as a pipe:
+
+```
+bin/topsailai-data search 'alpha|nomatch'
+```
+
+No match prints `[]`. A query containing a space is rejected:
+
+```
+bin/topsailai-data search 'a b'
+```
+
+```
+error: search: search query cannot contain spaces or tabs
 ```
 
 #### Search query syntax
 
 - `search` performs a case-insensitive substring match against object names, tags, and classify paths.
-- Use `|` to separate multiple terms. An object matches if any term matches (OR logic). Example: `search foo|bar` matches objects whose name, tags, or classify path contain `foo` or `bar`.
+- Use `|` to separate multiple terms. An object matches if any term matches (OR logic). Example: `search 'foo|bar'` matches objects whose name, tags, or classify path contain `foo` or `bar`.
 - Spaces, tabs, and backslash escapes are not supported in search queries. To match multi-word tags, search for one word at a time.
 
 #### Sorting results
@@ -378,35 +489,355 @@ bin/topsailai-data list --sort time:desc
 bin/topsailai-data search work --sort time:asc
 ```
 
-Modify tags:
+#### Update the description
 
 ```
-bin/topsailai-data tag add <id> <tag>
-bin/topsailai-data tag remove <id> <tag>
+bin/topsailai-data update demo --description "Rewritten description"
 ```
 
-Move:
-
 ```
-bin/topsailai-data move <id> <new-classify...>
-bin/topsailai-data move hello archive/2026
+updated object demo
 ```
 
-Delete and cleanup:
+Pass an empty value to clear the description. The field is then printed with
+no value:
 
 ```
-bin/topsailai-data delete <id>
-bin/topsailai-data gc [--dry-run] [--status creating|deleted|ceased]
-bin/topsailai-data recover <id> [--from <archive|->]
+bin/topsailai-data update demo --description ""
 ```
 
-Actual data I/O:
+```
+updated object demo
+```
+
+#### Add and remove tags
 
 ```
-bin/topsailai-data get <id> <object-file>
-bin/topsailai-data get-archive <id> > backup.tar
-bin/topsailai-data put <id> <dest-file> [--from <file|->]
-bin/topsailai-data put-archive <id> <archive|->
+bin/topsailai-data tag add demo gamma
+```
+
+```
+added tag "gamma" to demo
+```
+
+```
+bin/topsailai-data tag remove demo gamma
+```
+
+```
+removed tag "gamma" from demo
+```
+
+Removing a tag the object does not carry fails instead of silently succeeding:
+
+```
+bin/topsailai-data tag remove demo nosuch
+```
+
+```
+error: tag remove: tag not found: tag "nosuch" not found
+```
+
+#### Move an object
+
+```
+bin/topsailai-data move demo archive/2026
+```
+
+```
+moved object demo
+```
+
+The ID, name, and tags are unchanged; only `Path` and `DataRef` gain the new
+classify directories:
+
+```
+ID:            demo
+Path:          2026/1112/1706/archive/2026/demo
+Tags:          alpha, beta
+DataRef:       2026/1112/1706/archive/2026/demo
+```
+
+#### Soft delete and recover
+
+`delete` on an active object marks it `deleted` and keeps the payload, so the
+operation is reversible:
+
+```
+bin/topsailai-data delete demo
+```
+
+```
+deleted object demo
+```
+
+The object disappears from `list` but `show` still resolves it:
+
+```
+bin/topsailai-data list
+```
+
+```
+[]
+```
+
+```
+bin/topsailai-data show demo
+```
+
+```
+Status:        deleted
+DeletedAt:     2026-11-12T17:04:18+08:00
+```
+
+Use `--include-deleted` to see it in a collection query:
+
+```
+bin/topsailai-data list --include-deleted
+```
+
+`recover` restores it to `active` without needing `--from`, because the
+payload was never removed:
+
+```
+bin/topsailai-data recover demo
+```
+
+```
+recovered object demo
+```
+
+Recovering an object that is already active fails:
+
+```
+bin/topsailai-data recover demo
+```
+
+```
+error: recover: object already exists: object demo is already active
+```
+
+If the payload is gone but you still have an archive, supply it:
+
+```
+bin/topsailai-data recover demo --from ./backup.tar
+```
+
+#### Finalize and purge
+
+A second `delete` on a `deleted` object removes the payload and moves the
+object to `ceased`:
+
+```
+bin/topsailai-data delete demo
+```
+
+```
+deleted object demo
+```
+
+```
+bin/topsailai-data show demo
+```
+
+```
+Status:        ceased
+DeletedAt:     2026-11-12T17:04:29+08:00
+CeasedAt:      2026-11-12T17:04:29+08:00
+```
+
+A `ceased` object keeps its metadata and tags but has no payload, so actual
+data commands fail:
+
+```
+bin/topsailai-data get demo demo.md
+```
+
+```
+error: get: object not found: demo
+```
+
+`ceased` is terminal. Recovery is refused even when an archive is supplied:
+
+```
+bin/topsailai-data recover demo --from ./backup.tar
+```
+
+```
+error: recover: object has ceased: object demo has ceased and cannot be restored
+```
+
+#### Garbage collect
+
+Always preview first. `--dry-run` reports the plan without changing anything:
+
+```
+bin/topsailai-data gc --dry-run
+```
+
+```
+dry-run: would run GC for ceased objects
+```
+
+When nothing matches, the message says so:
+
+```
+bin/topsailai-data gc --dry-run --status deleted
+```
+
+```
+no deleted objects to gc
+```
+
+Default `gc` honors `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`, so a freshly
+ceased object survives:
+
+```
+bin/topsailai-data gc
+```
+
+```
+gc completed for ceased objects
+```
+
+`--status ceased` ignores the retention window and purges immediately:
+
+```
+bin/topsailai-data gc --status ceased
+```
+
+```
+gc completed for ceased objects
+```
+
+After the purge the object is gone entirely:
+
+```
+bin/topsailai-data show demo
+```
+
+```
+error: show: metadata for "demo": object not found
+```
+
+`--status deleted` finalizes every deleted object in one pass, which is the
+batch equivalent of deleting twice:
+
+```
+bin/topsailai-data gc --status deleted
+```
+
+```
+finalized deleted object demo
+```
+
+`--status creating` cleans up objects whose creation was interrupted:
+
+```
+bin/topsailai-data gc --status creating
+```
+
+```
+no creating objects to gc
+```
+
+#### Create over a ceased object
+
+A `ceased` object does not block reuse of its name. Creation purges the old
+record and starts clean, so no stale `CeasedAt` survives:
+
+```
+bin/topsailai-data create demo --description "Second life" --from ./demo.md
+```
+
+```
+created object demo at 2026/1112/1706/demo
+```
+
+```
+Status:        active
+Description:   Second life
+```
+
+An `active`, `creating`, or `deleted` object still blocks creation:
+
+```
+bin/topsailai-data create demo --description "dup" --from ./demo.md
+```
+
+```
+error: create: object already exists: demo
+```
+
+#### Read and write actual data
+
+Read one file to stdout:
+
+```
+bin/topsailai-data get demo demo.md
+```
+
+Write one file into the object. The destination name is relative to the object
+folder, and missing parent folders are created:
+
+```
+bin/topsailai-data put demo notes/a.md --from ./demo.md
+```
+
+Export the whole payload as a tar archive:
+
+```
+bin/topsailai-data get-archive demo > ./backup.tar
+```
+
+```
+tar -tvf ./backup.tar
+```
+
+```
+-rw-r--r-- root/root        62 2026-11-12 17:04 demo.md
+drwxr-xr-x root/root         0 2026-11-12 17:04 notes
+-rw-r--r-- root/root        62 2026-11-12 17:04 notes/a.md
+```
+
+Replace the payload from an archive:
+
+```
+bin/topsailai-data put-archive demo ./backup.tar
+```
+
+```
+wrote archive to object demo
+```
+
+#### Writes require an active object
+
+Every actual-data write is rejected unless the object is `active`. The error
+names the reason, so a script can tell a lifecycle problem from a missing
+object:
+
+```
+bin/topsailai-data put demo x.md --from ./demo.md
+```
+
+```
+error: put: object "demo" is not active: object is not active
+```
+
+```
+bin/topsailai-data tag add demo zeta
+```
+
+```
+error: tag add: object "demo" is not active: object is not active
+```
+
+```
+bin/topsailai-data move demo other
+```
+
+```
+error: move: object is not active: object demo is deleted
 ```
 
 #### Binary files with `get`
@@ -445,7 +876,7 @@ Avoid piping `get` output through tools that interpret or re-encode the stream (
     - quickstart
   created_at: 2026-07-14T23:23:00Z
   updated_at: 2026-07-14T23:23:00Z
-  schema_version: 1
+  schema_version: 2
   data_ref: 2026/0714/2323/hello
 ```
 
@@ -464,13 +895,14 @@ Use `--offset` and `--limit` to paginate. When no objects match, `list` and `sea
     "tags": ["quickstart"],
     "created_at": "2026-07-14T23:23:00Z",
     "updated_at": "2026-07-14T23:23:00Z",
-    "schema_version": 1,
+    "schema_version": 2,
     "data_ref": "2026/0714/2323/hello"
   }
 ]
 ```
 
-`show` prints three sections for an object: metadata, the content of `<object>.md`, and the folder structure.
+`show` prints four sections for an object: metadata, usage statistics, the
+content of `<object>.md`, and the folder structure.
 
 ### show output format
 
@@ -493,13 +925,19 @@ The first section lists the object's stored metadata. All timestamps are formatt
 | `Tags` | The object's complete tag set, loaded from the independent Hash metadata `tags` file. Empty when there are no tags. |
 | `DataRef` | Opaque reference to the actual data, managed by the actual-data adapter. |
 
+#### Stat section
+
+The second section is labeled `Stat:` and prints the object's usage counters.
+`LastReadAt` prints `never` when the object has never been read. Statistics are
+frozen while an object is `deleted` or `ceased`.
+
 #### Markdown content section
 
-The second section is labeled `--- Markdown ---` and prints the contents of the object's mandatory `<object>.md` file. If the file is empty, the section prints `(empty)`.
+The third section is labeled `--- Markdown ---` and prints the contents of the object's mandatory `<object>.md` file. If the file is empty, the section prints `(empty)`.
 
 #### Folder structure section
 
-The third section is labeled `--- folder structure ---` and prints the payload tree, including `<object>.md` and user files named `metadata.json`, `stat.json`, `.stat.json`, or ending in `.lock`/`.tags`. Internal `.topsailai-data-write-*` temporary files are excluded. Hash metadata lives outside the payload tree.
+The fourth section is labeled `--- folder structure ---` and prints the payload tree, including `<object>.md` and user files named `metadata.json`, `stat.json`, `.stat.json`, or ending in `.lock`/`.tags`. Internal `.topsailai-data-write-*` temporary files are excluded. Hash metadata lives outside the payload tree.
 
 If the object folder contains no files besides the mandatory `<object>.md`, the section prints:
 
@@ -517,11 +955,17 @@ Name:          hello
 Path:          2026/0714/2323/hello
 Description:   A hello object
 Status:        active
-SchemaVersion: 1
+SchemaVersion: 2
 CreatedAt:     2026-07-14T23:23:00+08:00
 UpdatedAt:     2026-07-14T23:23:00+08:00
 Tags:          quickstart
 DataRef:       2026/0714/2323/hello
+
+Stat:
+  ReadCount:     0
+  LastReadAt:    never
+  WriteCount:    1
+  LastWrittenAt: 2026-07-14T23:23:00+08:00
 
 --- Markdown ---
 Hello, world!
@@ -641,15 +1085,18 @@ bin/topsailai-data stat <id> --format yaml
 bin/topsailai-data stat <id> --format json
 ```
 
-Rank objects by read or write usage:
+Rank objects by read, write, or recency of read usage:
 
 ```
 bin/topsailai-data stat top --by read --order desc --limit 10
 bin/topsailai-data stat top --by write --order asc --limit 10 --status active --format json
+bin/topsailai-data stat top --by last_read --order desc --limit 5
 ```
 
-`stat top` supports `--by read|write`, `--order desc|asc`, `--limit n`,
-`--status <status>`, and `--format yaml|json`.
+`stat top` supports `--by read|write|last_read`, `--order desc|asc`, `--limit n`,
+`--status active|deleted|ceased|all`, and `--format yaml|json`. `--by last_read`
+ranks by the most recent read time, and `--status all` includes every lifecycle
+state instead of only `active`.
 
 Attach each object's statistics to normal list or search results without
 incrementing its counters:
@@ -735,7 +1182,7 @@ TOPSAILAI_DATA_CEASED_RETENTION_DAYS=30
 - **Tar archives** are extracted into the object folder. Symbolic links inside tar archives are rejected to prevent directory traversal.
 - **`gc --status deleted`** finalizes `deleted` objects to `ceased`. After finalization, the object is subject to `TOPSAILAI_DATA_CEASED_RETENTION_DAYS` unless `gc --status ceased` is used to remove it immediately.
 - **`gc --status ceased`** removes all `ceased` objects immediately, ignoring the retention window. Default `gc` only removes ceased objects after the retention window expires.
-- **Deleted/ceased objects** are hidden from normal `list` and `search` unless `--include-deleted` is used. The `show` command, however, always resolves an object by ID and displays its metadata regardless of status. For `deleted` and `ceased` objects the actual-data sections (`--- Markdown ---` and `--- folder structure ---`) are omitted and replaced with a note that actual data is unavailable, because the payload may have been partially or fully removed.
+- **Deleted/ceased objects** are hidden from normal `list` and `search` unless `--include-deleted` is used. The `show` command, however, always resolves an object by ID and displays its metadata regardless of status. For `deleted` and `ceased` objects the actual-data sections (`--- Markdown ---` and `--- folder structure ---`) are omitted and replaced with a note that actual data is unavailable. Actual-data reads require `active` status, so `get` and `get-archive` fail for both statuses even when a `deleted` object's payload is still intact; run `recover` first.
 - **`recover`** only restores objects whose status is `deleted` back to `active`. It does not operate on `creating`, `active`, or `ceased` objects.
 - **Avoid manual changes**: do not create or rename object folders manually. Use the CLI so that metadata and the `.md` marker stay consistent.
 
@@ -791,22 +1238,282 @@ mode: a file command without `--object` is rejected.
 
 ### Examples
 
+Most examples below use one object id, `project--qrew--skill-hub`; the folder
+examples use a second object, `demo`, so their output stays short. Every example
+was run against a real store, and the output is copied from the actual command
+output.
+
+#### Read a whole file
+
 ```
 bin/topsailai-data file read notes/design.md --object project--qrew--skill-hub
-bin/topsailai-data file read notes/design.md --object project--qrew--skill-hub --seek 100 --size 200
-bin/topsailai-data file read-lines notes/design.md --object project--qrew--skill-hub --start 10 --end 20
-bin/topsailai-data file read-around notes/design.md 42 --object project--qrew--skill-hub --context 3
-bin/topsailai-data file read-context notes/design.md "TODO" --object project--qrew--skill-hub --context 2
-bin/topsailai-data file read-files a.md b.md --object project--qrew--skill-hub --format json
-bin/topsailai-data file write notes/new.md --object project--qrew--skill-hub --content "# Title"
-bin/topsailai-data file write notes/new.md --object project--qrew--skill-hub --from ./draft.md
-bin/topsailai-data file append notes/log.md --object project--qrew--skill-hub --content "one more line"
-bin/topsailai-data file exists a=a.md b=b.md --object project--qrew--skill-hub
-bin/topsailai-data file list-dirs . notes --object project--qrew--skill-hub
-bin/topsailai-data file size notes/design.md --object project--qrew--skill-hub
-bin/topsailai-data file overwrite-lines notes/design.md 10 --object project--qrew--skill-hub --end 12 --content "replacement"
-bin/topsailai-data file insert notes/design.md 5 --object project--qrew--skill-hub --content "inserted line"
 ```
+
+```text
+# Design
+
+line three
+line four
+line five
+line six
+line seven
+line eight
+```
+
+#### Read a byte window
+
+`--seek` and `--size` are byte offsets. A negative `--seek` counts from the end
+of the file, and `--size -1` reads to the end.
+
+```
+bin/topsailai-data file read logs/big.log --object project--qrew--skill-hub --seek 0 --size 10
+bin/topsailai-data file read logs/big.log --object project--qrew--skill-hub --seek -5
+```
+
+```text
+xxxxxxxxxx
+xxxxx
+```
+
+#### Read a line range
+
+Rows are printed as `{line_number}-{content}`. `--end 0` reads only `--start`,
+and `--end -1` reads through the end of the file.
+
+```
+bin/topsailai-data file read-lines notes/design.md --object project--qrew--skill-hub --start 3 --end 5
+```
+
+```text
+3-line three
+4-line four
+5-line five
+```
+
+#### Read around one line
+
+The target line is marked `:` and context lines `-`.
+
+```
+bin/topsailai-data file read-around notes/design.md 5 --object project--qrew--skill-hub --context 1
+```
+
+```text
+4-line four
+5:line five
+6-line six
+```
+
+#### Search a file with a pattern
+
+`read-context` takes a regular expression and is case-insensitive unless
+`--case-sensitive` is passed.
+
+```
+bin/topsailai-data file read-context notes/design.md "line (four|six)" --object project--qrew--skill-hub --context 1
+```
+
+```text
+3-line three
+4:line four
+5-line five
+6:line six
+7-line seven
+```
+
+#### Read several files at once
+
+`read-files` returns one path-to-content map. A file that cannot be read is
+recorded as an `Error: ...` value instead of failing the whole command.
+
+```
+bin/topsailai-data file read-files notes/design.md notes/2026/AGENTS.md --object project--qrew--skill-hub --format json
+```
+
+```json
+{
+  "notes/2026/AGENTS.md": "# AGENTS\n\nThis folder was created by the topsailai-data file mkdirs command.\n\nRecord instructions for agents working in this folder here.\n",
+  "notes/design.md": "# Design\n\nline three\nline four\nline five\nline six\nline seven\nline eight\n"
+}
+```
+
+#### Write a whole file
+
+`--from` reads a local file, `--content` takes inline text, and redirected
+standard input is used when neither is given. A whole-file write prints `OK`.
+
+```
+bin/topsailai-data file write notes/new.md --object project--qrew--skill-hub --content "# Title"
+bin/topsailai-data file write notes/design.md --object project--qrew--skill-hub --from ./draft.md
+```
+
+```text
+OK
+OK
+```
+
+#### Write at a byte offset
+
+`--seek` overwrites from that offset. Adding `--insert` inserts instead of
+overwriting. A seek past the end of the file appends.
+
+```
+bin/topsailai-data file write notes/pos.txt --object project--qrew--skill-hub --seek 3 --content "ABC"
+bin/topsailai-data file write notes/pos.txt --object project--qrew--skill-hub --seek 3 --insert --content "XY"
+```
+
+Starting from `0123456789`, the first command produces `012ABC6789` and the
+second produces `012XYABC6789`.
+
+#### Append
+
+`append` creates the file when it does not exist yet.
+
+```
+bin/topsailai-data file append notes/log.md --object project--qrew--skill-hub --content "one more line"
+bin/topsailai-data file append notes/new-log.md --object project--qrew--skill-hub --content "first line"
+```
+
+```text
+OK
+OK
+```
+
+#### Replace a line range
+
+`overwrite-lines` prints the line-number warning and a unified diff. The file is
+already changed when the diff is printed.
+
+```
+bin/topsailai-data file overwrite-lines notes/design.md 4 --object project--qrew--skill-hub --end 5 --content "line four replaced"
+```
+
+```text
+> You CANNOT call continuously due to the line number will change after each call.
+> Invoke the tool that provides line numbers to check content Now!
+--- before
++++ notes/design.md
+@@ -1,8 +1,7 @@
+ # Design
+ 
+ line three
+-line four
+-line five
++line four replaced
+ line six
+ line seven
+ line eight
+```
+
+Passing an empty `--content ""` deletes the addressed range:
+
+```
+bin/topsailai-data file overwrite-lines notes/small.md 2 --object project--qrew--skill-hub --content ""
+```
+
+Starting from `alpha`, `beta`, `gamma`, the result is `alpha`, `gamma`.
+
+#### Insert a line
+
+`insert` adds content after the reference line by default, and `--before`
+inserts before it.
+
+```
+bin/topsailai-data file insert notes/design.md 2 --object project--qrew--skill-hub --content "inserted after two"
+bin/topsailai-data file insert notes/small.md 1 --object project--qrew--skill-hub --before --content "header"
+```
+
+```text
+--- before
++++ notes/design.md
+@@ -1,5 +1,6 @@
+ # Design
+ 
++inserted after two
+ line three
+ line four replaced
+ line six
+```
+
+#### Check existence
+
+`exists` requires `name=path` pairs and accepts files and folders alike.
+
+```
+bin/topsailai-data file exists design=notes/design.md missing=notes/nope.md dir=notes/2026 --object project--qrew--skill-hub
+```
+
+```text
+design: true
+dir: true
+missing: false
+```
+
+#### Create folders
+
+```
+bin/topsailai-data file mkdirs notes/2026 --object project--qrew--skill-hub
+```
+
+```text
+OK
+```
+
+#### List folders
+
+```
+bin/topsailai-data file list-dirs . notes notes/2026 --object project--qrew--skill-hub
+```
+
+```text
+.:
+    - notes
+    - project--qrew--skill-hub.md
+notes:
+    - "2026"
+    - AGENTS.md
+    - design.md
+notes/2026:
+    - AGENTS.md
+```
+
+#### Report a file size
+
+```
+bin/topsailai-data file size notes/design.md --object project--qrew--skill-hub
+```
+
+```text
+72
+```
+
+#### Edit a file in place instead of get-edit-put
+
+The `file` group exists so a small edit does not need a full round trip. Read
+the region, edit it, and confirm the result:
+
+```
+bin/topsailai-data file read-lines notes/design.md --object project--qrew--skill-hub --start 1 --end 5
+bin/topsailai-data file overwrite-lines notes/design.md 4 --object project--qrew--skill-hub --content "line four replaced"
+bin/topsailai-data file read-lines notes/design.md --object project--qrew--skill-hub --start 1 --end 5
+```
+
+Re-read after every `overwrite-lines` or `insert` call, because the line numbers
+of the following lines change.
+
+#### Compare with get and put
+
+Use `file` for reading and editing inside an object, and `get`/`put` when the
+whole file must leave or enter the store as a stream:
+
+```
+bin/topsailai-data get project--qrew--skill-hub notes/design.md > ./design.md
+bin/topsailai-data put project--qrew--skill-hub notes/design.md --from ./design.md
+```
+
+`get` preserves raw bytes, so it is the right choice for binary files. `file
+read` decodes text and truncates non-whitelisted extensions, so it is the wrong
+choice for images or archives.
 
 ### Object scoping
 
@@ -818,8 +1525,14 @@ on. The object folder is the root of every path:
 - A leading slash is ignored, so `/notes/a.md` and `notes/a.md` are the same
   file.
 - An empty path addresses the object root. `list-dirs ""` and `list-dirs .`
-  both list the top level of the object folder.
-- A path that escapes the object folder, such as `../outside.md`, is rejected.
+  both list the top level of the object folder. The output key echoes the
+  argument as given, so `list-dirs .` prints `.:` while `list-dirs ""` prints
+  `"":`; the listed entries are identical.
+- A path that climbs above the object root is clamped to the root, not
+  rejected. `../outside.md` and `../../outside.md` both address
+  `outside.md` inside the object, so a file command can never reach a file
+  outside the object. The clamp is silent: the command succeeds and writes
+  inside the object.
 - An unknown object id fails with `object not found` before any file is
   touched.
 
@@ -831,6 +1544,34 @@ guarantees apply unchanged:
   leaves the previous content intact.
 - Read and write operations update the object's usage statistics.
 - Internal Hash metadata is outside the payload root and cannot be reached through file commands. Payload files named `<object>.lock`, `<object>.deleted`, `<object>.ceased`, `.stat.json`, or `metadata.json` are ordinary user data. The mandatory `<object>.md` remains readable and writable; `.topsailai-data-write-*` remains reserved.
+
+### Common errors
+
+Every failure exits non-zero and prints one `error: ...` line to stderr, so a
+script can rely on the exit code.
+
+| Situation | Message |
+|-----------|---------|
+| `--object` omitted | `error: file read: --object <id> is required` |
+| Unknown object id | `error: file read: metadata for "nope": object not found` |
+| Missing file | `error: file read: object not found: file "notes/nope.md"` |
+| `exists` without `name=path` | `error: file exists: expected name=path, got "notes/tail.md"` |
+| Invalid `--format` | `error: invalid --format "xml": must be yaml or json` |
+| Invalid regex in `read-context` | `error: file read-context: invalid parameter: invalid pattern=[: invalid regular expression: ...` |
+| `read` on a folder | `error: file read: read <absolute-path>: is a directory` |
+| Competing writer holds the lock | `error: ... object is locked by another process` |
+
+A missing folder is not an error for `list-dirs`: the folder is reported with a
+single `Error: ...` entry and the command still exits `0`.
+
+```
+bin/topsailai-data file list-dirs nope --object demo
+```
+
+```text
+nope:
+    - 'Error: objectfs: folder "nope" does not exist in object "demo"'
+```
 
 ### Writing content from standard input
 
@@ -882,7 +1623,20 @@ waiting, so an interactive invocation never hangs.
   prints the warning that line numbers change after each call, so re-read the
   file before the next edit.
 - `read-files`, `list-dirs`, and `exists` record a per-item failure instead of
-  hiding the other items.
+  hiding the other items. A failed item appears as an `Error: ...` value and the
+  command still exits `0`, so inspect the values rather than the exit code.
+- `read-lines`, `read-around`, and `read-context` print their rows joined by a
+  newline with no trailing newline, so chained output runs into the next line.
+  Add `echo` when chaining commands in a terminal.
+- `read` on a folder fails with `is a directory`, while `size` on a folder
+  reports `0`. Use `list-dirs` to inspect a folder.
+- `write --seek` past the end of a file appends instead of failing, and
+  `read --seek` past the end returns empty output with exit `0`.
+- `exists` requires `name=path` pairs. A bare path is rejected with
+  `expected name=path`.
+- `file` with no subcommand prints the subcommand list and exits `0`. `-h` or
+  `--help` after a subcommand prints the generic `file` usage line, not that
+  subcommand's own flags, so read the table above for exact arguments.
 
 ### Discovery inside an object
 
@@ -895,6 +1649,18 @@ bin/topsailai-data file list-dirs notes --object project--qrew--skill-hub
 bin/topsailai-data file list-dirs notes/archive --object project--qrew--skill-hub
 ```
 
+Real output for the first two commands:
+
+```text
+.:
+    - notes
+    - project--qrew--skill-hub.md
+notes:
+    - "2026"
+    - AGENTS.md
+    - design.md
+```
+
 `exists` reports a boolean per named path and accepts files and folders alike.
 `size` reports a byte count, and `read` returns content.
 
@@ -903,10 +1669,14 @@ Recursive discovery with object-boundary detection belongs to `list` and
 `search` in the object store, which scan the whole store rather than one
 object.
 
+### Folders and the AGENTS.md marker
+
+Object storage has no meaningful empty folder: a folder becomes discoverable
+only once it holds a file. Both `mkdirs` and the ordinary write commands
+therefore seed a marker file.
+
 `mkdirs` creates every missing level of the requested path and writes an
-`AGENTS.md` marker into each level it creates. Object storage has no meaningful
-empty folder, so a folder becomes discoverable only once it holds a file; the
-marker is what makes the new folder visible to `list-dirs` and `exists`.
+`AGENTS.md` marker into each level it creates:
 
 ```
 bin/topsailai-data file mkdirs notes/2026 --object demo
@@ -922,3 +1692,27 @@ bin/topsailai-data file read notes/2026/AGENTS.md --object demo
   replacement, and the write statistics apply exactly as for any other write.
 - The absolute-path requirement of the original tool does not apply in object
   mode, because every path is already relative to the object folder.
+
+`write`, `append`, `overwrite-lines`, and `insert` also create missing parent
+folders, and those parents receive the same `AGENTS.md` marker. A write into a
+new folder therefore succeeds without a separate `mkdirs` call, but the marker
+appears as an extra file:
+
+```
+bin/topsailai-data file write deep/x/y.md --object demo --content "hi"
+bin/topsailai-data file list-dirs deep --object demo
+bin/topsailai-data file list-dirs deep/x --object demo
+```
+
+```text
+deep:
+    - AGENTS.md
+    - x
+deep/x:
+    - AGENTS.md
+    - y.md
+```
+
+Use `mkdirs` when the folder itself is the deliverable, and a plain write when
+only the file matters. Do not be surprised by the marker: it is created by the
+tool, not by the caller, and it is ordinary actual data afterwards.

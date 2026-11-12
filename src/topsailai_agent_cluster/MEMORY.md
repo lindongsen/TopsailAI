@@ -301,6 +301,18 @@ the installed TopsailAI CLI and understand its native fields; the generic CLI Ad
 `providers/mock` is both the conforming reference and the locally configured fault injector for
 conformance and integration tests. Remote requests can never select a mock fault mode.
 
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> Provider CLI 使用独立安装包；Endpoint package 不依赖任何具体 provider。Mock 只作为测试构建产物，不进入默认生产安装。
+
+The initial package boundary is `agent-cluster-endpoint` plus the optional
+`agent-cluster-provider-topsailai`; the Endpoint package has no dependency on that or any future
+provider package. `providers/mock` produces a test artifact only and is excluded from default
+production packages and installations. Provider releases use versioned artifacts and are activated by
+an explicit Endpoint-local binding change after protocol compatibility checks; installation alone does
+not restart the Endpoint or silently replace the active executable. Keeping the previous versioned
+artifact and binding path provides rollback.
+
 For the MVP, provider CLI trust is operational trust, not enforced isolation. Process separation gives
 module, dependency and fault isolation; a provider running under the Endpoint OS identity is not
 sandboxed from files that identity can read. Supporting hostile providers later requires a separate

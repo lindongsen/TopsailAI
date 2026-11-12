@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 import cli_topsailai.state as state
 from cli_topsailai.colors import Colors
 from cli_topsailai.constants import (
+    MANAGED_PROJECT_SPELLINGS,
+    PROJECT_RECENT_SPELLINGS,
+    QUIT_COMMAND_SPELLINGS,
     REFRESH_ALL_COMMAND_SPELLINGS,
     REFRESH_COMMAND_SPELLINGS,
     SESSION_COMMAND_SPELLINGS,
@@ -912,7 +915,7 @@ def prompt_selection(
                 continue
             lower_input = user_input.lower()
 
-            if lower_input in ("q", "quit", "exit", "/q", "/quit", "/exit"):
+            if lower_input in QUIT_COMMAND_SPELLINGS:
                 if state.current_scope == "doc":
                     return ("leave_scope", None)
                 return ("quit", None)
@@ -978,9 +981,9 @@ def prompt_selection(
                 state.current_scope == "workspace"
                 and state.workspace_showing_managed_projects
             ):
-                if lower_input in ("r", "recent", "/r", "/recent"):
+                if lower_input in PROJECT_RECENT_SPELLINGS:
                     return ("refresh", None)
-                if lower_input in ("p", "projects", "/p", "/projects"):
+                if lower_input in MANAGED_PROJECT_SPELLINGS:
                     return ("show_managed_projects", None)
                 if lower_input in ("cd", "/cd"):
                     return ("refresh", None)
@@ -1002,7 +1005,8 @@ def prompt_selection(
                         return ("agent_managed_project", arg)
                 print(
                     f"{Colors.RED}[ERROR] In projects list; supported commands: "
-                    f"r, p, q, p agent <number>{Colors.RESET}"
+                    f"r/recent, p/projects, q/quit/exit, cd, p agent <number>"
+                    f"{Colors.RESET}"
                 )
                 continue
 
@@ -1027,8 +1031,10 @@ def prompt_selection(
             # Project scope: r/recent shows recent session/project history.
             # This must be checked before the global r/refresh binding.
             if state.current_scope == "project" and (
-                lower_input in ("r", "recent", "/r", "/recent")
-                or lower_input.startswith(("r ", "recent ", "/r ", "/recent "))
+                lower_input in PROJECT_RECENT_SPELLINGS
+                or lower_input.startswith(
+                    tuple(spelling + " " for spelling in PROJECT_RECENT_SPELLINGS)
+                )
             ):
                 parts = user_input.split(None, 1)
                 if len(parts) > 1:
@@ -1153,7 +1159,7 @@ def prompt_selection(
 
             # Managed project list commands (available in workspace and project scopes).
             if state.current_scope in ("workspace", "project"):
-                if lower_input in ("p", "projects", "/p", "/projects"):
+                if lower_input in MANAGED_PROJECT_SPELLINGS:
                     return ("show_managed_projects", None)
                 if lower_input.startswith(("p ", "/p ")):
                     parts = user_input.split(None, 2)
