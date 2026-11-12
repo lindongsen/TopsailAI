@@ -9,9 +9,10 @@ created: 2026-11-07
 
 Every variable below is read once at the process boundary and converted into typed
 configuration. The Server and Endpoint read theirs through
-`internal/config/config.go`; the operator CLI reads its own two variables in
-`src/main/agent-cluster-cli/main.go`. Business logic receives explicit parameters
-and never reads the environment directly.
+`internal/config/config.go`; the operator CLI reads its own configuration in
+`src/main/agent-cluster-cli/main.go` and
+`src/main/agent-cluster-cli/input_history.go`. Business logic receives explicit parameters and never
+reads the environment directly.
 
 Almost every variable also has a command-line flag. The flag takes precedence over
 the environment variable, and the environment variable takes precedence over the
@@ -55,7 +56,7 @@ overrides the image default, which is the same precedence the flag has over the 
 package deployment. See `docs/agent-cluster-architecture.md` for the container directory tree and the
 mount points.
 
-The CLI is unaffected by the deployment form: it resolves its two variables from the five sources
+The CLI is unaffected by the deployment form: it resolves its configuration from the sources
 listed under "CLI configuration file precedence" regardless of whether the Server runs as a package or
 a container.
 
@@ -234,29 +235,42 @@ rejected before any allowlist or policy check.
 
 ## Client
 
-The operator CLI reads these two variables at its own process boundary. They are
-not read by the Server or the Endpoint, so a bundle deployment configures them per
-operator rather than per node.
+The operator CLI reads these variables at its own process boundary. They are not
+read by the Server or the Endpoint, so a bundle deployment configures them per
+operator rather than per node. History settings have no flags; the environment or
+CLI configuration files override their built-in defaults.
 
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
 | `AGENT_CLUSTER_SERVER_URL` | `--server-url` | `http://127.0.0.1:8080` | Server API URL the CLI connects to |
 | `AGENT_CLUSTER_TOKEN` | `--token` | empty | Bearer token the CLI presents to the Server |
+| `AGENT_CLUSTER_HISTORY_FILE` | none | `${HOME}/.topsailai/.topsailai_agent_cluster.history.jsonl` | Persistent JSONL file for accepted interactive input |
+| `AGENT_CLUSTER_HISTORY_MAX_ENTRIES` | none | `100` | Maximum trailing history records read at startup and maximum commands retained for Up/Down recall |
+| `AGENT_CLUSTER_HISTORY_MAX_SIZE_MB` | none | `1` | Maximum active history-file size before rotation |
+| `AGENT_CLUSTER_HISTORY_MAX_BACKUPS` | none | `1` | Maximum retained rotated history files |
 
 `AGENT_CLUSTER_TOKEN` has no built-in default, unlike the Server's development
 token. A CLI started without it omits the `Authorization` header entirely, so the
 Server rejects the request instead of the client silently using a known development
 value.
 
+Interactive history stores every accepted nonblank submission as one JSON object per
+line. REPL commands use `kind=command`; confirmation, guided-choice and wizard answers
+use `kind=answer`. Only commands enter Up/Down recall. The file is created with mode
+`0600`, startup reads only a bounded tail, and a missing, unreadable or malformed file
+is reported without preventing the interactive CLI from starting. A configured numeric
+bound must be a non-negative integer; zero uses the built-in default.
+
 ### CLI configuration file precedence
 
-The CLI resolves its two variables from five sources. `prepareExecutableEnv` runs
-in `main` before flag parsing, so the files are loaded first and the flags are then
-parsed with the resolved values as their defaults.
+The CLI resolves its configuration from five sources. `prepareExecutableEnv` runs
+in `main` before flag parsing, so the files are loaded first. The Server URL and token
+flags are then parsed with the resolved values as their defaults; history settings have
+no flags and are resolved once from the resulting environment.
 
 | Rank | Source | Mechanism |
 |---|---|---|
-| 1 | Explicit flag | `--server-url`, `--token` |
+| 1 | Explicit flag | `--server-url`, `--token`; no history flags |
 | 2 | Process environment | `os.LookupEnv` before the CLI starts |
 | 3 | Executable-local file | `/opt/agent-cluster/bin/.env.local` |
 | 4 | Per-user file | `${HOME}/.topsailai/.topsailai_agent_cluster.env` |

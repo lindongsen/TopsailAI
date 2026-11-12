@@ -814,3 +814,11 @@ indistinguishable from the exit status. Only capturing the `org.freedesktop.Noti
 call on the bus, or seeing the popup, proves the channel works. This is the same class as the
 recorded lesson about a styled prefix being invisible to a plain-text assertion: the evidence and the
 behaviour live in different places, so a green result certifies nothing.
+
+## Retention failure must stop the append it was meant to bound
+
+Trigger: input-history rotation reported deletion or rename errors and then continued appending. A failed cleanup could therefore leave the active file above its configured bound or overwrite a retained backup, while a successful expired-backup deletion was silent.
+
+Action: make retention maintenance return an error to the append path and abort the append when any stat, deletion or rename fails. Log every successful backup deletion with the exact path, and test both the successful deletion event and the failure boundary, including unchanged active content and unchanged persistent recall.
+
+Why this prevents recurrence: retention is part of the write contract, not optional housekeeping. Continuing after it fails makes a bounded append-only file unbounded while still reporting the input as recorded. Failing the append preserves the last known retained state, and an explicit deletion event makes irreversible cleanup observable.

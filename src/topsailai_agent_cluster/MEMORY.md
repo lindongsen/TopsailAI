@@ -223,3 +223,19 @@ and verify the same convenient behaviour.
 `clean <row|session>` is the reference pattern: the operator may use the visible list row for speed or
 a Session identifier when no table is available; the row is resolved locally to the real target and is
 never treated as durable identity.
+
+## Every interactive CLI input must be recorded in history
+
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> CLI 交互模式中提交的所有输入都需要记录到 history。
+
+This is a standing rule for the entire interactive CLI, not only the top-level REPL. Every accepted
+nonblank submission is persisted in bounded private JSONL history, including command lines,
+confirmation answers, guided choices and wizard answers. Rejected, overflowed and blank input is not a
+submitted value and is not recorded.
+
+Recording does not imply recall. REPL commands are recallable with Up/Down; prompt and wizard answers
+are recorded for history but never offered as commands or future prompt defaults. This distinction
+prevents a context-specific answer such as `y` or `3` from becoming an accidental command or repeated
+destructive confirmation.
