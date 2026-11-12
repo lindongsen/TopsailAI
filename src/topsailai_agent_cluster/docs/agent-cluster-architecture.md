@@ -389,11 +389,46 @@ compiled into the Endpoint. `providers/topsailai` may understand TopsailAI-nativ
 the generic CLI Adapter may not. `providers/mock` supplies both conforming behavior and locally
 configured broken modes for executable-level negative tests.
 
-Adding or replacing a provider installs a provider CLI and changes Endpoint-local binding
-configuration. It requires no Endpoint, Server, database schema, public API or operator CLI source
-change. The previous same-repository Go `Provider` registration proposal is superseded: Agent Cluster
-does not use Go runtime plugins, compile provider implementations into the Endpoint, or publish a Go
-SDK as the provider integration boundary.
+Provider deployment preserves that source boundary. `agent-cluster-endpoint` has no package dependency
+on a concrete provider. The optional `agent-cluster-provider-topsailai` package installs a versioned
+provider executable, while the mock is a test build artifact and is excluded from default production
+packages and installations.
+
+```mermaid
+flowchart LR
+    EndpointPackage["agent-cluster-endpoint package"]
+    ProviderPackage["agent-cluster-provider-topsailai package\noptional"]
+    MockArtifact["provider mock artifact\ntests only"]
+    EndpointRuntime["Endpoint runtime"]
+    ProviderRuntime["Configured versioned provider executable"]
+
+    EndpointPackage --> EndpointRuntime
+    ProviderPackage --> ProviderRuntime
+    EndpointRuntime -.->|"local binding configuration"| ProviderRuntime
+    MockArtifact -.->|"conformance and integration tests only"| EndpointRuntime
+```
+
+Adding or replacing a provider installs a provider package and changes Endpoint-local binding
+configuration. Installation alone neither restarts the Endpoint nor replaces the active executable.
+Provider artifacts use versioned paths: the operator validates `describe` compatibility and the
+provider package before atomically changing the binding to the new path. The previous version and its
+binding path remain available for rollback until cutover acceptance.
+
+```mermaid
+flowchart LR
+    Install["Install versioned provider artifact"] --> Describe["Run describe and compatibility checks"]
+    Describe --> Verify["Run conformance and bounded smoke checks"]
+    Verify --> Switch["Atomically switch Endpoint-local binding"]
+    Switch --> Publish["Re-describe and publish effective capability revision"]
+    Publish --> Accept{"Cutover accepted?"}
+    Accept -->|"yes"| Retire["Retire old artifact under retention policy"]
+    Accept -->|"no"| Rollback["Restore previous binding path"]
+```
+
+This requires no Endpoint, Server, database schema, public API or operator CLI source change. The
+previous same-repository Go `Provider` registration proposal is superseded: Agent Cluster does not use
+Go runtime plugins, compile provider implementations into the Endpoint, or publish a Go SDK as the
+provider integration boundary.
 
 ### Trust model
 
@@ -421,6 +456,31 @@ no shell, bounded stdin/stdout/stderr, strict JSON/JSONL validation, deadline an
 cleanup of the exact process group it owns. Remote input cannot enable mock fault modes or replace
 local process configuration. Supporting untrusted providers later requires a separate design for OS
 identities, filesystem and credential permissions, network restrictions and sandbox/container policy.
+
+### Binding scheduling and process custody
+
+Every provider binding has its own bounded scheduler. Endpoint, binding and provider descriptor limits
+are combined by taking the strictest value for total, discovery, mutation and follow work. Capacity is
+never shared in a way that lets one blocked provider consume another binding's slots.
+
+```mermaid
+flowchart LR
+    Requests["Adapter function calls"] --> BindingRouter["Route by binding ID"]
+    BindingRouter --> SchedulerA["Binding A scheduler\nstrictest configured limits"]
+    BindingRouter --> SchedulerB["Binding B scheduler\nstrictest configured limits"]
+    SchedulerA --> ProviderA["Provider CLI A processes"]
+    SchedulerB --> ProviderB["Provider CLI B processes"]
+    ProviderA --> Helper["Invocation helpers\nowned by the call"]
+    ProviderA --> Handoff{"Durable custody handoff complete?"}
+    Handoff -->|"yes"| Resource["Provider business resource\nindependent lifecycle"]
+    Handoff -->|"uncertain"| Unknown["unknown effect\nno automatic retry"]
+```
+
+The Generic CLI Adapter cleans up invocation helpers and its exact process group. A durable Agent or
+other provider business resource may survive the provider CLI only after the provider completes an
+explicit lifecycle handoff outside that invocation group. The provider cannot report acknowledged
+success before the handoff is durable; uncertain handoff remains an unknown effect. Protocol
+conformance checks helper cleanup, while provider live tests check the independent resource lifecycle.
 
 ### Migration constraint
 

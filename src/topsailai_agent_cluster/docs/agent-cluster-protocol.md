@@ -543,16 +543,46 @@ A discovery result returns `ProviderObservation` records with provider-private i
 ```
 
 It does not return `cluster_session_id` or another public Cluster ID. The Endpoint alone maps the
-provider key through `ResourceMapper`, builds the standard inventory resource, and performs the reverse
-lookup before later provider calls. Adapter discovery and Endpoint collection must not both mint or
-remap the same Cluster identity.
+provider identity through `ResourceMapper`, builds the standard inventory resource, and performs the
+reverse lookup before later provider calls. The durable mapping identity is the tuple:
+
+```text
+(binding_id, resource_kind, provider_resource_key)
+```
+
+`resource_kind` is a closed Cluster vocabulary. It is part of identity rather than descriptive data,
+so a provider may use the same private key for a Session and a Task without collapsing them into one
+Cluster resource. Adapter discovery and Endpoint collection must not both mint or remap the same
+Cluster identity.
+
+A provider must keep `provider_resource_key` stable for the same business resource across process
+restarts, repeated discovery and protocol-compatible provider upgrades. A provider must not silently
+change the key format. An unavoidable incompatible identity change requires one of: an explicit old-key
+alias, an Endpoint mapping migration, or a new binding identity approved as a breaking migration. The
+provider project must test key stability across every claimed compatible upgrade; executable
+conformance can prove repeatability for one version but cannot prove cross-version continuity.
+
+Four identities remain distinct:
+
+| Identity | Owner and purpose |
+|---|---|
+| `binding_id` | Endpoint-local identity of one configured provider instance and the namespace used by `ResourceMapper`. |
+| `launch_profile_id` | Public opaque identity of one standard launch preset; one binding may publish several profiles. |
+| Provider launch-profile key | Provider-private preset key resolved only inside the Endpoint/provider seam. |
+| Cluster resource ID | Endpoint-minted public identity of one discovered Agent, Session, Task or other standard resource. |
+
+The Endpoint resolves `launch_profile_id` to `binding_id` plus a provider-private launch-profile key.
+The current implementation where a launch profile ID doubles as an adapter ID is legacy compatibility,
+not the Adapter CLI identity model.
 
 ### Query framing
 
 `query` is the single framing function for provider-neutral read surfaces. Its names and schemas form
-a closed, versioned Cluster registry. Initial standard names include `launch.options`,
-`history.messages`, `model.catalog` and `session.messages`; the exact schema for each name is frozen in
-the protocol schema deliverable before implementation.
+a closed, versioned Cluster registry. Initial standard names are `launch.options`, `history.messages`,
+`model.catalog` and `session.messages`; the protocol schema deliverable freezes each target kind and
+request/result schema before implementation. Query capabilities and mutating operation capabilities
+are separate typed descriptor collections, so a read cannot become a mutation through classification
+ambiguity.
 
 ```json
 {
@@ -586,6 +616,15 @@ descriptor with the Cluster registry, Endpoint-supported behavior, binding confi
 local policy. It hashes the normalized result into the effective capability revision advertised to the
 Server. The provider descriptor revision is input evidence, not the public capability revision.
 
+The Endpoint refreshes a binding descriptor on Endpoint startup, binding add/change, provider
+executable-version switch, provider startup-configuration change, Endpoint policy reload and control
+action approval reload. Periodic discovery uses the accepted cached descriptor and does not invoke
+`describe` every cycle. A failed refresh never converts the provider surface to an apparently healthy
+empty capability set and never leaves the old descriptor advertised as current: the binding becomes
+`degraded` or `unavailable`, its last valid inventory remains explicitly stale, and new mutating
+operations are refused until a compatible descriptor is accepted. Recovery computes and publishes a
+new effective capability revision before admitting new mutation.
+
 ### Identity, generation and invocation rules
 
 Cluster resource IDs never cross into provider authority. Requests identify a provider target with an
@@ -618,10 +657,18 @@ Process exit, protocol validity, provider outcome and effect certainty are separ
 - The Endpoint may downgrade `acknowledged` to `unknown` when transport evidence is incomplete; it may
   never upgrade a provider result without stronger evidence.
 
-The generic CLI Adapter owns wall-clock and monotonic budgets, bounded reads, exact process-group
-cleanup and error logging. It must never terminate processes by a broad name match. A provider that
-launches a durable agent must complete an explicit provider-side lifecycle handoff before claiming
-acknowledgement; invocation helper processes remain owned by the call and must not leak.
+The Generic CLI Adapter owns wall-clock and monotonic budgets, bounded reads, exact process-group
+cleanup and error logging. It must never terminate processes by a broad name match.
+
+Provider processes have two distinct ownership classes. An invocation helper belongs to the current
+provider CLI call and must exit or be cleaned up when that call completes, times out or is cancelled.
+A durable provider business resource, such as an Agent started by the call, may outlive the invocation
+only after the provider has completed its own explicit lifecycle custody handoff. The provider may
+return `acknowledged` only after that handoff is durable and independent of the invocation process
+group. If handoff completion is uncertain, the result carries `effect_certainty=unknown`; the Generic
+CLI Adapter must neither guess success nor automatically retry. Conformance verifies that helpers do
+not leak, while provider live tests verify that a legitimately handed-off resource survives provider
+CLI exit and is not killed by later invocation cleanup.
 
 ### Configuration and trust boundary
 
@@ -629,6 +676,15 @@ The provider executable, fixed base arguments, working directory, minimal enviro
 provider configuration are Endpoint-local administrative settings. Each request carries only a
 binding ID and its operation data. Provider-specific secrets use a protected local mechanism and are
 not echoed in responses, stderr, receipts or audit records.
+
+Provider packages and Endpoint bindings have separate lifecycles. `agent-cluster-endpoint` has no
+package dependency on a concrete provider; a provider such as TopsailAI is installed through the
+optional `agent-cluster-provider-topsailai` package. The package installs an immutable, versioned
+executable path. Installing it does not restart the Endpoint, change the active binding or publish new
+capabilities. Activation requires an explicit local binding update after bootstrap compatibility and
+package verification; the Endpoint then re-runs `describe`, computes a new effective capability
+revision and publishes it. Rollback restores the previous versioned executable path. The mock provider
+is a test artifact and is not part of default production packaging or installation.
 
 For the MVP, the provider CLI is a locally trusted component and is not sandboxed from the Endpoint.
 The rule that it must not modify Endpoint databases, journals or credentials is an integration contract,
@@ -642,13 +698,23 @@ Endpoint retains its allowlist, working-directory resolution and confinement, mi
 timeout, output bounds and exact-process cleanup. A provider may supply standard Session directory
 evidence through discovery, but it cannot replace the Endpoint's command-execution policy.
 
-### Concurrency
+### Binding-level concurrency
 
-Because process-per-request invocations cannot coordinate through in-process provider locks,
-`describe` reports standard concurrency constraints such as total, discovery, mutation and follow
-limits and whether discovery serializes with mutation. The Endpoint enforces the stricter of its own
-hard limits and the provider descriptor. A provider can narrow limits but cannot expand Endpoint safety
-bounds.
+Process-per-request invocations cannot coordinate through provider process memory, so the Endpoint
+enforces concurrency before starting them. Each binding owns an independent scheduler and semaphores;
+a blocked or slow provider must not consume another binding's capacity. The effective limit for each
+class is the strictest of the Endpoint hard limit, the binding-local configuration and the provider
+constraint accepted from `describe`:
+
+```text
+effective_limit = min(endpoint_hard_limit, binding_limit, provider_limit)
+```
+
+The standard descriptor distinguishes at least total, discovery, mutation and follow limits, plus
+whether discovery must serialize with mutation. The Endpoint acquires both the total slot and the
+operation-class slot, and enforces cross-class serialization when required. A provider may narrow a
+limit but cannot expand an Endpoint safety bound. Queue admission is bounded and fails visibly when
+full; an unlimited process backlog is never used as flow control.
 
 ### Conformance
 
