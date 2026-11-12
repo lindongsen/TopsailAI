@@ -5,16 +5,21 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/topsailai/topsailai_data/pkg/adapters/local"
 	"github.com/topsailai/topsailai_data/pkg/config"
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
+	"github.com/topsailai/topsailai_data/pkg/filetool"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
@@ -736,4 +741,396 @@ func statOf(t *testing.T, ctx context.Context, mgr *manager.Manager, id string) 
 		t.Fatalf("read stat for %s: %v", id, err)
 	}
 	return stat
+}
+
+// allocatedBytes reports the cumulative bytes allocated by the process so far.
+// The counter is monotonic, so a difference measures the allocation of one
+// operation even when earlier allocations have already been collected.
+func allocatedBytes() uint64 {
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	return stats.TotalAlloc
+}
+
+// TestReadFileLargeFileUsesBoundedMemory proves that reading a file far larger
+// than the truncation limit does not buffer the whole file.
+//
+// The object-backed file system forwards the adapter's seekable stream, so the
+// read path stops once the limit is reached. Buffering the file first would
+// allocate at least the file size, which the assertion below rejects.
+func TestReadFileLargeFileUsesBoundedMemory(t *testing.T) {
+	const fileSize = 8 << 20
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "markdown",
+		"big.log": strings.Repeat("a", fileSize),
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	before := allocatedBytes()
+	got, err := filetool.ReadFile("big.log", filetool.ReadFileOptions{
+		Size:    -1,
+		FS:      fs,
+		Options: filetool.Options{TruncateLimit: 1000},
+	})
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	grown := allocatedBytes() - before
+
+	want := strings.Repeat("a", 1000) + filetool.TruncateSuffix
+	if got != want {
+		t.Fatalf("unexpected content: %d bytes", len(got))
+	}
+	if grown > 2<<20 {
+		t.Fatalf("reading a %d-byte file allocated %d bytes, so the stream was buffered", fileSize, grown)
+	}
+}
+
+// TestStatLargeFileUsesBoundedMemory proves that reporting a file size does not
+// read the file content. The size comes from the adapter's own file handle.
+func TestStatLargeFileUsesBoundedMemory(t *testing.T) {
+	const fileSize = 8 << 20
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "markdown",
+		"big.log": strings.Repeat("a", fileSize),
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	before := allocatedBytes()
+	info, err := fs.Stat("big.log")
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	grown := allocatedBytes() - before
+
+	if info.Size() != fileSize {
+		t.Fatalf("unexpected size: %d", info.Size())
+	}
+	if grown > 2<<20 {
+		t.Fatalf("stating a %d-byte file allocated %d bytes, so the content was read", fileSize, grown)
+	}
+}
+
+// TestAppendFromStreamsLargeSource proves that appending a large stream copies
+// it instead of buffering it in memory.
+func TestAppendFromStreamsLargeSource(t *testing.T) {
+	const chunk = 8 << 20
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	source := strings.NewReader(strings.Repeat("b", chunk))
+	before := allocatedBytes()
+	if err := fs.AppendFrom("big.log", source, 0o644); err != nil {
+		t.Fatalf("append from: %v", err)
+	}
+	grown := allocatedBytes() - before
+
+	info, err := fs.Stat("big.log")
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Size() != chunk {
+		t.Fatalf("unexpected size: %d", info.Size())
+	}
+	if grown > 2<<20 {
+		t.Fatalf("appending %d bytes allocated %d bytes, so the source was buffered", chunk, grown)
+	}
+}
+
+// TestWriteFileFromStreamsLargeSource proves that replacing a file from a
+// stream does not buffer the source in memory.
+//
+// The manager holds object custody for the whole write and the adapter copies
+// the stream, so memory use stays constant. Buffering the source first would
+// allocate at least its size, which the assertion below rejects.
+func TestWriteFileFromStreamsLargeSource(t *testing.T) {
+	const chunk = 8 << 20
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	source := strings.NewReader(strings.Repeat("c", chunk))
+	before := allocatedBytes()
+	if err := fs.WriteFileFrom("big.log", source, 0o644); err != nil {
+		t.Fatalf("write from: %v", err)
+	}
+	grown := allocatedBytes() - before
+
+	info, err := fs.Stat("big.log")
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Size() != chunk {
+		t.Fatalf("unexpected size: %d", info.Size())
+	}
+	if grown > 2<<20 {
+		t.Fatalf("writing %d bytes allocated %d bytes, so the source was buffered", chunk, grown)
+	}
+}
+
+// TestConcurrentAppendKeepsEverySuccessfulUpdate rejects an append path that
+// reports success and then loses the appended bytes to a concurrent writer.
+//
+// Scope of this guard: the advisory lock is non-blocking, so a losing writer
+// fails with ErrObjectLocked and never reports success. That means this test
+// catches an *unlocked* append, where every writer succeeds and the last one
+// overwrites the rest, but it does not by itself distinguish a lock-scoped
+// append from a read-modify-write that reads outside the lock: in the latter
+// case only one writer wins the write lock and the losers fail loudly, so no
+// acknowledged update is lost either. Bounded memory on a large existing file
+// is what pins the in-place append implementation; see
+// TestAppendToLargeExistingFileUsesBoundedMemory.
+//
+// A start gate releases every writer at the same instant so the race is
+// reproducible instead of depending on timing luck.
+func TestConcurrentAppendKeepsEverySuccessfulUpdate(t *testing.T) {
+	const writers = 16
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "markdown",
+		"notes.md": "base",
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	gate := make(chan struct{})
+	var mu sync.Mutex
+	succeeded := make([]int, 0, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			<-gate
+			marker := fmt.Sprintf("|w%d|", n)
+			err := fs.AppendFile("notes.md", []byte(marker), 0o644)
+			if err == nil {
+				mu.Lock()
+				succeeded = append(succeeded, n)
+				mu.Unlock()
+				return
+			}
+			if !errors.Is(err, apperrors.ErrObjectLocked) {
+				t.Errorf("append %d: unexpected error: %v", n, err)
+			}
+		}(i)
+	}
+	close(gate)
+	wg.Wait()
+
+	data, err := fs.ReadFile("notes.md")
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !strings.HasPrefix(string(data), "base") {
+		t.Fatalf("original content was lost: %q", data)
+	}
+	for _, n := range succeeded {
+		marker := fmt.Sprintf("|w%d|", n)
+		if !strings.Contains(string(data), marker) {
+			t.Fatalf("append %d reported success but %q is missing from %q", n, marker, data)
+		}
+	}
+}
+
+// TestConcurrentUpdateFileKeepsEverySuccessfulUpdate proves that the read and
+// the write of a read-modify-write run under one custody, so a concurrent
+// updater cannot interleave between them and discard an acknowledged update.
+//
+// The callback records how many updaters are inside it at once. Exclusive
+// custody means that number never exceeds one, which is a direct assertion of
+// the invariant rather than an inference from the final content.
+func TestConcurrentUpdateFileKeepsEverySuccessfulUpdate(t *testing.T) {
+	const writers = 16
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "markdown",
+		"notes.md": "base",
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	var inCallback int32
+	var maxInCallback int32
+	gate := make(chan struct{})
+	var mu sync.Mutex
+	succeeded := make([]int, 0, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			<-gate
+			marker := fmt.Sprintf("|w%d|", n)
+			err := fs.UpdateFile("notes.md", func(existing []byte, exists bool) ([]byte, error) {
+				current := atomic.AddInt32(&inCallback, 1)
+				defer atomic.AddInt32(&inCallback, -1)
+				for {
+					observed := atomic.LoadInt32(&maxInCallback)
+					if current <= observed || atomic.CompareAndSwapInt32(&maxInCallback, observed, current) {
+						break
+					}
+				}
+				if !exists {
+					return nil, fmt.Errorf("notes.md disappeared")
+				}
+				// Hold the callback open long enough that a second updater would
+				// certainly be observed if custody did not span the read.
+				time.Sleep(5 * time.Millisecond)
+				updated := append(append([]byte{}, existing...), []byte(marker)...)
+				return updated, nil
+			})
+			if err == nil {
+				mu.Lock()
+				succeeded = append(succeeded, n)
+				mu.Unlock()
+				return
+			}
+			if !errors.Is(err, apperrors.ErrObjectLocked) {
+				t.Errorf("update %d: unexpected error: %v", n, err)
+			}
+		}(i)
+	}
+	close(gate)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxInCallback); got > 1 {
+		t.Fatalf("%d updaters ran inside the read-modify-write at once, so custody does not span the read", got)
+	}
+
+	data, err := fs.ReadFile("notes.md")
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	for _, n := range succeeded {
+		marker := fmt.Sprintf("|w%d|", n)
+		if !strings.Contains(string(data), marker) {
+			t.Fatalf("update %d reported success but %q is missing from %q", n, marker, data)
+		}
+	}
+}
+
+// TestUpdateFileReportsMissingFile proves that the callback learns a file is
+// absent instead of receiving an error. The object-backed implementation reports
+// a missing file through the exists flag, so a caller can create it.
+func TestUpdateFileReportsMissingFile(t *testing.T) {
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	var seenExists bool
+	err := fs.UpdateFile("fresh.md", func(existing []byte, exists bool) ([]byte, error) {
+		seenExists = exists
+		if len(existing) != 0 {
+			t.Fatalf("expected no existing content, got %q", existing)
+		}
+		return []byte("created"), nil
+	})
+	if err != nil {
+		t.Fatalf("update file: %v", err)
+	}
+	if seenExists {
+		t.Fatal("a missing file was reported as existing")
+	}
+
+	data, err := fs.ReadFile("fresh.md")
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(data) != "created" {
+		t.Fatalf("unexpected content: %q", data)
+	}
+}
+
+// TestUpdateFileAbortsWithoutChangingContent proves that a callback error leaves
+// the stored content untouched.
+func TestUpdateFileAbortsWithoutChangingContent(t *testing.T) {
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "markdown",
+		"notes.md": "first",
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	sentinel := errors.New("abort the update")
+	err := fs.UpdateFile("notes.md", func(existing []byte, exists bool) ([]byte, error) {
+		return nil, sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected the callback error, got %v", err)
+	}
+
+	data, err := fs.ReadFile("notes.md")
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(data) != "first" {
+		t.Fatalf("content changed after an aborted update: %q", data)
+	}
+}
+
+// TestReadFileFullContentAllocatesFileSize is the sensitivity control for the
+// bounded-memory assertions above.
+//
+// ReadFile returns the complete content by contract, so it must allocate at
+// least the file size. This test proves the allocation counter really observes a
+// full-file buffer; without it, a bounded-memory assertion could pass simply
+// because the counter never moved.
+func TestReadFileFullContentAllocatesFileSize(t *testing.T) {
+	const fileSize = 8 << 20
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "markdown",
+		"big.log": strings.Repeat("a", fileSize),
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	before := allocatedBytes()
+	data, err := fs.ReadFile("big.log")
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	grown := allocatedBytes() - before
+
+	if len(data) != fileSize {
+		t.Fatalf("unexpected content length: %d", len(data))
+	}
+	if grown < fileSize {
+		t.Fatalf("reading %d bytes allocated only %d bytes, so the counter is not observing the buffer", fileSize, grown)
+	}
+}
+
+// TestAppendToLargeExistingFileUsesBoundedMemory proves that appending to a large
+// existing file does not read that file back into memory.
+//
+// This is the deterministic guard for the read-modify-write defect: an
+// implementation that reads the existing content, concatenates, and writes it
+// back must allocate at least the existing file size. An in-place append
+// allocates only its copy buffer.
+func TestAppendToLargeExistingFileUsesBoundedMemory(t *testing.T) {
+	const fileSize = 8 << 20
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":  "markdown",
+		"notes.md": strings.Repeat("x", fileSize),
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	before := allocatedBytes()
+	if err := fs.AppendFile("notes.md", []byte("tail"), 0o644); err != nil {
+		t.Fatalf("append file: %v", err)
+	}
+	grown := allocatedBytes() - before
+
+	info, err := fs.Stat("notes.md")
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Size() != fileSize+4 {
+		t.Fatalf("unexpected size: %d", info.Size())
+	}
+	if grown > 2<<20 {
+		t.Fatalf("appending to a %d-byte file allocated %d bytes, so the existing content was read back", fileSize, grown)
+	}
 }
