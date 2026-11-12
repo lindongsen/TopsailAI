@@ -153,8 +153,8 @@ and confines every provider detail to one adapter section. See
 
 | Component | Owns | Must not own |
 |---|---|---|
-| Server | Endpoint registry, standard capabilities/resources, caller authentication and request routing, latest inventory, standard command routing, audit | Adapter registry/configuration/selection or provider-specific interpretation of reported metadata, provider flags, local paths, PID selection, agent execution, operation authorization |
-| Endpoint | Local inventory authority, provider bindings, execution journal, local policy, bounded collection, stream relay | Cross-endpoint scheduling or assumptions about Server UI |
+| Server | Endpoint registry, standard capabilities/resources, caller authentication and request routing, latest inventory, standard command routing, audit | Adapter registry/configuration/selection or provider-specific interpretation of reported metadata, provider flags, local paths, PID selection, agent execution, operation authorization, relaying any Endpoint-originated message to another Endpoint |
+| Endpoint | Local inventory authority, provider bindings, execution journal, local policy, bounded collection, stream relay | Cross-endpoint scheduling or assumptions about Server UI, any message to another Endpoint, any request that the Server relay a message to another Endpoint |
 | Adapter | Provider discovery, identity mapping, semantic translation, supported operations, output normalization | Server credentials, network routing, cluster RBAC |
 | CLI/TUI | Selection, filtering, status display, confirmation, user intent | Backend polling logic or provider-specific shell commands |
 
@@ -179,6 +179,56 @@ maintenance, because that is an Agent outage rather than an Endpoint restart. A 
 installs and does not restart the container. Where Agents must survive an Endpoint restart, the Agents
 have to run outside the Endpoint's lifecycle boundary, and that is a deployment decision the protocol
 cannot make for the operator.
+
+## Endpoint isolation is a hard constraint
+
+Human direction on 2026-11-12, wording normalized, meaning preserved:
+
+> endpoint 之间不可以有交流。endpoint 去向 server 发消息再转给其它 endpoint，这种也是不允许的。
+
+This is a hard constraint, not a preference. An Endpoint must never send an instruction, request,
+notification or any other message to another Endpoint, and it must never ask the Server to relay one.
+The Server is a router between operators and Endpoints, never a relay between Endpoints. There is no
+exception for convenience, for a future feature, or for a provider that happens to expose a
+peer-to-peer surface.
+
+The constraint is stated as three prohibitions, because each one is a different way to violate it:
+
+| Prohibited | Meaning |
+|---|---|
+| Endpoint dials or accepts a peer Endpoint | An Endpoint has exactly one transport peer, its Server. It never opens a connection to another Endpoint and never accepts one. |
+| Endpoint asks the Server to relay | An Endpoint never emits a message whose destination is another Endpoint, and the Server never forwards an Endpoint-originated message to a different Endpoint. |
+| Endpoint-originated frame reaches a foreign Endpoint | A response is correlated to the peer that owns the request, so a frame from one Endpoint can never satisfy or influence another Endpoint. |
+
+Consequences that MUST hold for every change:
+
+- The Endpoint emits only responses to its own Server requests and reports about its own state. It
+  never produces a command frame. `FrameCommand` has exactly two legitimate producers: the Server
+  dispatching an operator-admitted intent to one addressed Endpoint, and an Endpoint replaying its
+  own journal into its own executor after restart.
+- The Server dispatches only operator-admitted intents, and only to the single Endpoint named by the
+  intent. No broadcast, fan-out, relay loop or "send to all Endpoints" path may be added.
+- Every pending request is bound to the Endpoint it was sent to, and every response is checked
+  against that binding before it is delivered. A frame from a different Endpoint is dropped.
+- An Endpoint never reads another Endpoint's address, token, certificate or configuration. Server
+  dial addresses are Server configuration and must never reach an Endpoint.
+- An Endpoint never learns that another Endpoint exists. Cross-Endpoint coordination, if it is ever
+  required, must be expressed as an operator action or a Server-side decision, never as
+  Endpoint-to-Endpoint messaging.
+- A new frame type, a new route or a new adapter capability that would carry a message from one
+  Endpoint to another is rejected at design review, not implemented and then restricted.
+
+Why this is a hard constraint rather than a guideline: an Endpoint holds local execution authority
+and makes its own local policy decision. A channel between two Endpoints would let one machine's
+authority reach another machine's resources without passing the Server's routing or the target
+Endpoint's own policy check, which is exactly the authority boundary this architecture exists to
+keep. The Server is deliberately not an authorizer, so it cannot be trusted to filter a relay it was
+never designed to perform.
+
+Verified against the implementation on 2026-11-12 by reading the Endpoint, channel and Server
+dispatch paths: no network primitive exists on the Endpoint side, the Endpoint emits only response
+and report frames, `Server.SendCommand` writes to one peer resolved by Endpoint ID, and every
+response correlation requires the pending request's Endpoint to equal the responding peer.
 
 ## Adapter seam and independent provider development
 
