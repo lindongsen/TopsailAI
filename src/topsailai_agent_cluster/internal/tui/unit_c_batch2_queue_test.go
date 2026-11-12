@@ -242,7 +242,7 @@ func unitC19MainHelp() string {
 		"  clean <row|session>                   delete provider-owned expired artifacts for one exact session after confirmation\n" +
 		"  drive [start|stop|status] [session]   manage a session driver by row number or session ID; drive stop leaves the agent running\n" +
 		"  status [command-id]                   show command result\n" +
-		"  refresh                               refresh inventories\n" +
+		"  refresh [endpoint] [-a|--all]         refresh inventories\n" +
 		unitC19WatchHelpLine() +
 		"  history [endpoint]                    read provider session history for one endpoint and number its rows\n" +
 		"  messages [-c N] [-t N] [session]      read one session's conversation by row number or session ID\n" +
@@ -260,7 +260,7 @@ func unitC19MainHelp() string {
 // Its syntax is wider than the block column, so the description hangs on the next
 // line at the shared description column.
 func unitC19WatchHelpLine() string {
-	return "  watch [interval] [--force] [-t|--trigger[=<path>]]\n" +
+	return "  watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]]\n" +
 		"                                        re-render the list on a timer until any key is pressed; --trigger runs a script when a session starts waiting for input\n"
 }
 

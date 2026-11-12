@@ -66,6 +66,91 @@ func refreshScopeStub() *refreshStub {
 	}
 }
 
+// TestParseRefreshArguments covers the interactive refresh grammar.
+func TestParseRefreshArguments(t *testing.T) {
+	cases := []struct {
+		name    string
+		rest    string
+		filter  string
+		all     bool
+		wantErr bool
+	}{
+		{name: "default"},
+		{name: "short all", rest: "-a", all: true},
+		{name: "long all with endpoint", rest: "endpoint-1 --all", filter: "endpoint-1", all: true},
+		{name: "endpoint after flag", rest: "--all endpoint-1", filter: "endpoint-1", all: true},
+		{name: "repeated all", rest: "-a --all", wantErr: true},
+		{name: "two endpoints", rest: "endpoint-1 endpoint-2", wantErr: true},
+		{name: "unknown flag", rest: "--clean", wantErr: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := parseRefreshArguments(testCase.rest)
+			if testCase.wantErr {
+				if err == nil {
+					t.Fatalf("rest=%q accepted, want error", testCase.rest)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("rest=%q: %v", testCase.rest, err)
+			}
+			if got.Filter != testCase.filter || got.All != testCase.all {
+				t.Fatalf("rest=%q parsed=%+v, want filter=%q all=%t", testCase.rest, got, testCase.filter, testCase.all)
+			}
+		})
+	}
+}
+
+// TestRefreshSkipsOfflineEndpointByDefault proves the default selection is
+// applied before forced collection, not after the failed result is rendered.
+func TestRefreshSkipsOfflineEndpointByDefault(t *testing.T) {
+	stub := refreshScopeStub()
+	stub.endpoints[1].ConnectionState = "offline"
+	output, diagnostics := runScope(t, stub, "refresh\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if calls := stub.forcedCollections(); len(calls) != 1 || calls[0] != "endpoint-1" {
+		t.Fatalf("forced collections=%v, want only online endpoint-1", calls)
+	}
+	if !strings.Contains(output, "offline endpoints hidden: 1 (use --all to include)") {
+		t.Fatalf("hidden endpoint summary missing: %q", output)
+	}
+}
+
+// TestRefreshAllIncludesOfflineEndpoint proves --all restores the complete
+// collection set.
+func TestRefreshAllIncludesOfflineEndpoint(t *testing.T) {
+	stub := refreshScopeStub()
+	stub.endpoints[1].ConnectionState = "offline"
+	output, diagnostics := runScope(t, stub, "refresh --all\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if calls := stub.forcedCollections(); len(calls) != 2 || calls[0] != "endpoint-1" || calls[1] != "endpoint-2" {
+		t.Fatalf("forced collections=%v, want both endpoints", calls)
+	}
+	if got := strings.Count(output, "offline endpoints hidden"); got != 1 {
+		t.Fatalf("hidden summary count=%d, want only the startup list summary: %q", got, output)
+	}
+}
+
+// TestRefreshExplicitOfflineEndpointWins proves a named Endpoint is attempted
+// even when the Server projection already marks it offline.
+func TestRefreshExplicitOfflineEndpointWins(t *testing.T) {
+	stub := refreshScopeStub()
+	stub.endpoints[1].ConnectionState = "offline"
+	stub.refreshErrors["endpoint-2"] = errors.New("endpoint offline")
+	_, diagnostics := runScope(t, stub, "refresh endpoint-2\nexit\n", ColorPolicy{})
+	if calls := stub.forcedCollections(); len(calls) != 1 || calls[0] != "endpoint-2" {
+		t.Fatalf("forced collections=%v, want explicit endpoint-2", calls)
+	}
+	if !strings.Contains(diagnostics, "endpoint offline") {
+		t.Fatalf("explicit offline failure missing: %q", diagnostics)
+	}
+}
+
 // TestRefreshForcesEveryEndpointInWorkspaceScope proves a workspace refresh asks
 // every Endpoint for a fresh collection before rendering. Collections run
 // concurrently, so the assertion compares the recorded set rather than the

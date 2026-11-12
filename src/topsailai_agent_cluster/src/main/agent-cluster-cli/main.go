@@ -271,10 +271,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return list(ctx, api, output, errors, *filter, listParsed, *jsonMode, tui.OutputColorPolicy(output))
 	case "refresh":
-		if err := parseRefreshArgs(flags.Args()[1:]); err != nil {
+		refreshParsed, err := parseRefreshArgs(flags.Args()[1:], *filter)
+		if err != nil {
 			return err
 		}
-		return refresh(ctx, api, output, errors, *filter, *jsonMode, tui.OutputColorPolicy(output))
+		return refresh(ctx, api, output, errors, refreshParsed, *jsonMode, tui.OutputColorPolicy(output))
 	case "endpoints":
 		endpointFilter, err := parseEndpointsArgs(flags.Args()[1:], *filter)
 		if err != nil {
@@ -798,13 +799,34 @@ func listUsageError(shorthand listShorthand) error {
 	}
 }
 
-// parseRefreshArgs rejects every positional argument, so a typo cannot silently
-// refresh a different scope than the operator intended.
-func parseRefreshArgs(args []string) error {
-	if len(args) != 0 {
-		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] refresh")
+// refreshFlags is the parsed standalone refresh tail. Filter includes the
+// existing global --endpoint value, so a positional Endpoint cannot silently
+// override it.
+type refreshFlags struct {
+	Filter string
+	All    bool
+}
+
+// parseRefreshArgs accepts one optional Endpoint and one spelling of --all. An
+// explicit Endpoint wins over the online-only default, while --all restores the
+// complete fleet collection. A repeated spelling is a usage error.
+func parseRefreshArgs(args []string, flagFilter string) (refreshFlags, error) {
+	parsed := refreshFlags{Filter: flagFilter}
+	for _, arg := range args {
+		switch arg {
+		case "-a", "--all":
+			if parsed.All {
+				return refreshFlags{}, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] refresh [endpoint] [-a|--all]")
+			}
+			parsed.All = true
+		default:
+			if strings.HasPrefix(arg, "-") || parsed.Filter != "" {
+				return refreshFlags{}, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] refresh [endpoint] [-a|--all]")
+			}
+			parsed.Filter = arg
+		}
 	}
-	return nil
+	return parsed, nil
 }
 
 // parseEndpointsArgs accepts at most one endpoint ID filter and rejects any
@@ -964,25 +986,29 @@ func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, fil
 
 // refresh forces one fresh Endpoint collection and renders the committed
 // inventory, so the operator's next view is fresh rather than a cached projection.
-func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
+func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, parsed refreshFlags, jsonMode bool, color tui.ColorPolicy) error {
 	refreshCtx, cancel := context.WithTimeout(ctx, tui.RefreshCommandTimeout())
 	defer cancel()
 	options := tui.TableOptionsFor(output)
 	options.Color = color
+	options.All = parsed.All
 	// A forced collection is the longest silent wait on the read surface, so it
 	// reports progress like a command does. The reporter is built from the
 	// diagnostics stream, so a redirected stream stays silent.
-	progress := tui.NewProgress(errors, refreshProgressHeader(filter))
-	return legacyRunner(api).RefreshWithProgress(refreshCtx, output, errors, filter, jsonMode, options, progress)
+	progress := tui.NewProgress(errors, refreshProgressHeader(parsed.Filter, parsed.All))
+	return legacyRunner(api).RefreshWithProgress(refreshCtx, output, errors, parsed.Filter, jsonMode, options, progress)
 }
 
 // refreshProgressHeader describes the forced collection in flight. A scoped
 // refresh names its Endpoint, because the operator asked for that exact one.
-func refreshProgressHeader(filter string) string {
-	if filter == "" {
+func refreshProgressHeader(filter string, all bool) string {
+	if filter != "" {
+		return "refreshing endpoint " + tui.SanitizeInlineText(filter) + "..."
+	}
+	if all {
 		return "refreshing all endpoints..."
 	}
-	return "refreshing endpoint " + tui.SanitizeInlineText(filter) + "..."
+	return "refreshing online endpoints..."
 }
 
 // endpoints renders the endpoint projection for the standalone CLI.

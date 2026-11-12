@@ -41,7 +41,7 @@ func (r CommandRunner) RefreshWithProgress(ctx context.Context, out, errors io.W
 	if _, ok := r.API.(InventoryRefresher); !ok {
 		return fmt.Errorf("forced collection is unavailable: the API client does not support refresh")
 	}
-	loaded, err := forceCollectionWithProgress(ctx, r.API, filter, progress)
+	loaded, err := forceCollectionSelected(ctx, r.API, filter, options.All, progress)
 	if err != nil {
 		return err
 	}
@@ -146,28 +146,47 @@ type endpointResult struct {
 	err        error
 }
 
-// forceCollection asks every Endpoint in scope to collect a fresh inventory and
-// returns the committed documents. Endpoints are collected concurrently, because
-// a serial loop makes the command cost the sum of every Endpoint instead of the
+// forceCollection asks every online Endpoint in scope to collect a fresh
+// inventory and returns the committed documents. An explicit Endpoint filter
+// wins over the online check, so a named offline Endpoint is still attempted and
+// reports its real failure. Endpoints are collected concurrently, because a
+// serial loop makes the command cost the sum of every Endpoint instead of the
 // slowest one. A failed Endpoint keeps its last committed document and is reported
-// through the load errors, so one slow or offline Endpoint never hides the others.
+// through the load errors, so one slow Endpoint never hides the others.
 func forceCollection(ctx context.Context, api InteractiveAPI, filter string) (reportLoad, error) {
-	return forceCollectionWithProgress(ctx, api, filter, nil)
+	return forceCollectionSelected(ctx, api, filter, false, nil)
 }
 
-// forceCollectionWithProgress is forceCollection with a progress reporter. Each
-// completed Endpoint is reported as one stage row, so a fleet refresh shows which
-// Endpoints have answered instead of a single opaque wait. The reporter is
-// presentation only, so a nil reporter keeps the previous behaviour exactly.
-func forceCollectionWithProgress(ctx context.Context, api InteractiveAPI, filter string, progress *ActionProgress) (reportLoad, error) {
+// forceWatchCollection performs the same forced collection as refresh after
+// applying list's Endpoint selection rule. A repeating watch skips a known-
+// offline Endpoint by default because every tick would otherwise repeat a
+// request that cannot reach it; --all restores the complete collection set.
+func forceWatchCollection(ctx context.Context, api InteractiveAPI, filter string, all bool) (reportLoad, error) {
+	return forceCollectionSelected(ctx, api, filter, all, nil)
+}
+
+// forceCollectionSelected executes the shared forced-collection implementation
+// over the selected Endpoints. Refresh and repeating watch both pass their
+// --all value so their defaults match list without duplicating collection logic.
+func forceCollectionSelected(ctx context.Context, api InteractiveAPI, filter string, all bool, progress *ActionProgress) (reportLoad, error) {
 	endpoints, err := api.ListEndpoints(ctx)
 	if err != nil {
 		return reportLoad{}, err
 	}
-	loaded := reportLoad{endpoints: endpoints, reports: make(map[string]protocol.InventoryReport), errors: make(map[string]error)}
+	loaded := reportLoad{
+		endpoints:      endpoints,
+		reports:        make(map[string]protocol.InventoryReport),
+		errors:         make(map[string]error),
+		skippedOffline: make(map[string]bool),
+	}
 	scoped := make([]protocol.Endpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		if filter != "" && endpoint.EndpointID != filter {
+			continue
+		}
+		explicit := filter != "" && endpoint.EndpointID == filter
+		if !all && !explicit && !endpointOnline(endpoint) {
+			loaded.skippedOffline[endpoint.EndpointID] = true
 			continue
 		}
 		scoped = append(scoped, endpoint)

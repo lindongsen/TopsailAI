@@ -21,16 +21,21 @@ import (
 // depending on wall-clock timing.
 type watchStub struct {
 	interactiveStub
-	mu    sync.Mutex
-	calls int
-	fail  error
-	gate  chan struct{}
+	mu        sync.Mutex
+	calls     int
+	callsByID map[string]int
+	fail      error
+	gate      chan struct{}
 }
 
 // GetInventory shadows the embedded stub so the watch loop is observable.
 func (s *watchStub) GetInventory(ctx context.Context, id string) (protocol.InventoryReport, error) {
 	s.mu.Lock()
 	s.calls++
+	if s.callsByID == nil {
+		s.callsByID = make(map[string]int)
+	}
+	s.callsByID[id]++
 	fail := s.fail
 	gate := s.gate
 	perEndpoint := s.inventoryErrors[id]
@@ -60,6 +65,14 @@ func (s *watchStub) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+// callCountFor reports the inventory reads for one Endpoint, so filtering tests
+// prove the request was skipped rather than merely hidden after it completed.
+func (s *watchStub) callCountFor(endpointID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.callsByID[endpointID]
 }
 
 // setFail changes the injected failure for the next read.
@@ -142,6 +155,7 @@ func TestParseWatchArguments(t *testing.T) {
 		rest     string
 		interval time.Duration
 		force    bool
+		all      bool
 		wantErr  bool
 	}{
 		{name: "WAT-U01 default", rest: "", interval: 5 * time.Second},
@@ -155,6 +169,9 @@ func TestParseWatchArguments(t *testing.T) {
 		{name: "WAT-U09 force below floor rejected", rest: "5s --force", wantErr: true},
 		{name: "WAT-U10 force at floor", rest: "10s --force", interval: 10 * time.Second, force: true},
 		{name: "WAT-U11 json rejected", rest: "--json", wantErr: true},
+		{name: "WAT-U12 short all", rest: "-a", interval: 5 * time.Second, all: true},
+		{name: "WAT-U13 long all with force", rest: "--all --force", interval: 10 * time.Second, force: true, all: true},
+		{name: "WAT-U14 repeated all rejected", rest: "-a --all", wantErr: true},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -168,8 +185,8 @@ func TestParseWatchArguments(t *testing.T) {
 			if err != nil {
 				t.Fatalf("rest=%q error=%v", testCase.rest, err)
 			}
-			if request.Interval != testCase.interval || request.Force != testCase.force {
-				t.Fatalf("rest=%q request=%+v, want interval=%s force=%v", testCase.rest, request, testCase.interval, testCase.force)
+			if request.Interval != testCase.interval || request.Force != testCase.force || request.All != testCase.all {
+				t.Fatalf("rest=%q request=%+v, want interval=%s force=%v all=%v", testCase.rest, request, testCase.interval, testCase.force, testCase.all)
 			}
 		})
 	}
@@ -289,6 +306,79 @@ func TestWatchControllerStopCancelsInFlightCollection(t *testing.T) {
 // collection hid every healthy endpoint behind one diagnostic line, so an
 // operator watching a fleet saw no table at all while most of it was reporting
 // normally. The failing endpoint is named beside the table instead.
+// TestWatchProjectionSkipsOfflineEndpointByDefault proves watch reuses list's
+// selection before fetching. A rendered-row assertion alone cannot distinguish
+// an avoided request from a request hidden after it failed, so the test asserts
+// the per-Endpoint call count too.
+func TestWatchProjectionSkipsOfflineEndpointByDefault(t *testing.T) {
+	stub := newWatchStub()
+	stub.endpoints[1].ConnectionState = "offline"
+	ticks := newWatchManualTicks()
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
+	defer controller.Stop()
+	result := waitForResult(t, controller)
+	if result.err != nil {
+		t.Fatalf("projection watch failed: %v", result.err)
+	}
+	if got := stub.callCountFor("endpoint-2"); got != 0 {
+		t.Fatalf("offline inventory reads=%d, want 0", got)
+	}
+	if strings.Contains(string(result.output), "endpoint endpoint-2 unavailable") {
+		t.Fatalf("offline endpoint produced a diagnostic: %q", result.output)
+	}
+	if !strings.Contains(string(result.output), "offline endpoints hidden: 1 (use --all to include)") {
+		t.Fatalf("hidden endpoint summary missing: %q", result.output)
+	}
+	tracker := triggerTracker{}
+	if events := tracker.observe(result.rows); len(events) != 0 {
+		t.Fatalf("initial rendered rows fired trigger events: %+v", events)
+	}
+	if len(tracker.states) != 1 {
+		t.Fatalf("trigger baseline entries=%d, want only the online rendered session", len(tracker.states))
+	}
+	for key := range tracker.states {
+		if key.EndpointID == "endpoint-2" {
+			t.Fatalf("hidden offline endpoint entered trigger baseline: %+v", key)
+		}
+	}
+}
+
+// TestWatchProjectionAllIncludesOfflineEndpoint proves --all restores the
+// previous complete projection, including the inventory read.
+func TestWatchProjectionAllIncludesOfflineEndpoint(t *testing.T) {
+	stub := newWatchStub()
+	stub.endpoints[1].ConnectionState = "offline"
+	ticks := newWatchManualTicks()
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second, All: true}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
+	defer controller.Stop()
+	result := waitForResult(t, controller)
+	if result.err != nil {
+		t.Fatalf("projection watch --all failed: %v", result.err)
+	}
+	if got := stub.callCountFor("endpoint-2"); got != 1 {
+		t.Fatalf("offline inventory reads=%d, want 1", got)
+	}
+	if strings.Contains(string(result.output), "offline endpoints hidden") {
+		t.Fatalf("--all kept the hidden endpoint summary: %q", result.output)
+	}
+}
+
+// TestWatchProjectionExplicitOfflineEndpointWins proves a named Endpoint is not
+// mistaken for an omitted fleet member.
+func TestWatchProjectionExplicitOfflineEndpointWins(t *testing.T) {
+	stub := newWatchStub()
+	stub.endpoints[1].ConnectionState = "offline"
+	ticks := newWatchManualTicks()
+	controller := newWatchController(context.Background(), stub, "endpoint-2", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
+	defer controller.Stop()
+	if result := waitForResult(t, controller); result.err != nil {
+		t.Fatalf("explicit offline watch failed: %v", result.err)
+	}
+	if got := stub.callCountFor("endpoint-2"); got != 1 {
+		t.Fatalf("explicit offline inventory reads=%d, want 1", got)
+	}
+}
+
 func TestWatchControllerRendersTableWhenOneEndpointFails(t *testing.T) {
 	stub := newWatchStub()
 	stub.inventoryErrors = map[string]error{"endpoint-2": errors.New("adapter failed")}
@@ -374,6 +464,42 @@ func TestWatchControllerLeavesNoGoroutine(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("goroutines=%d, want at most %d after Stop", runtime.NumGoroutine(), before)
+}
+
+// TestWatchForcedModeSkipsOfflineEndpointByDefault proves the selection is
+// applied before provider discovery, not only before rendering its result.
+func TestWatchForcedModeSkipsOfflineEndpointByDefault(t *testing.T) {
+	stub := refreshScopeStub()
+	stub.endpoints[1].ConnectionState = "offline"
+	ticks := newWatchManualTicks()
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: 10 * time.Second, Force: true}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
+	defer controller.Stop()
+	result := waitForResult(t, controller)
+	if result.err != nil {
+		t.Fatalf("forced watch failed: %v", result.err)
+	}
+	if calls := stub.forcedCollections(); len(calls) != 1 || calls[0] != "endpoint-1" {
+		t.Fatalf("forced collections=%v, want only online endpoint-1", calls)
+	}
+	if !strings.Contains(string(result.output), "offline endpoints hidden: 1 (use --all to include)") {
+		t.Fatalf("hidden endpoint summary missing: %q", result.output)
+	}
+}
+
+// TestWatchForcedModeAllIncludesOfflineEndpoint proves --all restores forced
+// collection for every Endpoint.
+func TestWatchForcedModeAllIncludesOfflineEndpoint(t *testing.T) {
+	stub := refreshScopeStub()
+	stub.endpoints[1].ConnectionState = "offline"
+	ticks := newWatchManualTicks()
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: 10 * time.Second, Force: true, All: true}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
+	defer controller.Stop()
+	if result := waitForResult(t, controller); result.err != nil {
+		t.Fatalf("forced watch --all failed: %v", result.err)
+	}
+	if calls := stub.forcedCollections(); len(calls) != 2 || calls[0] != "endpoint-1" || calls[1] != "endpoint-2" {
+		t.Fatalf("forced collections=%v, want both endpoints", calls)
+	}
 }
 
 // TestWatchControllerForcedModeUsesForcedCollection proves --force asks the
@@ -1014,7 +1140,7 @@ func TestWatchHelpDocumentsTheStopRule(t *testing.T) {
 		t.Fatalf("PrintScopedCommandHelp: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"watch [interval] [--force] [-t|--trigger[=<path>]]", "workspace, endpoint", "any keypress stops the loop", "-t, --trigger: run a script when a session changes from running to waiting_input", "topsailai-agent-cluster.on-state-change.trigger", "an endpoint that fails to report is named beside the table instead of replacing it"} {
+	for _, want := range []string{"watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]]", "workspace, endpoint", "-a, --all: include Endpoints that are not online", "any keypress stops the loop", "-t, --trigger: run a script when a session changes from running to waiting_input", "topsailai-agent-cluster.on-state-change.trigger", "an online endpoint that fails to report is named beside the table instead of replacing it"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q: %q", want, text)
 		}

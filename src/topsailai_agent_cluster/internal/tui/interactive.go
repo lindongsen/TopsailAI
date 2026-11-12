@@ -615,7 +615,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "status":
 		return false, interactiveStatus(ctx, api, state, strings.TrimSpace(rest), out)
 	case "refresh":
-		return false, interactiveRefresh(ctx, api, state, trustedOut, errOut, options.Color)
+		return false, interactiveRefreshCommand(ctx, api, state, rest, trustedOut, errOut, options.Color)
 	case "watch":
 		return false, interactiveWatch(api, state, rest, trustedOut, options)
 	case "start":
@@ -1114,21 +1114,74 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 	return nil
 }
 
-// interactiveRefresh forces one fresh Endpoint collection in the current scope and
+// refreshArguments is the parsed interactive refresh tail. The filter is kept
+// beside All so the caller cannot accidentally apply --all to one Endpoint while
+// rendering another.
+type refreshArguments struct {
+	Filter string
+	All    bool
+}
+
+const refreshUsage = "usage: refresh [endpoint] [-a|--all]"
+
+// parseRefreshArguments accepts one optional Endpoint and one spelling of --all.
+// A repeated spelling is rejected because resolving it by precedence would
+// silently ignore an argument the operator stated.
+func parseRefreshArguments(rest string) (refreshArguments, error) {
+	parsed := refreshArguments{}
+	for _, token := range strings.Fields(rest) {
+		switch token {
+		case "-a", "--all":
+			if parsed.All {
+				return refreshArguments{}, fmt.Errorf("%s", refreshUsage)
+			}
+			parsed.All = true
+		case "--clean":
+			return refreshArguments{}, fmt.Errorf("%s", refreshUsage)
+		default:
+			if strings.HasPrefix(token, "-") || parsed.Filter != "" {
+				return refreshArguments{}, fmt.Errorf("%s", refreshUsage)
+			}
+			parsed.Filter = token
+		}
+	}
+	return parsed, nil
+}
+
+// interactiveRefreshCommand parses the operator's refresh tail before invoking
+// the shared refresh implementation. Internal refresh actions keep calling
+// interactiveRefresh directly, so a launch prompt can refresh its current scope
+// without pretending it parsed a command line.
+func interactiveRefreshCommand(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out, errors io.Writer, color ColorPolicy) error {
+	arguments, err := parseRefreshArguments(rest)
+	if err != nil {
+		return err
+	}
+	return interactiveRefreshWithArguments(parent, api, state, arguments, out, errors, color)
+}
+
+// interactiveRefresh forces one fresh Endpoint collection in the current scope
+// with the default online-only selection. It is also used by launch prompts whose
+// refresh action has no command tail to parse.
+func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
+	return interactiveRefreshWithArguments(parent, api, state, refreshArguments{}, out, errors, color)
+}
+
+// interactiveRefreshWithArguments forces one fresh Endpoint collection and
 // renders the committed inventory, so the operator sees fresh data rather than a
 // cached Server projection. In session scope it revalidates the pinned selection
 // against that same committed document, so a changed generation still invalidates
 // the selection instead of silently retargeting it.
-func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
+func interactiveRefreshWithArguments(parent context.Context, api InteractiveAPI, state *interactiveState, arguments refreshArguments, out, errors io.Writer, color ColorPolicy) error {
 	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
-	scoped, err := scopedListFilter(state, "")
+	scoped, err := scopedListFilter(state, arguments.Filter)
 	if err != nil {
 		return err
 	}
 	state.Rows = nil
 	staged := make([]SessionRow, 0)
-	loaded, err := forceCollection(ctx, api, scoped)
+	loaded, err := forceCollectionSelected(ctx, api, scoped, arguments.All, nil)
 	if err != nil {
 		state.Rows = nil
 		return err
@@ -1148,7 +1201,7 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 			return err
 		}
 	}
-	err = renderListRows(out, errors, loaded, scoped, false, tableOptionsFor(out, color, listArguments{}, func(rows []SessionRow) { staged = append(staged, rows...) }))
+	err = renderListRows(out, errors, loaded, scoped, false, tableOptionsFor(out, color, listArguments{All: arguments.All}, func(rows []SessionRow) { staged = append(staged, rows...) }))
 	if err != nil {
 		state.Rows = nil
 		return err

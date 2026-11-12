@@ -72,7 +72,7 @@ func TestRefreshHelpAndDispatchContract(t *testing.T) {
 	if err := runWithIO([]string{"help", "refresh"}, strings.NewReader(""), &helpOut, &helpDiagnostics, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	const syntax = "agent-cluster-cli [options] [--endpoint <id>] refresh"
+	const syntax = "agent-cluster-cli [options] [--endpoint <id>] refresh [endpoint] [-a|--all]"
 	if !strings.Contains(helpOut.String(), syntax) {
 		t.Fatalf("help=%q missing executable syntax %q", helpOut.String(), syntax)
 	}
@@ -130,18 +130,41 @@ func TestRefreshJSONMatchesListJSON(t *testing.T) {
 	}
 }
 
-// TestRefreshRejectsPositionalArguments proves a typo cannot silently refresh a
-// different scope than the operator intended.
-func TestRefreshRejectsPositionalArguments(t *testing.T) {
+// TestRefreshAcceptsPositionalEndpoint proves the standalone surface supports the
+// same exact Endpoint selection as the interactive command.
+func TestRefreshAcceptsPositionalEndpoint(t *testing.T) {
 	fixture := newRefreshTestServer(t)
 	var output, diagnostics strings.Builder
 	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "refresh", "endpoint-1"}
-	err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil)
-	if err == nil || err.Error() != "usage: agent-cluster-cli [options] [--endpoint <id>] refresh" {
-		t.Fatalf("unexpected positional result: %v", err)
+	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("positional refresh failed: %v diagnostics=%q", err, diagnostics.String())
 	}
-	if calls := fixture.calls(); len(calls) != 0 {
-		t.Fatalf("rejected command still forced collection: %v", calls)
+	if got, want := strings.Join(fixture.calls(), ","), "endpoint-1"; got != want {
+		t.Fatalf("forced collection=%q want=%q", got, want)
+	}
+	if !sameStringSet(listSessionIDs(output.String()), []string{"fresh-1"}) {
+		t.Fatalf("rendered rows=%q", output.String())
+	}
+}
+
+// TestRefreshRejectsConflictingSelectorsAndRepeatedAll proves two spellings
+// cannot silently override each other or apply one option twice.
+func TestRefreshRejectsConflictingSelectorsAndRepeatedAll(t *testing.T) {
+	for _, args := range [][]string{
+		{"--endpoint", "endpoint-1", "refresh", "endpoint-2"},
+		{"refresh", "endpoint-1", "endpoint-2"},
+		{"refresh", "-a", "--all"},
+	} {
+		fixture := newRefreshTestServer(t)
+		fullArgs := append([]string{"--server-url", fixture.server.URL, "--token", "test-token"}, args...)
+		var output, diagnostics strings.Builder
+		err := runWithIO(fullArgs, strings.NewReader(""), &output, &diagnostics, false, nil)
+		if err == nil || err.Error() != "usage: agent-cluster-cli [options] [--endpoint <id>] refresh [endpoint] [-a|--all]" {
+			t.Fatalf("args=%v unexpected result: %v", args, err)
+		}
+		if calls := fixture.calls(); len(calls) != 0 {
+			t.Fatalf("args=%v rejected command still forced collection: %v", args, calls)
+		}
 	}
 }
 

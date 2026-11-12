@@ -257,7 +257,7 @@ was dispatched rather than rejected as unknown.
 | Command | Standalone spelling | Interactive spelling | Compliant |
 |---|---|---|---|
 | `list` | `list`, `list --full`, `lf`, `list --brief`, `lb` | `list`, `l`, `list --full`, `lf`, `list --brief`, `lb` | yes (the `lf` shorthand implies the full layout and the `lb` shorthand implies the brief column set, on both surfaces) |
-| `refresh` | `refresh` | `refresh`, `r` | yes |
+| `refresh` | `refresh [endpoint] [-a|--all]` | `refresh [endpoint] [-a|--all]`, `r` | yes (defaults to online Endpoints; an explicit Endpoint wins over that default) |
 | `history` | `history <endpoint-id-or-hostname>` | `history [endpoint-id-or-hostname]` | yes (standalone requires the endpoint argument; interactive requires it in workspace scope, and in endpoint scope it defaults to the current endpoint while rejecting a different one) |
 | `messages` | `messages <endpoint-id-or-hostname> <session-id>` | `messages [row-number-or-session-id]` | yes (standalone requires both arguments and addresses the provider session key; interactive resolves a bare number against the most recently rendered table, either the list or the history table, and rejects a number when neither is available) |
 | `endpoints` | `endpoints` | `endpoints` | yes |
@@ -277,7 +277,7 @@ was dispatched rather than rejected as unknown.
 | `agent.drive.start` | `drive start` | `drive start [session]` | yes |
 | `agent.drive.stop` | `drive stop` | `drive stop [session]` | yes |
 | `drive status` | `drive status` | `drive status [session]`, `drive [session]` | yes |
-| `watch` | not applicable | `watch`, `w` | yes |
+| `watch` | not applicable | `watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]]`, `w` | yes (projection and forced modes default to online Endpoints) |
 | `help` | `help` | `help`, `?` | yes |
 | `cd` | not applicable | `cd` | not applicable |
 | `quit` | not applicable | `quit`, `q` (both navigate back outside workspace scope) | not applicable |
@@ -409,6 +409,14 @@ that is already available. The immediate collection is the same bounded collecti
 tick performs, including the forced-collection path under `--force`, so it adds no
 new capability and no new failure mode. A repeated identical failure is still
 reported once, because the de-duplication applies to the immediate collection too.
+
+Both watch modes apply the same Endpoint selection before every request. The default
+projection mode does not read known-offline Endpoints, and `watch --force` does not
+force provider discovery on them. `-a` and `--all` restore those Endpoints in either
+mode. An explicit Endpoint scope still wins, because naming one machine is a request
+to observe that machine even when it is offline. This rule must run before the read
+or forced collection; hiding a row after the request would repeat the unavailable
+diagnostic on every tick.
 
 The presentation policy is re-read on every render rather than sampled once when the
 loop starts, so a terminal resize during a watch run is honoured on the next tick.
@@ -557,10 +565,11 @@ starts a stream, repeated `output_chunk` frames carry records, and exactly one
 `output_end` frame closes it, all correlated by the same request ID. No new
 connection, no subscription resource and no durable stream state are introduced.
 
-## The `list` default and the `-a|--all` flag
+## Online Endpoint defaults and the `-a|--all` flag
 
-`list` renders sessions from Endpoints that are online. An Endpoint that is not
-online is not queried at all, so it produces neither a placeholder row nor an
+`list`, `watch` and `refresh` select Endpoints before issuing a request. `list`
+renders sessions from Endpoints that are online. An Endpoint that is not online is
+not queried at all, so it produces neither a placeholder row nor an
 `endpoint <id> unavailable` diagnostic. `-a` and `--all` are one flag in two
 spellings, and they include those Endpoints again.
 
@@ -590,10 +599,17 @@ an empty table would describe it as absent instead of offline.
 failed, which the default still shows with its diagnostic. The two flags therefore
 answer different questions and neither is redundant.
 
+`watch` uses the same selection for every tick. Projection mode skips inventory
+reads for known-offline Endpoints, while `watch --force` skips their forced
+collections; `watch --all` restores them in both modes. `refresh` likewise forces
+only online Endpoints by default and accepts `refresh [endpoint] [-a|--all]` on both
+surfaces. A named Endpoint is attempted even when offline so its real failure is
+reported instead of being misrepresented as absence.
+
 The shared target-resolution load keeps its previous behaviour, because `resume`
 exists precisely for a session whose process is gone: a resolver must still read a
-disconnected Endpoint's retained document. Only the list render uses the skipping
-load.
+disconnected Endpoint's retained document. Only fleet rendering and explicit
+collection commands apply the online-only default.
 
 ## The `list --full` flag and the `lf` shorthand
 

@@ -29,6 +29,10 @@ const (
 type watchRequest struct {
 	Interval time.Duration
 	Force    bool
+	// All includes Endpoints that are not online. Projection mode shares list's
+	// selection rule, while forced mode applies the same rule before provider
+	// discovery so a repeating watch does not probe a known-offline Endpoint.
+	All bool
 	// TriggerSet records that the operator asked for a trigger script. It is
 	// separate from TriggerPath because a bare --trigger means "use the default
 	// location", which is a different request from naming a path.
@@ -67,12 +71,12 @@ type WatchLineReader interface {
 // watchUsage is the interactive usage line. One constant keeps every rejection
 // message identical, so an operator never has to compare two spellings of the
 // same grammar.
-const watchUsage = "usage: watch [interval] [--force] [-t|--trigger[=<path>]]"
+const watchUsage = "usage: watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]]"
 
 // parseWatchArguments decodes the interactive watch grammar.
 // Accepted forms are "watch", "watch <interval>", "watch --force",
-// "watch <interval> --force", and either of those with "-t", "--trigger",
-// "-t=<path>" or "--trigger=<path>" appended.
+// "watch <interval> --force", and either of those with "-a", "--all", "-t",
+// "--trigger", "-t=<path>" or "--trigger=<path>" appended.
 //
 // --trigger is a flag with an optional value rather than a positional argument,
 // because the interval is already positional and a bare path would be
@@ -94,6 +98,11 @@ func parseWatchArguments(rest string) (watchRequest, error) {
 				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}
 			request.Force = true
+		case token == "-a" || token == "--all":
+			if request.All {
+				return watchRequest{}, fmt.Errorf("%s", watchUsage)
+			}
+			request.All = true
 		case token == "--trigger" || token == "-t":
 			if request.TriggerSet {
 				return watchRequest{}, fmt.Errorf("%s", watchUsage)
@@ -365,9 +374,9 @@ func (c *watchController) collectionContext() (context.Context, context.CancelFu
 // render, and that is the one case this function reports as an error.
 func (c *watchController) load(ctx context.Context) (reportLoad, error) {
 	if c.request.Force {
-		return forceCollection(ctx, c.api, c.filter)
+		return forceWatchCollection(ctx, c.api, c.filter, c.request.All)
 	}
-	return loadReports(ctx, c.api, c.filter)
+	return loadListReports(ctx, c.api, c.filter, c.request.All)
 }
 
 // render produces the table bytes through the shared renderer, so sanitization
@@ -386,7 +395,7 @@ func (c *watchController) render(loaded reportLoad) ([]SessionRow, []byte, error
 	var buffer bytes.Buffer
 	safe := &watchWriter{safeWriter: &safeWriter{target: &buffer, keepSGR: c.color.Enabled}, layout: c.layoutSource()}
 	var rows []SessionRow
-	options := tableOptionsFor(safe, c.color, listArguments{}, func(rendered []SessionRow) {
+	options := tableOptionsFor(safe, c.color, listArguments{All: c.request.All}, func(rendered []SessionRow) {
 		rows = append(rows, rendered...)
 	})
 	if err := renderListRows(safe, safe, loaded, c.filter, false, options); err != nil {

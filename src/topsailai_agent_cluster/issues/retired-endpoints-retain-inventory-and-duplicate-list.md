@@ -108,3 +108,18 @@ weakened to remove the rows.
   rather than passing by construction.
 - `make test-unit-cli`, `make test-unit-common`, `make vet` and `git diff --check`
   pass.
+
+## Watch and refresh follow the same selection rule
+
+`watch` and `refresh` now apply the same online-only default before issuing any
+request. Projection watch does not read known-offline Endpoint inventories, forced
+watch does not launch repeated collection attempts for them, and refresh does not
+force them during a fleet refresh. `-a`/`--all` restores the complete Endpoint set.
+An explicitly named Endpoint still wins over the default and is attempted even when
+it is offline, so an operator asking for one machine receives its real failure.
+
+This closes the remaining repeated-noise path: filtering only during rendering would
+still issue one failed request per offline Endpoint on every watch tick. The shared
+selection now runs before both inventory reads and forced collections. This section
+records the code change only; package deployment evidence belongs in a later rollout
+record.
