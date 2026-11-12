@@ -916,3 +916,25 @@ not release the socket or its read loop. Interleaving resource release with a fa
 callback lets one Endpoint's storage latency retain unrelated Endpoint resources. Closing the whole
 batch first makes connection cleanup independent across Endpoints while preserving durable offline
 publication afterward.
+
+## Extracting a shared submission path must not create a second command budget
+
+Trigger: removing the interactive `btw` confirmation meant the direct form and the confirmed form
+had to share one submission body. The body was extracted from `interactiveConfirmedAction` into
+`submitInteractiveAction`, and the first version of the helper created its own `commandContext(parent)`
+internally. That silently doubled the command deadline for every operation that still confirms —
+`stop`, `interrupt`, `ctl`, `drive start`, `drive stop`, `clean`, `resume` and model selection — because
+the caller had already created a budget to revalidate the target and the helper then created another.
+
+Action: when extracting a helper out of a function that already owns a context, pass the caller's
+context in and let the helper use it, instead of letting the helper derive a new one. Only the caller
+that has no budget yet should create one. Here the direct form creates its own `submitCtx` exactly as
+the explicit `send` path does, while the confirmed form passes the context that already revalidated the
+target, so a confirmation never buys a second deadline. Keep `parent` as a separate parameter when a
+post-submit step needs its own bounded budget, and say so in the helper's doc comment.
+
+Why this prevents recurrence: a helper that creates its own context looks more self-contained and
+reads as the safer extraction, and every test still passes because a doubled deadline only changes
+timing, never behaviour. The defect is invisible in the diff: the added line is correct in isolation
+and the removed line was the only evidence of the original budget. Writing the budget ownership into
+the doc comment is what makes the next extraction check it rather than rediscover it.
