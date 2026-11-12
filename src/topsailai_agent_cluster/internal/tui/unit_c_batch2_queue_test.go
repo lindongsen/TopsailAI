@@ -239,7 +239,7 @@ func unitC19MainHelp() string {
 		unitC19StartHelpLine() +
 		"  resume [row]                          resume a stopped session by row number; a bare resume needs exactly one unknown session\n" +
 		"  stop [session]                        stop a session by row number or session ID\n" +
-		"  clean <session>                       delete provider-owned expired artifacts for one exact session after confirmation\n" +
+		"  clean <row|session>                   delete provider-owned expired artifacts for one exact session after confirmation\n" +
 		"  drive [start|stop|status] [session]   manage a session driver by row number or session ID; drive stop leaves the agent running\n" +
 		"  status [command-id]                   show command result\n" +
 		"  refresh                               refresh inventories\n" +

@@ -101,7 +101,7 @@ func TestCleanRejectsAmbiguousIdentifierAcrossEndpoints(t *testing.T) {
 	stub.reports["endpoint-2"] = scopeInventory("res-shared", "generation-2")
 	cleanStub := cleanInteractiveStub{interactiveStub: stub}
 	_, diagnostics := runScope(t, cleanStub, "clean res-shared\nexit\n", ColorPolicy{})
-	assertActionableError(t, diagnostics, `error: multiple sessions match "res-shared"; use clean <number> with a row from list`)
+	assertActionableError(t, diagnostics, `error: multiple sessions match "res-shared"; use clean <row> with a row from list`)
 	if cleanStub.admit != 0 {
 		t.Fatalf("ambiguous clean admitted %d commands", cleanStub.admit)
 	}

@@ -18,7 +18,7 @@ func interactiveClean(parent context.Context, api InteractiveAPI, state *interac
 	}
 	token := strings.TrimSpace(rest)
 	if token == "" {
-		return fmt.Errorf("usage: clean <session>")
+		return fmt.Errorf("usage: clean <row|session>")
 	}
 	ctx, cancel := commandContext(parent)
 	target, err := resolveCleanTarget(ctx, api, state, token)
@@ -123,7 +123,7 @@ func resolveCleanTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI, 
 		}
 		return sessionTarget{}, numericTokenHint(token, fmt.Errorf("session %q was not found on any endpoint", token))
 	default:
-		return sessionTarget{}, fmt.Errorf("multiple sessions match %q; use clean <number> with a row from list", token)
+		return sessionTarget{}, fmt.Errorf("multiple sessions match %q; use clean <row> with a row from list", token)
 	}
 }
 
