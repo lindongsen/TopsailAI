@@ -64,7 +64,8 @@ a container.
 
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
-| `AGENT_CLUSTER_DATABASE_PATH` | `--database-path` | `.tmp/server.sqlite` | SQLite database file |
+| `AGENT_CLUSTER_DATABASE_PATH` | `--database-path` | `.tmp/server.sqlite` for the Server, `.tmp/endpoint.sqlite` for the Endpoint | SQLite database file |
+| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional`; read by both the Server and the Endpoint |
 | `AGENT_CLUSTER_TLS_CA_FILE` | `--tls-ca-file` | empty | CA bundle used to verify peers |
 | `AGENT_CLUSTER_TLS_CERTIFICATE_FILE` | `--tls-certificate-file` | empty | Node certificate |
 | `AGENT_CLUSTER_TLS_KEY_FILE` | `--tls-key-file` | empty | Node private key |
@@ -82,7 +83,6 @@ a container.
 |---|---|---|---|
 | `AGENT_CLUSTER_SERVER_API_LISTEN_ADDR` | `--api-listen-addr` | `:8080` | Bearer-authenticated operator API address |
 | `AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR` | `--channel-listen-addr` | `:8443` | mTLS Endpoint channel address; unused in the `server-initiated` direction |
-| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
 | `AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES` | `--endpoint-dial-addresses` | empty | Comma-separated `endpoint_id=wss://address` pairs the Server dials in the `server-initiated` and `bidirectional` directions |
 | `AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
 | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
@@ -123,13 +123,13 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_ID` | `--endpoint-id` | empty | Endpoint identity announced to the Server |
 | `AGENT_CLUSTER_ENDPOINT_INSTANCE_ID` | `--instance-id` | `default` | Endpoint instance identity |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
-| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
 | `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `--endpoint-access-policy-dir` | empty | Endpoint-local directory holding one access policy file per caller token; empty means every caller is permitted |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | none | `5000` | Positive post-collection delay in milliseconds; launcher value is `COLLECTION_DELAY_MS` |
+| `AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY` | none | `10m` | Positive duration retaining each Adapter's last successful source snapshot; older source cache is deleted before collection, while resource mappings and command evidence are preserved; launcher value is `SOURCE_CACHE_EXPIRY` |
 
 ### `AGENT_CLUSTER_ENDPOINT_ADAPTERS`
 
