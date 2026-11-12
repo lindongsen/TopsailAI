@@ -370,6 +370,8 @@ Explicit provisional limits: terminal command results and audit summaries retain
 
 Unregistering an Endpoint revokes its credential and removes or clears its single current Session inventory according to explicit unregister policy, without creating inventory history; it never deletes provider workspaces or terminates agents. Each component cleans only resources it owns. Cleanup events are audited.
 
+The Server automatically expires an offline Endpoint's latest Session inventory after five minutes by default. `AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY` changes that positive duration. Expiry is based on the Server-owned Endpoint update time, rechecks the offline state transactionally, and never deletes command evidence. Endpoint metadata is removed only when no retained command references it; otherwise the stale inventory is removed and the identity remains for historical command lookup. Each removed inventory and metadata record is logged with its Endpoint identity and cutoff.
+
 ## Session reporting and latest-only persistence
 
 Human direction:

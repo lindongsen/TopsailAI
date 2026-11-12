@@ -85,6 +85,13 @@ a container.
 | `AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES` | `--endpoint-dial-addresses` | empty | Comma-separated `endpoint_id=wss://address` pairs the Server dials in the `server-initiated` and `bidirectional` directions |
 | `AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
 | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
+| `AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY` | `--endpoint-expiry` | `5m` | Positive duration after which the Server removes offline Endpoint inventory; Endpoint metadata is also removed when no retained command references it |
+
+### `AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY`
+
+The Server owns expiry because it owns the persisted fleet projection. The value is a positive Go duration such as `30s`, `5m`, or `1h`; zero and negative values are rejected. A cleanup runs once at Server startup and then at a bounded interval of at most one minute.
+
+When an Endpoint has remained offline beyond the configured duration, the Server removes its `endpoint_session_state` row so stale sessions no longer appear in `list`. The Server also removes the Endpoint metadata row when no retained command references it. If command evidence exists, the metadata row remains so historical command lookup retains its Endpoint identity. Online and recently disconnected Endpoints are never selected.
 
 ### `AGENT_CLUSTER_SERVER_AUTH_TOKEN`
 

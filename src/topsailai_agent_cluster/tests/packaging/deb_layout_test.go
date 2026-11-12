@@ -740,6 +740,16 @@ func TestDebLauncherForwardsTheAccessPolicyDir(t *testing.T) {
 	}
 }
 
+// TestDebLauncherForwardsServerEndpointExpiry proves the packaged launcher
+// passes the configured offline-record retention window to the Server binary.
+func TestDebLauncherForwardsServerEndpointExpiry(t *testing.T) {
+	packages := buildDebPackages(t)
+	launcher := readPackagedFile(t, packages["node"], debOptDir+"/agent-clusterctl")
+	if !hasLineContaining(launcher, "--endpoint-expiry", "ENDPOINT_EXPIRY") {
+		t.Fatal("the packaged launcher never forwards ENDPOINT_EXPIRY to --endpoint-expiry")
+	}
+}
+
 // hasLineContaining reports whether some line of text contains every one of the
 // given substrings. A line-scoped check is what distinguishes a forwarding site
 // from an unrelated mention of the same name elsewhere in the script.

@@ -822,3 +822,21 @@ Trigger: input-history rotation reported deletion or rename errors and then cont
 Action: make retention maintenance return an error to the append path and abort the append when any stat, deletion or rename fails. Log every successful backup deletion with the exact path, and test both the successful deletion event and the failure boundary, including unchanged active content and unchanged persistent recall.
 
 Why this prevents recurrence: retention is part of the write contract, not optional housekeeping. Continuing after it fails makes a bounded append-only file unbounded while still reporting the input as recorded. Failing the append preserves the last known retained state, and an explicit deletion event makes irreversible cleanup observable.
+
+## A persisted online state is stale after the process that owned the connection restarts
+
+Trigger: while adding Server-side expiry for offline Endpoint inventory, the first design selected only
+rows already marked `offline`. After an unclean Server stop, a persisted Endpoint row can still say
+`online` even though no channel survives the Server process. That abandoned identity would therefore
+never become eligible for expiry and its old inventory would remain indefinitely.
+
+Action: at the final pre-serve startup checkpoint, mark every persisted `online` Endpoint offline without
+refreshing its `update_at_ms`. A real reconnect publishes a newer online observation normally. Keep this
+recovery after configuration and service validation, so a Server that fails before it is ready does not
+mutate connection state merely because an operator attempted to start it.
+
+Why this prevents recurrence: connection state describes a relationship with one running Server process,
+not durable truth. Persisting it supports restart diagnostics, but replaying `online` as current state
+confuses historical evidence with a live channel. Preserving the old timestamp also matters: refreshing it
+at startup would grant every abandoned identity a new retention window on every restart and could keep
+stale inventory alive forever on a frequently restarted Server.
