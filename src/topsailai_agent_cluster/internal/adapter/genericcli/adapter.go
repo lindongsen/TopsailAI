@@ -260,6 +260,132 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 	})
 }
 
+// LaunchProfile reads and maps this Adapter instance's provider-private launch profile.
+func (a *Adapter) LaunchProfile(ctx context.Context) (protocol.LaunchHandler, error) {
+	result, err := a.launchOptions(ctx, false)
+	if err != nil {
+		return protocol.LaunchHandler{}, err
+	}
+	mapping, err := a.config.Mapper.GetOrCreateResourceID(ctx, a.config.AdapterID, protocol.ResourceLaunchProfile, result.Profile.ProviderResourceKey, a.config.Now().UnixMilli())
+	if err != nil {
+		return protocol.LaunchHandler{}, err
+	}
+	return protocol.LaunchHandler{AdapterID: a.config.AdapterID, LaunchProfileID: mapping.ResourceID, DisplayName: result.Profile.DisplayName, Revision: result.Profile.Revision}, nil
+}
+
+// Projects returns provider-managed launch projects without exposing the launch profile key.
+func (a *Adapter) Projects(ctx context.Context) ([]protocol.Project, error) {
+	result, err := a.launchOptions(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	projects := make([]protocol.Project, 0, len(result.Projects))
+	for _, project := range result.Projects {
+		projects = append(projects, protocol.Project{Name: project.Name, Path: project.Path})
+	}
+	return projects, nil
+}
+
+// History maps provider-private session keys to opaque Cluster resource IDs.
+func (a *Adapter) History(ctx context.Context, query protocol.HistoryQuery) (protocol.HistoryResult, error) {
+	payload, _ := json.Marshal(providercli.HistoryMessagesPayload{Limit: query.Limit})
+	value, err := a.typedQuery(ctx, providercli.QueryHistoryMessages, nil, payload)
+	if err != nil {
+		return protocol.HistoryResult{}, err
+	}
+	providerResult := value.(providercli.HistoryMessagesResult)
+	result := protocol.HistoryResult{Rows: make([]protocol.HistoryRow, 0, len(providerResult.Rows)), ObservedAtMS: providerResult.ObservedAtMS, Truncated: providerResult.Truncated}
+	for _, row := range providerResult.Rows {
+		mapping, mapErr := a.config.Mapper.GetOrCreateResourceID(ctx, a.config.AdapterID, protocol.ResourceSession, row.ProviderResourceKey, providerResult.ObservedAtMS)
+		if mapErr != nil {
+			return protocol.HistoryResult{}, mapErr
+		}
+		result.Rows = append(result.Rows, protocol.HistoryRow{ProviderSessionID: row.ProviderSessionID, ResourceID: mapping.ResourceID, ProviderDisplayName: row.ProviderDisplayName, ProviderProjectWorkspace: row.ProviderProjectWorkspace, Task: row.Task, ProviderStatus: row.ProviderStatus, CreatedAtMS: row.CreatedAtMS, ModifiedAtMS: row.ModifiedAtMS, ProviderNo: row.ProviderNo, Resumable: row.Resumable, ResumeBlockedReason: row.ResumeBlockedReason})
+	}
+	return result, nil
+}
+
+// ModelCatalog maps provider-private profile keys to opaque Cluster profile IDs.
+func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
+	target, err := a.providerTarget(ctx, query.Target, false)
+	if err != nil {
+		return protocol.ModelCatalog{}, err
+	}
+	value, err := a.typedQuery(ctx, providercli.QueryModelCatalog, target, json.RawMessage(`{}`))
+	if err != nil {
+		return protocol.ModelCatalog{}, err
+	}
+	providerResult := value.(providercli.ModelCatalogResult)
+	result := protocol.ModelCatalog{Profiles: make([]protocol.ModelProfile, 0, len(providerResult.Profiles)), ObservedAtMS: providerResult.ObservedAtMS, Truncated: providerResult.Truncated}
+	for _, profile := range providerResult.Profiles {
+		mapping, mapErr := a.config.Mapper.GetOrCreateResourceID(ctx, a.config.AdapterID, protocol.ResourceModelProfile, profile.ProviderResourceKey, providerResult.ObservedAtMS)
+		if mapErr != nil {
+			return protocol.ModelCatalog{}, mapErr
+		}
+		result.Profiles = append(result.Profiles, protocol.ModelProfile{ModelProfileID: mapping.ResourceID, ProviderDisplayName: profile.ProviderDisplayName, CurrentState: profile.CurrentState, Available: profile.Available, UnavailableReason: profile.UnavailableReason})
+		if profile.ProviderResourceKey == providerResult.CurrentProviderResourceKey {
+			result.CurrentProfileID = mapping.ResourceID
+		}
+	}
+	return result, nil
+}
+
+// Messages converts one typed provider conversation result without creating a new Cluster identity.
+func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (protocol.MessagesResult, error) {
+	target := &providercli.Target{ResourceKind: protocol.ResourceSession, ProviderResourceKey: query.ProviderSessionID}
+	payload, _ := json.Marshal(providercli.SessionMessagesPayload{MaxChars: query.MaxChars, MaxTokens: query.MaxTokens})
+	value, err := a.typedQuery(ctx, providercli.QuerySessionMessages, target, payload)
+	if err != nil {
+		return protocol.MessagesResult{}, err
+	}
+	providerResult := value.(providercli.SessionMessagesResult)
+	result := protocol.MessagesResult{ProviderSessionID: providerResult.ProviderSessionID, Messages: make([]protocol.Message, 0, len(providerResult.Messages)), MessageCount: providerResult.MessageCount, ObservedAtMS: providerResult.ObservedAtMS, Truncated: providerResult.Truncated}
+	for _, message := range providerResult.Messages {
+		result.Messages = append(result.Messages, protocol.Message{Role: message.Role, Content: message.Content, CreatedAtMS: message.CreatedAtMS, WordCount: message.WordCount, TokenCount: message.TokenCount})
+	}
+	return result, nil
+}
+
+func (a *Adapter) launchOptions(ctx context.Context, includeProjects bool) (providercli.LaunchOptionsResult, error) {
+	payload, _ := json.Marshal(providercli.LaunchOptionsPayload{IncludeProjects: includeProjects})
+	value, err := a.typedQuery(ctx, providercli.QueryLaunchOptions, nil, payload)
+	if err != nil {
+		return providercli.LaunchOptionsResult{}, err
+	}
+	return value.(providercli.LaunchOptionsResult), nil
+}
+
+func (a *Adapter) typedQuery(ctx context.Context, name string, target *providercli.Target, payload json.RawMessage) (any, error) {
+	query := providercli.NamedContract{Name: name, Version: "v1"}
+	if !a.supportsQuery(query) {
+		return nil, adapter.ErrUnsupported
+	}
+	if _, err := providercli.DecodeQueryPayload(query, target, payload); err != nil {
+		return nil, fmt.Errorf("validate provider query request: %w", err)
+	}
+	response, err := a.call(ctx, classDiscovery, providercli.FunctionQuery, target, nil, &query, "", payload)
+	if err != nil {
+		return nil, err
+	}
+	if err := responseError(response); err != nil {
+		return nil, err
+	}
+	value, err := providercli.DecodeQueryResult(query, response.QueryResult)
+	if err != nil {
+		return nil, fmt.Errorf("decode provider query result: %w", err)
+	}
+	return value, nil
+}
+
+func (a *Adapter) supportsQuery(query providercli.NamedContract) bool {
+	for _, candidate := range a.descriptor.Queries {
+		if candidate == query {
+			return true
+		}
+	}
+	return false
+}
+
 // QueryCommand reconciles one prior Provider invocation when supported.
 func (a *Adapter) QueryCommand(ctx context.Context, query adapter.CommandQuery) (adapter.CommandResult, error) {
 	response, err := a.call(ctx, classMutation, providercli.FunctionQueryCommand, nil, nil, nil, query.ProviderRequestRef, json.RawMessage(`{}`))

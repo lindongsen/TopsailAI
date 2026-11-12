@@ -100,7 +100,18 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 		if intent.LaunchProfileID == "" || intent.ProfileRevision == "" {
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "profile_required"))
 		}
-		if descriptor.Capabilities.Revision != intent.ProfileRevision {
+		profileRevision := descriptor.Capabilities.Revision
+		if profileReader, ok := instance.(adapter.LaunchProfileHandler); ok {
+			profile, profileErr := profileReader.LaunchProfile(ctx)
+			if profileErr != nil {
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "profile_unavailable"))
+			}
+			if profile.LaunchProfileID != intent.LaunchProfileID {
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "profile_not_found"))
+			}
+			profileRevision = profile.Revision
+		}
+		if profileRevision != intent.ProfileRevision {
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "profile_revision_mismatch"))
 		}
 	}
@@ -346,9 +357,23 @@ func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.Immutab
 	if intent.Operation != "agent.start" {
 		return nil, "", resolutionFailure("target_required", fmt.Errorf("resource_id is required for operation %q", intent.Operation))
 	}
+	mapping, err := e.store.LookupResourceID(ctx, intent.LaunchProfileID)
+	if err == nil {
+		if mapping.ResourceKind != protocol.ResourceLaunchProfile {
+			return nil, "", resolutionFailure("profile_not_found", fmt.Errorf("resource_id %q is not a launch profile", intent.LaunchProfileID))
+		}
+		instance, ok := e.registry.Get(mapping.AdapterID)
+		if !ok {
+			return nil, "", resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile %q adapter %q is not configured", intent.LaunchProfileID, mapping.AdapterID))
+		}
+		return instance, mapping.AdapterID, nil
+	}
+	if !errors.Is(err, endpointstorage.ErrResourceNotFound) {
+		return nil, "", fmt.Errorf("launch profile %q mapping lookup failed: %w", intent.LaunchProfileID, err)
+	}
 	instance, ok := e.registry.Get(intent.LaunchProfileID)
 	if !ok {
-		return nil, "", resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile adapter %q is not configured", intent.LaunchProfileID))
+		return nil, "", resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile %q is not configured", intent.LaunchProfileID))
 	}
 	return instance, intent.LaunchProfileID, nil
 }

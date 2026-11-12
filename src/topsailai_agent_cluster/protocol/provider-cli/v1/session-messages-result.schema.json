@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/session-messages-result.schema.json",
+  "title": "session-messages-result query_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provider_session_id",
+    "messages",
+    "message_count",
+    "observed_at_ms",
+    "truncated"
+  ],
+  "properties": {
+    "provider_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "messages": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "word_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "token_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "message_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "description": "Validated after correlation with the v1 query in the common request envelope."
+}

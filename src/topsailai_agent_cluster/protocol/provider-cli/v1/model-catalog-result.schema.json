@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/model-catalog-result.schema.json",
+  "title": "model-catalog-result query_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profiles",
+    "observed_at_ms",
+    "truncated"
+  ],
+  "properties": {
+    "profiles": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_kind",
+          "provider_resource_key",
+          "current_state",
+          "available"
+        ],
+        "properties": {
+          "resource_kind": {
+            "const": "model_profile"
+          },
+          "provider_resource_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "provider_display_name": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "current_state": {
+            "enum": [
+              "yes",
+              "no",
+              "unknown"
+            ]
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "current_provider_resource_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "description": "Validated after correlation with the v1 query in the common request envelope."
+}

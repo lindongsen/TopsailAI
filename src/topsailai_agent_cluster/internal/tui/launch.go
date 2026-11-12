@@ -305,7 +305,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 			return err
 		}
 	} else {
-		if len(projects.Handlers) != 1 || projects.Handlers[0].AdapterID != selected.AdapterID || projects.Handlers[0].Revision != selected.Revision {
+		if len(projects.Handlers) != 1 || projects.Handlers[0].AdapterID != selected.AdapterID || launchProfileID(projects.Handlers[0]) != launchProfileID(selected) || projects.Handlers[0].Revision != selected.Revision {
 			return fmt.Errorf("launch handler changed; start again")
 		}
 		for index, project := range projects.Projects {
@@ -362,7 +362,14 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return interactiveStart(ctx, api, state, interactiveStartRequest{EndpointID: endpointID, Profile: selected.AdapterID, ProfileRevision: selected.Revision, Folder: folder, Payload: payload}, out, trustedOut, options)
+	return interactiveStart(ctx, api, state, interactiveStartRequest{EndpointID: endpointID, Profile: launchProfileID(selected), ProfileRevision: selected.Revision, Folder: folder, Payload: payload}, out, trustedOut, options)
+}
+
+func launchProfileID(handler protocol.LaunchHandler) string {
+	if handler.LaunchProfileID != "" {
+		return handler.LaunchProfileID
+	}
+	return handler.AdapterID
 }
 
 // launchAdapterRowLabel renders one adapter row as "display name (adapter id)".

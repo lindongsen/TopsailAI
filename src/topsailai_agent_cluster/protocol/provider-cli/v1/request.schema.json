@@ -4,96 +4,512 @@
   "title": "Agent Cluster Provider CLI v1 request",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocol", "major", "minor", "request_id", "function", "adapter_id", "deadline_at_ms", "budget", "payload"],
+  "required": [
+    "protocol",
+    "major",
+    "minor",
+    "request_id",
+    "function",
+    "adapter_id",
+    "deadline_at_ms",
+    "budget",
+    "payload"
+  ],
   "properties": {
-    "protocol": {"const": "agent-cluster-adapter"},
-    "major": {"const": 1},
-    "minor": {"type": "integer", "minimum": 0, "maximum": 0},
-    "request_id": {"$ref": "#/$defs/identifier"},
-    "function": {"enum": ["describe", "discover", "inspect", "execute", "query", "query_command", "read_output", "follow_output", "watch"]},
-    "adapter_id": {"$ref": "#/$defs/identifier"},
-    "invocation_id": {"$ref": "#/$defs/identifier"},
-    "deadline_at_ms": {"type": "integer", "minimum": 1},
-    "budget": {"$ref": "#/$defs/budget"},
-    "target": {"$ref": "#/$defs/target"},
-    "operation": {"$ref": "#/$defs/named_contract"},
-    "query": {"$ref": "#/$defs/standard_query"},
-    "payload": {"not": {"type": "null"}}
+    "protocol": {
+      "const": "agent-cluster-adapter"
+    },
+    "major": {
+      "const": 1
+    },
+    "minor": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 0
+    },
+    "request_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "function": {
+      "enum": [
+        "describe",
+        "discover",
+        "inspect",
+        "execute",
+        "query",
+        "query_command",
+        "read_output",
+        "follow_output",
+        "watch"
+      ]
+    },
+    "adapter_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "invocation_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "deadline_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "budget": {
+      "$ref": "#/$defs/budget"
+    },
+    "target": {
+      "$ref": "#/$defs/target"
+    },
+    "operation": {
+      "$ref": "#/$defs/named_contract"
+    },
+    "query": {
+      "$ref": "#/$defs/standard_query"
+    },
+    "payload": {
+      "not": {
+        "type": "null"
+      }
+    }
   },
   "allOf": [
     {
-      "if": {"properties": {"function": {"const": "execute"}}, "required": ["function"]},
+      "if": {
+        "properties": {
+          "function": {
+            "const": "execute"
+          }
+        },
+        "required": [
+          "function"
+        ]
+      },
       "then": {
-        "required": ["invocation_id", "target", "operation"],
-        "properties": {"target": {"$ref": "#/$defs/mutation_target"}},
-        "not": {"required": ["query"]}
+        "required": [
+          "invocation_id",
+          "target",
+          "operation"
+        ],
+        "properties": {
+          "target": {
+            "$ref": "#/$defs/mutation_target"
+          }
+        },
+        "not": {
+          "required": [
+            "query"
+          ]
+        }
       }
     },
     {
-      "if": {"properties": {"function": {"const": "query"}}, "required": ["function"]},
-      "then": {"required": ["query"], "not": {"anyOf": [{"required": ["operation"]}, {"required": ["invocation_id"]}]}}
+      "if": {
+        "properties": {
+          "function": {
+            "const": "query"
+          }
+        },
+        "required": [
+          "function"
+        ]
+      },
+      "then": {
+        "required": [
+          "query"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "operation"
+              ]
+            },
+            {
+              "required": [
+                "invocation_id"
+              ]
+            }
+          ]
+        }
+      }
     },
     {
-      "if": {"properties": {"function": {"enum": ["inspect", "read_output", "follow_output"]}}, "required": ["function"]},
-      "then": {"required": ["target"], "not": {"anyOf": [{"required": ["operation"]}, {"required": ["query"]}, {"required": ["invocation_id"]}]}}
+      "if": {
+        "properties": {
+          "function": {
+            "enum": [
+              "inspect",
+              "read_output",
+              "follow_output"
+            ]
+          }
+        },
+        "required": [
+          "function"
+        ]
+      },
+      "then": {
+        "required": [
+          "target"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "operation"
+              ]
+            },
+            {
+              "required": [
+                "query"
+              ]
+            },
+            {
+              "required": [
+                "invocation_id"
+              ]
+            }
+          ]
+        }
+      }
     },
     {
-      "if": {"properties": {"function": {"const": "query_command"}}, "required": ["function"]},
-      "then": {"required": ["invocation_id"], "not": {"anyOf": [{"required": ["operation"]}, {"required": ["query"]}]}}
+      "if": {
+        "properties": {
+          "function": {
+            "const": "query_command"
+          }
+        },
+        "required": [
+          "function"
+        ]
+      },
+      "then": {
+        "required": [
+          "invocation_id"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "operation"
+              ]
+            },
+            {
+              "required": [
+                "query"
+              ]
+            }
+          ]
+        }
+      }
     },
     {
-      "if": {"properties": {"function": {"enum": ["describe", "discover", "watch"]}}, "required": ["function"]},
-      "then": {"not": {"anyOf": [{"required": ["operation"]}, {"required": ["query"]}, {"required": ["invocation_id"]}, {"required": ["target"]}]}}
+      "if": {
+        "properties": {
+          "function": {
+            "enum": [
+              "describe",
+              "discover",
+              "watch"
+            ]
+          }
+        },
+        "required": [
+          "function"
+        ]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "operation"
+              ]
+            },
+            {
+              "required": [
+                "query"
+              ]
+            },
+            {
+              "required": [
+                "invocation_id"
+              ]
+            },
+            {
+              "required": [
+                "target"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "query": {
+            "properties": {
+              "name": {
+                "const": "launch.options"
+              },
+              "version": {
+                "const": "v1"
+              }
+            }
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "launch-options-request.schema.json"
+          }
+        },
+        "not": {
+          "required": [
+            "target"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "query": {
+            "properties": {
+              "name": {
+                "const": "history.messages"
+              },
+              "version": {
+                "const": "v1"
+              }
+            }
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "history-messages-request.schema.json"
+          }
+        },
+        "not": {
+          "required": [
+            "target"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "query": {
+            "properties": {
+              "name": {
+                "const": "model.catalog"
+              },
+              "version": {
+                "const": "v1"
+              }
+            }
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "model-catalog-request.schema.json"
+          },
+          "target": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/target"
+              },
+              {
+                "properties": {
+                  "resource_kind": {
+                    "const": "session"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "query": {
+            "properties": {
+              "name": {
+                "const": "session.messages"
+              },
+              "version": {
+                "const": "v1"
+              }
+            }
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "session-messages-request.schema.json"
+          },
+          "target": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/target"
+              },
+              {
+                "properties": {
+                  "resource_kind": {
+                    "const": "session"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
     }
   ],
   "$defs": {
-    "identifier": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S(?:.*\\S)?$"},
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
     "budget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["max_stdout_bytes", "max_stderr_bytes", "max_records"],
+      "required": [
+        "max_stdout_bytes",
+        "max_stderr_bytes",
+        "max_records"
+      ],
       "properties": {
-        "max_stdout_bytes": {"type": "integer", "minimum": 1},
-        "max_stderr_bytes": {"type": "integer", "minimum": 1},
-        "max_records": {"type": "integer", "minimum": 1}
+        "max_stdout_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_stderr_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_records": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "target": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["resource_kind", "provider_resource_key"],
+      "required": [
+        "resource_kind",
+        "provider_resource_key"
+      ],
       "properties": {
-        "resource_kind": {"enum": ["agent", "session", "task", "launch_profile", "model_profile"]},
-        "provider_resource_key": {"$ref": "#/$defs/identifier"},
-        "expected_generation": {"$ref": "#/$defs/identifier"}
+        "resource_kind": {
+          "enum": [
+            "agent",
+            "session",
+            "task",
+            "launch_profile",
+            "model_profile"
+          ]
+        },
+        "provider_resource_key": {
+          "$ref": "#/$defs/identifier"
+        },
+        "expected_generation": {
+          "$ref": "#/$defs/identifier"
+        }
       }
     },
     "mutation_target": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["resource_kind", "provider_resource_key", "expected_generation"],
+      "required": [
+        "resource_kind",
+        "provider_resource_key",
+        "expected_generation"
+      ],
       "properties": {
-        "resource_kind": {"enum": ["agent", "session", "task", "launch_profile", "model_profile"]},
-        "provider_resource_key": {"$ref": "#/$defs/identifier"},
-        "expected_generation": {"$ref": "#/$defs/identifier"}
+        "resource_kind": {
+          "enum": [
+            "agent",
+            "session",
+            "task",
+            "launch_profile",
+            "model_profile"
+          ]
+        },
+        "provider_resource_key": {
+          "$ref": "#/$defs/identifier"
+        },
+        "expected_generation": {
+          "$ref": "#/$defs/identifier"
+        }
       }
     },
     "named_contract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "properties": {
-        "name": {"$ref": "#/$defs/identifier"},
-        "version": {"$ref": "#/$defs/identifier"}
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/identifier"
+        }
       }
     },
     "standard_query": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "properties": {
-        "name": {"enum": ["launch.options", "history.messages", "model.catalog", "session.messages"]},
-        "version": {"const": "v1"}
+        "name": {
+          "enum": [
+            "launch.options",
+            "history.messages",
+            "model.catalog",
+            "session.messages"
+          ]
+        },
+        "version": {
+          "const": "v1"
+        }
       }
     }
   }

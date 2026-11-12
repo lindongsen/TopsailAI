@@ -52,6 +52,36 @@ Provider documents contain Provider observations and evidence only. Cluster reso
 IDs, request hashes, journal phases, command revisions and complete Cluster execution receipts are
 Endpoint authority and are rejected at this seam.
 
+## Typed query contracts
+
+The `query` envelope carries one registered query name and the fixed query version `v1`. The
+query-specific request schemas validate only `payload`, and the matching result schemas validate
+only `query_result`; neither document repeats the query name or version. The Generic CLI Adapter
+selects exactly one request and result schema from the correlated envelope. An unknown query or
+version is rejected before invocation, and an unadvertised query is not invoked.
+
+All query payloads and results are closed objects. Unknown fields, extra JSON documents and JSON
+`null` are rejected rather than ignored or normalized. Optional fields may be omitted only where the
+matching schema allows omission; omission is not interchangeable with `null`.
+
+Provider-owned resource references carry both the required `resource_kind` and a non-empty stable
+`provider_resource_key`. `launch.options` uses `launch_profile`, `history.messages` uses `session`,
+and `model.catalog` uses `model_profile`; any other kind fails closed. The same provider business
+resource must retain the same key across repeated reads, provider restarts and every upgrade that
+claims identity compatibility. Duplicate keys in one result are invalid.
+
+A Provider query result must never contain a Cluster-owned identity such as `launch_profile_id`,
+`resource_id`, `model_profile_id`, `cluster_session_id` or `command_id`. The Endpoint maps the tuple
+`(adapter_id, resource_kind, provider_resource_key)` through `ResourceMapper` and publishes only the
+resulting opaque Cluster ID. A Provider cannot mint, copy or infer that ID.
+
+The machine-readable contracts are:
+
+- `launch-options-request.schema.json` and `launch-options-result.schema.json`
+- `history-messages-request.schema.json` and `history-messages-result.schema.json`
+- `model-catalog-request.schema.json` and `model-catalog-result.schema.json`
+- `session-messages-request.schema.json` and `session-messages-result.schema.json`
+
 ## Size bounds
 
 Request budgets are byte and record limits. JSON Schema `maxLength` counts Unicode characters rather

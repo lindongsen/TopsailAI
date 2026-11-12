@@ -21,8 +21,11 @@ const (
 )
 
 const (
-	resourceSession   = "session"
-	queryModelCatalog = "model.catalog"
+	resourceSession      = "session"
+	queryLaunchOptions   = "launch.options"
+	queryHistoryMessages = "history.messages"
+	queryModelCatalog    = "model.catalog"
+	querySessionMessages = "session.messages"
 )
 
 // version identifies the public Provider CLI protocol revision.

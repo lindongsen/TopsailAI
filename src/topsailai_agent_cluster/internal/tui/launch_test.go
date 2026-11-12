@@ -19,7 +19,10 @@ type launchStub struct {
 // GetLaunchOptions supplies a live handler separate from inventory summaries.
 func (s *launchStub) GetLaunchOptions(_ context.Context, endpoint, adapterID string) (protocol.LaunchOptions, error) {
 	s.calls++
-	result := protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{{AdapterID: "a", Revision: "v"}}, Projects: []protocol.Project{{Name: "工程", Path: "/work/my app"}}}
+	if s.calls == 2 && adapterID != "adapter-route" {
+		return protocol.LaunchOptions{}, errors.New("project query did not use adapter ID")
+	}
+	result := protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{{AdapterID: "adapter-route", LaunchProfileID: "profile-opaque", Revision: "v"}}, Projects: []protocol.Project{{Name: "工程", Path: "/work/my app"}}}
 	if adapterID != "" && s.fail {
 		return protocol.LaunchOptions{}, errors.New("offline")
 	}
@@ -53,7 +56,7 @@ func TestProjectLaunchWizard(t *testing.T) {
 			}
 			if item.admits == 1 {
 				intent := stub.intents[0]
-				if intent.Folder != item.folder || intent.LaunchProfileID != "a" || intent.ProfileRevision != "v" || intent.Target != nil {
+				if intent.Folder != item.folder || intent.LaunchProfileID != "profile-opaque" || intent.ProfileRevision != "v" || intent.Target != nil {
 					t.Fatalf("%#v", intent)
 				}
 				var payload map[string]string

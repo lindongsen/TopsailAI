@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
@@ -29,7 +30,17 @@ func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery
 		if !ok {
 			continue
 		}
-		result.Handlers = append(result.Handlers, protocol.LaunchHandler{AdapterID: descriptor.AdapterID, DisplayName: descriptor.DisplayName, Revision: descriptor.Capabilities.Revision})
+		launchHandler := protocol.LaunchHandler{AdapterID: descriptor.AdapterID, LaunchProfileID: descriptor.AdapterID, DisplayName: descriptor.DisplayName, Revision: descriptor.Capabilities.Revision}
+		if profileReader, ok := instance.(adapter.LaunchProfileHandler); ok {
+			launchHandler, err = profileReader.LaunchProfile(ctx)
+			if err != nil {
+				return result, err
+			}
+			if launchHandler.AdapterID != descriptor.AdapterID || launchHandler.LaunchProfileID == "" || launchHandler.Revision == "" {
+				return result, fmt.Errorf("adapter %q returned an invalid launch profile", descriptor.AdapterID)
+			}
+		}
+		result.Handlers = append(result.Handlers, launchHandler)
 		if query.AdapterID == "" {
 			continue
 		}

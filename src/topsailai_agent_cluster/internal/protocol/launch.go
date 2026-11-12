@@ -13,9 +13,10 @@ type LaunchQuery struct {
 
 // LaunchHandler identifies a configured, start-capable adapter and its revision.
 type LaunchHandler struct {
-	AdapterID   string `json:"adapter_id"`
-	DisplayName string `json:"display_name"`
-	Revision    string `json:"revision"`
+	AdapterID       string `json:"adapter_id"`
+	LaunchProfileID string `json:"launch_profile_id"`
+	DisplayName     string `json:"display_name"`
+	Revision        string `json:"revision"`
 }
 
 // LaunchOptions carries bounded handler/project results with explicit failures.

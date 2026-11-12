@@ -138,10 +138,21 @@ func handleUnary(request request, fault string) response {
 	case functionExecute:
 		return executeResponse(request, fault)
 	case functionQuery:
-		if request.Query == nil || request.Query.Name != queryModelCatalog || fault == "false-capability" {
+		if request.Query == nil || request.Query.Version != "v1" || fault == "false-capability" {
 			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
 		}
-		base.QueryResult = json.RawMessage(`{"profiles":[{"provider_resource_key":"model:mock","display_name":"Mock"}]}`)
+		switch request.Query.Name {
+		case queryLaunchOptions:
+			base.QueryResult = json.RawMessage(`{"profile":{"resource_kind":"launch_profile","provider_resource_key":"launch:mock","display_name":"Mock","revision":"launch-r1"},"projects":[{"name":"mock","path":"/work/mock"}]}`)
+		case queryHistoryMessages:
+			base.QueryResult = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"session:stable","provider_session_id":"session-1","resumable":true}],"observed_at_ms":1700000000000,"truncated":false}`)
+		case queryModelCatalog:
+			base.QueryResult = json.RawMessage(`{"profiles":[{"resource_kind":"model_profile","provider_resource_key":"model:mock","provider_display_name":"Mock","current_state":"yes","available":true}],"current_provider_resource_key":"model:mock","observed_at_ms":1700000000000,"truncated":false}`)
+		case querySessionMessages:
+			base.QueryResult = json.RawMessage(`{"provider_session_id":"session-1","messages":[{"role":"user","content":"hello"}],"message_count":1,"observed_at_ms":1700000000000,"truncated":false}`)
+		default:
+			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
+		}
 	case functionQueryCommand:
 		base.Result = &operationResult{
 			ProviderRequestRef:        "provider-ref-1",
@@ -187,7 +198,12 @@ func executeResponse(request request, fault string) response {
 
 // mockDescriptor returns the deterministic Provider CLI surface.
 func mockDescriptor(fault string) descriptor {
-	queries := []namedContract{{Name: queryModelCatalog, Version: "v1"}}
+	queries := []namedContract{
+		{Name: queryLaunchOptions, Version: "v1"},
+		{Name: queryHistoryMessages, Version: "v1"},
+		{Name: queryModelCatalog, Version: "v1"},
+		{Name: querySessionMessages, Version: "v1"},
+	}
 	return descriptor{
 		ProviderType:       "mock",
 		ProviderVersion:    "1.0.0",

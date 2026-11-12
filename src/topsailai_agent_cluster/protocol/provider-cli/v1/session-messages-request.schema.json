@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/session-messages-request.schema.json",
+  "title": "session-messages-request payload",
+  "description": "The query name and v1 contract version are carried once by the common request envelope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "max_chars",
+    "max_tokens"
+  ],
+  "properties": {
+    "max_chars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "max_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 200000
+    }
+  }
+}

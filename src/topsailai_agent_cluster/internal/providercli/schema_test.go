@@ -16,6 +16,14 @@ var requiredSchemaFiles = []string{
 	"request.schema.json",
 	"response.schema.json",
 	"stream-frame.schema.json",
+	"launch-options-request.schema.json",
+	"launch-options-result.schema.json",
+	"history-messages-request.schema.json",
+	"history-messages-result.schema.json",
+	"model-catalog-request.schema.json",
+	"model-catalog-result.schema.json",
+	"session-messages-request.schema.json",
+	"session-messages-result.schema.json",
 }
 
 func schemaDirectory(t *testing.T) string {
@@ -160,5 +168,27 @@ func TestSchemaCriticalBranches(t *testing.T) {
 	stream := loadSchema(t, "stream-frame.schema.json")
 	if len(stream["oneOf"].([]any)) != 3 {
 		t.Fatalf("stream frame branch count = %d, want 3", len(stream["oneOf"].([]any)))
+	}
+}
+
+func TestTypedQuerySchemasUseEnvelopeCorrelation(t *testing.T) {
+	request := loadSchema(t, "request.schema.json")
+	encodedRequest, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stem := range []string{"launch-options", "history-messages", "model-catalog", "session-messages"} {
+		ref := stem + "-request.schema.json"
+		if !strings.Contains(string(encodedRequest), `"$ref":"`+ref+`"`) {
+			t.Errorf("request envelope does not reference %s", ref)
+		}
+		result := loadSchema(t, stem+"-result.schema.json")
+		properties := result["properties"].(map[string]any)
+		if _, ok := properties["query"]; ok {
+			t.Errorf("%s result duplicates envelope query", stem)
+		}
+		if _, ok := properties["version"]; ok {
+			t.Errorf("%s result duplicates envelope version", stem)
+		}
 	}
 }

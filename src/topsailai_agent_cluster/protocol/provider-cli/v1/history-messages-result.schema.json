@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/history-messages-result.schema.json",
+  "title": "history-messages-result query_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rows",
+    "observed_at_ms",
+    "truncated"
+  ],
+  "properties": {
+    "rows": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_kind",
+          "provider_resource_key",
+          "provider_session_id",
+          "resumable"
+        ],
+        "properties": {
+          "resource_kind": {
+            "const": "session"
+          },
+          "provider_resource_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "provider_session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "provider_display_name": {
+            "type": "string"
+          },
+          "provider_project_workspace": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "provider_status": {
+            "type": "string"
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "modified_at_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "provider_no": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resumable": {
+            "type": "boolean"
+          },
+          "resume_blocked_reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "description": "Validated after correlation with the v1 query in the common request envelope."
+}

@@ -62,6 +62,29 @@ func TestMockProviderDefaultConformance(t *testing.T) {
 	}
 }
 
+func TestMockProviderTypedQueryConformance(t *testing.T) {
+	runner := mockRunner(t, "")
+	for _, query := range providercli.StandardQueries() {
+		t.Run(query.Name, func(t *testing.T) {
+			request := requestFor(providercli.FunctionQuery)
+			request.Query = &providercli.NamedContract{Name: query.Name, Version: query.Version}
+			switch query.Name {
+			case providercli.QueryModelCatalog, providercli.QuerySessionMessages:
+				request.Target = &providercli.Target{ResourceKind: providercli.ResourceSession, ProviderResourceKey: "session:stable"}
+			}
+			response := invoke(t, runner, request)
+			if _, err := providercli.DecodeQueryResult(providercli.NamedContract{Name: query.Name, Version: query.Version}, response.QueryResult); err != nil {
+				t.Fatalf("decode typed query result: %v", err)
+			}
+			for _, forbidden := range []string{"launch_profile_id", "resource_id", "model_profile_id", "cluster_session_id", "command_id"} {
+				if strings.Contains(string(response.QueryResult), `"`+forbidden+`"`) {
+					t.Fatalf("query result contains Cluster-owned field %q: %s", forbidden, response.QueryResult)
+				}
+			}
+		})
+	}
+}
+
 func TestMockProviderUnsupportedFunction(t *testing.T) {
 	response, _, err := mockRunner(t, "").Invoke(context.Background(), requestFor(providercli.FunctionWatch))
 	if err != nil {
@@ -296,6 +319,7 @@ func requestFor(function string) providercli.Request {
 		request.Operation = &providercli.NamedContract{Name: "message.send", Version: "v1"}
 	case providercli.FunctionQuery:
 		request.Query = &providercli.NamedContract{Name: providercli.QueryModelCatalog, Version: "v1"}
+		request.Target = target
 	case providercli.FunctionQueryCommand:
 		request.InvocationID = "invocation-1"
 	}

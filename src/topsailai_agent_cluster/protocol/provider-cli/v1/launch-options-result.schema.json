@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/launch-options-result.schema.json",
+  "title": "launch-options-result query_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "projects"
+  ],
+  "properties": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource_kind",
+        "provider_resource_key",
+        "display_name",
+        "revision"
+      ],
+      "properties": {
+        "resource_kind": {
+          "const": "launch_profile"
+        },
+        "provider_resource_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^\\S(?:.*\\S)?$"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^\\S(?:.*\\S)?$"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^\\S(?:.*\\S)?$"
+        }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "path"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "description": "Validated after correlation with the v1 query in the common request envelope."
+}
