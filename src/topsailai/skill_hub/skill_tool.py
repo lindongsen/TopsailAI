@@ -34,7 +34,7 @@ from topsailai.utils import (
     print_tool,
 )
 from topsailai.prompt_hub import prompt_tool
-from topsailai.workspace.folder_constants import FOLDER_SKILL
+from topsailai.workspace.folder_constants import FOLDER_SKILL, FOLDER_SKILLS
 
 
 class SkillHubToolError(ValueError):
@@ -424,7 +424,8 @@ def get_skill_markdown_with_subfolders(parent_folder: str, recursion_depth=0) ->
 def get_skill_markdown(skill_folders=None) -> str:
     """Get the markdown prompt for all available skills.
 
-    Scans the skill folder and any plugin skill folders specified in
+    Scans the default skill folders (``{TOPSAILAI_HOME}/skill`` and
+    ``{TOPSAILAI_HOME}/skills``) and any plugin skill folders specified in
     the TOPSAILAI_PLUGIN_SKILLS environment variable.
 
     Returns:
@@ -436,6 +437,7 @@ def get_skill_markdown(skill_folders=None) -> str:
     if not skill_folders:
         skill_folders = [
             FOLDER_SKILL,
+            FOLDER_SKILLS,
         ] + (
             EnvReaderInstance.get_list_str("TOPSAILAI_PLUGIN_SKILLS", separator="") or []
         )

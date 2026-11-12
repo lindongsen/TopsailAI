@@ -34,18 +34,20 @@ If the work is a single call the model can already make, a tool is enough and a 
 
 ## Where a Skill Can Live
 
-A skill is discovered from four locations. The first one needs no configuration at all, which makes it the
+A skill is discovered from five locations. The first two need no configuration at all, which makes them the
 right place for a skill that belongs to this machine rather than to one project.
 
 | Order | Location | Configured by |
 |-------|----------|---------------|
 | 1 | `{TOPSAILAI_HOME}/skill` | Nothing. `TOPSAILAI_HOME` defaults to `$HOME/.topsailai`. |
-| 2 | Every folder in `TOPSAILAI_PLUGIN_SKILLS` | The environment variable |
-| 3 | `{TOPSAILAI_PROJECT_WORKSPACE}/.topsailai/skills` | The project workspace variable |
-| 4 | `{TOPSAILAI_PWD}/.topsailai/skills` | The process working directory |
+| 2 | `{TOPSAILAI_HOME}/skills` | Nothing. The plural spelling used by most skill tooling. |
+| 3 | Every folder in `TOPSAILAI_PLUGIN_SKILLS` | The environment variable |
+| 4 | `{TOPSAILAI_PROJECT_WORKSPACE}/.topsailai/skills` | The project workspace variable |
+| 5 | `{TOPSAILAI_PWD}/.topsailai/skills` | The process working directory |
 
-The home location is scanned first and needs no variable, so a skill dropped into `{TOPSAILAI_HOME}/skill`
-is available to every project that uses the same home:
+Both home locations are scanned first and need no variable, so a skill dropped into either
+`{TOPSAILAI_HOME}/skill` or `{TOPSAILAI_HOME}/skills` is available to every project that uses the same home.
+A missing folder is skipped, so keeping only one of the two spellings is fine:
 
 ```bash
 export TOPSAILAI_HOME=/tmp/skilldemo/home

@@ -13,7 +13,7 @@ from unittest.mock import patch, MagicMock, mock_open
 import tempfile
 from pathlib import Path
 import yaml
-
+from topsailai.skill_hub import skill_tool as skill_tool_module
 from topsailai.skill_hub.skill_tool import (
     is_matched_skill,
     is_need_load_overview,
@@ -764,6 +764,78 @@ description: Test skill
             
         self.assertIn("# Skill Registry", result)
         self.assertIn("PromptTest", result)
+
+    @staticmethod
+    def _env_get_side_effect(name, default=None, formatter=None):
+        """Return a depth value for the depth key and None for folder keys."""
+        if name == "TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH":
+            return 3
+        return None
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_default_roots_include_plural_skills_folder(self, mock_env):
+        """The default roots scan both {TOPSAILAI_HOME}/skill and /skills."""
+        mock_env.get_list_str.return_value = None
+        mock_env.get.side_effect = self._env_get_side_effect
+
+        with tempfile.TemporaryDirectory() as singular_root:
+            with tempfile.TemporaryDirectory() as plural_root:
+                singular_skill = os.path.join(singular_root, "singular-skill")
+                plural_skill = os.path.join(plural_root, "plural-skill")
+                os.makedirs(singular_skill)
+                os.makedirs(plural_skill)
+                for folder, name in (
+                    (singular_skill, "SingularSkill"),
+                    (plural_skill, "PluralSkill"),
+                ):
+                    with open(os.path.join(folder, "SKILL.md"), "w") as f:
+                        f.write(f"---\nname: {name}\ndescription: {name} skill\n---\n")
+
+                with patch.object(skill_tool_module, 'FOLDER_SKILL', singular_root):
+                    with patch.object(skill_tool_module, 'FOLDER_SKILLS', plural_root):
+                        result = get_skill_markdown()
+
+        self.assertIn("SingularSkill", result)
+        self.assertIn("PluralSkill", result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_plural_skills_folder_alone_is_discovered(self, mock_env):
+        """A skill only inside {TOPSAILAI_HOME}/skills is discovered by default."""
+        mock_env.get_list_str.return_value = None
+        mock_env.get.side_effect = self._env_get_side_effect
+
+        with tempfile.TemporaryDirectory() as singular_root:
+            with tempfile.TemporaryDirectory() as plural_root:
+                plural_skill = os.path.join(plural_root, "plural-only")
+                os.makedirs(plural_skill)
+                with open(os.path.join(plural_skill, "SKILL.md"), "w") as f:
+                    f.write("---\nname: PluralOnly\ndescription: plural only\n---\n")
+
+                with patch.object(skill_tool_module, 'FOLDER_SKILL', singular_root):
+                    with patch.object(skill_tool_module, 'FOLDER_SKILLS', plural_root):
+                        result = get_skill_markdown()
+
+        self.assertIn("PluralOnly", result)
+        self.assertIn(plural_skill, result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_missing_plural_skills_folder_is_skipped(self, mock_env):
+        """A missing {TOPSAILAI_HOME}/skills folder does not break discovery."""
+        mock_env.get_list_str.return_value = None
+        mock_env.get.side_effect = self._env_get_side_effect
+
+        with tempfile.TemporaryDirectory() as singular_root:
+            singular_skill = os.path.join(singular_root, "singular-skill")
+            os.makedirs(singular_skill)
+            with open(os.path.join(singular_skill, "SKILL.md"), "w") as f:
+                f.write("---\nname: SingularOnly\ndescription: singular only\n---\n")
+
+            missing_plural_root = os.path.join(singular_root, "does-not-exist")
+            with patch.object(skill_tool_module, 'FOLDER_SKILL', singular_root):
+                with patch.object(skill_tool_module, 'FOLDER_SKILLS', missing_plural_root):
+                    result = get_skill_markdown()
+
+        self.assertIn("SingularOnly", result)
 
 
 class TestExpandPreloadDocEntry(unittest.TestCase):

@@ -57,6 +57,10 @@ FOLDER_LOCK = FOLDER_ROOT + "/lock"
 # Skill directory
 FOLDER_SKILL = FOLDER_ROOT + "/skill"
 
+# Additional skill directory using the industry-common plural name.
+# Both FOLDER_SKILL and FOLDER_SKILLS are default skill discovery roots.
+FOLDER_SKILLS = FOLDER_ROOT + "/skills"
+
 # Log
 FOLDER_LOG = FOLDER_ROOT + "/log"
 

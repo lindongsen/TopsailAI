@@ -884,7 +884,7 @@ The skill hub is controlled by several environment variables. They are documente
 
 ### Notes
 
-- `TOPSAILAI_PLUGIN_SKILLS` is read by `skill_tool.load_skills()` to discover additional skill folders outside `FOLDER_SKILL`.
+- `TOPSAILAI_PLUGIN_SKILLS` is read by `skill_tool.load_skills()` to discover additional skill folders outside the two default home roots `FOLDER_SKILL` (`{TOPSAILAI_HOME}/skill`) and `FOLDER_SKILLS` (`{TOPSAILAI_HOME}/skills`).
 - `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH` controls how many directory levels are scanned when looking for `SKILL.md` / `skill.md` files.
 - `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` interacts with the per-skill `flag_overview` frontmatter field: a skill is loaded into the prompt if either its own `flag_overview` is truthy or its name matches this environment variable.
 - `TOPSAILAI_CALL_SKILL_TIMEOUT_MAP` lets callers override the default timeout for individual skills when invoking them through `skill_tool.call_skill()`.
