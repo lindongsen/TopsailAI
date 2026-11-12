@@ -30,10 +30,14 @@ func (s *stubMetadataAdapter) List(ctx context.Context, opts models.ListOptions)
 func (s *stubMetadataAdapter) Search(ctx context.Context, terms []string, opts models.ListOptions) ([]*models.Object, error) {
 	return nil, nil
 }
-func (s *stubMetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag string) error    { return nil }
-func (s *stubMetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error { return nil }
-func (s *stubMetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error)               { return nil, nil }
-func (s *stubMetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error               { return nil }
+func (s *stubMetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag string) error {
+	return nil
+}
+func (s *stubMetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error {
+	return nil
+}
+func (s *stubMetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error) { return nil, nil }
+func (s *stubMetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error { return nil }
 func (s *stubMetadataAdapter) GC(ctx context.Context, retention time.Duration, force bool) ([]*models.Object, error) {
 	return nil, nil
 }
@@ -57,6 +61,9 @@ func (s *stubActualDataAdapter) AppendFile(ctx context.Context, ref string, file
 func (s *stubActualDataAdapter) WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error) {
 	return ref, nil
 }
+func (s *stubActualDataAdapter) ReplaceFileRange(ctx context.Context, ref string, filename string, r io.Reader, start int64, end int64) (string, error) {
+	return ref, nil
+}
 func (s *stubActualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
 	return nil, nil
 }
@@ -69,9 +76,11 @@ func (s *stubActualDataAdapter) ListFiles(ctx context.Context, ref string) ([]st
 func (s *stubActualDataAdapter) Move(ctx context.Context, oldRef string, newRef string) (string, error) {
 	return newRef, nil
 }
-func (s *stubActualDataAdapter) Delete(ctx context.Context, ref string) error          { return nil }
-func (s *stubActualDataAdapter) Exists(ctx context.Context, ref string) (bool, error)   { return false, nil }
-func (s *stubActualDataAdapter) Close() error                                           { return nil }
+func (s *stubActualDataAdapter) Delete(ctx context.Context, ref string) error { return nil }
+func (s *stubActualDataAdapter) Exists(ctx context.Context, ref string) (bool, error) {
+	return false, nil
+}
+func (s *stubActualDataAdapter) Close() error { return nil }
 
 func TestRegisterMetadataAdapter(t *testing.T) {
 	factory := func(ctx context.Context, cfg map[string]string) (MetadataAdapter, error) {

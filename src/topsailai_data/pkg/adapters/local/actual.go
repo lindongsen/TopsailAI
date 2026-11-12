@@ -420,6 +420,84 @@ func (a *actualDataAdapter) WriteFileAt(ctx context.Context, ref string, filenam
 	return resultRef, nil
 }
 
+// ReplaceFileRange replaces one byte range without loading the existing file.
+func (a *actualDataAdapter) ReplaceFileRange(ctx context.Context, ref string, filename string, r io.Reader, start int64, end int64) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	resultRef := ref
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if err := validateActualFilename(filename); err != nil {
+		return "", err
+	}
+	fullPath, err := resolvePayloadFile(ref, filename)
+	if err != nil {
+		return "", err
+	}
+	old, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("%w: file %q", errors.ErrObjectNotFound, filename)
+		}
+		return "", fmt.Errorf("open file %q for range replacement: %w", fullPath, err)
+	}
+	defer old.Close()
+	info, err := old.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat file %q for range replacement: %w", fullPath, err)
+	}
+	if start < 0 || end < start || end > info.Size() {
+		return "", fmt.Errorf("invalid replacement range [%d,%d) for file size %d", start, end, info.Size())
+	}
+	if err := cleanupStaleWriteTemps(filepath.Dir(fullPath), time.Now()); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(fullPath), writeTempPrefix)
+	if err != nil {
+		return "", fmt.Errorf("create temporary file for %q: %w", fullPath, err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		_ = tmp.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("set temporary file mode for %q: %w", fullPath, err)
+	}
+	if _, err := io.CopyN(tmp, old, start); err != nil {
+		return "", fmt.Errorf("copy prefix for %q: %w", fullPath, err)
+	}
+	if _, err := io.Copy(tmp, r); err != nil {
+		return "", fmt.Errorf("write replacement for %q: %w", fullPath, err)
+	}
+	if _, err := old.Seek(end, io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek suffix for %q: %w", fullPath, err)
+	}
+	if _, err := io.Copy(tmp, old); err != nil {
+		return "", fmt.Errorf("copy suffix for %q: %w", fullPath, err)
+	}
+	if err := old.Close(); err != nil {
+		return "", fmt.Errorf("close source file for %q: %w", fullPath, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return "", fmt.Errorf("sync temporary file for %q: %w", fullPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close temporary file for %q: %w", fullPath, err)
+	}
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		return "", fmt.Errorf("replace file %q: %w", fullPath, err)
+	}
+	cleanup = false
+	return resultRef, nil
+}
+
 // resolveWritePosition converts a byte seek to a clamped position.
 func resolveWritePosition(seek, size int64, insert bool) int64 {
 	if seek < 0 {

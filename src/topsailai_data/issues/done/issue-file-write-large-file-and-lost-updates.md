@@ -198,3 +198,16 @@ One test limitation stays recorded here rather than in a separate issue:
 lock-scoped append from an unlocked read-modify-write, because `LOCK_NB` makes
 losers fail loudly in both cases. Bounded memory on a large existing file is
 what pins the in-place implementation.
+
+## Final resolution
+
+The three follow-up issues have now also been resolved:
+
+- `issue-diff-bounded-window.md`: line edits scan incrementally and generate
+  diffs from the changed window plus bounded context.
+- `issue-write-seek-inplace.md`: positional writes stream prefix,
+  replacement, and suffix under one object lock.
+- `issue-mkdirs-archive-scan.md`: folder discovery uses direct adapter
+  metadata operations instead of reading the payload archive.
+
+Build, vet, all package tests, and the BDD suite pass with these changes.

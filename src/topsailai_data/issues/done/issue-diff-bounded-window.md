@@ -73,3 +73,16 @@ two in-memory snapshots. The fix has to bound the diff window, not the I/O.
 - Diff output is byte-identical to the current implementation for the covered
   cases.
 - `go test ./...` passes, including the existing line-ending and sentinel tests.
+
+## Resolution
+
+Resolved. `overwrite-lines` and `insert` now scan line boundaries incrementally
+under object custody, retain only the changed window and three context lines,
+and publish a byte-range replacement through a same-directory temporary file.
+Small edits no longer allocate in proportion to the complete file.
+
+Regression tests compare start, middle, and end diffs byte-for-byte with the
+former whole-file algorithm, preserve CRLF behavior, and keep cumulative
+allocation below 4 MiB for an edit in an 8 MiB operating-system file and below
+6 MiB through the complete object-backed path. A diff that itself contains a
+large changed range remains proportional to that requested output.

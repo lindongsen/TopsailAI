@@ -723,18 +723,24 @@ returns an `*os.File`, which is seekable, so `read`, `read-lines`,
 size. Only a non-seekable remote adapter falls back to buffering, and that
 fallback is the adapter's responsibility to bound.
 
-**Streaming writes.** `FS` exposes `WriteFileFrom`, `AppendFrom`, and
-`UpdateFile` so content can flow from an `io.Reader`. `write` with
-`--seek 0` and no `--insert`, and `append`, stream `--from` and standard input
-straight to the adapter instead of materializing `[]byte`. `put` already
-worked this way; the `file` group now matches it.
+**Streaming writes.** `FS` exposes `WriteFileFrom`, `AppendFrom`,
+`WriteAt`, and `EditFile` so content can flow from an `io.Reader` and bounded
+edits can publish byte ranges. Whole-file writes, append, non-zero `--seek`,
+and `--insert` assemble replacements in same-directory temporary files and
+publish them by rename without loading the existing file. `put` already
+streamed sources; the `file` group now preserves that property for every write
+shape.
 
-**Lock-scoped read-modify-write.** `Manager.UpdateActualFile` acquires
-exclusive object custody, reads the current content under that custody, calls
-the caller's transform, writes the result, and publishes the updated
-timestamp, all before releasing custody. `Manager.AppendActualFile` appends
-in place under the same custody. `overwrite-lines`, `insert`, `write` with a
-non-zero `--seek`, and `append` all route through these primitives.
+**Lock-scoped edits.** `Manager.AppendActualFile`, `WriteActualFileAt`, and
+`EditActualFile` acquire exclusive object custody once and retain it while the
+current file is inspected, the edit range is resolved, the replacement is
+published, and the timestamp is updated. `overwrite-lines` and `insert` scan
+line boundaries incrementally, retain only the changed window and three
+context lines for the unified diff, and stream the untouched prefix and suffix.
+For a small edit, memory is therefore independent of the complete file size.
+A diff that itself contains a very large changed range still necessarily uses
+memory and output proportional to that changed range, not to unrelated file
+content.
 
 The lock is the object's meta lock file at
 `meta/<h[0:2]>/<h[2:4]>/<h[4:6]>/<h>/lock`, where `h` is the lowercase SHA256
@@ -745,7 +751,8 @@ it. A competing writer therefore fails with `ErrObjectLocked` instead of
 silently discarding an update. This is the same advisory lock used by `put`,
 `tag`, `move`, and the lifecycle commands.
 
-**Known remaining cost.** `overwrite-lines` and `insert` still build a unified
-diff from two full line snapshots, and `write` with a non-zero `--seek` still
-materializes the file to splice bytes. Both are bounded by the file size and
-are tracked separately; they are not covered by the streaming guarantee above.
+**Direct folder discovery.** `ObjectFS.Stat`, `ReadDir`, and `MkdirAll`
+use adapter `StatFile` and `ListFiles` operations. The local adapter answers
+these from filesystem metadata and directory entries, so checking or creating
+a folder does not stream the object's payload archive. Reserved temporary
+replacement paths remain hidden from discovery.

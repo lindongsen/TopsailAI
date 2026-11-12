@@ -197,6 +197,21 @@ func (f *ObjectFS) WriteAt(p string, r io.Reader, seek int64, insert bool, _ os.
 	return f.mgr.WriteActualFileAt(f.ctx, f.id, name, r, seek, insert)
 }
 
+// EditFile plans and publishes a byte-range replacement under object custody.
+func (f *ObjectFS) EditFile(p string, planner filetool.FileEditPlanner, _ os.FileMode) error {
+	name, err := normalize(p)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot update the object root as a file")
+	}
+	return f.mgr.EditActualFile(f.ctx, f.id, name, func(current io.Reader, exists bool) (manager.FileEdit, error) {
+		edit, err := planner(current, exists)
+		return manager.FileEdit{Start: edit.Start, End: edit.End, Replacement: edit.Replacement}, err
+	})
+}
+
 // UpdateFile performs a lock-protected read-modify-write on one file.
 //
 // Exclusive object custody is acquired once and held across both the read and
