@@ -329,6 +329,25 @@ func (m *Manager) AppendActualFile(ctx context.Context, id models.ObjectID, file
 	return nil
 }
 
+// WriteActualFileAt inserts or overwrites a stream while holding exclusive object custody.
+func (m *Manager) WriteActualFileAt(ctx context.Context, id models.ObjectID, filename string, r io.Reader, seek int64, insert bool) error {
+	obj, lock, err := m.lockActiveObject(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer releaseNamespaceLock(lock)
+
+	if _, err := m.actual.WriteFileAt(ctx, obj.DataRef, filename, r, seek, insert); err != nil {
+		return fmt.Errorf("write file at offset: %w", err)
+	}
+	obj.UpdatedAt = time.Now()
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return err
+	}
+	m.recordWrite(ctx, obj)
+	return nil
+}
+
 // UpdateActualFile performs a lock-protected read-modify-write on one file.
 //
 // Exclusive object custody is acquired once and held across both the read and

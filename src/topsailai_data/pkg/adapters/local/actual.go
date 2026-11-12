@@ -321,6 +321,126 @@ func (a *actualDataAdapter) AppendFile(ctx context.Context, ref string, filename
 	return resultRef, nil
 }
 
+// WriteFileAt inserts or overwrites a stream at a byte offset without loading
+// the existing file into memory. The replacement is assembled in a temporary
+// file and published by rename, so a failed source read preserves the old file.
+func (a *actualDataAdapter) WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	resultRef := ref
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if err := validateActualFilename(filename); err != nil {
+		return "", err
+	}
+	fullPath, err := resolvePayloadFile(ref, filename)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return "", fmt.Errorf("create parent directories for %q: %w", fullPath, err)
+	}
+
+	old, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if _, err := a.WriteFile(ctx, resultRef, filename, r); err != nil {
+				return "", err
+			}
+			return resultRef, nil
+		}
+		return "", fmt.Errorf("open file %q for positional write: %w", fullPath, err)
+	}
+	defer old.Close()
+	oldInfo, err := old.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat file %q for positional write: %w", fullPath, err)
+	}
+	if source, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
+		sourceInfo, err := source.Stat()
+		if err != nil {
+			return "", fmt.Errorf("stat source for %q: %w", fullPath, err)
+		}
+		if os.SameFile(sourceInfo, oldInfo) {
+			return "", fmt.Errorf("%w: %q", errors.ErrSourceDestinationSameFile, fullPath)
+		}
+	}
+
+	position := resolveWritePosition(seek, oldInfo.Size(), insert)
+	if err := cleanupStaleWriteTemps(filepath.Dir(fullPath), time.Now()); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(fullPath), writeTempPrefix)
+	if err != nil {
+		return "", fmt.Errorf("create temporary file for %q: %w", fullPath, err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		_ = tmp.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(oldInfo.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("set temporary file mode for %q: %w", fullPath, err)
+	}
+	if _, err := io.CopyN(tmp, old, position); err != nil {
+		return "", fmt.Errorf("copy prefix for %q: %w", fullPath, err)
+	}
+	written, err := io.Copy(tmp, r)
+	if err != nil {
+		return "", fmt.Errorf("write replacement for %q: %w", fullPath, err)
+	}
+	suffixOffset := position
+	if !insert {
+		suffixOffset += written
+	}
+	if suffixOffset < oldInfo.Size() {
+		if _, err := old.Seek(suffixOffset, io.SeekStart); err != nil {
+			return "", fmt.Errorf("seek suffix for %q: %w", fullPath, err)
+		}
+		if _, err := io.Copy(tmp, old); err != nil {
+			return "", fmt.Errorf("copy suffix for %q: %w", fullPath, err)
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		return "", fmt.Errorf("sync temporary file for %q: %w", fullPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close temporary file for %q: %w", fullPath, err)
+	}
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		return "", fmt.Errorf("replace file %q: %w", fullPath, err)
+	}
+	cleanup = false
+	return resultRef, nil
+}
+
+// resolveWritePosition converts a byte seek to a clamped position.
+func resolveWritePosition(seek, size int64, insert bool) int64 {
+	if seek < 0 {
+		position := size + seek
+		if insert {
+			position++
+		}
+		if position < 0 {
+			return 0
+		}
+		if position > size {
+			return size
+		}
+		return position
+	}
+	if seek > size {
+		return size
+	}
+	return seek
+}
+
 // ReadFile returns a stream that reads a single file from the object's actual
 // data.
 func (a *actualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {

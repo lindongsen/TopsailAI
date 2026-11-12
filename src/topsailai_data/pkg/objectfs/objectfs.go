@@ -185,6 +185,18 @@ func (f *ObjectFS) AppendFrom(p string, r io.Reader, _ os.FileMode) error {
 	return f.mgr.AppendActualFile(f.ctx, f.id, name, r)
 }
 
+// WriteAt inserts or overwrites a stream under exclusive object custody.
+func (f *ObjectFS) WriteAt(p string, r io.Reader, seek int64, insert bool, _ os.FileMode) error {
+	name, err := normalize(p)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot update the object root as a file")
+	}
+	return f.mgr.WriteActualFileAt(f.ctx, f.id, name, r, seek, insert)
+}
+
 // UpdateFile performs a lock-protected read-modify-write on one file.
 //
 // Exclusive object custody is acquired once and held across both the read and

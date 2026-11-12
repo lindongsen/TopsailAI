@@ -873,6 +873,42 @@ func TestStatLargeFileUsesBoundedMemory(t *testing.T) {
 	}
 }
 
+// TestPositionalWriteUsesBoundedMemory proves changing a few bytes in a large
+// object file does not materialize the existing content.
+func TestPositionalWriteUsesBoundedMemory(t *testing.T) {
+	const fileSize = 8 << 20
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "markdown",
+		"big.log": strings.Repeat("a", fileSize),
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	before := allocatedBytes()
+	if err := filetool.WriteFile("big.log", "XYZ", filetool.WriteFileOptions{Seek: 100, FS: fs}); err != nil {
+		t.Fatalf("positional write: %v", err)
+	}
+	grown := allocatedBytes() - before
+	if grown > 2<<20 {
+		t.Fatalf("updating a %d-byte file allocated %d bytes, so the file was buffered", fileSize, grown)
+	}
+	fd, err := fs.Open("big.log")
+	if err != nil {
+		t.Fatalf("open result: %v", err)
+	}
+	defer fd.Close()
+	if _, err := fd.Seek(97, io.SeekStart); err != nil {
+		t.Fatalf("seek result: %v", err)
+	}
+	got := make([]byte, 9)
+	if _, err := io.ReadFull(fd, got); err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	if string(got) != "aaaXYZaaa" {
+		t.Fatalf("unexpected positional result %q", got)
+	}
+}
+
 // TestAppendFromStreamsLargeSource proves that appending a large stream copies
 // it instead of buffering it in memory.
 func TestAppendFromStreamsLargeSource(t *testing.T) {

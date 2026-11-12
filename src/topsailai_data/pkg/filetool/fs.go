@@ -3,6 +3,7 @@ package filetool
 import (
 	"io"
 	"os"
+	"path/filepath"
 )
 
 // ReadSeekCloser combines the reader, seeker, and closer capabilities that the
@@ -43,6 +44,10 @@ type FS interface {
 	// AppendFrom appends a stream to a file, creating it when missing. It exists
 	// so a large source is copied instead of being buffered in memory.
 	AppendFrom(path string, r io.Reader, perm os.FileMode) error
+
+	// WriteAt inserts or overwrites a stream at a byte offset resolved against
+	// the current file size. Negative offsets count from the end.
+	WriteAt(path string, r io.Reader, seek int64, insert bool, perm os.FileMode) error
 
 	// UpdateFile performs a lock-protected read-modify-write. The callback
 	// receives the current content and whether the file exists, and returns the
@@ -119,6 +124,68 @@ func (OSFS) WriteFileFrom(path string, r io.Reader, perm os.FileMode) error {
 		return err
 	}
 	return fd.Sync()
+}
+
+// WriteAt inserts or overwrites a stream at a byte offset.
+func (OSFS) WriteAt(path string, r io.Reader, seek int64, insert bool, perm os.FileMode) error {
+	old, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return OSFS{}.WriteFileFrom(path, r, perm)
+		}
+		return err
+	}
+	defer old.Close()
+	info, err := old.Stat()
+	if err != nil {
+		return err
+	}
+	position := resolvePosition64(seek, info.Size(), insert)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".topsailai-file-write-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		_ = tmp.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		return err
+	}
+	if _, err := io.CopyN(tmp, old, position); err != nil {
+		return err
+	}
+	written, err := io.Copy(tmp, r)
+	if err != nil {
+		return err
+	}
+	suffixOffset := position
+	if !insert {
+		suffixOffset += written
+	}
+	if suffixOffset < info.Size() {
+		if _, err := old.Seek(suffixOffset, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err := io.Copy(tmp, old); err != nil {
+			return err
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }
 
 // UpdateFile performs a read-modify-write on an operating-system file.

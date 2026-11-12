@@ -3,6 +3,7 @@ package filetool
 import (
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/pmezard/go-difflib/difflib"
 )
@@ -48,13 +49,7 @@ func insertAt(path, content string, seek int64, fs FS) error {
 	if seek == -1 {
 		return appendText(path, content, fs)
 	}
-	return updateText(path, fs, func(existing string, exists bool) (string, error) {
-		if !exists {
-			return content, nil
-		}
-		position := resolvePosition(seek, len(existing), true)
-		return existing[:position] + content + existing[position:], nil
-	})
+	return writeAt(path, content, seek, true, fs)
 }
 
 // overwriteAt replaces bytes starting at the requested position.
@@ -66,16 +61,7 @@ func overwriteAt(path, content string, seek int64, fs FS) error {
 	if seek == 0 {
 		return writeText(path, content, fs)
 	}
-	return updateText(path, fs, func(existing string, exists bool) (string, error) {
-		if !exists {
-			return content, nil
-		}
-		position := resolvePosition(seek, len(existing), false)
-		if position+len(content) <= len(existing) {
-			return existing[:position] + content + existing[position+len(content):], nil
-		}
-		return existing[:position] + content, nil
-	})
+	return writeAt(path, content, seek, false, fs)
 }
 
 // resolvePosition converts a seek value into a byte position within content.
@@ -84,8 +70,14 @@ func overwriteAt(path, content string, seek int64, fs FS) error {
 // after the last byte; overwrite mode does not. The result is clamped to the
 // content length.
 func resolvePosition(seek int64, length int, insert bool) int {
+	return int(resolvePosition64(seek, int64(length), insert))
+}
+
+// resolvePosition64 converts a seek value into a byte position without
+// narrowing large file sizes to int.
+func resolvePosition64(seek, length int64, insert bool) int64 {
 	if seek < 0 {
-		position := length + int(seek)
+		position := length + seek
 		if insert {
 			position++
 		}
@@ -97,10 +89,21 @@ func resolvePosition(seek int64, length int, insert bool) int {
 		}
 		return position
 	}
-	if seek > int64(length) {
+	if seek > length {
 		return length
 	}
-	return int(seek)
+	return seek
+}
+
+// writeAt streams a positional write after creating missing parent folders.
+func writeAt(path, content string, seek int64, insert bool, fs FS) error {
+	target := resolveFS(fs)
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := target.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return target.WriteAt(path, strings.NewReader(content), seek, insert, 0o644)
 }
 
 // updateText performs a lock-protected read-modify-write on a file.

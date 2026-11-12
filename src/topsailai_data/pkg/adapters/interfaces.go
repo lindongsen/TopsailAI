@@ -112,6 +112,10 @@ type ActualDataAdapter interface {
 	// a large file is never read back into memory.
 	AppendFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error)
 
+	// WriteFileAt inserts or overwrites a stream at a byte offset resolved
+	// against the current file size. Negative offsets count from the end.
+	WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error)
+
 	// ReadFile returns a stream that reads a single file from the object's actual data.
 	ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error)
 
