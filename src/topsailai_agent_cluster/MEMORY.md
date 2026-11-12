@@ -239,3 +239,35 @@ Recording does not imply recall. REPL commands are recallable with Up/Down; prom
 are recorded for history but never offered as commands or future prompt defaults. This distinction
 prevents a context-specific answer such as `y` or `3` from becoming an accidental command or repeated
 destructive confirmation.
+
+## Providers implement a standard Adapter CLI in independent projects
+
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> Adapter 是抽象层并定义标准。Endpoint 服务调用标准 Adapter 函数，Adapter 再调用
+> provider CLI；provider CLI 按照 Adapter 标准包装请求和行为，并访问 provider 自己的
+> 具体业务层。Cluster 不关心 provider 背后的业务、执行方式和实现细节。
+
+This supersedes the earlier same-repository, linkable Go provider proposal. The required dependency
+and call direction is:
+
+```text
+Endpoint service -> standard Adapter -> generic CLI runner -> provider CLI -> provider business layer
+```
+
+The standard Adapter and generic runner belong to Agent Cluster. A provider CLI belongs to the
+provider's independent project, may be implemented in any language, and translates the standard
+versioned JSON/JSONL protocol into provider-specific behavior. Adding or replacing a provider changes
+local installation and binding configuration, not Endpoint, Server, database schema, public API or
+operator CLI source.
+
+The Endpoint retains platform authority: authorization, local policy, command journal, deduplication,
+target and generation revalidation, cluster resource mapping, deadlines, byte and record limits,
+protocol validation and exact child-process cleanup. A provider CLI must not access Server routes,
+cluster credentials, the Endpoint database or cluster journals, and it must not mint or persist
+cluster resource IDs.
+
+Provider-specific command construction, native JSON decoding, state mapping and runtime behavior
+belong in the provider project. The existing cluster-local TopsailAI Go adapter is only a migration
+baseline and may be removed only after the independent provider CLI passes conformance, old/new parity,
+BDD, integration and live smoke verification.

@@ -392,22 +392,150 @@ protocol never names a provider script, environment variable or record path.
   never reads provider record files. A controller that survives an Endpoint
   restart is expected, not a leak.
 
-## Endpoint-private Adapter service boundary
+## Standard Adapter CLI protocol
 
-These methods exist only inside Endpoint; Server cannot call them or reference binding/provider parameters. Conceptual language-neutral methods, not implementation source:
+The Adapter is a provider-neutral service boundary inside the Endpoint. Its implementation calls a
+locally configured provider CLI through a versioned process protocol. The provider CLI may be written
+in any language and belongs to the provider's independent project.
 
-| Method | Contract |
+### Standard Adapter functions
+
+| Function | Contract |
 |---|---|
-| Describe(binding) | Return versioned capabilities, constraints and health prerequisites |
-| Discover(binding, page_or_checkpoint, budget) | Return bounded resources and explicit completeness/revision evidence |
-| Inspect(target, budget) | Revalidate exact provider mapping and target generation |
-| Execute(command, frozen_target, budget) | Perform one allowed intent and report the actual acknowledgement boundary |
-| QueryCommand(provider_command_ref, budget) | Optional provider reconciliation; unsupported is not failure |
-| ReadOutput(target, source, cursor_or_tail, budget) | Return snapshot or cursor-based data with truncation/gap flags |
-| Watch(binding, checkpoint, budget) | Optional provider event subscription |
-| Close() | Release controller CLI invocation helpers, subscriptions and handles; never stop independent Agents |
+| `describe` | Return protocol compatibility, supported standard operations, constraints and provider health prerequisites without changing provider state. |
+| `discover` | Return bounded provider resource observations and explicit completeness, revision and freshness evidence. |
+| `inspect` | Revalidate one provider-private resource key and generation within a budget. |
+| `execute` | Perform one standard operation against the frozen provider target and report the actual acknowledgement boundary and effect certainty. |
+| `query_command` | Optionally reconcile a prior provider operation by a provider correlation reference; unsupported is not failure. |
+| `read_output` | Return one bounded output snapshot with observation, truncation and gap evidence. |
+| `follow_output` | Stream bounded output records and exactly one terminal frame while the process channel remains writable. |
+| `watch` | Optionally stream provider observation changes; absence of support is explicit. |
 
-Endpoint services, not Adapter, own durable command IDs, policy, audit and network protocol. Methods receive explicit context, cancellation and budgets. Configuration is read at process startup and passed into bindings. Adapter errors use normalized categories and bounded redacted diagnostics; unsupported semantics must not be emulated by unrelated destructive actions.
+The Endpoint, not the provider CLI, owns durable cluster command IDs, authorization, policy, audit,
+deduplication, resource mapping and network protocol. The provider CLI receives explicit deadlines and
+budgets and returns provider-private keys and evidence.
+
+### Invocation and framing
+
+The Endpoint starts the configured executable directly with no shell. A non-streaming invocation reads
+one UTF-8 JSON request from stdin and writes one UTF-8 JSON response to stdout. A streaming invocation
+reads one JSON request and writes JSON Lines, one complete frame per line. Stderr is bounded diagnostic
+text and is never parsed as a successful result.
+
+A request contains at least:
+
+```json
+{
+  "protocol": "agent-cluster-adapter",
+  "major": 1,
+  "minor": 0,
+  "request_id": "req_opaque",
+  "operation": "discover",
+  "deadline_at_ms": 1794470400000,
+  "budget": {
+    "max_stdout_bytes": 1048576,
+    "max_stderr_bytes": 65536,
+    "max_records": 1000
+  },
+  "binding": {
+    "binding_id": "local-binding",
+    "settings": {}
+  },
+  "target": null,
+  "payload": {}
+}
+```
+
+A non-streaming response contains at least:
+
+```json
+{
+  "protocol": "agent-cluster-adapter",
+  "major": 1,
+  "minor": 0,
+  "request_id": "req_opaque",
+  "ok": true,
+  "result": {}
+}
+```
+
+An error response carries a standard error object:
+
+```json
+{
+  "protocol": "agent-cluster-adapter",
+  "major": 1,
+  "minor": 0,
+  "request_id": "req_opaque",
+  "ok": false,
+  "error": {
+    "code": "unsupported",
+    "message": "operation is not supported",
+    "retryable": false,
+    "effect_certainty": "not_applied"
+  }
+}
+```
+
+Streaming frames use `started`, operation-specific record types and `end`. Every frame repeats the
+request ID. A normal stream has exactly one `end`; EOF without `end` is `stream_interrupted`, never a
+clean completion. Cancellation may prevent the provider from writing its terminal frame, so the
+Endpoint still owns the authoritative interrupted result.
+
+### Version compatibility
+
+`protocol` is the fixed identifier `agent-cluster-adapter`. An unsupported major version is rejected
+before provider work. A higher minor version is accepted only when every required field and advertised
+feature is understood; otherwise the invocation fails with `incompatible_protocol`. Unknown fields
+must not silently change semantics.
+
+`describe` reports the supported major/minor range and capabilities. The Endpoint checks compatibility
+before using a binding and does not infer support from executable exit status.
+
+### Identity and target rules
+
+Cluster resource IDs never cross into provider authority. Requests identify a provider target with an
+opaque provider resource key plus the generation evidence last reported by that provider CLI. The
+Endpoint keeps the durable mapping between that key and the public cluster resource ID, freezes it at
+admission and revalidates it before a mutating invocation.
+
+A provider CLI must not construct, persist or interpret cluster IDs. A provider generation is evidence
+from the provider domain, not permission to execute. Two empty generations never prove identity.
+
+### Failure and effect rules
+
+Process exit, protocol validity, provider outcome and effect certainty are separate facts:
+
+- Exit zero with malformed or missing protocol output is `invalid_provider_response`.
+- Exit non-zero with a valid error response preserves the standard error; bounded stderr is diagnostic
+  detail, not a replacement result.
+- A timeout or cancellation after delivery may have unknown effect and must not be retried
+  automatically.
+- Output or record limits produce explicit truncation/limit evidence or a bounded failure; they never
+  turn a partial document into a complete one.
+- A provider crash, extra stdout text, request-ID mismatch, incompatible version or duplicate terminal
+  frame is a visible protocol failure.
+
+The generic runner owns wall-clock and monotonic budgets, bounded reads, exact process-group cleanup
+and error logging. It must never terminate processes by a broad name match.
+
+### Configuration boundary
+
+The provider executable and its local settings are Endpoint configuration, not protocol choices an
+operator request may override. The Endpoint passes a minimal environment and an explicit binding
+object. Provider-specific secrets are supplied through a protected local mechanism and must not be
+echoed in responses, stderr, receipts or audit records.
+
+The provider CLI cannot call the Server, open the Endpoint database or modify the command journal. It
+may access only the provider resources authorized by its local binding.
+
+### Conformance
+
+An executable conformance suite drives a provider CLI without an Endpoint, Server, channel or cluster
+database. It verifies version negotiation, framing, request correlation, capability truthfulness,
+standard errors, limits, cancellation, stream termination and secret redaction. A provider is not an
+accepted integration until the suite also demonstrates that deliberately broken fixtures are
+rejected.
 
 ## Proposed HTTP surfaces
 

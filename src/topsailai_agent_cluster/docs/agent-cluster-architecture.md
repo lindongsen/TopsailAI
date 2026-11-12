@@ -86,7 +86,7 @@ Operator CLI / TUI / future Web UI
            /             |               TopsailAI CLI      Other CLI        SDK / HTTP agent
 ```
 
-The CLI/TUI is a separate client process, even when installed on the server machine. It never reads endpoint files, invokes provider CLIs, or bypasses the Server API. Server and Endpoint each have an API-serving process; adapters run inside the Endpoint process initially. Provider CLIs are bounded child processes, not additional permanent platform services.
+The CLI/TUI is a separate client process, even when installed on the server machine. It never reads endpoint files, invokes provider CLIs, or bypasses the Server API. Server and Endpoint each have an API-serving process. The standard Adapter abstraction and its generic CLI runner live inside the Endpoint; each provider CLI is an independently installed, bounded child process owned by its provider project, not another permanent platform service.
 
 ## Strict Server and Endpoint abstraction boundary
 
@@ -230,89 +230,81 @@ dispatch paths: no network primitive exists on the Endpoint side, the Endpoint e
 and report frames, `Server.SendCommand` writes to one peer resolved by Endpoint ID, and every
 response correlation requires the pending request's Endpoint to equal the responding peer.
 
-## Adapter seam and independent provider development
+## Adapter CLI boundary and independent provider projects
 
-Human decision on 2026-11-11, wording normalized, meaning preserved:
+The Endpoint service calls standard Adapter functions. The Adapter is the cluster-owned abstraction
+layer: it defines the standard operations, resources, result semantics and safety boundaries, then a
+generic runner invokes a locally configured provider CLI. The provider CLI implements that standard in
+its own project and translates the request into whatever concrete business mechanism the provider uses.
 
-> 同意A，就是要把adapter拆出来能够单独开发，独立接入。让endpoint成为抽象层。
-
-> 同意建议，就是你说的意思A。先放同仓库，写好文档，做好约定。同意建议，先做好接缝。
-
-An adapter must be a component that can be developed, tested and compiled on its own, and plugged into
-the Endpoint without editing Endpoint code. The Endpoint remains the abstraction layer. The chosen form
-is a linkable module in the same repository, not a separate process and not a runtime plugin.
-
-The layering is fixed:
-
-| Layer | Location | Owns | Must not own |
-|---|---|---|---|
-| Endpoint abstraction | `internal/endpoint/` | Collection, execution, channel, policy, journal | Any provider name, flag, file or record format |
-| Adapter contract | `internal/adapter/` | `Adapter`, `Provider`, `Registry`, `Config` | Any provider implementation |
-| Provider component | `internal/adapter/<name>/` | Its factory, its configuration, its tests | Endpoint, storage, channel, Server, logging |
-| Composition root | `src/main/agent-cluster-endpoint/` | Naming every provider once | Provider behaviour |
-
-The composition root naming providers is correct and unavoidable. Go offers no runtime plugin loading
-that this project accepts, so something must link them. The rule is that this knowledge is confined to
-one file and one registration line, never spread through the startup flow.
-
-A provider is registered through one interface, so adding one is a new folder plus one line:
-
-```go
-// Deps carries the Endpoint-owned services a provider needs but must not construct.
-type Deps struct {
-    ResourceMapper ResourceMapper
-}
-
-type Provider interface {
-    Type() string
-    NewAdapter(context.Context, Config, Deps) (Adapter, error)
-}
+```text
+Endpoint service
+    -> standard Adapter functions
+    -> generic Adapter CLI runner
+    -> provider CLI
+    -> provider business/runtime layer
 ```
 
-`Deps` exists because `Config` is built from operator configuration and must stay a pure description
-of one binding, while `ResourceMapper` is a live Endpoint service. A provider cannot construct a
-mapper itself, because durable resource identity belongs to the Endpoint, so the mapper is supplied
-through `Deps` rather than folded into `Config`. Folding it into `Config` would make one struct mean
-two different things: parsed configuration and runtime dependency.
+This direction is mandatory. The cluster defines the contract first; a provider implements it. The
+cluster never learns the provider's native command names, flags, files, state labels, SDK calls or
+internal process model. A provider may use another CLI, an HTTP API, an SDK, files or processes behind
+its provider CLI without changing the Endpoint.
 
-The Endpoint must not contain a `switch` on `provider_type`. A provider type that is not registered
-fails closed at startup, exactly as an unknown type does today.
+### Ownership
 
-Configuration reaches a provider through `adapter.Config`, including an opaque `Settings` map carried
-in the `AGENT_CLUSTER_ENDPOINT_ADAPTERS` element. The Endpoint never interprets a `Settings` key. A provider
-validates its own keys and fails startup on a malformed value. A provider must not read process
-environment variables for its own configuration, because environment is external configuration read
-once at the process boundary and the Endpoint is that boundary. Reading the environment to construct a
-child process environment is a different purpose and remains allowed.
+| Layer | Owns | Must not own |
+|---|---|---|
+| Endpoint service | Authorization, command journal, deduplication, target and generation revalidation, cluster resource mapping, local policy | Provider commands, provider state labels, provider files or provider business rules |
+| Standard Adapter | Provider-neutral functions, request/result schemas, protocol versioning, error and effect semantics | Any provider-specific translation or executable behavior |
+| Generic CLI runner | Bounded child execution, stdin/stdout framing, stderr diagnostics, deadlines, cancellation and exact-process cleanup | Provider business interpretation |
+| Provider CLI | Translation from the standard Adapter protocol to one provider's behavior | Server routes, cluster credentials, Endpoint database, cluster authorization or cluster resource IDs |
+| Provider runtime | Agent-specific execution, sessions, models, output and persistence | Cluster protocol or fleet policy |
 
-The conventions that make independent development possible are mandatory for every provider:
+The provider CLI is configured by a local administrator. A remote command can select only a standard
+operation and an already configured binding; it can never supply an executable path, provider command,
+working directory, configuration path or environment override.
 
-- Import only the contract packages. Never import `endpoint`, `storage`, `channel`, `server`, `config`,
-  `logging` or `tui`, and never import another provider.
-- Receive everything through `Config`. Read no configuration from the process environment.
-- Return errors instead of writing log files, so the Endpoint owns logging and retention.
-- Never learn that a Server exists. No Server address, credential or route reaches a provider.
-- Never persist cluster state. Durable resource identity is supplied through `adapter.ResourceMapper`,
-  which the Endpoint implements.
-- Report an unsupported capability as `adapter.ErrUnsupported` rather than emulating it with an
-  unrelated operation.
-- Keep tests runnable without an Endpoint, a Server, a channel or a database.
+### Process and protocol boundary
 
-The `ctl.<action>` catalog is a standard operation family, so its loader, parser and validator belong to
-the neutral layer, not to a provider package. Its content is provider-specific, because an entry names a
-provider argv, so the file belongs to the provider's configuration. The catalog is per-adapter rather
-than one global file, because a single global catalog would advertise one provider's actions from
-another provider's binding.
+Ordinary Adapter calls start a bounded provider CLI process, write one versioned JSON request to stdin
+and read one versioned JSON response from stdout. Streaming calls use JSON Lines: every line is one
+complete frame, and exactly one terminal frame ends a normal stream. Provider logs and bounded
+diagnostics go to stderr; stdout is protocol data only.
 
-A real module split is a later step, and the order is load-bearing. The Go toolchain forbids an external
-module from importing a package under `internal/`, so a split requires physically moving `protocol`,
-`security` and `adapter` into a public SDK directory. That move freezes the `Adapter` interface: one
-changed method signature then breaks every provider. The interface is still evolving and these documents
-are discussion drafts, so the seam is built first, the interface stabilises second, and the module split
-comes last. Doing it in the reverse order pins an interface that is not finished.
+The first implementation uses a process per request. A resident provider daemon is not part of this
+contract and may be considered only after measured process-start cost justifies a separate lifecycle.
+The provider CLI may be written in any language and released independently from Agent Cluster.
 
-See `.task/plan_20261111T061542_adapter-seam-and-sdk.md` for the verified dependency facts, the three
-current leaks and the execution units.
+### Identity and authority do not cross the boundary
+
+The provider CLI returns provider-private resource keys and provider generation evidence. The Endpoint
+maps those keys through its durable `ResourceMapper` and mints the opaque cluster IDs exposed on the
+wire. A provider CLI must never mint, persist or interpret cluster resource IDs.
+
+A provider result is evidence, not authority. The Endpoint still decides whether the caller may perform
+the operation, whether the target generation is current, whether a command is a duplicate and whether
+a returned result satisfies the standard schema. A successful provider process exit cannot upgrade an
+unknown effect into a confirmed one.
+
+### Independent development and replacement
+
+Adding or replacing a provider installs a provider CLI and changes Endpoint-local binding
+configuration. It requires no Endpoint, Server, database schema, public API or operator CLI source
+change. Provider-specific translation code belongs to the provider project, not under
+`internal/adapter/<provider>` in this repository.
+
+The previous same-repository Go `Provider` registration proposal is superseded. Agent Cluster does not
+use Go runtime plugins, compile provider implementations into the Endpoint, or publish a Go SDK as the
+provider integration boundary. The portable contract is the versioned CLI protocol plus its schemas
+and executable conformance suite.
+
+### Migration constraint
+
+The existing `internal/adapter/topsailai` implementation remains only as a migration baseline until an
+independent TopsailAI provider CLI passes protocol conformance, fixture parity, BDD, integration and
+live smoke checks. It is removed only after the Endpoint has switched to the generic runner and the
+rollback path has been documented. Provider-specific behavior must not be rewritten into the generic
+runner during migration.
 
 ## Transport and connectivity
 
