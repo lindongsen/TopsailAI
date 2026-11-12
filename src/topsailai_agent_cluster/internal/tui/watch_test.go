@@ -541,12 +541,16 @@ type watchEditorInput struct {
 	reader    io.Reader
 	idlePolls int
 	polls     int
+	onIdle    func(int)
 }
 
 // Read reports a poll timeout until the idle budget is spent, then serves bytes.
 func (f *watchEditorInput) Read(p []byte) (int, error) {
 	if f.polls < f.idlePolls {
 		f.polls++
+		if f.onIdle != nil {
+			f.onIdle(f.polls)
+		}
 		return 0, os.ErrDeadlineExceeded
 	}
 	return f.reader.Read(p)
@@ -680,6 +684,59 @@ func TestReplWatchPrintsTableAndDiagnosticTogether(t *testing.T) {
 	// table above it rather than as a replacement for it.
 	if strings.Index(printed, "endpoint endpoint-2 unavailable") < strings.Index(printed, "host-one") {
 		t.Fatalf("diagnostic printed before the table: %q", printed)
+	}
+}
+
+// TestReadLineWithWatchIdlePollsWriteNothing proves an empty watch/follow poll
+// does not erase and redraw the prompt. The run with several idle polls must be
+// byte-identical to the run with none, so SSH carries no idle display traffic.
+func TestReadLineWithWatchIdlePollsWriteNothing(t *testing.T) {
+	run := func(idlePolls int) string {
+		input := &watchEditorInput{reader: strings.NewReader("\r"), idlePolls: idlePolls}
+		var out strings.Builder
+		editor := NewTerminalEditor(input, &out, func() int { return 40 }, func() (func() error, error) { return func() error { return nil }, nil })
+		watch := &fakeWatchSession{}
+		line, overflow, err := editor.ReadLineWithWatch(context.Background(), "workspace> ", true, 64, watch)
+		if err != nil || overflow || line != "" {
+			t.Fatalf("idlePolls=%d line=%q overflow=%v err=%v", idlePolls, line, overflow, err)
+		}
+		return out.String()
+	}
+	want := run(0)
+	if got := run(4); got != want {
+		t.Fatalf("idle polls wrote terminal bytes\ngot =%q\nwant=%q", got, want)
+	}
+}
+
+// TestReadLineWithWatchRedrawsOnceAfterResize proves suppressing empty idle
+// polls does not leave a resized terminal using the old input layout. The width
+// change is observed on the idle poll, while the next unchanged poll stays silent.
+func TestReadLineWithWatchRedrawsOnceAfterResize(t *testing.T) {
+	run := func(resize bool) string {
+		width := 40
+		input := &watchEditorInput{reader: strings.NewReader("\r"), idlePolls: 2}
+		if resize {
+			input.onIdle = func(poll int) {
+				if poll == 1 {
+					width = 12
+				}
+			}
+		}
+		var out strings.Builder
+		editor := NewTerminalEditor(input, &out, func() int { return width }, func() (func() error, error) { return func() error { return nil }, nil })
+		watch := &fakeWatchSession{}
+		if _, _, err := editor.ReadLineWithWatch(context.Background(), "workspace> ", true, 64, watch); err != nil {
+			t.Fatalf("resize=%v ReadLineWithWatch: %v", resize, err)
+		}
+		return out.String()
+	}
+	steady := run(false)
+	resized := run(true)
+	if got, want := strings.Count(resized, "\x1b[2K"), strings.Count(steady, "\x1b[2K")+2; got != want {
+		t.Fatalf("resize clear sequences=%d, want %d for exactly one extra redraw; output=%q", got, want, resized)
+	}
+	if resized == steady {
+		t.Fatal("resize produced no changed layout output")
 	}
 }
 
