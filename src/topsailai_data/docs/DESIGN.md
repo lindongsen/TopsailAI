@@ -547,6 +547,11 @@ Single-file `put` rejects a source that is the same file as the destination, inc
 
 The local adapter reserves the `.topsailai-data-write-*` namespace for temporary replacements. Reserved temporary files are excluded from archive reads, folder-tree output, existence checks, and move copies. Expired reserved temporary files are removed recursively at object cleanup/GC boundaries after 24 hours; fresh and unrelated files are preserved, and directory symlinks are not traversed.
 
+Every `file` write holds the object's meta lock across the whole
+read-modify-write, so a competing writer fails with `ErrObjectLocked` rather
+than silently discarding an update. See §20.9 for the streaming and
+lock-scoped write contract.
+
 ## 20. File and Folder Command Group
 
 The `file` command group exposes the file and folder capabilities of the
@@ -703,3 +708,44 @@ object.
   isolated store. Objects are created through `create` and their content is
   verified through `get`, so the scenarios exercise the public surface end to
   end rather than the library alone.
+
+### 20.9 Streaming and Lock-Scoped Writes
+
+The `file` group must not buffer a whole object file to serve a bounded
+request, and every write must hold the object's meta lock across the complete
+read-modify-write. Both properties are part of the contract, not an
+optimization detail.
+
+**Streaming reads.** `ObjectFS.Open` forwards the adapter's stream when it is
+seekable, so `filetool` reads only the bytes it needs. The local adapter
+returns an `*os.File`, which is seekable, so `read`, `read-lines`,
+`read-around`, `read-context`, and `size` stay bounded regardless of file
+size. Only a non-seekable remote adapter falls back to buffering, and that
+fallback is the adapter's responsibility to bound.
+
+**Streaming writes.** `FS` exposes `WriteFileFrom`, `AppendFrom`, and
+`UpdateFile` so content can flow from an `io.Reader`. `write` with
+`--seek 0` and no `--insert`, and `append`, stream `--from` and standard input
+straight to the adapter instead of materializing `[]byte`. `put` already
+worked this way; the `file` group now matches it.
+
+**Lock-scoped read-modify-write.** `Manager.UpdateActualFile` acquires
+exclusive object custody, reads the current content under that custody, calls
+the caller's transform, writes the result, and publishes the updated
+timestamp, all before releasing custody. `Manager.AppendActualFile` appends
+in place under the same custody. `overwrite-lines`, `insert`, `write` with a
+non-zero `--seek`, and `append` all route through these primitives.
+
+The lock is the object's meta lock file at
+`meta/<h[0:2]>/<h[2:4]>/<h[4:6]>/<h>/lock`, where `h` is the lowercase SHA256
+of the object ID. It is acquired with `LOCK_NB`, and flock is per open file
+description, so the lock is **not re-entrant**: a write path must acquire
+custody once and must not call another custody-acquiring method while holding
+it. A competing writer therefore fails with `ErrObjectLocked` instead of
+silently discarding an update. This is the same advisory lock used by `put`,
+`tag`, `move`, and the lifecycle commands.
+
+**Known remaining cost.** `overwrite-lines` and `insert` still build a unified
+diff from two full line snapshots, and `write` with a non-zero `--seek` still
+materializes the file to splice bytes. Both are bounded by the file size and
+are tracked separately; they are not covered by the streaming guarantee above.
