@@ -1,9 +1,12 @@
 package bdd
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -97,6 +100,73 @@ func registerInventorySteps(ctx *godog.ScenarioContext) {
 		}
 		if len(envelope.Data.Sessions) != 0 {
 			return fmt.Errorf("got %d sessions", len(envelope.Data.Sessions))
+		}
+		return nil
+	})
+	ctx.Step(`^an external reader holds the inventory database lock$`, func() error {
+		world := activeScenario.world
+		if _, err := world.Store.DB().ExecContext(context.Background(), "PRAGMA busy_timeout=20"); err != nil {
+			return err
+		}
+		lockDB, err := sql.Open("sqlite", filepath.Join(world.Root, "server.db"))
+		if err != nil {
+			return err
+		}
+		lockTx, err := lockDB.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			_ = lockDB.Close()
+			return err
+		}
+		var rows int
+		if err := lockTx.QueryRowContext(context.Background(), `SELECT count(*) FROM endpoint_session_state`).Scan(&rows); err != nil {
+			_ = lockTx.Rollback()
+			_ = lockDB.Close()
+			return err
+		}
+		world.lockDB, world.lockTx = lockDB, lockTx
+		return nil
+	})
+	ctx.Step(`^the inventory request is rejected because the database is locked$`, func() error {
+		if activeScenario.lastStatus < http.StatusBadRequest {
+			return fmt.Errorf("want database rejection, got status=%d body=%s", activeScenario.lastStatus, activeScenario.lastBody)
+		}
+		body := strings.ToLower(string(activeScenario.lastBody))
+		if !strings.Contains(body, "locked") && !strings.Contains(body, "busy") {
+			return fmt.Errorf("response has no SQLite lock evidence: %s", activeScenario.lastBody)
+		}
+		return nil
+	})
+	ctx.Step(`^the external database lock is released$`, func() error {
+		world := activeScenario.world
+		if world.lockTx == nil || world.lockDB == nil {
+			return fmt.Errorf("external database lock is not held")
+		}
+		if err := world.lockTx.Rollback(); err != nil {
+			return err
+		}
+		world.lockTx = nil
+		if err := world.lockDB.Close(); err != nil {
+			return err
+		}
+		world.lockDB = nil
+		return nil
+	})
+	ctx.Step(`^the latest inventory for "([^"]*)" has revision (\d+)$`, func(endpoint string, revision int64) error {
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/endpoints/"+endpoint+"/session-state", nil)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("get status=%d body=%s", resp.StatusCode, body)
+		}
+		var envelope struct {
+			Data protocol.InventoryReport `json:"data"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil {
+			return err
+		}
+		if envelope.Data.SnapshotRevision != revision {
+			return fmt.Errorf("revision=%d, want %d", envelope.Data.SnapshotRevision, revision)
 		}
 		return nil
 	})

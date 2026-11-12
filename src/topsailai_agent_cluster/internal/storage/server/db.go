@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"net/url"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -20,18 +22,25 @@ type Store struct {
 
 // Open opens a SQLite database and applies embedded migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := path
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	pragmas := url.Values{}
+	pragmas.Add("_pragma", "journal_mode(DELETE)")
+	pragmas.Add("_pragma", "synchronous(FULL)")
+	pragmas.Add("_pragma", "busy_timeout(5000)")
+	db, err := sql.Open("sqlite", dsn+separator+pragmas.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	store := &Store{db: db}
-	for _, pragma := range []string{"PRAGMA journal_mode=DELETE", "PRAGMA synchronous=FULL", "PRAGMA busy_timeout=5000"} {
-		if _, err := db.ExecContext(ctx, pragma); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("configure server sqlite: %w", err)
-		}
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure server sqlite: %w", err)
 	}
 	if err := store.migrate(ctx); err != nil {
 		db.Close()

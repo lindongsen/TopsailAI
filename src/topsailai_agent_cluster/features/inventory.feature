@@ -41,3 +41,13 @@ Feature: inventory persistence
     Given an isolated Agent Cluster server
     When endpoint "endpoint-1" submits a truncated partial report
     Then the report is marked incomplete rather than successful
+
+  Scenario: a transient database lock does not stop later inventory persistence
+    Given an isolated Agent Cluster server
+    And an external reader holds the inventory database lock
+    When endpoint "endpoint-1" submits a complete inventory with revision 1
+    Then the inventory request is rejected because the database is locked
+    And the external database lock is released
+    When endpoint "endpoint-1" submits a complete inventory with revision 2
+    Then the inventory request succeeds
+    And the latest inventory for "endpoint-1" has revision 2

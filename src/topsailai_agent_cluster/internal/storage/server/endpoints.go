@@ -71,22 +71,22 @@ func (s *Store) ExpireOfflineEndpoints(ctx context.Context, cutoffMS int64) (End
 	if cutoffMS <= 0 {
 		return EndpointExpiryResult{}, fmt.Errorf("endpoint expiry cutoff must be positive")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	var inventoryIDs []string
+	var endpointIDs []string
+	err := s.withTransaction(ctx, "endpoint expiry", func(conn *sql.Conn) error {
+		var err error
+		inventoryIDs, err = deleteReturningEndpointIDs(ctx, conn, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state != 'online' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ?) RETURNING endpoint_id`, cutoffMS)
+		if err != nil {
+			return fmt.Errorf("delete expired endpoint inventory: %w", err)
+		}
+		endpointIDs, err = deleteReturningEndpointIDs(ctx, conn, `DELETE FROM endpoints WHERE connection_state != 'online' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ? AND NOT EXISTS (SELECT 1 FROM commands WHERE commands.endpoint_id = endpoints.endpoint_id) RETURNING endpoint_id`, cutoffMS)
+		if err != nil {
+			return fmt.Errorf("delete expired endpoint metadata: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return EndpointExpiryResult{}, fmt.Errorf("begin endpoint expiry: %w", err)
-	}
-	defer tx.Rollback()
-
-	inventoryIDs, err := deleteReturningEndpointIDs(ctx, tx, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state != 'online' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ?) RETURNING endpoint_id`, cutoffMS)
-	if err != nil {
-		return EndpointExpiryResult{}, fmt.Errorf("delete expired endpoint inventory: %w", err)
-	}
-	endpointIDs, err := deleteReturningEndpointIDs(ctx, tx, `DELETE FROM endpoints WHERE connection_state != 'online' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ? AND NOT EXISTS (SELECT 1 FROM commands WHERE commands.endpoint_id = endpoints.endpoint_id) RETURNING endpoint_id`, cutoffMS)
-	if err != nil {
-		return EndpointExpiryResult{}, fmt.Errorf("delete expired endpoint metadata: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return EndpointExpiryResult{}, fmt.Errorf("commit endpoint expiry: %w", err)
+		return EndpointExpiryResult{}, err
 	}
 	sort.Strings(inventoryIDs)
 	sort.Strings(endpointIDs)

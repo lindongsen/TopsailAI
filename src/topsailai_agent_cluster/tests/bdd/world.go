@@ -3,6 +3,7 @@ package bdd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,6 +53,8 @@ type World struct {
 	Transport   *bddTransport
 	events      chan []byte
 	realCluster *harness.Cluster
+	lockDB      *sql.DB
+	lockTx      *sql.Tx
 }
 
 // NewWorld creates a scenario-scoped server and SQLite database on a dynamic port.
@@ -72,6 +75,12 @@ func NewWorld(t *testing.T) (*World, error) {
 	server := httptest.NewServer(serverapi.NewHandlerWithCommandsAndBroker(store, "bdd-token", commands, broker))
 	world := &World{Root: root, Store: store, Server: server, Client: server.Client(), Token: "bdd-token", Commands: commands, Transport: transport}
 	t.Cleanup(func() {
+		if world.lockTx != nil {
+			_ = world.lockTx.Rollback()
+		}
+		if world.lockDB != nil {
+			_ = world.lockDB.Close()
+		}
 		server.Close()
 		if err := store.Close(); err != nil {
 			t.Logf("close scenario store: %v", err)

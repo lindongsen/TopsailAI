@@ -938,3 +938,12 @@ reads as the safer extraction, and every test still passes because a doubled dea
 timing, never behaviour. The defect is invisible in the diff: the added line is correct in isolation
 and the removed line was the only evidence of the original budget. Writing the budget ownership into
 the doc comment is what makes the next extraction check it rather than rediscover it.
+
+
+## A failed SQLite commit can leave the pooled connection inside its transaction
+
+Trigger: Endpoint expiry reached `COMMIT` while another SQLite connection held a read lock. SQLite returned `SQLITE_BUSY` and kept the underlying transaction active, but `database/sql.Tx.Commit` had already marked the Go transaction finished, so the deferred `Rollback` could not clean it. The Server had one pooled connection, and every later inventory write failed with `cannot start a transaction within a transaction`.
+
+Action: when the driver can leave a transaction active after commit failure, pin one `sql.Conn`, issue `BEGIN` and `COMMIT` on that connection, and issue `ROLLBACK` on the same connection with an independent cleanup context before returning it to the pool. If rollback cannot be confirmed, mark the driver connection bad so the pool discards it. Put connection-local PRAGMAs in the driver DSN so a replacement connection receives the same durability and lock-wait settings. Test with a real second SQLite connection that holds a read transaction until commit fails, then release it and prove the next write succeeds.
+
+Why this prevents recurrence: a deferred rollback only works while its transaction handle still owns a usable driver transaction, and a one-connection pool turns one poisoned connection into a permanent write outage. Same-connection cleanup removes the active transaction before reuse, discarding handles the unprovable case, and per-connection configuration prevents recovery from silently changing database behaviour.
