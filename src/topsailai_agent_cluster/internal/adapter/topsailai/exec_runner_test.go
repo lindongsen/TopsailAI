@@ -108,7 +108,8 @@ func TestRunCommandTruncatesOversizedOutput(t *testing.T) {
 
 func TestRunCommandDoesNotInheritEndpointSecrets(t *testing.T) {
 	env := requireProgram(t, "env")
-	t.Setenv("AGENT_CLUSTER_AUTH_TOKEN", "super-secret-token")
+	t.Setenv("AGENT_CLUSTER_SERVER_AUTH_TOKEN", "super-secret-token")
+	t.Setenv("AGENT_CLUSTER_AUTH_TOKEN", "deprecated-super-secret-token")
 	t.Setenv("AGENT_CLUSTER_DATABASE_DSN", "postgres://user:secret@host/db")
 	runner := execCommandRunner{timeout: 10 * time.Second}
 	outcome, err := runner.RunCommand(context.Background(), env, []string{"env"}, t.TempDir())
@@ -116,7 +117,7 @@ func TestRunCommandDoesNotInheritEndpointSecrets(t *testing.T) {
 		t.Fatalf("RunCommand: %v", err)
 	}
 	output := string(outcome.Stdout)
-	for _, secret := range []string{"AGENT_CLUSTER_AUTH_TOKEN", "AGENT_CLUSTER_DATABASE_DSN", "super-secret-token", "postgres://"} {
+	for _, secret := range []string{"AGENT_CLUSTER_SERVER_AUTH_TOKEN", "AGENT_CLUSTER_AUTH_TOKEN", "AGENT_CLUSTER_DATABASE_DSN", "super-secret-token", "deprecated-super-secret-token", "postgres://"} {
 		if strings.Contains(output, secret) {
 			t.Fatalf("child environment leaked %q:\n%s", secret, output)
 		}

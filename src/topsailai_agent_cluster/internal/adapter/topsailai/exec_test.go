@@ -174,11 +174,12 @@ func TestResolveCommandExecutableUsesLookPath(t *testing.T) {
 
 func TestCommandEnvironmentExcludesSecrets(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_DATABASE_DSN", "postgres://user:secret@host/db")
-	t.Setenv("AGENT_CLUSTER_AUTH_TOKEN", "token-value")
+	t.Setenv("AGENT_CLUSTER_SERVER_AUTH_TOKEN", "token-value")
+	t.Setenv("AGENT_CLUSTER_AUTH_TOKEN", "deprecated-token-value")
 	t.Setenv("PATH", "/usr/bin:/bin")
 	environment := commandEnvironment()
 	joined := strings.Join(environment, "\n")
-	for _, secret := range []string{"AGENT_CLUSTER_DATABASE_DSN", "AGENT_CLUSTER_AUTH_TOKEN", "secret", "token-value"} {
+	for _, secret := range []string{"AGENT_CLUSTER_DATABASE_DSN", "AGENT_CLUSTER_SERVER_AUTH_TOKEN", "AGENT_CLUSTER_AUTH_TOKEN", "secret", "token-value", "deprecated-token-value"} {
 		if strings.Contains(joined, secret) {
 			t.Fatalf("environment leaked %q: %v", secret, environment)
 		}
