@@ -48,7 +48,7 @@ func mappedFollowAdapter(t *testing.T, runner followRunner) *Adapter {
 	t.Helper()
 	a := newFollowAdapter(t, runner)
 	mapper := a.mapper.(*fakeMapper)
-	if _, err := mapper.GetOrCreateResourceID(context.Background(), "a1", "provider-key", 0); err != nil {
+	if _, err := mapper.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider-key", 0); err != nil {
 		t.Fatal(err)
 	}
 	return a

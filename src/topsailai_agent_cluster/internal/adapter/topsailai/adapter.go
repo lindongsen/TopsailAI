@@ -342,7 +342,7 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if err != nil {
 			return adapter.DiscoverResult{}, err
 		}
-		resourceID, err := a.resourceID(ctx, providerKey)
+		resourceID, err := a.resourceID(ctx, protocol.ResourceSession, providerKey)
 		if err != nil {
 			return adapter.DiscoverResult{}, err
 		}
@@ -367,11 +367,11 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 	return result, nil
 }
 
-func (a *Adapter) resourceID(ctx context.Context, providerKey string) (string, error) {
+func (a *Adapter) resourceID(ctx context.Context, resourceKind, providerKey string) (string, error) {
 	if a.mapper == nil {
 		return "", errors.New("durable resource mapper is required")
 	}
-	mapping, err := a.mapper.GetOrCreateResourceID(ctx, a.config.AdapterID, providerKey, time.Now().UnixMilli())
+	mapping, err := a.mapper.GetOrCreateResourceID(ctx, a.config.AdapterID, resourceKind, providerKey, time.Now().UnixMilli())
 	if err != nil {
 		return "", err
 	}
@@ -402,6 +402,9 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	if err != nil {
 		return adapter.InspectResult{}, err
 	}
+	if mapping.AdapterID != a.config.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
+		return adapter.InspectResult{}, fmt.Errorf("resource %q is not a session owned by adapter %q", request.Target.ResourceID, a.config.AdapterID)
+	}
 	// Query only the requested provider session. A full workspace discovery scans
 	// the complete provider history, which costs seconds per command, so the
 	// targeted list is used instead; it reports the same generation evidence for
@@ -416,7 +419,7 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	// session is intended, and the provider applies no host filter to resume. Such
 	// a row still reports an empty generation, because this host cannot verify a
 	// process it cannot see, so it is found but not live.
-	target, err := decodeProviderSessionKey(mapping.ProviderKey)
+	target, err := decodeProviderSessionKey(mapping.ProviderResourceKey)
 	if err != nil {
 		return adapter.InspectResult{}, err
 	}

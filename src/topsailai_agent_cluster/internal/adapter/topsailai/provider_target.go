@@ -65,7 +65,10 @@ func (a *Adapter) providerSessionTarget(ctx context.Context, target *protocol.Co
 	if err != nil {
 		return providerSessionTarget{}, err
 	}
-	return decodeProviderSessionKey(mapping.ProviderKey)
+	if mapping.AdapterID != a.config.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
+		return providerSessionTarget{}, fmt.Errorf("resource %q is not a session owned by adapter %q", target.ResourceID, a.config.AdapterID)
+	}
+	return decodeProviderSessionKey(mapping.ProviderResourceKey)
 }
 
 // providerTarget returns the provider's session selector for operations whose

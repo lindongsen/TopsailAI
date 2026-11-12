@@ -24,7 +24,7 @@ func modelSelectIntent(sessionID, profileID string) protocol.ImmutableIntent {
 // target resolves before the profile is examined.
 func mintSession(t *testing.T, instance *Adapter) string {
 	t.Helper()
-	sessionID, err := instance.resourceID(context.Background(), "session-1")
+	sessionID, err := instance.resourceID(context.Background(), protocol.ResourceSession, "session-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestModelSelectResolvesOpaqueIDToProviderName(t *testing.T) {
 	sessionID := mintSession(t, instance)
 	// Mint the profile the way a catalog read would, so the identifier is one this
 	// Endpoint really owns.
-	profileID, err := instance.resourceID(ctx, modelProviderKeyPrefix+"fast-model")
+	profileID, err := instance.resourceID(ctx, protocol.ResourceModelProfile, modelProviderKeyPrefix+"fast-model")
 	if err != nil {
 		t.Fatal(err)
 	}

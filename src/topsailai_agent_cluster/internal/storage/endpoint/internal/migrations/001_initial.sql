@@ -9,11 +9,12 @@ CREATE TABLE IF NOT EXISTS command_journal (
 );
 CREATE TABLE IF NOT EXISTS resource_mapping (
     adapter_id TEXT NOT NULL,
-    provider_key TEXT NOT NULL,
+    resource_kind TEXT NOT NULL,
+    provider_resource_key TEXT NOT NULL,
     resource_id TEXT NOT NULL,
     created_at_ms BIGINT NOT NULL,
     update_at_ms BIGINT NOT NULL,
-    PRIMARY KEY (adapter_id, provider_key),
+    PRIMARY KEY (adapter_id, resource_kind, provider_resource_key),
     UNIQUE (resource_id)
 );
 CREATE TABLE IF NOT EXISTS source_cache (

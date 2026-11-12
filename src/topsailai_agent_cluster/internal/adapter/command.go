@@ -97,7 +97,7 @@ func (a *commandAdapter) Discover(parent context.Context, _ DiscoverRequest) (Di
 		providerSessionID := row.SessionID
 		clusterSessionID := providerSessionID
 		if a.config.ResourceMapper != nil {
-			mapping, err := a.config.ResourceMapper.GetOrCreateResourceID(ctx, a.config.AdapterID, providerSessionID, time.Now().UnixMilli())
+			mapping, err := a.config.ResourceMapper.GetOrCreateResourceID(ctx, a.config.AdapterID, protocol.ResourceSession, providerSessionID, time.Now().UnixMilli())
 			if err != nil {
 				return DiscoverResult{}, fmt.Errorf("map adapter %q resource: %w", a.config.AdapterID, err)
 			}
@@ -132,7 +132,7 @@ func (a *commandAdapter) Inspect(ctx context.Context, request InspectRequest) (I
 	}
 	if a.config.ResourceMapper != nil {
 		mapping, err := a.config.ResourceMapper.LookupResourceID(ctx, request.Target.ResourceID)
-		if err != nil || mapping.AdapterID != a.config.AdapterID {
+		if err != nil || mapping.AdapterID != a.config.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
 			return InspectResult{}, fmt.Errorf("unknown resource ID %q", request.Target.ResourceID)
 		}
 	}
@@ -163,10 +163,10 @@ func (a *commandAdapter) Execute(parent context.Context, request ExecuteRequest)
 		providerKey := request.Intent.Target.ResourceID
 		if a.config.ResourceMapper != nil {
 			mapping, err := a.config.ResourceMapper.LookupResourceID(ctx, providerKey)
-			if err != nil || mapping.AdapterID != a.config.AdapterID {
+			if err != nil || mapping.AdapterID != a.config.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
 				return ExecuteResult{}, fmt.Errorf("unknown resource ID %q", providerKey)
 			}
-			providerKey = mapping.ProviderKey
+			providerKey = mapping.ProviderResourceKey
 		}
 		args = append(args, "--target-resource-id", providerKey, "--target-generation", request.Intent.Target.ProviderGeneration)
 	}
@@ -216,13 +216,13 @@ func (a *commandAdapter) ReadOutput(parent context.Context, request OutputReques
 		if err != nil {
 			return OutputResult{}, fmt.Errorf("map adapter %q resource: %w", a.config.AdapterID, err)
 		}
-		if mapping.AdapterID != a.config.AdapterID {
-			return OutputResult{}, fmt.Errorf("resource %q belongs to adapter %q", request.Target.ResourceID, mapping.AdapterID)
+		if mapping.AdapterID != a.config.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
+			return OutputResult{}, fmt.Errorf("resource %q is not a session owned by adapter %q", request.Target.ResourceID, a.config.AdapterID)
 		}
 	}
 	providerKey := request.Target.ResourceID
-	if mapping.ProviderKey != "" {
-		providerKey = mapping.ProviderKey
+	if mapping.ProviderResourceKey != "" {
+		providerKey = mapping.ProviderResourceKey
 	}
 
 	// ReadOutput retrieves bounded provider output for a resource.

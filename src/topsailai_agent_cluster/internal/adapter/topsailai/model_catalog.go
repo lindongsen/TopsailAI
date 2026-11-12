@@ -92,7 +92,7 @@ func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQ
 		// The opaque identifier is minted from the provider name, because the name
 		// is the provider's own selection key. Minting from the registry id would
 		// produce an identifier that resolves to a name the provider never accepts.
-		profileID, err := a.resourceID(ctx, modelProviderKeyPrefix+entry.Name)
+		profileID, err := a.resourceID(ctx, protocol.ResourceModelProfile, modelProviderKeyPrefix+entry.Name)
 		if err != nil {
 			return protocol.ModelCatalog{}, fmt.Errorf("map model profile: %w", err)
 		}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"topsailai_agent_cluster/internal/adapter"
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 // ErrResourceNotFound reports that no durable mapping exists for a resource ID.
@@ -20,12 +21,15 @@ var ErrResourceNotFound = errors.New("resource mapping not found")
 type ResourceMapping = adapter.ResourceMapping
 
 // GetOrCreateResourceID returns a stable opaque ID without exposing provider paths.
-func (s *Store) GetOrCreateResourceID(ctx context.Context, adapterID, providerKey string, nowMS int64) (ResourceMapping, error) {
-	if adapterID == "" || providerKey == "" || nowMS < 1 {
-		return ResourceMapping{}, errors.New("adapter ID, provider key and timestamp are required")
+func (s *Store) GetOrCreateResourceID(ctx context.Context, adapterID, resourceKind, providerResourceKey string, nowMS int64) (ResourceMapping, error) {
+	if adapterID == "" || providerResourceKey == "" || nowMS < 1 {
+		return ResourceMapping{}, errors.New("adapter ID, provider resource key and timestamp are required")
+	}
+	if !protocol.IsResourceKind(resourceKind) {
+		return ResourceMapping{}, fmt.Errorf("invalid resource kind %q", resourceKind)
 	}
 	var mapping ResourceMapping
-	err := s.db.QueryRowContext(ctx, `SELECT adapter_id, provider_key, resource_id FROM resource_mapping WHERE adapter_id=? AND provider_key=?`, adapterID, providerKey).Scan(&mapping.AdapterID, &mapping.ProviderKey, &mapping.ResourceID)
+	err := s.db.QueryRowContext(ctx, `SELECT adapter_id, resource_kind, provider_resource_key, resource_id FROM resource_mapping WHERE adapter_id=? AND resource_kind=? AND provider_resource_key=?`, adapterID, resourceKind, providerResourceKey).Scan(&mapping.AdapterID, &mapping.ResourceKind, &mapping.ProviderResourceKey, &mapping.ResourceID)
 	if err == nil {
 		return mapping, nil
 	}
@@ -36,15 +40,16 @@ func (s *Store) GetOrCreateResourceID(ctx context.Context, adapterID, providerKe
 	if err != nil {
 		return ResourceMapping{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO resource_mapping(adapter_id, provider_key, resource_id, created_at_ms, update_at_ms) VALUES(?, ?, ?, ?, ?)`, adapterID, providerKey, resourceID, nowMS, nowMS)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO resource_mapping(adapter_id, resource_kind, provider_resource_key, resource_id, created_at_ms, update_at_ms) VALUES(?, ?, ?, ?, ?, ?)`, adapterID, resourceKind, providerResourceKey, resourceID, nowMS, nowMS)
 	if err != nil {
 		var existing ResourceMapping
-		if retryErr := s.db.QueryRowContext(ctx, `SELECT adapter_id, provider_key, resource_id FROM resource_mapping WHERE adapter_id=? AND provider_key=?`, adapterID, providerKey).Scan(&existing.AdapterID, &existing.ProviderKey, &existing.ResourceID); retryErr == nil {
+		retryErr := s.db.QueryRowContext(ctx, `SELECT adapter_id, resource_kind, provider_resource_key, resource_id FROM resource_mapping WHERE adapter_id=? AND resource_kind=? AND provider_resource_key=?`, adapterID, resourceKind, providerResourceKey).Scan(&existing.AdapterID, &existing.ResourceKind, &existing.ProviderResourceKey, &existing.ResourceID)
+		if retryErr == nil {
 			return existing, nil
 		}
 		return ResourceMapping{}, fmt.Errorf("store resource mapping: %w", err)
 	}
-	return ResourceMapping{AdapterID: adapterID, ProviderKey: providerKey, ResourceID: resourceID}, nil
+	return ResourceMapping{AdapterID: adapterID, ResourceKind: resourceKind, ProviderResourceKey: providerResourceKey, ResourceID: resourceID}, nil
 }
 
 func randomResourceID() (string, error) {
@@ -61,7 +66,7 @@ func (s *Store) LookupResourceID(ctx context.Context, resourceID string) (Resour
 		return ResourceMapping{}, errors.New("resource ID is required")
 	}
 	var mapping ResourceMapping
-	err := s.db.QueryRowContext(ctx, `SELECT adapter_id, provider_key, resource_id FROM resource_mapping WHERE resource_id=?`, resourceID).Scan(&mapping.AdapterID, &mapping.ProviderKey, &mapping.ResourceID)
+	err := s.db.QueryRowContext(ctx, `SELECT adapter_id, resource_kind, provider_resource_key, resource_id FROM resource_mapping WHERE resource_id=?`, resourceID).Scan(&mapping.AdapterID, &mapping.ResourceKind, &mapping.ProviderResourceKey, &mapping.ResourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ResourceMapping{}, fmt.Errorf("%w: %q", ErrResourceNotFound, resourceID)
 	}

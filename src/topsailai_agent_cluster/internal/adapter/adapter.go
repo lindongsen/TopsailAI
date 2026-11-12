@@ -121,16 +121,17 @@ type Event struct {
 	Data []byte
 }
 
-// ResourceMapping binds a provider-native key to a durable opaque resource ID.
+// ResourceMapping binds one typed provider-native key to a durable opaque resource ID.
 type ResourceMapping struct {
-	AdapterID   string
-	ProviderKey string
-	ResourceID  string
+	AdapterID           string
+	ResourceKind        string
+	ProviderResourceKey string
+	ResourceID          string
 }
 
 // ResourceMapper persists and resolves Endpoint resource ownership.
 type ResourceMapper interface {
-	GetOrCreateResourceID(context.Context, string, string, int64) (ResourceMapping, error)
+	GetOrCreateResourceID(context.Context, string, string, string, int64) (ResourceMapping, error)
 	LookupResourceID(context.Context, string) (ResourceMapping, error)
 }
 

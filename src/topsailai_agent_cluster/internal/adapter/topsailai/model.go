@@ -40,10 +40,10 @@ func (a *Adapter) modelProviderName(ctx context.Context, profileID string) (stri
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errModelProfileUnknown, err)
 	}
-	if !strings.HasPrefix(mapping.ProviderKey, modelProviderKeyPrefix) {
+	if mapping.AdapterID != a.config.AdapterID || mapping.ResourceKind != protocol.ResourceModelProfile || !strings.HasPrefix(mapping.ProviderResourceKey, modelProviderKeyPrefix) {
 		return "", errModelProfileUnknown
 	}
-	name := strings.TrimPrefix(mapping.ProviderKey, modelProviderKeyPrefix)
+	name := strings.TrimPrefix(mapping.ProviderResourceKey, modelProviderKeyPrefix)
 	if name == "" {
 		return "", errModelProfileUnknown
 	}

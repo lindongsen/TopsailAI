@@ -189,7 +189,7 @@ func TestModelCatalogRejectsAnOversizedDocument(t *testing.T) {
 func TestModelCatalogRejectsAProfileAsTheTarget(t *testing.T) {
 	runner := &fakeRunner{out: []byte(`[]`)}
 	instance := newTestAdapter(t, runner)
-	profileID, err := instance.resourceID(context.Background(), modelProviderKeyPrefix+"claude")
+	profileID, err := instance.resourceID(context.Background(), protocol.ResourceModelProfile, modelProviderKeyPrefix+"claude")
 	if err != nil {
 		t.Fatal(err)
 	}

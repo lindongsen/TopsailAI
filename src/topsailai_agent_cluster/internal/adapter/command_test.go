@@ -112,7 +112,7 @@ func TestMain(m *testing.M) {
 
 type commandMapper struct{ mapping ResourceMapping }
 
-func (m commandMapper) GetOrCreateResourceID(context.Context, string, string, int64) (ResourceMapping, error) {
+func (m commandMapper) GetOrCreateResourceID(context.Context, string, string, string, int64) (ResourceMapping, error) {
 	return m.mapping, nil
 }
 func (m commandMapper) LookupResourceID(context.Context, string) (ResourceMapping, error) {
@@ -132,7 +132,7 @@ func TestCommandAdapterPassesTargetAndPayload(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
 	argvPath := t.TempDir() + "/argv"
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_ARGV", argvPath)
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-1", ResourceID: "res-1"}})
+	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native-1", ResourceID: "res-1"}})
 	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestReadOutputTranslatesOpaqueResourceID(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "output")
 	argvPath := t.TempDir() + "/argv"
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_ARGV", argvPath)
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-output", ResourceID: "res-output"}})
+	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native-output", ResourceID: "res-output"}})
 	result, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output", ProviderGeneration: "gen-1"}, MaxBytes: 32})
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestOutputIsBoundedDuringRead(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_PID", pidPath)
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_DONE", donePath)
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_RECORD", recordPath)
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-output"}})
+	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native-output"}})
 
 	completedStarted := time.Now()
 	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output"}, MaxBytes: 2 << 20}); err != nil {
@@ -297,11 +297,27 @@ func TestCommandAdapterDiscoverAndInspect(t *testing.T) {
 }
 
 func TestCommandAdapterRejectsMapperOwnershipMismatch(t *testing.T) {
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "other", ProviderKey: "native"}})
+	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "other", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native"}})
 	if _, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c", Operation: "send", Target: &protocol.CommandTarget{ResourceID: "r", ProviderGeneration: "g"}}}); err == nil {
 		t.Fatal("execute accepted a resource owned by another adapter")
 	}
 	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "r", ProviderGeneration: "g"}, MaxBytes: 1}); err == nil {
 		t.Fatal("output accepted a resource owned by another adapter")
+	}
+}
+
+// TestCommandAdapterRejectsNonSessionMappings proves an opaque ID from another
+// resource namespace cannot be used by Session operations.
+func TestCommandAdapterRejectsNonSessionMappings(t *testing.T) {
+	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceTask, ProviderResourceKey: "native"}})
+	target := protocol.CommandTarget{ResourceID: "r", ProviderGeneration: "g"}
+	if _, err := a.Inspect(context.Background(), InspectRequest{Target: target}); err == nil {
+		t.Fatal("inspect accepted a task mapping as a session")
+	}
+	if _, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c", Operation: "send", Target: &target}}); err == nil {
+		t.Fatal("execute accepted a task mapping as a session")
+	}
+	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: target, MaxBytes: 1}); err == nil {
+		t.Fatal("output accepted a task mapping as a session")
 	}
 }

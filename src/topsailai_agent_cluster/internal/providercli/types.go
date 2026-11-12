@@ -2,7 +2,11 @@
 // Endpoint Generic CLI Adapter and an independently built Provider CLI.
 package providercli
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"topsailai_agent_cluster/internal/protocol"
+)
 
 const (
 	// ProtocolName is the fixed Provider CLI protocol identifier.
@@ -36,15 +40,15 @@ const (
 
 const (
 	// ResourceAgent identifies a provider agent observation.
-	ResourceAgent = "agent"
+	ResourceAgent = protocol.ResourceAgent
 	// ResourceSession identifies a provider session observation.
-	ResourceSession = "session"
+	ResourceSession = protocol.ResourceSession
 	// ResourceTask identifies a provider task observation.
-	ResourceTask = "task"
+	ResourceTask = protocol.ResourceTask
 	// ResourceLaunchProfile identifies a provider launch preset.
-	ResourceLaunchProfile = "launch_profile"
+	ResourceLaunchProfile = protocol.ResourceLaunchProfile
 	// ResourceModelProfile identifies a provider model preset.
-	ResourceModelProfile = "model_profile"
+	ResourceModelProfile = protocol.ResourceModelProfile
 )
 
 const (

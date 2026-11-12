@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"unicode/utf8"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 // DecodeRequest decodes exactly one strict Provider CLI request.
@@ -591,12 +593,7 @@ func isFunction(value string) bool {
 }
 
 func isResourceKind(value string) bool {
-	switch value {
-	case ResourceAgent, ResourceSession, ResourceTask, ResourceLaunchProfile, ResourceModelProfile:
-		return true
-	default:
-		return false
-	}
+	return protocol.IsResourceKind(value)
 }
 
 func isDeliveryBoundary(value string) bool {

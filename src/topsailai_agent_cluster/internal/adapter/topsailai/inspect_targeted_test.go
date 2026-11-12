@@ -30,9 +30,8 @@ func newInspectAdapter(t *testing.T, runner *recordingRunner) *Adapter {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mapping := ResourceMapping{AdapterID: "a1", ProviderKey: providerKey, ResourceID: "res_provider-session"}
-	mapper.byKey[providerKey] = mapping
-	mapper.byID[mapping.ResourceID] = mapping
+	mapping := ResourceMapping{AdapterID: "a1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: providerKey, ResourceID: "res_provider-session"}
+	mapper.addMapping(mapping)
 	result, err := newWithRunner(Config{AdapterID: "a1", Executable: "/provider", MaxOutput: 4096, ResourceMapper: mapper, PlatformProbe: func() (PlatformCapabilities, error) {
 		return PlatformCapabilities{ProcAvailable: true, PidfdAvailable: true}, nil
 	}}, runner)

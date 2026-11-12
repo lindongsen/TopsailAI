@@ -58,7 +58,7 @@ func newFollowExecutor(t *testing.T, instance adapter.Adapter) (*Executor, strin
 	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 		t.Fatalf("configure adapter: %v", err)
 	}
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 	if err != nil {
 		t.Fatalf("create mapping: %v", err)
 	}

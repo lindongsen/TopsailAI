@@ -86,14 +86,15 @@ func newCapabilityMapper() *capabilityMapper {
 	return &capabilityMapper{byKey: make(map[string]adapter.ResourceMapping), byID: make(map[string]adapter.ResourceMapping)}
 }
 
-func (m *capabilityMapper) GetOrCreateResourceID(_ context.Context, adapterID, providerKey string, _ int64) (adapter.ResourceMapping, error) {
+func (m *capabilityMapper) GetOrCreateResourceID(_ context.Context, adapterID, resourceKind, providerKey string, _ int64) (adapter.ResourceMapping, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if mapping, ok := m.byKey[providerKey]; ok {
+	mappingKey := adapterID + "\x00" + resourceKind + "\x00" + providerKey
+	if mapping, ok := m.byKey[mappingKey]; ok {
 		return mapping, nil
 	}
-	mapping := adapter.ResourceMapping{AdapterID: adapterID, ProviderKey: providerKey, ResourceID: "res_" + providerKey}
-	m.byKey[providerKey] = mapping
+	mapping := adapter.ResourceMapping{AdapterID: adapterID, ResourceKind: resourceKind, ProviderResourceKey: providerKey, ResourceID: "res_" + resourceKind + "_" + providerKey}
+	m.byKey[mappingKey] = mapping
 	m.byID[mapping.ResourceID] = mapping
 	return mapping, nil
 }

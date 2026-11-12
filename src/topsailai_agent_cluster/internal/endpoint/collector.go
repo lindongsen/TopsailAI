@@ -250,8 +250,8 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 				session := &snapshot.Sessions[index]
 				clusterSessionID := session.ClusterSessionID
 				mapping, lookupErr := c.store.LookupResourceID(ctx, clusterSessionID)
-				if lookupErr != nil || mapping.AdapterID != binding.AdapterID {
-					mapping, lookupErr = c.store.GetOrCreateResourceID(ctx, binding.AdapterID, clusterSessionID, nowMS)
+				if lookupErr != nil || mapping.AdapterID != binding.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
+					mapping, lookupErr = c.store.GetOrCreateResourceID(ctx, binding.AdapterID, protocol.ResourceSession, clusterSessionID, nowMS)
 				}
 				if lookupErr != nil {
 					// A cancelled store call means the cycle was abandoned, not

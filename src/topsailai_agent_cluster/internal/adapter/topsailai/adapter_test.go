@@ -29,8 +29,18 @@ func newFakeMapper() *fakeMapper {
 	return &fakeMapper{byKey: make(map[string]ResourceMapping), byID: make(map[string]ResourceMapping)}
 }
 
-func (m *fakeMapper) GetOrCreateResourceID(_ context.Context, adapterID, providerKey string, _ int64) (ResourceMapping, error) {
-	if mapping, ok := m.byKey[providerKey]; ok {
+func fakeMappingKey(adapterID, resourceKind, providerKey string) string {
+	return adapterID + "\x00" + resourceKind + "\x00" + providerKey
+}
+
+func (m *fakeMapper) addMapping(mapping ResourceMapping) {
+	m.byKey[fakeMappingKey(mapping.AdapterID, mapping.ResourceKind, mapping.ProviderResourceKey)] = mapping
+	m.byID[mapping.ResourceID] = mapping
+}
+
+func (m *fakeMapper) GetOrCreateResourceID(_ context.Context, adapterID, resourceKind, providerKey string, _ int64) (ResourceMapping, error) {
+	mappingKey := fakeMappingKey(adapterID, resourceKind, providerKey)
+	if mapping, ok := m.byKey[mappingKey]; ok {
 		return mapping, nil
 	}
 	resourceSuffix := providerKey
@@ -46,8 +56,11 @@ func (m *fakeMapper) GetOrCreateResourceID(_ context.Context, adapterID, provide
 			resourceSuffix += "_task"
 		}
 	}
-	mapping := ResourceMapping{AdapterID: adapterID, ProviderKey: providerKey, ResourceID: "res_" + resourceSuffix}
-	m.byKey[providerKey] = mapping
+	if resourceKind != protocol.ResourceSession {
+		resourceSuffix = resourceKind + "_" + resourceSuffix
+	}
+	mapping := ResourceMapping{AdapterID: adapterID, ResourceKind: resourceKind, ProviderResourceKey: providerKey, ResourceID: "res_" + resourceSuffix}
+	m.byKey[mappingKey] = mapping
 	m.byID[mapping.ResourceID] = mapping
 	return mapping, nil
 }
@@ -60,12 +73,12 @@ func (m *fakeMapper) LookupResourceID(_ context.Context, resourceID string) (Res
 	// Older unit fixtures predate row-level provider mappings. Convert only
 	// session fixtures here; model-profile keys intentionally keep their own
 	// provider representation so model mapping tests still exercise it.
-	if !strings.HasPrefix(mapping.ProviderKey, sessionRowProviderKeyPrefix) && !strings.HasPrefix(mapping.ProviderKey, modelProviderKeyPrefix) {
-		providerKey, err := providerSessionKey(workspaceItem{SessionID: mapping.ProviderKey})
+	if !strings.HasPrefix(mapping.ProviderResourceKey, sessionRowProviderKeyPrefix) && !strings.HasPrefix(mapping.ProviderResourceKey, modelProviderKeyPrefix) {
+		providerKey, err := providerSessionKey(workspaceItem{SessionID: mapping.ProviderResourceKey})
 		if err != nil {
 			return ResourceMapping{}, err
 		}
-		mapping.ProviderKey = providerKey
+		mapping.ProviderResourceKey = providerKey
 	}
 	return mapping, nil
 }
@@ -698,5 +711,26 @@ func TestExecuteUsesAssignmentFormForDashLeadingMessage(t *testing.T) {
 				t.Fatalf("unexpected argv: %#v, want %#v", runner.args, wantArgs)
 			}
 		})
+	}
+}
+
+func TestFakeMapperSeparatesResourceKinds(t *testing.T) {
+	mapper := newFakeMapper()
+	session, err := mapper.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "shared", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := mapper.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceTask, "shared", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ResourceID == task.ResourceID {
+		t.Fatalf("session and task shared resource ID %q", session.ResourceID)
+	}
+	if got, err := mapper.LookupResourceID(context.Background(), session.ResourceID); err != nil || got.ResourceKind != protocol.ResourceSession {
+		t.Fatalf("session lookup=%#v error=%v", got, err)
+	}
+	if got, err := mapper.LookupResourceID(context.Background(), task.ResourceID); err != nil || got.ResourceKind != protocol.ResourceTask {
+		t.Fatalf("task lookup=%#v error=%v", got, err)
 	}
 }

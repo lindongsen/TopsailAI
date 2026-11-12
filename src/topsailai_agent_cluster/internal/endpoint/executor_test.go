@@ -155,7 +155,7 @@ func TestReadOutputTruncatesAtMaxBytes(t *testing.T) {
 	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 		t.Fatal(err)
 	}
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestReadOutputUnsupportedReturnsError(t *testing.T) {
 		return outputTestAdapter{err: adapter.ErrUnsupported}, nil
 	})
 	_, _ = registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"})
-	mapping, _ := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	mapping, _ := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 	e, _ := NewExecutor(store, registry)
 	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, ProviderGeneration: "g1", MaxBytes: 4})
 	if err != nil || response.ErrorCode != "unsupported" {
@@ -201,7 +201,7 @@ func TestExecutorRejectsUnsupportedCapabilityWithoutCallingAdapter(t *testing.T)
 	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 		t.Fatal(err)
 	}
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestResumePreflightRequiresAuthoritativeAbsence(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider-session", 1)
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider-session", 1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -390,7 +390,7 @@ func TestReadOutputForwardsBothBudgets(t *testing.T) {
 			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 				t.Fatal(err)
 			}
-			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -497,7 +497,7 @@ func TestReadOutputSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 				t.Fatal(err)
 			}
-			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -632,7 +632,7 @@ func TestExecuteSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 				t.Fatal(err)
 			}
-			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -687,7 +687,7 @@ func TestResumeStillInspectsLive(t *testing.T) {
 	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 		t.Fatal(err)
 	}
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -730,7 +730,7 @@ func TestReadOutputTruncatesOnRuneBoundary(t *testing.T) {
 	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 		t.Fatal(err)
 	}
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -773,7 +773,7 @@ func TestReadOutputKeepsWholeRunesWhenBudgetFallsInsideARune(t *testing.T) {
 	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 		t.Fatal(err)
 	}
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -847,7 +847,7 @@ func TestUnverifiedTargetRejectsEveryOperationExceptResume(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider-session", 1)
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider-session", 1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -902,7 +902,7 @@ func TestWorkspaceCleanGenerationlessAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider-session", 1)
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider-session", 1)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -97,7 +97,7 @@ func TestExecuteRecordsTerminalRejectionForUnmappedResource(t *testing.T) {
 // rather than reported as an infrastructure failure.
 func TestExecuteRecordsTerminalRejectionForUnconfiguredAdapter(t *testing.T) {
 	executor, store := newRejectionExecutor(t)
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "a_removed", "provider", 1)
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a_removed", protocol.ResourceSession, "provider", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

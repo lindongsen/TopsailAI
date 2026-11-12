@@ -89,7 +89,7 @@ func TestExecuteWorkspaceCleanRejectsIncompletePrivateSelectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			mapping := ResourceMapping{AdapterID: "a1", ProviderKey: key, ResourceID: "res-clean"}
+			mapping := ResourceMapping{AdapterID: "a1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: key, ResourceID: "res-clean"}
 			mapper.byID[mapping.ResourceID] = mapping
 			a, err := newWithRunner(Config{AdapterID: "a1", Executable: "/provider", MaxOutput: 1024, ResourceMapper: mapper}, runner)
 			if err != nil {

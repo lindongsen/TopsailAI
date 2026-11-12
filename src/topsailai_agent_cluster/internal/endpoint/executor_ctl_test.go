@@ -56,7 +56,7 @@ func newCtlTestExecutor(t *testing.T, capabilities []protocol.Capability) (*Exec
 	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
 		t.Fatal(err)
 	}
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "session-key", time.Now().UnixMilli())
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "session-key", time.Now().UnixMilli())
 	if err != nil {
 		t.Fatal(err)
 	}

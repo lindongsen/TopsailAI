@@ -76,7 +76,7 @@ func (a *Adapter) History(ctx context.Context, query protocol.HistoryQuery) (pro
 		// adapter. A mapping failure fails the whole read instead of publishing
 		// an unaddressable row, because such a row would look selectable and
 		// then fail at dispatch.
-		resourceID, err := a.resourceID(ctx, entry.SessionID)
+		resourceID, err := a.resourceID(ctx, protocol.ResourceSession, entry.SessionID)
 		if err != nil {
 			return protocol.HistoryResult{}, fmt.Errorf("map history resource: %w", err)
 		}

@@ -64,7 +64,7 @@ func TestInvocationStartedWithoutReceiptReportsUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mapping, err := store.GetOrCreateResourceID(context.Background(), "fixture-main", "fixture-session", time.Now().UnixMilli())
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "fixture-main", protocol.ResourceSession, "fixture-session", time.Now().UnixMilli())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -101,6 +101,49 @@ func TestCollectResolvesMappingsOnHealthyCycle(t *testing.T) {
 	}
 }
 
+// TestCollectDoesNotReuseWrongKindMapping proves a Task ID returned in a
+// Session position is remapped into the Session namespace instead of being
+// published as the existing Task resource.
+func TestCollectDoesNotReuseWrongKindMapping(t *testing.T) {
+	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	taskMapping, err := store.GetOrCreateResourceID(context.Background(), "a", protocol.ResourceTask, "shared", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := fakeAdapter{result: adapter.DiscoverResult{
+		Complete:         true,
+		CollectionStatus: protocol.CollectionSucceeded,
+		Sessions:         []protocol.Session{{ClusterSessionID: taskMapping.ResourceID}},
+	}}
+	collector, err := NewCollector(context.Background(), []Binding{{AdapterID: "a", ProviderType: "fixture", Adapter: provider}}, time.Second, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := collector.Collect(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Sessions) != 1 {
+		t.Fatalf("sessions=%#v, want one session", report.Sessions)
+	}
+	if report.Sessions[0].ClusterSessionID == taskMapping.ResourceID {
+		t.Fatalf("collector reused task resource ID %q for a session", taskMapping.ResourceID)
+	}
+	mapping, err := store.LookupResourceID(context.Background(), report.Sessions[0].ClusterSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mapping.ResourceKind != protocol.ResourceSession {
+		t.Fatalf("mapped resource kind=%q, want %q", mapping.ResourceKind, protocol.ResourceSession)
+	}
+}
+
 // TestCollectReportsStoreFailureThatIsNotCancellation verifies that a genuine
 // store failure is still reported as a collection failure. Only a cancellation
 // aborts the cycle; a broken store is a real defect the operator must see.

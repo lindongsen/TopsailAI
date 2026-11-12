@@ -173,7 +173,7 @@ func TestControlActionPayloadNormalizesObject(t *testing.T) {
 // controlIntent builds one ctl. intent targeting a mapped session.
 func controlIntent(t *testing.T, binding *Adapter, operation string, payload []byte) protocol.ImmutableIntent {
 	t.Helper()
-	if _, err := binding.mapper.GetOrCreateResourceID(context.Background(), "a1", "sess1", 0); err != nil {
+	if _, err := binding.mapper.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "sess1", 0); err != nil {
 		t.Fatalf("map resource: %v", err)
 	}
 	return protocol.ImmutableIntent{

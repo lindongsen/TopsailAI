@@ -938,3 +938,23 @@ reads as the safer extraction, and every test still passes because a doubled dea
 timing, never behaviour. The defect is invisible in the diff: the added line is correct in isolation
 and the removed line was the only evidence of the original budget. Writing the budget ownership into
 the doc comment is what makes the next extraction check it rather than rediscover it.
+
+## Adding an identity dimension requires every consumer and test double to enforce it
+
+Trigger: the resource mapping key changed from `(adapter_id, provider_key)` to
+`(adapter_id, resource_kind, provider_resource_key)`. The storage migration and production mapper
+were correct, but the Collector initially reused a mapping after checking only `adapter_id`, and a
+TopsailAI test mapper generated IDs without `resource_kind`. A Task mapping could therefore be
+accepted as a Session mapping in one production path, while tests could still collapse two distinct
+resource kinds onto one synthetic ID.
+
+Action: when an identity gains a dimension, enumerate every writer, lookup consumer, cache key and
+test double, then require each one to carry and validate the complete identity. Add a negative test at
+each boundary that supplies the right old dimensions and the wrong new dimension. Search for the old
+field and method signature after migration so an omitted call site cannot survive as an implicit
+default.
+
+Why this prevents recurrence: changing a database primary key protects only database lookups. A
+consumer that validates a subset can erase the new distinction after lookup, and a test double that
+omits it can certify collisions the real store prevents. Enforcing the full tuple at every boundary
+makes the schema rule an application invariant instead of a storage-only convention.

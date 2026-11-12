@@ -340,7 +340,7 @@ func newCommandExecAdapter(t *testing.T, execRunner commandExecRunner, sessionDo
 // commandExecIntent builds one command.exec intent targeting a mapped session.
 func commandExecIntent(t *testing.T, adapter *Adapter, argv []string) protocol.ImmutableIntent {
 	t.Helper()
-	if _, err := adapter.mapper.GetOrCreateResourceID(context.Background(), "a1", "sess1", 0); err != nil {
+	if _, err := adapter.mapper.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "sess1", 0); err != nil {
 		t.Fatalf("map resource: %v", err)
 	}
 	payload, err := json.Marshal(protocol.CommandExecRequest{Argv: argv})
