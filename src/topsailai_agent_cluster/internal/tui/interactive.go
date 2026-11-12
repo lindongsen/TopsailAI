@@ -91,6 +91,13 @@ type reportLoad struct {
 	endpoints []protocol.Endpoint
 	reports   map[string]protocol.InventoryReport
 	errors    map[string]error
+	// skippedOffline holds the endpoints the loader deliberately did not query
+	// because they are not online. The identifiers are needed, not only a count,
+	// because the renderer must drop their rows: ListRows builds a placeholder for
+	// every endpoint it is given, so a skipped endpoint would otherwise reappear as
+	// a row that was never observed. The count is what the summary line prints, so
+	// the identifiers never become per-endpoint noise.
+	skippedOffline map[string]bool
 }
 
 type interactiveState struct {
@@ -865,6 +872,62 @@ func loadReports(ctx context.Context, api InteractiveAPI, endpointFilter string)
 	return loaded, nil
 }
 
+// endpointOnline reports whether an endpoint is currently reporting. An empty
+// connection state is treated as online, because that is what an endpoint record
+// carries before its first heartbeat is classified, and treating it as offline
+// would hide a healthy endpoint that simply has not been classified yet.
+func endpointOnline(endpoint protocol.Endpoint) bool {
+	return endpoint.ConnectionState == "" || endpoint.ConnectionState == "online"
+}
+
+// loadListReports loads the inventory a list render needs. It differs from
+// loadReports in one decision: an endpoint that is not online is not queried at
+// all, because the request can only fail and the failure describes the endpoint's
+// own state rather than a defect. Skipping the request is what removes both the
+// placeholder row and the "endpoint unavailable" diagnostic, and neither can be
+// removed by filtering after the fetch.
+//
+// The skip is not silent. The count is carried on the load so the renderer can
+// state it once, because hiding an endpoint that may still hold sessions must
+// never look like proof that it holds none.
+//
+// An explicit filter wins over the skip: the operator named that endpoint, so
+// answering with an empty table would describe the endpoint as absent instead of
+// offline. all includes every endpoint, which is what --all requests.
+//
+// loadReports keeps its own behaviour because a target resolver must still read a
+// disconnected endpoint's retained document: resume exists precisely for a
+// session whose process is gone.
+func loadListReports(ctx context.Context, api InteractiveAPI, endpointFilter string, all bool) (reportLoad, error) {
+	endpoints, err := api.ListEndpoints(ctx)
+	if err != nil {
+		return reportLoad{}, err
+	}
+	loaded := reportLoad{
+		endpoints:      endpoints,
+		reports:        make(map[string]protocol.InventoryReport),
+		errors:         make(map[string]error),
+		skippedOffline: make(map[string]bool),
+	}
+	for _, endpoint := range endpoints {
+		if endpointFilter != "" && endpoint.EndpointID != endpointFilter {
+			continue
+		}
+		explicit := endpointFilter != "" && endpoint.EndpointID == endpointFilter
+		if !all && !explicit && !endpointOnline(endpoint) {
+			loaded.skippedOffline[endpoint.EndpointID] = true
+			continue
+		}
+		report, fetchErr := api.GetInventory(ctx, endpoint.EndpointID)
+		if fetchErr != nil {
+			loaded.errors[endpoint.EndpointID] = fetchErr
+			continue
+		}
+		loaded.reports[endpoint.EndpointID] = report
+	}
+	return loaded, nil
+}
+
 // interactiveList renders the session table for one parsed list tail. The parsed
 // arguments are passed as one value rather than as three positional booleans, so
 // a caller cannot swap clean, full and brief while still compiling.
@@ -890,12 +953,13 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 }
 
 // listArguments is the parsed interactive list tail. It is a struct rather than a
-// tuple of positional values because clean, full and brief are all booleans: a
-// positional signature would let a caller swap two of them and still compile,
+// tuple of positional values because clean, all, full and brief are all booleans:
+// a positional signature would let a caller swap two of them and still compile,
 // which is a silent layout bug rather than a type error.
 type listArguments struct {
 	Filter string
 	Clean  bool
+	All    bool
 	Full   bool
 	Brief  bool
 }
@@ -903,7 +967,7 @@ type listArguments struct {
 // listUsage is the interactive usage line. One constant keeps every rejection
 // message identical, so an operator never has to compare two spellings of the
 // same grammar.
-const listUsage = "usage: list [endpoint] [--clean] [--full] [--brief]"
+const listUsage = "usage: list [endpoint] [--clean] [-a|--all] [--full] [--brief]"
 
 // parseListArguments parses the interactive list tail. --full is the per-command
 // request to render without truncation and --brief is the per-command request to
@@ -911,6 +975,11 @@ const listUsage = "usage: list [endpoint] [--clean] [--full] [--brief]"
 // commands so they inherit list's filter argument and scope availability
 // unchanged. The two are independent axes, so they combine: a brief table that is
 // also untruncated is a coherent request.
+//
+// -a and --all are one flag in two spellings, so they set the same field and a
+// second spelling of either is a usage error. The default omits endpoints that are
+// not online, because querying one can only produce a failure that describes the
+// endpoint rather than a defect; --all is the request to see them anyway.
 //
 // A repeated flag is a usage error instead of a harmless duplicate, because the
 // operator who typed it twice cannot tell which one took effect.
@@ -923,6 +992,11 @@ func parseListArguments(rest string) (listArguments, error) {
 				return listArguments{}, fmt.Errorf("%s", listUsage)
 			}
 			parsed.Clean = true
+		case "-a", "--all":
+			if parsed.All {
+				return listArguments{}, fmt.Errorf("%s", listUsage)
+			}
+			parsed.All = true
 		case "--full":
 			if parsed.Full {
 				return listArguments{}, fmt.Errorf("%s", listUsage)

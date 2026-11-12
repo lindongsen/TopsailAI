@@ -124,10 +124,15 @@ func TestStopRejectsChangedGenerationBeforeConfirmation(t *testing.T) {
 
 // TestStopRejectsOfflineEndpoint proves a stop is refused when the owning endpoint is
 // not online, instead of being dispatched into a disconnected channel.
+//
+// The list uses --all because the default omits an offline endpoint, so the row
+// this test selects only exists when the operator asked to see it. That is the
+// real path: an operator who wants to act on an offline endpoint has to name it,
+// and the refusal must still happen at the action rather than at the listing.
 func TestStopRejectsOfflineEndpoint(t *testing.T) {
 	stub := scopeStub()
 	stub.endpoints[0].ConnectionState = "offline"
-	_, diagnostics := runScope(t, stub, "list\nstop 1\nexit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "list --all\nstop 1\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, `error: endpoint "endpoint-1" is not online: connection_state=offline`)
 	if stub.admit != 0 {
 		t.Fatalf("offline endpoint admitted %d commands", stub.admit)

@@ -67,6 +67,7 @@ func tableOptionsFor(out io.Writer, color ColorPolicy, arguments listArguments, 
 	options := TableOptionsFor(out)
 	options.Color = color
 	options.Clean = arguments.Clean
+	options.All = arguments.All
 	options.Full = options.Full || arguments.Full
 	options.Brief = arguments.Brief
 	options.OnRows = onRows

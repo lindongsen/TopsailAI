@@ -557,6 +557,44 @@ starts a stream, repeated `output_chunk` frames carry records, and exactly one
 `output_end` frame closes it, all correlated by the same request ID. No new
 connection, no subscription resource and no durable stream state are introduced.
 
+## The `list` default and the `-a|--all` flag
+
+`list` renders sessions from Endpoints that are online. An Endpoint that is not
+online is not queried at all, so it produces neither a placeholder row nor an
+`endpoint <id> unavailable` diagnostic. `-a` and `--all` are one flag in two
+spellings, and they include those Endpoints again.
+
+The decision belongs to the load, not to the render. Filtering after the fetch
+would still issue the request and still print the failure the skip exists to
+remove, which is why `--clean` previously hid the rows while leaving the
+diagnostics in place. The loader therefore skips the request, and the renderer
+drops the row that request would have produced.
+
+The skip is never silent. One line states the count:
+
+```text
+offline endpoints hidden: 4 (use --all to include)
+```
+
+The count is printed instead of the identifiers, because naming each one would
+reproduce the per-endpoint noise the skip removes, and `--all` is the documented
+way to see them. The line is part of the answer rather than a diagnostic, so a
+redirected stream receives it too. It is not printed in `--json` mode, because a
+machine-readable document must stay one parseable document.
+
+An explicit filter wins over the skip. `list --endpoint <offline-id>` renders that
+Endpoint and reports its failure, because the operator named that exact machine and
+an empty table would describe it as absent instead of offline.
+
+`--clean` keeps a separate meaning. It also hides an online Endpoint whose fetch
+failed, which the default still shows with its diagnostic. The two flags therefore
+answer different questions and neither is redundant.
+
+The shared target-resolution load keeps its previous behaviour, because `resume`
+exists precisely for a session whose process is gone: a resolver must still read a
+disconnected Endpoint's retained document. Only the list render uses the skipping
+load.
+
 ## The `list --full` flag and the `lf` shorthand
 
 `--full` is the per-command request to render the session table without truncation,
@@ -565,9 +603,10 @@ restarting the CLI with `--no-truncate`. `lf` is its shorthand, so the common ca
 does not require typing the flag. It is a form of `list`, not a second command and
 not an alias entry.
 
-- Standalone: `agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full]`
-  and `agent-cluster-cli [options] [--endpoint <id>] lf [--clean]`.
-- Interactive: `list [endpoint] [--clean] [--full]` and `lf [endpoint] [--clean]`.
+- Standalone: `agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full]`
+  and `agent-cluster-cli [options] [--endpoint <id>] lf [--clean] [-a|--all]`.
+- Interactive: `list [endpoint] [--clean] [-a|--all] [--full]` and
+  `lf [endpoint] [--clean] [-a|--all]`.
 - The full layout is implied by the shorthand, so every other argument keeps the
   meaning it has under `list`: `lf --clean` renders the same table as
   `list --clean --full`.
@@ -603,10 +642,10 @@ runs on which machine without the descriptive columns pushing the table past a n
 terminal. `lb` is its shorthand. It is a form of `list`, not a second command and not
 an alias entry.
 
-- Standalone: `agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full] [--brief]`
-  and `agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [--full]`.
-- Interactive: `list [endpoint] [--clean] [--full] [--brief]` and
-  `lb [endpoint] [--clean] [--full]`.
+- Standalone: `agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full] [--brief]`
+  and `agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [-a|--all] [--full]`.
+- Interactive: `list [endpoint] [--clean] [-a|--all] [--full] [--brief]` and
+  `lb [endpoint] [--clean] [-a|--all] [--full]`.
 - The brief layout is implied by the shorthand, so every other argument keeps the
   meaning it has under `list`: `lb --clean` renders the same table as
   `list --clean --brief`.

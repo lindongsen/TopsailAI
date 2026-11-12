@@ -214,7 +214,7 @@ func TestCommandRunnerListCleanOmitsFailedEndpointsAndKeepsDiagnostics(t *testin
 // disconnected endpoint still serves its last committed document, so it never
 // produces a fetch error and its retained rows would otherwise survive the flag
 // and appear as current sessions.
-func TestCommandRunnerListCleanOmitsDisconnectedEndpoints(t *testing.T) {
+func TestCommandRunnerListOmitsDisconnectedEndpointsByDefault(t *testing.T) {
 	session := func(id string) protocol.InventoryReport {
 		return protocol.InventoryReport{
 			CollectionStatus: protocol.CollectionSucceeded,
@@ -232,23 +232,112 @@ func TestCommandRunnerListCleanOmitsDisconnectedEndpoints(t *testing.T) {
 			"gone-ep": session("session-gone"),
 		},
 	}
-	var plain, clean strings.Builder
+	var plain, all, clean strings.Builder
 	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &plain, io.Discard, "", false, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &all, io.Discard, "", false, TableOptions{All: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &clean, io.Discard, "", false, TableOptions{Clean: true}); err != nil {
 		t.Fatal(err)
 	}
-	// The unfiltered table must show both, otherwise the clean assertion below
-	// would pass for the wrong reason.
-	if !strings.Contains(plain.String(), "gone-ep") || !strings.Contains(plain.String(), "live-ep") {
-		t.Fatalf("plain list=%q, want both endpoints", plain.String())
+	// The default must omit the disconnected endpoint and say so once, because a
+	// hidden endpoint must never look like an endpoint that reported no sessions.
+	if strings.Contains(plain.String(), "gone-ep") {
+		t.Fatalf("default list=%q, want the disconnected endpoint omitted", plain.String())
 	}
+	if !strings.Contains(plain.String(), "live-ep") {
+		t.Fatalf("default list=%q, want the online endpoint kept", plain.String())
+	}
+	if !strings.Contains(plain.String(), "offline endpoints hidden: 1 (use --all to include)") {
+		t.Fatalf("default list=%q, want one hidden-endpoint summary", plain.String())
+	}
+	// --all is the documented way to see them, so it must render the row.
+	if !strings.Contains(all.String(), "gone-ep") || !strings.Contains(all.String(), "live-ep") {
+		t.Fatalf("all list=%q, want both endpoints", all.String())
+	}
+	if strings.Contains(all.String(), "offline endpoints hidden") {
+		t.Fatalf("all list=%q, want no hidden-endpoint summary", all.String())
+	}
+	// --clean keeps its own meaning: it also hides an online endpoint whose fetch
+	// failed, which the default still shows.
 	if strings.Contains(clean.String(), "gone-ep") {
 		t.Fatalf("clean list=%q, want the disconnected endpoint omitted", clean.String())
 	}
 	if !strings.Contains(clean.String(), "live-ep") {
 		t.Fatalf("clean list=%q, want the online endpoint kept", clean.String())
+	}
+}
+
+// TestCommandRunnerListDoesNotQueryDisconnectedEndpoints proves the skip happens
+// before the request. Filtering after the fetch would still produce the failure
+// that the skip exists to remove, so the call log is the only evidence that
+// distinguishes the two designs.
+func TestCommandRunnerListDoesNotQueryDisconnectedEndpoints(t *testing.T) {
+	api := &runnerStubAPI{
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "live-ep", ConnectionState: "online"},
+			{EndpointID: "gone-ep", ConnectionState: "offline"},
+		},
+		reports: map[string]protocol.InventoryReport{"live-ep": {CollectionStatus: protocol.CollectionSucceeded}},
+	}
+	var out, diagnostics strings.Builder
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, &diagnostics, "", false, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range api.calls {
+		if call == "inventory:gone-ep" {
+			t.Fatalf("default list queried a disconnected endpoint: calls=%v", api.calls)
+		}
+	}
+	if strings.Contains(diagnostics.String(), "gone-ep") {
+		t.Fatalf("default list reported a disconnected endpoint: %q", diagnostics.String())
+	}
+}
+
+// TestCommandRunnerListAllQueriesDisconnectedEndpoints proves --all restores the
+// request, so the flag changes the load and not only the rendering.
+func TestCommandRunnerListAllQueriesDisconnectedEndpoints(t *testing.T) {
+	api := &runnerStubAPI{
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "live-ep", ConnectionState: "online"},
+			{EndpointID: "gone-ep", ConnectionState: "offline"},
+		},
+		reports: map[string]protocol.InventoryReport{"live-ep": {CollectionStatus: protocol.CollectionSucceeded}},
+	}
+	var out strings.Builder
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, io.Discard, "", false, TableOptions{All: true}); err != nil {
+		t.Fatal(err)
+	}
+	queried := false
+	for _, call := range api.calls {
+		if call == "inventory:gone-ep" {
+			queried = true
+		}
+	}
+	if !queried {
+		t.Fatalf("--all did not query the disconnected endpoint: calls=%v", api.calls)
+	}
+}
+
+// TestCommandRunnerListExplicitFilterWinsOverOfflineSkip proves an operator who
+// names an offline endpoint still sees it. Answering with an empty table would
+// describe the endpoint as absent instead of offline.
+func TestCommandRunnerListExplicitFilterWinsOverOfflineSkip(t *testing.T) {
+	api := &runnerStubAPI{
+		endpoints: []protocol.Endpoint{{EndpointID: "gone-ep", ConnectionState: "offline"}},
+		reports:   map[string]protocol.InventoryReport{"gone-ep": {CollectionStatus: protocol.CollectionSucceeded}},
+	}
+	var out strings.Builder
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, io.Discard, "gone-ep", false, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "gone-ep") {
+		t.Fatalf("explicit filter list=%q, want the named endpoint rendered", out.String())
+	}
+	if strings.Contains(out.String(), "offline endpoints hidden") {
+		t.Fatalf("explicit filter list=%q, want no hidden-endpoint summary", out.String())
 	}
 }
 
@@ -285,7 +374,7 @@ func TestCommandRunnerJSONAndStatus(t *testing.T) {
 // on the JSON surface. A flag that the table honours and the JSON path ignores
 // makes two callers disagree about the same query, and the JSON caller has no
 // way to notice because the extra rows look like ordinary data.
-func TestCommandRunnerJSONListHonoursClean(t *testing.T) {
+func TestCommandRunnerJSONListHonoursCleanAndAll(t *testing.T) {
 	session := func(id string) protocol.InventoryReport {
 		return protocol.InventoryReport{
 			CollectionStatus: protocol.CollectionSucceeded,
@@ -303,9 +392,9 @@ func TestCommandRunnerJSONListHonoursClean(t *testing.T) {
 			"gone-ep": session("session-gone"),
 		},
 	}
-	render := func(clean bool) []SessionRow {
+	render := func(options TableOptions) []SessionRow {
 		var out strings.Builder
-		if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, io.Discard, "", true, TableOptions{Clean: clean}); err != nil {
+		if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, io.Discard, "", true, options); err != nil {
 			t.Fatal(err)
 		}
 		var rows []SessionRow
@@ -314,11 +403,16 @@ func TestCommandRunnerJSONListHonoursClean(t *testing.T) {
 		}
 		return rows
 	}
-	if got := len(render(false)); got != 2 {
-		t.Fatalf("unfiltered rows=%d, want 2", got)
+	// The default omits the disconnected endpoint, and the JSON document must
+	// agree with the table: a JSON caller that received rows the table dropped
+	// would have no way to notice the disagreement.
+	if rows := render(TableOptions{}); len(rows) != 1 || rows[0].EndpointID != "live-ep" {
+		t.Fatalf("default rows=%+v, want only live-ep", rows)
 	}
-	rows := render(true)
-	if len(rows) != 1 || rows[0].EndpointID != "live-ep" {
+	if rows := render(TableOptions{All: true}); len(rows) != 2 {
+		t.Fatalf("all rows=%d, want 2", len(rows))
+	}
+	if rows := render(TableOptions{Clean: true}); len(rows) != 1 || rows[0].EndpointID != "live-ep" {
 		t.Fatalf("clean rows=%+v, want only live-ep", rows)
 	}
 }

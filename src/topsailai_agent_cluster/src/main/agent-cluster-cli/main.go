@@ -265,11 +265,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		// with a mode, because they select opposite layouts and a single word
 		// cannot state which one was meant.
 		shorthand := listShorthand(flags.Arg(0))
-		listClean, listFull, listBrief, err := parseListArgs(flags.Args()[1:], shorthand)
+		listParsed, err := parseListArgs(flags.Args()[1:], shorthand)
 		if err != nil {
 			return err
 		}
-		return list(ctx, api, output, errors, *filter, listClean, listFull, listBrief, *jsonMode, tui.OutputColorPolicy(output))
+		return list(ctx, api, output, errors, *filter, listParsed, *jsonMode, tui.OutputColorPolicy(output))
 	case "refresh":
 		if err := parseRefreshArgs(flags.Args()[1:]); err != nil {
 			return err
@@ -730,38 +730,59 @@ func listShorthandFor(spelling string) listShorthand {
 // rejects the flag it already implies for the same reason logf rejects a repeated
 // follow flag: the combination is a contradiction. It accepts the other flag,
 // because that one states something the shorthand did not.
-func parseListArgs(args []string, shorthand listShorthand) (bool, bool, bool, error) {
-	clean := false
-	full := shorthand == listShorthandFull
-	brief := shorthand == listShorthandBrief
+func parseListArgs(args []string, shorthand listShorthand) (listFlags, error) {
+	parsed := listFlags{
+		Full:  shorthand == listShorthandFull,
+		Brief: shorthand == listShorthandBrief,
+	}
 	for _, arg := range args {
 		switch arg {
 		case "--clean":
-			if clean {
-				return false, false, false, listUsageError(shorthand)
+			if parsed.Clean {
+				return listFlags{}, listUsageError(shorthand)
 			}
-			clean = true
+			parsed.Clean = true
+		case "-a", "--all":
+			// -a and --all are one flag in two spellings, so a second spelling of
+			// either is a usage error. The default omits endpoints that are not
+			// online, because querying one can only produce a failure that describes
+			// the endpoint rather than a defect.
+			if parsed.All {
+				return listFlags{}, listUsageError(shorthand)
+			}
+			parsed.All = true
 		case "--full":
-			if full {
+			if parsed.Full {
 				if shorthand == listShorthandFull {
-					return false, false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] (full is implied; drop --full)")
+					return listFlags{}, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] [-a|--all] [--brief] (full is implied; drop --full)")
 				}
-				return false, false, false, listUsageError(shorthand)
+				return listFlags{}, listUsageError(shorthand)
 			}
-			full = true
+			parsed.Full = true
 		case "--brief":
-			if brief {
+			if parsed.Brief {
 				if shorthand == listShorthandBrief {
-					return false, false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lb [--clean] (brief is implied; drop --brief)")
+					return listFlags{}, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [-a|--all] [--full] (brief is implied; drop --brief)")
 				}
-				return false, false, false, listUsageError(shorthand)
+				return listFlags{}, listUsageError(shorthand)
 			}
-			brief = true
+			parsed.Brief = true
 		default:
-			return false, false, false, listUsageError(shorthand)
+			return listFlags{}, listUsageError(shorthand)
 		}
 	}
-	return clean, full, brief, nil
+	return parsed, nil
+}
+
+// listFlags is the parsed list tail. It is a struct rather than a tuple of
+// positional booleans because clean, all, full and brief are all booleans: a
+// positional signature would let a caller swap two of them and still compile,
+// which is a silent layout bug rather than a type error.
+type listFlags struct {
+	Clean bool
+	All   bool
+	Full  bool
+	Brief bool
 }
 
 // listUsageError names the spelling the operator typed, so a usage error never
@@ -769,11 +790,11 @@ func parseListArgs(args []string, shorthand listShorthand) (bool, bool, bool, er
 func listUsageError(shorthand listShorthand) error {
 	switch shorthand {
 	case listShorthandFull:
-		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] [--brief]")
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] [-a|--all] [--brief]")
 	case listShorthandBrief:
-		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [--full]")
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [-a|--all] [--full]")
 	default:
-		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full] [--brief]")
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full] [--brief]")
 	}
 }
 
@@ -931,12 +952,13 @@ func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 // so the startup --no-truncate option survives a command that did not repeat it.
 // brief selects the identifying column set; it is a separate axis from full, so
 // the two combine instead of overriding each other.
-func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, full, brief, jsonMode bool, color tui.ColorPolicy) error {
+func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, parsed listFlags, jsonMode bool, color tui.ColorPolicy) error {
 	options := tui.TableOptionsFor(output)
 	options.Color = color
-	options.Clean = clean
-	options.Full = options.Full || full
-	options.Brief = brief
+	options.Clean = parsed.Clean
+	options.All = parsed.All
+	options.Full = options.Full || parsed.Full
+	options.Brief = parsed.Brief
 	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, options)
 }
 

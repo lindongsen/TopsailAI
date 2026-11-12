@@ -181,7 +181,7 @@ func TestListBriefAliasIsAdvertisedInStandaloneSyntax(t *testing.T) {
 		t.Fatalf("PrintNonInteractiveCommandHelp: %v", err)
 	}
 	rendered := help.String()
-	want := "Syntax: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full] [--brief]"
+	want := "Syntax: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full] [--brief]"
 	if !strings.Contains(rendered, want) {
 		t.Fatalf("standalone list syntax does not advertise --brief: %q", rendered)
 	}

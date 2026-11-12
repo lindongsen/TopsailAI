@@ -122,7 +122,7 @@ func TestListRejectsRepeatedFullFlag(t *testing.T) {
 	if err == nil {
 		t.Fatalf("repeated --full was accepted")
 	}
-	if !strings.Contains(err.Error(), "list [--clean] [--full]") {
+	if !strings.Contains(err.Error(), "list [--clean] [-a|--all] [--full]") {
 		t.Fatalf("error=%v does not name the list usage line", err)
 	}
 }

@@ -45,8 +45,13 @@ func (r CommandRunner) List(ctx context.Context, out io.Writer, filter string, j
 }
 
 // ListWithOptions renders text list output through the shared table renderer.
+//
+// The load is list-scoped rather than the shared target-resolution load, because
+// list is the only surface whose default is to omit an endpoint that is not
+// online. A target resolver must keep reading a disconnected endpoint's retained
+// document, so it keeps calling loadReports.
 func (r CommandRunner) ListWithOptions(ctx context.Context, out, errors io.Writer, filter string, jsonMode bool, options TableOptions) error {
-	loaded, err := loadReports(ctx, r.API, filter)
+	loaded, err := loadListReports(ctx, r.API, filter, options.All)
 	if err != nil {
 		return err
 	}
@@ -57,6 +62,21 @@ func (r CommandRunner) ListWithOptions(ctx context.Context, out, errors io.Write
 // validated the same load does not repeat the API round trip.
 func renderListRows(out, errors io.Writer, loaded reportLoad, filter string, jsonMode bool, options TableOptions) error {
 	rows := ListRows(loaded.endpoints, loaded.reports, filter)
+	// A skipped endpoint was never queried, so it has no observation to render.
+	// ListRows still builds a placeholder for it, because that function cannot know
+	// which endpoints the loader chose to skip, so the rows are dropped here. This
+	// is the second half of one decision: the loader avoids the request, and the
+	// renderer avoids the row that request would have produced.
+	if len(loaded.skippedOffline) > 0 {
+		kept := rows[:0]
+		for _, row := range rows {
+			if loaded.skippedOffline[row.EndpointID] {
+				continue
+			}
+			kept = append(kept, row)
+		}
+		rows = kept
+	}
 	if options.Clean {
 		// An endpoint that is not online has stopped reporting, so its retained
 		// inventory is historical rather than current. Omitting it is the same
@@ -99,7 +119,24 @@ func renderListRows(out, errors io.Writer, loaded reportLoad, filter string, jso
 	for endpointID, fetchErr := range loaded.errors {
 		failures = append(failures, EndpointFailure{EndpointID: endpointID, Err: fetchErr})
 	}
-	return RenderTable(out, errors, rows, failures, options)
+	if err := RenderTable(out, errors, rows, failures, options); err != nil {
+		return err
+	}
+	return writeSkippedOfflineSummary(out, len(loaded.skippedOffline))
+}
+
+// writeSkippedOfflineSummary states once that endpoints were omitted, because a
+// hidden endpoint must never look like an endpoint that reported no sessions. The
+// count is printed instead of the identifiers: naming each one would reproduce the
+// per-endpoint noise the skip exists to remove, and --all is the documented way to
+// see them. A redirected stream receives the line too, because it is part of the
+// answer rather than a diagnostic.
+func writeSkippedOfflineSummary(out io.Writer, skipped int) error {
+	if skipped == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(out, "offline endpoints hidden: %d (use --all to include)\n", skipped)
+	return err
 }
 
 // Show executes the shared endpoint and session detail query.

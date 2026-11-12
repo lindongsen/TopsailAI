@@ -31,7 +31,14 @@ type TableOptions struct {
 	// the capped layout, because their width is not a budget that can be spent.
 	Grow   bool
 	Color  ColorPolicy
-	Clean  bool
+	Clean bool
+	// All includes endpoints that are not online. The default omits them, because
+	// an offline endpoint cannot report: querying it produces a failure that
+	// describes the endpoint's own state rather than a defect, and a row built
+	// from that failure reads as a session observation it never made. Clean stays
+	// a separate decision, because it also hides an online endpoint whose fetch
+	// failed, which the default still shows.
+	All bool
 	OnRows func([]SessionRow)
 	// Location formats the DATA_STATUS success stamp; nil means the local timezone.
 	Location *time.Location

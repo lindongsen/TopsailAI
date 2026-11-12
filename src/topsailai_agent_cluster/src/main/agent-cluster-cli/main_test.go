@@ -268,7 +268,7 @@ func TestCLIHelpDescribesListCleanBehavior(t *testing.T) {
 		t.Fatalf("help wrote diagnostics=%q", diagnostics.String())
 	}
 	text := output.String()
-	for _, phrase := range []string{"[--endpoint <id>] list [--clean]", "failed to report", "--clean", "stderr"} {
+	for _, phrase := range []string{"[--endpoint <id>] list [--clean] [-a|--all]", "failed to report", "--clean", "--all", "offline", "stderr"} {
 		if !strings.Contains(text, phrase) {
 			t.Fatalf("CLI help missing %q: %q", phrase, text)
 		}
@@ -463,12 +463,15 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 	defer server.Close()
 
 	tests := []struct {
-		name       string
-		args       []string
-		wantIDs    []string
-		wantOutput string
-		wantError  string
-		wantDiag   string
+		name        string
+		args        []string
+		wantIDs     []string
+		wantOutput  string
+		wantAbsent  []string
+		wantError   string
+		wantDiag    string
+		wantNoDiag  string
+		wantSummary string
 	}{
 		{
 			name:    "global endpoint before list",
@@ -476,17 +479,42 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 			wantIDs: []string{"A1", "A2"},
 		},
 		{
-			name:       "unclean retains failed endpoint",
-			args:       []string{"--server-url", server.URL, "--token", "test-token", "list"},
+			// The default omits an offline endpoint entirely: it is not queried,
+			// so it produces neither a placeholder row nor a diagnostic. The one
+			// summary line is what keeps the omission from looking like proof
+			// that the endpoint holds no sessions.
+			name:        "default omits offline endpoint without querying it",
+			args:        []string{"--server-url", server.URL, "--token", "test-token", "list"},
+			wantIDs:     []string{"A1", "A2", "B1", "B2"},
+			wantAbsent:  []string{"endpoint-3"},
+			wantNoDiag:  "endpoint-3 unavailable",
+			wantSummary: "offline endpoints hidden: 1 (use --all to include)",
+		},
+		{
+			// --all is the documented way to see the endpoint again, so the
+			// request, the placeholder row and the diagnostic all return.
+			name:       "all includes offline endpoint and queries it",
+			args:       []string{"--server-url", server.URL, "--token", "test-token", "list", "--all"},
 			wantIDs:    []string{"A1", "A2", "B1", "B2"},
 			wantOutput: "endpoint-3",
 			wantDiag:   "endpoint-3 unavailable",
 		},
 		{
-			name:     "clean after list",
-			args:     []string{"--server-url", server.URL, "--token", "test-token", "list", "--clean"},
-			wantIDs:  []string{"A1", "A2", "B1", "B2"},
-			wantDiag: "endpoint-3 unavailable",
+			name:       "all short spelling matches the long one",
+			args:       []string{"--server-url", server.URL, "--token", "test-token", "list", "-a"},
+			wantIDs:    []string{"A1", "A2", "B1", "B2"},
+			wantOutput: "endpoint-3",
+			wantDiag:   "endpoint-3 unavailable",
+		},
+		{
+			// --clean keeps its own meaning: it also hides an online endpoint
+			// whose fetch failed, which the default still shows.
+			name:        "clean after list",
+			args:        []string{"--server-url", server.URL, "--token", "test-token", "list", "--clean"},
+			wantIDs:     []string{"A1", "A2", "B1", "B2"},
+			wantAbsent:  []string{"endpoint-3"},
+			wantNoDiag:  "endpoint-3 unavailable",
+			wantSummary: "offline endpoints hidden: 1 (use --all to include)",
 		},
 		{
 			name:    "global endpoint and clean",
@@ -494,9 +522,23 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 			wantIDs: []string{"A1", "A2"},
 		},
 		{
+			// Naming an offline endpoint explicitly wins over the default skip,
+			// because answering with an empty table would describe the endpoint
+			// as absent instead of offline.
+			name:       "explicit offline filter still renders the endpoint",
+			args:       []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-3", "list"},
+			wantOutput: "endpoint-3",
+			wantDiag:   "endpoint-3 unavailable",
+		},
+		{
 			name:      "endpoint positional argument rejected",
 			args:      []string{"--server-url", server.URL, "--token", "test-token", "list", "endpoint-1"},
-			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full] [--brief]",
+			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full] [--brief]",
+		},
+		{
+			name:      "repeated all spelling rejected",
+			args:      []string{"--server-url", server.URL, "--token", "test-token", "list", "-a", "--all"},
+			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full] [--brief]",
 		},
 		{
 			name:    "global endpoint after list is honoured",
@@ -523,11 +565,19 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 			if tc.wantOutput != "" && !strings.Contains(output.String(), tc.wantOutput) {
 				t.Fatalf("output=%q missing %q", output.String(), tc.wantOutput)
 			}
-			if tc.name == "clean after list" && strings.Contains(output.String(), "endpoint-3") {
-				t.Fatalf("clean output retained failed endpoint: %q", output.String())
+			for _, absent := range tc.wantAbsent {
+				if strings.Contains(output.String(), absent) {
+					t.Fatalf("output=%q retained %q", output.String(), absent)
+				}
 			}
 			if tc.wantDiag != "" && !strings.Contains(diagnostics.String(), tc.wantDiag) {
 				t.Fatalf("diagnostics=%q missing %q", diagnostics.String(), tc.wantDiag)
+			}
+			if tc.wantNoDiag != "" && strings.Contains(diagnostics.String(), tc.wantNoDiag) {
+				t.Fatalf("diagnostics=%q must not carry %q", diagnostics.String(), tc.wantNoDiag)
+			}
+			if tc.wantSummary != "" && !strings.Contains(output.String(), tc.wantSummary) {
+				t.Fatalf("output=%q missing summary %q", output.String(), tc.wantSummary)
 			}
 		})
 	}
@@ -636,7 +686,7 @@ func TestListHelpAndDispatchContract(t *testing.T) {
 	if err := runWithIO([]string{"help", "list"}, strings.NewReader(""), &helpOut, &helpDiagnostics, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	const syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean]"
+	const syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all]"
 	if !strings.Contains(helpOut.String(), syntax) {
 		t.Fatalf("help=%q missing executable syntax %q", helpOut.String(), syntax)
 	}

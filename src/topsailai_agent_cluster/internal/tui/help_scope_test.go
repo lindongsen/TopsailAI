@@ -358,7 +358,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 	}
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
-		"agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
+		"agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all]",
 		"agent-cluster-cli [options] [--endpoint <id>] refresh",
 		"agent-cluster-cli [options] show <endpoint-or-session>",
 		"agent-cluster-cli [options] [--lines <lines>] [--follow] logs <endpoint> <session>",
