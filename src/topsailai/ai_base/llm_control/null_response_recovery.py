@@ -12,6 +12,7 @@ from topsailai.ai_base.llm_control.configuration import (
     NULL_RESPONSE_RECOVERY_DEFAULT_MESSAGE,
     get_null_response_recovery_config,
 )
+from topsailai.utils.print_tool import print_warning
 
 CONTINUE_MESSAGE = NULL_RESPONSE_RECOVERY_DEFAULT_MESSAGE
 NULL_RESPONSE_THRESHOLD = 3
@@ -72,6 +73,10 @@ def observe_attempt_error(operation_id: str, error_category: str) -> bool:
     state.messages.append(message)
     state.injected_messages.append(message)
     state.injected_for_request = True
+    print_warning(
+        "Injected a temporary LLM recovery message after "
+        f"{NULL_RESPONSE_THRESHOLD} consecutive null responses."
+    )
     return True
 
 
