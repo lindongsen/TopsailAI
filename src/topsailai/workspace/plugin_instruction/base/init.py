@@ -15,10 +15,11 @@ from topsailai.utils.module_tool import (
 
 INSTRUCTIONS = get_function_map("topsailai.workspace.plugin_instruction", key="INSTRUCTIONS")
 
-# Alias the git module's main dispatcher to the natural /git command so users
-# can type "/git status" instead of "/git.git status".
+# Alias module main dispatchers to their natural root commands.
 if "git.git" in INSTRUCTIONS:
     INSTRUCTIONS["git"] = INSTRUCTIONS["git.git"]
+if "runtime.runtime" in INSTRUCTIONS:
+    INSTRUCTIONS["runtime"] = INSTRUCTIONS.pop("runtime.runtime")
 
 def expand_plugin_instructions():
     """ expand instructions by external plugins """
