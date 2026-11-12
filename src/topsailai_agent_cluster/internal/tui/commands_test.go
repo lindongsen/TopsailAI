@@ -209,6 +209,49 @@ func TestCommandRunnerListCleanOmitsFailedEndpointsAndKeepsDiagnostics(t *testin
 	}
 }
 
+// TestCommandRunnerListCleanOmitsDisconnectedEndpoints proves --clean hides an
+// endpoint that stopped reporting, not only one whose fetch failed. A
+// disconnected endpoint still serves its last committed document, so it never
+// produces a fetch error and its retained rows would otherwise survive the flag
+// and appear as current sessions.
+func TestCommandRunnerListCleanOmitsDisconnectedEndpoints(t *testing.T) {
+	session := func(id string) protocol.InventoryReport {
+		return protocol.InventoryReport{
+			CollectionStatus: protocol.CollectionSucceeded,
+			Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
+			Sessions:         []protocol.Session{{ClusterSessionID: id, AdapterID: "adapter", ProviderGeneration: "generation", State: "running"}},
+		}
+	}
+	api := &runnerStubAPI{
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "live-ep", ConnectionState: "online"},
+			{EndpointID: "gone-ep", ConnectionState: "offline"},
+		},
+		reports: map[string]protocol.InventoryReport{
+			"live-ep": session("session-live"),
+			"gone-ep": session("session-gone"),
+		},
+	}
+	var plain, clean strings.Builder
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &plain, io.Discard, "", false, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &clean, io.Discard, "", false, TableOptions{Clean: true}); err != nil {
+		t.Fatal(err)
+	}
+	// The unfiltered table must show both, otherwise the clean assertion below
+	// would pass for the wrong reason.
+	if !strings.Contains(plain.String(), "gone-ep") || !strings.Contains(plain.String(), "live-ep") {
+		t.Fatalf("plain list=%q, want both endpoints", plain.String())
+	}
+	if strings.Contains(clean.String(), "gone-ep") {
+		t.Fatalf("clean list=%q, want the disconnected endpoint omitted", clean.String())
+	}
+	if !strings.Contains(clean.String(), "live-ep") {
+		t.Fatalf("clean list=%q, want the online endpoint kept", clean.String())
+	}
+}
+
 func TestRenderJSONHasStableBytes(t *testing.T) {
 	var out strings.Builder
 	if err := RenderJSON(&out, map[string]any{"status": "finished"}); err != nil {
@@ -235,6 +278,48 @@ func TestCommandRunnerJSONAndStatus(t *testing.T) {
 	}
 	if out.String() != "confirmed result\n" {
 		t.Fatalf("status=%q", out.String())
+	}
+}
+
+// TestCommandRunnerJSONListHonoursClean proves --clean is not silently dropped
+// on the JSON surface. A flag that the table honours and the JSON path ignores
+// makes two callers disagree about the same query, and the JSON caller has no
+// way to notice because the extra rows look like ordinary data.
+func TestCommandRunnerJSONListHonoursClean(t *testing.T) {
+	session := func(id string) protocol.InventoryReport {
+		return protocol.InventoryReport{
+			CollectionStatus: protocol.CollectionSucceeded,
+			Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
+			Sessions:         []protocol.Session{{ClusterSessionID: id, AdapterID: "adapter", ProviderGeneration: "generation", State: "running"}},
+		}
+	}
+	api := &runnerStubAPI{
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "live-ep", ConnectionState: "online"},
+			{EndpointID: "gone-ep", ConnectionState: "offline"},
+		},
+		reports: map[string]protocol.InventoryReport{
+			"live-ep": session("session-live"),
+			"gone-ep": session("session-gone"),
+		},
+	}
+	render := func(clean bool) []SessionRow {
+		var out strings.Builder
+		if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, io.Discard, "", true, TableOptions{Clean: clean}); err != nil {
+			t.Fatal(err)
+		}
+		var rows []SessionRow
+		if err := json.Unmarshal([]byte(out.String()), &rows); err != nil {
+			t.Fatalf("json=%q: %v", out.String(), err)
+		}
+		return rows
+	}
+	if got := len(render(false)); got != 2 {
+		t.Fatalf("unfiltered rows=%d, want 2", got)
+	}
+	rows := render(true)
+	if len(rows) != 1 || rows[0].EndpointID != "live-ep" {
+		t.Fatalf("clean rows=%+v, want only live-ep", rows)
 	}
 }
 

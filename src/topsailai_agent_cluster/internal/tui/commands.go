@@ -57,17 +57,39 @@ func (r CommandRunner) ListWithOptions(ctx context.Context, out, errors io.Write
 // validated the same load does not repeat the API round trip.
 func renderListRows(out, errors io.Writer, loaded reportLoad, filter string, jsonMode bool, options TableOptions) error {
 	rows := ListRows(loaded.endpoints, loaded.reports, filter)
-	if jsonMode {
-		return RenderJSON(out, rows)
-	}
-	if options.Clean && len(loaded.errors) > 0 {
-		filtered := rows[:0]
-		for _, row := range rows {
-			if _, failed := loaded.errors[row.EndpointID]; !failed {
-				filtered = append(filtered, row)
+	if options.Clean {
+		// An endpoint that is not online has stopped reporting, so its retained
+		// inventory is historical rather than current. Omitting it is the same
+		// decision as omitting a failed fetch, because both are endpoints that
+		// failed to report, which is exactly what --clean promises to hide. A
+		// fetch failure alone was not enough: a disconnected endpoint still
+		// serves its last committed document, so it never produced an error and
+		// its stale rows survived the flag.
+		//
+		// The filter runs before the JSON branch because a flag that is accepted
+		// and then silently ignored is worse than a flag that is rejected: a JSON
+		// caller would receive rows the table surface had already dropped, and
+		// nothing in the output would say the two disagreed.
+		offline := make(map[string]bool, len(loaded.endpoints))
+		for _, endpoint := range loaded.endpoints {
+			if endpoint.ConnectionState != "" && endpoint.ConnectionState != "online" {
+				offline[endpoint.EndpointID] = true
 			}
 		}
+		filtered := rows[:0]
+		for _, row := range rows {
+			if _, failed := loaded.errors[row.EndpointID]; failed {
+				continue
+			}
+			if offline[row.EndpointID] {
+				continue
+			}
+			filtered = append(filtered, row)
+		}
 		rows = filtered
+	}
+	if jsonMode {
+		return RenderJSON(out, rows)
 	}
 	assignRowNumbers(rows)
 	if options.OnRows != nil {
