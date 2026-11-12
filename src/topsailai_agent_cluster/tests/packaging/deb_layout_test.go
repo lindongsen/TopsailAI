@@ -740,6 +740,16 @@ func TestDebLauncherForwardsTheAccessPolicyDir(t *testing.T) {
 	}
 }
 
+// TestDebLauncherForwardsServerEndpointExpiry proves the packaged launcher
+// passes the configured offline-record retention window to the Server binary.
+func TestDebLauncherForwardsServerEndpointExpiry(t *testing.T) {
+	packages := buildDebPackages(t)
+	launcher := readPackagedFile(t, packages["node"], debOptDir+"/agent-clusterctl")
+	if !hasLineContaining(launcher, "--endpoint-expiry", "ENDPOINT_EXPIRY") {
+		t.Fatal("the packaged launcher never forwards ENDPOINT_EXPIRY to --endpoint-expiry")
+	}
+}
+
 // TestCLIEnvWriterUsesExplicitServerTokenName prevents the generated per-user
 // configuration from collapsing the two independent credentials back into one
 // ambiguous CLI token. The writer is shared by bundle and Debian installation,

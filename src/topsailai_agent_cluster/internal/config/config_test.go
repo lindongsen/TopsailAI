@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestDefaultsAndLoad(t *testing.T) {
 	defaults := Defaults("test")
@@ -155,5 +158,37 @@ func TestEndpointDeprecatedEnvironmentNamesRemainFallbacks(t *testing.T) {
 	}
 	if cfg.CommandAllowlistFile != "/old/allowlist" || cfg.ControlActionFile != "/old/catalog" {
 		t.Fatalf("deprecated Endpoint file names were not loaded: %+v", cfg)
+	}
+}
+
+func TestServerEndpointExpiryConfiguration(t *testing.T) {
+	if got := Defaults("agent-cluster-server").EndpointExpiry; got != 5*time.Minute {
+		t.Fatalf("default Endpoint expiry = %s", got)
+	}
+	t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY", "7m30s")
+	cfg, err := Load([]string{"--endpoint-expiry", "9m"}, "agent-cluster-server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EndpointExpiry != 9*time.Minute {
+		t.Fatalf("flag did not override environment: %s", cfg.EndpointExpiry)
+	}
+}
+
+func TestServerEndpointExpiryRejectsInvalidValues(t *testing.T) {
+	for _, value := range []string{"invalid", "0s", "-1m"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY", value)
+			if _, err := Load(nil, "agent-cluster-server"); err == nil {
+				t.Fatalf("accepted Endpoint expiry %q", value)
+			}
+		})
+	}
+}
+
+func TestEndpointIgnoresServerEndpointExpiry(t *testing.T) {
+	t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY", "invalid")
+	if _, err := Load(nil, "agent-cluster-endpoint"); err != nil {
+		t.Fatalf("Endpoint parsed Server expiry: %v", err)
 	}
 }

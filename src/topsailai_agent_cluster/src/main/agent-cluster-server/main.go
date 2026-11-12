@@ -147,6 +147,15 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
+	recoveredEndpoints, err := store.MarkPersistedEndpointsOffline(ctx)
+	if err != nil {
+		logger.Error("recover persisted endpoint connection states", "error", err)
+		_ = store.Close()
+		os.Exit(1)
+	}
+	if recoveredEndpoints > 0 {
+		logger.Info("recovered persisted endpoint connection states", "endpoints_marked_offline", recoveredEndpoints)
+	}
 	// Record the resolved addresses before serving: without this line a healthy
 	// start leaves no trace in the log, so a silent death cannot be told apart
 	// from a start that never happened.
@@ -155,12 +164,20 @@ func main() {
 		// during startup rather than after the API is already accepting traffic.
 		runEndpointDialer(ctx, logger, channelService, cfg)
 	}
-	logger.Info("server service starting", "api_listen_address", cfg.APIListenAddress, "channel_listen_address", channelListenAddress, "channel_direction", cfg.ChannelDirection, "database_path", cfg.DatabasePath)
-	if err := service.Run(ctx); err != nil {
+	expiryDone := make(chan struct{})
+	go func() {
+		defer close(expiryDone)
+		runEndpointExpiry(ctx, logger, store, cfg.EndpointExpiry)
+	}()
+	logger.Info("server service starting", "api_listen_address", cfg.APIListenAddress, "channel_listen_address", channelListenAddress, "channel_direction", cfg.ChannelDirection, "database_path", cfg.DatabasePath, "endpoint_expiry", cfg.EndpointExpiry.String())
+	runErr := service.Run(ctx)
+	stop()
+	<-expiryDone
+	if runErr != nil {
 		// Run returns nil on a graceful shutdown and the listen error when a port
 		// cannot be bound, so a non-zero exit is what lets a supervisor or launcher
 		// distinguish a failed start from a clean stop.
-		logger.Error("server service stopped", "error", err)
+		logger.Error("server service stopped", "error", runErr)
 		_ = service.Close()
 		os.Exit(1)
 	}

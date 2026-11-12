@@ -259,6 +259,9 @@ function start_node() {
         # The bearer token the API handler validates; without it the server falls
         # back to the built-in development token and every client call returns 401.
         [ -n "${AUTH_TOKEN:-}" ] && args+=(--auth-token "${AUTH_TOKEN}")
+        # Offline Endpoint inventory is retained only for this window. The
+        # Server owns expiry because it owns the persisted fleet projection.
+        [ -n "${ENDPOINT_EXPIRY:-}" ] && args+=(--endpoint-expiry "${ENDPOINT_EXPIRY}")
     else
         args+=(--endpoint-id "${ENDPOINT_ID}")
         args+=(--instance-id "${INSTANCE_ID}")

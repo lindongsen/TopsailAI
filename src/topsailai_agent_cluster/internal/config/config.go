@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -35,6 +36,8 @@ type Config struct {
 	ChannelListenAddress string
 	DatabasePath         string
 	AuthToken            string
+	// EndpointExpiry is the Server-owned retention window for offline Endpoint records.
+	EndpointExpiry       time.Duration
 	CommandAllowlistFile string
 	// ControlActionFile is the Endpoint-local file that selects which ctl. actions
 	// this Endpoint serves. An empty value keeps the reviewed default set in force.
@@ -82,7 +85,7 @@ func Defaults(role string) Config {
 	if role == "agent-cluster-endpoint" {
 		databasePath = ".tmp/endpoint.sqlite"
 	}
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 5 * time.Minute, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
 }
 
 // Load parses command-line flags and applies environment configuration.
@@ -101,6 +104,13 @@ func Load(args []string, role string) (Config, error) {
 		}
 		if value := EnvironmentValue("AGENT_CLUSTER_SERVER_AUTH_TOKEN", "AGENT_CLUSTER_AUTH_TOKEN"); value != "" {
 			cfg.AuthToken = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY"); value != "" {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY: %w", err)
+			}
+			cfg.EndpointExpiry = parsed
 		}
 		if value := EnvironmentValue("AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES", "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES"); value != "" {
 			addresses, err := ParseDialAddresses(value)
@@ -196,6 +206,7 @@ func Load(args []string, role string) (Config, error) {
 		flags.StringVar(&cfg.APIListenAddress, "api-listen-addr", cfg.APIListenAddress, "Bearer-authenticated API listen address")
 		flags.StringVar(&cfg.ChannelListenAddress, "channel-listen-addr", cfg.ChannelListenAddress, "mTLS channel listen address")
 		flags.StringVar(&cfg.AuthToken, "auth-token", cfg.AuthToken, "pre-provisioned bearer token")
+		flags.DurationVar(&cfg.EndpointExpiry, "endpoint-expiry", cfg.EndpointExpiry, "retention window for offline Endpoint records")
 		flags.Func("endpoint-dial-addresses", "comma-separated endpoint_id=wss://address pairs the Server dials", func(value string) error {
 			addresses, err := ParseDialAddresses(value)
 			if err != nil {
@@ -297,6 +308,9 @@ func (c Config) Validate() error {
 	}
 	if c.LogMaxSize <= 0 || c.LogBackups < 0 || c.LogMaxAge < 0 {
 		return fmt.Errorf("log rotation limits must be positive or zero where allowed")
+	}
+	if c.EndpointExpiry <= 0 {
+		return fmt.Errorf("endpoint expiry must be positive")
 	}
 	switch c.ChannelDirection {
 	case DirectionEndpointInitiated, DirectionServerInitiated, DirectionBidirectional:
