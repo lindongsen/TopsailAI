@@ -81,7 +81,7 @@ def print_scopes() -> None:
         (
             "runtime",
             "The live log-streaming scope entered after selecting a workspace log file. It follows output for the watched session or task while keeping session messaging available.",
-            "Send process messages with /send, inject agent2llm context to the watched PID with /ctx.btw or to all discoverable live PIDs with /ctx.btw-all, print session metadata with /meta, send control requests with /control, forward agent instructions with /agent.<instruction>, recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit.",
+            "Send process messages with /send, inject agent2llm context to the watched PID with /ctx.btw or to all discoverable live PIDs with /ctx.btw-all, print session metadata with /meta, send control requests with /control, forward agent instructions with /agent.<instruction>, recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit. The leading '/' is optional for every runtime command, so send hello and /send hello are the same command.",
         ),
         (
             "project",
@@ -337,7 +337,7 @@ def print_help(
         },
         {
             "cmd": "/send [session_id_or_index] [message...]",
-            "desc": "Send a message to a running session through its named pipe. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /send defaults to the watched session.",
+            "desc": "Send a message to a running session through its named pipe. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /send defaults to the watched session and the leading '/' is optional, so send hello is the same command.",
             "example": "Example: /send 1 hello  or  /send my-session hello  or  while streaming: /send hello",
             "scopes": ["session", "runtime"],
         },
@@ -391,7 +391,7 @@ def print_help(
         },
         {
             "cmd": "<free-form text>",
-            "desc": "While streaming a log, any input that is not a recognized command prompts 'Send as message? [y/N]'. Answering yes sends the input to the watched session via /send.",
+            "desc": "While streaming a log, any input that is not a recognized command prompts 'Send as message? [y/N]'. Answering yes sends the input to the watched session via /send. A recognized command is matched with or without the leading '/', so send hello and /send hello are the same command, while hello world matches no command and keeps this prompt.",
             "example": "Example: hello  (then answer y to send it)",
             "scopes": ["runtime"],
         },

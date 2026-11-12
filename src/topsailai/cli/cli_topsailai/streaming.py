@@ -257,10 +257,11 @@ def stream_file(
     Stream a log file in real-time, similar to ``tail -f``.
 
     Shows the last 100 lines, then follows new writes.  Supports ``q`` to
-    quit, ``/send [message]`` to send a message to the watched session,
-    ``/ctx.btw [message]`` to inject an agent2llm message, ``/ctx.btw-all [message]``
-    to broadcast to discoverable same-session PIDs, ``/control`` to
+    quit, ``send [message]`` to send a message to the watched session,
+    ``ctx.btw [message]`` to inject an agent2llm message, ``ctx.btw-all [message]``
+    to broadcast to discoverable same-session PIDs, ``control`` to
     send a control request to the watched PID, or Ctrl+C for graceful exit.
+    The leading "/" is optional for every runtime command.
 
     When ``runtime_raw`` is True, a simple curses-free raw streaming mode is
     used instead of the two-pane curses UI or legacy single-pane fallback.
@@ -408,6 +409,50 @@ class _CursesOutputCapture:
         sys.stderr = self._original_stderr
 
 
+# Runtime commands implemented by the streaming layer itself. They are listed
+# here so a bare spelling is recognized without the leading "/".
+_RUNTIME_BUILTIN_COMMANDS = ("send", "ctx.btw-all", "meta", "help")
+
+
+def _runtime_command_line(cmd_line: str, task_dir: str) -> Optional[str]:
+    """Return the "/"-prefixed command line when *cmd_line* names a command.
+
+    The leading "/" is optional in runtime scope, so ``send hello`` and
+    ``/send hello`` are the same command. Input that names no command returns
+    ``None``, which keeps the existing send-as-message behavior.
+
+    Input that already starts with "/" is returned with its surrounding
+    whitespace removed, so an unknown slash command is still reported as an
+    unknown command instead of being silently sent as a message, and a
+    downstream handler that slices a fixed prefix length still finds the
+    command at offset 0.
+    """
+    text = cmd_line.strip()
+    if not text:
+        return None
+    if text.startswith("/"):
+        return text
+    token = text.split(None, 1)[0].lower()
+    if token in _RUNTIME_BUILTIN_COMMANDS:
+        return "/" + text
+    if token == "control" or token.startswith(("control.", "agent.")):
+        return "/" + text
+    # Every YAML command available in runtime scope is recognized in its bare
+    # form too; the matcher already normalizes a leading "/". The match runs
+    # under the runtime scope so the answer never depends on the ambient scope,
+    # and the scope check keeps a command that is not available while streaming
+    # from being promoted to a runtime command.
+    previous_scope = state.current_scope
+    try:
+        state.current_scope = "runtime"
+        matched = yaml_commands.match_yaml_command(text, task_dir)
+    finally:
+        state.current_scope = previous_scope
+    if matched is not None and "runtime" in matched[0].get("scopes", []):
+        return "/" + text
+    return None
+
+
 def _build_stream_command_handler(
     ui: Any,
     task_dir: str,
@@ -429,29 +474,31 @@ def _build_stream_command_handler(
         with _CursesOutputCapture(ui):
             if cmd_line.startswith("!"):
                 execute_shell_command(cmd_line)
-            elif lower.startswith("/"):
-                _handle_stream_command(
-                    cmd_line,
-                    task_dir,
-                    log_files,
-                    default_session_id,
-                    default_stdout_path,
-                    default_pid,
-                    input_provider=_multi_line_input_provider,
-                    default_session_pid=default_session_pid,
-                )
             else:
-                _prompt_send_as_message(
-                    cmd_line,
-                    task_dir,
-                    log_files,
-                    default_session_id,
-                    default_stdout_path,
-                    default_pid,
-                    input_provider=_multi_line_input_provider,
-                    output_callback=ui.append_status,
-                    input_callback=ui.read_multi_line_blocking,
-                )
+                command_line = _runtime_command_line(cmd_line, task_dir)
+                if command_line is not None:
+                    _handle_stream_command(
+                        command_line,
+                        task_dir,
+                        log_files,
+                        default_session_id,
+                        default_stdout_path,
+                        default_pid,
+                        input_provider=_multi_line_input_provider,
+                        default_session_pid=default_session_pid,
+                    )
+                else:
+                    _prompt_send_as_message(
+                        cmd_line,
+                        task_dir,
+                        log_files,
+                        default_session_id,
+                        default_stdout_path,
+                        default_pid,
+                        input_provider=_multi_line_input_provider,
+                        output_callback=ui.append_status,
+                        input_callback=ui.read_multi_line_blocking,
+                    )
         return True
 
     return handler
@@ -506,12 +553,14 @@ def _prompt_send_as_message(
     if output_callback is not None:
         output_callback(
             f"[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'."
+            f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'. "
+            f"The leading '/' is optional."
         )
     else:
         print(
             f"{Colors.RED}[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+            f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'. "
+            f"The leading '/' is optional.{Colors.RESET}"
         )
     return True
 
@@ -1130,9 +1179,10 @@ def _dispatch_input(
     if cmd_line.startswith("!"):
         execute_shell_command(cmd_line)
         return True
-    if lower.startswith("/"):
+    command_line = _runtime_command_line(cmd_line, task_dir)
+    if command_line is not None:
         _handle_stream_command(
-            cmd_line,
+            command_line,
             task_dir,
             log_files,
             default_session_id,
@@ -1181,9 +1231,10 @@ def _stream_file_raw(
     print_header(f"Streaming: {filename}")
     print(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
-        f"type '/send [message]' to send a message, "
-        f"'/ctx.btw [message]' or '/ctx.btw-all [message]' to inject agent2llm messages, "
-        f"'/control <command>' to send a control request, or Ctrl+C to exit.{Colors.RESET}\n"
+        f"type 'send [message]' to send a message, "
+        f"'ctx.btw [message]' or 'ctx.btw-all [message]' to inject agent2llm messages, "
+        f"'control <command>' to send a control request, or Ctrl+C to exit. "
+        f"The leading '/' is optional.{Colors.RESET}\n"
     )
     prompt = _build_runtime_prompt(default_session_id)
     fd = None
@@ -1309,9 +1360,10 @@ def _stream_file_legacy(
     print_header(f"Streaming: {filename}")
     print(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
-        f"type '/send [message]' to send a message, "
-        f"'/ctx.btw [message]' or '/ctx.btw-all [message]' to inject agent2llm messages, "
-        f"'/control <command>' to send a control request, or Ctrl+C to exit.{Colors.RESET}\n"
+        f"type 'send [message]' to send a message, "
+        f"'ctx.btw [message]' or 'ctx.btw-all [message]' to inject agent2llm messages, "
+        f"'control <command>' to send a control request, or Ctrl+C to exit. "
+        f"The leading '/' is optional.{Colors.RESET}\n"
     )
 
     prompt = _build_runtime_prompt(default_session_id)
@@ -1360,28 +1412,32 @@ def _stream_file_legacy(
                                 break
                             if cmd_line.startswith("!"):
                                 execute_shell_command(cmd_line)
-                            elif lower.startswith("/"):
-                                _handle_stream_command(
-                                    cmd_line,
-                                    task_dir,
-                                    log_files,
-                                    default_session_id,
-                                    default_stdout_path,
-                                    default_pid,
-                                    default_session_pid=default_session_pid,
-                                )
                             else:
-                                _prompt_send_as_message(
-                                    cmd_line,
-                                    task_dir,
-                                    log_files,
-                                    default_session_id,
-                                    default_stdout_path,
-                                    default_pid,
-                                    input_provider=None,
-                                    output_callback=None,
-                                    input_callback=None,
+                                command_line = _runtime_command_line(
+                                    cmd_line, task_dir
                                 )
+                                if command_line is not None:
+                                    _handle_stream_command(
+                                        command_line,
+                                        task_dir,
+                                        log_files,
+                                        default_session_id,
+                                        default_stdout_path,
+                                        default_pid,
+                                        default_session_pid=default_session_pid,
+                                    )
+                                else:
+                                    _prompt_send_as_message(
+                                        cmd_line,
+                                        task_dir,
+                                        log_files,
+                                        default_session_id,
+                                        default_stdout_path,
+                                        default_pid,
+                                        input_provider=None,
+                                        output_callback=None,
+                                        input_callback=None,
+                                    )
                             _persist_runtime_command(
                                 cmd_line, default_session_id, runtime_history
                             )
@@ -1474,7 +1530,7 @@ def _handle_stream_command(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
         f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', "
         f"'/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', "
-        f"'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+        f"'q', 'quit', 'exit', or 'cd'. The leading '/' is optional.{Colors.RESET}"
     )
 
 

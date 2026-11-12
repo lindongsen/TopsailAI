@@ -73,14 +73,16 @@ These options apply only to the default interactive mode (no subcommand). They c
 The CLI has five scopes, derived from the original design notes in `../../topsailai.md`. Run `scopes` from workspace scope to display these introductions and each scope's available actions:
 
 - **`[workspace]`** — the default task-watcher scope. It lists discovered session and task logs and provides actions to watch logs, retrieve context, clean or refresh files, launch agents, and enter other scopes.
-- **`[runtime:<id>]`** — the live log-streaming scope entered after selecting a workspace log. It provides `/send`, `/ctx.btw` for the watched PID, `/ctx.btw-all` for all discoverable live PIDs in a named session, `/control`, `/agent.<instruction>`, `/meta`, help, and commands for leaving the stream.
+- **`[runtime:<id>]`** — the live log-streaming scope entered after selecting a workspace log. It provides `/send`, `/ctx.btw` for the watched PID, `/ctx.btw-all` for all discoverable live PIDs in a named session, `/control`, `/agent.<instruction>`, `/meta`, help, and commands for leaving the stream. The leading `/` is optional here as well, so `send hello` and `/send hello` are the same command.
 - **`[project]`** — a navigation scope listing recent sessions with recorded project workspaces and running status. It provides session selection, context retrieval, refresh, agent launch and resume actions, and return to workspace scope.
 - **`[session:<id>]`** — a focused scope for one session. It provides context retrieval and streaming, runtime messaging, agent2llm and persistent context injection, configured session commands, and return to workspace scope.
 - **`[doc]`** — a browser for Markdown documentation grouped under `docs/`. It provides numbered document reading, list refresh, help, and return to workspace scope.
 
 ### Optional leading slash
 
-In `workspace`, `session` and `project` scope, the leading `/` of a command is optional: `meta 1` and `/meta 1` are the same command, and the same holds for every other command in those scopes, including `q`/`quit`/`exit`, `r`/`recent`, `p`/`projects`, `models`, `scopes`, `clean`, `help`, `session`, `agent`, `resume`, `retrieve`, `stream`, `send` and the YAML-configured commands. Only the first token is normalized, so the rest of the line — a message body, a JSON payload or a path — is passed through unchanged. The `!<command>` shell escape is never normalized.
+In `workspace`, `session`, `project` and `runtime` scope, the leading `/` of a command is optional: `meta 1` and `/meta 1` are the same command, and the same holds for every other command in those scopes, including `r`/`recent`, `p`/`projects`, `models`, `scopes`, `clean`, `help`, `session`, `agent`, `resume`, `retrieve`, `stream`, `send` and the YAML-configured commands. Only the first token is normalized, so the rest of the line — a message body, a JSON payload or a path — is passed through unchanged. The `!<command>` shell escape is never normalized. In `workspace`, `session` and `project` scope `q`/`quit`/`exit` are also accepted with the leading `/`; in `runtime` scope they are accepted only in their bare form, exactly as before.
+
+In `runtime` scope the recognition is a match against the runtime command set, not a blind normalization. Input whose first token names a runtime command (`send`, `ctx.btw`, `ctx.btw-all`, `meta`, `help`, `control`, `control.<subcommand>`, `agent.<instruction>`, or a YAML command available in runtime scope such as `git`, `git.status`, `git.diff`) is treated as that command, so `send hello` and `/send hello` are the same command. Input that matches no command, such as `hello world`, keeps the existing behavior and prompts `Send as message? [y/N]`. Input that already starts with `/` is never reinterpreted, so an unknown slash command such as `/unknown` is still reported as an unknown command instead of being silently sent as a message. `q`, `quit`, `exit`, `cd` and `!<command>` keep their existing precedence.
 
 Command aliases follow the same rule, so each alias is accepted with and without the leading `/`:
 
@@ -92,7 +94,7 @@ Command aliases follow the same rule, so each alias is accepted with and without
 
 `r` and `/r` remain the pre-existing short form of `/refresh`. The aliases are additional spellings of the same command, not separate commands: they share the same behavior, arguments and errors. In project scope `r [limit]` and `recent [limit]` keep their limit argument, while `list` and `l` accept no limit, exactly like `/refresh`. The restricted managed-project view still accepts only `r`, `p`, `q`, `cd` and `p agent <number>`, so the aliases are rejected there.
 
-`runtime` scope keeps its existing spellings and has its own command set, so these aliases do not apply there. `doc` scope shares the same prompt loop as `workspace` and `project` scope, so an alias binds wherever its base command already binds: `list` and `l` refresh the doc list, and `messages` reaches the same binding `/session` already has there, even though `/session` is not part of the documented doc-scope command set.
+`runtime` scope has its own command set, so these aliases do not apply there; its commands are still accepted with or without the leading `/`, as described above. `doc` scope shares the same prompt loop as `workspace` and `project` scope, so an alias binds wherever its base command already binds: `list` and `l` refresh the doc list, and `messages` reaches the same binding `/session` already has there, even though `/session` is not part of the documented doc-scope command set.
 
 ## Session Output Files
 
@@ -428,6 +430,8 @@ Selections persist in `{TOPSAILAI_HOME}/.model_selection.json`. A project overri
 The selected configuration is resolved immediately before `/agent` or `/resume`. It sets `OPENAI_MODEL`; when configured, it also sets identical `OPENAI_BASE_URL` and `OPENAI_API_BASE` values and maps referenced credentials to `OPENAI_API_KEY`, `OPENAI_ORG_ID`, and `OPENAI_PROJECT_ID`. These values apply only to the launched child process and do not alter the parent shell.
 
 ## Runtime Commands
+
+Every command in this table is accepted with or without the leading `/`, so `send hello` and `/send hello` are the same command. Input that matches no command keeps the send-as-message prompt.
 
 | Command | Description |
 |---------|-------------|

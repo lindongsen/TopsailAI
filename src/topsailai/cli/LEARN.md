@@ -555,3 +555,38 @@ from a line count or from "a few lines after the start". After the write,
 compare `git diff --numstat` against the intended change: an unexpected deletion
 count is a failure, not formatting noise. Reading the file back is the only step
 that caught both incidents, so it is mandatory rather than optional.
+
+## A normalized command line must be the value passed downstream
+
+### Trigger
+
+Making the leading `/` optional in runtime scope, the recognizer returned the
+original `cmd_line` for input that already started with `/`. Input such as
+`"   /send hi"` therefore reached `_handle_stream_command` with its leading
+spaces intact, where `_handle_stream_send` computes the message body as
+`cmd_line[len("/send"):].strip()`. The slice starts at offset 0, so the body
+became `"hi"` only by accident of the trailing strip and the command prefix was
+never actually matched. The same fixed-length slice pattern exists for
+`/agent.` and `/ctx.btw-all`.
+
+### Action taken
+
+Changed the already-slash branch to return the stripped text instead of the raw
+input, so the command always begins at offset 0, and added a unit test asserting
+`"   /send hi"` -> `"/send hi"`, `"\t/send hi"` -> `"/send hi"`, and
+`"  /unknown  "` -> `"/unknown"`. Verified the test is sensitive with a negative
+control: all three cases fail against the old `return cmd_line` implementation.
+Re-ran the targeted regression set (303 passed), the full unit suite (4195
+passed), and the pty manual test (3/3 PASS).
+
+### Why this prevents recurrence
+
+A recognizer that decides "this is a command" and a handler that extracts
+arguments by slicing a fixed prefix length are two halves of one contract: the
+handler assumes the prefix starts at offset 0. Returning the caller's raw string
+because it "already looks right" silently breaks that assumption for any input
+with leading whitespace, and the failure is invisible because the trailing
+`.strip()` hides it in the common case. Whenever a function normalizes input to
+make a decision, it must return the normalized value it decided on, not the
+original, and the test must include leading and trailing whitespace rather than
+only clean input.
