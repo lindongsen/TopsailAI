@@ -782,3 +782,27 @@ Why this prevents recurrence: latest-only storage deliberately discards older st
 old bytes to remain stored contradicts its retention model. At the same time, revision equality alone
 cannot prove content identity. Combining revision ordering with content equality at the equal-revision
 boundary lets retries converge without hiding conflicting immutable reports.
+
+## A whitelisted child environment removes the variables a desktop notification needs
+
+Trigger: the watch trigger script was extended to raise an on-screen popup. A plain `notify-send`
+inside the script failed with `Cannot autolaunch D-Bus without X11 $DISPLAY`, because
+`triggerEnvironment` (`internal/tui/trigger.go:169-199`) forwards only `PATH HOME LANG LC_ALL TZ
+TMPDIR` plus `TERM=dumb`. The script had already solved the same problem for audio by discovering
+`/tmp/pulse-*/native`, but the session bus is a second, independent discovery problem.
+
+Action: when a script runs under a whitelisted environment, treat every desktop service it needs as
+something to discover rather than something to inherit. For D-Bus, check `/run/user/<uid>/bus` and
+also read `DBUS_SESSION_BUS_ADDRESS` from the processes of the desktop account, because a session
+started by a display manager publishes an abstract socket such as `unix:abstract=/tmp/dbus-XXXXXXXX`
+and `/run/user/<uid>/bus` does not exist on such a host. Then send as the account that owns the
+session: a session bus refuses another account's connection and reports it as `The connection is
+closed`, which reads like a transport failure rather than a permission failure.
+
+Why this prevents recurrence: the whitelist is a security property and must not be widened, so the
+missing variable can never be fixed by forwarding it. The failure is also silent in the way that
+matters: the script still exits 0 by design, so a broken popup and a working popup are
+indistinguishable from the exit status. Only capturing the `org.freedesktop.Notifications.Notify`
+call on the bus, or seeing the popup, proves the channel works. This is the same class as the
+recorded lesson about a styled prefix being invisible to a plain-text assertion: the evidence and the
+behaviour live in different places, so a green result certifies nothing.
