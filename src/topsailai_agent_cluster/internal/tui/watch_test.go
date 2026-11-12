@@ -284,38 +284,66 @@ func TestWatchControllerStopCancelsInFlightCollection(t *testing.T) {
 	}
 }
 
-// TestWatchControllerReportsRepeatedFailureOnce proves a permanently failing
-// endpoint cannot flood the terminal. The immediate collection reports the
-// failure once, and the following tick repeats it without publishing again.
-func TestWatchControllerReportsRepeatedFailureOnce(t *testing.T) {
+// TestWatchControllerRendersTableWhenOneEndpointFails proves a partially failed
+// collection still renders the endpoints that answered. Rejecting the whole
+// collection hid every healthy endpoint behind one diagnostic line, so an
+// operator watching a fleet saw no table at all while most of it was reporting
+// normally. The failing endpoint is named beside the table instead.
+func TestWatchControllerRendersTableWhenOneEndpointFails(t *testing.T) {
 	stub := newWatchStub()
-	stub.setFail(errors.New("endpoint unreachable"))
+	stub.inventoryErrors = map[string]error{"endpoint-2": errors.New("adapter failed")}
 	ticks := newWatchManualTicks()
 	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
-	first := waitForResult(t, controller)
-	if first.err == nil {
-		t.Fatal("expected a reported failure")
+	result := waitForResult(t, controller)
+	if result.err != nil {
+		t.Fatalf("partial collection was rejected instead of rendered: %v", result.err)
 	}
-	ticks.tick(t)
-	// The second identical failure must publish nothing, so the pending slot
-	// stays empty.
-	time.Sleep(50 * time.Millisecond)
-	if _, ok := controller.take(); ok {
-		t.Fatal("repeated identical failure was reported again")
+	if len(result.rows) == 0 {
+		t.Fatal("partial collection published no rows")
+	}
+	rendered := string(result.output)
+	if !strings.Contains(rendered, "host-one") {
+		t.Fatalf("rendered output lost the healthy endpoint: %q", rendered)
+	}
+	if !strings.Contains(rendered, "endpoint endpoint-2 unavailable: adapter failed") {
+		t.Fatalf("rendered output lost the failing endpoint diagnostic: %q", rendered)
+	}
+}
+
+// TestWatchControllerReportsTotalEnumerationFailureAsDiagnostic proves the one
+// failure that leaves nothing to render is still reported as a diagnostic. A
+// failure to enumerate the endpoints is not a per-endpoint fetch failure, so it
+// cannot be shown beside a table that was never loaded.
+func TestWatchControllerReportsTotalEnumerationFailureAsDiagnostic(t *testing.T) {
+	stub := newWatchStub()
+	stub.failList = true
+	ticks := newWatchManualTicks()
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
+	defer controller.Stop()
+	result := waitForResult(t, controller)
+	if result.err == nil {
+		t.Fatal("an endpoint enumeration failure was accepted")
+	}
+	if len(result.rows) != 0 {
+		t.Fatalf("enumeration failure published rows: %v", result.rows)
 	}
 }
 
 // TestWatchControllerReportsRecoveryAfterFailure proves a recovered collection
-// publishes success again instead of staying silent.
+// publishes the healthy table again instead of staying silent.
 func TestWatchControllerReportsRecoveryAfterFailure(t *testing.T) {
 	stub := newWatchStub()
 	stub.setFail(errors.New("endpoint unreachable"))
 	ticks := newWatchManualTicks()
 	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
 	defer controller.Stop()
-	if result := waitForResult(t, controller); result.err == nil {
-		t.Fatal("expected a reported failure")
+	failed := waitForResult(t, controller)
+	if failed.err != nil {
+		t.Fatalf("a per-endpoint failure was reported as a load failure: %v", failed.err)
+	}
+	if !strings.Contains(string(failed.output), "unavailable") {
+		t.Fatalf("failed collection carried no diagnostic: %q", failed.output)
 	}
 	stub.setFail(nil)
 	ticks.tick(t)
@@ -325,6 +353,9 @@ func TestWatchControllerReportsRecoveryAfterFailure(t *testing.T) {
 	}
 	if len(result.rows) == 0 {
 		t.Fatal("recovery published no rows")
+	}
+	if strings.Contains(string(result.output), "unavailable") {
+		t.Fatalf("recovered collection kept a stale diagnostic: %q", result.output)
 	}
 }
 
@@ -343,25 +374,6 @@ func TestWatchControllerLeavesNoGoroutine(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("goroutines=%d, want at most %d after Stop", runtime.NumGoroutine(), before)
-}
-
-// TestWatchControllerRejectsPartialCollection proves a partially failed
-// collection is rejected instead of rendering an incomplete row set, because a
-// shorter table would silently rebind row numbers. The immediate collection is
-// enough to observe it.
-func TestWatchControllerRejectsPartialCollection(t *testing.T) {
-	stub := newWatchStub()
-	stub.inventoryErrors = map[string]error{"endpoint-2": errors.New("adapter failed")}
-	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
-	defer controller.Stop()
-	result := waitForResult(t, controller)
-	if result.err == nil {
-		t.Fatal("partial collection was accepted")
-	}
-	if len(result.rows) != 0 {
-		t.Fatalf("partial collection published rows: %v", result.rows)
-	}
 }
 
 // TestWatchControllerForcedModeUsesForcedCollection proves --force asks the
@@ -498,6 +510,50 @@ func TestReplWatchMarkerRowCarriesNoTableRule(t *testing.T) {
 	}
 	if strings.ContainsRune(markerRow, '─') {
 		t.Fatalf("marker row=%q, want no table rule on the marker row", markerRow)
+	}
+}
+
+// TestReplWatchPrintsTableAndDiagnosticTogether proves the bytes the operator
+// actually sees carry both the table and the failing endpoint diagnostic. The
+// controller-level tests assert the rendered buffer, but the operator reads the
+// payload Idle returns, and a diagnostic that never reaches that payload is
+// invisible no matter how correct the render was.
+func TestReplWatchPrintsTableAndDiagnosticTogether(t *testing.T) {
+	stub := newWatchStub()
+	stub.inventoryErrors = map[string]error{"endpoint-2": errors.New("adapter failed")}
+	ticks := newWatchManualTicks()
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}), nil)
+	defer controller.Stop()
+	state := &interactiveState{Scope: ScopeState{Kind: ScopeWorkspace}}
+	state.setRows(nil)
+	watch := &replWatch{controller: controller, state: state}
+	// The pending slot is polled instead of taken, because Idle is the consumer
+	// under test: taking the result here would leave Idle with nothing to print.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		controller.mu.Lock()
+		ready := controller.pending != nil
+		controller.mu.Unlock()
+		if ready {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	payload, err := watch.Idle()
+	if err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	printed := string(payload)
+	if !strings.Contains(printed, "host-one") {
+		t.Fatalf("printed payload lost the healthy endpoint: %q", printed)
+	}
+	if !strings.Contains(printed, "endpoint endpoint-2 unavailable: adapter failed") {
+		t.Fatalf("printed payload lost the failing endpoint diagnostic: %q", printed)
+	}
+	// The diagnostic must follow the table, so it reads as a note about the
+	// table above it rather than as a replacement for it.
+	if strings.Index(printed, "endpoint endpoint-2 unavailable") < strings.Index(printed, "host-one") {
+		t.Fatalf("diagnostic printed before the table: %q", printed)
 	}
 }
 
@@ -958,7 +1014,7 @@ func TestWatchHelpDocumentsTheStopRule(t *testing.T) {
 		t.Fatalf("PrintScopedCommandHelp: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"watch [interval] [--force] [-t|--trigger[=<path>]]", "workspace, endpoint", "any keypress stops the loop", "-t, --trigger: run a script when a session changes from running to waiting_input", "topsailai-agent-cluster.on-state-change.trigger"} {
+	for _, want := range []string{"watch [interval] [--force] [-t|--trigger[=<path>]]", "workspace, endpoint", "any keypress stops the loop", "-t, --trigger: run a script when a session changes from running to waiting_input", "topsailai-agent-cluster.on-state-change.trigger", "an endpoint that fails to report is named beside the table instead of replacing it"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q: %q", want, text)
 		}

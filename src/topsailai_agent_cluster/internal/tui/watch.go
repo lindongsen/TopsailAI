@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -353,35 +352,22 @@ func (c *watchController) collectionContext() (context.Context, context.CancelFu
 	return context.WithTimeout(c.ctx, 10*time.Second)
 }
 
-// load reads the inventory for the current scope. A partially failed refresh is
-// rejected instead of rendered, because replacing the table with an incomplete
-// row set would rebind row numbers from data the operator cannot see.
+// load reads the inventory for the current scope.
+//
+// A per-endpoint fetch failure is not a load failure. The rows that were read
+// are still authoritative, and the endpoints that failed are reported as
+// diagnostics beside the table, exactly as list reports them. Rejecting the
+// whole collection because one endpoint is unreachable hid every healthy
+// endpoint behind a single diagnostic line, so an operator watching a fleet saw
+// no table at all while most of the fleet was answering normally.
+//
+// Only a failure to enumerate the endpoints themselves leaves nothing to
+// render, and that is the one case this function reports as an error.
 func (c *watchController) load(ctx context.Context) (reportLoad, error) {
-	var loaded reportLoad
-	var err error
 	if c.request.Force {
-		loaded, err = forceCollection(ctx, c.api, c.filter)
-	} else {
-		loaded, err = loadReports(ctx, c.api, c.filter)
+		return forceCollection(ctx, c.api, c.filter)
 	}
-	if err != nil {
-		return reportLoad{}, err
-	}
-	// The failing endpoint IDs are sorted before the message is built, because a
-	// map iteration order would alternate the message between ticks and defeat
-	// the repeated-failure de-duplication in publishFailure.
-	failed := make([]string, 0, len(loaded.errors))
-	for endpointID := range loaded.errors {
-		failed = append(failed, endpointID)
-	}
-	if len(failed) == 0 {
-		return loaded, nil
-	}
-	sort.Strings(failed)
-	if len(failed) == 1 {
-		return reportLoad{}, fmt.Errorf("endpoint %q failed to report", failed[0])
-	}
-	return reportLoad{}, fmt.Errorf("endpoints %q failed to report", strings.Join(failed, `", "`))
+	return loadReports(ctx, c.api, c.filter)
 }
 
 // render produces the table bytes through the shared renderer, so sanitization
@@ -391,6 +377,11 @@ func (c *watchController) load(ctx context.Context) (reportLoad, error) {
 // escapeCell, so no untrusted escape can survive this seam. The layout is read
 // here rather than stored, so a terminal resize during the loop is honoured on
 // the next render.
+//
+// The endpoint diagnostics are written into the same buffer as the table, not
+// discarded. The renderer already sanitizes them, and a watch payload is one
+// block the editor prints at once, so a diagnostic written to a separate writer
+// would either be lost or arrive detached from the table it describes.
 func (c *watchController) render(loaded reportLoad) ([]SessionRow, []byte, error) {
 	var buffer bytes.Buffer
 	safe := &watchWriter{safeWriter: &safeWriter{target: &buffer, keepSGR: c.color.Enabled}, layout: c.layoutSource()}
@@ -398,7 +389,7 @@ func (c *watchController) render(loaded reportLoad) ([]SessionRow, []byte, error
 	options := tableOptionsFor(safe, c.color, listArguments{}, func(rendered []SessionRow) {
 		rows = append(rows, rendered...)
 	})
-	if err := renderListRows(safe, io.Discard, loaded, c.filter, false, options); err != nil {
+	if err := renderListRows(safe, safe, loaded, c.filter, false, options); err != nil {
 		return nil, nil, err
 	}
 	if err := safe.Flush(); err != nil {
