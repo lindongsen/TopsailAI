@@ -467,17 +467,21 @@ func TestInteractiveHelpIncludesStart(t *testing.T) {
 func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nbtw {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nexit\n"
+	input := "cd endpoint-1/session-1\nbtw {\"text\":\"context\"}\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if stub.admit != 2 {
 		t.Fatalf("admitted %d commands, want 2 after declined stop", stub.admit)
 	}
-	for _, phrase := range []string{"btw session-1?", "interrupt session-1?", "stop cancelled"} {
+	// btw submits directly, so it never asks; interrupt and stop still do.
+	for _, phrase := range []string{"interrupt session-1?", "stop cancelled"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("output missing %q: %q", phrase, output.String())
 		}
+	}
+	if strings.Contains(output.String(), "btw session-1?") {
+		t.Fatalf("btw asked for confirmation: %q", output.String())
 	}
 }
 
@@ -584,17 +588,19 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ny\ncontrol heartbeat\n\ny\nexit\n"
+	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ncontrol heartbeat\n\ny\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if errorsOut.Len() != 0 || stub.admit != 2 {
 		t.Fatalf("output=%q errors=%q admits=%d", output.String(), errorsOut.String(), stub.admit)
 	}
-	for _, phrase := range []string{"btw session-1?", "control heartbeat?"} {
-		if !strings.Contains(output.String(), phrase) {
-			t.Fatalf("output missing %q: %q", phrase, output.String())
-		}
+	// btw submits directly, so only the control action still asks.
+	if !strings.Contains(output.String(), "control heartbeat?") {
+		t.Fatalf("output missing %q: %q", "control heartbeat?", output.String())
+	}
+	if strings.Contains(output.String(), "btw session-1?") {
+		t.Fatalf("btw asked for confirmation: %q", output.String())
 	}
 }
 
@@ -611,8 +617,8 @@ func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
 		{name: "send literal text", input: "cd endpoint-1/session-1\nsend hello world\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"hello world"}`},
 		{name: "send prose mentioning json flag", input: "cd endpoint-1/session-1\nsend please add --json to the config\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"please add --json to the config"}`},
 		{name: "send prose ending with json flag", input: "cd endpoint-1/session-1\nsend the flag is --json\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"the flag is --json"}`},
-		{name: "btw prose ending with json flag", input: "cd endpoint-1/session-1\nbtw remember the flag is --json\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"remember the flag is --json"}`},
-		{name: "btw literal text", input: "cd endpoint-1/session-1\nbtw the deployment notes are in docs/\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
+		{name: "btw prose ending with json flag", input: "cd endpoint-1/session-1\nbtw remember the flag is --json\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"remember the flag is --json"}`},
+		{name: "btw literal text", input: "cd endpoint-1/session-1\nbtw the deployment notes are in docs/\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
 		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft stop and summarize now\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},
 		{name: "interrupt hard", input: "cd endpoint-1/session-1\ninterrupt hard\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
 		{name: "guided interrupt defaults to hard", input: "cd endpoint-1/session-1\ninterrupt\n\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},

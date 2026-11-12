@@ -42,7 +42,7 @@ func TestUnitAutoFollowSkipsOnlyProvablyUnappliedResults(t *testing.T) {
 		t.Run(tc.name+" btw", func(t *testing.T) {
 			base := newSendFollowStub()
 			stub := &receiptSendFollowStub{sendFollowStub: base, result: map[string]any{"status": string(tc.status), "effect_certainty": string(tc.effect)}}
-			_, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "y", "quit"})
+			_, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "quit"})
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}

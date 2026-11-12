@@ -45,7 +45,13 @@ func TestInteractiveSessionExactIntents(t *testing.T) {
 				line += " " + payload
 			}
 			var out, diagnostics strings.Builder
-			if err := RunInteractive(context.Background(), stub, strings.NewReader("cd endpoint-1/session-1\n"+line+"\ny\nquit\n"), &out, &diagnostics, InteractiveOptions{WaitTimeoutMS: 321}); err != nil {
+			// btw submits directly, so only the operations that still confirm
+			// consume the extra "y" answer.
+			answer := "y\n"
+			if op == protocol.OperationContextInject {
+				answer = ""
+			}
+			if err := RunInteractive(context.Background(), stub, strings.NewReader("cd endpoint-1/session-1\n"+line+"\n"+answer+"quit\n"), &out, &diagnostics, InteractiveOptions{WaitTimeoutMS: 321}); err != nil {
 				t.Fatal(err)
 			}
 			if diagnostics.Len() != 0 || len(stub.intents) != 1 {

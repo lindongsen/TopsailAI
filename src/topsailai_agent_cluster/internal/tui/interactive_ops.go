@@ -957,11 +957,13 @@ func reconcileStoppedSelection(ctx context.Context, api InteractiveAPI, state *i
 	return err
 }
 
-// interactiveSessionPayload executes context injection or interruption with confirmation.
-// Selection authority is resolved under the command deadline; the confirmation itself is
-// read with the cancel-only parent context. Context injection takes literal text, and a
-// bare inject or btw reads a multi-line context block instead of demanding JSON. A bare
-// interrupt guides the operator through the action choice.
+// interactiveSessionPayload executes context injection or interruption.
+// Selection authority is resolved under the command deadline. Context injection
+// submits directly, because the operator typed both the command and its text, so a
+// confirmation could only repeat what is already on screen; interruption keeps its
+// confirmation because it cannot be undone. Context injection takes literal text,
+// and a bare inject or btw reads a multi-line context block instead of demanding
+// JSON. A bare interrupt guides the operator through the action choice.
 func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	payloadText := strings.TrimSpace(rest)
 	// A bare --json option or a JSON object followed by a stray --json option is rejected,
@@ -1014,6 +1016,15 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 		postSubmit = func(postCtx context.Context, result map[string]any) error {
 			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, name+" completed", result)
 		}
+		// Context injection is additive and the operator already stated the
+		// command and its text, so it submits directly. A confirmation here could
+		// only repeat what the operator just typed, and the human directed that
+		// btw sends as soon as it is entered. The submission gets its own command
+		// budget, exactly as the explicit send form does, because the selection
+		// read above already spent the previous one.
+		submitCtx, cancelSubmit := commandContext(parent)
+		defer cancelSubmit()
+		return submitInteractiveAction(submitCtx, parent, api, state, op, name, confirmationTargetFor(*session), session.ProviderGeneration, payload, out, options, postSubmit)
 	}
 	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.ProviderGeneration, payload, lines, out, trustedOut, options, nil, postSubmit)
 }
@@ -1096,6 +1107,18 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 	} else if _, _, _, err := findSelected(ctx, api, state); err != nil {
 		return err
 	}
+	return submitInteractiveAction(ctx, parent, api, state, op, name, target, generation, payload, out, options, postSubmit)
+}
+
+// submitInteractiveAction prepares, admits, waits for and renders one action, then
+// runs the optional post-submit step. It is the single submission path shared by the
+// confirmed and direct forms, so both produce the same intent, the same durable
+// receipt and the same follow-up behaviour. ctx is the caller's command budget: the
+// confirmed form passes the context that already revalidated the target, so a
+// confirmation never buys a second deadline, while the direct form passes a fresh one
+// exactly as the explicit send form does. parent is only used to give the post-submit
+// step its own bounded budget.
+func submitInteractiveAction(ctx, parent context.Context, api InteractiveAPI, state *interactiveState, op, name string, target confirmationTarget, generation string, payload json.RawMessage, out io.Writer, options InteractiveOptions, postSubmit func(context.Context, map[string]any) error) error {
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
 	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.ClusterSessionID, ProviderGeneration: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: target.ProviderDisplayName, ProviderSessionID: target.ProviderSessionID}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)

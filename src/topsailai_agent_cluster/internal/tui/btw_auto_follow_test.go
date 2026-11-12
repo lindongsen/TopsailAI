@@ -7,14 +7,13 @@ import (
 
 // btwScenario enters a session and injects context, so the automatic post-btw
 // step is the second output action and the first one is the entry snapshot.
-const btwScenario = "cd host-one/endpoint-1/res-1\nbtw {\"text\":\"hi\"}\ny\nexit\n"
+const btwScenario = "cd host-one/endpoint-1/res-1\nbtw {\"text\":\"hi\"}\nexit\n"
 
 // armedFollowSession returns the last recorded prompt session that carries an
 // armed follow, which is the tail the action under test armed. Entering a session
 // arms a tail of its own, so "exactly one armed prompt" is no longer true and the
 // last one is the action's. It fails when none was armed, so a test never has to
-// hardcode a prompt index: the confirmation answer consumes a prompt slot of its
-// own, which makes the index differ from the send path.
+// hardcode a prompt index.
 func armedFollowSession(t *testing.T, reader *watchRecordingReader) WatchSession {
 	t.Helper()
 	sessions, _ := reader.recorded()
@@ -37,7 +36,7 @@ func armedFollowSession(t *testing.T, reader *watchRecordingReader) WatchSession
 // would stop at the moment it was read while the agent kept writing.
 func TestUnitBtwAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 	stub := newSendFollowStub()
-	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "y", "quit"})
+	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "quit"})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -83,7 +82,7 @@ func TestUnitBtwAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 // that only tailed 20.
 func TestUnitBtwAutoFollowIsBoundedByTheReplDefaults(t *testing.T) {
 	stub := newSendFollowStub()
-	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "y", "quit"}); diagnostics != "" {
+	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "quit"}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	requests := actionFollowRequests(stub)
@@ -103,12 +102,12 @@ func TestUnitBtwAutoFollowIsBoundedByTheReplDefaults(t *testing.T) {
 // output without typing logs -f, and that a keypress stops it.
 func TestUnitBtwAutoFollowStartsTheStreamOnTheNextPrompt(t *testing.T) {
 	stub := newSendFollowStub()
-	_, diagnostics, reader := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "y", "quit"})
+	_, diagnostics, reader := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "quit"})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	// Two streams open: the entry transition's tail on the prompt after cd, and
-	// the injection's tail on the prompt after the confirmation.
+	// the injection's tail on the prompt after the injection.
 	if stub.followCount() != 2 {
 		t.Fatalf("streams opened=%d want=2 (entry and injection)", stub.followCount())
 	}
@@ -129,7 +128,7 @@ func TestUnitBtwAutoFollowStartsTheStreamOnTheNextPrompt(t *testing.T) {
 // missing everything written after it.
 func TestUnitBtwAutoFollowDegradesToASnapshotWithoutStreaming(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "y", "quit"})
+	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "quit"})
 	if diagnostics != "" {
 		t.Fatalf("a degraded automatic step must not be an error: %q", diagnostics)
 	}
@@ -167,23 +166,50 @@ func TestUnitBtwAutoFollowDegradesWithoutAKeypressSeam(t *testing.T) {
 	}
 }
 
-// TestUnitBtwAutoFollowSkipsARejectedInjection proves the tail is triggered by a
-// completed injection only: a declined confirmation arms nothing, because no
-// context reached the provider and no new output is expected.
-func TestUnitBtwAutoFollowSkipsARejectedInjection(t *testing.T) {
+// TestUnitBtwSubmitsWithoutConfirmation proves the interactive btw sends as soon
+// as it is entered. The human directed that the interactive surface must not ask
+// again, because the operator already typed both the command and its text, so a
+// question could only repeat what is on screen. The assertion is on the absence of
+// the question and on the admission, because a confirmation that was answered by a
+// later input line would still admit the command and hide the regression.
+func TestUnitBtwSubmitsWithoutConfirmation(t *testing.T) {
 	stub := newSendFollowStub()
-	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "n", "quit"})
+	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "quit"})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if stub.admit != 0 {
-		t.Fatalf("admitted %d commands, want none", stub.admit)
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1 without a confirmation answer", stub.admit)
 	}
-	if requests := actionFollowRequests(stub); len(requests) != 0 {
-		t.Fatalf("follow requests=%+v, want none after a declined confirmation", requests)
+	if strings.Contains(output, "Confirm") {
+		t.Fatalf("btw asked for confirmation: %q", output)
 	}
-	if !strings.Contains(output, "btw cancelled") {
-		t.Fatalf("missing cancellation evidence: %q", output)
+	if requests := actionFollowRequests(stub); len(requests) != 1 {
+		t.Fatalf("follow requests=%+v, want the automatic tail", requests)
+	}
+}
+
+// TestUnitBtwBareMultiLineSubmitsWithoutConfirmation proves the bare multi-line
+// form is confirmation-free too. The manual test claims both forms submit
+// directly, so the claim needs an automated check: the assembled block is the one
+// payload the operator never saw as a whole, and a confirmation there would be the
+// only review point. The human directed that btw sends as soon as it is entered,
+// and a question on one form only would make the same command behave differently
+// depending on how the text was typed.
+func TestUnitBtwBareMultiLineSubmitsWithoutConfirmation(t *testing.T) {
+	stub := newSendFollowStub()
+	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", "btw", "context line", "EOF", "quit"})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1 without a confirmation answer", stub.admit)
+	}
+	if strings.Contains(output, "Confirm") {
+		t.Fatalf("bare btw asked for confirmation: %q", output)
+	}
+	if requests := actionFollowRequests(stub); len(requests) != 1 {
+		t.Fatalf("follow requests=%+v, want the automatic tail", requests)
 	}
 }
 
@@ -192,7 +218,7 @@ func TestUnitBtwAutoFollowSkipsARejectedInjection(t *testing.T) {
 // a second stream with its own request.
 func TestUnitBtwAutoFollowKeepsTheExplicitLogsFollow(t *testing.T) {
 	stub := newSendFollowStub()
-	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "y", "logs -f", "quit"}); diagnostics != "" {
+	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "logs -f", "quit"}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	// The entry transition opens the first tail, so the automatic and the explicit

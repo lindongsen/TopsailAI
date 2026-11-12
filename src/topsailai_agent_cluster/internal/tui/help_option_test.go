@@ -19,14 +19,7 @@ func TestInteractivePayloadCommandsTreatHelpAsLiteralText(t *testing.T) {
 				endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}},
 				reports:   map[string]protocol.InventoryReport{"endpoint-1": testInventory()},
 			}
-			// btw is a mutating context injection, so it asks for confirmation
-			// after the payload is assembled; send with explicit text submits
-			// directly. The extra "y" answers that prompt, so the assertion
-			// below still proves the payload carried the literal --help text.
 			input := "cd endpoint-1/session-1\n" + command + " --help\nquit\n"
-			if command == "btw" {
-				input = "cd endpoint-1/session-1\n" + command + " --help\ny\nquit\n"
-			}
 			_, diagnostics := runScope(t, stub, input, ColorPolicy{})
 			if stub.admit != 1 {
 				t.Fatalf("%s --help admitted %d commands, want 1; diagnostics=%q", command, stub.admit, diagnostics)

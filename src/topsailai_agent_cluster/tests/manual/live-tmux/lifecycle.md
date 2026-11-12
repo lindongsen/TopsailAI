@@ -17,7 +17,7 @@ Select owned session. Enter `send Reply exactly LIVE_TMUX_SEND.`. An explicit te
 
 ## LIFE-03 Injection and aliases
 
-Enter `inject For the next reply include LIVE_TMUX_CONTEXT.`; inspect target and `Confirm inject? [y/N]`; n cancels. Repeat y, expect admitted command and acknowledged/accurately classified result. Send a new prompt requesting a short reply and verify assistant consumes context. Repeat alias `btw` with a distinct marker, or verify alias cancellation if duplicate context would obscure causality. `send {}`, arrays, invalid JSON and empty message must not be reported as successful delivery.
+Enter `btw For the next reply include LIVE_TMUX_CONTEXT.`; an explicit text submits directly, so expect no `Confirm inject? [y/N]` prompt, one admitted command and an acknowledged/accurately classified result, then the automatic live tail announced as `follow: <session-id> (any key stops)`. Verify the bare multi-line form also submits without a question: enter a bare `btw`, type a distinct marker line, finish with a standalone `EOF` line, and expect the block to be admitted with no confirmation prompt. Send a new prompt requesting a short reply and verify assistant consumes context. `send {}`, arrays, invalid JSON and empty message must not be reported as successful delivery.
 
 ## LIFE-04 Interrupt and control
 

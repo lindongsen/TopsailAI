@@ -195,9 +195,15 @@ see the effect.
   because the command word and the text are both visible. A bare `send` reads a
   multi-line block, echoes it verbatim and asks once, because the assembled block
   was never shown as a whole and the echo is the only place the operator can see
-  it before it is admitted. The confirmation gate stays on every operation that
-  cannot be undone: `stop`, `btw`, `interrupt`, `ctl`, `drive start` and
-  `drive stop`.
+  it before it is admitted.
+- `btw` never asks. Both forms submit directly, because context injection is
+  additive and the operator already stated the command and its text, so a question
+  could only repeat what is on screen. The bare multi-line form is included on
+  purpose: the human directed that `btw` sends as soon as it is entered, and a
+  confirmation on one form only would make the same command behave differently
+  depending on how the text was typed.
+- The confirmation gate stays on every operation that cannot be undone: `stop`,
+  `interrupt`, `ctl`, `drive start` and `drive stop`.
 - The bare-send confirmation is the block itself followed by one named prompt, not
   a flattened question:
 
@@ -260,7 +266,7 @@ was dispatched rather than rejected as unknown.
 | `logs` | `logs`, `logs --follow`, `logf` | `logs`, `logs -f`, `logf` | yes (the `logf` shorthand implies follow on both surfaces) |
 | `status` | `status` | `status` | yes |
 | `send` | `send` | `send`, `>` | yes (explicit text submits directly; a bare `send` asks once) |
-| `context.inject` | `btw` | `btw` | yes |
+| `context.inject` | `btw` | `btw` | yes (the interactive form submits directly in both the inline-text and bare multi-line forms; the standalone form keeps its `--yes` gate) |
 | `execution.interrupt` | `interrupt` | `interrupt` | yes |
 | `ctl.<action>` | `ctl` | `ctl`, `control`, `ctl.<action>` | yes |
 | `command.exec` | `exec` | `!<argv...>` | yes |
