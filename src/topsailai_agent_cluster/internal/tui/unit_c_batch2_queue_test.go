@@ -259,7 +259,7 @@ func unitC19MainHelp() string {
 // Its syntax is wider than the block column, so the description hangs on the next
 // line at the shared description column.
 func unitC19WatchHelpLine() string {
-	return "  watch [interval] [--force] [--trigger[=<path>]]\n" +
+	return "  watch [interval] [--force] [-t|--trigger[=<path>]]\n" +
 		"                                        re-render the list on a timer until any key is pressed; --trigger runs a script when a session starts waiting for input\n"
 }
 

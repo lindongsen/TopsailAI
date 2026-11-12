@@ -45,19 +45,24 @@ Do not use this skill when the user needs:
 ## Command Surface
 
 ```text
-watch [interval] [--force] [--trigger[=<path>]]
+watch [interval] [--force] [-t|--trigger[=<path>]]
 ```
 
 | Form | Meaning |
 |---|---|
 | `watch --trigger` | Use the default script path. |
+| `watch -t` | The same request, written with the short spelling. |
 | `watch --trigger=<path>` | Use the named script. |
+| `watch -t=<path>` | The same request, written with the short spelling. |
 | `watch 2s --trigger` | Combine with an interval and with `--force` in any order. |
 | `watch --trigger --trigger` | Rejected. A repeated flag is a usage error, never a silent override. |
+| `watch -t --trigger` | Rejected. The two spellings name one flag, so repeating it in any combination is a usage error. |
 | `watch --trigger=` | Rejected. An empty path is a usage error rather than a silent fallback to the default. |
+| `watch -t=` | Rejected for the same reason. |
+| `watch -t <path>` | Rejected. The value is attached with `=`, because the interval is already positional. |
 
-A relative `--trigger=<path>` is resolved with `filepath.Abs`, so it is relative to the
-directory the CLI was started in, not to the session working directory.
+A relative `--trigger=<path>` or `-t=<path>` is resolved with `filepath.Abs`, so it is
+relative to the directory the CLI was started in, not to the session working directory.
 
 `watch` is available in workspace and endpoint scope. It is unavailable in session scope,
 because a forced refresh can invalidate the pinned session.
@@ -81,8 +86,8 @@ The two forms are validated differently, and the difference is deliberate:
 
 | Form | Missing file | Not executable | Is a directory |
 |---|---|---|---|
-| `--trigger=<path>` | Hard error, `watch` refuses to start | Hard error | Hard error |
-| `--trigger` (default) | One diagnostic note, loop still runs | One diagnostic note | One diagnostic note |
+| `--trigger=<path>`, `-t=<path>` | Hard error, `watch` refuses to start | Hard error | Hard error |
+| `--trigger`, `-t` (default) | One diagnostic note, loop still runs | One diagnostic note | One diagnostic note |
 
 An explicit path is strict because the operator named it: a silent no-op would look like a
 working trigger. The default path is lenient because the operator only asked for the
@@ -388,7 +393,9 @@ Then inside the REPL:
 
 ```text
 watch --trigger
+watch -t
 watch 2s --trigger=/path/to/another/script
+watch 2s -t=/path/to/another/script
 ```
 
 The banner prints `trigger: <path> on running -> waiting_input` when a script is armed, or

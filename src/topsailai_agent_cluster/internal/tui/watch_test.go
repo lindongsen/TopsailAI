@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -699,6 +700,36 @@ func TestInteractiveWatchRejectsSessionScope(t *testing.T) {
 	}
 }
 
+// TestInteractiveWatchShortTriggerArmsTheScript proves the -t spelling reaches
+// the rendered banner, not only the parser. A parser-only test would pass while
+// the REPL still armed a loop with no script, so this drives the real entry
+// point and asserts the line the operator reads.
+func TestInteractiveWatchShortTriggerArmsTheScript(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	directory := filepath.Join(home, triggerHomeRelativeDir)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	script := filepath.Join(directory, defaultTriggerFileName)
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write default script: %v", err)
+	}
+	stub := newWatchStub()
+	out, diagnostics, reader := runWatchREPL(t, stub, []string{"watch -t", "quit"}, nil)
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	want := "trigger: " + script + " on " + protocol.SessionStateRunning + " -> " + protocol.SessionStateWaitingInput
+	if !strings.Contains(out, want) {
+		t.Fatalf("watch -t did not arm the default script; output=%q want=%q", out, want)
+	}
+	sessions, _ := reader.recorded()
+	if len(sessions) < 2 || sessions[1] == nil {
+		t.Fatal("watch -t did not arm a loop")
+	}
+}
+
 // TestInteractiveWatchRequiresTickCapableReader proves a reader without the
 // watch seam refuses the command instead of pretending to support it.
 func TestInteractiveWatchRequiresTickCapableReader(t *testing.T) {
@@ -901,7 +932,7 @@ func TestWatchHelpDocumentsTheStopRule(t *testing.T) {
 		t.Fatalf("PrintScopedCommandHelp: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"watch [interval] [--force] [--trigger[=<path>]]", "workspace, endpoint", "any keypress stops the loop", "--trigger: run a script when a session changes from running to waiting_input", "topsailai-agent-cluster.on-state-change.trigger"} {
+	for _, want := range []string{"watch [interval] [--force] [-t|--trigger[=<path>]]", "workspace, endpoint", "any keypress stops the loop", "-t, --trigger: run a script when a session changes from running to waiting_input", "topsailai-agent-cluster.on-state-change.trigger"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q: %q", want, text)
 		}

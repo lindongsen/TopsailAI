@@ -68,18 +68,23 @@ type WatchLineReader interface {
 // watchUsage is the interactive usage line. One constant keeps every rejection
 // message identical, so an operator never has to compare two spellings of the
 // same grammar.
-const watchUsage = "usage: watch [interval] [--force] [--trigger[=<path>]]"
+const watchUsage = "usage: watch [interval] [--force] [-t|--trigger[=<path>]]"
 
 // parseWatchArguments decodes the interactive watch grammar.
 // Accepted forms are "watch", "watch <interval>", "watch --force",
-// "watch <interval> --force", and either of those with "--trigger" or
-// "--trigger=<path>" appended.
+// "watch <interval> --force", and either of those with "-t", "--trigger",
+// "-t=<path>" or "--trigger=<path>" appended.
 //
 // --trigger is a flag with an optional value rather than a positional argument,
 // because the interval is already positional and a bare path would be
 // indistinguishable from it. A bare --trigger selects the default script
 // location, so the operator never has to spell a path that the convention
 // already defines.
+//
+// -t is a spelling of the same flag rather than a second flag, so it accepts
+// exactly the two forms --trigger accepts and shares the same duplicate guard.
+// A repeated spelling in any combination is a usage error, because resolving it
+// by precedence would silently ignore something the operator stated.
 func parseWatchArguments(rest string) (watchRequest, error) {
 	request := watchRequest{Interval: defaultWatchInterval}
 	intervalSet := false
@@ -90,16 +95,18 @@ func parseWatchArguments(rest string) (watchRequest, error) {
 				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}
 			request.Force = true
-		case token == "--trigger":
+		case token == "--trigger" || token == "-t":
 			if request.TriggerSet {
 				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}
 			request.TriggerSet = true
-		case strings.HasPrefix(token, "--trigger="):
+		case strings.HasPrefix(token, "--trigger=") || strings.HasPrefix(token, "-t="):
 			if request.TriggerSet {
 				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}
-			path := strings.TrimPrefix(token, "--trigger=")
+			// Both spellings carry the value after the same separator, so the
+			// value is taken from the token instead of from a second prefix.
+			_, path, _ := strings.Cut(token, "=")
 			if path == "" {
 				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}

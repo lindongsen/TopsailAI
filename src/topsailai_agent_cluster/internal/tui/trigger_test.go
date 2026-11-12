@@ -395,9 +395,41 @@ func TestResolveTriggerScriptIgnoresRequestWithoutTrigger(t *testing.T) {
 	}
 }
 
+// TestResolveTriggerScriptFromShortFlag proves the -t spelling reaches script
+// resolution instead of stopping at the parser. A shorthand that only sets a
+// parser field would look correct in a grammar test while the loop still ran
+// without a script, so this drives the parsed request into the resolver.
+func TestResolveTriggerScriptFromShortFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	directory := filepath.Join(home, triggerHomeRelativeDir)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	script := filepath.Join(directory, defaultTriggerFileName)
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write default script: %v", err)
+	}
+	request, err := parseWatchArguments("-t")
+	if err != nil {
+		t.Fatalf("parseWatchArguments(-t) failed: %v", err)
+	}
+	path, note, err := resolveTriggerScript(request)
+	if err != nil {
+		t.Fatalf("the default script resolved from -t was rejected: %v", err)
+	}
+	if note != "" {
+		t.Fatalf("the default script resolved from -t produced note %q, want none", note)
+	}
+	if path != script {
+		t.Fatalf("path = %q, want %q", path, script)
+	}
+}
+
 // TestParseWatchArgumentsAcceptsTriggerForms pins the grammar. A bare --trigger
 // selects the default location, and --trigger=<path> names one; both are flags
-// rather than positionals because the interval is already positional.
+// rather than positionals because the interval is already positional. -t is a
+// spelling of the same flag, so it accepts exactly the same two forms.
 func TestParseWatchArgumentsAcceptsTriggerForms(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -412,6 +444,11 @@ func TestParseWatchArgumentsAcceptsTriggerForms(t *testing.T) {
 		{"trigger with interval", "2s --trigger", true, "", false, 2 * time.Second},
 		{"trigger with force", "--force --trigger", true, "", true, defaultForcedInterval},
 		{"trigger path with force", "--trigger=/tmp/run.trigger --force", true, "/tmp/run.trigger", true, defaultForcedInterval},
+		{"bare short trigger", "-t", true, "", false, defaultWatchInterval},
+		{"short trigger with path", "-t=/tmp/run.trigger", true, "/tmp/run.trigger", false, defaultWatchInterval},
+		{"short trigger with interval", "2s -t", true, "", false, 2 * time.Second},
+		{"short trigger with force", "--force -t", true, "", true, defaultForcedInterval},
+		{"short trigger path with force", "-t=/tmp/run.trigger --force", true, "/tmp/run.trigger", true, defaultForcedInterval},
 		{"no trigger", "3s", false, "", false, 3 * time.Second},
 	}
 	for _, testCase := range cases {
@@ -440,7 +477,7 @@ func TestParseWatchArgumentsAcceptsTriggerForms(t *testing.T) {
 // trigger is rejected rather than resolved by precedence, because either choice
 // would silently ignore something the operator stated.
 func TestParseWatchArgumentsRejectsMalformedTrigger(t *testing.T) {
-	for _, rest := range []string{"--trigger --trigger", "--trigger=/a --trigger=/b", "--trigger=", "--trigger=/a --trigger"} {
+	for _, rest := range []string{"--trigger --trigger", "--trigger=/a --trigger=/b", "--trigger=", "--trigger=/a --trigger", "-t -t", "-t=/a -t=/b", "-t=", "-t --trigger", "-t=/a --trigger=/b", "--trigger -t"} {
 		if _, err := parseWatchArguments(rest); err == nil {
 			t.Fatalf("parseWatchArguments(%q) was accepted", rest)
 		}

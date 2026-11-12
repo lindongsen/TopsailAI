@@ -39,7 +39,7 @@ For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, in
 | send | `send <text>`; literal message text, no confirmation because the text is on screen; a bare `send` reads a multi-line block and asks once; no JSON is required |
 | status | `status [command-id]`; explicit result, otherwise the last command submitted in this CLI, otherwise selected session state; with no retained command it explains the short form instead of demanding an identifier |
 | refresh | `refresh`; reload server inventory, not a promise of synchronous provider discovery |
-| watch | `watch [interval] [--force]`; re-renders on a timer until any key is pressed; `--force` needs at least 10s because each tick launches one provider discovery per endpoint; unavailable in session scope |
+| watch | `watch [interval] [--force] [-t|--trigger[=<path>]]`; re-renders on a timer until any key is pressed; `--force` needs at least 10s because each tick launches one provider discovery per endpoint; `-t` is the short spelling of `--trigger`; unavailable in session scope |
 | help | `help [command]`, all, scope/scopes and aliases |
 | quit | `quit`; restores terminal and exits without stopping agent; outside workspace scope `quit` and its `q` alias return to workspace scope instead, and only in workspace scope do they exit |
 | exit | `exit`; always restores terminal and exits without stopping agent, from every scope; it is a separate command rather than an alias of `quit`, so it never navigates |

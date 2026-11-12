@@ -305,7 +305,14 @@ pin, and inventing one would duplicate `list` behind a second name.
 `--trigger` is the one behaviour `watch` adds, and it is deliberately the only one.
 It runs a local script when a watched session transitions from `running` to
 `waiting_input`, so an operator who is already watching the table can react without
-typing a second command. It stays inside `watch` rather than becoming a standalone
+typing a second command. `-t` is a spelling of the same flag, not a second flag, so
+it accepts exactly the two forms `--trigger` accepts: a bare `-t` selects the default
+script and `-t=<path>` names one. `-t <path>` stays rejected for the same reason
+`--trigger <path>` is rejected, because the interval is already positional and a bare
+path would be indistinguishable from it. A repeated spelling in any combination,
+such as `-t --trigger` or `-t=/a --trigger=/b`, is a usage error rather than a silent
+override, because the duplicate guard is keyed on the request rather than on the
+spelling. It stays inside `watch` rather than becoming a standalone
 command because it is a foreground convenience, not a reliability promise: it lives
 in the operator's own client process, so closing the terminal ends it, and it
 observes whatever the Endpoint last collected rather than subscribing to provider
