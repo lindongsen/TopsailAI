@@ -239,3 +239,26 @@ Recording does not imply recall. REPL commands are recallable with Up/Down; prom
 are recorded for history but never offered as commands or future prompt defaults. This distinction
 prevents a context-specific answer such as `y` or `3` from becoming an accidental command or repeated
 destructive confirmation.
+
+
+## Every deployment uses `/opt/agent-cluster` as its single product root
+
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> 所有节点和角色的部署路径都必须是 `/opt/agent-cluster`；gd-dev 也不能使用单独的产品根目录。
+
+This is a standing deployment rule for every host, container and role. Server, Endpoint and CLI files
+must all live below `/opt/agent-cluster`. Role-specific subdirectories are allowed when identities,
+configuration files or certificate names would otherwise conflict, but parallel product roots such as
+`/opt/agent-cluster-gddev` and `/opt/agent-cluster-gw` are not allowed.
+
+The current gd-dev deployment is noncompliant: its Server uses `/opt/agent-cluster`, while its Endpoint
+and rebuilt CLI use `/opt/agent-cluster-gddev`, and an older CLI remains under
+`/opt/agent-cluster-gw`. These paths are migration sources, not approved conventions. Do not delete
+them until the unified layout is running and rollback evidence exists.
+
+The Server and Endpoint packages currently conflict and install overlapping configuration and
+certificate paths. Resolve that package/layout defect with role-specific paths below the standard root;
+do not preserve the defect by documenting a second installation root. This prevents each node from
+inventing a different layout and keeps deployment, upgrades, diagnostics and rollback commands
+consistent across the fleet.
