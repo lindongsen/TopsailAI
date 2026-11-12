@@ -166,3 +166,19 @@ def test_disabled_recovery_never_injects(monkeypatch):
 
     assert outcomes == [False, False, False, False]
     assert observed == [{"role": "user", "content": "task"}]
+
+
+def test_error_after_injection_does_not_rearm_duplicate_guidance(active_state):
+    """A later null-response streak reuses the one live recovery message."""
+    for _ in range(3):
+        observe_attempt_error("op-1", "LLMNullResponseError")
+    observe_attempt_error("op-1", "LLMProviderReadError")
+    outcomes = [
+        observe_attempt_error("op-1", "LLMNullResponseError")
+        for _ in range(3)
+    ]
+
+    assert outcomes == [False, False, False]
+    assert active_state.messages.count(
+        {"role": "user", "content": "continue"}
+    ) == 1

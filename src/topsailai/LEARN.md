@@ -255,3 +255,11 @@ Trigger: `git add <4 own paths>` followed by a bare `git commit -m "..."` produc
 Action: always commit with an explicit pathspec, `git commit -m "<message>" -- <path1> <path2>`, and note that `-m` must precede `--` because everything after `--` is parsed as a path. Verify immediately with `git show --name-only --format="" HEAD` and assert the file list matches the intended set exactly.
 
 Why this prevents recurrence: in a workspace shared by several agents, the index is shared mutable state that any agent can populate at any time, so "I only added my files" is not evidence that "only my files will be committed". The pathspec form makes the commit's file set explicit and independent of what else happens to be staged. A post-commit `--name-only` check is the only reliable proof, because the commit succeeds silently either way and the contamination is invisible in the message.
+
+## A retry-segment reset must not re-authorize an additive request-wide side effect
+
+Trigger: null-response recovery reset its injection flag when a different retryable error interrupted the null streak, even though the previously injected recovery message remained in the same request list. A later qualifying streak could therefore append another identical message and grow every subsequent retry payload.
+
+Action: separate segment-local state from request-wide state: reset only the consecutive-null counter on an intervening error, keep one request-wide `injected_for_request` guard until request-final cleanup, and verify the real HTTP/SSE request bodies across both continuous and interrupted streaks.
+
+Why this prevents recurrence: retry classification may restart many times inside one bounded request, but an additive side effect that remains live must not be re-authorized until its owner removes it. The request-wide guard makes message growth constant rather than proportional to the number of retry segments.
