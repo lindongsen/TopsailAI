@@ -141,6 +141,12 @@ function load_config() {
     # advertises no ctl. action at all, which is the fail-closed default rather
     # than an error, so it is resolved only when the configuration names a file.
     CONTROL_ACTION_FILE=$(resolve_path "${CONTROL_ACTION_FILE:-}")
+    # The access policy directory is optional in the same way, but its absence is
+    # not fail-closed: an Endpoint with no policy directory permits every caller.
+    # A node that names the directory and never forwards it therefore loses the
+    # whole authorization boundary while every other capability keeps working, so
+    # the value is resolved here and passed as a flag below.
+    ENDPOINT_ACCESS_POLICY_DIR=$(resolve_path "${ENDPOINT_ACCESS_POLICY_DIR:-}")
 }
 
 # Reports the binary serving the configured role.
@@ -199,6 +205,10 @@ function doctor() {
         echo "channel    : ${CHANNEL_ADDRESS}"
         echo "allowlist  : ${COMMAND_ALLOWLIST_FILE:-<disabled>}"
         echo "catalog    : ${CONTROL_ACTION_FILE:-<disabled>}"
+        # Printed because an absent policy directory is not fail-closed: it means
+        # every caller is permitted, which an operator must be able to see before
+        # trusting a node's authorization boundary.
+        echo "policy     : ${ENDPOINT_ACCESS_POLICY_DIR:-<permissive>}"
     fi
 }
 
@@ -263,6 +273,13 @@ function start_node() {
         # packaged node that names the file but never forwards it loses the
         # whole family while every other capability keeps working.
         [ -n "${CONTROL_ACTION_FILE:-}" ] && args+=(--control-action-file "${CONTROL_ACTION_FILE}")
+        # The access policy directory is optional, and its absence is the one
+        # optional value that widens authority instead of narrowing it: an
+        # Endpoint with no policy directory permits every caller. Forwarding it
+        # is therefore what keeps a packaged node's authorization boundary in
+        # force, and a node that names it in node.conf but never passes it here
+        # silently serves every caller.
+        [ -n "${ENDPOINT_ACCESS_POLICY_DIR:-}" ] && args+=(--endpoint-access-policy-dir "${ENDPOINT_ACCESS_POLICY_DIR}")
         # Adapters are supplied through the environment; no flag exists for them.
         export AGENT_CLUSTER_ADAPTERS="${ADAPTERS}"
         # The collection delay is likewise environment-only, so the binary owns

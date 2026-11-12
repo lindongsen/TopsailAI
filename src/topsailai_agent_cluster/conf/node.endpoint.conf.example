@@ -51,6 +51,15 @@ COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf
 # refuses every ctl. operation; that is the fail-closed default, not an error.
 CONTROL_ACTION_FILE=conf/control-actions.conf
 
+# Access policy directory for the `endpoint-token` authorization boundary. Each
+# file in this directory describes exactly one caller token: the endpoints that
+# accept it, the scopes it is granted and the permissions it is granted. Paths
+# are relative to the bundle root. Unset this value to permit every caller, which
+# is the permissive default and the opposite of the fail-closed defaults above:
+# an Endpoint with no policy directory has no authorization boundary at all, so a
+# node that must refuse a caller has to name a directory here.
+ENDPOINT_ACCESS_POLICY_DIR=policy
+
 # TLS material, relative to the bundle root.
 TLS_CA_FILE=certs/ca.pem
 TLS_CERTIFICATE_FILE=certs/node.pem

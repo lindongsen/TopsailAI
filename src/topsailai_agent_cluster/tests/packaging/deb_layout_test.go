@@ -697,3 +697,64 @@ func TestDebConfigPackageNamesCarryTheSite(t *testing.T) {
 		}
 	}
 }
+
+// TestDebLauncherForwardsTheAccessPolicyDir proves the packaged launcher passes
+// the access policy directory to the Endpoint binary.
+//
+// This guards a real defect: the launcher forwarded the command allowlist and the
+// control action catalog but never the access policy directory, so a node
+// deployed from a package and started through the launcher served every caller
+// while node.conf named the directory. The failure is silent and asymmetric: the
+// allowlist and the catalog are fail-closed when absent, so their omission
+// disables a capability, while an absent policy directory is permissive, so its
+// omission removes the whole authorization boundary and every operation keeps
+// working. Nothing in the payload reveals it, and the node looks healthy.
+//
+// The assertions are structural rather than a bare substring search, because a
+// mention of the flag is not a forwarding site: the flag has to appear on a line
+// that also names the variable, which is what makes the value reach the binary.
+func TestDebLauncherForwardsTheAccessPolicyDir(t *testing.T) {
+	packages := buildDebPackages(t)
+	launcher := readPackagedFile(t, packages["node"], debOptDir+"/agent-clusterctl")
+
+	// The value has to be resolved from the configuration, otherwise the flag
+	// below would forward an empty string and the node stays permissive.
+	if !hasLineContaining(launcher, "ENDPOINT_ACCESS_POLICY_DIR=$(resolve_path") {
+		t.Fatalf("the packaged launcher never resolves ENDPOINT_ACCESS_POLICY_DIR;\n" +
+			"a node that names the directory in node.conf would still start permissive")
+	}
+
+	// The forwarding site: one line naming both the flag and the variable.
+	if !hasLineContaining(launcher, "--endpoint-access-policy-dir", "ENDPOINT_ACCESS_POLICY_DIR") {
+		t.Fatalf("the packaged launcher never forwards --endpoint-access-policy-dir;\n" +
+			"an Endpoint with no policy directory permits every caller, so the node " +
+			"would lose its authorization boundary while every other capability works")
+	}
+
+	// doctor has to show the permissive state, because an operator cannot
+	// otherwise tell a node with a policy directory from one without.
+	if !hasLineContaining(launcher, "policy     :", "ENDPOINT_ACCESS_POLICY_DIR") {
+		t.Fatalf("the packaged launcher doctor output never reports the policy directory;\n" +
+			"an absent directory is permissive, so the operator cannot see that the " +
+			"authorization boundary is missing")
+	}
+}
+
+// hasLineContaining reports whether some line of text contains every one of the
+// given substrings. A line-scoped check is what distinguishes a forwarding site
+// from an unrelated mention of the same name elsewhere in the script.
+func hasLineContaining(text string, substrings ...string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		matched := true
+		for _, substring := range substrings {
+			if !strings.Contains(line, substring) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
