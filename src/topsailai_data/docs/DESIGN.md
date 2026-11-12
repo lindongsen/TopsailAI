@@ -288,12 +288,12 @@ The following table maps each object status to the operations that may be perfor
 |--------|------------------------|-----------------|-------------|--------------|-----|------|--------|-------------------|
 | `creating` | No | No | No | Yes (during creation) | No | No | No | `gc` |
 | `active` | Yes | Yes | Yes | Yes | Yes | Yes | Yes (soft delete) | — |
-| `deleted` | Only with `--include-deleted` | Yes | Yes | No | No | No | Yes (finalize) | `recover`, `delete`, `gc` |
+| `deleted` | Only with `--include-deleted` | Yes | No | No | No | No | Yes (finalize) | `recover`, `delete`, `gc` |
 | `ceased` | Only with `--include-deleted` | Yes | No | No | No | No | No | `gc` (cleanup after retention, or immediate with `--status ceased`) |
 
 - `creating` objects are invisible to normal `List`, `Get`, and search. They may only be resolved by `gc` (which removes incomplete metadata and any partial actual data).
 - `active` objects support all operations. Write operations acquire the advisory object lock; `Delete` performs a soft delete that preserves actual data.
-- `deleted` objects retain metadata and actual data. `Read` is allowed; `recover` restores the object to `active` without requiring `--from`. `Delete` finalizes the object by removing actual data and transitioning it to `ceased`. `gc --status deleted` finalizes all `deleted` objects.
+- `deleted` objects retain metadata and actual data, but actual-data reads are refused because reads require `active` status. `recover` restores the object to `active` without requiring `--from`, after which reads work again. `Delete` finalizes the object by removing actual data and transitioning it to `ceased`. `gc --status deleted` finalizes all `deleted` objects.
 - `ceased` objects retain only metadata. No actual-data operations are permitted. They are eligible for cleanup by `gc` after `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`. When `gc --status ceased` is explicitly requested, all `ceased` objects are removed immediately, ignoring the retention window.
 
 ## 8. CLI Commands
@@ -593,7 +593,12 @@ on. The object folder is the root of every path:
   file.
 - An empty path addresses the object root. `list-dirs ""` and `list-dirs .`
   both list the top level of the object folder.
-- A path that escapes the object folder, such as `../outside.md`, is rejected.
+- A path that escapes the object folder, such as `../outside.md`, is clamped
+  rather than rejected. The path is normalized against the object root, so
+  `../outside.md` addresses `outside.md` inside the object and the command
+  succeeds. A caller cannot reach a file outside the object, but it also
+  receives no error, so a path that was meant to fail silently addresses a
+  different file at the object root.
 - An unknown object id returns `ErrObjectNotFound` before any file is touched.
 
 Because every operation is routed through the manager, the guarantees of the
