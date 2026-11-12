@@ -12,6 +12,9 @@ import topsailai.ai_base.llm_base as llm
 import topsailai.ai_base.llm_control.request_failure_log as failure_log
 from topsailai.ai_base.exception import HardInterruptError, LLMRetryExhaustedError
 from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
+from topsailai.hooks.points.aibase.after_llm_request_failures.payloads import (
+    build_payload,
+)
 
 MODULE = importlib.import_module(
     "topsailai.hooks.points.aibase.after_llm_request_failures.modules.print_failure_log"
@@ -247,6 +250,48 @@ def test_record_cap_marks_unrecorded_failures():
     assert record.dropped_failures == 3
     report = record.build_report()
     assert "3 failure(s) not recorded" in MODULE._format(MODULE._header(report), report)
+
+
+def test_capped_record_still_reports_the_exact_failure_count():
+    """A capped detail list must not under-report how many attempts failed."""
+    record = failure_log.LLMRequestFailureLog()
+    total = failure_log.MAX_RECORDED_FAILURES + 3
+    for attempt in range(total):
+        record.record_failure(attempt + 1, TypeError("many"))
+    report = record.build_report()
+    assert len(report["failures"]) == failure_log.MAX_RECORDED_FAILURES
+    assert report["dropped_failures"] == 3
+    # The header must state the real total, not the truncated detail length.
+    assert report["failed_attempts"] == total
+    assert report["last_failed_attempt"] == total
+    header = MODULE._header(report)
+    assert f"failed_attempts={total}" in header
+    assert f"last_failed_attempt={total}" in header
+
+
+def test_capped_report_passes_the_point_validation():
+    """The exact counters must satisfy the Hook Point payload contract."""
+    record = failure_log.LLMRequestFailureLog()
+    # Mirror the production flow: the request binds an operation id and marks
+    # an outcome before the report is dispatched to the Hook Point.
+    record.bind_operation("a" * 32)
+    record.mark_outcome("failed")
+    for attempt in range(failure_log.MAX_RECORDED_FAILURES + 3):
+        record.record_failure(attempt + 1, TypeError("many"))
+    validated = build_payload(record.build_report())
+    assert validated["failed_attempts"] == failure_log.MAX_RECORDED_FAILURES + 3
+    assert validated["dropped_failures"] == 3
+
+
+def test_uncapped_record_keeps_counters_equal_to_the_detail():
+    """Without truncation the counters still match the recorded detail."""
+    record = failure_log.LLMRequestFailureLog()
+    for attempt in range(3):
+        record.record_failure(attempt + 1, TypeError("many"))
+    report = record.build_report()
+    assert report["failed_attempts"] == 3
+    assert report["last_failed_attempt"] == 3
+    assert report["dropped_failures"] == 0
 
 
 def test_empty_record_emits_nothing():

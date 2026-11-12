@@ -69,17 +69,32 @@ def _validate_failure(failure):
 
 
 def _validate_counts(payload, failures):
-    """Require the aggregate counters to agree with the recorded failures."""
-    failed_attempts = payload["failed_attempts"]
-    if type(failed_attempts) is not int or failed_attempts != len(failures):
-        raise ValueError("invalid_failed_attempts")
-    last_attempt = payload["last_failed_attempt"]
-    expected_last = failures[-1]["attempt"] if failures else 0
-    if type(last_attempt) is not int or last_attempt != expected_last:
-        raise ValueError("invalid_last_failed_attempt")
+    """Require the aggregate counters to agree with the recorded failures.
+
+    ``failed_attempts`` counts every failed attempt, while ``failures`` holds at
+    most the recorded detail. The two therefore agree only after adding the
+    attempts whose detail was dropped by the cap.
+    """
     dropped = payload["dropped_failures"]
     if type(dropped) is not int or dropped < 0:
         raise ValueError("invalid_dropped_failures")
+    failed_attempts = payload["failed_attempts"]
+    if type(failed_attempts) is not int or failed_attempts != len(failures) + dropped:
+        raise ValueError("invalid_failed_attempts")
+    last_attempt = payload["last_failed_attempt"]
+    if type(last_attempt) is not int:
+        raise ValueError("invalid_last_failed_attempt")
+    if not failures:
+        # No detail and no dropped attempt means nothing failed at all.
+        if last_attempt != 0 or dropped != 0:
+            raise ValueError("invalid_last_failed_attempt")
+        return
+    # Dropped attempts are recorded after the detail list is full, so the last
+    # failed attempt is never earlier than the last recorded one.
+    if last_attempt < failures[-1]["attempt"]:
+        raise ValueError("invalid_last_failed_attempt")
+    if dropped == 0 and last_attempt != failures[-1]["attempt"]:
+        raise ValueError("invalid_last_failed_attempt")
 
 
 def _validate_elapsed(value):

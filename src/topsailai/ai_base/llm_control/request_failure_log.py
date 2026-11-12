@@ -56,6 +56,10 @@ class LLMRequestFailureLog:
         self.operation_id = ""
         self.outcome = "unknown"
         self.failures: list[dict] = []
+        # Counters stay exact even when the recorded detail list hits its cap,
+        # so the report never under-reports how many attempts actually failed.
+        self.failed_attempts = 0
+        self.last_failed_attempt = 0
         self.dropped_failures = 0
 
     def bind_operation(self, operation_id: str) -> None:
@@ -69,6 +73,10 @@ class LLMRequestFailureLog:
         duration_sec: Optional[float] = None,
     ) -> None:
         """Record one failed attempt of this request."""
+        # Exact counters are updated first so a capped detail list cannot make
+        # the report claim fewer failures than actually happened.
+        self.failed_attempts += 1
+        self.last_failed_attempt = attempt_number
         if len(self.failures) >= MAX_RECORDED_FAILURES:
             self.dropped_failures += 1
             return
@@ -87,7 +95,7 @@ class LLMRequestFailureLog:
 
     def has_failures(self) -> bool:
         """Return whether this request recorded at least one failure."""
-        return bool(self.failures)
+        return self.failed_attempts > 0
 
     def build_report(self) -> dict:
         """Return the detached data-only report payload of this request."""
@@ -96,8 +104,8 @@ class LLMRequestFailureLog:
             "schema_version": 1,
             "operation_id": self.operation_id,
             "outcome": self.outcome,
-            "failed_attempts": len(self.failures),
-            "last_failed_attempt": self.failures[-1]["attempt"] if self.failures else 0,
+            "failed_attempts": self.failed_attempts,
+            "last_failed_attempt": self.last_failed_attempt,
             "elapsed_sec": elapsed,
             "dropped_failures": self.dropped_failures,
             "failures": [dict(failure) for failure in self.failures],
