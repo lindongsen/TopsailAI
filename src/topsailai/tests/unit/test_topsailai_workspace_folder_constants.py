@@ -21,6 +21,7 @@ from topsailai.workspace.folder_constants import (
     FOLDER_MEMORY,
     FOLDER_LOCK,
     FOLDER_SKILL,
+    FOLDER_SKILLS,
     FOLDER_LOG,
     FOLDER_MEMORY_STORY,
     FOLDER_WORKSPACE_TASK,
@@ -108,6 +109,22 @@ class TestFolderConstantsLayer2(unittest.TestCase):
         """Verify FOLDER_SKILL has the expected value."""
         self.assertEqual(FOLDER_SKILL, FOLDER_ROOT + "/skill")
 
+    def test_folder_skills_is_string(self):
+        """Verify FOLDER_SKILLS is a string type."""
+        self.assertIsInstance(FOLDER_SKILLS, str)
+
+    def test_folder_skills_starts_with_root(self):
+        """Verify FOLDER_SKILLS is under FOLDER_ROOT."""
+        self.assertTrue(FOLDER_SKILLS.startswith(FOLDER_ROOT))
+
+    def test_folder_skills_value(self):
+        """Verify FOLDER_SKILLS has the expected value."""
+        self.assertEqual(FOLDER_SKILLS, FOLDER_ROOT + "/skills")
+
+    def test_folder_skills_differs_from_folder_skill(self):
+        """Verify the plural skill root is a distinct folder."""
+        self.assertNotEqual(FOLDER_SKILLS, FOLDER_SKILL)
+
     def test_folder_log_is_string(self):
         """Verify FOLDER_LOG is a string type."""
         self.assertIsInstance(FOLDER_LOG, str)
@@ -159,6 +176,7 @@ class TestFolderHierarchy(unittest.TestCase):
             FOLDER_MEMORY,
             FOLDER_LOCK,
             FOLDER_SKILL,
+            FOLDER_SKILLS,
             FOLDER_LOG,
             FOLDER_MEMORY_STORY,
             FOLDER_WORKSPACE_TASK,
@@ -191,6 +209,7 @@ class TestFolderHierarchy(unittest.TestCase):
             FOLDER_MEMORY,
             FOLDER_LOCK,
             FOLDER_SKILL,
+            FOLDER_SKILLS,
             FOLDER_LOG,
             FOLDER_MEMORY_STORY,
             FOLDER_WORKSPACE_TASK,
@@ -210,6 +229,7 @@ class TestFolderHierarchy(unittest.TestCase):
             FOLDER_MEMORY,
             FOLDER_LOCK,
             FOLDER_SKILL,
+            FOLDER_SKILLS,
             FOLDER_LOG,
             FOLDER_MEMORY_STORY,
             FOLDER_WORKSPACE_TASK,
