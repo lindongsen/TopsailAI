@@ -55,3 +55,18 @@ REFRESH_COMMAND_SPELLINGS = _command_spellings(
 REFRESH_ALL_COMMAND_SPELLINGS = tuple(
     spelling + " all" for spelling in REFRESH_COMMAND_SPELLINGS
 )
+
+# Runtime command aliases, declared once so recognition, completion and help
+# cannot drift apart. The key is the bare alias token and the value is the
+# canonical command token it expands to. The leading "/" is optional in runtime
+# scope, so each alias is accepted with and without it.
+#
+# These aliases are expanded by the runtime recognizer instead of being declared
+# in topsailai.yaml: /ctx.btw extracts its free-form message only from the "cmd"
+# template, so a YAML alias would silently drop the message body, and
+# agent.models is not a YAML command at all but the /agent.<instruction>
+# shortcut.
+RUNTIME_COMMAND_ALIASES = {
+    "btw": "ctx.btw",
+    "model": "agent.models",
+}

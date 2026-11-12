@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from typing import Any, Dict, List, Optional
 
 import cli_topsailai.state as cli_state
+from cli_topsailai.constants import RUNTIME_COMMAND_ALIASES
 from cli_topsailai.paths import expand_path
 
 
@@ -92,6 +93,10 @@ def get_available_completions() -> List[str]:
         completions.append("/send")
     if cli_state.current_scope == "runtime":
         completions.append("/ctx.btw-all")
+        # Runtime aliases are advertised only where they are accepted, and are
+        # derived from the same declaration the recognizer expands, so a
+        # spelling cannot be accepted without being discoverable.
+        completions.extend("/" + alias for alias in RUNTIME_COMMAND_ALIASES)
     if cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects:
         completions.extend(["/kill", "/driver", "/driver status", "/driver stop", "/driver log", "/driver meta", "/start"])
 

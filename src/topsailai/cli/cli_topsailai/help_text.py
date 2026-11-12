@@ -81,7 +81,7 @@ def print_scopes() -> None:
         (
             "runtime",
             "The live log-streaming scope entered after selecting a workspace log file. It follows output for the watched session or task while keeping session messaging available.",
-            "Send process messages with /send, inject agent2llm context to the watched PID with /ctx.btw or to all discoverable live PIDs with /ctx.btw-all, print session metadata with /meta, send control requests with /control, forward agent instructions with /agent.<instruction>, recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit. The leading '/' is optional for every runtime command, so send hello and /send hello are the same command.",
+            "Send process messages with /send, inject agent2llm context to the watched PID with /ctx.btw (alias /btw) or to all discoverable live PIDs with /ctx.btw-all, print session metadata with /meta, send control requests with /control, forward agent instructions with /agent.<instruction> (alias /model for /agent.models), recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit. The leading '/' is optional for every runtime command, so send hello and /send hello are the same command.",
         ),
         (
             "project",
@@ -354,6 +354,18 @@ def print_help(
             "scopes": ["runtime"],
         },
         {
+            "cmd": "/btw [message...]",
+            "desc": "Runtime-only alias of /ctx.btw: inject a by-the-way message into the agent2llm runtime context of the watched session. Accepted with or without the leading '/', and shares /ctx.btw's arguments and errors. If no message is provided, enter multi-line input mode (finish with EOF).",
+            "example": "Example: btw remember to check the logs",
+            "scopes": ["runtime"],
+        },
+        {
+            "cmd": "/model [args...]",
+            "desc": "Runtime-only alias of /agent.models: forward the registered agent.models instruction through the control channel. Accepted with or without the leading '/', and shares /agent.models's arguments and errors. Positional args are split on whitespace; requires a resolvable watched session PID.",
+            "example": "Example: model  or  model 1",
+            "scopes": ["runtime"],
+        },
+        {
             "cmd": "/meta <number>",
             "desc": "Read exact session metadata from the current ordinary workspace row without refreshing. Task rows are unsupported; temporary rows are read through the reserved topsailai prefix; --json is not supported.",
             "example": "Example: /meta 3",
@@ -385,7 +397,7 @@ def print_help(
         },
         {
             "cmd": "/agent.<instruction> [args...]",
-            "desc": "Runtime shortcut that forwards a registered agent instruction through the control channel as call_instruction with instruction 'agent.<name>'. Positional args are split on whitespace; kwargs are not supported. Requires a resolvable watched session PID.",
+            "desc": "Runtime shortcut that forwards a registered agent instruction through the control channel as call_instruction with instruction 'agent.<name>'. Positional args are split on whitespace; kwargs are not supported. Requires a resolvable watched session PID. /model is an alias of /agent.models.",
             "example": "Example: /agent.models  or  /agent.models 1",
             "scopes": ["runtime"],
         },

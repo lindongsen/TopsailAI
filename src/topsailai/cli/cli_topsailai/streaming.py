@@ -32,7 +32,7 @@ from cli_topsailai.colors import (
     print_success,
     print_warning,
 )
-from cli_topsailai.constants import DEFAULT_TIMEOUT_SECONDS
+from cli_topsailai.constants import DEFAULT_TIMEOUT_SECONDS, RUNTIME_COMMAND_ALIASES
 from cli_topsailai.formatting import print_header
 from cli_topsailai.log_files import (
     _build_pipe_path,
@@ -421,6 +421,11 @@ def _runtime_command_line(cmd_line: str, task_dir: str) -> Optional[str]:
     ``/send hello`` are the same command. Input that names no command returns
     ``None``, which keeps the existing send-as-message behavior.
 
+    A declared runtime alias is expanded to its canonical command here, so every
+    downstream handler keeps receiving exactly one spelling. The expansion keeps
+    the remainder of the line unchanged, so ``btw hello`` and ``/btw hello`` both
+    become ``/ctx.btw hello``.
+
     Input that already starts with "/" is returned with its surrounding
     whitespace removed, so an unknown slash command is still reported as an
     unknown command instead of being silently sent as a message, and a
@@ -430,12 +435,18 @@ def _runtime_command_line(cmd_line: str, task_dir: str) -> Optional[str]:
     text = cmd_line.strip()
     if not text:
         return None
+    token = text.split(None, 1)[0]
+    canonical = RUNTIME_COMMAND_ALIASES.get(token.lower().lstrip("/"))
+    if canonical is not None:
+        # Keep the remainder byte-for-byte so a message body, a JSON payload or
+        # a path is never rewritten by the alias expansion.
+        return "/" + canonical + text[len(token):]
     if text.startswith("/"):
         return text
-    token = text.split(None, 1)[0].lower()
-    if token in _RUNTIME_BUILTIN_COMMANDS:
+    lowered = token.lower()
+    if lowered in _RUNTIME_BUILTIN_COMMANDS:
         return "/" + text
-    if token == "control" or token.startswith(("control.", "agent.")):
+    if lowered == "control" or lowered.startswith(("control.", "agent.")):
         return "/" + text
     # Every YAML command available in runtime scope is recognized in its bare
     # form too; the matcher already normalizes a leading "/". The match runs
@@ -553,13 +564,13 @@ def _prompt_send_as_message(
     if output_callback is not None:
         output_callback(
             f"[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'. "
+            f"Use '/send [message]', '/ctx.btw [message]' (alias '/btw'), '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]' (alias '/model'), '/meta', '/help', 'q', 'quit', 'exit', or 'cd'. "
             f"The leading '/' is optional."
         )
     else:
         print(
             f"{Colors.RED}[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'. "
+            f"Use '/send [message]', '/ctx.btw [message]' (alias '/btw'), '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]' (alias '/model'), '/meta', '/help', 'q', 'quit', 'exit', or 'cd'. "
             f"The leading '/' is optional.{Colors.RESET}"
         )
     return True
@@ -1232,7 +1243,7 @@ def _stream_file_raw(
     print(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
         f"type 'send [message]' to send a message, "
-        f"'ctx.btw [message]' or 'ctx.btw-all [message]' to inject agent2llm messages, "
+        f"'ctx.btw [message]' (alias 'btw') or 'ctx.btw-all [message]' to inject agent2llm messages, "
         f"'control <command>' to send a control request, or Ctrl+C to exit. "
         f"The leading '/' is optional.{Colors.RESET}\n"
     )
@@ -1361,7 +1372,7 @@ def _stream_file_legacy(
     print(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
         f"type 'send [message]' to send a message, "
-        f"'ctx.btw [message]' or 'ctx.btw-all [message]' to inject agent2llm messages, "
+        f"'ctx.btw [message]' (alias 'btw') or 'ctx.btw-all [message]' to inject agent2llm messages, "
         f"'control <command>' to send a control request, or Ctrl+C to exit. "
         f"The leading '/' is optional.{Colors.RESET}\n"
     )
@@ -1528,8 +1539,9 @@ def _handle_stream_command(
 
     print(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', "
-        f"'/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', "
+        f"Use '/send [message]', '/ctx.btw [message]' (alias '/btw'), "
+        f"'/ctx.btw-all [message]', '/control <command>', "
+        f"'/agent.<instruction> [args...]' (alias '/model'), '/meta', '/help', "
         f"'q', 'quit', 'exit', or 'cd'. The leading '/' is optional.{Colors.RESET}"
     )
 
