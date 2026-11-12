@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/stream-frame.schema.json",
+  "title": "Agent Cluster Provider CLI v1 stream frame",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "major",
+    "minor",
+    "request_id",
+    "type",
+    "sequence"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "agent-cluster-adapter"
+    },
+    "major": {
+      "const": 1
+    },
+    "minor": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 0
+    },
+    "request_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "type": {
+      "enum": [
+        "started",
+        "record",
+        "end"
+      ]
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "record": {
+      "not": {
+        "type": "null"
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "error": {
+      "$ref": "#/$defs/provider_error"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "type": {
+          "const": "started"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "observed_at_ms"
+            ]
+          },
+          {
+            "required": [
+              "record"
+            ]
+          },
+          {
+            "required": [
+              "truncated"
+            ]
+          },
+          {
+            "required": [
+              "error"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "record"
+        }
+      },
+      "required": [
+        "observed_at_ms",
+        "record"
+      ],
+      "not": {
+        "required": [
+          "error"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "end"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "observed_at_ms"
+            ]
+          },
+          {
+            "required": [
+              "record"
+            ]
+          },
+          {
+            "required": [
+              "truncated"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "provider_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "effect_certainty"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/identifier"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "effect_certainty": {
+          "enum": [
+            "not_applied",
+            "acknowledged",
+            "unknown"
+          ]
+        }
+      }
+    }
+  }
+}

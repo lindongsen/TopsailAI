@@ -76,8 +76,9 @@ CLI_PKG := ./src/main/agent-cluster-cli
 # assigned to a group deliberately instead of being picked up by accident.
 #
 # common: packages both roles depend on, plus the module root.
-COMMON_TEST_PKGS := ./internal ./internal/protocol ./internal/config \
-                    ./internal/logging ./internal/security ./internal/channel
+COMMON_TEST_PKGS := ./internal ./internal/protocol ./internal/providercli \
+                    ./internal/config ./internal/logging ./internal/security \
+                    ./internal/channel
 # server: the Server service, its storage and its command entry point.
 SERVER_TEST_PKGS := ./internal/server ./internal/storage/server \
                     ./src/main/agent-cluster-server
@@ -132,8 +133,8 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
 
 .PHONY: help build build-testhooks vet fmt \
         test test-all test-unit test-unit-common test-unit-server \
-        test-unit-endpoint test-unit-cli test-bdd test-integration \
-        test-packaging test-harness bdd integration \
+        test-unit-endpoint test-unit-cli test-provider-schema test-bdd \
+        test-integration test-packaging test-harness bdd integration \
         deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint \
         deb-inspect deb-clean \
         image image-build image-run image-stop image-inspect image-clean \
@@ -156,14 +157,15 @@ help:
 	@echo "  test              run every untagged test (unit, harness, packaging, bdd)"
 	@echo "  test-all          run every test kind, including the tagged integration suite"
 	@echo "  test-unit         run the unit tests of every component"
+	@echo "  test-provider-schema run the Provider CLI DTO and JSON Schema contract tests"
 	@echo "  test-bdd          run the BDD feature suite"
 	@echo "  test-integration  run the integration suite with test hooks"
 	@echo "  test-packaging    run the Debian packaging tests"
 	@echo "  test-harness      run the test-harness self-tests"
 	@echo ""
 	@echo "  Test by component (unit tests)"
-	@echo "  test-unit-common  run the shared packages: protocol, config, logging,"
-	@echo "                    security, channel and the module root"
+	@echo "  test-unit-common  run the shared packages: protocol, provider CLI, config,"
+	@echo "                    logging, security, channel and the module root"
 	@echo "  test-unit-server  run the Server service, storage and entry point"
 	@echo "  test-unit-endpoint run the Endpoint service, adapters, storage and entry point"
 	@echo "  test-unit-cli     run the operator client, TUI and CLI entry point"
@@ -252,6 +254,12 @@ test-unit-endpoint:
 test-unit-cli:
 	go test -count=1 $(CLI_TEST_PKGS)
 
+# Provider CLI contract tests validate the strict Go DTO boundary and the
+# language-neutral JSON Schema inventory together. This target stays separate so
+# Provider implementations can run the seam contract without the whole project.
+test-provider-schema:
+	go test -count=1 ./internal/providercli
+
 # The BDD suite is cross-component on purpose: a scenario drives the real Server,
 # Endpoint and CLI together, so splitting it by component would either duplicate
 # scenarios or assert a component in isolation, which the unit groups already do.
@@ -283,7 +291,7 @@ test:
 	go test -count=1 ./...
 
 # Full verification: every test kind, including the tagged integration suite.
-test-all: test-unit test-bdd test-integration test-packaging test-harness
+test-all: test-unit test-provider-schema test-bdd test-integration test-packaging test-harness
 
 # Kept as aliases because earlier plans and habits refer to these names.
 bdd: test-bdd
