@@ -153,6 +153,14 @@ TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE=0
 # TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY='["服务器繁忙，请稍后再试。", "服务繁忙"]'
 TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY=["服务器繁忙，请稍后再试。"]
 
+# Enable temporary recovery-message injection after three consecutive null or
+# blank LLM responses. Truthy values are 1, true, yes, on, and enabled.
+TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_ENABLED=1
+
+# Message injected by null-response recovery. Empty or whitespace-only values
+# use the default "continue".
+TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_MESSAGE="continue"
+
 # Optional case-insensitive substring markers separated by semicolons (';').
 # Configured markers extend the built-in contextual rules and make a matching
 # BadRequestError fail immediately. Leave empty unless a provider-specific

@@ -8,8 +8,12 @@ from dataclasses import dataclass
 from typing import Optional
 
 from topsailai.ai_base.constants import ROLE_USER
+from topsailai.ai_base.llm_control.configuration import (
+    NULL_RESPONSE_RECOVERY_DEFAULT_MESSAGE,
+    get_null_response_recovery_config,
+)
 
-CONTINUE_MESSAGE = "continue"
+CONTINUE_MESSAGE = NULL_RESPONSE_RECOVERY_DEFAULT_MESSAGE
 NULL_RESPONSE_THRESHOLD = 3
 
 
@@ -19,6 +23,8 @@ class NullResponseRecoveryState:
 
     messages: list
     operation_id: str = ""
+    enabled: bool = True
+    recovery_message: str = CONTINUE_MESSAGE
     consecutive_failures: int = 0
     injected_for_streak: bool = False
     injected_messages: list | None = None
@@ -49,7 +55,11 @@ def bind_null_response_operation(operation_id: str) -> None:
 def observe_attempt_error(operation_id: str, error_category: str) -> bool:
     """Apply the Hook module's threshold decision and inject when it fires."""
     state = current_null_response_recovery()
-    if state is None or state.operation_id != operation_id:
+    if (
+        state is None
+        or state.operation_id != operation_id
+        or not state.enabled
+    ):
         return False
     if error_category != "LLMNullResponseError":
         state.consecutive_failures = 0
@@ -59,7 +69,7 @@ def observe_attempt_error(operation_id: str, error_category: str) -> bool:
     state.consecutive_failures += 1
     if state.consecutive_failures < NULL_RESPONSE_THRESHOLD or state.injected_for_streak:
         return False
-    message = {"role": ROLE_USER, "content": CONTINUE_MESSAGE}
+    message = {"role": ROLE_USER, "content": state.recovery_message}
     state.messages.append(message)
     state.injected_messages.append(message)
     state.injected_for_streak = True
@@ -78,7 +88,12 @@ def track_null_response_recovery(method):
     """Keep recovery state for exactly one complete ``chat()`` request."""
     @functools.wraps(method)
     def wrapper(self, messages, *args, **kwargs):
-        state = NullResponseRecoveryState(messages=messages)
+        enabled, recovery_message = get_null_response_recovery_config()
+        state = NullResponseRecoveryState(
+            messages=messages,
+            enabled=enabled,
+            recovery_message=recovery_message,
+        )
         token = _active_null_response_recovery.set(state)
         try:
             return method(self, messages, *args, **kwargs)

@@ -99,3 +99,70 @@ def test_tracking_decorator_clears_state_after_request():
         current_null_response_recovery,
     )
     assert current_null_response_recovery() is None
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_default_recovery_message_is_continue(monkeypatch, value):
+    """Unset and blank message configuration both use ``continue``."""
+    key = "TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_MESSAGE"
+    if value is None:
+        monkeypatch.delenv(key, raising=False)
+    else:
+        monkeypatch.setenv(key, value)
+
+    messages = [{"role": "user", "content": "task"}]
+
+    class Subject:
+        @track_null_response_recovery
+        def chat(self, messages):
+            state = _active_null_response_recovery.get()
+            state.operation_id = "op-1"
+            for _ in range(3):
+                observe_attempt_error("op-1", "LLMNullResponseError")
+            return list(messages)
+
+    result = Subject().chat(messages)
+
+    assert result[-1] == {"role": "user", "content": "continue"}
+    assert messages == [{"role": "user", "content": "task"}]
+
+
+def test_configured_recovery_message_is_injected(monkeypatch):
+    """A nonblank configured message replaces the default guidance."""
+    monkeypatch.setenv("TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_MESSAGE", "please continue")
+    messages = [{"role": "user", "content": "task"}]
+
+    class Subject:
+        @track_null_response_recovery
+        def chat(self, messages):
+            state = _active_null_response_recovery.get()
+            state.operation_id = "op-1"
+            for _ in range(3):
+                observe_attempt_error("op-1", "LLMNullResponseError")
+            return list(messages)
+
+    result = Subject().chat(messages)
+
+    assert result[-1] == {"role": "user", "content": "please continue"}
+
+
+def test_disabled_recovery_never_injects(monkeypatch):
+    """The enable switch prevents message injection without changing retries."""
+    monkeypatch.setenv("TOPSAILAI_LLM_NULL_RESPONSE_RECOVERY_ENABLED", "0")
+    messages = [{"role": "user", "content": "task"}]
+
+    class Subject:
+        @track_null_response_recovery
+        def chat(self, messages):
+            state = _active_null_response_recovery.get()
+            state.operation_id = "op-1"
+            outcomes = [
+                observe_attempt_error("op-1", "LLMNullResponseError")
+                for _ in range(4)
+            ]
+            return outcomes, list(messages)
+
+    outcomes, observed = Subject().chat(messages)
+
+    assert outcomes == [False, False, False, False]
+    assert observed == [{"role": "user", "content": "task"}]
