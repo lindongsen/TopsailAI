@@ -7,24 +7,26 @@ import (
 	"time"
 )
 
-func TestCollectionDelayEnvironmentPrefersEndpointName(t *testing.T) {
+func TestCollectionDelayEnvironmentUsesEndpointName(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS", "250")
-	t.Setenv("AGENT_CLUSTER_COLLECTION_DELAY_MS", "500")
 	if got := newRuntimeHooks(nil, "").CollectionDelay; got != 250*time.Millisecond {
 		t.Fatalf("collection delay = %s", got)
 	}
 }
 
-func TestCollectionDelayEnvironmentUsesDeprecatedFallback(t *testing.T) {
+// TestCollectionDelayEnvironmentIgnoresDeprecatedName pins the removal of the
+// compatibility fallback. A deprecated name must not configure the delay, so an
+// operator who still exports one gets the default instead of a silently
+// different collection cadence.
+func TestCollectionDelayEnvironmentIgnoresDeprecatedName(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COLLECTION_DELAY_MS", "500")
-	if got := newRuntimeHooks(nil, "").CollectionDelay; got != 500*time.Millisecond {
-		t.Fatalf("collection delay = %s", got)
+	if got := newRuntimeHooks(nil, "").CollectionDelay; got != 5*time.Second {
+		t.Fatalf("collection delay = %s, want the 5s default", got)
 	}
 }
 
 func TestCollectionDelayEnvironmentRejectsInvalidOwnedValue(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS", "invalid")
-	t.Setenv("AGENT_CLUSTER_COLLECTION_DELAY_MS", "250")
 	if got := newRuntimeHooks(nil, "").CollectionDelay; got != 5*time.Second {
 		t.Fatalf("collection delay = %s", got)
 	}

@@ -101,13 +101,13 @@ deployment value. A Server started without an explicit token accepts that known
 string from any reachable client. Always set a real token, and restrict the API
 listener to a trusted address.
 
-### Deprecated Server environment names
+### Removed Server environment names
 
-The names below remain fallback aliases for one compatibility cycle. The component-prefixed name
-always wins when both are present. New deployments and maintained tests must use only the primary
-name.
+The names below are no longer read. They were fallback aliases for one compatibility cycle, and that
+cycle is over. A process that still exports one of them starts with the documented default instead of
+the exported value, and no warning is printed, because the name is not read at all.
 
-| Deprecated name | Primary name |
+| Removed name | Replacement |
 |---|---|
 | `AGENT_CLUSTER_API_LISTEN_ADDR` | `AGENT_CLUSTER_SERVER_API_LISTEN_ADDR` |
 | `AGENT_CLUSTER_CHANNEL_LISTEN_ADDR` | `AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR` |
@@ -141,13 +141,13 @@ adapter IDs, a relative command path and a non-positive timeout.
 Adapters are supplied through the environment because no flag exists for them. The
 launcher exports this variable from the `ADAPTERS` configuration entry.
 
-### Deprecated Endpoint environment names
+### Removed Endpoint environment names
 
-The names below remain fallback aliases for one compatibility cycle. The component-prefixed name
-always wins when both are present. New deployments and maintained tests must use only the primary
-name.
+The names below are no longer read. They were fallback aliases for one compatibility cycle, and that
+cycle is over. A process that still exports one of them starts with the documented default instead of
+the exported value, and no warning is printed, because the name is not read at all.
 
-| Deprecated name | Primary name |
+| Removed name | Replacement |
 |---|---|
 | `AGENT_CLUSTER_INSTANCE_ID` | `AGENT_CLUSTER_ENDPOINT_INSTANCE_ID` |
 | `AGENT_CLUSTER_CHANNEL_ADDRESS` | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` |
@@ -329,22 +329,20 @@ visible from the CLI output.
 
 An empty assignment still occupies the key while the files are loaded, because
 `os.LookupEnv` reports an empty value as present. CLI value resolution then treats a
-blank component-owned name as unset: it first checks the deprecated name for the
-compatibility cycle and otherwise uses the built-in default. An empty
-`AGENT_CLUSTER_CLI_SERVER_URL` therefore suppresses that key in later files but may
-still select a nonblank `AGENT_CLUSTER_SERVER_URL`; without the deprecated value it
-selects the built-in URL. An empty `AGENT_CLUSTER_CLI_SERVER_TOKEN` similarly falls back first to the transitional
-`AGENT_CLUSTER_CLI_TOKEN`, then to `AGENT_CLUSTER_TOKEN`; without either fallback the CLI
-sends no `Authorization` header.
+blank component-owned name as unset and uses the built-in default. An empty
+`AGENT_CLUSTER_CLI_SERVER_URL` therefore suppresses that key in later files and
+selects the built-in URL. An empty `AGENT_CLUSTER_CLI_SERVER_TOKEN` selects no token,
+so the CLI sends no `Authorization` header.
 
 The built-in URL default is `http://127.0.0.1:8080`, while the shipped Server
 configuration listens on `127.0.0.1:53680`. An unconfigured CLI therefore fails to
 connect rather than reporting that it is unconfigured.
 
-The following names are accepted only as deprecated fallbacks. A nonblank
-component-owned name always wins when both are set.
+The following names are no longer read. They were fallback aliases for one compatibility cycle, and
+that cycle is over. A CLI that still exports one of them uses the built-in default instead, and no
+warning is printed, because the name is not read at all.
 
-| Deprecated name | Component-owned name |
+| Removed name | Component-owned name |
 |---|---|
 | `AGENT_CLUSTER_SERVER_URL` | `AGENT_CLUSTER_CLI_SERVER_URL` |
 | `AGENT_CLUSTER_CLI_TOKEN` | `AGENT_CLUSTER_CLI_SERVER_TOKEN` |

@@ -55,12 +55,12 @@ coverage and generated fixtures must be written below `.tmp/`.
 ## General pass criteria
 
 - The primary name configures exactly one owning component unless it is explicitly shared.
-- The deprecated name works only as a fallback and produces deprecation evidence.
-- When both names are set, the primary name wins.
+- A removed name is never read, so it cannot configure anything and produces no warning.
+- When both a primary and a removed name are set, the primary name wins.
 - A malformed foreign-role variable cannot prevent the current role from starting.
 - A malformed own-role variable fails visibly.
 - Generated configuration emits only primary names.
-- Every remaining old name is an intentional compatibility alias or migration explanation.
+- Every remaining old name is either a removed-name test or a historical record, never a live alias.
 - Trigger payload names are unchanged.
 
 ## Evidence format

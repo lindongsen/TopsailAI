@@ -261,7 +261,7 @@ Two findings were stated and then retracted after verification:
 ### Harness requirement
 
 `start_services.py` gained an optional `--allowlist` argument, because the harness
-previously had no way to configure `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` and
+previously had no way to configure `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` and
 `command.exec` therefore always failed closed. The option is optional so the same harness
 can still prove the fail-closed path.
 
@@ -328,6 +328,6 @@ characters and the socket appeared. Any future live run must keep the provider h
 
 `start_services.py` gained an optional `--control-actions` argument mirroring `--allowlist`:
 it validates an absolute path and an existing file, then sets
-`AGENT_CLUSTER_CONTROL_ACTION_FILE`. Without it the Endpoint advertises no `ctl.*` action and
+`AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`. Without it the Endpoint advertises no `ctl.*` action and
 every `ctl.*` fails closed, so the catalog could not be exercised at all. The option stays
 optional so the same harness can still prove the fail-closed path.

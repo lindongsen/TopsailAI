@@ -11,20 +11,20 @@ Feature: every maintained deployment surface emits the component-owned environme
 
 Background:
 
-- Given compatibility aliases are accepted by binaries but are not primary deployment output
+- Given removed names are not read by any binary and are not deployment output
 - And trigger-script payload variables are a separate published contract
 
 ## Scenario: every old configuration name is classified
 
-Given source, scripts, templates, Dockerfile, Makefile, documents and tests are searched for every deprecated name
+Given source, scripts, templates, Dockerfile, Makefile, documents and tests are searched for every removed name
 When the migration audit is completed
 Then every remaining occurrence is one of:
 
-- a compatibility alias definition;
-- a compatibility test;
+- a removed-name test that asserts the name is ignored;
+- a historical record under `issues/`, `.task/` or `LEARN.md`;
 - a migration explanation;
 
-And no launcher, template, container or generated env file emits a deprecated name
+And no launcher, template, container or generated env file emits a removed name
 And no unclassified occurrence remains
 
 Automation: a bounded repository contract test or explicit audit command recorded in this document.
@@ -58,13 +58,13 @@ Then the effective Endpoint configuration is equivalent
 
 Automation: startup argument/environment comparison test using temporary bundle state below `.tmp/`.
 
-## Scenario: package upgrade accepts old deployed environment names
+## Scenario: a direct-launch deployment that still supplies removed names starts on defaults
 
-Given a direct-launch deployment still supplies only deprecated environment names
-When the upgraded matching component starts during the compatibility period
+Given a direct-launch deployment still supplies only removed environment names
+When the upgraded matching component starts
 Then startup succeeds
-And the old values are applied
-And deprecation evidence names the primary replacements
+And the documented defaults are applied instead of the removed values
+And no warning is printed, because the names are not read at all
 And no unrelated component consumes those values
 
 Automation: real-process harness or component-level startup test.
@@ -95,7 +95,7 @@ Given `docs/Environment_Variables.md`, templates, scripts and source are compare
 Then every primary setting appears under the component that reads it
 And every default equals the code default
 And both production-only settings previously missing from documentation are covered under their new names
-And the migration alias policy is stated once without presenting old names as preferred
+And the removed-name policy is stated once without presenting old names as usable
 
 Automation: documentation contract review plus focused string assertions where stable.
 

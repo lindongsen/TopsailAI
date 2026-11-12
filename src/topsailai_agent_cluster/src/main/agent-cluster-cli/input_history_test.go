@@ -194,20 +194,15 @@ func TestResolveInputHistoryPersistsAcrossStores(t *testing.T) {
 	}
 }
 
-// TestResolveInputHistoryPrefersComponentNames verifies every history setting
-// follows the same component-name precedence as the Server URL and credentials.
-func TestResolveInputHistoryPrefersComponentNames(t *testing.T) {
+// TestResolveInputHistoryUsesComponentNames verifies every history setting is
+// read from its component-owned name.
+func TestResolveInputHistoryUsesComponentNames(t *testing.T) {
 	primaryPath := filepath.Join(t.TempDir(), "primary.jsonl")
-	deprecatedPath := filepath.Join(t.TempDir(), "deprecated.jsonl")
 	lookup := lookupFrom(map[string]string{
-		inputHistoryFileEnv:                 primaryPath,
-		deprecatedInputHistoryFileEnv:       deprecatedPath,
-		inputHistoryMaxEntriesEnv:           "7",
-		deprecatedInputHistoryMaxEntriesEnv: "70",
-		inputHistoryMaxSizeMBEnv:            "2",
-		deprecatedInputHistoryMaxSizeMBEnv:  "20",
-		inputHistoryMaxBackupsEnv:           "3",
-		deprecatedInputHistoryMaxBackupsEnv: "30",
+		inputHistoryFileEnv:       primaryPath,
+		inputHistoryMaxEntriesEnv: "7",
+		inputHistoryMaxSizeMBEnv:  "2",
+		inputHistoryMaxBackupsEnv: "3",
 	})
 	if got := resolveInputHistoryPath(lookup, "/home/operator"); got != primaryPath {
 		t.Fatalf("history path=%q want=%q", got, primaryPath)
@@ -221,55 +216,26 @@ func TestResolveInputHistoryPrefersComponentNames(t *testing.T) {
 	}
 }
 
-// TestResolveInputHistoryUsesDeprecatedNames verifies existing operator files
-// remain usable for one compatibility cycle.
-func TestResolveInputHistoryUsesDeprecatedNames(t *testing.T) {
-	deprecatedPath := filepath.Join(t.TempDir(), "deprecated.jsonl")
+// TestResolveInputHistoryIgnoresDeprecatedNames pins the removal of the
+// compatibility fallback. A deprecated name must not configure the store, so an
+// operator who still exports one falls back to the per-user default path and the
+// store's own bounds instead of a silently different file.
+func TestResolveInputHistoryIgnoresDeprecatedNames(t *testing.T) {
 	lookup := lookupFrom(map[string]string{
-		deprecatedInputHistoryFileEnv:       deprecatedPath,
-		deprecatedInputHistoryMaxEntriesEnv: "7",
-		deprecatedInputHistoryMaxSizeMBEnv:  "2",
-		deprecatedInputHistoryMaxBackupsEnv: "3",
+		"AGENT_CLUSTER_HISTORY_FILE":        filepath.Join(t.TempDir(), "deprecated.jsonl"),
+		"AGENT_CLUSTER_HISTORY_MAX_ENTRIES": "7",
+		"AGENT_CLUSTER_HISTORY_MAX_SIZE_MB": "2",
+		"AGENT_CLUSTER_HISTORY_MAX_BACKUPS": "3",
 	})
-	if got := resolveInputHistoryPath(lookup, "/home/operator"); got != deprecatedPath {
-		t.Fatalf("history path=%q want=%q", got, deprecatedPath)
+	wantPath := filepath.Join("/home/operator", filepath.FromSlash(inputHistoryRelativePath))
+	if got := resolveInputHistoryPath(lookup, "/home/operator"); got != wantPath {
+		t.Fatalf("history path=%q want=%q", got, wantPath)
 	}
 	limits, err := resolveInputHistoryLimits(lookup)
 	if err != nil {
 		t.Fatalf("resolve limits: %v", err)
 	}
-	if limits.MaxEntries != 7 || limits.MaxSizeBytes != 2<<20 || limits.MaxBackups != 3 {
-		t.Fatalf("limits=%+v", limits)
-	}
-}
-
-// TestResolveInputHistoryReportsEverySelectedDeprecatedName verifies the
-// compatibility path is visible without changing history behaviour.
-func TestResolveInputHistoryReportsEverySelectedDeprecatedName(t *testing.T) {
-	deprecatedPath := filepath.Join(t.TempDir(), "deprecated.jsonl")
-	lookup := lookupFrom(map[string]string{
-		deprecatedInputHistoryFileEnv:       deprecatedPath,
-		deprecatedInputHistoryMaxEntriesEnv: "7",
-		deprecatedInputHistoryMaxSizeMBEnv:  "2",
-		deprecatedInputHistoryMaxBackupsEnv: "3",
-	})
-	var diagnostics bytes.Buffer
-	store, err := resolveInputHistory(lookup, "/home/operator", &diagnostics)
-	if err != nil {
-		t.Fatalf("resolve history: %v", err)
-	}
-	if store == nil {
-		t.Fatal("resolve history returned a nil store")
-	}
-	for _, pair := range [][2]string{
-		{deprecatedInputHistoryFileEnv, inputHistoryFileEnv},
-		{deprecatedInputHistoryMaxEntriesEnv, inputHistoryMaxEntriesEnv},
-		{deprecatedInputHistoryMaxSizeMBEnv, inputHistoryMaxSizeMBEnv},
-		{deprecatedInputHistoryMaxBackupsEnv, inputHistoryMaxBackupsEnv},
-	} {
-		want := "warning: " + pair[0] + " is deprecated; use " + pair[1]
-		if count := strings.Count(diagnostics.String(), want); count != 1 {
-			t.Fatalf("diagnostics contain %q %d times, want 1: %q", want, count, diagnostics.String())
-		}
+	if limits.MaxEntries != 0 || limits.MaxSizeBytes != 0 || limits.MaxBackups != 0 {
+		t.Fatalf("deprecated names configured limits=%+v", limits)
 	}
 }

@@ -77,8 +77,8 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	jsonMode := flags.Bool("json", false, "write structured JSON")
 	filter := flags.String("endpoint", "", "filter by endpoint ID")
 	confirmed := flags.Bool("yes", false, "confirm a mutating action")
-	serverURL := flags.String("server-url", envOr(errors, cliServerURLEnv, deprecatedServerURLEnv, "http://127.0.0.1:8080"), "Server API URL")
-	token := flags.String("token", cliEnvironmentValueWithDiagnostics(os.Getenv, errors, cliServerTokenEnv, transitionalCLITokenEnv, deprecatedServerTokenEnv), "Server bearer token")
+	serverURL := flags.String("server-url", envOr(cliServerURLEnv, "http://127.0.0.1:8080"), "Server API URL")
+	token := flags.String("token", cliEnvironmentValue(os.Getenv, cliServerTokenEnv), "Server bearer token")
 	// --endpoint-token is the token the target Endpoint accepts. It is a separate
 	// credential from --token because the two answer different questions: the
 	// Server token decides whether this CLI may talk to the cluster, while the
@@ -164,7 +164,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// The Endpoint token mapping is resolved before any command runs, so a
 	// malformed configuration is reported once instead of surfacing as a refusal
 	// from whichever Endpoint the command happened to reach first.
-	endpointTokens, err := parseEndpointTokens(cliEnvironmentValueWithDiagnostics(os.Getenv, errors, endpointTokensEnv, deprecatedEndpointTokensEnv))
+	endpointTokens, err := parseEndpointTokens(cliEnvironmentValue(os.Getenv, endpointTokensEnv))
 	if err != nil {
 		return err
 	}
@@ -1388,8 +1388,8 @@ func operationName(value string) string {
 	return "message.send"
 }
 
-func envOr(diagnostics io.Writer, primary, deprecated, fallback string) string {
-	if value := cliEnvironmentValueWithDiagnostics(os.Getenv, diagnostics, primary, deprecated); value != "" {
+func envOr(name, fallback string) string {
+	if value := cliEnvironmentValue(os.Getenv, name); value != "" {
 		return value
 	}
 	return fallback

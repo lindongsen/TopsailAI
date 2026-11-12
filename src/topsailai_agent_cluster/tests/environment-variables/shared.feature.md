@@ -13,7 +13,7 @@ Background:
 
 - Given the Server and Endpoint use the same configuration package
 - And each process declares its role before environment parsing
-- And a renamed variable has one primary spelling and at most one deprecated spelling
+- And a renamed variable has exactly one spelling, because the compatibility cycle is over
 
 ## Scenario: a shared setting reaches both daemons
 
@@ -35,25 +35,21 @@ Then its database path is `.tmp/endpoint.sqlite`
 
 Automation: config defaults unit test.
 
-## Scenario: primary spelling wins over a deprecated alias
+## Scenario: a removed spelling cannot configure anything
 
-Given a renamed variable is set under both its primary and deprecated names
+Given a renamed variable is set under both its primary and removed names
 And the values differ
 When the owning process loads configuration
 Then the primary value is selected
-And the deprecated value cannot override it
-And the process reports that the deprecated spelling was ignored
+And the removed value cannot override it
+And no warning is printed, because the removed name is not read at all
 
-Automation: compatibility lookup helper unit test for every migrated owner group.
-
-## Scenario: a deprecated alias remains usable during migration
-
-Given only the deprecated spelling is set
+Given only the removed spelling is set
 When the owning process loads configuration
-Then the value is applied
-And exactly one deprecation event names the old and primary spellings
+Then the documented default is applied
+And the removed value is never read
 
-Automation: compatibility lookup helper unit test.
+Automation: removed-name table test for every migrated owner group.
 
 ## Scenario: an invalid own-role value fails visibly
 
@@ -99,7 +95,7 @@ make test-unit-common
 
 - Result: PASS.
 - Elapsed time: 3.67 seconds.
-- Automated coverage: Configuration role isolation, defaults, alias precedence and deprecation tests in the common/unit suite.
+- Automated coverage: Configuration role isolation, defaults and removed-name tests in the common/unit suite.
 - Skips or unavailable environments: none reported by these runs.
 - Evidence logs: `.tmp/env-prefix-*.log`; timing records: `.tmp/env-prefix-*.time`.
 

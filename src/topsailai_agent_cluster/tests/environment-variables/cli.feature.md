@@ -34,17 +34,17 @@ Examples:
 
 Automation: CLI config and history table tests.
 
-## Scenario Outline: each old CLI name is a warned fallback
+## Scenario Outline: each removed CLI name is ignored
 
-Given the primary name for `<deprecated>` is absent
-And `<deprecated>` is set to `<value>`
+Given the primary name for `<removed>` is absent
+And `<removed>` is set to `<value>`
 When CLI configuration is loaded
-Then the corresponding CLI concern uses `<value>`
-And one deprecation event names `<deprecated>` and its primary replacement
+Then the corresponding CLI concern keeps its documented default
+And no warning is printed, because the name is not read at all
 
 Examples:
 
-| deprecated | value |
+| removed | value |
 |---|---|
 | `AGENT_CLUSTER_SERVER_URL` | `https://legacy.example.test` |
 | `AGENT_CLUSTER_CLI_TOKEN` | `transitional-token` |
@@ -55,28 +55,26 @@ Examples:
 | `AGENT_CLUSTER_HISTORY_MAX_SIZE_MB` | `3` |
 | `AGENT_CLUSTER_HISTORY_MAX_BACKUPS` | `5` |
 
-Automation: CLI compatibility table test.
+Automation: CLI removed-name table test.
 
-## Scenario: the transitional Server token name outranks the legacy generic name
+## Scenario: the removed Server token spellings cannot supply a token
 
 Given `AGENT_CLUSTER_CLI_SERVER_TOKEN` is absent
 And `AGENT_CLUSTER_CLI_TOKEN` is `transitional-token`
 And `AGENT_CLUSTER_TOKEN` is `legacy-token`
 When CLI configuration is loaded
-Then the Server bearer token is `transitional-token`
-And one deprecation event replaces `AGENT_CLUSTER_CLI_TOKEN` with `AGENT_CLUSTER_CLI_SERVER_TOKEN`
+Then the Server bearer token is empty
+And the CLI sends no `Authorization` header
 
-Automation: CLI Server-token compatibility unit test.
+Automation: CLI Server-token removed-name unit test.
 
-## Scenario: process primary names outrank deprecated and file values
+## Scenario: process primary names outrank file values
 
 Given process environment contains a CLI primary value
-And the deprecated process name contains a different value
-And a supported env file contains a third value
+And a supported env file contains a different value
 When CLI configuration is loaded
 Then the established process-over-file precedence is preserved
 And the primary process name wins within the process source
-And deprecation evidence identifies the ignored old process spelling
 
 Automation: precedence matrix test using temporary env files below `.tmp/`.
 
@@ -87,7 +85,7 @@ When the file is read
 Then it contains `AGENT_CLUSTER_CLI_SERVER_URL`
 And it contains `AGENT_CLUSTER_CLI_SERVER_TOKEN`
 And it supports `AGENT_CLUSTER_CLI_ENDPOINT_TOKENS`
-And it emits none of the deprecated CLI names
+And it emits none of the removed CLI names
 
 Automation: installer and `scripts/lib/cli-env.sh` packaging tests.
 
@@ -109,14 +107,14 @@ Then the existing default file, entry, size and backup limits are unchanged
 And accepted interactive input is still written as bounded JSONL
 And retention failure still prevents the append
 
-Automation: existing history unit tests plus primary/deprecated name cases.
+Automation: existing history unit tests plus primary and removed-name cases.
 
 ## Scenario: CLI diagnostics name the primary setting
 
 Given Server URL, Server token or Endpoint token configuration is missing
 When the CLI refuses locally
 Then its diagnostic names the corresponding `AGENT_CLUSTER_CLI_*` setting
-And it does not instruct the operator to create a deprecated name
+And it does not instruct the operator to create a removed name
 
 Automation: CLI error-message unit tests.
 
@@ -129,7 +127,7 @@ make test-packaging
 
 - Result: PASS / PASS.
 - Elapsed time: 91.31 seconds / 48.37 seconds.
-- Automated coverage: CLI configuration, precedence, deprecation diagnostics, token-map and history tests plus generated env-file packaging tests.
+- Automated coverage: CLI configuration, precedence, removed-name diagnostics, token-map and history tests plus generated env-file packaging tests.
 - Skips or unavailable environments: none reported by these runs.
 - Evidence logs: `.tmp/env-prefix-*.log`; timing records: `.tmp/env-prefix-*.time`.
 

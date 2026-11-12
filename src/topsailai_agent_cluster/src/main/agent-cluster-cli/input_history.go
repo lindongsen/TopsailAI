@@ -17,11 +17,6 @@ const (
 	inputHistoryMaxEntriesEnv = "AGENT_CLUSTER_CLI_HISTORY_MAX_ENTRIES"
 	inputHistoryMaxSizeMBEnv  = "AGENT_CLUSTER_CLI_HISTORY_MAX_SIZE_MB"
 	inputHistoryMaxBackupsEnv = "AGENT_CLUSTER_CLI_HISTORY_MAX_BACKUPS"
-
-	deprecatedInputHistoryFileEnv       = "AGENT_CLUSTER_HISTORY_FILE"
-	deprecatedInputHistoryMaxEntriesEnv = "AGENT_CLUSTER_HISTORY_MAX_ENTRIES"
-	deprecatedInputHistoryMaxSizeMBEnv  = "AGENT_CLUSTER_HISTORY_MAX_SIZE_MB"
-	deprecatedInputHistoryMaxBackupsEnv = "AGENT_CLUSTER_HISTORY_MAX_BACKUPS"
 )
 
 // inputHistoryRelativePath is the default history file, placed beside the
@@ -47,11 +42,11 @@ const inputHistoryRelativePath = ".topsailai/.topsailai_agent_cluster.history.js
 // keeps the previous in-memory behaviour, which is exactly what an operator
 // without a home directory had before.
 func resolveInputHistory(lookup func(string) string, home string, diagnostics io.Writer) (*tui.InputHistory, error) {
-	path := resolveInputHistoryPathWithDiagnostics(lookup, home, diagnostics)
+	path := resolveInputHistoryPath(lookup, home)
 	if path == "" {
 		return nil, nil
 	}
-	limits, err := resolveInputHistoryLimitsWithDiagnostics(lookup, diagnostics)
+	limits, err := resolveInputHistoryLimits(lookup)
 	if err != nil {
 		return nil, err
 	}
@@ -61,11 +56,7 @@ func resolveInputHistory(lookup func(string) string, home string, diagnostics io
 // resolveInputHistoryPath returns the configured file, or the per-user default.
 // An empty result means no path could be resolved.
 func resolveInputHistoryPath(lookup func(string) string, home string) string {
-	return resolveInputHistoryPathWithDiagnostics(lookup, home, io.Discard)
-}
-
-func resolveInputHistoryPathWithDiagnostics(lookup func(string) string, home string, diagnostics io.Writer) string {
-	if configured := cliEnvironmentValueWithDiagnostics(lookup, diagnostics, inputHistoryFileEnv, deprecatedInputHistoryFileEnv); configured != "" {
+	if configured := cliEnvironmentValue(lookup, inputHistoryFileEnv); configured != "" {
 		return configured
 	}
 	if strings.TrimSpace(home) == "" {
@@ -78,19 +69,15 @@ func resolveInputHistoryPathWithDiagnostics(lookup func(string) string, home str
 // store's own default, so the defaults live in one place instead of being
 // repeated here.
 func resolveInputHistoryLimits(lookup func(string) string) (tui.InputHistoryLimits, error) {
-	return resolveInputHistoryLimitsWithDiagnostics(lookup, io.Discard)
-}
-
-func resolveInputHistoryLimitsWithDiagnostics(lookup func(string) string, diagnostics io.Writer) (tui.InputHistoryLimits, error) {
-	maxEntries, err := resolveInputHistoryIntWithDiagnostics(lookup, diagnostics, inputHistoryMaxEntriesEnv, deprecatedInputHistoryMaxEntriesEnv)
+	maxEntries, err := resolveInputHistoryInt(lookup, inputHistoryMaxEntriesEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
-	maxSizeMB, err := resolveInputHistoryIntWithDiagnostics(lookup, diagnostics, inputHistoryMaxSizeMBEnv, deprecatedInputHistoryMaxSizeMBEnv)
+	maxSizeMB, err := resolveInputHistoryInt(lookup, inputHistoryMaxSizeMBEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
-	maxBackups, err := resolveInputHistoryIntWithDiagnostics(lookup, diagnostics, inputHistoryMaxBackupsEnv, deprecatedInputHistoryMaxBackupsEnv)
+	maxBackups, err := resolveInputHistoryInt(lookup, inputHistoryMaxBackupsEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
@@ -106,12 +93,8 @@ func resolveInputHistoryLimitsWithDiagnostics(lookup func(string) string, diagno
 // resolveInputHistoryInt parses one bound. Zero means "unset" and is returned as
 // zero so the store applies its default; a negative or unparsable value is an
 // error, because neither can mean "unbounded" for an append-only file.
-func resolveInputHistoryInt(lookup func(string) string, name, deprecated string) (int, error) {
-	return resolveInputHistoryIntWithDiagnostics(lookup, io.Discard, name, deprecated)
-}
-
-func resolveInputHistoryIntWithDiagnostics(lookup func(string) string, diagnostics io.Writer, name, deprecated string) (int, error) {
-	raw := cliEnvironmentValueWithDiagnostics(lookup, diagnostics, name, deprecated)
+func resolveInputHistoryInt(lookup func(string) string, name string) (int, error) {
+	raw := cliEnvironmentValue(lookup, name)
 	if raw == "" {
 		return 0, nil
 	}

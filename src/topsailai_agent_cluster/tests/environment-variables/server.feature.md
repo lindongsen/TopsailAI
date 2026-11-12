@@ -32,25 +32,26 @@ Examples:
 
 Automation: Server-role config table test.
 
-## Scenario Outline: each old Server name is a warned fallback
+## Scenario Outline: each removed Server name is ignored
 
-Given the primary name for `<deprecated>` is absent
-And `<deprecated>` is set to `<value>`
+Given the primary name for `<removed>` is absent
+And `<removed>` is set to `<value>`
 When Server configuration is loaded
-Then the corresponding Server field equals `<value>`
-And one deprecation event names `<deprecated>` and its primary replacement
+Then the corresponding Server field keeps its documented default
+And no warning is printed, because the name is not read at all
 
 Examples:
 
-| deprecated | value |
+| removed | value |
 |---|---|
 | `AGENT_CLUSTER_API_LISTEN_ADDR` | `127.0.0.1:53680` |
 | `AGENT_CLUSTER_CHANNEL_LISTEN_ADDR` | `127.0.0.1:53943` |
 | `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` | `ep-a=wss://127.0.0.1:53944` |
 | `AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` | `true` |
 | `AGENT_CLUSTER_AUTH_TOKEN` | `legacy-secret` |
+| `AGENT_CLUSTER_SERVER_NAME` | `legacy-name` |
 
-Automation: Server alias table test.
+Automation: Server removed-name table test.
 
 ## Scenario: Endpoint and CLI names do not alter Server configuration
 

@@ -36,17 +36,17 @@ Examples:
 
 Automation: Endpoint-role config table test and runtime-hook setting test.
 
-## Scenario Outline: each old Endpoint name is a warned fallback
+## Scenario Outline: each removed Endpoint name is ignored
 
-Given the primary name for `<deprecated>` is absent
-And `<deprecated>` is set to `<value>`
+Given the primary name for `<removed>` is absent
+And `<removed>` is set to `<value>`
 When Endpoint configuration is loaded
-Then the corresponding Endpoint field equals `<value>`
-And one deprecation event names `<deprecated>` and its primary replacement
+Then the corresponding Endpoint field keeps its documented default
+And no warning is printed, because the name is not read at all
 
 Examples:
 
-| deprecated | value |
+| removed | value |
 |---|---|
 | `AGENT_CLUSTER_INSTANCE_ID` | `legacy-instance` |
 | `AGENT_CLUSTER_CHANNEL_ADDRESS` | `wss://127.0.0.1:53943` |
@@ -55,7 +55,7 @@ Examples:
 | `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `/tmp/actions.json` |
 | `AGENT_CLUSTER_COLLECTION_DELAY_MS` | `250` |
 
-Automation: Endpoint alias table test.
+Automation: Endpoint removed-name table test.
 
 ## Scenario: the real Endpoint channel address has one owner
 
