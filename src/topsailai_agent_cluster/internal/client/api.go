@@ -89,7 +89,7 @@ func (c *APIClient) explainRefusal(err error, endpointID string) error {
 // endpointTokensEnvName names the CLI configuration key that holds the Endpoint
 // token map. It is repeated here rather than imported from the CLI package
 // because the client is a library and must not depend on a command.
-const endpointTokensEnvName = "AGENT_CLUSTER_ENDPOINT_TOKENS"
+const endpointTokensEnvName = "AGENT_CLUSTER_CLI_ENDPOINT_TOKENS"
 
 // ListEndpoints returns the current endpoint projection.
 func (c *APIClient) ListEndpoints(ctx context.Context) ([]protocol.Endpoint, error) {

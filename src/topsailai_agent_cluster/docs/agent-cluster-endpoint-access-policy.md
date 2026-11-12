@@ -614,7 +614,7 @@ The per-user file is the normal place for the map, because it is the file the in
 writes and the file a user can edit without touching a package. One key holds the whole map:
 
 ```text
-AGENT_CLUSTER_ENDPOINT_TOKENS='gd-dev=7f3a9c2e5b1d4a86,topsailai-dev=1c9e4f7a2b8d3056'
+AGENT_CLUSTER_CLI_ENDPOINT_TOKENS='gd-dev=7f3a9c2e5b1d4a86,topsailai-dev=1c9e4f7a2b8d3056'
 ```
 
 The value is a comma-separated list of `endpoint_id=token` pairs. A token therefore must not contain

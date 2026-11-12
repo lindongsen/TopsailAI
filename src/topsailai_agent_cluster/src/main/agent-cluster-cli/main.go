@@ -77,13 +77,13 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	jsonMode := flags.Bool("json", false, "write structured JSON")
 	filter := flags.String("endpoint", "", "filter by endpoint ID")
 	confirmed := flags.Bool("yes", false, "confirm a mutating action")
-	serverURL := flags.String("server-url", envOr("AGENT_CLUSTER_SERVER_URL", "http://127.0.0.1:8080"), "Server API URL")
-	token := flags.String("token", os.Getenv("AGENT_CLUSTER_TOKEN"), "Server bearer token")
+	serverURL := flags.String("server-url", envOr(cliServerURLEnv, deprecatedServerURLEnv, "http://127.0.0.1:8080"), "Server API URL")
+	token := flags.String("token", cliEnvironmentValue(os.Getenv, cliTokenEnv, deprecatedTokenEnv), "Server bearer token")
 	// --endpoint-token is the token the target Endpoint accepts. It is a separate
 	// credential from --token because the two answer different questions: the
 	// Server token decides whether this CLI may talk to the cluster, while the
 	// Endpoint token decides whether this CLI may act on one machine. The normal
-	// source is the AGENT_CLUSTER_ENDPOINT_TOKENS mapping in the CLI configuration
+	// source is the AGENT_CLUSTER_CLI_ENDPOINT_TOKENS mapping in the CLI configuration
 	// file, because a token written on a command line stays in the shell history.
 	endpointToken := flags.String("endpoint-token", "", "token the target Endpoint accepts; requires --endpoint")
 	waitTimeoutMS := flags.Int64("wait-timeout-ms", 0, "maximum local wait for command completion in milliseconds")
@@ -164,7 +164,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// The Endpoint token mapping is resolved before any command runs, so a
 	// malformed configuration is reported once instead of surfacing as a refusal
 	// from whichever Endpoint the command happened to reach first.
-	endpointTokens, err := parseEndpointTokens(os.Getenv(endpointTokensEnv))
+	endpointTokens, err := parseEndpointTokens(cliEnvironmentValue(os.Getenv, endpointTokensEnv, deprecatedEndpointTokensEnv))
 	if err != nil {
 		return err
 	}
@@ -578,7 +578,7 @@ func flagSupplied(flags *flag.FlagSet, name string) bool {
 // cannot be added without deciding whether it is hoistable.
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
-	"endpoint-token": true,
+	"endpoint-token":  true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
 	"no-progress": true, "no-truncate": true, "limit": true, "max-chars": true, "c": true,
 	"max-tokens": true, "t": true,
@@ -1388,8 +1388,8 @@ func operationName(value string) string {
 	return "message.send"
 }
 
-func envOr(name, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+func envOr(primary, deprecated, fallback string) string {
+	if value := cliEnvironmentValue(os.Getenv, primary, deprecated); value != "" {
 		return value
 	}
 	return fallback

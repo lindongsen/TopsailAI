@@ -12,7 +12,7 @@ import (
 // Server that held Endpoint tokens could hand them out, and could therefore grant
 // access to every machine. Distributing them locally is what keeps the Server
 // unable to grant or revoke access.
-const endpointTokensEnv = "AGENT_CLUSTER_ENDPOINT_TOKENS"
+const endpointTokensEnv = cliEndpointTokensEnv
 
 // parseEndpointTokens reads the "endpoint_id=token" mapping.
 //

@@ -3,8 +3,8 @@ set -euo pipefail
 
 workspace_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cli_path=${AGENT_CLUSTER_CLI:-"$workspace_dir/.tmp/u84/bin/agent-cluster-cli"}
-server_url=${AGENT_CLUSTER_SERVER_URL:?set AGENT_CLUSTER_SERVER_URL}
-token=${AGENT_CLUSTER_TOKEN:?set AGENT_CLUSTER_TOKEN}
+server_url=${AGENT_CLUSTER_CLI_SERVER_URL:?set AGENT_CLUSTER_CLI_SERVER_URL}
+token=${AGENT_CLUSTER_CLI_TOKEN:?set AGENT_CLUSTER_CLI_TOKEN}
 session_name=${AGENT_CLUSTER_TMUX_SESSION:-interactive-manual}
 artifact_dir=${AGENT_CLUSTER_ARTIFACT_DIR:-"$workspace_dir/.tmp/u84/manual"}
 ready_text=${AGENT_CLUSTER_READY_TEXT:-'cluster>'}

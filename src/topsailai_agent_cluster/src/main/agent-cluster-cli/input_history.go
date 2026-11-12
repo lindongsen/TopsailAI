@@ -11,17 +11,17 @@ import (
 	"topsailai_agent_cluster/internal/tui"
 )
 
-// Input history configuration names. They follow the Client section's bare
-// AGENT_CLUSTER_ prefix rather than a CLI_ prefix, because these variables are
-// read by the operator CLI and by nothing else, exactly like
-// AGENT_CLUSTER_SERVER_URL. The bound names reuse the shape already used by the
-// log rotation variables (MAX_SIZE_MB, MAX_BACKUPS), so one operator learns one
-// set of spellings.
+// Input history configuration names are owned by the operator CLI.
 const (
-	inputHistoryFileEnv       = "AGENT_CLUSTER_HISTORY_FILE"
-	inputHistoryMaxEntriesEnv = "AGENT_CLUSTER_HISTORY_MAX_ENTRIES"
-	inputHistoryMaxSizeMBEnv  = "AGENT_CLUSTER_HISTORY_MAX_SIZE_MB"
-	inputHistoryMaxBackupsEnv = "AGENT_CLUSTER_HISTORY_MAX_BACKUPS"
+	inputHistoryFileEnv       = "AGENT_CLUSTER_CLI_HISTORY_FILE"
+	inputHistoryMaxEntriesEnv = "AGENT_CLUSTER_CLI_HISTORY_MAX_ENTRIES"
+	inputHistoryMaxSizeMBEnv  = "AGENT_CLUSTER_CLI_HISTORY_MAX_SIZE_MB"
+	inputHistoryMaxBackupsEnv = "AGENT_CLUSTER_CLI_HISTORY_MAX_BACKUPS"
+
+	deprecatedInputHistoryFileEnv       = "AGENT_CLUSTER_HISTORY_FILE"
+	deprecatedInputHistoryMaxEntriesEnv = "AGENT_CLUSTER_HISTORY_MAX_ENTRIES"
+	deprecatedInputHistoryMaxSizeMBEnv  = "AGENT_CLUSTER_HISTORY_MAX_SIZE_MB"
+	deprecatedInputHistoryMaxBackupsEnv = "AGENT_CLUSTER_HISTORY_MAX_BACKUPS"
 )
 
 // inputHistoryRelativePath is the default history file, placed beside the
@@ -61,7 +61,7 @@ func resolveInputHistory(lookup func(string) string, home string, diagnostics io
 // resolveInputHistoryPath returns the configured file, or the per-user default.
 // An empty result means no path could be resolved.
 func resolveInputHistoryPath(lookup func(string) string, home string) string {
-	if configured := strings.TrimSpace(lookup(inputHistoryFileEnv)); configured != "" {
+	if configured := cliEnvironmentValue(lookup, inputHistoryFileEnv, deprecatedInputHistoryFileEnv); configured != "" {
 		return configured
 	}
 	if strings.TrimSpace(home) == "" {
@@ -74,15 +74,15 @@ func resolveInputHistoryPath(lookup func(string) string, home string) string {
 // store's own default, so the defaults live in one place instead of being
 // repeated here.
 func resolveInputHistoryLimits(lookup func(string) string) (tui.InputHistoryLimits, error) {
-	maxEntries, err := resolveInputHistoryInt(lookup, inputHistoryMaxEntriesEnv)
+	maxEntries, err := resolveInputHistoryInt(lookup, inputHistoryMaxEntriesEnv, deprecatedInputHistoryMaxEntriesEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
-	maxSizeMB, err := resolveInputHistoryInt(lookup, inputHistoryMaxSizeMBEnv)
+	maxSizeMB, err := resolveInputHistoryInt(lookup, inputHistoryMaxSizeMBEnv, deprecatedInputHistoryMaxSizeMBEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
-	maxBackups, err := resolveInputHistoryInt(lookup, inputHistoryMaxBackupsEnv)
+	maxBackups, err := resolveInputHistoryInt(lookup, inputHistoryMaxBackupsEnv, deprecatedInputHistoryMaxBackupsEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
@@ -98,8 +98,8 @@ func resolveInputHistoryLimits(lookup func(string) string) (tui.InputHistoryLimi
 // resolveInputHistoryInt parses one bound. Zero means "unset" and is returned as
 // zero so the store applies its default; a negative or unparsable value is an
 // error, because neither can mean "unbounded" for an append-only file.
-func resolveInputHistoryInt(lookup func(string) string, name string) (int, error) {
-	raw := strings.TrimSpace(lookup(name))
+func resolveInputHistoryInt(lookup func(string) string, name, deprecated string) (int, error) {
+	raw := cliEnvironmentValue(lookup, name, deprecated)
 	if raw == "" {
 		return 0, nil
 	}

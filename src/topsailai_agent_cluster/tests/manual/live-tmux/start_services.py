@@ -138,11 +138,11 @@ def main() -> int:
     # The CLI loads .env.local from the directory of its own executable, so the
     # isolated configuration must live beside the binary rather than in runtime.
     cli_environment = args.bin_dir / ".env.local"
-    cli_environment.write_text(f"AGENT_CLUSTER_SERVER_URL=http://127.0.0.1:{api_port}\nAGENT_CLUSTER_TOKEN={token}\n", encoding="utf-8")
+    cli_environment.write_text(f"AGENT_CLUSTER_CLI_SERVER_URL=http://127.0.0.1:{api_port}\nAGENT_CLUSTER_CLI_TOKEN={token}\n", encoding="utf-8")
     cli_environment.chmod(0o600)
     # Inherited AGENT_CLUSTER_* variables take precedence over .env.local, so the
     # launch command must clear them before starting the CLI.
-    launch = "env -u AGENT_CLUSTER_SERVER_URL -u AGENT_CLUSTER_TOKEN " + str(args.bin_dir / "agent-cluster-cli") + " interactive"
+    launch = "env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_TOKEN " + str(args.bin_dir / "agent-cluster-cli") + " interactive"
     planned = []
     if args.role in ("both", "server"):
         planned.append(("server", server, server_env))

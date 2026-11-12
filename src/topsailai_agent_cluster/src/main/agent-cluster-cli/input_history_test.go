@@ -193,3 +193,52 @@ func TestResolveInputHistoryPersistsAcrossStores(t *testing.T) {
 		t.Fatalf("history=%q does not contain the recorded answer", string(content))
 	}
 }
+
+// TestResolveInputHistoryPrefersComponentNames verifies every history setting
+// follows the same component-name precedence as the Server URL and credentials.
+func TestResolveInputHistoryPrefersComponentNames(t *testing.T) {
+	primaryPath := filepath.Join(t.TempDir(), "primary.jsonl")
+	deprecatedPath := filepath.Join(t.TempDir(), "deprecated.jsonl")
+	lookup := lookupFrom(map[string]string{
+		inputHistoryFileEnv:                 primaryPath,
+		deprecatedInputHistoryFileEnv:       deprecatedPath,
+		inputHistoryMaxEntriesEnv:           "7",
+		deprecatedInputHistoryMaxEntriesEnv: "70",
+		inputHistoryMaxSizeMBEnv:            "2",
+		deprecatedInputHistoryMaxSizeMBEnv:  "20",
+		inputHistoryMaxBackupsEnv:           "3",
+		deprecatedInputHistoryMaxBackupsEnv: "30",
+	})
+	if got := resolveInputHistoryPath(lookup, "/home/operator"); got != primaryPath {
+		t.Fatalf("history path=%q want=%q", got, primaryPath)
+	}
+	limits, err := resolveInputHistoryLimits(lookup)
+	if err != nil {
+		t.Fatalf("resolve limits: %v", err)
+	}
+	if limits.MaxEntries != 7 || limits.MaxSizeBytes != 2<<20 || limits.MaxBackups != 3 {
+		t.Fatalf("limits=%+v", limits)
+	}
+}
+
+// TestResolveInputHistoryUsesDeprecatedNames verifies existing operator files
+// remain usable for one compatibility cycle.
+func TestResolveInputHistoryUsesDeprecatedNames(t *testing.T) {
+	deprecatedPath := filepath.Join(t.TempDir(), "deprecated.jsonl")
+	lookup := lookupFrom(map[string]string{
+		deprecatedInputHistoryFileEnv:       deprecatedPath,
+		deprecatedInputHistoryMaxEntriesEnv: "7",
+		deprecatedInputHistoryMaxSizeMBEnv:  "2",
+		deprecatedInputHistoryMaxBackupsEnv: "3",
+	})
+	if got := resolveInputHistoryPath(lookup, "/home/operator"); got != deprecatedPath {
+		t.Fatalf("history path=%q want=%q", got, deprecatedPath)
+	}
+	limits, err := resolveInputHistoryLimits(lookup)
+	if err != nil {
+		t.Fatalf("resolve limits: %v", err)
+	}
+	if limits.MaxEntries != 7 || limits.MaxSizeBytes != 2<<20 || limits.MaxBackups != 3 {
+		t.Fatalf("limits=%+v", limits)
+	}
+}

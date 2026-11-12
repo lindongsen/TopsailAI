@@ -132,7 +132,7 @@ func startPolicyProbeCluster(policyDir, token string) error {
 	}
 	cliEnv := map[string]string{}
 	if token != "" {
-		cliEnv["AGENT_CLUSTER_ENDPOINT_TOKENS"] = scopedEndpointTokenMap(token)
+		cliEnv["AGENT_CLUSTER_CLI_ENDPOINT_TOKENS"] = scopedEndpointTokenMap(token)
 	}
 	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{
 		EndpointEnvironment: endpointEnv,
@@ -157,9 +157,9 @@ func usePolicyProbeCredential(kind string) error {
 	case "missing":
 		activeScenario.realCluster.CLIEnv = nil
 	case "wrong":
-		activeScenario.realCluster.CLIEnv = []string{"AGENT_CLUSTER_ENDPOINT_TOKENS=" + scopedEndpointTokenMap("wrong-token")}
+		activeScenario.realCluster.CLIEnv = []string{"AGENT_CLUSTER_CLI_ENDPOINT_TOKENS=" + scopedEndpointTokenMap("wrong-token")}
 	case "unlisted":
-		activeScenario.realCluster.CLIEnv = []string{"AGENT_CLUSTER_ENDPOINT_TOKENS=" + scopedEndpointTokenMap("unlisted-token")}
+		activeScenario.realCluster.CLIEnv = []string{"AGENT_CLUSTER_CLI_ENDPOINT_TOKENS=" + scopedEndpointTokenMap("unlisted-token")}
 	default:
 		return fmt.Errorf("unknown credential kind %q", kind)
 	}

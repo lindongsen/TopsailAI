@@ -100,7 +100,7 @@ func startModelClusterWithScopes(scopes []string) error {
 			return err
 		}
 		options.EndpointEnvironment = map[string]string{"AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR": policyDir}
-		options.CLIEnvironment = map[string]string{"AGENT_CLUSTER_ENDPOINT_TOKENS": scopedEndpointTokenMap(token)}
+		options.CLIEnvironment = map[string]string{"AGENT_CLUSTER_CLI_ENDPOINT_TOKENS": scopedEndpointTokenMap(token)}
 	}
 	cluster, err := harness.StartCluster(activeTest, options)
 	if err != nil {
