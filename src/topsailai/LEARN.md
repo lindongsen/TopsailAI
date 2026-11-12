@@ -263,3 +263,11 @@ Trigger: null-response recovery reset its injection flag when a different retrya
 Action: separate segment-local state from request-wide state: reset only the consecutive-null counter on an intervening error, keep one request-wide `injected_for_request` guard until request-final cleanup, and verify the real HTTP/SSE request bodies across both continuous and interrupted streaks.
 
 Why this prevents recurrence: retry classification may restart many times inside one bounded request, but an additive side effect that remains live must not be re-authorized until its owner removes it. The request-wide guard makes message growth constant rather than proportional to the number of retry segments.
+
+## An open merge in a shared repository blocks every partial commit
+
+Trigger: `git commit -m "..." -- <5 own paths>` failed with `fatal: cannot do a partial commit during a merge`. Another agent had an open merge in the same repository (`MERGE_HEAD` present, one conflict in a sibling project's `MEMORY.md`). Git refuses a pathspec commit for the whole duration of a merge, no matter how narrow the pathspec is, so the pathspec discipline that normally isolates a commit from foreign staged work is not sufficient on its own.
+
+Action: detect the merge state before committing with `ls .git/MERGE_HEAD` and `git diff --name-only --diff-filter=U`. When a merge is open, do NOT conclude it with `git commit` and do NOT abort it with `git merge --abort`: concluding sweeps in every foreign staged entry, and aborting destroys another agent's in-flight resolution. Poll until the owning agent concludes the merge, then re-verify the index and the own files before committing.
+
+Why this prevents recurrence: the merge is repository-wide state owned by whoever started it, so a commit that looks locally correct is rejected by a condition that has nothing to do with the change. Both obvious workarounds are destructive to another agent's work, and the conflict file here belonged to a sibling project outside this workspace. Polling is the only action that neither corrupts the merge nor abandons the commit. Re-checking the index afterwards matters too: the index changed twice during the wait, and the foreign staged entries disappeared only when the merge commit landed.

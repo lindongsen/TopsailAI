@@ -40,7 +40,7 @@ COLLECTION_DELAY_MS=5000
 # The deployment scripts install conf/command-allowlist.conf.example under this
 # name, so the Endpoint starts with the shipped policy in force. Unset this value
 # to disable command execution entirely.
-COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf
+COMMAND_ALLOWLIST_FILE=command-allowlist.conf
 
 # Control action catalog for the `ctl` operator command. This file is the only
 # source of ctl. actions: the action names, their permission, their payload
@@ -49,7 +49,7 @@ COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf
 # bundle root. The deployment scripts install conf/control-actions.conf.example
 # under this name. Unset this value to advertise no ctl. action at all, which
 # refuses every ctl. operation; that is the fail-closed default, not an error.
-CONTROL_ACTION_FILE=conf/control-actions.conf
+CONTROL_ACTION_FILE=control-actions.conf
 
 # Access policy directory for the `endpoint-token` authorization boundary. Each
 # file in this directory describes exactly one caller token: the endpoints that
@@ -58,18 +58,18 @@ CONTROL_ACTION_FILE=conf/control-actions.conf
 # is the permissive default and the opposite of the fail-closed defaults above:
 # an Endpoint with no policy directory has no authorization boundary at all, so a
 # node that must refuse a caller has to name a directory here.
-ENDPOINT_ACCESS_POLICY_DIR=policy
+ENDPOINT_ACCESS_POLICY_DIR=../../policy
 
 # TLS material, relative to the bundle root.
-TLS_CA_FILE=certs/ca.pem
-TLS_CERTIFICATE_FILE=certs/node.pem
-TLS_KEY_FILE=certs/node-key.pem
+TLS_CA_FILE=../../certs/endpoint/ca.pem
+TLS_CERTIFICATE_FILE=../../certs/endpoint/node.pem
+TLS_KEY_FILE=../../certs/endpoint/node-key.pem
 
 # State and logs, relative to the bundle root.
-DATABASE_PATH=data/endpoint.sqlite
-LOG_PATH=logs/endpoint.log
-PID_FILE=run/endpoint.pid
-STDOUT_LOG=logs/endpoint.stdout.log
+DATABASE_PATH=../../data/endpoint/endpoint.sqlite
+LOG_PATH=../../logs/endpoint/endpoint.log
+PID_FILE=../../run/endpoint/endpoint.pid
+STDOUT_LOG=../../logs/endpoint/endpoint.stdout.log
 
 # Graceful shutdown window before SIGKILL.
 STOP_TIMEOUT_SECONDS=5

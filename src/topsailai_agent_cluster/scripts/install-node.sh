@@ -6,7 +6,7 @@
 #
 #   <bundle>/
 #     install-node.sh           this script
-#     conf/node.conf            role configuration
+#     conf/<role>/node.conf            role configuration
 #     bin/agent-cluster-<role>  the role binary
 #     bin/agent-cluster-cli     the operator CLI (endpoint bundles only)
 #     lib/cli-env.sh            shared per-user env-file writer
@@ -43,7 +43,7 @@ CLI_NAME="agent-cluster-cli"
 CLI_ALIASES="topsailai_agent_cluster topsailai2"
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-CONFIG_FILE="${SCRIPT_DIR}/conf/node.conf"
+CONFIG_FILE=""
 CLI_ENV_LIB="${SCRIPT_DIR}/lib/cli-env.sh"
 
 function die() {
@@ -74,10 +74,28 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# Selects the sole role configuration in a relocatable bundle. A bundle carrying
+# both roles is ambiguous and must be installed with a role-specific bundle.
+function select_config() {
+    local candidates=()
+    local candidate
+    for candidate in "${SCRIPT_DIR}/conf/server/node.conf" "${SCRIPT_DIR}/conf/endpoint/node.conf"; do
+        [ -f "${candidate}" ] && candidates+=("${candidate}")
+    done
+    if [ "${#candidates[@]}" -eq 1 ]; then
+        CONFIG_FILE="${candidates[0]}"
+        return
+    fi
+    if [ "${#candidates[@]}" -eq 0 ]; then
+        die "no role configuration found below ${SCRIPT_DIR}/conf"
+    fi
+    die "multiple role configurations found; use a role-specific bundle"
+}
+
 # Loads the role configuration exactly as the node controller does, so the
 # installer and the runtime never disagree about identity or addresses.
 function load_config() {
-    [ -f "${CONFIG_FILE}" ] || die "missing configuration ${CONFIG_FILE}"
+    select_config
     while IFS='=' read -r key _; do
         case "${key}" in
             AGENT_CLUSTER_*) unset "${key}" ;;

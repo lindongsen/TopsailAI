@@ -52,7 +52,7 @@ function local_ctl() {
     local role="$1"
     shift
     ensure_control
-    "${CONTROL}" -c "${LOCAL_BUNDLE}/conf/${role}.conf" "$@"
+    "${CONTROL}" -c "${LOCAL_BUNDLE}/conf/${role}/node.conf" "$@"
 }
 
 # Reports the pid of a live relay hop for one published port.
@@ -138,7 +138,7 @@ function status_relay() {
 # bundle, so the launcher only has to enter the container and delegate.
 function container_ctl() {
     docker exec "${CONTAINER_NAME}" bash -c \
-        "cd '${CONTAINER_BUNDLE_GUEST}' && ./agent-clusterctl -c conf/node.conf $*" ||
+        "cd '${CONTAINER_BUNDLE_GUEST}' && ./agent-clusterctl -c conf/endpoint/node.conf $*" ||
         die "cannot run agent-clusterctl inside ${CONTAINER_NAME}"
 }
 

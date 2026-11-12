@@ -162,7 +162,7 @@ func TestEndpointTemplateNamesTheInstalledCatalog(t *testing.T) {
 	if configured == "" {
 		t.Fatalf("the endpoint template must set CONTROL_ACTION_FILE, otherwise a fresh node advertises no ctl. action")
 	}
-	if !strings.HasSuffix(configured, "/control-actions.conf") {
+	if filepath.Base(configured) != "control-actions.conf" {
 		t.Fatalf("the template names %q, but the deployment scripts install control-actions.conf", configured)
 	}
 }

@@ -15,17 +15,17 @@ CHANNEL_LISTEN_ADDR=127.0.0.1:53943
 AUTH_TOKEN=replace-with-a-real-token
 
 # TLS material, relative to the bundle root.
-TLS_CA_FILE=certs/ca.pem
-TLS_CERTIFICATE_FILE=certs/node.pem
-TLS_KEY_FILE=certs/node-key.pem
+TLS_CA_FILE=../../certs/server/ca.pem
+TLS_CERTIFICATE_FILE=../../certs/server/node.pem
+TLS_KEY_FILE=../../certs/server/node-key.pem
 
 # State and logs, relative to the bundle root.
-DATABASE_PATH=data/server.sqlite
+DATABASE_PATH=../../data/server/server.sqlite
 # Remove offline Endpoint inventory after this duration.
 ENDPOINT_EXPIRY=5m
-LOG_PATH=logs/server.log
-PID_FILE=run/server.pid
-STDOUT_LOG=logs/server.stdout.log
+LOG_PATH=../../logs/server/server.log
+PID_FILE=../../run/server/server.pid
+STDOUT_LOG=../../logs/server/server.stdout.log
 
 # Graceful shutdown window before SIGKILL.
 STOP_TIMEOUT_SECONDS=5

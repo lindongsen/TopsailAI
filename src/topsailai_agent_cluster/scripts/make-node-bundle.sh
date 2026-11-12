@@ -81,8 +81,8 @@ BINARY_NAME="agent-cluster-${ROLE}"
 CLI_PKG="./src/main/agent-cluster-cli"
 CLI_NAME="agent-cluster-cli"
 
-mkdir -p "${DEST}/bin" "${DEST}/conf" "${DEST}/certs" "${DEST}/lib" \
-    "${DEST}/data" "${DEST}/logs" "${DEST}/run" ||
+mkdir -p "${DEST}/bin" "${DEST}/conf/${ROLE}" "${DEST}/certs/${ROLE}" "${DEST}/lib" \
+    "${DEST}/data/${ROLE}" "${DEST}/logs/${ROLE}" "${DEST}/run/${ROLE}" ||
     die "cannot create ${DEST}"
 
 # Build the role binary. A static build removes any dependency on the node libc.
@@ -114,23 +114,23 @@ install -m 0755 "${SCRIPT_DIR}/install-node.sh" "${DEST}/install-node.sh" ||
     die "cannot install installer"
 install -m 0644 "${SCRIPT_DIR}/lib/cli-env.sh" "${DEST}/lib/cli-env.sh" ||
     die "cannot install the shared CLI env library"
-install -m 0644 "${CONFIG}" "${DEST}/conf/node.conf" ||
+install -m 0644 "${CONFIG}" "${DEST}/conf/${ROLE}/node.conf" ||
     die "cannot install configuration"
-install -m 0644 "${CA}" "${DEST}/certs/ca.pem" || die "cannot install CA"
-install -m 0644 "${CERT}" "${DEST}/certs/node.pem" || die "cannot install certificate"
-install -m 0600 "${KEY}" "${DEST}/certs/node-key.pem" || die "cannot install key"
+install -m 0644 "${CA}" "${DEST}/certs/${ROLE}/ca.pem" || die "cannot install CA"
+install -m 0644 "${CERT}" "${DEST}/certs/${ROLE}/node.pem" || die "cannot install certificate"
+install -m 0600 "${KEY}" "${DEST}/certs/${ROLE}/node-key.pem" || die "cannot install key"
 # The endpoint configuration names conf/command-allowlist.conf, so the bundle must
 # carry that file. Without it the Endpoint refuses to start, because a missing
 # allowlist is a configuration error rather than an implicit unrestricted policy.
 if [ "${ROLE}" = "endpoint" ]; then
     install -m 0644 "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
-        "${DEST}/conf/command-allowlist.conf" ||
+        "${DEST}/conf/${ROLE}/command-allowlist.conf" ||
         die "cannot install the command allowlist"
     # The control action catalog is the only source of ctl. actions. A missing file
     # is not a startup error: it fails closed by advertising no ctl. action at all.
     # The bundle still ships the reviewed catalog so a fresh node keeps the feature.
     install -m 0644 "${PROJECT_DIR}/conf/control-actions.conf.example" \
-        "${DEST}/conf/control-actions.conf" ||
+        "${DEST}/conf/${ROLE}/control-actions.conf" ||
         die "cannot install the control action catalog"
 fi
 
@@ -146,7 +146,7 @@ if [ -n "${ADAPTERS}" ]; then
         echo ""
         echo "# Adapter override supplied when the bundle was assembled."
         echo "ADAPTERS='${ADAPTERS}'"
-    } >>"${DEST}/conf/node.conf" || die "cannot append adapter override"
+    } >>"${DEST}/conf/${ROLE}/node.conf" || die "cannot append adapter override"
 fi
 
 echo "bundle ready: ${DEST}"
@@ -155,8 +155,8 @@ echo "  binary  : bin/${BINARY_NAME}"
 if [ "${ROLE}" = "endpoint" ]; then
     echo "  cli     : bin/${CLI_NAME}"
 fi
-echo "  config  : conf/node.conf"
-echo "carry it to the node and run: ./agent-clusterctl doctor && ./agent-clusterctl start"
+echo "  config  : conf/${ROLE}/node.conf"
+echo "carry it to the node and run: ./agent-clusterctl -c conf/${ROLE}/node.conf doctor && ./agent-clusterctl -c conf/${ROLE}/node.conf start"
 if [ "${ROLE}" = "endpoint" ]; then
     echo "install the CLI and its per-user env file with: ./install-node.sh"
 fi
