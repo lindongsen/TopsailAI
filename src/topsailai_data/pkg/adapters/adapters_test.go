@@ -51,6 +51,9 @@ func (s *stubActualDataAdapter) ReadArchive(ctx context.Context, ref string) (io
 func (s *stubActualDataAdapter) WriteFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error) {
 	return ref, nil
 }
+func (s *stubActualDataAdapter) AppendFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error) {
+	return ref, nil
+}
 func (s *stubActualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
 	return nil, nil
 }

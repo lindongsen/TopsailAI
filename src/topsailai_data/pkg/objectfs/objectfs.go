@@ -11,7 +11,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/filetool"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
@@ -148,23 +146,60 @@ func (f *ObjectFS) WriteFile(p string, data []byte, _ os.FileMode) error {
 	return f.mgr.WriteActualFile(f.ctx, f.id, name, bytes.NewReader(data))
 }
 
+// WriteFileFrom replaces one file inside the object from a stream.
+//
+// The manager holds exclusive object custody for the whole write and the
+// adapter copies the stream, so a large source is never buffered in memory and
+// a cooperating process cannot interleave its own write.
+func (f *ObjectFS) WriteFileFrom(p string, r io.Reader, _ os.FileMode) error {
+	name, err := normalize(p)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot write the object root as a file")
+	}
+	return f.mgr.WriteActualFile(f.ctx, f.id, name, r)
+}
+
 // AppendFile appends to one file inside the object.
 //
-// The existing content is read first and the combined content is written back
-// through the manager, so the append is atomic and lock-protected. A missing
-// file is treated as empty content.
-func (f *ObjectFS) AppendFile(p string, data []byte, perm os.FileMode) error {
-	existing, err := f.ReadFile(p)
+// The manager holds exclusive object custody for the whole append and the
+// adapter appends in place, so a cooperating process cannot interleave its own
+// write and the existing content is never read back into memory.
+func (f *ObjectFS) AppendFile(p string, data []byte, _ os.FileMode) error {
+	return f.AppendFrom(p, bytes.NewReader(data), 0o644)
+}
+
+// AppendFrom appends a stream to one file inside the object.
+//
+// The stream is copied by the adapter, so a large source is never buffered in
+// memory.
+func (f *ObjectFS) AppendFrom(p string, r io.Reader, _ os.FileMode) error {
+	name, err := normalize(p)
 	if err != nil {
-		if !errors.Is(err, apperrors.ErrObjectNotFound) {
-			return err
-		}
-		existing = nil
+		return err
 	}
-	combined := make([]byte, 0, len(existing)+len(data))
-	combined = append(combined, existing...)
-	combined = append(combined, data...)
-	return f.WriteFile(p, combined, perm)
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot append to the object root as a file")
+	}
+	return f.mgr.AppendActualFile(f.ctx, f.id, name, r)
+}
+
+// UpdateFile performs a lock-protected read-modify-write on one file.
+//
+// Exclusive object custody is acquired once and held across both the read and
+// the write, so a cooperating process cannot interleave its own update between
+// them. The callback receives the current content and whether the file exists.
+func (f *ObjectFS) UpdateFile(p string, fn func(existing []byte, exists bool) ([]byte, error)) error {
+	name, err := normalize(p)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot update the object root as a file")
+	}
+	return f.mgr.UpdateActualFile(f.ctx, f.id, name, fn)
 }
 
 // Stat reports information about one file or folder inside the object.

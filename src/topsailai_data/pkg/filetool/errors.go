@@ -17,6 +17,10 @@ var ErrInvalidParameter = errors.New("invalid parameter")
 // ErrInvalidRange reports a line range that cannot be applied to a file.
 var ErrInvalidRange = errors.New("invalid line range")
 
+// ErrFileNotFound reports a file that does not exist when an operation
+// requires an existing file.
+var ErrFileNotFound = errors.New("file not found")
+
 // ParameterError describes an invalid tool argument in a machine-readable way.
 // It mirrors the invalid_request status used by the TopsailAI tool layer.
 type ParameterError struct {

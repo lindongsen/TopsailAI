@@ -1,7 +1,7 @@
 package filetool
 
 import (
-	"os"
+	"io"
 	"path/filepath"
 
 	"github.com/pmezard/go-difflib/difflib"
@@ -40,43 +40,42 @@ func WriteFile(path string, content string, opts WriteFileOptions) error {
 }
 
 // insertAt inserts content at the requested position without removing bytes.
+//
+// The read and the write happen inside one lock-protected update, so a
+// cooperating process cannot interleave its own write and silently discard this
+// one.
 func insertAt(path, content string, seek int64, fs FS) error {
-	existing, exists, err := readExisting(path, fs)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return writeText(path, content, fs)
-	}
 	if seek == -1 {
 		return appendText(path, content, fs)
 	}
-
-	position := resolvePosition(seek, len(existing), true)
-	updated := existing[:position] + content + existing[position:]
-	return writeText(path, updated, fs)
+	return updateText(path, fs, func(existing string, exists bool) (string, error) {
+		if !exists {
+			return content, nil
+		}
+		position := resolvePosition(seek, len(existing), true)
+		return existing[:position] + content + existing[position:], nil
+	})
 }
 
 // overwriteAt replaces bytes starting at the requested position.
+//
+// The read and the write happen inside one lock-protected update, so a
+// cooperating process cannot interleave its own write and silently discard this
+// one.
 func overwriteAt(path, content string, seek int64, fs FS) error {
 	if seek == 0 {
 		return writeText(path, content, fs)
 	}
-
-	existing, exists, err := readExisting(path, fs)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return writeText(path, content, fs)
-	}
-
-	position := resolvePosition(seek, len(existing), false)
-	if position+len(content) <= len(existing) {
-		updated := existing[:position] + content + existing[position+len(content):]
-		return writeText(path, updated, fs)
-	}
-	return writeText(path, existing[:position]+content, fs)
+	return updateText(path, fs, func(existing string, exists bool) (string, error) {
+		if !exists {
+			return content, nil
+		}
+		position := resolvePosition(seek, len(existing), false)
+		if position+len(content) <= len(existing) {
+			return existing[:position] + content + existing[position+len(content):], nil
+		}
+		return existing[:position] + content, nil
+	})
 }
 
 // resolvePosition converts a seek value into a byte position within content.
@@ -104,16 +103,27 @@ func resolvePosition(seek int64, length int, insert bool) int {
 	return int(seek)
 }
 
-// readExisting returns the current file content and whether the file exists.
-func readExisting(path string, fs FS) (string, bool, error) {
-	data, err := resolveFS(fs).ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", false, nil
+// updateText performs a lock-protected read-modify-write on a file.
+//
+// The callback receives the current content and whether the file exists, and
+// returns the replacement content. Parent folders are created before the update
+// so a write into a new folder succeeds. The read and the write happen inside
+// one custody scope, so a cooperating process cannot interleave its own update
+// and silently discard this one.
+func updateText(path string, fs FS, fn func(existing string, exists bool) (string, error)) error {
+	target := resolveFS(fs)
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := target.MkdirAll(dir, 0o755); err != nil {
+			return err
 		}
-		return "", false, err
 	}
-	return string(data), true, nil
+	return target.UpdateFile(path, func(existing []byte, exists bool) ([]byte, error) {
+		updated, err := fn(string(existing), exists)
+		if err != nil {
+			return nil, err
+		}
+		return []byte(updated), nil
+	})
 }
 
 // writeText writes content to a file, creating parent folders as needed.
@@ -151,6 +161,41 @@ func appendText(path, content string, fs FS) error {
 		}
 	}
 	return target.AppendFile(path, []byte(content), 0o644)
+}
+
+// WriteFileFrom replaces a file from a stream, creating parent folders as
+// needed.
+//
+// It exists so a large source is copied instead of being buffered in memory.
+// The whole write happens under one lock-protected custody scope.
+func WriteFileFrom(path string, r io.Reader, fs FS) error {
+	if path == "" {
+		return invalidParameter("file_path", path, "must be a non-empty string")
+	}
+	target := resolveFS(fs)
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := target.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return target.WriteFileFrom(path, r, 0o644)
+}
+
+// AppendFrom appends a stream to a file, creating parent folders as needed.
+//
+// It exists so a large source is copied instead of being buffered in memory.
+// The whole append happens under one lock-protected custody scope.
+func AppendFrom(path string, r io.Reader, fs FS) error {
+	if path == "" {
+		return invalidParameter("file_path", path, "must be a non-empty string")
+	}
+	target := resolveFS(fs)
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := target.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return target.AppendFrom(path, r, 0o644)
 }
 
 // unifiedDiff renders a unified diff between two texts.

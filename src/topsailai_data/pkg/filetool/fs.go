@@ -6,8 +6,9 @@ import (
 )
 
 // ReadSeekCloser combines the reader, seeker, and closer capabilities that the
-// read paths need. An operating-system file satisfies it directly; an
-// object-backed implementation buffers content and satisfies it in memory.
+// read paths need. An operating-system file satisfies it directly, and an
+// object-backed implementation forwards the adapter stream when it is seekable
+// so a large file is never buffered in memory.
 type ReadSeekCloser interface {
 	io.Reader
 	io.Seeker
@@ -33,6 +34,22 @@ type FS interface {
 
 	// AppendFile appends data to a file, creating it when missing.
 	AppendFile(path string, data []byte, perm os.FileMode) error
+
+	// WriteFileFrom replaces the content of a file from a stream, creating it
+	// when missing. It exists so a large source is copied instead of being
+	// buffered in memory.
+	WriteFileFrom(path string, r io.Reader, perm os.FileMode) error
+
+	// AppendFrom appends a stream to a file, creating it when missing. It exists
+	// so a large source is copied instead of being buffered in memory.
+	AppendFrom(path string, r io.Reader, perm os.FileMode) error
+
+	// UpdateFile performs a lock-protected read-modify-write. The callback
+	// receives the current content and whether the file exists, and returns the
+	// replacement content. An implementation must hold exclusive custody for the
+	// whole read and write so a cooperating process cannot interleave its own
+	// update and silently discard this one.
+	UpdateFile(path string, fn func(existing []byte, exists bool) ([]byte, error)) error
 
 	// Stat reports file information.
 	Stat(path string) (os.FileInfo, error)
@@ -76,6 +93,54 @@ func (OSFS) AppendFile(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return fd.Sync()
+}
+
+// AppendFrom appends a stream to an operating-system file.
+func (OSFS) AppendFrom(path string, r io.Reader, perm os.FileMode) error {
+	fd, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	defer fd.Close()
+	if _, err := io.Copy(fd, r); err != nil {
+		return err
+	}
+	return fd.Sync()
+}
+
+// WriteFileFrom replaces an operating-system file from a stream.
+func (OSFS) WriteFileFrom(path string, r io.Reader, perm os.FileMode) error {
+	fd, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	defer fd.Close()
+	if _, err := io.Copy(fd, r); err != nil {
+		return err
+	}
+	return fd.Sync()
+}
+
+// UpdateFile performs a read-modify-write on an operating-system file.
+//
+// The operating-system implementation has no advisory lock to hold, so it reads
+// and writes directly. Callers that need cross-process serialization must use an
+// implementation that provides it.
+func (OSFS) UpdateFile(path string, fn func(existing []byte, exists bool) ([]byte, error)) error {
+	existing, err := os.ReadFile(path)
+	exists := true
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		existing = nil
+		exists = false
+	}
+	updated, err := fn(existing, exists)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, updated, 0o644)
 }
 
 // Stat stats an operating-system path.

@@ -1433,6 +1433,9 @@ func (e *errorCloseActualDataAdapter) ReadArchive(ctx context.Context, ref strin
 func (e *errorCloseActualDataAdapter) WriteFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error) {
 	return ref, nil
 }
+func (e *errorCloseActualDataAdapter) AppendFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error) {
+	return ref, nil
+}
 func (e *errorCloseActualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }

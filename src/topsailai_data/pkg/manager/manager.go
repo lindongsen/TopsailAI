@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -301,6 +302,86 @@ func (m *Manager) WriteActualFile(ctx context.Context, id models.ObjectID, filen
 	}
 	m.recordWrite(ctx, obj)
 	return nil
+}
+
+// AppendActualFile appends to a single file in the object's actual data.
+//
+// The whole append runs under one exclusive object custody, so a cooperating
+// process cannot interleave its own write and silently discard this one. The
+// adapter appends in place, so a large existing file is never read back into
+// memory.
+func (m *Manager) AppendActualFile(ctx context.Context, id models.ObjectID, filename string, r io.Reader) error {
+	obj, lock, err := m.lockActiveObject(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer releaseNamespaceLock(lock)
+
+	if _, err := m.actual.AppendFile(ctx, obj.DataRef, filename, r); err != nil {
+		return fmt.Errorf("append file: %w", err)
+	}
+
+	obj.UpdatedAt = time.Now()
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return err
+	}
+	m.recordWrite(ctx, obj)
+	return nil
+}
+
+// UpdateActualFile performs a lock-protected read-modify-write on one file.
+//
+// Exclusive object custody is acquired once and held across both the read and
+// the write, so a cooperating process cannot interleave its own update between
+// them. The callback receives the current content and whether the file exists,
+// and returns the replacement content. Returning an error aborts the update and
+// leaves the stored content unchanged.
+func (m *Manager) UpdateActualFile(ctx context.Context, id models.ObjectID, filename string, fn func(existing []byte, exists bool) ([]byte, error)) error {
+	obj, lock, err := m.lockActiveObject(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer releaseNamespaceLock(lock)
+
+	existing, exists, err := m.readActualFileUnderCustody(ctx, obj, filename)
+	if err != nil {
+		return err
+	}
+	updated, err := fn(existing, exists)
+	if err != nil {
+		return err
+	}
+
+	if _, err := m.actual.WriteFile(ctx, obj.DataRef, filename, bytes.NewReader(updated)); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+
+	obj.UpdatedAt = time.Now()
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return err
+	}
+	m.recordWrite(ctx, obj)
+	return nil
+}
+
+// readActualFileUnderCustody reads one file while the caller already holds
+// exclusive object custody. It never acquires custody again, because the
+// advisory lock is not re-entrant.
+func (m *Manager) readActualFileUnderCustody(ctx context.Context, obj *models.Object, filename string) ([]byte, bool, error) {
+	rc, err := m.actual.ReadFile(ctx, obj.DataRef, filename)
+	if err != nil {
+		if stderrors.Is(err, errors.ErrObjectNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	defer rc.Close()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, false, fmt.Errorf("read file %q: %w", filename, err)
+	}
+	return data, true, nil
 }
 
 // ReadActualArchive returns a tar archive stream of the object's actual data.

@@ -269,6 +269,57 @@ func (a *actualDataAdapter) WriteFile(ctx context.Context, ref string, filename 
 	return resultRef, nil
 }
 
+// AppendFile appends to a single file in the object's actual data without
+// rewriting the existing content. Parent directories are created as needed and
+// a missing file is created. Appending in place keeps memory use constant, so a
+// large existing file is never read back into memory.
+//
+// The caller must retain object custody for the whole append so a cooperating
+// process cannot interleave its own write.
+func (a *actualDataAdapter) AppendFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	resultRef := ref
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if err := validateActualFilename(filename); err != nil {
+		return "", err
+	}
+	fullPath, err := resolvePayloadFile(ref, filename)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return "", fmt.Errorf("create parent directories for %q: %w", fullPath, err)
+	}
+
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(fullPath); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat destination %q: %w", fullPath, err)
+	}
+	if err := cleanupStaleWriteTemps(filepath.Dir(fullPath), time.Now()); err != nil {
+		return "", err
+	}
+
+	f, err := os.OpenFile(fullPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, mode)
+	if err != nil {
+		return "", fmt.Errorf("open file %q for append: %w", fullPath, err)
+	}
+	defer f.Close()
+	if _, err := io.Copy(f, r); err != nil {
+		return "", fmt.Errorf("append to file %q: %w", fullPath, err)
+	}
+	if err := f.Sync(); err != nil {
+		return "", fmt.Errorf("sync appended file %q: %w", fullPath, err)
+	}
+	return resultRef, nil
+}
+
 // ReadFile returns a stream that reads a single file from the object's actual
 // data.
 func (a *actualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
