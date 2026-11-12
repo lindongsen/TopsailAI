@@ -306,6 +306,12 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
+            "cmd": "start [-f <folder>]",
+            "desc": "Launch an agent in a project folder. Without an option the managed project list is displayed and one row number is requested, so the selection uses exactly the list `p` shows. With -f/--folder the list is skipped and the named folder is launched directly; the folder must exist. Use `--agent-mode raw|dtach|tmux` to control how the agent process is launched (default: dtach).",
+            "example": "Example: start  or  start -f /work/my-project  or  start --folder=/work/my-project",
+            "scopes": ["workspace"],
+        },
+        {
             "cmd": "project add <path> [name]",
             "desc": "Non-interactive: add a project path to the managed project list stored in .projects.jsonl under TOPSAILAI_HOME. Duplicate paths are rejected.",
             "example": "Example: topsailai project add /work/my-project my-project",

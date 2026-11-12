@@ -157,6 +157,7 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/refresh` (alias `/list`, `/l`) | Re-scan the task directory and refresh the list. `r all`, `/refresh all`, `list all` or `l all` also includes rows whose metadata status is `completed`; a plain `r`, `/refresh`, `list` or `l` restores the default hidden view. |
 | `/session <number\|session_id>` (alias `/messages`) | Retrieve full context messages for a session. A row without a session id (a temporary session displayed as `(temp)`) is served through its control channel when one exists; see [Workspace session history](#workspace-session-history). |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
+| `start [-f <folder>]` | Launch an agent in a project folder. Without `-f`, display the managed project list and launch in the row number you enter. With `-f`, launch in that folder directly and skip the list and the prompt. Workspace scope only. |
 | `/resume <number>` | Resume the selected running session with the effective model selection. |
 | `/models` | List registry entries and select the workspace default or active-project override. |
 | `/models current` | Show the effective model and whether it comes from project or workspace selection. |
@@ -347,6 +348,23 @@ The managed project list is stored independently from session history in `{TOPSA
 - `p add` resolves the path to an absolute path and rejects non-existent directories or duplicate paths.
 - `p del <number>` asks for `y/N` confirmation and only removes the registry entry; it does not delete the project folder on disk.
 - When the managed project list is active, `agent <number>` launches an agent in the selected project's folder.
+
+### start
+
+`start` launches an agent in a project folder. It is available in workspace scope only; project, session and doc scope reject it with `/start is only available in workspace scope.`, and the restricted managed-project view keeps its documented command set and rejects it too. The leading `/` is optional, so `start` and `/start` are the same command.
+
+Two forms are accepted:
+
+| Form | Behavior |
+|------|----------|
+| `start` | Display the managed project list, then ask for a row number. The list is exactly the one `p` displays, and the number selects from that list. |
+| `start -f <folder>` | Launch in `<folder>` directly. The list is not displayed and no prompt is issued. |
+
+Accepted folder spellings are `-f <folder>`, `--folder <folder>`, `-f=<folder>` and `--folder=<folder>`. The folder is the whole remainder of the line, so a path containing spaces needs no quoting. The path is expanded, made absolute, and must be an existing directory; otherwise `[ERROR] Folder is not a directory: <path>` is printed and nothing is launched.
+
+When the list is shown, the prompt is `Project number (q to cancel): `. Entering `q` or `quit` cancels, and an answer that is not a number in `1..N` prints `[ERROR] Invalid project number. Please enter 1-N.` and launches nothing. An empty managed list prints the existing warning and does not prompt.
+
+The launched agent uses the same launch boundary as `/agent` and `p agent <number>`, so the effective model selection and the `--agent-mode` value apply to the child process.
 
 ### Interactive message commands
 

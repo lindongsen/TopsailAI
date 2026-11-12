@@ -93,7 +93,7 @@ def get_available_completions() -> List[str]:
     if cli_state.current_scope == "runtime":
         completions.append("/ctx.btw-all")
     if cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects:
-        completions.extend(["/kill", "/driver", "/driver status", "/driver stop", "/driver log", "/driver meta"])
+        completions.extend(["/kill", "/driver", "/driver status", "/driver stop", "/driver log", "/driver meta", "/start"])
 
     if (cli_state.current_scope == "runtime" or
             (cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects)):

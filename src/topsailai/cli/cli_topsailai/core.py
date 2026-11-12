@@ -478,6 +478,91 @@ def _prompt_project_workspace(entries: List[dict]) -> Optional[str]:
         return None
 
 
+def _parse_start_folder(user_input: str) -> Optional[str]:
+    """Return the folder named by ``-f/--folder`` on a ``start`` line.
+
+    The folder is the whole remainder of the line, so a path containing spaces
+    needs no quoting. ``-f=PATH`` and ``--folder=PATH`` are accepted as single
+    tokens. ``None`` means the line carries no folder option, so the caller
+    shows the managed project list and asks for a row number instead.
+
+    Raises:
+        ValueError: The line is malformed or the option has no value, so a typo
+            never launches an agent in an unintended folder.
+    """
+    parts = user_input.split(None, 2)
+    if len(parts) == 1:
+        return None
+    option = parts[1]
+    if option in ("-f", "--folder"):
+        if len(parts) < 3 or not parts[2].strip():
+            raise ValueError("Usage: start [-f <folder>]")
+        return parts[2].strip()
+    if option.startswith(("-f=", "--folder=")):
+        value = user_input.split("=", 1)[1].strip()
+        if not value:
+            raise ValueError("Usage: start [-f <folder>]")
+        return value
+    raise ValueError("Usage: start [-f <folder>]")
+
+
+def _resolve_start_folder(folder: str) -> Optional[str]:
+    """Return the absolute folder named by ``-f/--folder``.
+
+    The path is expanded and made absolute, then required to be an existing
+    directory, so a typo is reported instead of launching an agent in a folder
+    that does not exist.
+    """
+    target = os.path.abspath(os.path.expanduser(folder.strip()))
+    if not os.path.isdir(target):
+        print(f"{Colors.RED}[ERROR] Folder is not a directory: {target}{Colors.RESET}")
+        return None
+    return target
+
+
+def _handle_start_command(folder: Optional[str], agent_mode: str = "dtach") -> None:
+    """Launch an agent in a chosen project folder.
+
+    Without a folder the managed project list is displayed and one row number
+    is requested, so the operator picks from exactly the list ``p`` shows. With
+    a folder the list is skipped entirely and no prompt is issued.
+    """
+    from cli_topsailai.project_scope import (
+        build_managed_project_list,
+        launch_agent_in_folder,
+        print_managed_project_table,
+        resolve_agent_folder,
+    )
+
+    if folder is None:
+        entries = build_managed_project_list()
+        print_managed_project_table(entries)
+        if not entries:
+            return
+        try:
+            answer = _read_input_with_prompt("Project number (q to cancel): ")
+        except (EOFError, KeyboardInterrupt):
+            return
+        if answer.lower() in ("q", "quit"):
+            return
+        # A non-numeric answer must never be read as a folder path, so the row
+        # number is validated here instead of being forwarded to the resolver.
+        if not answer.isdigit() or not 1 <= int(answer) <= len(entries):
+            print(
+                f"{Colors.RED}[ERROR] Invalid project number. "
+                f"Please enter 1-{len(entries)}.{Colors.RESET}"
+            )
+            return
+        target = resolve_agent_folder(answer, entries)
+        if target is None:
+            return
+    else:
+        target = _resolve_start_folder(folder)
+        if target is None:
+            return
+    launch_agent_in_folder(target, agent_mode=agent_mode)
+
+
 def _handle_models_action(
     command: str,
     project_workspace: Optional[str] = None,
@@ -920,6 +1005,24 @@ def prompt_selection(
                     f"r, p, q, p agent <number>{Colors.RESET}"
                 )
                 continue
+
+            # Workspace scope: "start" launches an agent in a project folder.
+            # Without a folder it shows the managed project list and asks for a
+            # row number, so the operator picks from exactly the list "p" shows.
+            # With -f/--folder the list is skipped and no prompt is issued.
+            if first_token in ("/start", "start"):
+                if state.current_scope != "workspace":
+                    print(
+                        f"{Colors.RED}[ERROR] /start is only available in "
+                        f"workspace scope.{Colors.RESET}"
+                    )
+                    continue
+                try:
+                    folder = _parse_start_folder(user_input)
+                except ValueError as error:
+                    print(f"{Colors.RED}[ERROR] {error}{Colors.RESET}")
+                    continue
+                return ("start", folder)
 
             # Project scope: r/recent shows recent session/project history.
             # This must be checked before the global r/refresh binding.
@@ -2224,6 +2327,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                     )
                     continue
                 launch_agent_in_folder(folder, agent_mode=args.agent_mode)
+                continue
+
+            if action == "start":
+                _handle_start_command(value, agent_mode=args.agent_mode)
                 continue
 
             if action == "resume":
