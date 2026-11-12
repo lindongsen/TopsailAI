@@ -11,6 +11,7 @@ from topsailai.events.backends import create_backend
 from topsailai.events.buffer import EventBuffer
 from topsailai.events.config import EventConfig, get_session_id
 from topsailai.events.models import Event
+from topsailai.events.subscribers.fanout import fan_out
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ class EventCollector:
                 **kwargs,
             )
         self._buffer.append(event)
+        fan_out(event)
         if flush:
             self.flush()
 

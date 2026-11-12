@@ -72,6 +72,16 @@ def get_control_socket_path(task_folder: str, session_id: str, pid: int) -> str:
     )
 
 
+def get_event_channel_socket_path(task_folder: str, session_id: str, pid: int) -> str:
+    """Return the absolute UDS event-channel socket path for a session process."""
+    return os.path.abspath(
+        os.path.join(
+            task_folder,
+            f"{session_id}.{pid}.session.events.sock",
+        )
+    )
+
+
 def get_session_stdout_path(task_folder: str, session_id: str | None, pid: int) -> str:
     """Return the absolute stdout path using a file-only fallback for empty IDs."""
     return os.path.abspath(

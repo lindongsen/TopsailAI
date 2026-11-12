@@ -519,6 +519,30 @@ These variables control the independent event recording subsystem.
 | `TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT` | `0` | When `1`, the file backend deletes the current process's event file on interpreter shutdown. Defaults to `0` so events are preserved across restarts. |
 | `TOPSAILAI_EVENTS_FILE_FSYNC` | `1` | When `1`, the file backend flushes each write to disk to improve durability. Set to `0` to reduce I/O overhead at the cost of potential data loss on crash. |
 
+## Event Channel Configuration
+
+These variables control the optional channel that pushes recorded events to external subscribers over a long-lived local connection. The channel is disabled by default and is independent of the control channel.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_EVENT_CHANNEL_ENABLED` | `0` | Master switch. `1` enables the channel, `0` disables it. When disabled, no socket is created and no events are pushed. |
+| `TOPSAILAI_EVENT_CHANNEL_MAX_SUBSCRIBERS` | `8` | Maximum number of concurrent subscribers. A subscribe request beyond this limit is rejected. Positive integer; invalid or non-positive values fall back to `8`. |
+| `TOPSAILAI_EVENT_CHANNEL_QUEUE_SIZE` | `1000` | Maximum number of pending events held for one subscriber. When full, the oldest event is dropped and the drop count increases. Positive integer; invalid or non-positive values fall back to `1000`. |
+| `TOPSAILAI_EVENT_CHANNEL_HEARTBEAT_INTERVAL` | `10` | Interval in seconds at which a subscriber sends a heartbeat. Positive number; invalid or non-positive values fall back to `10`. |
+| `TOPSAILAI_EVENT_CHANNEL_HEARTBEAT_TIMEOUT` | `30` | Idle time in seconds after which a subscriber that sent no heartbeat is disconnected and removed. Positive number; invalid or non-positive values fall back to `30`. |
+| `TOPSAILAI_EVENT_CHANNEL_MAX_FRAME_BYTES` | `1048576` | Maximum accepted size in bytes of one incoming frame. A larger frame is rejected and the connection is closed. Positive integer; invalid or non-positive values fall back to `1048576`. |
+
+### Behavior
+
+- **Delivery is best effort.** A push never waits for confirmation, never retries, and never blocks the producer. A failed push is not reported back to the producer.
+- **No backfill.** Events recorded while a subscriber is disconnected are lost. A reconnect resumes from the current moment.
+- **Subscribers are isolated.** Each subscriber has its own queue, so one slow or disconnected subscriber cannot delay the producer or other subscribers.
+- **Disconnect stops sending.** A failed push, a closed connection, or a heartbeat timeout ends the link and removes the subscriber.
+- **Reconnect replaces.** A subscriber that reconnects with the same identity replaces its previous entry instead of adding a second one.
+- **Unsubscribe closes the link.** An explicit cancellation is confirmed and then the connection is closed.
+- **Filtering is server-side.** A subscriber receives only the event types it requested, so it never has to discard unwanted events.
+- **Drops are observable.** The number of events dropped for a subscriber is recorded and can be inspected.
+
 ## Human Decision Tool
 
 | Variable | Default | Description |

@@ -354,7 +354,91 @@ pytest tests/unit/events/test_decorators.py
 
 ---
 
-## 12. Future Work
+## 12. Event Channel (External Subscribers)
+
+The event channel pushes recorded events to external subscribers over a Unix
+domain socket. It is deliberately independent of the control channel: the
+control channel is request/response and must never be delayed by a slow
+subscriber, while this channel is server-push and tolerates loss.
+
+### Delivery semantics
+
+- **Fire and forget.** The producer never waits for an acknowledgement, never
+  retries, and never blocks. A failed send is not reported back to the producer.
+- **No backfill.** Events recorded while a subscriber is disconnected are lost.
+  A reconnect resumes from the current moment, not from the disconnect point.
+- **Bounded per-subscriber queue.** Each subscriber owns a queue that drops the
+  oldest event on overflow, matching the existing `EventBuffer` policy. The drop
+  count is observable through `Subscriber.dropped`.
+- **Subscriber isolation.** Every subscriber has its own queue and writer
+  thread, so one slow or dead subscriber cannot delay the producer or its peers.
+
+### Lifecycle
+
+| Event | Result |
+|-------|--------|
+| Subscribe | Link established, `subscribed` confirmation sent |
+| Heartbeat | `heartbeat_ack` echoes the client sequence number and refreshes liveness |
+| Send failure, EOF, or heartbeat timeout | Link closed, subscriber removed, sending stops |
+| Reconnect with the same id | Previous entry replaced, so no duplicate delivery |
+| Unsubscribe | `unsubscribed` confirmation sent, then the link closes |
+
+The heartbeat timeout is mandatory rather than optional: after a peer is killed
+the socket can stay half-open and `sendall` keeps succeeding into the kernel
+buffer, so a write failure alone would misreport a dead subscriber as alive.
+
+### Subscriber identity
+
+Identity is client-generated and stable across reconnects. The CLI generates one
+automatically and accepts an explicit override, so a reconnect is recognised as
+the same subscriber instead of a new one.
+
+### Frames
+
+Frames are JSON Lines, one object per line, multiplexed on one connection.
+
+| Direction | Frame | Purpose |
+|-----------|-------|---------|
+| Client to server | `subscribe` | Start receiving; carries `subscriber_id` and an optional filter |
+| Server to client | `subscribed` | Confirmation |
+| Server to client | `event` | One pushed event |
+| Client to server | `heartbeat` | Liveness signal with a client sequence number |
+| Server to client | `heartbeat_ack` | Echoes the sequence number |
+| Client to server | `unsubscribe` | Explicit cancellation |
+| Server to client | `unsubscribed` | Confirmation before the link closes |
+| Server to client | `error` | Protocol or admission failure |
+
+Filter patterns accept `*`, an exact event type, or a trailing `.*` prefix
+wildcard such as `tool_call.*`. Filtering happens on the server so a subscriber
+never receives events it did not ask for.
+
+### Socket ownership
+
+The socket file is `{session_id}.{pid}.session.events.sock` in the task folder.
+Its suffix must stay registered in `context/session_activity.py`; an
+unregistered `*.session.*` suffix makes session cleanup report an unknown owner
+and blocks cleanup permanently.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_EVENT_CHANNEL_ENABLED` | `0` | Master switch; disabled by default so existing behavior is unchanged |
+| `TOPSAILAI_EVENT_CHANNEL_MAX_SUBSCRIBERS` | `8` | Maximum concurrent subscribers |
+| `TOPSAILAI_EVENT_CHANNEL_QUEUE_SIZE` | `1000` | Per-subscriber queue capacity |
+| `TOPSAILAI_EVENT_CHANNEL_HEARTBEAT_INTERVAL` | `10` | Client heartbeat interval in seconds |
+| `TOPSAILAI_EVENT_CHANNEL_HEARTBEAT_TIMEOUT` | `30` | Server idle limit before a subscriber is reclaimed |
+| `TOPSAILAI_EVENT_CHANNEL_MAX_FRAME_BYTES` | `1048576` | Maximum accepted single frame size |
+
+### Client
+
+`bin/topsailai_event_subscribe` connects to a session's channel and prints every
+pushed event as one JSON line. It exits when the link ends, when the event limit
+is reached, or on interrupt.
+
+---
+
+## 13. Future Work
 
 - Implement `DBEventBackend.write()` for persistent database storage.
 - Implement `WebhookEventBackend.write()` for outbound event streaming.

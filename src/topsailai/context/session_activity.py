@@ -23,6 +23,7 @@ _OWNER_SUFFIXES = (
     "events",
     "pipe",
     "sock",
+    "events.sock",
     "stats.jsonl",
     "agent2llm_inject_messages.jsonl",
     "agent2llm_interrupt.flag",
