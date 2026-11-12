@@ -561,10 +561,11 @@ class SummaryScriptScenario(SummarizeHooksScenario):
         from topsailai.ai_base.exception import LLMRetryExhaustedError
         assert isinstance(error, LLMRetryExhaustedError)
         assert error.attempts == 18 and error.manual_cycle_count == 0
-        assert error.retry_reason == "type_error"
-        assert isinstance(error.last_error, TypeError)
+        from topsailai.ai_base.llm_control.exception import LLMNullResponseError
+        assert error.retry_reason == "null_response"
+        assert isinstance(error.last_error, LLMNullResponseError)
         assert error.__cause__ is error.last_error
-        assert error.last_error.args == ("null of response",)
+        assert error.last_error.args == ("LLM response content is blank",)
 
     def close(self):
         """Verify worker settlement before inherited exact server/client/artifact cleanup."""

@@ -14,6 +14,10 @@ class ModelServiceError(Exception):
     """Report an invalid or unavailable model-service response."""
 
 
+class LLMNullResponseError(ModelServiceError):
+    """Report a model response whose content is null or blank."""
+
+
 class LLMServiceSpecialResponseError(ModelServiceError):
     """Report a configured model response that should be retried."""
 

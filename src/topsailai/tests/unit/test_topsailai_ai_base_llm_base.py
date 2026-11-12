@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, call, patch, PropertyMock
 import openai
 
 from topsailai.ai_base.llm_control.exception import (
+    LLMNullResponseError,
     LLMProviderBadRequestError,
     LLMProviderConnectionError,
     LLMProviderInternalServerError,
@@ -1763,6 +1764,33 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         result = model.chat(self.messages)
         
         self.assertEqual(result, ["success"])
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_three_null_responses_inject_continue_into_fourth_attempt(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """The failure Hook adds recovery guidance before the next retry."""
+        model = self._create_mock_model()
+        snapshots = []
+
+        def call_model(messages, tools=None, tool_choice="auto"):
+            snapshots.append([dict(message) for message in messages])
+            if len(snapshots) <= 3:
+                raise LLMNullResponseError("LLM response content is null")
+            return MagicMock(), "ok"
+
+        model.call_llm_model = call_model
+        mock_format.return_value = ["success"]
+
+        result = model.chat(self.messages)
+
+        self.assertEqual(result, ["success"])
+        self.assertEqual(len(snapshots), 4)
+        self.assertNotIn({"role": "user", "content": "continue"}, snapshots[2])
+        self.assertEqual(snapshots[3][-1], {"role": "user", "content": "continue"})
 
     @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
