@@ -19,19 +19,27 @@ from topsailai.events.subscribers.registry import (
     DEFAULT_MAX_SUBSCRIBERS,
     SubscriptionRegistry,
 )
+from topsailai.events.subscribers.stats import EventChannelStats
 from topsailai.events.subscribers.fanout import (
     fan_out,
+    get_event_channel_stats,
     get_subscription_registry,
+    reset_event_channel_stats,
+    set_drop_observer,
     set_subscription_registry,
 )
 
 __all__ = [
     "DEFAULT_QUEUE_SIZE",
     "DEFAULT_MAX_SUBSCRIBERS",
+    "EventChannelStats",
     "Subscriber",
     "matches_event_type",
     "SubscriptionRegistry",
     "fan_out",
+    "get_event_channel_stats",
     "get_subscription_registry",
+    "reset_event_channel_stats",
+    "set_drop_observer",
     "set_subscription_registry",
 ]

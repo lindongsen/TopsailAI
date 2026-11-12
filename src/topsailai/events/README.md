@@ -436,6 +436,24 @@ and blocks cleanup permanently.
 pushed event as one JSON line. It exits when the link ends, when the event limit
 is reached, or on interrupt.
 
+### Drop observability
+
+Delivery is fire-and-forget, so a full subscriber queue discards its oldest event
+instead of blocking the producer. Discards are counted process-wide rather than
+per subscriber, because a subscriber's own counter disappears together with the
+subscriber — exactly when an operator wants to know whether events were lost.
+
+The cumulative totals are mirrored into the executing Agent's Runtime Data under
+the key `event.channel.dropped`, so `/runtime` and `/runtime.get
+event.channel.dropped` report them. The published value carries `phase`,
+`dropped_total`, and `delivered_total`.
+
+Publication happens only when a drop is counted, so the healthy path performs no
+Runtime Data work. The cumulative total is published rather than an increment, so
+a drop counted on a thread without a bound Agent is not lost: the next
+publication carries the complete total. Runtime Data stays outside conversation
+context and never enters session messages or summaries.
+
 ---
 
 ## 13. Future Work

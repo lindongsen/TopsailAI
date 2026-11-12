@@ -56,3 +56,15 @@ Feature: Push recorded events to external subscribers
     And the subscriber stops reading while 5 events are recorded
     Then recording all 5 events completes without blocking
     And the subscriber queue stays bounded instead of growing without limit
+
+  Scenario: An operator can see how many events were dropped
+    Given an event channel serving session "bdd-session" with a 2 event queue
+    And a subscriber "sub-i" that never drains its queue
+    When the session records 5 events
+    Then the runtime view reports 3 dropped events
+
+  Scenario: A healthy channel publishes no drop state
+    Given an event channel serving session "bdd-session" with a 100 event queue
+    And a subscriber "sub-j" that never drains its queue
+    When the session records 3 events
+    Then the runtime view reports no dropped events

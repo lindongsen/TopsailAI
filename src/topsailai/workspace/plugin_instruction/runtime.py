@@ -15,6 +15,8 @@ _DISPLAY_VALUE_FIELDS = (
     "next_retry_number",
     "threshold",
     "last_error_category",
+    "dropped_total",
+    "delivered_total",
 )
 _MAX_DISPLAY_VALUE_LENGTH = 120
 _NO_RUNTIME = "No active Agent runtime."

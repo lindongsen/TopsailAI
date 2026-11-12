@@ -15,13 +15,18 @@ from types import SimpleNamespace
 import pytest
 from pytest_bdd import given, parsers, then, when
 
+from topsailai.ai_base.runtime_data import RuntimeDataStore
 from topsailai.events.models import Event
 from topsailai.events.subscribers import (
     SubscriptionRegistry,
     fan_out,
+    reset_event_channel_stats,
+    set_drop_observer,
     set_subscription_registry,
 )
 from topsailai.workspace.event_channel import EventChannelConfig, EventChannelServer
+from topsailai.workspace.event_channel import runtime_state
+from topsailai.workspace.plugin_instruction import runtime as runtime_instruction
 
 RECV_TIMEOUT = 5.0
 
@@ -69,7 +74,7 @@ def _send(sock, frame):
 
 
 @pytest.fixture
-def channel_state(bdd_tmp_path):
+def channel_state(bdd_tmp_path, monkeypatch):
     """Own one real server, its registry, and every link opened by a scenario."""
     state = SimpleNamespace(
         socket_path=str(bdd_tmp_path / "events.sock"),
@@ -77,7 +82,12 @@ def channel_state(bdd_tmp_path):
         registry=None,
         links={},
         recorded=[],
+        agent=SimpleNamespace(runtime=SimpleNamespace(runtime_data=RuntimeDataStore())),
     )
+    monkeypatch.setattr(runtime_state, "get_agent_object", lambda: state.agent)
+    monkeypatch.setattr(runtime_instruction, "get_ai_agent", lambda: state.agent)
+    reset_event_channel_stats()
+    runtime_state.clear_event_channel_runtime_state()
     try:
         yield state
     finally:
@@ -91,6 +101,9 @@ def channel_state(bdd_tmp_path):
             assert not state.server.is_running()
             assert not __import__("os").path.exists(state.socket_path)
         set_subscription_registry(None)
+        set_drop_observer(None)
+        reset_event_channel_stats()
+        runtime_state.clear_event_channel_runtime_state()
 
 
 @given(
@@ -315,3 +328,43 @@ def queue_bounded(channel_state):
     subscriber = channel_state.registry.snapshot()[0]
     assert subscriber.queue_size == 2
     assert subscriber.size <= subscriber.queue_size
+
+
+@given(parsers.parse('a subscriber "{subscriber_id}" that never drains its queue'))
+def register_undrained_subscriber(channel_state, subscriber_id):
+    """Register a subscriber with no link, so nothing ever drains its queue.
+
+    A connected subscriber that simply stops reading is not deterministic: its
+    writer thread still moves queued events into the socket buffer, so whether
+    the queue overflows depends on thread scheduling. Registering the
+    subscriber without a link removes the writer entirely and makes the drop
+    count exactly predictable.
+    """
+    subscriber = channel_state.registry.register(subscriber_id, ())
+    assert subscriber is not None
+    channel_state.undrained = subscriber
+
+
+@when(parsers.parse("the session records {count:d} events"))
+def record_events(channel_state, count):
+    """Record a fixed number of events through the real fan-out entry point."""
+    channel_state.recorded = []
+    for index in range(count):
+        event = Event(event_type="tool_call.start", payload={"index": index})
+        channel_state.recorded.append(event)
+        fan_out(event)
+
+
+@then(parsers.parse("the runtime view reports {count:d} dropped events"))
+def runtime_reports_drops(channel_state, count):
+    """Assert the operator-visible runtime view reports the drop count."""
+    text = runtime_instruction.show_runtime()
+    assert f"Dropped total: {count}" in text, text
+    assert runtime_state.RUNTIME_STATE_KEY in text
+
+
+@then("the runtime view reports no dropped events")
+def runtime_reports_no_drops(channel_state):
+    """Assert a healthy channel publishes no drop state at all."""
+    text = runtime_instruction.show_runtime()
+    assert "Dropped total" not in text

@@ -129,6 +129,7 @@ class EventChannelServer:
             logger.warning("event channel already running on %s", self.socket_path)
             return
 
+        self._install_runtime_observer()
         self._stop_event.clear()
         self._sock = create_unix_socket(self.socket_path, backlog=self.backlog)
         restrict_socket_permissions(self.socket_path)
@@ -180,6 +181,24 @@ class EventChannelServer:
     def is_running(self) -> bool:
         """Return True while the accept thread is alive."""
         return self._thread is not None and self._thread.is_alive()
+
+    def _install_runtime_observer(self) -> None:
+        """Attach the Runtime Data drop mirror when the channel becomes active.
+
+        The import is deferred so the transport layer does not depend on the
+        Agent runtime at module load time, and a failure here never prevents
+        the channel from starting.
+        """
+        try:
+            from topsailai.workspace.event_channel.runtime_state import (
+                install_event_channel_runtime_observer,
+            )
+
+            install_event_channel_runtime_observer()
+        except Exception:
+            logger.warning(
+                "event channel Runtime Data observer not installed", exc_info=True
+            )
 
     def _serve(self) -> None:
         """Accept connections until the server is stopped."""
