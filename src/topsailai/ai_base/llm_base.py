@@ -109,6 +109,10 @@ from .llm_control.null_response_recovery import (
     bind_null_response_operation as _bind_null_response_operation,
     track_null_response_recovery as _track_null_response_recovery,
 )
+from .llm_control.retry_runtime_state import (
+    bind_retry_runtime_operation as _bind_retry_runtime_operation,
+    track_retry_runtime_state as _track_retry_runtime_state,
+)
 from .llm_control.response_events import LLMResponseEventMixin
 
 
@@ -573,6 +577,7 @@ class LLMModel(
             tool_choice=tool_choice,
         )
 
+    @_track_retry_runtime_state
     @_track_null_response_recovery
     @_log_llm_request_failures
     def chat(
@@ -623,6 +628,7 @@ class LLMModel(
         operation_id = uuid4().hex
         _bind_llm_request_operation(operation_id)
         _bind_null_response_operation(operation_id)
+        _bind_retry_runtime_operation(operation_id)
         return_mode = "raw" if for_raw else (
             "response_and_parsed" if for_response else "parsed"
         )

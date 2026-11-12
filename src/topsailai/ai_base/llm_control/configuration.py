@@ -93,6 +93,28 @@ def get_null_response_recovery_config(env_reader=None):
     return enabled, message
 
 
+LLM_REQUEST_RETRY_STATE_DEFAULT_THRESHOLD = 3
+
+
+def get_llm_request_retry_state_threshold(env_reader=None):
+    """Return the request-scoped retry-state threshold; zero disables it."""
+    if env_reader is None:
+        env_reader = EnvReaderInstance
+    raw = env_reader.get(
+        "TOPSAILAI_LLM_REQUEST_RETRY_STATE_THRESHOLD",
+        default=LLM_REQUEST_RETRY_STATE_DEFAULT_THRESHOLD,
+    )
+    if isinstance(raw, bool):
+        return LLM_REQUEST_RETRY_STATE_DEFAULT_THRESHOLD
+    try:
+        threshold = int(raw)
+    except (TypeError, ValueError):
+        return LLM_REQUEST_RETRY_STATE_DEFAULT_THRESHOLD
+    if threshold < 0:
+        return LLM_REQUEST_RETRY_STATE_DEFAULT_THRESHOLD
+    return threshold
+
+
 def get_configured_extra_body():
     """Parse provider-specific fields from TOPSAILAI_LLM_EXTRA_BODY."""
     return get_json_object_from_env("TOPSAILAI_LLM_EXTRA_BODY")

@@ -266,13 +266,9 @@ After request A settles, request B starts with no active state from A. A's stale
 
 ### Concurrent requests on one Agent
 
-If the runtime supports concurrent `LLMModel.chat()` operations on one Agent, a single-key Store cannot represent both owners without loss. Before executable coverage is finalized, implementation must choose and document one contract:
+A single-key Store rejects overlapping ownership. The first request keeps authority over `llm.request.retrying`; a second concurrent request cannot overwrite, update, or settle that active generation. The second request's LLM behavior continues unchanged, while Runtime Data publication for that request is disabled after the ownership conflict.
 
-- Reject overlapping ownership without corrupting the current state;
-- Model active entries by key plus owner;
-- Or prove one Agent serializes LLM requests and guard that invariant.
-
-The test must match the actual supported concurrency contract and must not silently let one request overwrite another.
+The executable test must prove that the first owner remains visible until it settles, the second request cannot remove it, and only the first generation produces history.
 
 ## History Capacity Through Real Lifecycle
 
