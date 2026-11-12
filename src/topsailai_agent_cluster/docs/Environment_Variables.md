@@ -69,6 +69,7 @@ a container.
 | `AGENT_CLUSTER_TLS_CERTIFICATE_FILE` | `--tls-certificate-file` | empty | Node certificate |
 | `AGENT_CLUSTER_TLS_KEY_FILE` | `--tls-key-file` | empty | Node private key |
 | `AGENT_CLUSTER_TLS_REVOKED_SERIALS_FILE` | `--tls-revoked-serials-file` | empty | Revoked certificate serial list |
+| `AGENT_CLUSTER_TLS_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity verified by the Endpoint and by the Server in shared-certificate mode |
 | `AGENT_CLUSTER_LOG_OUTPUT` | `--log-output` | `stderr` | Log destination: `stderr` or `file` |
 | `AGENT_CLUSTER_LOG_PATH` | `--log-path` | empty | Log file path when `file` output is selected |
 | `AGENT_CLUSTER_LOG_MAX_SIZE_MB` | `--log-max-size-mb` | `100` | Maximum log file size before rotation |
@@ -93,6 +94,21 @@ deployment value. A Server started without an explicit token accepts that known
 string from any reachable client. Always set a real token, and restrict the API
 listener to a trusted address.
 
+### Deprecated Server environment names
+
+The names below remain fallback aliases for one compatibility cycle. The component-prefixed name
+always wins when both are present. New deployments and maintained tests must use only the primary
+name.
+
+| Deprecated name | Primary name |
+|---|---|
+| `AGENT_CLUSTER_API_LISTEN_ADDR` | `AGENT_CLUSTER_SERVER_API_LISTEN_ADDR` |
+| `AGENT_CLUSTER_CHANNEL_LISTEN_ADDR` | `AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR` |
+| `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` | `AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES` |
+| `AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` | `AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE` |
+| `AGENT_CLUSTER_AUTH_TOKEN` | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` |
+| `AGENT_CLUSTER_SERVER_NAME` | `AGENT_CLUSTER_TLS_SERVER_NAME` |
+
 ## Endpoint
 
 | Variable | Flag | Default | Purpose |
@@ -102,7 +118,6 @@ listener to a trusted address.
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
 | `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
-| `AGENT_CLUSTER_TLS_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity the Endpoint verifies in the `server-initiated` direction |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
 | `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
