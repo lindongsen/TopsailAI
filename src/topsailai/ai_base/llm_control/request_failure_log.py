@@ -3,8 +3,12 @@
 One logical LLM chat request may retry the same provider call many times.
 ``LLMModel.chat()`` owns those retries, so the consecutive failures of a single
 request are invisible once the request returns. This module records every
-failed attempt inside that one request, prints one summary when the request
-exits, and drops the record afterwards.
+failed attempt inside that one request and dispatches one report when the
+request exits.
+
+This module owns collection and lifecycle only. Presentation belongs to the
+``hook__aibase__after__llm_request_failures`` Hook Point, so a new observer can
+be added without touching ``LLMModel.chat()``.
 
 The module is provider-neutral and deliberately does not classify retries:
 ``LLMModel.chat()`` keeps the retry decision and only reports each failure.
@@ -17,17 +21,17 @@ import functools
 import time
 from typing import Callable, Optional
 
+from topsailai.hooks.points.aibase.after_llm_request_failures import (
+    hook__aibase__after__llm_request_failures,
+)
+from topsailai.hooks.points.aibase.after_llm_request_failures.point import (
+    FAILURE_MESSAGE_MAX_CHARS,
+    MAX_FAILURES,
+)
 from topsailai.logger.log_chat import logger
-from topsailai.utils.print_tool import print_with_time
 
-
-# One request is bounded by the retry loop (18 attempts per cycle, at most 8
-# cycles). The cap only protects against a future unbounded loop.
-MAX_RECORDED_FAILURES = 200
-# Keep one failure line readable; the complete error text stays in the attempt log.
-FAILURE_MESSAGE_MAX_CHARS = 200
-# Console output stays bounded; the logger always receives every failure.
-CONSOLE_DETAIL_LIMIT = 5
+# Kept as module aliases so existing callers and tests keep one spelling.
+MAX_RECORDED_FAILURES = MAX_FAILURES
 
 _active_request_failure_log = contextvars.ContextVar(
     "topsailai_llm_request_failure_log", default=None
@@ -55,7 +59,7 @@ class LLMRequestFailureLog:
         self.dropped_failures = 0
 
     def bind_operation(self, operation_id: str) -> None:
-        """Adopt the request operation id so the summary correlates with hooks."""
+        """Adopt the request operation id so the report correlates with hooks."""
         self.operation_id = operation_id or ""
 
     def record_failure(
@@ -71,9 +75,9 @@ class LLMRequestFailureLog:
         self.failures.append({
             "attempt": attempt_number,
             "error": type(error).__name__,
-            "duration_sec": (
-                None if duration_sec is None else round(float(duration_sec), 3)
-            ),
+            # The report schema has no nullable number, so an unknown duration
+            # is recorded as zero instead of inventing a measurement.
+            "duration_sec": 0.0 if duration_sec is None else round(float(duration_sec), 3),
             "message": _one_line(error),
         })
 
@@ -85,60 +89,25 @@ class LLMRequestFailureLog:
         """Return whether this request recorded at least one failure."""
         return bool(self.failures)
 
-    def _header(self) -> str:
-        """Build the one-line summary shared by console and log output."""
+    def build_report(self) -> dict:
+        """Return the detached data-only report payload of this request."""
         elapsed = round(max(0.0, self._clock() - self.started_at), 3)
-        last_attempt = self.failures[-1]["attempt"] if self.failures else 0
-        return (
-            f"[LLMRequestFailureLog] operation_id={self.operation_id or 'null'} "
-            f"outcome={self.outcome} failed_attempts={len(self.failures)} "
-            f"last_failed_attempt={last_attempt} elapsed_sec={elapsed}"
-        )
+        return {
+            "schema_version": 1,
+            "operation_id": self.operation_id,
+            "outcome": self.outcome,
+            "failed_attempts": len(self.failures),
+            "last_failed_attempt": self.failures[-1]["attempt"] if self.failures else 0,
+            "elapsed_sec": elapsed,
+            "dropped_failures": self.dropped_failures,
+            "failures": [dict(failure) for failure in self.failures],
+        }
 
-    def _detail_lines(self, limit: Optional[int]) -> list[str]:
-        """Build per-failure lines, optionally bounded for console output."""
-        entries = self.failures
-        omitted = 0
-        if limit is not None and len(entries) > limit * 2:
-            omitted = len(entries) - limit * 2
-            entries = entries[:limit] + entries[-limit:]
-        lines = []
-        for index, failure in enumerate(entries):
-            if omitted and index == limit:
-                lines.append(
-                    f"[LLMRequestFailureLog]   ... {omitted} failure(s) omitted ..."
-                )
-            duration = failure["duration_sec"]
-            lines.append(
-                f"[LLMRequestFailureLog]   attempt={failure['attempt']} "
-                f"error={failure['error']} "
-                f"duration_sec={'null' if duration is None else duration} "
-                f"message={failure['message']}"
-            )
-        if self.dropped_failures:
-            lines.append(
-                f"[LLMRequestFailureLog]   ... {self.dropped_failures} failure(s) "
-                "not recorded ..."
-            )
-        return lines
-
-    def format_summary(self, limit: Optional[int] = None, header: str = "") -> str:
-        """Return the complete summary, or a bounded variant for the console."""
-        return "\n".join([header or self._header()] + self._detail_lines(limit))
-
-    def emit(self) -> None:
-        """Print and log the summary once, only when failures were recorded."""
+    def report(self) -> None:
+        """Dispatch the report once, only when failures were recorded."""
         if not self.has_failures():
             return
-        # Build the header once so the console and the log cannot disagree on
-        # the elapsed time of the same request.
-        header = self._header()
-        print_with_time(
-            self.format_summary(CONSOLE_DETAIL_LIMIT, header),
-            need_format=False,
-            color_kind="warning",
-        )
-        logger.warning(self.format_summary(header=header))
+        hook__aibase__after__llm_request_failures(**self.build_report())
 
 
 def current_llm_request_failure_log() -> Optional[LLMRequestFailureLog]:
@@ -188,11 +157,16 @@ def log_llm_request_failures(method):
             return result
         finally:
             _active_request_failure_log.reset(token)
-            try:
-                record.emit()
-            except Exception as report_error:  # noqa: BLE001 - never mask the request
-                logger.warning(
-                    "failed to report LLM request failures: %s", report_error
-                )
+            _report_without_masking(record)
 
     return wrapper
+
+
+def _report_without_masking(record: LLMRequestFailureLog) -> None:
+    """Report once, letting host control flow through but nothing else."""
+    try:
+        record.report()
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as report_error:  # noqa: BLE001 - never mask the request
+        logger.warning("failed to report LLM request failures: %s", report_error)

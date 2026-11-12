@@ -1,5 +1,6 @@
 """Per-request LLM failure log contracts. Author: DawsonLin."""
 
+import importlib
 import time
 from collections import deque
 from types import SimpleNamespace
@@ -11,6 +12,11 @@ import topsailai.ai_base.llm_base as llm
 import topsailai.ai_base.llm_control.request_failure_log as failure_log
 from topsailai.ai_base.exception import HardInterruptError, LLMRetryExhaustedError
 from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
+
+MODULE = importlib.import_module(
+    "topsailai.hooks.points.aibase.after_llm_request_failures.modules.print_failure_log"
+)
+PREFIX = "[LLMRequestFailureLog]"
 
 
 @pytest.fixture
@@ -32,12 +38,18 @@ def case(monkeypatch):
         SimpleNamespace(monotonic=time.monotonic, sleep=sleeps.append),
     )
     monkeypatch.setattr(llm, "get_agent_object", lambda: None)
+    # The report Module is re-executed on every dispatch, so it binds these
+    # names at call time and the source module is the correct seam. That seam
+    # also carries framework output, so only the failure report is captured.
     monkeypatch.setattr(
-        failure_log, "print_with_time",
-        lambda message, **_kwargs: console.append(message),
+        "topsailai.utils.print_tool.print_with_time",
+        lambda message, **_kwargs: (
+            console.append(message)
+            if str(message).startswith(PREFIX) else None
+        ),
     )
     monkeypatch.setattr(
-        failure_log, "logger",
+        "topsailai.logger.log_chat.logger",
         SimpleNamespace(warning=lambda message, *a: logged.append(message)),
     )
     for phase in ("before", "after", "error"):
@@ -48,6 +60,14 @@ def case(monkeypatch):
     return SimpleNamespace(
         model=model, events=events, sleeps=sleeps, console=console, logged=logged,
     )
+
+
+def _detail_attempts(summary):
+    """Return the rendered per-failure detail lines of one summary."""
+    return [
+        line for line in summary.splitlines()
+        if line.startswith(f"{PREFIX}   attempt=")
+    ]
 
 
 def test_success_without_failures_reports_nothing(case):
@@ -67,7 +87,7 @@ def test_consecutive_failures_are_reported_once_on_exit(case):
     assert case.model.chat([], for_raw=True) == "ok"
     assert len(case.console) == 1
     summary = case.console[0]
-    assert summary.startswith("[LLMRequestFailureLog] operation_id=")
+    assert summary.startswith(f"{PREFIX} operation_id=")
     assert "outcome=success" in summary
     assert "failed_attempts=2" in summary
     assert "last_failed_attempt=2" in summary
@@ -101,14 +121,6 @@ def test_exhaustion_reports_failed_outcome_and_keeps_cause(case):
     assert "last_failed_attempt=18" in summary
     assert len(_detail_attempts(summary)) == 10  # bounded console detail
     assert "failure(s) omitted" in summary
-
-
-def _detail_attempts(summary):
-    """Return the rendered per-failure detail lines of one summary."""
-    return [
-        line for line in summary.splitlines()
-        if line.startswith("[LLMRequestFailureLog]   attempt=")
-    ]
 
 
 def test_console_detail_is_bounded_while_log_keeps_every_failure(case):
@@ -162,13 +174,36 @@ def test_business_control_error_reports_failed_outcome(case):
     assert "outcome=failed" in case.console[0]
 
 
-def test_reporting_failure_never_masks_the_request_error(case, monkeypatch):
-    """A broken reporter must not replace the original request exception."""
-    def explode(*_args, **_kwargs):
-        """Fail while reporting."""
-        raise RuntimeError("reporter broken")
+def test_broken_report_module_never_masks_the_request_error(case, monkeypatch):
+    """A failing report Module is isolated by the Hook Point, not propagated."""
+    def explode(message, **_kwargs):
+        """Fail only while reporting, leaving framework output intact."""
+        if str(message).startswith(PREFIX):
+            raise RuntimeError("reporter broken")
 
-    monkeypatch.setattr(failure_log, "print_with_time", explode)
+    monkeypatch.setattr("topsailai.utils.print_tool.print_with_time", explode)
+    error = TypeError("request failure")
+    case.model.call_llm_model.side_effect = error
+    with pytest.raises(LLMRetryExhaustedError) as caught:
+        case.model.chat([], for_raw=True)
+    assert caught.value.__cause__ is error
+    assert case.console == []
+
+
+def test_broken_dispatch_never_masks_the_request_error(case, monkeypatch):
+    """A dispatch failure is swallowed so the request result stays authoritative."""
+    def explode(**_payload):
+        """Fail while dispatching the report."""
+        raise RuntimeError("dispatch broken")
+
+    monkeypatch.setattr(
+        failure_log, "hook__aibase__after__llm_request_failures", explode
+    )
+    # The module bound its logger at import time, so patch that exact binding.
+    monkeypatch.setattr(
+        failure_log, "logger",
+        SimpleNamespace(warning=lambda message, *a: case.logged.append(message)),
+    )
     error = TypeError("request failure")
     case.model.call_llm_model.side_effect = error
     with pytest.raises(LLMRetryExhaustedError) as caught:
@@ -203,14 +238,15 @@ def test_failure_message_is_collapsed_and_bounded(case):
     assert detail[0].endswith("...")
 
 
-def test_record_cap_marks_unrecorded_failures(case):
+def test_record_cap_marks_unrecorded_failures():
     """The safety cap reports how many failures were not recorded."""
     record = failure_log.LLMRequestFailureLog()
     for attempt in range(failure_log.MAX_RECORDED_FAILURES + 3):
         record.record_failure(attempt + 1, TypeError("many"))
     assert len(record.failures) == failure_log.MAX_RECORDED_FAILURES
     assert record.dropped_failures == 3
-    assert "3 failure(s) not recorded" in record.format_summary()
+    report = record.build_report()
+    assert "3 failure(s) not recorded" in MODULE._format(MODULE._header(report), report)
 
 
 def test_empty_record_emits_nothing():
@@ -218,4 +254,6 @@ def test_empty_record_emits_nothing():
     record = failure_log.LLMRequestFailureLog()
     record.mark_outcome("success")
     assert record.has_failures() is False
-    assert record.format_summary().startswith("[LLMRequestFailureLog] operation_id=null")
+    assert MODULE._header(record.build_report()).startswith(
+        f"{PREFIX} operation_id=null"
+    )

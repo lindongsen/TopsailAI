@@ -339,7 +339,7 @@ class LLMRetryScenario:
             with ExitStack() as stack:
                 stack.enter_context(_skip_retry_backoff())
                 stack.enter_context(patch(
-                    "topsailai.ai_base.llm_control.request_failure_log.print_with_time",
+                    "topsailai.utils.print_tool.print_with_time",
                     side_effect=self._capture_failure_log,
                 ))
                 self.result = self.model.chat(
