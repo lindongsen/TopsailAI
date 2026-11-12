@@ -1,6 +1,10 @@
 package main
 
-import "strings"
+import (
+	"fmt"
+	"io"
+	"strings"
+)
 
 const (
 	cliServerURLEnv             = "AGENT_CLUSTER_CLI_SERVER_URL"
@@ -13,11 +17,20 @@ const (
 
 // cliEnvironmentValue returns the component-owned value or a deprecated alias.
 func cliEnvironmentValue(lookup func(string) string, primary string, deprecated ...string) string {
+	return cliEnvironmentValueWithDiagnostics(lookup, io.Discard, primary, deprecated...)
+}
+
+// cliEnvironmentValueWithDiagnostics reports a deprecated name only when its
+// value is actually selected. A configured primary name therefore stays quiet.
+func cliEnvironmentValueWithDiagnostics(lookup func(string) string, diagnostics io.Writer, primary string, deprecated ...string) string {
 	if value := strings.TrimSpace(lookup(primary)); value != "" {
 		return value
 	}
 	for _, name := range deprecated {
 		if value := strings.TrimSpace(lookup(name)); value != "" {
+			if diagnostics != nil {
+				fmt.Fprintf(diagnostics, "warning: %s is deprecated; use %s\n", name, primary)
+			}
 			return value
 		}
 	}

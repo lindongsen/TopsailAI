@@ -47,11 +47,11 @@ const inputHistoryRelativePath = ".topsailai/.topsailai_agent_cluster.history.js
 // keeps the previous in-memory behaviour, which is exactly what an operator
 // without a home directory had before.
 func resolveInputHistory(lookup func(string) string, home string, diagnostics io.Writer) (*tui.InputHistory, error) {
-	path := resolveInputHistoryPath(lookup, home)
+	path := resolveInputHistoryPathWithDiagnostics(lookup, home, diagnostics)
 	if path == "" {
 		return nil, nil
 	}
-	limits, err := resolveInputHistoryLimits(lookup)
+	limits, err := resolveInputHistoryLimitsWithDiagnostics(lookup, diagnostics)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,11 @@ func resolveInputHistory(lookup func(string) string, home string, diagnostics io
 // resolveInputHistoryPath returns the configured file, or the per-user default.
 // An empty result means no path could be resolved.
 func resolveInputHistoryPath(lookup func(string) string, home string) string {
-	if configured := cliEnvironmentValue(lookup, inputHistoryFileEnv, deprecatedInputHistoryFileEnv); configured != "" {
+	return resolveInputHistoryPathWithDiagnostics(lookup, home, io.Discard)
+}
+
+func resolveInputHistoryPathWithDiagnostics(lookup func(string) string, home string, diagnostics io.Writer) string {
+	if configured := cliEnvironmentValueWithDiagnostics(lookup, diagnostics, inputHistoryFileEnv, deprecatedInputHistoryFileEnv); configured != "" {
 		return configured
 	}
 	if strings.TrimSpace(home) == "" {
@@ -74,15 +78,19 @@ func resolveInputHistoryPath(lookup func(string) string, home string) string {
 // store's own default, so the defaults live in one place instead of being
 // repeated here.
 func resolveInputHistoryLimits(lookup func(string) string) (tui.InputHistoryLimits, error) {
-	maxEntries, err := resolveInputHistoryInt(lookup, inputHistoryMaxEntriesEnv, deprecatedInputHistoryMaxEntriesEnv)
+	return resolveInputHistoryLimitsWithDiagnostics(lookup, io.Discard)
+}
+
+func resolveInputHistoryLimitsWithDiagnostics(lookup func(string) string, diagnostics io.Writer) (tui.InputHistoryLimits, error) {
+	maxEntries, err := resolveInputHistoryIntWithDiagnostics(lookup, diagnostics, inputHistoryMaxEntriesEnv, deprecatedInputHistoryMaxEntriesEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
-	maxSizeMB, err := resolveInputHistoryInt(lookup, inputHistoryMaxSizeMBEnv, deprecatedInputHistoryMaxSizeMBEnv)
+	maxSizeMB, err := resolveInputHistoryIntWithDiagnostics(lookup, diagnostics, inputHistoryMaxSizeMBEnv, deprecatedInputHistoryMaxSizeMBEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
-	maxBackups, err := resolveInputHistoryInt(lookup, inputHistoryMaxBackupsEnv, deprecatedInputHistoryMaxBackupsEnv)
+	maxBackups, err := resolveInputHistoryIntWithDiagnostics(lookup, diagnostics, inputHistoryMaxBackupsEnv, deprecatedInputHistoryMaxBackupsEnv)
 	if err != nil {
 		return tui.InputHistoryLimits{}, err
 	}
@@ -99,7 +107,11 @@ func resolveInputHistoryLimits(lookup func(string) string) (tui.InputHistoryLimi
 // zero so the store applies its default; a negative or unparsable value is an
 // error, because neither can mean "unbounded" for an append-only file.
 func resolveInputHistoryInt(lookup func(string) string, name, deprecated string) (int, error) {
-	raw := cliEnvironmentValue(lookup, name, deprecated)
+	return resolveInputHistoryIntWithDiagnostics(lookup, io.Discard, name, deprecated)
+}
+
+func resolveInputHistoryIntWithDiagnostics(lookup func(string) string, diagnostics io.Writer, name, deprecated string) (int, error) {
+	raw := cliEnvironmentValueWithDiagnostics(lookup, diagnostics, name, deprecated)
 	if raw == "" {
 		return 0, nil
 	}
