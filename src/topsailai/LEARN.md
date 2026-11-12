@@ -271,3 +271,11 @@ Trigger: `git commit -m "..." -- <5 own paths>` failed with `fatal: cannot do a 
 Action: detect the merge state before committing with `ls .git/MERGE_HEAD` and `git diff --name-only --diff-filter=U`. When a merge is open, do NOT conclude it with `git commit` and do NOT abort it with `git merge --abort`: concluding sweeps in every foreign staged entry, and aborting destroys another agent's in-flight resolution. Poll until the owning agent concludes the merge, then re-verify the index and the own files before committing.
 
 Why this prevents recurrence: the merge is repository-wide state owned by whoever started it, so a commit that looks locally correct is rejected by a condition that has nothing to do with the change. Both obvious workarounds are destructive to another agent's work, and the conflict file here belonged to a sibling project outside this workspace. Polling is the only action that neither corrupts the merge nor abandons the commit. Re-checking the index afterwards matters too: the index changed twice during the wait, and the foreign staged entries disappeared only when the merge commit landed.
+
+## Hook handler assertions must identify the configured resource instead of assuming a fixed position
+
+Trigger: adding a second bundled `error_llm_chat_attempt` module made a discovery test read the first bundled handler instead of its configured `observer.py` plugin, even though dispatch order remained valid.
+
+Action: locate the expected handler by its stable identity before asserting its return value or error, while retaining separate assertions for terminal handler ordering.
+
+Why this prevents recurrence: bundled Hook resources can expand without changing the configured plugin contract, so identity-based assertions verify the intended resource and do not fail merely because another valid handler is inserted earlier.

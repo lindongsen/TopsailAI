@@ -165,6 +165,7 @@ Modular `/` commands registered via `INSTRUCTIONS` dict.
 | `skill.py` | `/show`, `/load`, `/unload`, `/hooks` | Skill hub management |
 | `skill_repo.py` | `/list`, `/install`, `/uninstall` | Skill repository operations |
 | `stat.py` | `/tool_call`, `/tool_call_errors`, `/tool_call_reset`, `/tool_call_log` | Tool call statistics |
+| `runtime.py` | `/runtime`, `/runtime.get <key>`, `/runtime.history [key]` | Read-only active and bounded settled public Runtime Data for the current Agent |
 
 Loaded by `plugin_instruction/base/init.py` via `get_function_map()`; supports external plugins via `TOPSAILAI_PLUGIN_INSTRUCTIONS`.
 
