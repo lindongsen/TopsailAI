@@ -25,7 +25,7 @@ Examples:
 | variable | value | concern |
 |---|---|---|
 | `AGENT_CLUSTER_CLI_SERVER_URL` | `https://cluster.example.test` | Server URL |
-| `AGENT_CLUSTER_CLI_TOKEN` | `operator-token` | Server bearer token |
+| `AGENT_CLUSTER_CLI_SERVER_TOKEN` | `operator-token` | Server bearer token |
 | `AGENT_CLUSTER_CLI_ENDPOINT_TOKENS` | `endpoint-a=token-a` | Endpoint token map |
 | `AGENT_CLUSTER_CLI_HISTORY_FILE` | `/tmp/history.jsonl` | history path |
 | `AGENT_CLUSTER_CLI_HISTORY_MAX_ENTRIES` | `200` | in-memory recall bound |
@@ -47,6 +47,7 @@ Examples:
 | deprecated | value |
 |---|---|
 | `AGENT_CLUSTER_SERVER_URL` | `https://legacy.example.test` |
+| `AGENT_CLUSTER_CLI_TOKEN` | `transitional-token` |
 | `AGENT_CLUSTER_TOKEN` | `legacy-token` |
 | `AGENT_CLUSTER_ENDPOINT_TOKENS` | `endpoint-a=legacy-endpoint-token` |
 | `AGENT_CLUSTER_HISTORY_FILE` | `/tmp/legacy-history.jsonl` |
@@ -55,6 +56,17 @@ Examples:
 | `AGENT_CLUSTER_HISTORY_MAX_BACKUPS` | `5` |
 
 Automation: CLI compatibility table test.
+
+## Scenario: the transitional Server token name outranks the legacy generic name
+
+Given `AGENT_CLUSTER_CLI_SERVER_TOKEN` is absent
+And `AGENT_CLUSTER_CLI_TOKEN` is `transitional-token`
+And `AGENT_CLUSTER_TOKEN` is `legacy-token`
+When CLI configuration is loaded
+Then the Server bearer token is `transitional-token`
+And one deprecation event replaces `AGENT_CLUSTER_CLI_TOKEN` with `AGENT_CLUSTER_CLI_SERVER_TOKEN`
+
+Automation: CLI Server-token compatibility unit test.
 
 ## Scenario: process primary names outrank deprecated and file values
 
@@ -73,7 +85,7 @@ Automation: precedence matrix test using temporary env files below `.tmp/`.
 Given node installation writes the operator's per-user CLI env file
 When the file is read
 Then it contains `AGENT_CLUSTER_CLI_SERVER_URL`
-And it contains `AGENT_CLUSTER_CLI_TOKEN`
+And it contains `AGENT_CLUSTER_CLI_SERVER_TOKEN`
 And it supports `AGENT_CLUSTER_CLI_ENDPOINT_TOKENS`
 And it emits none of the deprecated CLI names
 

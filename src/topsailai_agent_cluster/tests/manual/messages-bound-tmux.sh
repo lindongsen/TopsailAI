@@ -78,7 +78,7 @@ function run_case() {
     tmux send-keys -t "${TMUX_SESSION}" \
         "export AGENT_CLUSTER_CLI_SERVER_URL=http://127.0.0.1:${API_PORT}" C-m
     tmux send-keys -t "${TMUX_SESSION}" \
-        "export AGENT_CLUSTER_CLI_TOKEN=${AUTH_TOKEN}" C-m
+        "export AGENT_CLUSTER_CLI_SERVER_TOKEN=${AUTH_TOKEN}" C-m
     tmux send-keys -t "${TMUX_SESSION}" \
         "${CLI_BIN} messages ${ENDPOINT_ID} ${SESSION_ID} ${extra}; echo EXIT=\$?" C-m
 

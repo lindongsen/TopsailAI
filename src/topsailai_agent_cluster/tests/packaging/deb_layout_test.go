@@ -740,6 +740,32 @@ func TestDebLauncherForwardsTheAccessPolicyDir(t *testing.T) {
 	}
 }
 
+// TestCLIEnvWriterUsesExplicitServerTokenName prevents the generated per-user
+// configuration from collapsing the two independent credentials back into one
+// ambiguous CLI token. The writer is shared by bundle and Debian installation,
+// so one source assertion protects both deployment paths without running either
+// privileged installer.
+func TestCLIEnvWriterUsesExplicitServerTokenName(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("resolve project root: %v", err)
+	}
+	path := filepath.Join(root, "scripts", "lib", "cli-env.sh")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read CLI environment writer: %v", err)
+	}
+	writer := string(content)
+	if !hasLineContaining(writer, "echo", "AGENT_CLUSTER_CLI_SERVER_TOKEN=") {
+		t.Fatal("CLI environment writer does not emit AGENT_CLUSTER_CLI_SERVER_TOKEN")
+	}
+	for _, deprecated := range []string{"AGENT_CLUSTER_CLI_TOKEN=", "AGENT_CLUSTER_TOKEN="} {
+		if hasLineContaining(writer, "echo", deprecated) {
+			t.Fatalf("CLI environment writer still emits deprecated name %s", deprecated)
+		}
+	}
+}
+
 // hasLineContaining reports whether some line of text contains every one of the
 // given substrings. A line-scoped check is what distinguishes a forwarding site
 // from an unrelated mention of the same name elsewhere in the script.
