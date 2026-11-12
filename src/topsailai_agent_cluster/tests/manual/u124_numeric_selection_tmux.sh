@@ -6,8 +6,7 @@ EXE_FOLDER=$(dirname "$EXE_FILE")
 workspace_dir=$(cd "$EXE_FOLDER/../.." && pwd)
 start_script=${AGENT_CLUSTER_START_SCRIPT:-"$workspace_dir/tests/manual/u124_numeric_selection_start.sh"}
 server_url=${AGENT_CLUSTER_CLI_SERVER_URL:?set AGENT_CLUSTER_CLI_SERVER_URL}
-token=${AGENT_CLUSTER_CLI_SERVER_TOKEN:-${AGENT_CLUSTER_SERVER_AUTH_TOKEN:-}}
-if [[ -z "$token" ]]; then printf '%s\n' 'start failed: set AGENT_CLUSTER_CLI_SERVER_TOKEN or AGENT_CLUSTER_SERVER_AUTH_TOKEN' >&2; exit 1; fi
+token=${AGENT_CLUSTER_CLI_SERVER_TOKEN:?set AGENT_CLUSTER_CLI_SERVER_TOKEN}
 cli_path=${AGENT_CLUSTER_CLI:-"$workspace_dir/.tmp/u124/unit-b/bin/agent-cluster-cli"}
 session_name=${AGENT_CLUSTER_TMUX_SESSION:-u124-numeric-selection}
 artifact_dir=${AGENT_CLUSTER_ARTIFACT_DIR:-"$workspace_dir/.tmp/u124/unit-b/manual"}
