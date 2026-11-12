@@ -237,15 +237,15 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		}
 		cluster.EndpointChannel = endpointChannelPort
 	}
-	serverEnv := []string{"AGENT_CLUSTER_API_LISTEN_ADDR=127.0.0.1:" + cluster.API, "AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_DATABASE_PATH=" + cluster.ServerDB, "AGENT_CLUSTER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ServerCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ServerKey}
+	serverEnv := []string{"AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=127.0.0.1:" + cluster.API, "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_DATABASE_PATH=" + cluster.ServerDB, "AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ServerCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ServerKey}
 	if options.ChannelDirection != "" {
 		serverEnv = append(serverEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
 	}
 	if endpointChannelPort != "" {
-		serverEnv = append(serverEnv, "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES=endpoint-1=wss://127.0.0.1:"+endpointChannelPort)
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES=endpoint-1=wss://127.0.0.1:"+endpointChannelPort)
 	}
 	if options.SharedCertificate {
-		serverEnv = append(serverEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE=true")
 	}
 	serverEnv = appendFaultEnvironment(serverEnv, options.Faults)
 	serverEnv = append(serverEnv, sortedEnvironment(options.Environment)...)
@@ -346,9 +346,6 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	}
 	if endpointChannelPort != "" {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR=127.0.0.1:"+endpointChannelPort)
-	}
-	if options.SharedCertificate {
-		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
 	}
 	endpointEnv = appendFaultEnvironment(endpointEnv, options.Faults)
 	// The command allowlist and the control action catalog are Endpoint-local

@@ -79,15 +79,14 @@ a container.
 
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
-| `AGENT_CLUSTER_API_LISTEN_ADDR` | `--api-listen-addr` | `:8080` | Bearer-authenticated operator API address |
-| `AGENT_CLUSTER_CHANNEL_LISTEN_ADDR` | `--channel-listen-addr` | `:8443` | mTLS Endpoint channel address; unused in the `server-initiated` direction |
+| `AGENT_CLUSTER_SERVER_API_LISTEN_ADDR` | `--api-listen-addr` | `:8080` | Bearer-authenticated operator API address |
+| `AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR` | `--channel-listen-addr` | `:8443` | mTLS Endpoint channel address; unused in the `server-initiated` direction |
 | `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
-| `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` | `--endpoint-dial-addresses` | empty | Comma-separated `endpoint_id=wss://address` pairs the Server dials in the `server-initiated` and `bidirectional` directions |
-| `AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
-| `AGENT_CLUSTER_LISTEN_ADDRESS` | `--listen-address` | `:8080` | Deprecated alias for the API address |
-| `AGENT_CLUSTER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
+| `AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES` | `--endpoint-dial-addresses` | empty | Comma-separated `endpoint_id=wss://address` pairs the Server dials in the `server-initiated` and `bidirectional` directions |
+| `AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
+| `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
 
-### `AGENT_CLUSTER_AUTH_TOKEN`
+### `AGENT_CLUSTER_SERVER_AUTH_TOKEN`
 
 The built-in default `development-token` is a development convenience, not a
 deployment value. A Server started without an explicit token accepts that known
@@ -103,7 +102,7 @@ listener to a trusted address.
 | `AGENT_CLUSTER_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
 | `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
-| `AGENT_CLUSTER_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity the Endpoint verifies in the `server-initiated` direction |
+| `AGENT_CLUSTER_TLS_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity the Endpoint verifies in the `server-initiated` direction |
 | `AGENT_CLUSTER_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
 | `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
@@ -323,7 +322,7 @@ File format constraints:
 
 | Variable | Consequence |
 |---|---|
-| `AGENT_CLUSTER_AUTH_TOKEN` | The known development token is accepted |
+| `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | The known development token is accepted |
 | `AGENT_CLUSTER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
 | `AGENT_CLUSTER_CONTROL_ACTION_FILE` | No `ctl.` action is advertised and every `ctl.` operation is refused |

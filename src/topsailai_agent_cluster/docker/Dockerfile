@@ -77,8 +77,8 @@ RUN addgroup -S -g 10001 agent-cluster \
 # which is the same directory the package uses, so the container path and the
 # host path are identical. Logs go to stderr because a container should not own a
 # log file: the Docker log driver rotates it.
-ENV AGENT_CLUSTER_API_LISTEN_ADDR=:53680 \
-    AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=:53943 \
+ENV AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=:53680 \
+    AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=:53943 \
     AGENT_CLUSTER_DATABASE_PATH=/opt/agent-cluster/data/server.sqlite \
     AGENT_CLUSTER_TLS_CA_FILE=/opt/agent-cluster/certs/ca.pem \
     AGENT_CLUSTER_TLS_CERTIFICATE_FILE=/opt/agent-cluster/certs/server.pem \

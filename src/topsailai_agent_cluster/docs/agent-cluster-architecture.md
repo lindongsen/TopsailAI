@@ -330,7 +330,7 @@ In the `endpoint-initiated` direction the Server opens the channel listener and 
 
 In the `bidirectional` direction both sides dial at the same time, so the cluster converges on whichever link is established last. Convergence needs no extra fencing mechanism: the Server is the sole generation authority, and it acquires the generation inside the same lock that installs the peer, so install order equals generation order. The Endpoint keeps the highest generation it has seen and closes the superseded link. A failed dial never evicts a healthy link, because a generation is proposed during the handshake and committed only after it succeeds.
 
-`AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` makes every Endpoint present the Server certificate, so only one certificate has to be maintained. The certificate then no longer proves which Endpoint is connecting: Endpoint identity becomes an assertion in the hello frame, trusted because the peer holds the shared certificate. This is acceptable only when every Endpoint is equally trusted, and must never be described as per-Endpoint authentication. The mode is opt-in, so the default deployment keeps the certificate-to-Endpoint binding.
+`AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE` makes every Endpoint present the Server certificate, so only one certificate has to be maintained. The certificate then no longer proves which Endpoint is connecting: Endpoint identity becomes an assertion in the hello frame, trusted because the peer holds the shared certificate. This is acceptable only when every Endpoint is equally trusted, and must never be described as per-Endpoint authentication. The mode is opt-in, so the default deployment keeps the certificate-to-Endpoint binding.
 
 The `hello` frame carries an `initiator` field so each side can reject a connection that dialed the wrong side instead of silently accepting it. An empty `initiator` is the legacy Endpoint-initiated handshake and remains valid.
 
@@ -338,7 +338,7 @@ The Server remains the sole authority for the connection generation in both dire
 
 Each side verifies the certificate of the side it accepts. In the `endpoint-initiated` direction the Server validates the Endpoint identity. In the `server-initiated` direction the Endpoint validates the Server identity, and the dialing Server validates the Endpoint certificate by name.
 
-Server dial addresses are operator configuration, not protocol data: `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` maps `endpoint_id=wss://address` pairs. A command can never choose where the Server connects.
+Server dial addresses are operator configuration, not protocol data: `AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES` maps `endpoint_id=wss://address` pairs. A command can never choose where the Server connects.
 
 Both components expose HTTP APIs. Server exposes the operator API and, in the `endpoint-initiated` direction, the Endpoint connection entry point. Endpoint exposes the same local application services over a loopback-only API for health, inventory, command status and diagnostics. Remote access to the Endpoint API is disabled by default. It is not a second bypass around the Endpoint access policy: any enabled direct write path requires the same caller token, the same journal and the same policy checks.
 

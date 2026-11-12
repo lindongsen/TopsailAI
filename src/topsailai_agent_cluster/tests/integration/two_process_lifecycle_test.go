@@ -38,7 +38,7 @@ func TestTwoProcessLifecycle(t *testing.T) {
 	endpointDB := filepath.Join(root, "endpoint.db")
 	serverCmd := exec.Command(serverBin)
 	serverCmd.Dir = moduleRoot(t)
-	serverCmd.Env = append(os.Environ(), "AGENT_CLUSTER_API_LISTEN_ADDR=127.0.0.1:"+api, "AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel, "AGENT_CLUSTER_DATABASE_PATH="+db, "AGENT_CLUSTER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey, "AGENT_CLUSTER_LOG_OUTPUT=stderr")
+	serverCmd.Env = append(os.Environ(), "AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=127.0.0.1:"+api, "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel, "AGENT_CLUSTER_DATABASE_PATH="+db, "AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey, "AGENT_CLUSTER_LOG_OUTPUT=stderr")
 	serverCmd.Stdout, serverCmd.Stderr = os.Stdout, os.Stderr
 	if err := serverCmd.Start(); err != nil {
 		t.Fatal(err)

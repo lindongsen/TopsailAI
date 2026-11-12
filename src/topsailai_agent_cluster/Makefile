@@ -412,7 +412,7 @@ image-run:
 	@chown 10001:10001 $(IMAGE_DATA_DIR)/server.sqlite* 2>/dev/null || true
 	docker run -d --name $(IMAGE_CONTAINER) --network $(IMAGE_NET) \
 		-p $(IMAGE_API_PORT):53680 -p $(IMAGE_CHANNEL_PORT):53943 \
-		-e AGENT_CLUSTER_AUTH_TOKEN=$(IMAGE_TOKEN) \
+		-e AGENT_CLUSTER_SERVER_AUTH_TOKEN=$(IMAGE_TOKEN) \
 		-v $(IMAGE_CERTS_DIR):/opt/agent-cluster/certs:ro \
 		-v $(IMAGE_DATA_DIR):/opt/agent-cluster/data \
 		--restart unless-stopped \

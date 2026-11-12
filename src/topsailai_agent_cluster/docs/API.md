@@ -38,7 +38,7 @@ Authorization: Bearer <token>
 ```
 
 A missing or wrong token returns `401 unauthorized`. The token is configured through
-`AGENT_CLUSTER_AUTH_TOKEN`; see `docs/Environment_Variables.md`.
+`AGENT_CLUSTER_SERVER_AUTH_TOKEN`; see `docs/Environment_Variables.md`.
 
 The Server token authenticates the CLI but does not grant operation permissions. The Server verifies
 that the requested Endpoint exists and has a live channel, then forwards the request without making

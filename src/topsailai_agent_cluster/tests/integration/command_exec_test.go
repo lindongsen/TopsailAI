@@ -168,10 +168,10 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 	c.server = exec.Command(serverBinary)
 	c.server.Dir = moduleRoot(t)
 	serverEnv := append(os.Environ(),
-		"AGENT_CLUSTER_API_LISTEN_ADDR=127.0.0.1:"+c.api,
-		"AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel,
+		"AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=127.0.0.1:"+c.api,
+		"AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel,
 		"AGENT_CLUSTER_DATABASE_PATH="+c.serverDB,
-		"AGENT_CLUSTER_AUTH_TOKEN=secret",
+		"AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret",
 		"AGENT_CLUSTER_TLS_CA_FILE="+certs.ca,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey,

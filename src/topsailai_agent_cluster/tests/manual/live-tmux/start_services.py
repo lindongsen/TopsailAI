@@ -104,10 +104,10 @@ def main() -> int:
         "AGENT_CLUSTER_TLS_CA_FILE": str(certs / "ca.pem"),
     })
     server_env = base | {
-        "AGENT_CLUSTER_API_LISTEN_ADDR": f"127.0.0.1:{api_port}",
-        "AGENT_CLUSTER_CHANNEL_LISTEN_ADDR": f"127.0.0.1:{channel_port}",
+        "AGENT_CLUSTER_SERVER_API_LISTEN_ADDR": f"127.0.0.1:{api_port}",
+        "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR": f"127.0.0.1:{channel_port}",
         "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "server.db"),
-        "AGENT_CLUSTER_AUTH_TOKEN": token,
+        "AGENT_CLUSTER_SERVER_AUTH_TOKEN": token,
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "server.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "server.key"),
     }

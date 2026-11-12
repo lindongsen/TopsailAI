@@ -427,7 +427,7 @@ func startU12ClusterAt(t *testing.T, root string, extra map[string]string, secon
 	build(t, fb, "./tests/fixtures/provider")
 	c := &u12Cluster{root: root, api: free(t), serverDB: filepath.Join(root, "server.db"), endpointDB: filepath.Join(root, "endpoint.db"), record: filepath.Join(root, "records.jsonl"), record2: filepath.Join(root, "records-2.jsonl")}
 	channel := free(t)
-	senv := append(os.Environ(), "AGENT_CLUSTER_API_LISTEN_ADDR=127.0.0.1:"+c.api, "AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel, "AGENT_CLUSTER_DATABASE_PATH="+c.serverDB, "AGENT_CLUSTER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey)
+	senv := append(os.Environ(), "AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=127.0.0.1:"+c.api, "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel, "AGENT_CLUSTER_DATABASE_PATH="+c.serverDB, "AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey)
 	for k, v := range extra {
 		senv = append(senv, k+"="+v)
 	}

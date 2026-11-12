@@ -93,26 +93,26 @@ func Load(args []string, role string) (Config, error) {
 	genericRole := !serverRole && !endpointRole
 
 	if serverRole || genericRole {
-		if value := os.Getenv("AGENT_CLUSTER_API_LISTEN_ADDR"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_SERVER_API_LISTEN_ADDR", "AGENT_CLUSTER_API_LISTEN_ADDR"); value != "" {
 			cfg.APIListenAddress = value
 		}
-		if value := os.Getenv("AGENT_CLUSTER_CHANNEL_LISTEN_ADDR"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR", "AGENT_CLUSTER_CHANNEL_LISTEN_ADDR"); value != "" {
 			cfg.ChannelListenAddress = value
 		}
-		if value := os.Getenv("AGENT_CLUSTER_AUTH_TOKEN"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_SERVER_AUTH_TOKEN", "AGENT_CLUSTER_AUTH_TOKEN"); value != "" {
 			cfg.AuthToken = value
 		}
-		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES", "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES"); value != "" {
 			addresses, err := ParseDialAddresses(value)
 			if err != nil {
 				return Config{}, err
 			}
 			cfg.EndpointDialAddresses = addresses
 		}
-		if value := os.Getenv("AGENT_CLUSTER_TLS_SHARED_CERTIFICATE"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE", "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE"); value != "" {
 			parsed, err := strconv.ParseBool(value)
 			if err != nil {
-				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_TLS_SHARED_CERTIFICATE: %w", err)
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE: %w", err)
 			}
 			cfg.TLSSharedCertificate = parsed
 		}
@@ -153,7 +153,7 @@ func Load(args []string, role string) (Config, error) {
 	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_DIRECTION"); value != "" {
 		cfg.ChannelDirection = value
 	}
-	if value := os.Getenv("AGENT_CLUSTER_SERVER_NAME"); value != "" {
+	if value := EnvironmentValue("AGENT_CLUSTER_TLS_SERVER_NAME", "AGENT_CLUSTER_SERVER_NAME"); value != "" {
 		cfg.ServerName = value
 	}
 	if value := os.Getenv("AGENT_CLUSTER_TLS_CA_FILE"); value != "" {

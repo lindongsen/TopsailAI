@@ -116,9 +116,9 @@ ADAPTERS_JSON=$(printf '[{"adapter_id":"topsailai","provider_type":"topsailai","
 
 # The Server owns the API and the channel listener. Its certificate is the one the
 # Endpoint verifies, and the CA is the one both sides trust.
-AGENT_CLUSTER_API_LISTEN_ADDR="127.0.0.1:${API_PORT}" \
-AGENT_CLUSTER_CHANNEL_LISTEN_ADDR="127.0.0.1:${CHANNEL_PORT}" \
-AGENT_CLUSTER_AUTH_TOKEN="${AUTH_TOKEN}" \
+AGENT_CLUSTER_SERVER_API_LISTEN_ADDR="127.0.0.1:${API_PORT}" \
+AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR="127.0.0.1:${CHANNEL_PORT}" \
+AGENT_CLUSTER_SERVER_AUTH_TOKEN="${AUTH_TOKEN}" \
 AGENT_CLUSTER_TLS_CA_FILE="${CERT_DIR}/ca.pem" \
 AGENT_CLUSTER_TLS_CERTIFICATE_FILE="${CERT_DIR}/server.pem" \
 AGENT_CLUSTER_TLS_KEY_FILE="${CERT_DIR}/server-key.pem" \

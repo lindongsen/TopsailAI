@@ -57,7 +57,7 @@ func main() {
 	bidirectional := cfg.ChannelDirection == config.DirectionBidirectional
 	dials := serverInitiated || bidirectional
 	if dials && len(cfg.EndpointDialAddresses) == 0 {
-		logger.Error("endpoint dial addresses are required when the server dials", "error", "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES is empty")
+		logger.Error("endpoint dial addresses are required when the server dials", "error", "AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES is empty")
 		_ = store.Close()
 		os.Exit(1)
 	}

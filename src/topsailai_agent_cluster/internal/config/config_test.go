@@ -70,3 +70,47 @@ func TestEnvironmentValuePrefersPrimaryName(t *testing.T) {
 		t.Fatalf("environment value = %q", got)
 	}
 }
+
+func TestServerEnvironmentNamesAndPrecedence(t *testing.T) {
+	t.Setenv("AGENT_CLUSTER_API_LISTEN_ADDR", "old-api")
+	t.Setenv("AGENT_CLUSTER_SERVER_API_LISTEN_ADDR", "new-api")
+	t.Setenv("AGENT_CLUSTER_CHANNEL_LISTEN_ADDR", "old-channel")
+	t.Setenv("AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR", "new-channel")
+	t.Setenv("AGENT_CLUSTER_AUTH_TOKEN", "old-token")
+	t.Setenv("AGENT_CLUSTER_SERVER_AUTH_TOKEN", "new-token")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES", "old=wss://old")
+	t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES", "new=wss://new")
+	t.Setenv("AGENT_CLUSTER_TLS_SHARED_CERTIFICATE", "false")
+	t.Setenv("AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE", "true")
+	t.Setenv("AGENT_CLUSTER_SERVER_NAME", "old-name")
+	t.Setenv("AGENT_CLUSTER_TLS_SERVER_NAME", "new-name")
+	cfg, err := Load(nil, "agent-cluster-server")
+	if err != nil {
+		t.Fatalf("load Server configuration: %v", err)
+	}
+	if cfg.APIListenAddress != "new-api" || cfg.ChannelListenAddress != "new-channel" || cfg.AuthToken != "new-token" {
+		t.Fatalf("Server primary names did not win: %+v", cfg)
+	}
+	if cfg.EndpointDialAddresses["new"] != "wss://new" || !cfg.TLSSharedCertificate || cfg.ServerName != "new-name" {
+		t.Fatalf("Server primary names did not configure channel: %+v", cfg)
+	}
+}
+
+func TestServerDeprecatedEnvironmentNamesRemainFallbacks(t *testing.T) {
+	t.Setenv("AGENT_CLUSTER_API_LISTEN_ADDR", "old-api")
+	t.Setenv("AGENT_CLUSTER_CHANNEL_LISTEN_ADDR", "old-channel")
+	t.Setenv("AGENT_CLUSTER_AUTH_TOKEN", "old-token")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES", "old=wss://old")
+	t.Setenv("AGENT_CLUSTER_TLS_SHARED_CERTIFICATE", "true")
+	t.Setenv("AGENT_CLUSTER_SERVER_NAME", "old-name")
+	cfg, err := Load(nil, "agent-cluster-server")
+	if err != nil {
+		t.Fatalf("load deprecated Server configuration: %v", err)
+	}
+	if cfg.APIListenAddress != "old-api" || cfg.ChannelListenAddress != "old-channel" || cfg.AuthToken != "old-token" {
+		t.Fatalf("deprecated Server names were not loaded: %+v", cfg)
+	}
+	if cfg.EndpointDialAddresses["old"] != "wss://old" || !cfg.TLSSharedCertificate || cfg.ServerName != "old-name" {
+		t.Fatalf("deprecated Server channel names were not loaded: %+v", cfg)
+	}
+}
