@@ -150,7 +150,7 @@ func TestEndpointDeprecatedEnvironmentNamesAreIgnored(t *testing.T) {
 }
 
 func TestServerEndpointExpiryConfiguration(t *testing.T) {
-	if got := Defaults("agent-cluster-server").EndpointExpiry; got != 5*time.Minute {
+	if got := Defaults("agent-cluster-server").EndpointExpiry; got != 24*time.Hour {
 		t.Fatalf("default Endpoint expiry = %s", got)
 	}
 	t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY", "7m30s")

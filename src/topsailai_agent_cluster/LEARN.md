@@ -879,3 +879,21 @@ Why this prevents recurrence: a whitelist implementation can stay correct while 
 false confidence about the wrong variable. Testing every accepted spelling keeps the non-leakage
 contract aligned with the compatibility contract, so a future change from a whitelist to inherited
 environment would expose every supported credential path.
+
+## A blocking callback inside a batch cleanup delays every later resource release
+
+Trigger: the first stale-peer sweep processed each expired Endpoint as `close connection -> run
+OnDisconnect` before moving to the next Endpoint. `OnDisconnect` writes the offline transition to
+SQLite synchronously, so one blocked database write could leave every later expired WebSocket open
+even though all of those peers had already been removed from the authoritative map.
+
+Action: separate batch cleanup into phases according to urgency and blocking risk. First detach and
+close every expired connection, then fail pending work and run persistence callbacks. Keep all of
+those operations outside the shared channel lock, and retain the exact peer identity so a late read
+loop cannot affect a replacement connection.
+
+Why this prevents recurrence: removing a peer from the routing map stops new requests, but it does
+not release the socket or its read loop. Interleaving resource release with a fallible synchronous
+callback lets one Endpoint's storage latency retain unrelated Endpoint resources. Closing the whole
+batch first makes connection cleanup independent across Endpoints while preserving durable offline
+publication afterward.

@@ -63,5 +63,17 @@ func (s *Store) migrate(ctx context.Context) error {
 	} else if err != nil {
 		return fmt.Errorf("inspect endpoint schema: %w", err)
 	}
+	var offlineSinceColumn string
+	err = s.db.QueryRowContext(ctx, `SELECT name FROM pragma_table_info('endpoints') WHERE name = 'offline_since_at_ms'`).Scan(&offlineSinceColumn)
+	if err == sql.ErrNoRows {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE endpoints ADD COLUMN offline_since_at_ms BIGINT NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add endpoint offline timestamp column: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("inspect endpoint offline timestamp schema: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_endpoints_offline_since ON endpoints(offline_since_at_ms, endpoint_id)`); err != nil {
+		return fmt.Errorf("index endpoint offline timestamp: %w", err)
+	}
 	return nil
 }

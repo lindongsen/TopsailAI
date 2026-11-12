@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS endpoints (
     display_name TEXT NOT NULL,
     hostname TEXT NOT NULL DEFAULT '',
     connection_state TEXT NOT NULL,
+    offline_since_at_ms BIGINT NOT NULL DEFAULT 0,
     observed_at_ms BIGINT NOT NULL,
     capability_revision TEXT NOT NULL,
     create_at_ms BIGINT NOT NULL,

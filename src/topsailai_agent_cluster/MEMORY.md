@@ -350,3 +350,16 @@ Why this prevents recurrence: a process boundary alone does not create abstracti
 prevents a new provider from depending on Cluster internals, prevents a provider result from claiming
 journal authority, and lets a provider be replaced through installation and local binding configuration
 without changing Endpoint, Server, storage, public API or operator CLI source.
+
+## Server never sends requests to an offline Endpoint
+
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> Endpoint 进入 offline 状态后，Server 不再向它发送请求。
+
+This is a standing routing rule. The authoritative in-memory channel peer is the send boundary: when
+heartbeat expiry or transport disconnection removes that peer, every command, query, output read,
+follow and refresh must fail immediately as offline instead of being written, queued or retried.
+Persisted `connection_state` is an operational projection and must not create a second send path.
+A later authenticated reconnect installs a new fenced peer and restores request delivery through that
+new connection only.
