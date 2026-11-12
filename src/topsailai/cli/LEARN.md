@@ -590,3 +590,51 @@ with leading whitespace, and the failure is invisible because the trailing
 make a decision, it must return the normalized value it decided on, not the
 original, and the test must include leading and trailing whitespace rather than
 only clean input.
+
+## An accepted spelling is not a completable spelling
+
+### Trigger
+
+The user asked that aliases also be included in TAB completion. The aliases
+were already accepted by the parser, so the request looked like a one-line
+inventory addition. It was not: three separate defects were hiding behind the
+same symptom.
+
+1. The advertised inventory held only canonical `/`-prefixed spellings, and two
+   of the three input surfaces matched with `startswith(prefix)` only, so a bare
+   spelling such as `list` completed in the readline prompt but never in the raw
+   TTY editor or the curses UI.
+2. Three genuine aliases were absent from the inventory entirely, so no surface
+   could complete them: `exit` for `q`/`quit`, `recent` for project-scope `r`,
+   and `projects` for `p`. They existed only as hardcoded string tuples inside
+   `core.py`, invisible to the completer.
+3. The restricted managed-project view hint listed only `r, p, q`, so the
+   aliases it actually accepted were undiscoverable even after they completed.
+
+### Action taken
+
+Kept the advertised inventory canonical and resolved the bare spelling once in a
+shared matcher `completer.get_completion_candidates(prefix)`, which all three
+surfaces now call, so a spelling cannot complete on one surface and fail on
+another. Moved the three alias declarations into `constants.py` as
+`QUIT_COMMAND_ALIASES`, `MANAGED_PROJECT_ALIASES` and `PROJECT_RECENT_ALIASES`
+plus their derived spelling groups, and replaced the hardcoded tuples in
+`core.py` with those groups so the parser and the completer read one
+declaration. Gated each new spelling by scope so completion never offers a
+spelling the parser rejects. Widened the restricted-view hint to name every
+accepted spelling. Verified with 66 new parametrized cases, the full
+`tests/unit/topsailai` suite (3429 passed), a pty manual test (3/3 PASS), a pty
+negative control proving the manual test is sensitive, and a live probe of the
+hint text and alias dispatch.
+
+### Why this prevents recurrence
+
+"Accepted" and "completable" are two different lists, and a command can be in
+one without the other. When a spelling is added to the parser, the same change
+must add it to the completion inventory and to every help and error string that
+enumerates the command set, otherwise the command works but is undiscoverable.
+Deriving both lists from one declaration is what makes that automatic; a
+hardcoded tuple in a parser branch is a second source of truth that the
+completer cannot see. Also check every input surface, not just the one that is
+easiest to test: the readline path already handled bare spellings, which is
+exactly why the raw TTY and curses gaps went unnoticed.
