@@ -958,3 +958,20 @@ Why this prevents recurrence: changing a database primary key protects only data
 consumer that validates a subset can erase the new distinction after lookup, and a test double that
 omits it can certify collisions the real store prevents. Enforcing the full tuple at every boundary
 makes the schema rule an application invariant instead of a storage-only convention.
+
+## Every process-group termination branch must wait for cleanup
+
+Trigger: the Provider conformance runner correctly killed and waited for its process group on timeout
+and cancellation, but the stdout-overflow branch only sent the group kill before returning. A Provider
+helper could therefore outlive an invocation specifically when excessive output triggered the safety
+limit, even though the same runner proved cleanup on its main timeout path.
+
+Action: centralize or audit every branch that terminates an owned process group, including timeout,
+cancellation, output-limit rejection and post-exit helper detection. After sending the exact group
+signal, wait until that same group is observably gone before returning, and test cleanup with a helper
+whose PID is reported before termination.
+
+Why this prevents recurrence: process cleanup is a property of every exit path, not of the common one.
+A safety branch is often reviewed only for its error classification, so a correct kill call looks
+complete while asynchronous descendants still exist. Waiting on the owned group turns a requested
+termination into verified resource release and keeps one malformed Provider from leaking processes.

@@ -88,4 +88,4 @@ make test-packaging
 make test-all
 ```
 
-`test-conformance` is a planned target and must not be reported as executed until it exists. Component-level and larger test runs continue to use Makefile targets as required by project memory.
+`test-conformance` builds the independent Mock Provider under `.tmp/provider-conformance` and runs the executable conformance suite directly against it. Component-level and larger test runs continue to use Makefile targets as required by project memory.

@@ -26,6 +26,7 @@ SHELL := /bin/bash
 
 BIN_DIR := bin
 TESTHOOKS_DIR := .tmp/artifacts
+CONFORMANCE_DIR := .tmp/provider-conformance
 DEB_DIR ?= .tmp/deb
 DEB_BUILD_DIR ?= .tmp/deb/build
 LAUNCHER := scripts/start-local-cluster.sh
@@ -77,7 +78,7 @@ CLI_PKG := ./src/main/agent-cluster-cli
 #
 # common: packages both roles depend on, plus the module root.
 COMMON_TEST_PKGS := ./internal ./internal/protocol ./internal/providercli \
-                    ./internal/config ./internal/logging ./internal/security \
+                    ./internal/providerconformance ./internal/config ./internal/logging ./internal/security \
                     ./internal/channel
 # server: the Server service, its storage and its command entry point.
 SERVER_TEST_PKGS := ./internal/server ./internal/storage/server \
@@ -133,7 +134,7 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
 
 .PHONY: help build build-testhooks vet fmt \
         test test-all test-unit test-unit-common test-unit-server \
-        test-unit-endpoint test-unit-cli test-provider-schema test-bdd \
+        test-unit-endpoint test-unit-cli test-provider-schema test-conformance test-bdd \
         test-integration test-packaging test-harness bdd integration \
         deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint \
         deb-inspect deb-clean \
@@ -158,6 +159,7 @@ help:
 	@echo "  test-all          run every test kind, including the tagged integration suite"
 	@echo "  test-unit         run the unit tests of every component"
 	@echo "  test-provider-schema run the Provider CLI DTO and JSON Schema contract tests"
+	@echo "  test-conformance   build and verify the independent Mock Provider executable"
 	@echo "  test-bdd          run the BDD feature suite"
 	@echo "  test-integration  run the integration suite with test hooks"
 	@echo "  test-packaging    run the Debian packaging tests"
@@ -260,6 +262,14 @@ test-unit-cli:
 test-provider-schema:
 	go test -count=1 ./internal/providercli
 
+# Executable conformance builds the independent Mock Provider module and drives
+# it only through the Provider CLI process boundary. All generated binaries, Go
+# cache data and compiler temporary files stay under .tmp/.
+test-conformance:
+	mkdir -p $(CONFORMANCE_DIR)/bin $(CONFORMANCE_DIR)/go-cache $(CONFORMANCE_DIR)/go-tmp
+	cd providers/mock && GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) .
+	AGENT_CLUSTER_MOCK_EXECUTABLE=$(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go test -count=1 ./internal/providerconformance
+
 # The BDD suite is cross-component on purpose: a scenario drives the real Server,
 # Endpoint and CLI together, so splitting it by component would either duplicate
 # scenarios or assert a component in isolation, which the unit groups already do.
@@ -291,7 +301,7 @@ test:
 	go test -count=1 ./...
 
 # Full verification: every test kind, including the tagged integration suite.
-test-all: test-unit test-provider-schema test-bdd test-integration test-packaging test-harness
+test-all: test-unit test-provider-schema test-conformance test-bdd test-integration test-packaging test-harness
 
 # Kept as aliases because earlier plans and habits refer to these names.
 bdd: test-bdd
@@ -299,7 +309,7 @@ bdd: test-bdd
 integration: test-integration
 
 fmt:
-	gofmt -w src internal
+	gofmt -w src internal providers/mock
 
 # Builds one package. The builder derives the version from git when DEB_VERSION is
 # empty, so a package always identifies the commit it was built from.
