@@ -134,8 +134,9 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
 
 .PHONY: help build build-testhooks vet fmt \
         test test-all test-unit test-unit-common test-unit-server \
-        test-unit-endpoint test-unit-cli test-provider-schema test-conformance test-bdd \
-        test-integration test-packaging test-harness bdd integration \
+        test-unit-endpoint test-unit-cli test-provider-schema test-conformance \
+        test-provider-topsailai test-bdd test-integration test-packaging test-harness \
+        bdd integration \
         deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint \
         deb-inspect deb-clean \
         image image-build image-run image-stop image-inspect image-clean \
@@ -160,6 +161,7 @@ help:
 	@echo "  test-unit         run the unit tests of every component"
 	@echo "  test-provider-schema run the Provider CLI DTO and JSON Schema contract tests"
 	@echo "  test-conformance   build and verify the independent Mock Provider executable"
+	@echo "  test-provider-topsailai test the independent TopsailAI Provider module"
 	@echo "  test-bdd          run the BDD feature suite"
 	@echo "  test-integration  run the integration suite with test hooks"
 	@echo "  test-packaging    run the Debian packaging tests"
@@ -270,6 +272,12 @@ test-conformance:
 	cd providers/mock && GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) .
 	AGENT_CLUSTER_MOCK_EXECUTABLE=$(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go test -count=1 ./internal/providerconformance
 
+# The independent TopsailAI Provider module is tested outside the root Go module.
+# Its compiler cache and temporary files remain under .tmp/.
+test-provider-topsailai:
+	mkdir -p .tmp/provider-topsailai/go-cache .tmp/provider-topsailai/go-tmp
+	cd providers/topsailai && TMPDIR=$(abspath .tmp/provider-topsailai) GOCACHE=$(abspath .tmp/provider-topsailai/go-cache) GOTMPDIR=$(abspath .tmp/provider-topsailai/go-tmp) go test -count=1 ./...
+
 # The BDD suite is cross-component on purpose: a scenario drives the real Server,
 # Endpoint and CLI together, so splitting it by component would either duplicate
 # scenarios or assert a component in isolation, which the unit groups already do.
@@ -309,7 +317,7 @@ bdd: test-bdd
 integration: test-integration
 
 fmt:
-	gofmt -w src internal providers/mock
+	gofmt -w src internal providers/mock providers/topsailai
 
 # Builds one package. The builder derives the version from git when DEB_VERSION is
 # empty, so a package always identifies the commit it was built from.
