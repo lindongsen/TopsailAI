@@ -130,8 +130,8 @@ for a 200 MB object.
 
 ## Resolution
 
-Fixed for the streaming and lock-scope defects. Still open for the diff and
-byte-splice paths, and for the archive scan.
+Fixed for the streaming and lock-scope defects. The remaining diff, byte-splice,
+and archive-scan work was split into three separate issues.
 
 **Streaming write seam.** `FS` gained `WriteFileFrom`, `AppendFrom`, and
 `UpdateFile`. `write` with `--seek 0` and no `--insert`, and `append`, stream
@@ -176,18 +176,25 @@ successes and 4 failures, and both acknowledged inserts persisted. An external
 `object is locked by another process` and exit 1 without writing. Silent loss
 is gone; contention now fails loudly.
 
-**Still open.**
+**Remaining work, split into separate issues.**
 
-- `overwrite-lines` and `insert` remain about 1.1 GB on a 200 MB file because
-  `unifiedDiff` builds `difflib.SplitLines` for both snapshots. A unified diff
-  needs both texts, so this needs a bounded-window diff strategy, not a
-  streaming change.
-- `write --seek != 0` remains 772 MB because `overwriteAt` materializes the
-  file to splice bytes. A byte-offset overwrite could be done in place on the
-  underlying handle.
-- `ObjectFS.MkdirAll` still streams the whole tar archive via `listAll` on
-  every subdirectory write (0.23s on a 200 MB object, memory bounded).
-- `TestConcurrentAppendKeepsEverySuccessfulUpdate` does not distinguish a
-  lock-scoped append from an unlocked read-modify-write, because `LOCK_NB`
-  makes losers fail loudly in both cases. Bounded memory on a large existing
-  file is what pins the in-place implementation.
+The three open technical items were split so each can be evaluated, fixed, and
+verified independently:
+
+- `issue-diff-bounded-window.md` — `overwrite-lines` and `insert` remain about
+  1.1 GB on a 200 MB file because `unifiedDiff` builds `difflib.SplitLines` for
+  both snapshots. A unified diff needs both texts, so this needs a
+  bounded-window diff strategy, not a streaming change.
+- `issue-write-seek-inplace.md` — `write --seek != 0` remains 772 MB because
+  `overwriteAt` materializes the file to splice bytes. A byte-offset overwrite
+  can be done in place on the underlying handle.
+- `issue-mkdirs-archive-scan.md` — `ObjectFS` has no path index, so `MkdirAll`,
+  `ReadDir`, and `isDir` stream the whole tar archive on every call. A write
+  into a subdirectory of a 200 MB object costs 0.15 s versus 0.01 s at the
+  object root, and the cost does not shrink when the folder already exists.
+
+One test limitation stays recorded here rather than in a separate issue:
+`TestConcurrentAppendKeepsEverySuccessfulUpdate` does not distinguish a
+lock-scoped append from an unlocked read-modify-write, because `LOCK_NB` makes
+losers fail loudly in both cases. Bounded memory on a large existing file is
+what pins the in-place implementation.
