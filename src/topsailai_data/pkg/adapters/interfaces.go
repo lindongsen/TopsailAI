@@ -11,6 +11,20 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
 
+// FileInfo describes one path inside an object's actual data.
+//
+// It is deliberately smaller than os.FileInfo: an existence check needs to know
+// whether the path is present, whether it is a folder, and how large a file is,
+// and nothing else. Keeping the type minimal lets a remote adapter answer
+// without materializing a full file-system entry.
+type FileInfo struct {
+	// Size is the byte length of a file. It is zero for a folder.
+	Size int64
+
+	// IsDir reports whether the path is a folder.
+	IsDir bool
+}
+
 // MetadataAdapter manages object metadata.
 type MetadataAdapter interface {
 	// Init prepares the adapter for use (creates directories, tables, etc.).
@@ -98,8 +112,23 @@ type ActualDataAdapter interface {
 	// a large file is never read back into memory.
 	AppendFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error)
 
+	// WriteFileAt inserts or overwrites a stream at a byte offset resolved
+	// against the current file size. Negative offsets count from the end.
+	WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error)
+
 	// ReadFile returns a stream that reads a single file from the object's actual data.
 	ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error)
+
+	// StatFile reports whether one file or folder exists inside the object's
+	// actual data and, for a file, its byte length. It exists so an existence
+	// check does not enumerate the whole payload: a caller that only needs to
+	// know whether a path is present must not pay a cost proportional to the
+	// object size. A missing path returns errors.ErrObjectNotFound.
+	StatFile(ctx context.Context, ref string, filename string) (FileInfo, error)
+
+	// ListFiles returns the relative paths of all regular payload files without
+	// reading their contents. Reserved adapter-internal files are excluded.
+	ListFiles(ctx context.Context, ref string) ([]string, error)
 
 	// Move relocates the actual data for an object to a new adapter-specific reference.
 	// For local adapters newRef is the new relative payload path; source cleanup

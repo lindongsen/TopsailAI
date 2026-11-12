@@ -329,6 +329,25 @@ func (m *Manager) AppendActualFile(ctx context.Context, id models.ObjectID, file
 	return nil
 }
 
+// WriteActualFileAt inserts or overwrites a stream while holding exclusive object custody.
+func (m *Manager) WriteActualFileAt(ctx context.Context, id models.ObjectID, filename string, r io.Reader, seek int64, insert bool) error {
+	obj, lock, err := m.lockActiveObject(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer releaseNamespaceLock(lock)
+
+	if _, err := m.actual.WriteFileAt(ctx, obj.DataRef, filename, r, seek, insert); err != nil {
+		return fmt.Errorf("write file at offset: %w", err)
+	}
+	obj.UpdatedAt = time.Now()
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return err
+	}
+	m.recordWrite(ctx, obj)
+	return nil
+}
+
 // UpdateActualFile performs a lock-protected read-modify-write on one file.
 //
 // Exclusive object custody is acquired once and held across both the read and
@@ -422,6 +441,45 @@ func (m *Manager) ReadActualFile(ctx context.Context, id models.ObjectID, filena
 		return &lockedReadCloser{ReadCloser: reader, lock: lock}, nil
 	}
 	return reader, nil
+}
+
+// StatActualFile reports whether one path exists inside the object's actual
+// data without enumerating the payload.
+//
+// It exists so an existence check costs one adapter lookup instead of a full
+// archive scan. The lookup is a read operation, so it records read statistics
+// exactly like ReadActualFile.
+func (m *Manager) StatActualFile(ctx context.Context, id models.ObjectID, filename string) (adapters.FileInfo, error) {
+	obj, lock, err := m.readActiveObject(ctx, id)
+	if err != nil {
+		return adapters.FileInfo{}, err
+	}
+	if lock != nil {
+		defer releaseNamespaceLock(lock)
+	}
+	info, err := m.actual.StatFile(ctx, obj.DataRef, filename)
+	if err != nil {
+		return adapters.FileInfo{}, err
+	}
+	m.recordRead(ctx, obj, lock)
+	return info, nil
+}
+
+// ListActualFiles returns payload file names without reading their contents.
+func (m *Manager) ListActualFiles(ctx context.Context, id models.ObjectID) ([]string, error) {
+	obj, lock, err := m.readActiveObject(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if lock != nil {
+		defer releaseNamespaceLock(lock)
+	}
+	paths, err := m.actual.ListFiles(ctx, obj.DataRef)
+	if err != nil {
+		return nil, err
+	}
+	m.recordRead(ctx, obj, lock)
+	return paths, nil
 }
 
 // MoveObject moves an active object to a new classify path. The object name

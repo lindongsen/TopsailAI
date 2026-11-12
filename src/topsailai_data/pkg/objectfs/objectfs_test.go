@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/topsailai/topsailai_data/pkg/adapters"
 	"github.com/topsailai/topsailai_data/pkg/adapters/local"
 	"github.com/topsailai/topsailai_data/pkg/config"
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
@@ -23,6 +24,17 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
+
+// archiveCountingAdapter records accidental archive reads while forwarding all adapter operations.
+type archiveCountingAdapter struct {
+	adapters.ActualDataAdapter
+	archiveReads atomic.Int64
+}
+
+func (a *archiveCountingAdapter) ReadArchive(ctx context.Context, ref string) (io.ReadCloser, error) {
+	a.archiveReads.Add(1)
+	return a.ActualDataAdapter.ReadArchive(ctx, ref)
+}
 
 // newTestManager returns a manager rooted in a temporary directory.
 func newTestManager(t *testing.T) (*manager.Manager, context.Context) {
@@ -409,6 +421,54 @@ func TestReadDirRejectsMissingFolder(t *testing.T) {
 
 	if _, err := fs.ReadDir("ghost"); err == nil {
 		t.Fatal("expected an error for a missing folder")
+	}
+}
+
+// TestFolderOperationsDoNotReadArchive proves path discovery never opens the
+// payload archive merely to inspect folders.
+func TestFolderOperationsDoNotReadArchive(t *testing.T) {
+	const adapterName = "objectfs-archive-counting"
+	var counting *archiveCountingAdapter
+	adapters.RegisterActualDataAdapter(adapterName, func(_ context.Context, cfg map[string]string) (adapters.ActualDataAdapter, error) {
+		counting = &archiveCountingAdapter{ActualDataAdapter: local.NewActualDataAdapter(cfg["root"])}
+		return counting, nil
+	})
+	cfg := &config.Config{
+		Root:                t.TempDir(),
+		MetadataAdapter:     "local",
+		ActualDataAdapter:   adapterName,
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
+		CeasedRetentionDays: 30,
+	}
+	mgr, err := manager.New(cfg)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	ctx := context.Background()
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":       "markdown",
+		"notes/keep.md": "keep",
+	})
+	counting.archiveReads.Store(0)
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	if err := fs.MkdirAll("notes", 0o755); err != nil {
+		t.Fatalf("first mkdirs: %v", err)
+	}
+	if err := fs.MkdirAll("notes", 0o755); err != nil {
+		t.Fatalf("second mkdirs: %v", err)
+	}
+	info, err := fs.Stat("notes")
+	if err != nil {
+		t.Fatalf("stat folder: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("expected notes to be a folder")
+	}
+	if got := counting.archiveReads.Load(); got != 0 {
+		t.Fatalf("folder operations opened the payload archive %d times", got)
 	}
 }
 
@@ -810,6 +870,42 @@ func TestStatLargeFileUsesBoundedMemory(t *testing.T) {
 	}
 	if grown > 2<<20 {
 		t.Fatalf("stating a %d-byte file allocated %d bytes, so the content was read", fileSize, grown)
+	}
+}
+
+// TestPositionalWriteUsesBoundedMemory proves changing a few bytes in a large
+// object file does not materialize the existing content.
+func TestPositionalWriteUsesBoundedMemory(t *testing.T) {
+	const fileSize = 8 << 20
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md": "markdown",
+		"big.log": strings.Repeat("a", fileSize),
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	before := allocatedBytes()
+	if err := filetool.WriteFile("big.log", "XYZ", filetool.WriteFileOptions{Seek: 100, FS: fs}); err != nil {
+		t.Fatalf("positional write: %v", err)
+	}
+	grown := allocatedBytes() - before
+	if grown > 2<<20 {
+		t.Fatalf("updating a %d-byte file allocated %d bytes, so the file was buffered", fileSize, grown)
+	}
+	fd, err := fs.Open("big.log")
+	if err != nil {
+		t.Fatalf("open result: %v", err)
+	}
+	defer fd.Close()
+	if _, err := fd.Seek(97, io.SeekStart); err != nil {
+		t.Fatalf("seek result: %v", err)
+	}
+	got := make([]byte, 9)
+	if _, err := io.ReadFull(fd, got); err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	if string(got) != "aaaXYZaaa" {
+		t.Fatalf("unexpected positional result %q", got)
 	}
 }
 

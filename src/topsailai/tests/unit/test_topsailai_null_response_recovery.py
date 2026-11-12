@@ -1,5 +1,7 @@
 """Tests for request-local null-response Hook recovery."""
 
+from unittest.mock import patch
+
 import pytest
 
 from topsailai.ai_base.llm_control.null_response_recovery import (
@@ -26,13 +28,23 @@ def active_state():
 
 
 def test_hook_module_injects_continue_when_streak_reaches_three(active_state):
-    """The Hook module owns both threshold evaluation and message injection."""
+    """A successful injection emits one warning and later retries stay quiet."""
     payload = {"operation_id": "op-1", "error_category": "LLMNullResponseError"}
 
-    assert continue_after_null_responses.main(**payload) is False
-    assert continue_after_null_responses.main(**payload) is False
-    assert active_state.messages == [{"role": "user", "content": "task"}]
-    assert continue_after_null_responses.main(**payload) is True
+    with patch(
+        "topsailai.ai_base.llm_control.null_response_recovery.print_warning"
+    ) as warning:
+        assert continue_after_null_responses.main(**payload) is False
+        assert continue_after_null_responses.main(**payload) is False
+        warning.assert_not_called()
+        assert active_state.messages == [{"role": "user", "content": "task"}]
+        assert continue_after_null_responses.main(**payload) is True
+        assert continue_after_null_responses.main(**payload) is False
+
+    warning.assert_called_once_with(
+        "Injected a temporary LLM recovery message after "
+        "3 consecutive null responses."
+    )
     assert active_state.messages[-1] == {"role": "user", "content": "continue"}
 
 
@@ -166,3 +178,19 @@ def test_disabled_recovery_never_injects(monkeypatch):
 
     assert outcomes == [False, False, False, False]
     assert observed == [{"role": "user", "content": "task"}]
+
+
+def test_error_after_injection_does_not_rearm_duplicate_guidance(active_state):
+    """A later null-response streak reuses the one live recovery message."""
+    for _ in range(3):
+        observe_attempt_error("op-1", "LLMNullResponseError")
+    observe_attempt_error("op-1", "LLMProviderReadError")
+    outcomes = [
+        observe_attempt_error("op-1", "LLMNullResponseError")
+        for _ in range(3)
+    ]
+
+    assert outcomes == [False, False, False]
+    assert active_state.messages.count(
+        {"role": "user", "content": "continue"}
+    ) == 1

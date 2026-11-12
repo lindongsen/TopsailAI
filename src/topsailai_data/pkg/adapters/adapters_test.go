@@ -54,7 +54,16 @@ func (s *stubActualDataAdapter) WriteFile(ctx context.Context, ref string, filen
 func (s *stubActualDataAdapter) AppendFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error) {
 	return ref, nil
 }
+func (s *stubActualDataAdapter) WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error) {
+	return ref, nil
+}
 func (s *stubActualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
+	return nil, nil
+}
+func (s *stubActualDataAdapter) StatFile(ctx context.Context, ref string, filename string) (FileInfo, error) {
+	return FileInfo{}, nil
+}
+func (s *stubActualDataAdapter) ListFiles(ctx context.Context, ref string) ([]string, error) {
 	return nil, nil
 }
 func (s *stubActualDataAdapter) Move(ctx context.Context, oldRef string, newRef string) (string, error) {

@@ -27,79 +27,85 @@ Two habits follow, and both are mandatory when adding an adapter:
   record format named in `internal/protocol`, in a Server route, in a stored document or in a CLI
   help body is a defect, even when it is only a comment.
 
-## A provider is its own component
+## A provider implements the standard Adapter CLI
 
-Human decision on 2026-11-11, wording normalized, meaning preserved:
+A provider is an independent project and release. It implements the versioned Adapter CLI protocol
+defined by Agent Cluster and owns every translation between that standard and its concrete runtime.
+The Endpoint contains one generic CLI runner; it does not contain one Go package per provider.
 
-> 同意A，就是要把adapter拆出来能够单独开发，独立接入。让endpoint成为抽象层。
+The required call chain is:
 
-> 同意建议，就是你说的意思A。先放同仓库，写好文档，做好约定。同意建议，先做好接缝。
-
-An adapter is a component, not a branch inside the Endpoint. It can be developed, tested and compiled on
-its own, and it is plugged into the Endpoint through one registration line. The Endpoint is the
-abstraction layer and never names a provider.
-
-The component lives in its own folder, `internal/adapter/<name>/`, and exposes one constructor:
-
-```go
-func NewProvider() adapter.Provider
+```text
+Endpoint service -> Adapter -> provider CLI -> provider business layer
 ```
 
-The composition root in `src/main/agent-cluster-endpoint/` lists the providers it links. That list is the
-only place in the Endpoint that names a provider, and adding a provider is a new folder plus one line.
-There must be no `switch` on `provider_type` anywhere in the Endpoint.
+The Adapter exposes provider-neutral functions such as describe, discover, inspect, execute,
+query-command, read-output and follow-output. The provider CLI receives the matching standard request,
+performs the provider-specific work and returns a standard result. The provider may change how it does
+that work without a cluster release as long as the advertised protocol remains compatible.
 
-### What a provider may import
+### Provider CLI implementation rules
 
-Only the contract packages: `protocol`, `security` and `adapter`. A provider must not import
-`endpoint`, `storage`, `channel`, `server`, `config`, `logging` or `tui`, and must not import another
-provider. This is what keeps it independently buildable and independently testable.
+1. Implement the cluster-defined protocol; never redefine operation names, states, error codes or
+   effect certainty from provider vocabulary.
+2. Keep provider command names, flags, files, state labels and response formats inside the provider
+   project. They must not appear in the generic runner or Endpoint service.
+3. Read one request from stdin and write protocol data only to stdout. Write logs and diagnostics to
+   stderr, within the advertised and enforced byte budget.
+4. Echo the request ID and protocol version in every response or stream frame. Reject an unsupported
+   major version before performing an operation.
+5. Advertise only operations the provider CLI can actually implement. Return the standard
+   `unsupported` error instead of emulating an operation with a different provider action.
+6. Preserve uncertainty. A timeout, broken transport or unconfirmed provider effect must not be
+   reported as success or `not_applied` without evidence.
+7. Accept configuration only through the local binding established by the Endpoint. A remote request
+   cannot choose an executable, provider command, environment variable, file or working directory.
+8. Do not access Server routes, cluster credentials, the Endpoint database or cluster journals. Do not
+   mint or persist cluster resource IDs.
+9. Exit when the request finishes or its input closes. For streaming operations, stop on cancellation
+   and emit exactly one terminal frame when the channel is still writable.
+10. Pass the executable conformance suite without an Endpoint, Server, channel or cluster database.
 
-### What a provider receives
+### Configuration and executable ownership
 
-Everything arrives through `adapter.Config`, including an opaque `Settings` map carried in the
-`AGENT_CLUSTER_ENDPOINT_ADAPTERS` element. The Endpoint never interprets a `Settings` key; the provider validates
-its own keys and fails startup on a malformed value.
+Each binding names a locally approved provider executable and opaque provider settings. The Endpoint
+loads external configuration once, validates the common fields and passes only that binding's settings
+to the provider CLI. Provider-specific settings are namespaced per binding and validated by the
+provider CLI; an unknown or malformed setting fails that binding visibly.
 
-A provider must not read process environment variables for its own configuration. Environment is
-external configuration read once at the process boundary, and the Endpoint is that boundary. Reading the
-environment to construct a child process environment is a different purpose and remains allowed, which
-is what `runner.go`, `follow.go` and `exec_command.go` already do.
+The provider executable path, base arguments, working directory and environment are local
+administrative configuration. They are never command payload fields. The generic runner starts the
+executable directly with an argv array and no shell, supplies a minimal environment, applies bounded
+stdin/stdout/stderr and terminates only the exact process group it created.
 
-### What a provider must not do
+### Standard requests and streams
 
-- Write log files. It returns errors, and the Endpoint owns logging and retention.
-- Learn that a Server exists. No Server address, credential or route reaches a provider.
-- Persist cluster state. Durable resource identity is supplied through `adapter.ResourceMapper`, which
-  the Endpoint implements.
-- Emulate an unsupported capability with an unrelated operation. It reports `adapter.ErrUnsupported`.
-- Require an Endpoint, a Server, a channel or a database to run its tests.
+Request/response operations use one JSON document in each direction. Streaming operations use JSON
+Lines with a start frame, zero or more records and one terminal frame. A provider must not print a
+banner, progress text or log line to stdout, because one non-protocol byte makes the response invalid.
 
-### Where the `ctl.<action>` catalog belongs
+The protocol schemas and examples live in `docs/agent-cluster-protocol.md`. The conformance suite is
+the executable form of the same contract; prose and tests must be updated together.
 
-The catalog mechanism is neutral and the catalog content is provider-specific, so the two are split:
+### TopsailAI migration
 
-- The loader, parser and validator belong to the neutral layer, because `ctl.` is a standard operation
-  family defined by the cluster (`internal/security/scopes.go`). Keeping them in a provider package
-  forces the Endpoint to import that provider just to load a standard family.
-- The catalog file belongs to the provider's configuration, because an entry names a provider argv such
-  as `["runtime","control","heartbeat",...]`.
-- The catalog is per-adapter, named through `Settings`, not one global file. A single global catalog
-  would advertise one provider's actions from another provider's binding.
+The existing Go implementation under `internal/adapter/topsailai` is migration source material, not
+the target architecture. Its TopsailAI command construction, JSON decoding, state translation,
+model/history/drive mapping and output handling move to an independently managed TopsailAI provider
+CLI project.
 
-The Endpoint never interprets the catalog. It checks advertised capabilities only, so a catalog edit
-reaches admission through `Describe` and reaches the operator through the inventory.
+Migration is incremental:
 
-### Module split is a later step
+- Implement and test the generic runner against provider-neutral fixtures.
+- Implement the TopsailAI provider CLI in the TopsailAI project.
+- Run the same fixtures through the old Go adapter and the provider CLI and compare the standard
+  results, including uncertainty and truncation evidence.
+- Switch an Endpoint binding to the provider CLI only after conformance and parity pass.
+- Remove the cluster-local TopsailAI implementation only after BDD, integration and live smoke checks
+  pass and rollback is documented.
 
-The Go toolchain forbids an external module from importing a package under `internal/`, so a real module
-split requires moving `protocol`, `security` and `adapter` into a public SDK directory. That move freezes
-the `Adapter` interface, and one changed method signature then breaks every provider.
-
-The interface is still evolving and these documents are discussion drafts, so the order is: build the
-seam, let the interface stabilise, then split the module. Reversing the order pins an interface that is
-not finished. The chosen form is a linkable module in the same repository, not a separate process and
-not a runtime plugin.
+The sections below describe the verified TopsailAI mapping that the independent provider CLI must
+preserve. They do not authorize Agent Cluster to keep or reintroduce TopsailAI-specific translation.
 
 ## Verified TopsailAI integration surface
 

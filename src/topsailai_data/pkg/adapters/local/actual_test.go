@@ -880,6 +880,42 @@ func TestActualDataAdapterWriteFileFailureCleansTemporaryFile(t *testing.T) {
 	}
 }
 
+func TestActualDataAdapterWriteFileAtFailurePreservesDestination(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "object", "2026", "1111", "1200", "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(ref, "data.txt")
+	original := []byte("prefix-original-suffix")
+	if err := os.WriteFile(destination, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := adapter.WriteFileAt(ctx, actualFixtureRef(t, root, ref), "data.txt", &failingReader{data: []byte("partial")}, 7, false)
+	if err == nil {
+		t.Fatal("expected injected read failure")
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("destination changed: got %q, want %q", got, original)
+	}
+	entries, err := os.ReadDir(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), writeTempPrefix) {
+			t.Fatalf("temporary artifact remains: %s", entry.Name())
+		}
+	}
+}
+
 func TestActualDataAdapterReadArchiveAndExistsHideWriteTemporaryFiles(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

@@ -1436,8 +1436,17 @@ func (e *errorCloseActualDataAdapter) WriteFile(ctx context.Context, ref string,
 func (e *errorCloseActualDataAdapter) AppendFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error) {
 	return ref, nil
 }
+func (e *errorCloseActualDataAdapter) WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error) {
+	return ref, nil
+}
 func (e *errorCloseActualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
+}
+func (e *errorCloseActualDataAdapter) StatFile(ctx context.Context, ref string, filename string) (adapters.FileInfo, error) {
+	return adapters.FileInfo{}, nil
+}
+func (e *errorCloseActualDataAdapter) ListFiles(ctx context.Context, ref string) ([]string, error) {
+	return nil, nil
 }
 func (e *errorCloseActualDataAdapter) Move(ctx context.Context, oldRef string, newRef string) (string, error) {
 	return newRef, nil

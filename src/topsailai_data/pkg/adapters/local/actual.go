@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/topsailai/topsailai_data/pkg/adapters"
 	"github.com/topsailai/topsailai_data/pkg/errors"
 )
 
@@ -320,6 +321,126 @@ func (a *actualDataAdapter) AppendFile(ctx context.Context, ref string, filename
 	return resultRef, nil
 }
 
+// WriteFileAt inserts or overwrites a stream at a byte offset without loading
+// the existing file into memory. The replacement is assembled in a temporary
+// file and published by rename, so a failed source read preserves the old file.
+func (a *actualDataAdapter) WriteFileAt(ctx context.Context, ref string, filename string, r io.Reader, seek int64, insert bool) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	resultRef := ref
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if err := validateActualFilename(filename); err != nil {
+		return "", err
+	}
+	fullPath, err := resolvePayloadFile(ref, filename)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return "", fmt.Errorf("create parent directories for %q: %w", fullPath, err)
+	}
+
+	old, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if _, err := a.WriteFile(ctx, resultRef, filename, r); err != nil {
+				return "", err
+			}
+			return resultRef, nil
+		}
+		return "", fmt.Errorf("open file %q for positional write: %w", fullPath, err)
+	}
+	defer old.Close()
+	oldInfo, err := old.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat file %q for positional write: %w", fullPath, err)
+	}
+	if source, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
+		sourceInfo, err := source.Stat()
+		if err != nil {
+			return "", fmt.Errorf("stat source for %q: %w", fullPath, err)
+		}
+		if os.SameFile(sourceInfo, oldInfo) {
+			return "", fmt.Errorf("%w: %q", errors.ErrSourceDestinationSameFile, fullPath)
+		}
+	}
+
+	position := resolveWritePosition(seek, oldInfo.Size(), insert)
+	if err := cleanupStaleWriteTemps(filepath.Dir(fullPath), time.Now()); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(fullPath), writeTempPrefix)
+	if err != nil {
+		return "", fmt.Errorf("create temporary file for %q: %w", fullPath, err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		_ = tmp.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(oldInfo.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("set temporary file mode for %q: %w", fullPath, err)
+	}
+	if _, err := io.CopyN(tmp, old, position); err != nil {
+		return "", fmt.Errorf("copy prefix for %q: %w", fullPath, err)
+	}
+	written, err := io.Copy(tmp, r)
+	if err != nil {
+		return "", fmt.Errorf("write replacement for %q: %w", fullPath, err)
+	}
+	suffixOffset := position
+	if !insert {
+		suffixOffset += written
+	}
+	if suffixOffset < oldInfo.Size() {
+		if _, err := old.Seek(suffixOffset, io.SeekStart); err != nil {
+			return "", fmt.Errorf("seek suffix for %q: %w", fullPath, err)
+		}
+		if _, err := io.Copy(tmp, old); err != nil {
+			return "", fmt.Errorf("copy suffix for %q: %w", fullPath, err)
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		return "", fmt.Errorf("sync temporary file for %q: %w", fullPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close temporary file for %q: %w", fullPath, err)
+	}
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		return "", fmt.Errorf("replace file %q: %w", fullPath, err)
+	}
+	cleanup = false
+	return resultRef, nil
+}
+
+// resolveWritePosition converts a byte seek to a clamped position.
+func resolveWritePosition(seek, size int64, insert bool) int64 {
+	if seek < 0 {
+		position := size + seek
+		if insert {
+			position++
+		}
+		if position < 0 {
+			return 0
+		}
+		if position > size {
+			return size
+		}
+		return position
+	}
+	if seek > size {
+		return size
+	}
+	return seek
+}
+
 // ReadFile returns a stream that reads a single file from the object's actual
 // data.
 func (a *actualDataAdapter) ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error) {
@@ -345,6 +466,86 @@ func (a *actualDataAdapter) ReadFile(ctx context.Context, ref string, filename s
 		return nil, fmt.Errorf("open file %q: %w", fullPath, err)
 	}
 	return f, nil
+}
+
+// StatFile reports whether one path exists inside the object's actual data.
+//
+// It answers from a single lstat of the resolved payload path, so an existence
+// check costs one file-system lookup instead of a full archive enumeration. A
+// folder is reported as a directory; a regular file reports its byte length.
+// A missing path returns errors.ErrObjectNotFound.
+func (a *actualDataAdapter) StatFile(ctx context.Context, ref string, filename string) (adapters.FileInfo, error) {
+	if ctx.Err() != nil {
+		return adapters.FileInfo{}, ctx.Err()
+	}
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return adapters.FileInfo{}, err
+	}
+	if err := validateActualFilename(filename); err != nil {
+		return adapters.FileInfo{}, err
+	}
+	fullPath, err := resolvePayloadFile(ref, filename)
+	if err != nil {
+		return adapters.FileInfo{}, err
+	}
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return adapters.FileInfo{}, fmt.Errorf("%w: file %q", errors.ErrObjectNotFound, filename)
+		}
+		return adapters.FileInfo{}, fmt.Errorf("stat file %q: %w", fullPath, err)
+	}
+	if info.IsDir() {
+		return adapters.FileInfo{IsDir: true}, nil
+	}
+	return adapters.FileInfo{Size: info.Size()}, nil
+}
+
+// ListFiles returns payload file names without opening or reading file bodies.
+func (a *actualDataAdapter) ListFiles(ctx context.Context, ref string) ([]string, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	dir, err := a.resolveRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	err = filepath.WalkDir(dir, func(fullPath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if fullPath == dir {
+			return nil
+		}
+		if isMetadataMarker(entry.Name()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("get info for %q: %w", fullPath, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, fullPath)
+		if err != nil {
+			return fmt.Errorf("relate path %q to object directory: %w", fullPath, err)
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list payload files in %q: %w", dir, err)
+	}
+	return paths, nil
 }
 
 // Move copies the object directory from oldRef to newRef. For the local adapter
