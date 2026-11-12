@@ -5,7 +5,10 @@ Author: mm-m25
 Purpose: Test agent instruction handlers (system_prompt, env_prompt, tool_prompt, tools)
 """
 
+import json
 import os
+import shutil
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -832,6 +835,111 @@ class TestSelectModel(unittest.TestCase):
 
         self.assertIn("Current model: CurrentModel", result)
         self.assertIn("No models found in", result)
+
+
+class TestSessionMetaModelNameSync(unittest.TestCase):
+    """Test that a model switch refreshes the session metadata model_name."""
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    @patch("topsailai.workspace.session_meta.update_session_meta_field")
+    def test_select_model_updates_session_meta(
+        self, mock_update_field, mock_load_registry, mock_get_agent
+    ):
+        """Test /models <name> projects the applied model name onto the metadata."""
+        mock_agent = MagicMock()
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {"ModelA": {"name": "ModelA"}}
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        select_model("ModelA")
+
+        mock_update_field.assert_called_once_with("model_name", "ModelA")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.session_meta.update_session_meta_field")
+    def test_set_llm_updates_session_meta(self, mock_update_field, mock_get_agent):
+        """Test /set_llm <name> also projects the applied model name."""
+        mock_agent = MagicMock()
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_get_agent.return_value = mock_agent
+
+        from topsailai.workspace.plugin_instruction.agent import set_llm
+        set_llm("NewModel")
+
+        mock_update_field.assert_called_once_with("model_name", "NewModel")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.session_meta.update_session_meta_field")
+    def test_connection_switch_updates_session_meta(self, mock_update_field, mock_get_agent):
+        """Test a connection-changing switch also projects the model name."""
+        mock_agent = MagicMock()
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+
+        from topsailai.workspace.plugin_instruction.agent import set_llm
+        set_llm("model=NewModel", "base_url=https://example.com/v1", "api_key=secret")
+
+        mock_update_field.assert_called_once_with("model_name", "NewModel")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.session_meta.update_session_meta_field")
+    def test_metadata_failure_does_not_change_result(self, mock_update_field, mock_get_agent):
+        """Test a metadata write failure is swallowed and the result is unchanged."""
+        mock_update_field.side_effect = OSError("disk full")
+        mock_agent = MagicMock()
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_get_agent.return_value = mock_agent
+
+        from topsailai.workspace.plugin_instruction.agent import set_llm
+        result = set_llm("NewModel")
+
+        self.assertIn("OldModel -> NewModel", result)
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "NewModel")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_metadata_file_contains_applied_model(self, mock_get_agent):
+        """Test the real metadata file records the applied model name."""
+        from topsailai.workspace import session_meta
+
+        class FakeLLM:
+            model_name = "OldModel"
+
+        class FakeAgent:
+            agent_name = "FakeAgent"
+            agent_type = "react"
+            agent_role = "worker"
+            llm_model = FakeLLM()
+
+        temp_dir = tempfile.mkdtemp()
+        original_task_folder = session_meta.FOLDER_WORKSPACE_TASK
+        session_meta.FOLDER_WORKSPACE_TASK = temp_dir
+        try:
+            with patch.dict(os.environ, {"SESSION_ID": "meta-model-sync"}):
+                path = session_meta.create_session_meta("meta-model-sync", FakeAgent())
+                self.assertIsNotNone(path)
+
+                mock_agent = MagicMock()
+                mock_agent.runtime.llm_model.model_name = "OldModel"
+                mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+                mock_get_agent.return_value = mock_agent
+
+                from topsailai.workspace.plugin_instruction.agent import set_llm
+                set_llm("NewModel")
+
+                with open(path, "r", encoding="utf-8") as fd:
+                    meta = json.load(fd)
+                self.assertEqual(meta["model_name"], "NewModel")
+        finally:
+            session_meta.FOLDER_WORKSPACE_TASK = original_task_folder
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 class TestLoadModelsRegistry(unittest.TestCase):

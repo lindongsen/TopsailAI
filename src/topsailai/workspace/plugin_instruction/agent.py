@@ -7,6 +7,7 @@
 
 import os
 
+from topsailai.logger import logger
 from topsailai.utils import (
     env_tool,
     json_tool,
@@ -52,6 +53,29 @@ def _load_models_registry() -> dict:
         print_warning(f"Failed to load models registry from {FILE_MODELS_REGISTRY}: {e}")
 
     return registry
+
+
+def _sync_session_meta_model_name(model_name: str) -> None:
+    """Project the applied model name onto the current session metadata file.
+
+    The metadata file records ``model_name`` once at session creation, so a
+    later model switch must refresh it. This mirrors the best-effort metadata
+    projection used by ``ctx_manager.update_session_name``: the session
+    identifier comes from the ambient environment, and any failure is logged
+    without interrupting the instruction flow.
+
+    Args:
+        model_name (str): The model name that was just applied.
+    """
+    try:
+        from topsailai.workspace.session_meta import update_session_meta_field
+
+        update_session_meta_field("model_name", model_name)
+    except Exception:
+        logger.warning(
+            "model_name metadata sync failed: model_name=%s", model_name,
+            exc_info=True,
+        )
 
 
 def _apply_model_config(agent, config: dict) -> str:
@@ -116,6 +140,7 @@ def _apply_model_config(agent, config: dict) -> str:
     # Model-only switches are request-scoped and deliberately retain the
     # current SDK client and failover leases.
     llm_model.model_name = new_model_name
+    _sync_session_meta_model_name(new_model_name)
 
     environment = config.get("environment")
     if isinstance(environment, dict):
