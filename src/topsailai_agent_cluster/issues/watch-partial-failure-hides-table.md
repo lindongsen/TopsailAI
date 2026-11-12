@@ -113,3 +113,57 @@ accepted. Restoring `io.Discard` failed both with the table present but the diag
 the `reportLoad{}` rejection failed both with `partial collection was rejected instead of rendered`.
 `go build ./internal/tui/`, `go vet ./internal/tui/`, `go test ./internal/tui/ -count=1` and
 `make test-unit-cli` are green after the fix.
+
+## Live terminal verification
+
+The unit tests assert the rendered buffer, but the defect was reported from a real interactive
+session, so the fix was also verified on a real terminal against the live cluster. The check drives
+the interactive CLI through tmux, captures the pane, and compares only the output produced after the
+`auto-refresh:` banner. That boundary matters: the initial `list` render already contains a table
+header, so matching the whole pane reports a table that `watch` never printed. The first version of
+the check made exactly that mistake and passed against the unfixed binary.
+
+The check was run against both builds, and the pair is what proves it discriminates:
+
+| Build | Table after `watch` | Failure diagnostic | Result |
+|---|---|---|---|
+| Unfixed (`HEAD~1` worktree) | absent | absent | FAIL |
+| Fixed | present, 23 rows | 4 lines | PASS |
+
+Unfixed output, which reproduces the report exactly, including the mangled quoting that the old
+`%q`-on-a-joined-string message produced:
+
+```text
+auto-refresh: 1m0s projection (any key stops)
+auto-refresh: endpoints "ai-dev\", \"gd-dev\", \"local-endpoint\", \"topsailai-dev" failed to report
+```
+
+Fixed output: the table renders, and each failing endpoint is named beside it.
+
+```text
+auto-refresh: 1m0s projection (any key stops)
+NO │ SESSION_NAME                 │ DRIVER  │ PROJECT_WORKSPACE                      │ ENDPOINT      │ DATA_STATUS
+1  │ Endpoint组件独立拆分讨论     │ none    │ /TopsailAI/src/topsailai_agent_cluster │ ai-dev        │ ok (18:20:09)
+...
+running(5) | input(2) | unknown(11) | no sessions(5)
+endpoint ai-dev unavailable: server request failed (404): not_found: endpoint "ai-dev" inventory not found
+endpoint gd-dev unavailable: server request failed (404): not_found: endpoint "gd-dev" inventory not found
+endpoint local-endpoint unavailable: server request failed (404): not_found: endpoint "local-endpoint" inventory not found
+endpoint topsailai-dev unavailable: server request failed (404): not_found: endpoint "topsailai-dev" inventory not found
+```
+
+The four failing endpoints are the offline ones whose inventory the Server has already expired, so
+this is the ordinary steady state of a fleet with retired identities, not an artificial fault. The
+healthy endpoints keep rendering throughout, which is the behaviour the report asked for.
+
+Evidence is kept under the workspace temporary directory: `.tmp/live-watch-partial-fixed/` for the
+fixed build and `.tmp/live-watch-partial-prefix/` for the unfixed build, each containing the full
+pane, the post-banner segment and a JSON verdict. The driver script is
+`.tmp/watch-partial-failure-live.py`.
+
+One behaviour is worth noting rather than fixing here: a failing endpoint still contributes a
+`no sessions` placeholder row from `ListRows`, so the summary counts it under `no sessions` while the
+diagnostic line says it is unavailable. The two statements are both true of different things, the
+placeholder is the existing `list` convention, and changing it would alter the row numbering that
+`watch` exists to keep stable. It is recorded here so a future reader does not mistake the
+`no sessions` count for a claim that the endpoint answered.
