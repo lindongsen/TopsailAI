@@ -816,7 +816,7 @@ func (c *Cluster) runTUIInteractiveWithReader(stdin io.Reader, termType string, 
 func (c *Cluster) cliEnvironment() []string {
 	env := append(os.Environ(),
 		"AGENT_CLUSTER_CLI_SERVER_URL="+c.URL(""),
-		"AGENT_CLUSTER_CLI_TOKEN=secret",
+		"AGENT_CLUSTER_CLI_SERVER_TOKEN=secret",
 		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,

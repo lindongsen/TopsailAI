@@ -100,7 +100,7 @@ def start_services(runtime: Path, bin_dir: Path, provider: Path, project: Path) 
         if children[-1].poll() is not None:
             raise RuntimeError(f"{name} exited during startup with {children[-1].returncode}")
     cli_environment = bin_dir / ".env.local"
-    cli_environment.write_text(f"AGENT_CLUSTER_CLI_SERVER_URL=http://127.0.0.1:{api_port}\nAGENT_CLUSTER_CLI_TOKEN={token}\n", encoding="utf-8")
+    cli_environment.write_text(f"AGENT_CLUSTER_CLI_SERVER_URL=http://127.0.0.1:{api_port}\nAGENT_CLUSTER_CLI_SERVER_TOKEN={token}\n", encoding="utf-8")
     cli_environment.chmod(0o600)
     return children, api_port, token
 
@@ -137,7 +137,7 @@ def main() -> int:
     try:
         children, api_port, token = start_services(args.runtime, args.bin_dir, args.provider, args.project)
         wait_inventory(api_port, token, 60)
-        launch = "env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_TOKEN " + str(args.bin_dir / "agent-cluster-cli") + " interactive"
+        launch = "env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN " + str(args.bin_dir / "agent-cluster-cli") + " interactive"
         subprocess.run(["tmux", "new-session", "-d", "-s", args.session, "-x", "180", "-y", "40", "-n", "cli", launch], check=True)
         target = f"{args.session}:cli"
         wait_prompt(target, "", 30)

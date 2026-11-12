@@ -840,3 +840,24 @@ not durable truth. Persisting it supports restart diagnostics, but replaying `on
 confuses historical evidence with a live channel. Preserving the old timestamp also matters: refreshing it
 at startup would grant every abandoned identity a new retention window on every restart and could keep
 stale inventory alive forever on a frequently restarted Server.
+
+## A component-prefix migration needs a symmetric compatibility inventory
+
+Trigger: the Server, Endpoint and CLI environment names were migrated in separate logical units. The
+Endpoint and CLI sections of `docs/Environment_Variables.md` gained explicit deprecated-to-primary
+mapping tables, but the Server section did not. Every Server alias worked and all tests passed, so the
+omission was visible only when the three component contracts were compared side by side during the
+final review.
+
+Action: for a cross-component naming migration, maintain one owner-by-owner inventory containing the
+primary name, deprecated name, reader, deployment emitter, documentation row and compatibility test.
+Review the inventory horizontally as well as reviewing each component vertically. When generating
+per-file Git review evidence from a project below the repository root, address files from the Git top
+level and require every expected diff file to be nonempty; a successful command that produces an
+empty diff is not review evidence.
+
+Why this prevents recurrence: independent component commits can each be internally correct while the
+public migration contract is asymmetric. Tests prove that aliases work, but they do not prove that an
+operator can discover every alias. A single compatibility inventory makes a missing component row
+visible, and a nonempty-diff assertion prevents a path-base mistake from silently certifying files
+that were never reviewed.

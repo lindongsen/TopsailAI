@@ -69,6 +69,7 @@ a container.
 | `AGENT_CLUSTER_TLS_CERTIFICATE_FILE` | `--tls-certificate-file` | empty | Node certificate |
 | `AGENT_CLUSTER_TLS_KEY_FILE` | `--tls-key-file` | empty | Node private key |
 | `AGENT_CLUSTER_TLS_REVOKED_SERIALS_FILE` | `--tls-revoked-serials-file` | empty | Revoked certificate serial list |
+| `AGENT_CLUSTER_TLS_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity verified by the Endpoint and by the Server in shared-certificate mode |
 | `AGENT_CLUSTER_LOG_OUTPUT` | `--log-output` | `stderr` | Log destination: `stderr` or `file` |
 | `AGENT_CLUSTER_LOG_PATH` | `--log-path` | empty | Log file path when `file` output is selected |
 | `AGENT_CLUSTER_LOG_MAX_SIZE_MB` | `--log-max-size-mb` | `100` | Maximum log file size before rotation |
@@ -100,6 +101,21 @@ deployment value. A Server started without an explicit token accepts that known
 string from any reachable client. Always set a real token, and restrict the API
 listener to a trusted address.
 
+### Deprecated Server environment names
+
+The names below remain fallback aliases for one compatibility cycle. The component-prefixed name
+always wins when both are present. New deployments and maintained tests must use only the primary
+name.
+
+| Deprecated name | Primary name |
+|---|---|
+| `AGENT_CLUSTER_API_LISTEN_ADDR` | `AGENT_CLUSTER_SERVER_API_LISTEN_ADDR` |
+| `AGENT_CLUSTER_CHANNEL_LISTEN_ADDR` | `AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR` |
+| `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` | `AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES` |
+| `AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` | `AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE` |
+| `AGENT_CLUSTER_AUTH_TOKEN` | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` |
+| `AGENT_CLUSTER_SERVER_NAME` | `AGENT_CLUSTER_TLS_SERVER_NAME` |
+
 ## Endpoint
 
 | Variable | Flag | Default | Purpose |
@@ -109,7 +125,6 @@ listener to a trusted address.
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
 | `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
-| `AGENT_CLUSTER_TLS_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity the Endpoint verifies in the `server-initiated` direction |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
 | `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
@@ -266,14 +281,14 @@ CLI configuration files override their built-in defaults.
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
 | `AGENT_CLUSTER_CLI_SERVER_URL` | `--server-url` | `http://127.0.0.1:8080` | Server API URL the CLI connects to |
-| `AGENT_CLUSTER_CLI_TOKEN` | `--token` | empty | Bearer token the CLI presents to the Server |
+| `AGENT_CLUSTER_CLI_SERVER_TOKEN` | `--token` | empty | Bearer token the CLI presents to the Server |
 | `AGENT_CLUSTER_CLI_ENDPOINT_TOKENS` | `--endpoint-token` for one selected Endpoint | empty | Comma-separated `endpoint_id=token` map used for Endpoint authorization |
 | `AGENT_CLUSTER_CLI_HISTORY_FILE` | none | `${HOME}/.topsailai/.topsailai_agent_cluster.history.jsonl` | Persistent JSONL file for accepted interactive input |
 | `AGENT_CLUSTER_CLI_HISTORY_MAX_ENTRIES` | none | `100` | Maximum trailing history records read at startup and maximum commands retained for Up/Down recall |
 | `AGENT_CLUSTER_CLI_HISTORY_MAX_SIZE_MB` | none | `1` | Maximum active history-file size before rotation |
 | `AGENT_CLUSTER_CLI_HISTORY_MAX_BACKUPS` | none | `1` | Maximum retained rotated history files |
 
-`AGENT_CLUSTER_CLI_TOKEN` has no built-in default, unlike the Server's development
+`AGENT_CLUSTER_CLI_SERVER_TOKEN` has no built-in default, unlike the Server's development
 token. A CLI started without it omits the `Authorization` header entirely, so the
 Server rejects the request instead of the client silently using a known development
 value.
@@ -318,8 +333,9 @@ blank component-owned name as unset: it first checks the deprecated name for the
 compatibility cycle and otherwise uses the built-in default. An empty
 `AGENT_CLUSTER_CLI_SERVER_URL` therefore suppresses that key in later files but may
 still select a nonblank `AGENT_CLUSTER_SERVER_URL`; without the deprecated value it
-selects the built-in URL. An empty `AGENT_CLUSTER_CLI_TOKEN` similarly falls back to
-`AGENT_CLUSTER_TOKEN` when present and otherwise sends no `Authorization` header.
+selects the built-in URL. An empty `AGENT_CLUSTER_CLI_SERVER_TOKEN` similarly falls back first to the transitional
+`AGENT_CLUSTER_CLI_TOKEN`, then to `AGENT_CLUSTER_TOKEN`; without either fallback the CLI
+sends no `Authorization` header.
 
 The built-in URL default is `http://127.0.0.1:8080`, while the shipped Server
 configuration listens on `127.0.0.1:53680`. An unconfigured CLI therefore fails to
@@ -331,7 +347,8 @@ component-owned name always wins when both are set.
 | Deprecated name | Component-owned name |
 |---|---|
 | `AGENT_CLUSTER_SERVER_URL` | `AGENT_CLUSTER_CLI_SERVER_URL` |
-| `AGENT_CLUSTER_TOKEN` | `AGENT_CLUSTER_CLI_TOKEN` |
+| `AGENT_CLUSTER_CLI_TOKEN` | `AGENT_CLUSTER_CLI_SERVER_TOKEN` |
+| `AGENT_CLUSTER_TOKEN` | `AGENT_CLUSTER_CLI_SERVER_TOKEN` |
 | `AGENT_CLUSTER_ENDPOINT_TOKENS` | `AGENT_CLUSTER_CLI_ENDPOINT_TOKENS` |
 | `AGENT_CLUSTER_HISTORY_FILE` | `AGENT_CLUSTER_CLI_HISTORY_FILE` |
 | `AGENT_CLUSTER_HISTORY_MAX_ENTRIES` | `AGENT_CLUSTER_CLI_HISTORY_MAX_ENTRIES` |
@@ -362,7 +379,7 @@ File format constraints:
 | Variable | Consequence |
 |---|---|
 | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | The known development token is accepted |
-| `AGENT_CLUSTER_CLI_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
+| `AGENT_CLUSTER_CLI_SERVER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
 | `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | No `ctl.` action is advertised and every `ctl.` operation is refused |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | Every caller is permitted, so the Endpoint has no authorization boundary |

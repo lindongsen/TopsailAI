@@ -6,8 +6,8 @@ EXE_FOLDER=$(dirname "$EXE_FILE")
 workspace_dir=$(cd "$EXE_FOLDER/../.." && pwd)
 start_script=${AGENT_CLUSTER_START_SCRIPT:-"$workspace_dir/tests/manual/u124_numeric_selection_start.sh"}
 server_url=${AGENT_CLUSTER_CLI_SERVER_URL:?set AGENT_CLUSTER_CLI_SERVER_URL}
-token=${AGENT_CLUSTER_CLI_TOKEN:-${AGENT_CLUSTER_SERVER_AUTH_TOKEN:-}}
-if [[ -z "$token" ]]; then printf '%s\n' 'start failed: set AGENT_CLUSTER_CLI_TOKEN or AGENT_CLUSTER_SERVER_AUTH_TOKEN' >&2; exit 1; fi
+token=${AGENT_CLUSTER_CLI_SERVER_TOKEN:-${AGENT_CLUSTER_SERVER_AUTH_TOKEN:-}}
+if [[ -z "$token" ]]; then printf '%s\n' 'start failed: set AGENT_CLUSTER_CLI_SERVER_TOKEN or AGENT_CLUSTER_SERVER_AUTH_TOKEN' >&2; exit 1; fi
 cli_path=${AGENT_CLUSTER_CLI:-"$workspace_dir/.tmp/u124/unit-b/bin/agent-cluster-cli"}
 session_name=${AGENT_CLUSTER_TMUX_SESSION:-u124-numeric-selection}
 artifact_dir=${AGENT_CLUSTER_ARTIFACT_DIR:-"$workspace_dir/.tmp/u124/unit-b/manual"}
@@ -96,7 +96,7 @@ trap cleanup EXIT INT TERM
 if tmux has-session -t "$session_name" 2>/dev/null; then printf 'start refused: tmux session already exists: %s\n' "$session_name" >&2; exit 1; fi
 trap cleanup EXIT INT TERM
 
-AGENT_CLUSTER_CLI="$cli_path" AGENT_CLUSTER_CLI_SERVER_URL="$server_url" AGENT_CLUSTER_CLI_TOKEN="$token" AGENT_CLUSTER_TMUX_SESSION="$session_name" AGENT_CLUSTER_ARTIFACT_DIR="$artifact_dir" AGENT_CLUSTER_SESSION_ID_FILE="$session_id_file" AGENT_CLUSTER_HANDOFF_MARKER="$handoff_marker" AGENT_CLUSTER_HANDOFF_ACK="$handoff_ack" "$start_script" &
+AGENT_CLUSTER_CLI="$cli_path" AGENT_CLUSTER_CLI_SERVER_URL="$server_url" AGENT_CLUSTER_CLI_SERVER_TOKEN="$token" AGENT_CLUSTER_TMUX_SESSION="$session_name" AGENT_CLUSTER_ARTIFACT_DIR="$artifact_dir" AGENT_CLUSTER_SESSION_ID_FILE="$session_id_file" AGENT_CLUSTER_HANDOFF_MARKER="$handoff_marker" AGENT_CLUSTER_HANDOFF_ACK="$handoff_ack" "$start_script" &
 start_pid=$!
 handoff_deadline=$((SECONDS + timeout_seconds))
 while [[ ! -s "$handoff_marker" || ! -s "$session_id_file" ]]; do

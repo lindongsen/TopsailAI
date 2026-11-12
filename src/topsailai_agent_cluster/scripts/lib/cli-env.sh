@@ -30,7 +30,7 @@ function cli_env_quote_value() {
 #
 #   home        the user's home directory; the file is written under it
 #   server-url  value for AGENT_CLUSTER_CLI_SERVER_URL
-#   token       value for AGENT_CLUSTER_CLI_TOKEN
+#   token       value for AGENT_CLUSTER_CLI_SERVER_TOKEN
 #   force       1 replaces an existing file whose content differs, 0 refuses
 #
 # Returns 0 when the file was written or already matched, 1 on any failure.
@@ -73,7 +73,7 @@ function cli_env_write() {
         echo "# Written at install time; the CLI reads it when the process"
         echo "# environment does not already define these keys."
         echo "AGENT_CLUSTER_CLI_SERVER_URL=${quoted_url}"
-        echo "AGENT_CLUSTER_CLI_TOKEN=${quoted_token}"
+        echo "AGENT_CLUSTER_CLI_SERVER_TOKEN=${quoted_token}"
     ) || {
         echo "ERROR: cannot compose ${target}" >&2
         return 1

@@ -8,10 +8,11 @@ import (
 
 const (
 	cliServerURLEnv             = "AGENT_CLUSTER_CLI_SERVER_URL"
-	cliTokenEnv                 = "AGENT_CLUSTER_CLI_TOKEN"
+	cliServerTokenEnv           = "AGENT_CLUSTER_CLI_SERVER_TOKEN"
+	transitionalCLITokenEnv     = "AGENT_CLUSTER_CLI_TOKEN"
 	cliEndpointTokensEnv        = "AGENT_CLUSTER_CLI_ENDPOINT_TOKENS"
 	deprecatedServerURLEnv      = "AGENT_CLUSTER_SERVER_URL"
-	deprecatedTokenEnv          = "AGENT_CLUSTER_TOKEN"
+	deprecatedServerTokenEnv    = "AGENT_CLUSTER_TOKEN"
 	deprecatedEndpointTokensEnv = "AGENT_CLUSTER_ENDPOINT_TOKENS"
 )
 

@@ -6,8 +6,8 @@ EXE_FOLDER=$(dirname "$EXE_FILE")
 workspace_dir=$(cd "$EXE_FOLDER/../.." && pwd)
 cli_path=${AGENT_CLUSTER_CLI:-"$workspace_dir/.tmp/u124/unit-b/bin/agent-cluster-cli"}
 server_url=${AGENT_CLUSTER_CLI_SERVER_URL:?set AGENT_CLUSTER_CLI_SERVER_URL}
-token=${AGENT_CLUSTER_CLI_TOKEN:-${AGENT_CLUSTER_SERVER_AUTH_TOKEN:-}}
-if [[ -z "$token" ]]; then printf '%s\n' 'start failed: set AGENT_CLUSTER_CLI_TOKEN or AGENT_CLUSTER_SERVER_AUTH_TOKEN' >&2; exit 1; fi
+token=${AGENT_CLUSTER_CLI_SERVER_TOKEN:-${AGENT_CLUSTER_SERVER_AUTH_TOKEN:-}}
+if [[ -z "$token" ]]; then printf '%s\n' 'start failed: set AGENT_CLUSTER_CLI_SERVER_TOKEN or AGENT_CLUSTER_SERVER_AUTH_TOKEN' >&2; exit 1; fi
 session_name=${AGENT_CLUSTER_TMUX_SESSION:-u124-numeric-selection}
 artifact_dir=${AGENT_CLUSTER_ARTIFACT_DIR:-"$workspace_dir/.tmp/u124/unit-b/manual"}
 session_id_file=${AGENT_CLUSTER_SESSION_ID_FILE:-"$artifact_dir/session-id"}

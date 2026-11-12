@@ -78,7 +78,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	filter := flags.String("endpoint", "", "filter by endpoint ID")
 	confirmed := flags.Bool("yes", false, "confirm a mutating action")
 	serverURL := flags.String("server-url", envOr(errors, cliServerURLEnv, deprecatedServerURLEnv, "http://127.0.0.1:8080"), "Server API URL")
-	token := flags.String("token", cliEnvironmentValueWithDiagnostics(os.Getenv, errors, cliTokenEnv, deprecatedTokenEnv), "Server bearer token")
+	token := flags.String("token", cliEnvironmentValueWithDiagnostics(os.Getenv, errors, cliServerTokenEnv, transitionalCLITokenEnv, deprecatedServerTokenEnv), "Server bearer token")
 	// --endpoint-token is the token the target Endpoint accepts. It is a separate
 	// credential from --token because the two answer different questions: the
 	// Server token decides whether this CLI may talk to the cluster, while the

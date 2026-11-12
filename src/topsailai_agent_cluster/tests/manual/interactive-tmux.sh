@@ -4,7 +4,7 @@ set -euo pipefail
 workspace_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 start_script="$workspace_dir/tests/manual/interactive-start.sh"
 server_url=${AGENT_CLUSTER_CLI_SERVER_URL:?set AGENT_CLUSTER_CLI_SERVER_URL}
-token=${AGENT_CLUSTER_CLI_TOKEN:?set AGENT_CLUSTER_CLI_TOKEN}
+token=${AGENT_CLUSTER_CLI_SERVER_TOKEN:?set AGENT_CLUSTER_CLI_SERVER_TOKEN}
 session_name=${AGENT_CLUSTER_TMUX_SESSION:-interactive-manual}
 artifact_dir=${AGENT_CLUSTER_ARTIFACT_DIR:-"$workspace_dir/.tmp/u84/manual"}
 endpoint_id=${AGENT_CLUSTER_FIXTURE_ENDPOINT:-endpoint-1}
@@ -87,7 +87,7 @@ send_line() {
 
 AGENT_CLUSTER_CLI=${AGENT_CLUSTER_CLI:-"$workspace_dir/.tmp/u84/bin/agent-cluster-cli"} \
 AGENT_CLUSTER_CLI_SERVER_URL="$server_url" \
-AGENT_CLUSTER_CLI_TOKEN="$token" \
+AGENT_CLUSTER_CLI_SERVER_TOKEN="$token" \
 AGENT_CLUSTER_TMUX_SESSION="$session_name" \
 AGENT_CLUSTER_ARTIFACT_DIR="$artifact_dir" \
 "$start_script"
