@@ -266,30 +266,75 @@ consistent across the fleet.
 
 Directed by the human on 2026-11-12, wording normalized, meaning preserved:
 
-> Adapter 是抽象层并定义标准。Endpoint 服务调用标准 Adapter 函数，Adapter 再调用
-> provider CLI；provider CLI 按照 Adapter 标准包装请求和行为，并访问 provider 自己的
-> 具体业务层。Cluster 不关心 provider 背后的业务、执行方式和实现细节。
+> Adapter 是 Endpoint 的抽象层并定义标准。Endpoint 调用标准 Adapter 函数，Adapter 直接启动
+> provider CLI；provider CLI 按标准包装请求和行为，再自行对接 provider 业务。Cluster 不关心
+> provider CLI 后面的命令行、API、SDK 或其他实现方式。
 
-This supersedes the earlier same-repository, linkable Go provider proposal. The required dependency
-and call direction is:
+This supersedes the earlier same-repository linkable Go provider proposal. The mandatory call direction
+is:
 
 ```text
-Endpoint service -> standard Adapter -> generic CLI runner -> provider CLI -> provider business layer
+Endpoint service -> Endpoint-owned Adapter -> generic CLI Adapter -> provider CLI -> provider business
 ```
 
-The standard Adapter and generic runner belong to Agent Cluster. A provider CLI belongs to the
-provider's independent project, may be implemented in any language, and translates the standard
-versioned JSON/JSONL protocol into provider-specific behavior. Adding or replacing a provider changes
-local installation and binding configuration, not Endpoint, Server, database schema, public API or
-operator CLI source.
+The direct provider process invocation is an Endpoint implementation mechanism such as Go
+`exec.CommandContext`; it is not the public Cluster operation `command.exec`. Public `command.exec`
+remains the Endpoint-native, operator-requested allowlisted command surface.
 
-The Endpoint retains platform authority: authorization, local policy, command journal, deduplication,
-target and generation revalidation, cluster resource mapping, deadlines, byte and record limits,
-protocol validation and exact child-process cleanup. A provider CLI must not access Server routes,
-cluster credentials, the Endpoint database or cluster journals, and it must not mint or persist
-cluster resource IDs.
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
 
-Provider-specific command construction, native JSON decoding, state mapping and runtime behavior
-belong in the provider project. The existing cluster-local TopsailAI Go adapter is only a migration
-baseline and may be removed only after the independent provider CLI passes conformance, old/new parity,
-BDD, integration and live smoke verification.
+> Provider CLI 在 MVP 中是本地可信组件，但不提供安全沙箱隔离。Provider CLI 作为独立组件和
+> 独立项目维护，先放在 `providers/` 下，其中 `topsailai` 对接 TopsailAI 业务命令行，`mock`
+> 用于测试。
+
+The provider projects are:
+
+```text
+providers/
+├── topsailai/
+└── mock/
+```
+
+They share the repository but have independent build metadata, dependencies, tests, versions and
+executable artifacts. They are not imported or compiled into Endpoint. `providers/topsailai` may call
+the installed TopsailAI CLI and understand its native fields; the generic CLI Adapter may not.
+`providers/mock` is both the conforming reference and the locally configured fault injector for
+conformance and integration tests. Remote requests can never select a mock fault mode.
+
+For the MVP, provider CLI trust is operational trust, not enforced isolation. Process separation gives
+module, dependency and fault isolation; a provider running under the Endpoint OS identity is not
+sandboxed from files that identity can read. Supporting hostile providers later requires a separate
+OS-user, filesystem, credential, network and sandbox/container design. Even trusted providers remain
+subject to strict framing, bounded I/O, deadlines, exact process cleanup and local-only executable
+configuration.
+
+Endpoint retains all Cluster authority: authorization, local policy, command journal, deduplication,
+`ResourceMapper`, effective capabilities, Cluster IDs and complete `ExecutionReceipt` construction.
+Provider CLI requests carry provider-private keys, expected generations, standard functions, typed
+payloads, deadlines and budgets. They do not carry Cluster resource authority, complete
+`ImmutableIntent` objects or complete receipts. A mutating provider call revalidates
+`expected_generation` in the same execution path; a prior `inspect` alone is not sufficient.
+
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> 只读能力使用统一的 `query` framing，但 query 名称以及请求和结果 schema 必须由 Cluster
+> 标准定义。
+
+The query registry is closed and versioned. Providers may advertise support for registered queries but
+cannot add arbitrary provider-namespaced queries. Mutations use `execute`; provider-specific approved
+controls remain `ctl.<action>`. Effective control actions are the intersection of provider-described
+actions and Endpoint-local approval, while provider-native argv remains inside the provider project.
+
+Trigger: the first provider-seam design treated an in-process Go interface, the external provider
+protocol and provider business invocation as one boundary, which risked serializing Cluster authority
+into a provider request and keeping native command templates in Endpoint configuration.
+
+Action: keep the Endpoint-internal Adapter contract and external JSON/JSONL protocol as separate seams;
+map provider keys to Cluster IDs only in Endpoint; compose complete receipts only in Endpoint; keep
+provider commands inside provider projects; and validate the boundary with an executable mock and
+closed query schemas.
+
+Why this prevents recurrence: a process boundary alone does not create abstraction. Explicit ownership
+prevents a new provider from depending on Cluster internals, prevents a provider result from claiming
+journal authority, and lets a provider be replaced through installation and local binding configuration
+without changing Endpoint, Server, storage, public API or operator CLI source.

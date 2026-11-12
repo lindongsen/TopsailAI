@@ -165,64 +165,50 @@ Only operations and input/result fields defined by the negotiated standard API a
 
 ## Provider control channel
 
-The `ctl.<action>` family exposes the provider control actions an Endpoint actually supports. Each
-advertised action is a separate versioned capability with a fixed payload schema, so the Server
-validates a standard shape and never forwards an unvalidated provider instruction.
+The `ctl.<action>` family exposes provider-specific control actions without making provider-native
+commands part of the Cluster protocol. Each advertised action remains a separate versioned capability
+with a fixed payload schema. The Server treats the action name as an opaque standard identifier and
+never selects provider code or interprets provider semantics.
 
-- The action inventory comes from the Endpoint-local control action catalog, not from a hardcoded
-  Server list and not from compiled-in adapter code. Adding, changing or removing a provider action
-  requires no Server code, table or public schema change, and no adapter rebuild.
-- The Endpoint advertises only actions its catalog defines. An action that is absent from the
-  advertised capabilities is rejected at admission rather than attempted and failed.
-- Payloads are validated against the advertised schema before dispatch. A payload that does not match
-  the schema is rejected; it is never passed through as an opaque provider instruction.
-- Actions that read conversation content are sensitive. They require an explicit permission scope and
-  must not be reachable with an unscoped credential.
-- The Server treats the action name as an opaque standard identifier. It does not interpret provider
-  semantics, select code by action name, or route by adapter.
+Under the target provider CLI architecture, the effective action inventory is the intersection of two
+independent inputs:
 
-### Control action catalog
+```mermaid
+flowchart LR
+    Descriptor["Provider CLI descriptor
+implemented actions + schemas"] --> Intersection["Endpoint capability composition"]
+    Policy["Endpoint local approval
+actions + permissions"] --> Intersection
+    Intersection --> Effective["Advertised ctl actions"]
+```
 
-The catalog is Endpoint-local administrative configuration, loaded at startup and reloaded on
-`SIGHUP`. It is the only source of control actions, so the action surface is an operational decision
-rather than a code change.
+- The provider CLI descriptor states which actions it implements and supplies their payload schemas.
+  Provider-native argv, SDK calls and files remain inside the provider project.
+- Endpoint-local policy approves the subset that may be exposed and assigns each action a permission
+  from the closed Cluster vocabulary.
+- An action must appear in both inputs. Absence from either side rejects it before dispatch.
+- The Endpoint validates the payload against the effective advertised schema before invoking the
+  provider CLI. An invalid payload is never passed through as an opaque provider instruction.
+- Actions that read conversation content require an explicit sensitive-data permission.
+- A descriptor or policy change produces a new Endpoint-computed effective capability revision.
 
-Implemented forwarding: `scripts/agent-clusterctl` resolves `CONTROL_ACTION_FILE`, prints it in
-`doctor` and passes `--control-action-file` to the endpoint binary, so a node started through the
-launcher loads the catalog its `node.conf` names. The binary also accepts
-`AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` for a direct launch. An unset value advertises no `ctl.` action
-and refuses every `ctl.` operation, which is the fail-closed default rather than an error. The
-launcher previously forwarded only `COMMAND_ALLOWLIST_FILE`, so every packaged node advertised zero
-`ctl.` actions while `node.conf` named the file; see
-`issues/agent-clusterctl-drops-control-action-file.md`.
+The target Endpoint configuration contains no provider argv template and no placeholder substitution.
+A remote request supplies only the advertised `ctl.<action>` name and its validated standard payload.
+The provider CLI decides how that action reaches provider business logic.
 
-Each entry defines:
+### Legacy control catalog during migration
 
-| Field | Meaning |
-|---|---|
-| `name` | Action name after the `ctl.` prefix. A dotted name stays one action. |
-| `permission` | Scope required to invoke it, from the closed scope vocabulary. |
-| `payload_schema` | JSON Schema object describing the payload. Descriptive only; the Server stores and returns it verbatim. |
-| `command` | Provider argv template, executed directly and never through a shell. |
-| `payload_session_field` | Optional payload field filled from the revalidated target. |
+The current implementation predates the independent provider CLI seam. Its Endpoint-local control
+action catalog contains `command` and `payload_session_field`, and the Endpoint substitutes
+`{session}` and `{payload}` into a provider argv template. `scripts/agent-clusterctl` forwards the
+catalog path from `CONTROL_ACTION_FILE`, and the endpoint binary accepts
+`AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`.
 
-Two placeholders are substituted per token, so a placeholder never splits into several arguments:
-`{session}` becomes the provider session key and `{payload}` becomes the JSON payload. Each may appear
-at most once; an unknown or unterminated placeholder is rejected when the file is loaded.
-
-An Endpoint without a catalog advertises no `ctl.` action and refuses every `ctl.` operation. That is
-the fail-closed default: an Endpoint cannot be talked into running an action nobody configured. An
-empty `actions` list is accepted and disables the family the same way.
-
-Because the catalog decides which provider command runs, it is an authorization surface. The Endpoint
-validates the configured capability list before its policy hook runs, so an action absent from the
-catalog is rejected before any allowlist or policy check. The file must not be remotely writable.
-
-The catalog is descriptive for the Server and authoritative for the Endpoint. The Server never
-interprets `command`, `payload_schema` or `payload_session_field`; it only carries the advertised
-capability so the operator surface can render the right prompt. A catalog edit reaches the operator
-only after the Endpoint re-describes, republishes and the Server commits, so a forced collection is
-the only path that makes the next view fresh.
+That behavior remains an implemented compatibility path until the generic CLI Adapter and provider
+CLIs replace it; it is not the target provider integration contract. Migration must preserve the
+existing fail-closed behavior, action names, payload validation and permissions while moving
+provider-native argv construction into `providers/topsailai`. The legacy catalog is removed only
+after old/new action parity and rollback verification pass.
 
 ## Allowlisted command execution
 
@@ -394,30 +380,67 @@ protocol never names a provider script, environment variable or record path.
 
 ## Standard Adapter CLI protocol
 
-The Adapter is a provider-neutral service boundary inside the Endpoint. Its implementation calls a
-locally configured provider CLI through a versioned process protocol. The provider CLI may be written
-in any language and belongs to the provider's independent project.
+The Adapter is a provider-neutral service boundary owned by the Endpoint. Its generic CLI
+implementation calls a locally configured provider CLI through a versioned process protocol. The
+provider CLI may be written in any language, is independently built, and belongs to a project under
+`providers/` rather than to the Endpoint binary.
+
+### The two contracts
+
+The Endpoint-internal Adapter contract and the external process protocol are deliberately distinct:
+
+| Contract | Participants | Representation | Authority carried |
+|---|---|---|---|
+| Endpoint-internal Adapter contract | Endpoint and generic CLI Adapter | In-process typed DTOs | Endpoint may retain Cluster command context internally. |
+| Adapter CLI protocol | Generic CLI Adapter and provider CLI | Versioned JSON/JSONL | Provider target, standard function, typed payload, deadline and budgets only. |
+
+The generic CLI Adapter translates between them. It must not serialize a complete Cluster
+`ImmutableIntent`, public `Session` or `ExecutionReceipt` onto the provider process boundary.
 
 ### Standard Adapter functions
 
 | Function | Contract |
 |---|---|
-| `describe` | Return protocol compatibility, supported standard operations, constraints and provider health prerequisites without changing provider state. |
-| `discover` | Return bounded provider resource observations and explicit completeness, revision and freshness evidence. |
+| `describe` | Return bootstrap protocol compatibility, provider descriptor revision, implemented standard operations, standard queries, control actions, concurrency limits and health prerequisites without changing provider state. |
+| `discover` | Return bounded provider observations and explicit completeness, revision and freshness evidence. |
 | `inspect` | Revalidate one provider-private resource key and generation within a budget. |
-| `execute` | Perform one standard operation against the frozen provider target and report the actual acknowledgement boundary and effect certainty. |
-| `query_command` | Optionally reconcile a prior provider operation by a provider correlation reference; unsupported is not failure. |
+| `execute` | Perform one standard mutating operation against a provider-private target after revalidating its expected generation in the execution path. |
+| `query` | Perform one read-only query whose name and request/result schemas are defined by the Cluster standard registry. |
+| `query_command` | Optionally reconcile a prior provider invocation by its stable invocation ID or provider correlation reference; unsupported is not failure. |
 | `read_output` | Return one bounded output snapshot with observation, truncation and gap evidence. |
 | `follow_output` | Stream bounded output records and exactly one terminal frame while the process channel remains writable. |
 | `watch` | Optionally stream provider observation changes; absence of support is explicit. |
 
-The Endpoint, not the provider CLI, owns durable cluster command IDs, authorization, policy, audit,
-deduplication, resource mapping and network protocol. The provider CLI receives explicit deadlines and
-budgets and returns provider-private keys and evidence.
+The Endpoint, not the provider CLI, owns durable Cluster command IDs, authorization, policy, audit,
+deduplication, resource mapping, effective capability revisions, public receipts and network protocol.
+
+### Invocation sequence
+
+```mermaid
+sequenceDiagram
+    participant E as Endpoint service
+    participant A as Generic CLI Adapter
+    participant P as Provider CLI
+    participant B as Provider business/runtime
+
+    E->>E: authorize, journal and map Cluster ID to provider target
+    E->>A: Execute internal Adapter request
+    A->>P: start fixed local executable
+    A->>P: JSON request on stdin
+    P->>B: revalidate expected generation and apply provider behavior
+    B-->>P: provider-native evidence
+    P-->>A: versioned JSON result on stdout
+    A-->>E: validated provider operation result
+    E->>E: conservatively compose ExecutionReceipt and persist journal
+```
+
+The provider CLI may invoke another CLI, call an API or SDK, or use another local business mechanism;
+that call is outside the Adapter CLI contract.
 
 ### Invocation and framing
 
-The Endpoint starts the configured executable directly with no shell. A non-streaming invocation reads
+The generic CLI Adapter starts the configured executable directly with no shell. This is direct local
+process invocation, not the public Cluster operation `command.exec`. A non-streaming invocation reads
 one UTF-8 JSON request from stdin and writes one UTF-8 JSON response to stdout. A streaming invocation
 reads one JSON request and writes JSON Lines, one complete frame per line. Stderr is bounded diagnostic
 text and is never parsed as a successful result.
@@ -430,23 +453,35 @@ A request contains at least:
   "major": 1,
   "minor": 0,
   "request_id": "req_opaque",
-  "operation": "discover",
+  "function": "execute",
+  "binding_id": "local-binding",
+  "invocation_id": "inv_opaque",
   "deadline_at_ms": 1794470400000,
   "budget": {
     "max_stdout_bytes": 1048576,
     "max_stderr_bytes": 65536,
     "max_records": 1000
   },
-  "binding": {
-    "binding_id": "local-binding",
-    "settings": {}
+  "target": {
+    "provider_resource_key": "provider-private-key",
+    "expected_generation": "generation-7"
   },
-  "target": null,
-  "payload": {}
+  "operation": {
+    "name": "message.send",
+    "version": "v1"
+  },
+  "payload": {
+    "text": "hello"
+  }
 }
 ```
 
-A non-streaming response contains at least:
+The per-request document never contains Endpoint credentials, caller authority, Cluster resource IDs,
+request hashes, command revisions, journal phase, executable path, provider argv, provider config path,
+test mode or environment overrides. Provider startup configuration and secrets are fixed local
+administrative configuration and are not copied into every request.
+
+A successful provider operation response contains provider evidence, not a complete Cluster receipt:
 
 ```json
 {
@@ -455,11 +490,21 @@ A non-streaming response contains at least:
   "minor": 0,
   "request_id": "req_opaque",
   "ok": true,
-  "result": {}
+  "result": {
+    "provider_request_ref": "provider-ref",
+    "delivery_boundary": "submitted",
+    "effect_certainty": "acknowledged",
+    "provider_outcome": "accepted",
+    "provider_response": "",
+    "provider_response_truncated": false,
+    "started_at_ms": 1794470399900,
+    "finished_at_ms": 1794470400000
+  }
 }
 ```
 
-An error response carries a standard error object:
+An error response carries a standard error object. Its effect certainty is provider evidence and may
+be downgraded by the Endpoint when process or framing failure makes the effect less certain.
 
 ```json
 {
@@ -480,27 +525,82 @@ An error response carries a standard error object:
 Streaming frames use `started`, operation-specific record types and `end`. Every frame repeats the
 request ID. A normal stream has exactly one `end`; EOF without `end` is `stream_interrupted`, never a
 clean completion. Cancellation may prevent the provider from writing its terminal frame, so the
-Endpoint still owns the authoritative interrupted result.
+Endpoint owns the authoritative interrupted result.
 
-### Version compatibility
+### Provider observations and Cluster identity
 
-`protocol` is the fixed identifier `agent-cluster-adapter`. An unsupported major version is rejected
-before provider work. A higher minor version is accepted only when every required field and advertised
-feature is understood; otherwise the invocation fails with `incompatible_protocol`. Unknown fields
-must not silently change semantics.
+A discovery result returns `ProviderObservation` records with provider-private identity:
 
-`describe` reports the supported major/minor range and capabilities. The Endpoint checks compatibility
-before using a binding and does not infer support from executable exit status.
+```json
+{
+  "provider_resource_key": "provider-private-key",
+  "provider_generation": "generation-7",
+  "resource_kind": "session",
+  "state": "running",
+  "state_reason": "",
+  "observed_at_ms": 1794470400000
+}
+```
 
-### Identity and target rules
+It does not return `cluster_session_id` or another public Cluster ID. The Endpoint alone maps the
+provider key through `ResourceMapper`, builds the standard inventory resource, and performs the reverse
+lookup before later provider calls. Adapter discovery and Endpoint collection must not both mint or
+remap the same Cluster identity.
+
+### Query framing
+
+`query` is the single framing function for provider-neutral read surfaces. Its names and schemas form
+a closed, versioned Cluster registry. Initial standard names include `launch.options`,
+`history.messages`, `model.catalog` and `session.messages`; the exact schema for each name is frozen in
+the protocol schema deliverable before implementation.
+
+```json
+{
+  "function": "query",
+  "query": {
+    "name": "model.catalog",
+    "version": "v1"
+  },
+  "target": {
+    "provider_resource_key": "provider-private-key",
+    "expected_generation": "generation-7"
+  },
+  "payload": {}
+}
+```
+
+A provider may advertise support for a registered query or return `unsupported`; it may not create a
+provider-namespaced arbitrary query. Queries are read-only. Any state-changing behavior uses `execute`,
+and approved provider-specific controls use `ctl.<action>`.
+
+### Version and capability compatibility
+
+`protocol` is the fixed identifier `agent-cluster-adapter`. The `describe` bootstrap envelope uses the
+fixed major-version request shape above; an executable that cannot parse that bootstrap request is
+incompatible. A higher minor version is accepted only when every required field and advertised feature
+is understood; otherwise the invocation fails with `incompatible_protocol`.
+
+`describe` reports the supported major/minor range, provider descriptor revision, standard operations,
+standard queries, control actions, limits and concurrency constraints. The Endpoint intersects that
+descriptor with the Cluster registry, Endpoint-supported behavior, binding configuration revision and
+local policy. It hashes the normalized result into the effective capability revision advertised to the
+Server. The provider descriptor revision is input evidence, not the public capability revision.
+
+### Identity, generation and invocation rules
 
 Cluster resource IDs never cross into provider authority. Requests identify a provider target with an
-opaque provider resource key plus the generation evidence last reported by that provider CLI. The
-Endpoint keeps the durable mapping between that key and the public cluster resource ID, freezes it at
-admission and revalidates it before a mutating invocation.
+opaque provider resource key plus the generation evidence last reported by that provider CLI. Two
+empty generations never prove identity.
 
-A provider CLI must not construct, persist or interpret cluster IDs. A provider generation is evidence
-from the provider domain, not permission to execute. Two empty generations never prove identity.
+A separate `inspect` is a useful preflight but cannot prevent a target from changing before another
+process performs `execute`. Every mutating request therefore carries `expected_generation`, and the
+provider CLI revalidates it in the same call path that applies the behavior. If it cannot provide that
+property, it must report the limitation and must not advertise safe support for that operation.
+
+Every mutating request also carries a stable opaque `invocation_id`. Recovery of the same Cluster
+command reuses the same value. A provider may use it for deduplication or reconciliation, but it does
+not grant journal authority and is not a Cluster resource ID. The Endpoint never changes the value and
+blindly retries merely because a response was lost.
 
 ### Failure and effect rules
 
@@ -515,27 +615,49 @@ Process exit, protocol validity, provider outcome and effect certainty are separ
   turn a partial document into a complete one.
 - A provider crash, extra stdout text, request-ID mismatch, incompatible version or duplicate terminal
   frame is a visible protocol failure.
+- The Endpoint may downgrade `acknowledged` to `unknown` when transport evidence is incomplete; it may
+  never upgrade a provider result without stronger evidence.
 
-The generic runner owns wall-clock and monotonic budgets, bounded reads, exact process-group cleanup
-and error logging. It must never terminate processes by a broad name match.
+The generic CLI Adapter owns wall-clock and monotonic budgets, bounded reads, exact process-group
+cleanup and error logging. It must never terminate processes by a broad name match. A provider that
+launches a durable agent must complete an explicit provider-side lifecycle handoff before claiming
+acknowledgement; invocation helper processes remain owned by the call and must not leak.
 
-### Configuration boundary
+### Configuration and trust boundary
 
-The provider executable and its local settings are Endpoint configuration, not protocol choices an
-operator request may override. The Endpoint passes a minimal environment and an explicit binding
-object. Provider-specific secrets are supplied through a protected local mechanism and must not be
-echoed in responses, stderr, receipts or audit records.
+The provider executable, fixed base arguments, working directory, minimal environment and protected
+provider configuration are Endpoint-local administrative settings. Each request carries only a
+binding ID and its operation data. Provider-specific secrets use a protected local mechanism and are
+not echoed in responses, stderr, receipts or audit records.
 
-The provider CLI cannot call the Server, open the Endpoint database or modify the command journal. It
-may access only the provider resources authorized by its local binding.
+For the MVP, the provider CLI is a locally trusted component and is not sandboxed from the Endpoint.
+The rule that it must not modify Endpoint databases, journals or credentials is an integration contract,
+not an enforced defense against malicious code running under the same OS identity. Reliability checks
+remain mandatory even for trusted code. Untrusted providers require a future isolation design.
+
+### Public `command.exec` remains Endpoint-native
+
+The public standard operation `command.exec` is not implemented by starting the provider CLI. The
+Endpoint retains its allowlist, working-directory resolution and confinement, minimal environment,
+timeout, output bounds and exact-process cleanup. A provider may supply standard Session directory
+evidence through discovery, but it cannot replace the Endpoint's command-execution policy.
+
+### Concurrency
+
+Because process-per-request invocations cannot coordinate through in-process provider locks,
+`describe` reports standard concurrency constraints such as total, discovery, mutation and follow
+limits and whether discovery serializes with mutation. The Endpoint enforces the stricter of its own
+hard limits and the provider descriptor. A provider can narrow limits but cannot expand Endpoint safety
+bounds.
 
 ### Conformance
 
-An executable conformance suite drives a provider CLI without an Endpoint, Server, channel or cluster
-database. It verifies version negotiation, framing, request correlation, capability truthfulness,
-standard errors, limits, cancellation, stream termination and secret redaction. A provider is not an
-accepted integration until the suite also demonstrates that deliberately broken fixtures are
-rejected.
+An executable conformance suite drives a provider CLI without an Endpoint, Server, channel or Cluster
+database. It verifies version negotiation, framing, request correlation, descriptor truthfulness,
+standard errors, limits, cancellation, generation handling, query closure, stream termination and
+secret redaction. `providers/mock` supplies both a conforming reference and locally selected broken
+modes. Fault mode is test-launch configuration, never a remote request field. Every negative assertion
+must be proven by observing the matching broken mode fail.
 
 ## Proposed HTTP surfaces
 
