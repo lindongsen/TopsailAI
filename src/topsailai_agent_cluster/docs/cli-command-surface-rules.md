@@ -211,6 +211,7 @@ was dispatched rather than rejected as unknown.
 | `agent.start` | `start` | `start` | yes |
 | `agent.resume` | `resume` | not applicable | yes (standalone only: session scope requires a live generation while resume authorizes on a proven absence, so the interactive spelling was removed) |
 | `agent.stop` | `stop` | `stop` | yes |
+| `workspace.clean` | `--yes clean <endpoint> <resource> [generation]` | `clean <session>` in workspace and endpoint scopes | yes (destructive confirmation is mandatory; session scope does not offer cleanup; row numbers and literal IDs resolve against the current persisted inventory before exact Endpoint-side inspection) |
 | `agent.drive.start` | `drive start` | `drive start [session]` | yes |
 | `agent.drive.stop` | `drive stop` | `drive stop [session]` | yes |
 | `drive status` | `drive status` | `drive status [session]`, `drive [session]` | yes |

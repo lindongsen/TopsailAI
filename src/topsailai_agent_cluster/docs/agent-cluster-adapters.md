@@ -153,6 +153,8 @@ Runtime JSON fields are documented as ok, exit_code, action, session_id, pid, de
 
 Both session and PID selectors mean a strict intersection. Ambiguous, stale or mismatched targets fail; do not retry using a looser selector or select the newest session. CLI local checks do not prove authenticated process generation. Endpoint maintains its own generation mapping and revalidates available evidence, but cannot manufacture provider guarantees.
 
+The TopsailAI mapping for standard `workspace.clean` invokes `workspace clean -s SESSION -p PID --yes --json`. The adapter obtains both selectors from the Endpoint-private durable resource mapping; neither appears in the cluster payload. An empty session ID or non-positive PID fails with `exact_target_required` before provider execution, and the adapter never retries with only one selector. The provider JSON receipt remains the opaque `provider_response`, including deleted, empty, partial and rejected outcomes.
+
 Prefer the unified `topsailai runtime` wrapper rather than the legacy `topsailai_send_control`: the latter documentation allows multiple targets/broadcast and success if at least one target responds. Cluster commands must not inherit that ambiguity. Do not expose all dynamically registered control actions merely because a CLI can invoke them; map only reviewed standard semantics into the public Endpoint API; provider-only actions remain local.
 
 Platform distinction: network protocol and management services should be portable; the documented TopsailAI FIFO/Unix-domain control transports have platform constraints. Capabilities must reflect the actual host support. Do not advertise Windows delivery support on the strength of generic HTTP portability.

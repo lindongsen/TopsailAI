@@ -164,10 +164,13 @@ passthrough for provider-specific instructions.
 |---|---|---|---|
 | Provider control | `ctl.<action>` | JSON object forwarded as the action arguments | `read_output` for actions that return conversation content, otherwise `control` |
 | Command execution | `command.exec` | `{"argv": ["..."]}` | `control` |
+| Workspace cleanup | `workspace.clean` | `{}` | `control` |
 
 `ctl.<action>` is advertised one capability per action, so an action the Endpoint does not serve is
 absent from the inventory and is refused at admission with `403 permission_denied`. The action name is
 an opaque standard identifier: the Server never interprets provider semantics or routes by adapter.
+
+`workspace.clean` targets one opaque Session resource and deletes only provider-owned expired artifacts. It is destructive and requires explicit client confirmation before submission. Its public payload is empty: the Endpoint resolves and validates the provider-private exact selectors. A target with no live generation is accepted only when authoritative inspection confirms that exact mapped record still exists. Provider cleanup counts and partial-failure details remain in the opaque `provider_response`.
 
 `command.exec` carries an argv array and never a command string, because the Endpoint must not parse
 or split a string. `argv` is required, is limited to 64 tokens, each token is limited to 4096 bytes,

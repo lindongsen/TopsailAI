@@ -237,7 +237,7 @@ func CommandHelpLines() []string {
 	return formatHelpBlock(cells, descriptions)
 }
 
-var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "messages", "model", "endpoints", "show", "info", "logs", "status", "send", "btw", "interrupt", "ctl", "exec", "start", "resume", "stop", "drive", "help", "interactive"}
+var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "messages", "model", "endpoints", "show", "info", "logs", "status", "send", "btw", "interrupt", "ctl", "exec", "start", "resume", "stop", "clean", "drive", "help", "interactive"}
 
 // nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
 // command. The advertised list keeps one spelling per surface, while an accepted
@@ -314,6 +314,11 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.examples = []string{"resume endpoint-1 res_abc", "resume endpoint-1 res_abc gen-1"}
 	case "stop":
 		entry.syntax = "agent-cluster-cli [options] stop <endpoint> <resource> <generation>"
+	case "clean":
+		entry.syntax = "agent-cluster-cli [options] clean <endpoint> <resource> [generation]"
+		entry.description = "delete provider-owned expired artifacts for one exact session after explicit confirmation"
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: opaque session/resource ID from the persisted inventory", "generation: optional expected generation; omit it for an expired session whose liveness is unverified", "--yes: required confirmation for this destructive operation", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"--yes clean endpoint-1 res_abc", "--yes clean endpoint-1 res_abc gen-1"}
 	case "drive":
 		entry.syntax = "agent-cluster-cli [options] drive <start|stop|status> <endpoint> <session> [generation]"
 	case "logs":
