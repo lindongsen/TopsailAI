@@ -20,9 +20,12 @@ AUTH_TOKEN=replace-with-a-real-token
 # reachable at from this node; it is written into the per-user CLI env file.
 SERVER_API_URL=http://127.0.0.1:53680
 
-# Provider adapters. ADAPTERS must stay single-quoted: the shell strips unquoted
-# double quotes while sourcing, which would corrupt the JSON payload. The command
-# must be an absolute path that exists on this node.
+# Provider adapters under the current implemented configuration contract. ADAPTERS
+# must stay single-quoted: the shell strips unquoted double quotes while sourcing,
+# which would corrupt the JSON payload. The command must be an absolute path that
+# exists on this node. The approved Provider CLI replacement keeps adapter_id but
+# will replace this provider-specific command configuration only when the code and
+# deployment contract change together.
 ADAPTERS='[{"adapter_id":"topsailai-local","provider_type":"topsailai","command":"/TopsailAI/src/topsailai/bin/topsailai","timeout_ms":120000}]'
 
 # Pause after a completed inventory collection before the next cycle starts, in
@@ -47,13 +50,14 @@ SOURCE_CACHE_EXPIRY=10m
 # to disable command execution entirely.
 COMMAND_ALLOWLIST_FILE=command-allowlist.conf
 
-# Control action catalog for the `ctl` operator command. This file is the only
-# source of ctl. actions: the action names, their permission, their payload
-# schema and the provider command each one runs all come from here, so changing
-# the action surface never requires a code change. Paths are relative to the
-# bundle root. The deployment scripts install conf/control-actions.conf.example
-# under this name. Unset this value to advertise no ctl. action at all, which
-# refuses every ctl. operation; that is the fail-closed default, not an error.
+# Control action catalog for the `ctl` operator command under the current
+# implementation. This file currently supplies action names, permissions, payload
+# schemas and provider commands. The target Provider CLI contract moves provider
+# command construction into the Provider project and keeps only local action
+# approval and permission here; that replacement lands with the code change.
+# Paths are relative to the bundle root. The deployment scripts install
+# conf/control-actions.conf.example under this name. Unset this value to advertise
+# no ctl. action at all, which refuses every ctl. operation fail-closed.
 CONTROL_ACTION_FILE=control-actions.conf
 
 # Access policy directory for the `endpoint-token` authorization boundary. Each

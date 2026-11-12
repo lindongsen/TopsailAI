@@ -141,6 +141,11 @@ adapter IDs, a relative command path and a non-positive timeout.
 Adapters are supplied through the environment because no flag exists for them. The
 launcher exports this variable from the `ADAPTERS` configuration entry.
 
+This is the current implemented configuration contract. The approved independent Provider CLI
+replacement keeps `adapter_id` but replaces provider-specific command configuration with a verified
+versioned Provider executable and per-adapter activation. The implementation and this reference must
+change together; the target fields are not documented here as available before the code supports them.
+
 ### Removed Endpoint environment names
 
 The names below are no longer read. They were fallback aliases for one compatibility cycle, and that
@@ -224,6 +229,11 @@ Defines the `ctl.<action>` surface. This file is the only source of control
 actions: the action name, its permission, its payload schema and the provider
 command each action runs all come from here, so changing the action surface never
 requires a code change.
+
+This is the current implemented catalog. It is not the target Provider CLI contract: the approved
+replacement moves provider argv construction into the Provider project and leaves Endpoint-local
+configuration with action approval and permission only. The command-template fields remain documented
+here until the replacement unit removes them from the running code and deployment configuration.
 
 The launcher forwards this key. `scripts/agent-clusterctl` resolves
 `CONTROL_ACTION_FILE`, prints it in `doctor` and passes `--control-action-file`, so a

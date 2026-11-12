@@ -28,7 +28,7 @@ Examples:
 | `AGENT_CLUSTER_ENDPOINT_INSTANCE_ID` | `instance-a` | process instance identity |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` | `wss://127.0.0.1:53943` | Server channel address |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `127.0.0.1:53944` | Endpoint channel listener |
-| `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | `[{"id":"default","provider_type":"topsailai"}]` | adapter configuration |
+| `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | `[{"adapter_id":"default","provider_type":"topsailai","command":"/opt/agent-cluster/providers/topsailai","timeout_ms":120000}]` | adapter configuration |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `/tmp/allowlist.conf` | command allowlist path |
 | `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | `/tmp/actions.json` | control action catalog path |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `/tmp/policies` | access policy directory |
@@ -50,7 +50,7 @@ Examples:
 |---|---|
 | `AGENT_CLUSTER_INSTANCE_ID` | `legacy-instance` |
 | `AGENT_CLUSTER_CHANNEL_ADDRESS` | `wss://127.0.0.1:53943` |
-| `AGENT_CLUSTER_ADAPTERS` | `[{"id":"default","provider_type":"topsailai"}]` |
+| `AGENT_CLUSTER_ADAPTERS` | `[{"adapter_id":"default","provider_type":"topsailai","command":"/opt/agent-cluster/providers/topsailai","timeout_ms":120000}]` |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `/tmp/allowlist.conf` |
 | `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `/tmp/actions.json` |
 | `AGENT_CLUSTER_COLLECTION_DELAY_MS` | `250` |

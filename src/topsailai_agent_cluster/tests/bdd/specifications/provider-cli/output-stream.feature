@@ -80,12 +80,12 @@ Feature: Provider output snapshots and streams
     Then the outcome is stream_interrupted or a process failure
     And no provider terminal code is fabricated
 
-  Scenario: Output follow capacity is independent by binding
-    Given binding "binding-a" has exhausted its follow capacity
-    And binding "binding-b" has available follow capacity
-    When a follow is requested from binding "binding-b"
-    Then binding "binding-b" admits the follow
-    And binding "binding-a" remains at its configured limit
+  Scenario: Output follow capacity is independent by Adapter instance
+    Given Adapter instance "adapter-a" has exhausted its follow capacity
+    And Adapter instance "adapter-b" has available follow capacity
+    When a follow is requested from Adapter instance "adapter-b"
+    Then Adapter instance "adapter-b" admits the follow
+    And Adapter instance "adapter-a" remains at its configured limit
 
   Scenario: A slow output consumer cannot starve mutation capacity
     Given a follow consumer is slower than the provider output rate

@@ -32,15 +32,15 @@ For each implementation logical unit:
 |---|---|---|
 | `protocol.feature` | Bootstrap, compatibility, JSON framing, request correlation, stdout/stderr bounds and error classification | Conformance and Endpoint integration |
 | `function-contract.feature` | Closed function inventory and function-specific semantics | Conformance |
-| `resource-identity.feature` | Resource mapping tuple, key stability, binding/profile/resource identity and collection outcomes | Endpoint integration and upgrade tests |
+| `resource-identity.feature` | Resource mapping tuple, key stability, Adapter/profile/resource identity and collection outcomes | Endpoint integration and upgrade tests |
 | `capability-query.feature` | Descriptor intersection, effective revision, refresh lifecycle, query registry and control approval | Unit, conformance and integration |
 | `execution-generation.feature` | Minimal mutation request, same-path generation validation, invocation identity and receipt authority | Conformance and Endpoint integration |
 | `output-stream.feature` | Snapshot bounds, JSONL follow framing, terminal outcomes, cancellation and backpressure | Conformance, BDD and integration |
-| `scheduling-custody.feature` | Per-binding capacity, queue bounds, helper ownership and durable resource handoff | Integration and provider live tests |
+| `scheduling-custody.feature` | Per-adapter capacity, queue bounds, helper ownership and durable resource handoff | Integration and provider live tests |
 | `packaging-upgrade.feature` | Independent packages, immutable versions, activation, rollback and Endpoint independence | Packaging and integration |
 | `trust-configuration.feature` | Local trust without sandbox claims, fixed invocation configuration and secret boundaries | Conformance, integration and security review |
 | `mock-conformance.feature` | Reference Mock behavior, local fault fixtures and executable conformance | Conformance |
-| `migration-parity.feature` | Legacy/new semantic parity, cutover, rollback and removal gate | Integration, BDD and live verification |
+| `replacement-acceptance.feature` | Contract-based replacement, old-path removal and Provider CLI version rollback | Integration, BDD and live verification |
 
 ## Requirement traceability
 
@@ -53,23 +53,23 @@ For each implementation logical unit:
 | Provider projects are independent and do not import Cluster internals | `mock-conformance.feature`, `packaging-upgrade.feature` |
 | Endpoint package has no concrete provider dependency | `packaging-upgrade.feature` |
 | Mock is test-only and absent from production installation | `packaging-upgrade.feature`, `mock-conformance.feature` |
-| Resource identity is `(binding_id, resource_kind, provider_resource_key)` | `resource-identity.feature` |
+| Resource identity is `(adapter_id, resource_kind, provider_resource_key)` | `resource-identity.feature` |
 | Provider keys remain stable across compatible upgrades | `resource-identity.feature`, `mock-conformance.feature` |
-| Binding, launch profile, provider profile and Cluster resource identities are distinct | `resource-identity.feature` |
+| Adapter, launch profile, provider profile and Cluster resource identities are distinct | `resource-identity.feature` |
 | Provider never owns Cluster IDs, journal phase or complete receipts | `resource-identity.feature`, `execution-generation.feature` |
 | Standard reads use closed Cluster-defined `query` names and schemas | `capability-query.feature`, `function-contract.feature` |
 | Mutation revalidates expected generation in the execution path | `execution-generation.feature`, `mock-conformance.feature` |
-| Each binding has independent bounded concurrency | `scheduling-custody.feature`, `output-stream.feature` |
-| Endpoint, binding and provider limits combine by the strictest value | `scheduling-custody.feature` |
+| Each Adapter instance has independent bounded concurrency | `scheduling-custody.feature`, `output-stream.feature` |
+| Endpoint, Adapter instance and provider limits combine by the strictest value | `scheduling-custody.feature` |
 | Provider helper ownership differs from durable business-resource custody | `scheduling-custody.feature`, `mock-conformance.feature` |
-| Provider package installation and binding activation are separate | `packaging-upgrade.feature` |
-| Provider activation is versioned, validated and rollback-safe | `packaging-upgrade.feature`, `migration-parity.feature` |
-| Legacy removal follows semantic parity and accepted cutover | `migration-parity.feature` |
+| Provider package installation and Adapter activation are separate | `packaging-upgrade.feature` |
+| Provider activation is versioned, validated and rollback-safe | `packaging-upgrade.feature`, `replacement-acceptance.feature` |
+| The replacement removes the old Adapter paths without a dual implementation phase | `replacement-acceptance.feature` |
 
 ## Test data and cleanup rules
 
 - Use provider-private fixture keys that are stable and non-sensitive.
-- Create unique binding IDs, invocation IDs and request IDs per scenario unless reuse is the behavior under test.
+- Create unique adapter IDs, invocation IDs and request IDs per scenario unless reuse is the behavior under test.
 - Fault modes come only from local test process configuration or fixture files, never from a protocol request.
 - Every process-based scenario records the exact process it starts and cleans up only that process and its owned children.
 - Durable-resource scenarios must distinguish the resource lifecycle from the provider invocation helper lifecycle.

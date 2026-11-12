@@ -4,20 +4,20 @@ Feature: Provider resource identity and discovery
   restart, and compatible provider upgrades.
 
   Background:
-    Given a configured provider binding with ID "binding-a"
+    Given a configured Adapter instance with ID "adapter-a"
     And the Endpoint owns the ResourceMapper
 
   Scenario: Discovery maps a provider Session to a Cluster resource
     Given discovery returns a Session with provider key "resource-1"
     And discovery returns provider generation "generation-1"
     When the Endpoint accepts the observation
-    Then the Endpoint maps the tuple "binding-a", "session", "resource-1"
+    Then the Endpoint maps the tuple "adapter-a", "session", "resource-1"
     And the published Session has a stable opaque Cluster resource ID
     And the provider response contains no Cluster resource ID authority
 
   Scenario: Repeated discovery reuses the same Cluster resource ID
     Given a Session observation with provider key "resource-1" was mapped previously
-    When the same binding discovers the same Session again
+    When the same Adapter instance discovers the same Session again
     Then the existing Cluster resource ID is reused
     And no second mapping is created
 
@@ -28,12 +28,12 @@ Feature: Provider resource identity and discovery
     Then the Session and Task receive different Cluster resource IDs
     And both mappings retain their resource kind
 
-  Scenario: Equal provider keys in different bindings remain distinct
-    Given binding "binding-a" discovers Session key "resource-1"
-    And binding "binding-b" discovers Session key "resource-1"
+  Scenario: Equal provider keys in different Adapter instances remain distinct
+    Given Adapter instance "adapter-a" discovers Session key "resource-1"
+    And Adapter instance "adapter-b" discovers Session key "resource-1"
     When the Endpoint maps both observations
     Then the two Sessions receive different Cluster resource IDs
-    And neither binding can resolve the other binding's resource
+    And neither Adapter instance can resolve the other Adapter instance's resource
 
   Scenario: A provider cannot choose a public Cluster ID
     Given a provider observation includes a field claiming Cluster ID "res-forged"
@@ -48,18 +48,18 @@ Feature: Provider resource identity and discovery
     And the provider target contains the expected provider generation
     And the provider target does not contain Cluster Session "res-session"
 
-  Scenario: A successful empty discovery clears only that binding's resources
-    Given binding "binding-a" previously reported Sessions
-    And binding "binding-b" previously reported Sessions
-    When binding "binding-a" returns a successful complete empty discovery
-    Then binding "binding-a" publishes an empty resource section
-    And binding "binding-b" keeps its existing observations
+  Scenario: A successful empty discovery clears only that Adapter instance's resources
+    Given Adapter instance "adapter-a" previously reported Sessions
+    And Adapter instance "adapter-b" previously reported Sessions
+    When Adapter instance "adapter-a" returns a successful complete empty discovery
+    Then Adapter instance "adapter-a" publishes an empty resource section
+    And Adapter instance "adapter-b" keeps its existing observations
 
   Scenario: A failed discovery does not become a successful empty inventory
-    Given binding "binding-a" previously reported a Session
+    Given Adapter instance "adapter-a" previously reported a Session
     When its provider discovery fails before a complete result
     Then the last valid Session remains present and stale
-    And the binding reports its collection error
+    And the Adapter instance reports its collection error
     And the failure is not published as a successful empty discovery
 
   Scenario: Compatible provider restart preserves identity
@@ -81,19 +81,19 @@ Feature: Provider resource identity and discovery
     But version "1.1.0" returns "renamed-resource-1" for the same business Session
     When upgrade identity checks run
     Then the provider cutover is rejected
-    And the active binding remains on version "1.0.0"
+    And the active Adapter instance remains on version "1.0.0"
 
-  Scenario: An approved breaking identity migration uses a new binding namespace
+  Scenario: An approved breaking identity migration uses a new Adapter instance namespace
     Given a provider cannot preserve or alias its previous resource keys
     And the operator approves a breaking identity migration
-    When the new provider version is activated under binding "binding-a-v2"
-    Then new resources are mapped in the "binding-a-v2" namespace
-    And old mappings remain associated with "binding-a"
+    When the new provider version is activated under Adapter instance "adapter-a-v2"
+    Then new resources are mapped in the "adapter-a-v2" namespace
+    And old mappings remain associated with "adapter-a"
     And the migration is not presented as an identity-preserving upgrade
 
-  Scenario: One binding publishes multiple launch profiles
-    Given binding "binding-a" advertises provider launch profiles "default" and "large"
+  Scenario: One Adapter instance publishes multiple launch profiles
+    Given Adapter instance "adapter-a" advertises provider launch profiles "default" and "large"
     When the Endpoint publishes standard launch profiles
     Then each profile receives its own opaque "launch_profile_id"
-    And both launch profile IDs resolve to binding "binding-a"
-    And neither public launch profile ID is required to equal the binding ID
+    And both launch profile IDs resolve to Adapter instance "adapter-a"
+    And neither public launch profile ID is required to equal the adapter ID

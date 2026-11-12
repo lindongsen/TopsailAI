@@ -73,7 +73,7 @@ The production package boundary follows the component boundary:
 
 The Endpoint package does not depend on the TopsailAI provider package or any future concrete provider.
 Provider packages install immutable versioned executable paths and do not restart or reconfigure the
-Endpoint. A locally approved binding update activates a verified version; retaining the previous path
+Endpoint. A locally approved Adapter update activates a verified version; retaining the previous path
 provides rollback. The mock must not be included in default production packages, images or node
 installation recipes.
 
@@ -102,7 +102,7 @@ configuration select it, so production input cannot activate a testing bypass.
 6. Return provider-private resource keys and generation evidence. Never mint, persist or interpret
    Cluster resource IDs. Keep a resource key stable across restarts, repeated discovery and every
    claimed protocol-compatible upgrade; an unavoidable identity change requires an approved alias,
-   mapping migration or new binding identity.
+   mapping migration or new Adapter identity.
 7. Revalidate `expected_generation` in the same execution path that performs a mutating operation; a
    previous `inspect` result alone is not sufficient.
 8. Return provider evidence, not a complete Cluster receipt. Preserve uncertainty when delivery or
@@ -115,7 +115,7 @@ configuration select it, so production input cannot activate a testing bypass.
     resource may outlive the provider CLI only after an explicit independent custody handoff; return
     unknown effect rather than acknowledged success when that handoff is uncertain.
 12. Report truthful total, discovery, mutation and follow concurrency constraints. The Endpoint applies
-    them per binding together with its stricter hard and local limits; the provider process must not
+    them per Adapter instance together with its stricter hard and local limits; the provider process must not
     assume an in-memory lock coordinates separate invocations.
 13. Pass executable conformance without an Endpoint, Server, channel or Cluster database.
 
@@ -132,13 +132,13 @@ would require a future sandbox design and is outside this MVP.
 
 ### Configuration and executable ownership
 
-Each binding names one locally approved provider executable and fixed launch configuration. The generic
+Each Adapter instance names one locally approved provider executable and fixed launch configuration. The generic
 CLI Adapter validates common fields, starts that executable directly with an argv array and no shell,
 supplies a minimal environment, applies bounded stdin/stdout/stderr, and terminates only the exact
 process group it created.
 
 Provider business configuration and secrets are local provider startup configuration, not an arbitrary
-`settings` map copied into each request. The per-request protocol contains the binding ID, function,
+`settings` map copied into each request. The per-request protocol contains the adapter ID, function,
 provider-private target, operation or query, payload, deadline and budgets. An operator request cannot
 supply an executable, base argv, working directory, config path, environment override or test mode.
 
@@ -191,28 +191,35 @@ local policy approves the exposed subset and required permissions. Effective adv
 the intersection. Provider-native argv construction belongs inside the provider project; the target
 configuration contains no provider command template.
 
-The current Endpoint control-action catalog with `command` templates is a legacy migration input, not
-the target seam. Its behavior remains until `providers/topsailai` has parity and the binding can roll
-back safely.
+The current Endpoint control-action catalog with `command` templates is implementation to remove,
+not a compatibility seam. The target policy keeps only action approval and permission; provider-native
+command construction belongs to `providers/topsailai`.
 
-### TopsailAI migration
+### TopsailAI replacement
 
-The existing Go implementation under `internal/adapter/topsailai` is migration source material, not
-the target architecture. Its command construction, JSON decoding, state translation,
-model/history/drive mapping and output handling move to `providers/topsailai`.
+The current Go implementation under `internal/adapter/topsailai` and the old `CommandAdapter` are the
+code being replaced, not supported legacy implementations, parity oracles, fallbacks or rollback
+targets. Their command construction, JSON decoding, state translation, model/history/drive mapping and
+output handling move to `providers/topsailai`.
 
-Migration is incremental:
+Replacement is contract-driven:
 
-- Implement and test the generic CLI Adapter against `providers/mock`.
-- Implement `providers/topsailai` so it calls the installed TopsailAI business CLI.
-- Run the same fixtures through the old Go adapter and the provider CLI and compare standard results,
-  including uncertainty and truncation evidence.
-- Switch an Endpoint binding to the provider CLI only after conformance and parity pass.
-- Remove the Cluster-local TopsailAI implementation and legacy command-template catalog only after BDD,
-  integration and live smoke checks pass and rollback is documented.
+- Freeze the Provider CLI DTOs and schemas, then make conformance executable with `providers/mock`.
+- Implement the Generic CLI Adapter without TopsailAI-specific behavior.
+- Implement `providers/topsailai` against the installed TopsailAI business CLI.
+- Validate the replacement against the Cluster contract, provider-neutral fixtures, BDD, integration
+  checks and bounded live smoke evidence.
+- In the reviewed replacement unit, remove the old `CommandAdapter`, its argv protocol, the compiled-in
+  TopsailAI factory path and provider-command templates. Do not ship two Provider seams.
+- Rollback selects a previously verified immutable Provider CLI version for the same `adapter_id`; it
+  never restores the command-based or compiled-in Adapter.
 
-The sections below describe the verified TopsailAI mapping that `providers/topsailai` must preserve.
-They do not authorize Agent Cluster to keep or reintroduce TopsailAI-specific translation.
+Endpoint accepts zero configured Adapters and remains connected while waiting for local configuration.
+A local `agent-clusterctl` action drives an Endpoint per-adapter replace operation, so activation or
+rollback affects one Adapter instance without restarting Endpoint or disturbing another instance.
+
+The sections below describe verified TopsailAI behavior that `providers/topsailai` must satisfy. They
+do not authorize Agent Cluster to keep or reintroduce TopsailAI-specific translation.
 
 ## Verified TopsailAI integration surface
 
@@ -274,9 +281,9 @@ Platform distinction: network protocol and management services should be portabl
 
 ## Adapter execution policy
 
-- Configure the provider CLI executable and provider roots locally by binding, never from a remote command payload. The generic CLI Adapter checks the Adapter CLI protocol at binding initialization; `providers/topsailai` separately checks the TopsailAI business CLI version/schema and reports degraded health on incompatible output.
+- Configure the provider CLI executable and provider roots locally per Adapter instance, never from a remote command payload. The generic CLI Adapter checks the Adapter CLI protocol at Adapter initialization; `providers/topsailai` separately checks the TopsailAI business CLI version/schema and reports degraded health on incompatible output.
 - Invoke a fixed executable with an argv array and no shell. Messages beginning with a dash use the literal assignment form; no concatenated shell strings. Preserve Unicode and whitespace; validate encoded byte length and provider framing rules.
-- Run discovery once per binding per cycle for periodic full Session reporting. Server-initiated fresh pulls use the same serialized/coalesced collector; never return stale cached data as a fresh pull result. Collect each binding independently from its Adapter CLI returned results, retain failed-source last-known data with explicit unknown/stale status, and assemble one structurally complete standard inventory with descriptive adapter metadata; Server then atomically replaces the SQLite sessions_json field only after validation. Bound historical provider inventory processing. The current full-output discovery may require a provider CLI enhancement for large histories.
+- Run discovery once per Adapter instance per cycle for periodic full Session reporting. Server-initiated fresh pulls use the same serialized/coalesced collector; never return stale cached data as a fresh pull result. Collect each Adapter instance independently from its Adapter CLI returned results, retain failed-source last-known data with explicit unknown/stale status, and assemble one structurally complete standard inventory with descriptive adapter metadata; Server then atomically replaces the SQLite sessions_json field only after validation. Bound historical provider inventory processing. The current full-output discovery may require a provider CLI enhancement for large histories.
 - Query logs only on explicit requests; opening a panel must not start periodic snapshot polling. MVP does not require periodic stdout snapshot refresh. No fake stdout cursor, heuristic line-deduplication or promise of complete historical output.
 - Follow is a separate capability from snapshot, and the adapter implements it with `runtime logs --follow`. The provider rejects `--json` together with `--follow` (`runtime_cli.py`), so the follow path consumes plain text lines and never passes `--json`; the snapshot path keeps its JSON envelope. The two paths therefore never share a decoder, and a follow record carries no provider envelope fields.
 - The provider buffers stdout when it is not a terminal, so a follow child is started with `PYTHONUNBUFFERED=1` and any inherited value is stripped first. Without it every record would arrive at process exit instead of as it is written, which would make a live tail look like a hang. Measured on this host: a plain piped child delivers all lines at exit (0.93s), while the unbuffered child delivers them at 0.02/0.32/0.62s.

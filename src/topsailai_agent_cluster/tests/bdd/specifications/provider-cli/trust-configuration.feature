@@ -4,7 +4,7 @@ Feature: Local provider trust and invocation configuration
   code. Remote requests cannot choose how the provider executable is launched.
 
   Background:
-    Given a provider binding configured by a local administrator
+    Given a configured Adapter instance by a local administrator
     And the provider CLI is trusted local software
 
   Scenario: Provider trust is reported without a sandbox claim
@@ -13,20 +13,20 @@ Feature: Local provider trust and invocation configuration
     And it does not claim filesystem, credential, network, or OS-user isolation
     And it distinguishes process fault isolation from malicious-code containment
 
-  Scenario: Executable selection comes only from local binding configuration
-    Given binding "binding-a" has a fixed versioned provider executable
-    When a remote operation targets binding "binding-a"
+  Scenario: Executable selection comes only from local Adapter configuration
+    Given Adapter instance "adapter-a" has a fixed versioned provider executable
+    When a remote operation targets Adapter instance "adapter-a"
     Then the Generic CLI Adapter starts only the configured executable
     And the remote payload cannot replace the executable path
 
   Scenario: Remote input cannot inject provider argv
-    Given binding "binding-a" has fixed provider base arguments
+    Given Adapter instance "adapter-a" has fixed provider base arguments
     When a remote payload contains fields resembling executable arguments
     Then those fields are rejected by the standard operation schema
     And no unconfigured argument is appended to the provider process
 
   Scenario: Remote input cannot replace provider working directory
-    Given binding "binding-a" has an Endpoint-local provider working directory
+    Given Adapter instance "adapter-a" has an Endpoint-local provider working directory
     When a remote payload contains another working directory
     Then the requested working directory is rejected or ignored by schema
     And the provider starts in the locally configured directory
@@ -37,12 +37,12 @@ Feature: Local provider trust and invocation configuration
     Then the variables are rejected by the standard schema
     And they are not added to the provider process environment
 
-  Scenario: Provider startup settings are isolated by binding
-    Given bindings "binding-a" and "binding-b" use the same provider executable
-    And each binding has different local startup configuration
-    When both bindings invoke the provider concurrently
-    Then each invocation receives only its own binding configuration
-    And neither invocation observes the other binding's settings
+  Scenario: Provider startup settings are isolated by Adapter instance
+    Given Adapter instances "adapter-a" and "adapter-b" use the same provider executable
+    And each Adapter instance has different local startup configuration
+    When both Adapter instances invoke the provider concurrently
+    Then each invocation receives only its own Adapter configuration
+    And neither invocation observes the other Adapter instance's settings
 
   Scenario: Secrets do not cross in ordinary request JSON
     Given the provider needs a local secret to reach its business backend

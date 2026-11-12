@@ -196,19 +196,18 @@ The target Endpoint configuration contains no provider argv template and no plac
 A remote request supplies only the advertised `ctl.<action>` name and its validated standard payload.
 The provider CLI decides how that action reaches provider business logic.
 
-### Legacy control catalog during migration
+### Current control catalog replacement
 
-The current implementation predates the independent provider CLI seam. Its Endpoint-local control
-action catalog contains `command` and `payload_session_field`, and the Endpoint substitutes
-`{session}` and `{payload}` into a provider argv template. `scripts/agent-clusterctl` forwards the
-catalog path from `CONTROL_ACTION_FILE`, and the endpoint binary accepts
-`AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`.
+The current Endpoint-local control-action catalog contains `command` and `payload_session_field`, and
+the Endpoint substitutes `{session}` and `{payload}` into provider argv templates. This is current
+implementation evidence only; it is not a compatibility contract or a supported legacy path.
 
-That behavior remains an implemented compatibility path until the generic CLI Adapter and provider
-CLIs replace it; it is not the target provider integration contract. Migration must preserve the
-existing fail-closed behavior, action names, payload validation and permissions while moving
-provider-native argv construction into `providers/topsailai`. The legacy catalog is removed only
-after old/new action parity and rollback verification pass.
+The Provider CLI replacement moves provider-native argv construction into `providers/topsailai` and
+changes Endpoint-local policy to approve action names and permissions only. The replacement unit
+removes the command templates and placeholder substitution after the new descriptor and policy
+intersection is executable. There is no dual-path action parity phase and no fallback to the old
+catalog. Existing fail-closed behavior, standard action names, payload validation and permissions are
+acceptance requirements derived from the Cluster contract and tests.
 
 ## Allowlisted command execution
 
@@ -454,7 +453,7 @@ A request contains at least:
   "minor": 0,
   "request_id": "req_opaque",
   "function": "execute",
-  "binding_id": "local-binding",
+  "adapter_id": "topsailai-work",
   "invocation_id": "inv_opaque",
   "deadline_at_ms": 1794470400000,
   "budget": {
@@ -547,7 +546,7 @@ provider identity through `ResourceMapper`, builds the standard inventory resour
 reverse lookup before later provider calls. The durable mapping identity is the tuple:
 
 ```text
-(binding_id, resource_kind, provider_resource_key)
+(adapter_id, resource_kind, provider_resource_key)
 ```
 
 `resource_kind` is a closed Cluster vocabulary. It is part of identity rather than descriptive data,
@@ -558,7 +557,7 @@ Cluster identity.
 A provider must keep `provider_resource_key` stable for the same business resource across process
 restarts, repeated discovery and protocol-compatible provider upgrades. A provider must not silently
 change the key format. An unavoidable incompatible identity change requires one of: an explicit old-key
-alias, an Endpoint mapping migration, or a new binding identity approved as a breaking migration. The
+alias, an Endpoint mapping migration, or a new Adapter identity approved as a breaking migration. The
 provider project must test key stability across every claimed compatible upgrade; executable
 conformance can prove repeatability for one version but cannot prove cross-version continuity.
 
@@ -566,14 +565,14 @@ Four identities remain distinct:
 
 | Identity | Owner and purpose |
 |---|---|
-| `binding_id` | Endpoint-local identity of one configured provider instance and the namespace used by `ResourceMapper`. |
-| `launch_profile_id` | Public opaque identity of one standard launch preset; one binding may publish several profiles. |
+| `adapter_id` | Endpoint-local identity of one configured provider instance and the namespace used by `ResourceMapper`. |
+| `launch_profile_id` | Public opaque identity of one standard launch preset; one Adapter instance may publish several profiles. |
 | Provider launch-profile key | Provider-private preset key resolved only inside the Endpoint/provider seam. |
 | Cluster resource ID | Endpoint-minted public identity of one discovered Agent, Session, Task or other standard resource. |
 
-The Endpoint resolves `launch_profile_id` to `binding_id` plus a provider-private launch-profile key.
-The current implementation where a launch profile ID doubles as an adapter ID is legacy compatibility,
-not the Adapter CLI identity model.
+The Endpoint resolves `launch_profile_id` to `adapter_id` plus a provider-private launch-profile key.
+The current implementation where a launch profile ID doubles as an Adapter ID is a coupling to remove,
+not a compatibility model to preserve in the Provider CLI contract.
 
 ### Query framing
 
@@ -612,15 +611,15 @@ is understood; otherwise the invocation fails with `incompatible_protocol`.
 
 `describe` reports the supported major/minor range, provider descriptor revision, standard operations,
 standard queries, control actions, limits and concurrency constraints. The Endpoint intersects that
-descriptor with the Cluster registry, Endpoint-supported behavior, binding configuration revision and
+descriptor with the Cluster registry, Endpoint-supported behavior, Adapter configuration revision and
 local policy. It hashes the normalized result into the effective capability revision advertised to the
 Server. The provider descriptor revision is input evidence, not the public capability revision.
 
-The Endpoint refreshes a binding descriptor on Endpoint startup, binding add/change, provider
+The Endpoint refreshes an Adapter descriptor on Endpoint startup, Adapter add/change, provider
 executable-version switch, provider startup-configuration change, Endpoint policy reload and control
 action approval reload. Periodic discovery uses the accepted cached descriptor and does not invoke
 `describe` every cycle. A failed refresh never converts the provider surface to an apparently healthy
-empty capability set and never leaves the old descriptor advertised as current: the binding becomes
+empty capability set and never leaves the old descriptor advertised as current: the Adapter instance becomes
 `degraded` or `unavailable`, its last valid inventory remains explicitly stale, and new mutating
 operations are refused until a compatible descriptor is accepted. Recovery computes and publishes a
 new effective capability revision before admitting new mutation.
@@ -674,14 +673,14 @@ CLI exit and is not killed by later invocation cleanup.
 
 The provider executable, fixed base arguments, working directory, minimal environment and protected
 provider configuration are Endpoint-local administrative settings. Each request carries only a
-binding ID and its operation data. Provider-specific secrets use a protected local mechanism and are
+adapter ID and its operation data. Provider-specific secrets use a protected local mechanism and are
 not echoed in responses, stderr, receipts or audit records.
 
-Provider packages and Endpoint bindings have separate lifecycles. `agent-cluster-endpoint` has no
+Provider packages and Endpoint Adapter configurations have separate lifecycles. `agent-cluster-endpoint` has no
 package dependency on a concrete provider; a provider such as TopsailAI is installed through the
 optional `agent-cluster-provider-topsailai` package. The package installs an immutable, versioned
-executable path. Installing it does not restart the Endpoint, change the active binding or publish new
-capabilities. Activation requires an explicit local binding update after bootstrap compatibility and
+executable path. Installing it does not restart the Endpoint, change the active Adapter configuration or publish new
+capabilities. Activation requires an explicit local per-adapter update after bootstrap compatibility and
 package verification; the Endpoint then re-runs `describe`, computes a new effective capability
 revision and publishes it. Rollback restores the previous versioned executable path. The mock provider
 is a test artifact and is not part of default production packaging or installation.
@@ -698,12 +697,12 @@ Endpoint retains its allowlist, working-directory resolution and confinement, mi
 timeout, output bounds and exact-process cleanup. A provider may supply standard Session directory
 evidence through discovery, but it cannot replace the Endpoint's command-execution policy.
 
-### Binding-level concurrency
+### Adapter-level concurrency
 
 Process-per-request invocations cannot coordinate through provider process memory, so the Endpoint
-enforces concurrency before starting them. Each binding owns an independent scheduler and semaphores;
-a blocked or slow provider must not consume another binding's capacity. The effective limit for each
-class is the strictest of the Endpoint hard limit, the binding-local configuration and the provider
+enforces concurrency before starting them. Each Adapter instance owns an independent scheduler and semaphores;
+a blocked or slow provider must not consume another Adapter instance's capacity. The effective limit for each
+class is the strictest of the Endpoint hard limit, the Adapter-local configuration and the provider
 constraint accepted from `describe`:
 
 ```text

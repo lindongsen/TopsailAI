@@ -879,3 +879,22 @@ Why this prevents recurrence: a whitelist implementation can stay correct while 
 false confidence about the wrong variable. Testing every accepted spelling keeps the non-leakage
 contract aligned with the compatibility contract, so a future change from a whitelist to inherited
 environment would expose every supported credential path.
+
+## Removing an implementation seam requires deleting its test callers too
+
+Trigger: the Endpoint Provider CLI replacement plan required deleting the old `CommandAdapter`, but the
+first removal scope named only production factories and protocol code. The test harness, integration
+launchers, BDD world, manual-test scripts, configuration tests and Makefile package groups still created
+or imported the old Adapter, so deleting production code alone would have broken verification or kept a
+second executable seam alive under `tests/`.
+
+Action: before deleting an implementation boundary, inventory every constructor, import, protocol flag,
+fixture executable, launcher and package-list reference across production and test code. Migrate tests
+that assert still-valid public behavior to the replacement seam, and delete tests that assert only the
+removed implementation. Make absence from executable test infrastructure part of the same structural
+gate as absence from production code.
+
+Why this prevents recurrence: test infrastructure is an active caller, not a historical document. If it
+keeps the removed protocol alive, the project either cannot compile after deletion or must retain a
+hidden compatibility implementation solely for tests, contradicting the single-seam architecture. A
+complete caller inventory makes production replacement and verification migrate as one logical unit.

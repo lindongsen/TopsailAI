@@ -320,6 +320,29 @@ OS-user, filesystem, credential, network and sandbox/container design. Even trus
 subject to strict framing, bounded I/O, deadlines, exact process cleanup and local-only executable
 configuration.
 
+Directed by the human on 2026-11-12, wording normalized, meaning preserved:
+
+> Keep `adapter_id`; it already identifies one configured Adapter instance, so introducing
+> `binding_id` would only rename the same concept. Do not retain the old `CommandAdapter` as a legacy,
+> fallback or parity implementation.
+
+`adapter_id` remains the stable Endpoint-local identity of one configured Adapter instance. Multiple
+Adapter instances may use the same `provider_type` or provider executable implementation. Resource
+mapping therefore uses `(adapter_id, resource_kind, provider_resource_key)`: the necessary migration
+adds the resource kind; it does not rename Adapter identity.
+
+The independent Provider CLI replaces the current command-based and compiled-in provider paths rather
+than running beside them as supported alternatives. Acceptance is against the Cluster contract,
+fixtures, BDD, integration tests and bounded live smoke evidence, not an old/new implementation parity
+suite. Once the replacement unit lands, the old `CommandAdapter`, its argv protocol, the compiled-in
+TopsailAI factory path and provider-command templates are removed in that same reviewed unit. They are
+not rollback targets. Rollback means selecting a previously verified versioned Provider CLI artifact
+for the same `adapter_id`.
+
+Endpoint must be able to start, connect and report health with zero configured Adapters. Provider
+activation is an Endpoint-local per-adapter replace operation driven by `agent-clusterctl`; installing a
+Provider package alone never activates it or restarts the whole Endpoint.
+
 Endpoint retains all Cluster authority: authorization, local policy, command journal, deduplication,
 `ResourceMapper`, effective capabilities, Cluster IDs and complete `ExecutionReceipt` construction.
 Provider CLI requests carry provider-private keys, expected generations, standard functions, typed

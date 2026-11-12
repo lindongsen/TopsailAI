@@ -27,14 +27,14 @@ Feature: Provider CLI protocol framing and compatibility
     Given the provider supports only Adapter CLI protocol major 2
     And the Endpoint supports only Adapter CLI protocol major 1
     When the Endpoint invokes the describe function
-    Then the binding is marked incompatible
+    Then the Adapter instance is marked incompatible
     And no discover, query, execute, or output function is invoked
     And no mutating capability is published
 
   Scenario: An unknown minor feature is used only after negotiation
     Given the provider and Endpoint share protocol major 1
     And only the provider advertises minor feature "future-frame"
-    When the Endpoint negotiates the binding
+    When the Endpoint negotiates the Adapter instance
     Then the Endpoint does not send "future-frame"
     And functions supported by the common feature set remain available
 

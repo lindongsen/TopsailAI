@@ -5,7 +5,7 @@ Feature: Provider mutation execution and generation safety
 
   Background:
     Given an admitted mutating Cluster command
-    And the Endpoint has resolved its Cluster target to a provider binding and key
+    And the Endpoint has resolved its Cluster target to a configured Adapter instance and key
 
   Scenario: A provider mutation receives a minimal request
     When the Endpoint prepares the provider execute request

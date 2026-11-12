@@ -82,7 +82,7 @@ Operator CLI / TUI / future Web UI
                  |
       Endpoint API and local execution authority
                  |
-       Adapter registry and provider bindings
+       Adapter registry and configured instances
            /             |               TopsailAI CLI      Other CLI        SDK / HTTP agent
 ```
 
@@ -154,11 +154,11 @@ and confines every provider detail to one adapter section. See
 | Component | Owns | Must not own |
 |---|---|---|
 | Server | Endpoint registry, standard capabilities/resources, caller authentication and request routing, latest inventory, standard command routing, audit | Adapter registry/configuration/selection or provider-specific interpretation of reported metadata, provider flags, local paths, PID selection, agent execution, operation authorization, relaying any Endpoint-originated message to another Endpoint |
-| Endpoint | Local inventory authority, provider bindings, execution journal, local policy, bounded collection, stream relay | Cross-endpoint scheduling or assumptions about Server UI, any message to another Endpoint, any request that the Server relay a message to another Endpoint |
-| Adapter | Provider discovery, identity mapping, semantic translation, supported operations, output normalization | Server credentials, network routing, cluster RBAC |
+| Endpoint | Local inventory authority, Adapter instances, execution journal, local policy, bounded collection, stream relay | Cross-endpoint scheduling or assumptions about Server UI, any message to another Endpoint, any request that the Server relay a message to another Endpoint |
+| Adapter | Provider discovery, stable provider-private keys and generation evidence, semantic translation, supported operations, output normalization | Cluster resource-ID mapping, Server credentials, network routing, cluster RBAC |
 | CLI/TUI | Selection, filtering, status display, confirmation, user intent | Backend polling logic or provider-specific shell commands |
 
-An Endpoint represents one machine: one Endpoint daemon runs in its operating system and hosts multiple adapters/provider bindings for different agents. Do not deploy one Endpoint per account or per adapter. Two bindings of the same provider may use different locally approved roots or execution identities. Cross-account execution requires an explicit least-privilege local policy, not unrestricted impersonation. A binding has a stable ID. A single Server manages many machine Endpoints.
+An Endpoint represents one machine: one Endpoint daemon runs in its operating system and hosts multiple configured Adapter instances for different agents. Do not deploy one Endpoint per account or per adapter. Two Adapter instances of the same provider may use different locally approved roots or execution identities. Cross-account execution requires an explicit least-privilege local policy, not unrestricted impersonation. Each Adapter instance has a stable `adapter_id`. A single Server manages many machine Endpoints.
 
 MVP supports start/resume/stop requests by invoking the corresponding Adapter CLI, alongside collecting its returned inventory. Endpoint and Agent are independent: Endpoint is a controller, not an Agent parent process, supervisor or lifecycle owner. Endpoint startup/shutdown/restart does not start, stop, adopt or restart Agents. The provider CLI/runtime is responsible for actual Agent launch, persistence and termination. Endpoint reports only returned evidence; command delivery or CLI exit alone cannot prove Agent readiness or task completion.
 
@@ -295,7 +295,7 @@ only Seam B; it does not import or implement Agent Cluster's internal Go interfa
 | Provider runtime | Agent-specific execution, sessions, models, output and persistence | Cluster protocol or fleet policy |
 
 The provider CLI is configured by a local administrator. A remote command can select only a standard
-operation and an already configured binding; it can never supply an executable path, provider command,
+operation and an already configured Adapter instance; it can never supply an executable path, provider command,
 working directory, configuration path, test mode or environment override.
 
 ### Process and protocol boundary
@@ -364,7 +364,7 @@ flowchart LR
     Provider["Provider descriptor"] --> Intersect["Endpoint normalization and intersection"]
     Standard["Cluster standard operation and query registry"] --> Intersect
     Policy["Endpoint local policy"] --> Intersect
-    Binding["Binding configuration revision"] --> Intersect
+    AdapterConfig["Adapter configuration revision"] --> Intersect
     Intersect --> Effective["Effective capabilities + revision"]
 ```
 
@@ -404,28 +404,29 @@ flowchart LR
 
     EndpointPackage --> EndpointRuntime
     ProviderPackage --> ProviderRuntime
-    EndpointRuntime -.->|"local binding configuration"| ProviderRuntime
+    EndpointRuntime -.->|"local Adapter configuration"| ProviderRuntime
     MockArtifact -.->|"conformance and integration tests only"| EndpointRuntime
 ```
 
-Adding or replacing a provider installs a provider package and changes Endpoint-local binding
-configuration. Installation alone neither restarts the Endpoint nor replaces the active executable.
+Adding or replacing a provider installs a provider package and changes Endpoint-local Adapter configuration.
+Installation alone neither restarts the Endpoint nor replaces the active executable.
 Provider artifacts use versioned paths: the operator validates `describe` compatibility and the
-provider package before atomically changing the binding to the new path. The previous version and its
-binding path remain available for rollback until cutover acceptance.
+provider package before atomically replacing that Adapter instance with the new path. The previous verified Provider CLI version remains available for rollback until cutover acceptance.
 
 ```mermaid
 flowchart LR
     Install["Install versioned provider artifact"] --> Describe["Run describe and compatibility checks"]
     Describe --> Verify["Run conformance and bounded smoke checks"]
-    Verify --> Switch["Atomically switch Endpoint-local binding"]
+    Verify --> Switch["Atomically replace one Adapter instance"]
     Switch --> Publish["Re-describe and publish effective capability revision"]
     Publish --> Accept{"Cutover accepted?"}
     Accept -->|"yes"| Retire["Retire old artifact under retention policy"]
-    Accept -->|"no"| Rollback["Restore previous binding path"]
+    Accept -->|"no"| Rollback["Restore previous Provider CLI version"]
 ```
 
-This requires no Endpoint, Server, database schema, public API or operator CLI source change. The
+After the Generic CLI seam is implemented, adding or switching a Provider CLI version requires no
+Endpoint, Server, database schema, public API or operator CLI source change. The initial replacement
+of the compiled-in and command-based paths does require the Endpoint changes defined by this plan. The
 previous same-repository Go `Provider` registration proposal is superseded: Agent Cluster does not use
 Go runtime plugins, compile provider implementations into the Endpoint, or publish a Go SDK as the
 provider integration boundary.
@@ -457,17 +458,17 @@ cleanup of the exact process group it owns. Remote input cannot enable mock faul
 local process configuration. Supporting untrusted providers later requires a separate design for OS
 identities, filesystem and credential permissions, network restrictions and sandbox/container policy.
 
-### Binding scheduling and process custody
+### Adapter scheduling and process custody
 
-Every provider binding has its own bounded scheduler. Endpoint, binding and provider descriptor limits
+Every Adapter instance has its own bounded scheduler. Endpoint, Adapter-instance and provider-descriptor limits
 are combined by taking the strictest value for total, discovery, mutation and follow work. Capacity is
-never shared in a way that lets one blocked provider consume another binding's slots.
+never shared in a way that lets one blocked provider consume another Adapter instance's slots.
 
 ```mermaid
 flowchart LR
-    Requests["Adapter function calls"] --> BindingRouter["Route by binding ID"]
-    BindingRouter --> SchedulerA["Binding A scheduler\nstrictest configured limits"]
-    BindingRouter --> SchedulerB["Binding B scheduler\nstrictest configured limits"]
+    Requests["Adapter function calls"] --> BindingRouter["Route by adapter ID"]
+    BindingRouter --> SchedulerA["Adapter A scheduler\nstrictest configured limits"]
+    BindingRouter --> SchedulerB["Adapter B scheduler\nstrictest configured limits"]
     SchedulerA --> ProviderA["Provider CLI A processes"]
     SchedulerB --> ProviderB["Provider CLI B processes"]
     ProviderA --> Helper["Invocation helpers\nowned by the call"]
@@ -482,13 +483,25 @@ explicit lifecycle handoff outside that invocation group. The provider cannot re
 success before the handoff is durable; uncertain handoff remains an unknown effect. Protocol
 conformance checks helper cleanup, while provider live tests check the independent resource lifecycle.
 
-### Migration constraint
+### Replacement constraint
 
-The existing `internal/adapter/topsailai` implementation remains only as a migration baseline until
-`providers/topsailai` passes protocol conformance, fixture parity, BDD, integration and live smoke
-checks. It is removed only after the Endpoint has switched to the generic CLI Adapter and the rollback
-path has been documented. Provider-specific behavior must not be rewritten into the generic Adapter
-during migration.
+The current `internal/adapter/topsailai` and command-based Adapter paths describe the implementation
+being replaced; they are not supported legacy, fallback, parity or rollback paths. The replacement is
+accepted against the Cluster contract, protocol conformance, provider-neutral fixtures, BDD,
+integration checks and bounded live smoke evidence. The reviewed replacement unit removes the old
+`CommandAdapter`, its argv protocol, the compiled-in TopsailAI factory and provider-command templates
+instead of carrying two provider seams forward.
+
+The first production replacement is a one-way removal of the old seams; it does not roll back to old
+Adapter code. After one Provider CLI version has passed production acceptance, later rollback applies
+only between verified, immutable Provider CLI versions configured for the same `adapter_id`.
+Provider-specific behavior remains in `providers/topsailai` and must not be copied into the Generic CLI
+Adapter.
+
+Endpoint can run with zero configured Adapters: it still connects to Server, reports Endpoint health
+and waits for local configuration. A local `agent-clusterctl` action invokes an Endpoint per-adapter
+replace operation to activate or roll back one Provider CLI version without restarting Endpoint or
+affecting unrelated Adapter instances.
 
 ## Transport and connectivity
 
@@ -577,7 +590,7 @@ Every successful accepted update performs one transactional conditional INSERT/U
 - The CLI resolves each Endpoint's token from its own configuration file, never from the Server. Distribution stays local because a Server-side path would make the Server a token holder, and a holder can hand tokens out. The map lives in the same per-user file that already carries the Server URL and the `server-token`, so one precedence rule and one parser cover every setting. A CLI with no entry for the addressed Endpoint refuses locally as a configuration error instead of sending an unauthenticated request.
 - Revocation closes existing sessions and invalidates queued dispatch; certificates rotate without changing endpoint identity.
 - Never expose an arbitrary remote shell, executable path, environment override, filesystem path, socket path or unvalidated raw provider action in the generic API. The only command execution surface is the standard `command.exec` operation, which runs one argv array matched against an Endpoint-global allowlist in a session working directory with a minimal environment, bounded lifetime and bounded output. It is not a shell: no command string is parsed, no shell is invoked, and arguments are confined to the resolved directory.
-- Provider binaries and binding configuration are trusted local admin configuration. Execute argv directly without a shell, under a least-privilege account; bound child lifetime and output and clean up exact owned processes.
+- Provider binaries and Adapter configuration are trusted local admin configuration. Execute argv directly without a shell, under a least-privilege account; bound child lifetime and output and clean up exact owned processes.
 - Journal/audit references and payload hashes, not full prompts, secrets or complete stdout by default. Restrict output access, encrypt stored sensitive payloads and use bounded retention.
 - Treat stdout and provider metadata as untrusted: strip terminal control sequences for TUI rendering, cap frame/text size and nesting, and redact sensitive local metadata from fleet listings.
 - Existing CLI PID/liveness checks are not authenticated process identity. MVP assumes trusted local per-user provider storage; do not claim protection against a hostile local user or compromised Endpoint.
@@ -587,9 +600,9 @@ Every successful accepted update performs one transactional conditional INSERT/U
 
 Provisional target: 100 Endpoints, 20 active sessions per Endpoint, 100,000 retained historical resource summaries, 10 concurrent operators and 10 watched output panels cluster-wide. Validate and amend these assumptions before implementation approval.
 
-At a 10-second inventory refresh, one batched provider discovery per binding per cycle is approximately 10 CLI discovery launches/second across a fleet with one binding per Endpoint. Never run a full discovery separately for every session or every operator. Local provider discovery may still scan retained history: current CLI pagination/incremental discovery is not verified and may be the limiting cost. Measure it at representative history size before promising this target; do not compensate with ever faster polling.
+At a 10-second inventory refresh, one batched provider discovery per Adapter instance per cycle is approximately 10 CLI discovery launches/second across a fleet with one Adapter instance per Endpoint. Never run a full discovery separately for every session or every operator. Local provider discovery may still scan retained history: current CLI pagination/incremental discovery is not verified and may be the limiting cost. Measure it at representative history size before promising this target; do not compensate with ever faster polling.
 
-A 10-second heartbeat yields approximately 10 fleet heartbeats/second. MVP does not periodically refresh stdout snapshots, so no recurring stdout polling workload is budgeted. Explicit output requests remain bounded and shared where appropriate. Continuous output follow is implemented as an explicit operator action, so its workload is bounded by operator behaviour rather than by a timer: the Endpoint admits at most 8 concurrent follows and rejects an excess request instead of queueing it, and the Server bounds pending follows per connection. A follow therefore cannot multiply discovery cost, and it cannot starve commands, heartbeats or inventory reports on the shared channel. Inventory refresh is independent of stdout follow. Use bounded worker pools, jitter, cache, adaptive backoff and per-binding quotas.
+A 10-second heartbeat yields approximately 10 fleet heartbeats/second. MVP does not periodically refresh stdout snapshots, so no recurring stdout polling workload is budgeted. Explicit output requests remain bounded and shared where appropriate. Continuous output follow is implemented as an explicit operator action, so its workload is bounded by operator behaviour rather than by a timer: the Endpoint admits at most 8 concurrent follows and rejects an excess request instead of queueing it, and the Server bounds pending follows per connection. A follow therefore cannot multiply discovery cost, and it cannot starve commands, heartbeats or inventory reports on the shared channel. Inventory refresh is independent of stdout follow. Use bounded worker pools, jitter, cache, adaptive backoff and per-adapter quotas.
 
 Proposed initial budgets: cached first TUI page under 1 second, command durable admission p95 under 500 ms, command dispatch p95 under 2 seconds on a healthy LAN excluding provider execution, inventory freshness under 15 seconds in steady state. Endpoint queries use deterministic pagination and indexed endpoint/update-time filters. Session filtering reads the current JSON documents in the application, with bounded endpoint selection and result budgets; do not promise indexed global Session-state queries without a measured cost model. Cross-request pagination that observes changed revisions returns resync_required rather than retaining old snapshots; no live fleet fan-out on first render. Confirm with representative load evidence, not small fixtures.
 
