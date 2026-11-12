@@ -92,6 +92,12 @@ type ActualDataAdapter interface {
 	// It returns the adapter-specific reference to the stored payload.
 	WriteFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error)
 
+	// AppendFile appends to a single file in the object's actual data, creating
+	// it when missing. It returns the adapter-specific reference to the stored
+	// payload. An adapter must append without rewriting the existing content so
+	// a large file is never read back into memory.
+	AppendFile(ctx context.Context, ref string, filename string, r io.Reader) (string, error)
+
 	// ReadFile returns a stream that reads a single file from the object's actual data.
 	ReadFile(ctx context.Context, ref string, filename string) (io.ReadCloser, error)
 

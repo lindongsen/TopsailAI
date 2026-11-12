@@ -117,3 +117,11 @@ Feature: Interactive recovery after LLM retry exhaustion
     When the same provider stream failure occurs without an interactive user
     Then the provider failure scenario terminates with a bounded exhaustion error
     And the provider failure scenario sent exactly 18 completion requests
+
+  Scenario: One LLM request reports its consecutive failures when it exits
+    Given an LLM retry scenario whose first request cycle returns busy SSE responses and then succeeds
+    When the user enters an invalid exhaustion choice and then chooses Retry
+    Then the retry scenario returns the successful provider response
+    And the request failure log reported 18 consecutive failures for one request
+    And the request failure log reported the request outcome as success
+    And the request failure log reported each failed attempt exactly once

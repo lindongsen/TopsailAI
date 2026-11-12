@@ -47,7 +47,15 @@ func (e *lineEditor) apply(key lineKey, history bool) lineEditOutcome {
 	return lineEditContinue
 }
 
-// finish excludes wizard and confirmation answers from accepted history.
+// finish records every accepted input and keeps answers out of recall.
+//
+// Recording and recalling are different questions. A command line is both
+// recorded and recallable; an answer is recorded but never recallable, because
+// "y" or "3" means something only in the prompt that asked for it. Recalling an
+// answer at the REPL prompt would offer a command the operator never typed, and
+// recalling it at a destructive confirmation would let Up plus Enter re-confirm
+// an action. The record therefore keeps every input while recall stays
+// command-only.
 func (e *lineEditor) finish(history bool) (string, bool) {
 	if history {
 		return e.submit()
@@ -56,6 +64,9 @@ func (e *lineEditor) finish(history bool) (string, bool) {
 	e.reset()
 	if rejected {
 		value = ""
+	}
+	if !rejected {
+		e.record(InputHistoryKindAnswer, value)
 	}
 	return value, rejected
 }

@@ -307,6 +307,36 @@ func runFileWrite(ctx context.Context, mgr *manager.Manager, args []string) erro
 		return fmt.Errorf("file write: %w", err)
 	}
 
+	// A whole-file replacement needs no existing content, so a streamed source
+	// can be copied directly instead of being buffered in memory. A seek or an
+	// insert needs the existing content, so those keep the string path.
+	if *seek == 0 && !*insert {
+		stream, streamed, err := openContent(*content, fs.Changed("content"), *from)
+		if err != nil {
+			return fmt.Errorf("file write: %w", err)
+		}
+		target, err := objectFS(ctx, mgr, *objectID)
+		if err != nil {
+			if streamed {
+				_ = stream.Close()
+			}
+			return fmt.Errorf("file write: %w", err)
+		}
+		if streamed {
+			defer stream.Close()
+			if err := filetool.WriteFileFrom(remaining[0], stream, target); err != nil {
+				return fmt.Errorf("file write: %w", err)
+			}
+			fmt.Fprintln(os.Stdout, "OK")
+			return nil
+		}
+		if err := filetool.WriteFile(remaining[0], *content, filetool.WriteFileOptions{FS: target}); err != nil {
+			return fmt.Errorf("file write: %w", err)
+		}
+		fmt.Fprintln(os.Stdout, "OK")
+		return nil
+	}
+
 	text, err := resolveContent(*content, fs.Changed("content"), *from)
 	if err != nil {
 		return fmt.Errorf("file write: %w", err)
@@ -340,15 +370,26 @@ func runFileAppend(ctx context.Context, mgr *manager.Manager, args []string) err
 		return fmt.Errorf("file append: %w", err)
 	}
 
-	text, err := resolveContent(*content, fs.Changed("content"), *from)
+	stream, streamed, err := openContent(*content, fs.Changed("content"), *from)
 	if err != nil {
 		return fmt.Errorf("file append: %w", err)
 	}
 	target, err := objectFS(ctx, mgr, *objectID)
 	if err != nil {
+		if streamed {
+			_ = stream.Close()
+		}
 		return fmt.Errorf("file append: %w", err)
 	}
-	if err := filetool.AppendFileWithFS(remaining[0], text, target); err != nil {
+	if streamed {
+		defer stream.Close()
+		if err := filetool.AppendFrom(remaining[0], stream, target); err != nil {
+			return fmt.Errorf("file append: %w", err)
+		}
+		fmt.Fprintln(os.Stdout, "OK")
+		return nil
+	}
+	if err := filetool.AppendFileWithFS(remaining[0], *content, target); err != nil {
 		return fmt.Errorf("file append: %w", err)
 	}
 	fmt.Fprintln(os.Stdout, "OK")
@@ -583,6 +624,33 @@ func resolveContent(content string, contentSet bool, from string) (string, error
 		return "", err
 	}
 	return string(data), nil
+}
+
+// openContent returns a stream for the content of a write command.
+//
+// It reports streamed=false when the content is already an in-memory string,
+// which happens for an explicit --content value or when stdin is an interactive
+// terminal. In that case the caller keeps the string path. Otherwise the source
+// is returned as a stream so a large file or a large piped input is copied
+// instead of being buffered in memory.
+//
+// The precedence matches resolveContent: an explicit --content value wins, then
+// --from <path>, then --from -, and finally redirected stdin.
+func openContent(content string, contentSet bool, from string) (io.ReadCloser, bool, error) {
+	if from == "" {
+		if contentSet || stdinIsTerminal() {
+			return nil, false, nil
+		}
+		return io.NopCloser(os.Stdin), true, nil
+	}
+	if from == "-" {
+		return io.NopCloser(os.Stdin), true, nil
+	}
+	fd, err := os.Open(from)
+	if err != nil {
+		return nil, false, err
+	}
+	return fd, true, nil
 }
 
 // stdinIsTerminal reports whether stdin is an interactive terminal. When stdin

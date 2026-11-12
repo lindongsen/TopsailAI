@@ -70,6 +70,27 @@ literal Session identifier remains available when no table is present. A numeric
 name a current row may be retried as a numeric provider Session identifier, but an ambiguous match is
 rejected rather than guessed.
 
+## Interactive input history
+
+Every accepted nonblank input submitted through the interactive CLI is persisted in the operator's
+JSONL history file. This includes REPL command lines, confirmation answers, guided choices and wizard
+answers. Rejected or overflowed input is not a submission and blank input is omitted as noise.
+
+Recording and recall are separate behaviours:
+
+- REPL command lines are stored as `kind=command` and may be recalled with Up/Down, including after a
+  later CLI process loads the same file.
+- Prompt and wizard answers are stored as `kind=answer` and never enter recall. An answer such as `y`
+  or `3` is meaningful only beside the prompt that asked for it, and recalling it could repeat an
+  unintended choice or destructive confirmation.
+- History persistence is a convenience, not a startup dependency. Read, parse, append or rotation
+  failures are diagnosed, while the interactive CLI continues with the history still available in
+  memory where possible.
+
+The path, bounded load count, active-file size and retained backup count are configured by the
+`AGENT_CLUSTER_HISTORY_*` variables documented in `docs/Environment_Variables.md`. The default file is
+private (`0600`), size-rotated and loaded from a bounded tail rather than read in full.
+
 ## Failure semantics
 
 A non-interactive command MUST NOT silently degrade to a weaker behaviour.

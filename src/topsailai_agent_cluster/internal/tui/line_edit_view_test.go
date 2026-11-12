@@ -29,9 +29,13 @@ func TestLineEditDispatch(t *testing.T) {
 	}
 }
 
-// TestLineEditHistoryIsolation keeps prompt values out of retained commands.
+// TestLineEditHistoryIsolation keeps prompt values out of retained commands
+// while still recording them. Recall and record are separate questions: the
+// answer must reach the recorder and must never become recallable.
 func TestLineEditHistoryIsolation(t *testing.T) {
 	e := newLineEditor(16, 2)
+	recorder := &recordingInputRecorder{}
+	e.setRecorder(recorder)
 	typeEditor(e, "help")
 	e.finish(true)
 	e.apply(lineKey{kind: lineKeyPrevious}, true)
@@ -45,9 +49,17 @@ func TestLineEditHistoryIsolation(t *testing.T) {
 	if got, bad := e.finish(false); got != "secret" || bad || len(e.history) != 1 {
 		t.Fatalf("got=%q bad=%v history=%v", got, bad, e.history)
 	}
+	// The answer was recorded even though it is not recallable.
+	if want := []recordedInput{{InputHistoryKindCommand, "help"}, {InputHistoryKindAnswer, "secret"}}; !recorder.equal(want) {
+		t.Fatalf("recorded=%v want=%v", recorder.entries, want)
+	}
 	typeEditor(e, strings.Repeat("x", 16))
 	if got, bad := e.finish(false); got != "" || !bad {
 		t.Fatalf("%q %v", got, bad)
+	}
+	// A rejected input was never accepted, so it is never recorded.
+	if len(recorder.entries) != 2 {
+		t.Fatalf("rejected input was recorded: %v", recorder.entries)
 	}
 }
 

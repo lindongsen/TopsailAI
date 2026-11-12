@@ -685,6 +685,19 @@ enable them explicitly.
 
 Writes and lifecycle operations use Hash `lock` custody and re-read status after locking. Creation, move, and metadata-leaf removal also use namespace custody, acquired before the object lock. Optional read locks remain held until the read stream closes. Statistics serialize the full read-modify-write and revalidate active status under object custody. These are cooperating-process guarantees, not protection against hostile concurrent path replacement or power loss.
 
+Every `file` write holds the object's meta lock across the whole
+read-modify-write, so `overwrite-lines`, `insert`, `write` with a non-zero
+`--seek`, and `append` cannot interleave with another writer. The lock is
+non-blocking: a competing writer fails with `object is locked by another
+process` and exits non-zero instead of silently discarding an update. Retry
+after the other writer finishes.
+
+`file` reads and writes stream instead of buffering the whole object file, so
+`read`, `read-lines`, `read-around`, `size`, `append`, and `write --from` stay
+bounded in memory regardless of file size. `overwrite-lines` and `insert`
+still build a unified diff from both full snapshots, so their memory grows with
+the file.
+
 ## Environment variables
 
 | Variable | Required | Default | Description |

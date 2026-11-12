@@ -17,6 +17,17 @@ type lineEditor struct {
 	historyLimit int
 	position     int
 	draft        string
+	// recorder persists every submitted input. It is a seam rather than a direct
+	// file write, so the editor stays free of filesystem and process state and a
+	// test can observe what was recorded without touching a real file.
+	recorder InputRecorder
+}
+
+// InputRecorder persists one submitted input. The kind distinguishes a command
+// line from a prompt answer, because recording and recalling are different
+// questions: every input is recorded, but only a command line is recallable.
+type InputRecorder interface {
+	Record(kind, text string) error
 }
 
 // newLineEditor reserves one byte for the newline used by the input contract.
@@ -28,6 +39,28 @@ func newLineEditor(limit, historyLimit int) *lineEditor {
 		historyLimit = 0
 	}
 	return &lineEditor{limit: limit - 1, historyLimit: historyLimit}
+}
+
+// seedHistory replaces the recall list with previously recorded commands, so a
+// restarted REPL can recall what an earlier session typed. The list is bounded by
+// the same limit as one session's own history, and the position is moved to the
+// end so the first Up recalls the newest command.
+func (e *lineEditor) seedHistory(commands []string) {
+	e.history = e.history[:0]
+	for _, command := range commands {
+		if strings.TrimSpace(command) == "" {
+			continue
+		}
+		e.remember(command)
+	}
+	e.position = len(e.history)
+	e.draft = ""
+}
+
+// setRecorder attaches the persistence seam. A nil recorder keeps the editor
+// usable without persistence, so a caller that supplies none loses nothing.
+func (e *lineEditor) setRecorder(recorder InputRecorder) {
+	e.recorder = recorder
 }
 
 // insert rejects controls and permanently marks this line on byte overflow.
@@ -102,6 +135,8 @@ func (e *lineEditor) recall(previous bool) {
 }
 
 // submit returns no executable text on overflow and resets the editable line.
+// An accepted command line is recorded as a command, so it is recallable in this
+// session and available to a later session through the recorder.
 func (e *lineEditor) submit() (string, bool) {
 	value, rejected := string(e.text), e.overflow
 	if rejected {
@@ -110,8 +145,23 @@ func (e *lineEditor) submit() (string, bool) {
 	if !rejected && strings.TrimSpace(value) != "" && e.historyLimit > 0 {
 		e.remember(value)
 	}
+	if !rejected {
+		e.record(InputHistoryKindCommand, value)
+	}
 	e.reset()
 	return value, rejected
+}
+
+// record hands one accepted input to the persistence seam. A nil recorder keeps
+// the editor usable without persistence, and a rejected input is never recorded
+// because it was never accepted. The error is deliberately not propagated: the
+// store has already reported it to its diagnostics writer, and a history failure
+// must never turn an accepted command into a failed one.
+func (e *lineEditor) record(kind, value string) {
+	if e.recorder == nil || strings.TrimSpace(value) == "" {
+		return
+	}
+	_ = e.recorder.Record(kind, value)
 }
 
 // remember bounds retained history and avoids consecutive duplicates.

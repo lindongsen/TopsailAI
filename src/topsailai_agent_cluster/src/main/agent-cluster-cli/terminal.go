@@ -119,7 +119,12 @@ func resolveOutputColor(output io.Writer, noColorFlag bool) tui.ColorPolicy {
 // auto-refresh loop needs the tick-capable reader from the same editor. Returning
 // a nil editor means editing is unavailable, and the caller must fall back to the
 // plain prompt reader.
-func interactiveEditor(input io.Reader, output io.Writer) (*tui.TerminalEditor, func() error, error) {
+//
+// history is attached here rather than inside the REPL, because the process
+// boundary is the only place that resolves configuration. A nil store keeps the
+// previous in-memory behaviour, so a CLI without a resolvable history path still
+// edits and recalls within one session.
+func interactiveEditor(input io.Reader, output io.Writer, history *tui.InputHistory) (*tui.TerminalEditor, func() error, error) {
 	file, ok := input.(*os.File)
 	if !ok || !term.IsTerminal(int(file.Fd())) {
 		return nil, func() error { return nil }, nil
@@ -149,7 +154,19 @@ func interactiveEditor(input io.Reader, output io.Writer) (*tui.TerminalEditor, 
 		}
 		return func() error { return term.Restore(fd, state) }, nil
 	})
-	return editor, owned.Close, nil
+	return wireEditorHistory(editor, history), owned.Close, nil
+}
+
+// wireEditorHistory attaches the resolved store before the editor is returned,
+// so the first prompt records input and recalls commands from an earlier session.
+// Keeping this in a helper makes the shipped composition observable in a test;
+// store tests and editor tests alone cannot prove the CLI joined the two.
+func wireEditorHistory(editor *tui.TerminalEditor, history *tui.InputHistory) *tui.TerminalEditor {
+	if editor == nil {
+		return nil
+	}
+	editor.SetInputHistory(history)
+	return editor
 }
 
 // wireEditorReaders attaches every reader seam from one editor. A nil editor

@@ -29,6 +29,9 @@ type TerminalEditor struct {
 	// reads a cache and never performs network I/O, because completion runs
 	// inside the keystroke handler. A nil source completes no action.
 	actions func() []string
+	// history persists every interactive input. A nil store keeps the previous
+	// in-memory-only behaviour, so a caller that supplies none loses nothing.
+	history *InputHistory
 	// blockRows and blockCursorRow record the input block rendered last time, so
 	// the next redraw returns to its first row instead of appending a second copy.
 	blockRows      int
@@ -50,6 +53,17 @@ func NewTerminalEditor(input TerminalInput, output io.Writer, width func() int, 
 // completion and leaves command-word completion unchanged.
 func (t *TerminalEditor) SetActionSource(actions func() []string) {
 	t.actions = actions
+}
+
+// SetInputHistory injects the persistence seam for every interactive input.
+//
+// It follows SetActionSource: the dependency is attached at the CLI boundary
+// rather than added to the constructor, so a caller that supplies none keeps the
+// previous in-memory-only behaviour. The store is attached to the editor on every
+// read, because the editor is recreated when the line limit changes; attaching it
+// once at construction would silently stop recording after the first such change.
+func (t *TerminalEditor) SetInputHistory(history *InputHistory) {
+	t.history = history
 }
 
 // The editor is both the plain and the tick-capable reader. These assertions keep
@@ -106,6 +120,13 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 	}()
 	if t.editor == nil || t.editor.limit != max(1, limit)-1 {
 		t.editor = newLineEditor(limit, 100)
+		// The store is attached on every creation, not once at construction,
+		// because a changed line limit replaces the editor. Seeding here also
+		// means a restarted REPL recalls the commands an earlier session typed.
+		if t.history != nil {
+			t.editor.setRecorder(t.history)
+			t.editor.seedHistory(t.history.RecentCommands())
+		}
 	}
 	t.editor.reset()
 	// A new prompt always starts a new input block, so no stale row count from a

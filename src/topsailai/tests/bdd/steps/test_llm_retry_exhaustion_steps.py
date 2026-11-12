@@ -602,3 +602,56 @@ def then_provider_failure_terminates_with_exhaustion(llm_retry_ctx):
     assert isinstance(llm_retry_ctx.error, LLMRetryExhaustedError), llm_retry_ctx.error
     assert llm_retry_ctx.agent is not None
     assert llm_retry_ctx.agent.run_messages == ["old request"]
+
+
+@then("the request failure log reported 18 consecutive failures for one request")
+def then_failure_log_reported_eighteen_failures(llm_retry_ctx):
+    """Assert one request recorded every failed attempt of its retry cycle."""
+    header = _failure_log_header(llm_retry_ctx)
+    assert f"failed_attempts={MAX_ATTEMPTS}" in header, header
+    assert f"last_failed_attempt={MAX_ATTEMPTS}" in header, header
+    assert "operation_id=null" not in header, header
+
+
+@then("the request failure log reported the request outcome as success")
+def then_failure_log_reported_success_outcome(llm_retry_ctx):
+    """Assert the summary states the request finally succeeded."""
+    header = _failure_log_header(llm_retry_ctx)
+    assert "outcome=success" in header, header
+
+
+@then("the request failure log reported each failed attempt exactly once")
+def then_failure_log_reported_each_attempt_once(llm_retry_ctx):
+    """Assert the console keeps the first and last failures without duplicates."""
+    attempts = _failure_log_attempts(llm_retry_ctx)
+    # The console is deliberately bounded to the first and last five failures
+    # so one long retry cycle cannot flood the terminal.
+    assert attempts == [1, 2, 3, 4, 5, 14, 15, 16, 17, 18], attempts
+    assert len(set(attempts)) == len(attempts), attempts
+    assert any("failure(s) omitted" in line for line in llm_retry_ctx.failure_log_lines)
+    detail_lines = [
+        line for line in llm_retry_ctx.failure_log_lines
+        if line.startswith("[LLMRequestFailureLog]   attempt=")
+    ]
+    assert len(detail_lines) == len(attempts), detail_lines
+    assert all("error=" in line for line in detail_lines), detail_lines
+
+
+def _failure_log_header(llm_retry_ctx) -> str:
+    """Return the single production summary header of this request."""
+    headers = [
+        line for line in llm_retry_ctx.failure_log_lines
+        if line.startswith("[LLMRequestFailureLog] operation_id=")
+    ]
+    assert len(headers) == 1, llm_retry_ctx.failure_log_lines
+    return headers[0]
+
+
+def _failure_log_attempts(llm_retry_ctx) -> list[int]:
+    """Return the attempt numbers reported by the production detail lines."""
+    attempts = []
+    for line in llm_retry_ctx.failure_log_lines:
+        if "attempt=" not in line or "last_failed_attempt=" in line:
+            continue
+        attempts.append(int(line.split("attempt=")[1].split()[0]))
+    return attempts

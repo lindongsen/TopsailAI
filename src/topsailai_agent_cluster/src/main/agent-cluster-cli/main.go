@@ -187,7 +187,14 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if err != nil {
 			return err
 		}
-		editor, closeEditor, editorErr := interactiveEditor(input, output)
+		// The history store is resolved before the editor takes the terminal, so a
+		// rejected bound never leaves the screen in raw mode. A nil store means no
+		// path could be resolved, and the REPL keeps its in-memory behaviour.
+		inputHistory, historyErr := resolveInputHistoryFromProcess(errors)
+		if historyErr != nil {
+			return historyErr
+		}
+		editor, closeEditor, editorErr := interactiveEditor(input, output, inputHistory)
 		if editorErr != nil {
 			return editorErr
 		}

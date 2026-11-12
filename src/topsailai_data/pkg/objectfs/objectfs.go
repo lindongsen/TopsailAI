@@ -11,7 +11,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/filetool"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
@@ -77,9 +75,13 @@ func normalizeAllowRoot(p string) (string, error) {
 
 // Open returns a seekable reader over one file inside the object.
 //
-// The content is buffered because the read paths seek backwards to detect
-// encoding and to honour a negative offset. Object files are bounded by the
-// truncation limit on the read paths, so buffering stays small.
+// The adapter stream is forwarded directly when it is seekable, which is the
+// case for the local adapter because it returns an operating-system file. The
+// read paths seek backwards to detect encoding and to honour a negative offset,
+// so forwarding the stream keeps memory use constant regardless of file size.
+//
+// Only a non-seekable adapter stream is buffered, because the read paths cannot
+// seek it. The local adapter never takes that path.
 func (f *ObjectFS) Open(p string) (filetool.ReadSeekCloser, error) {
 	name, err := normalize(p)
 	if err != nil {
@@ -89,9 +91,18 @@ func (f *ObjectFS) Open(p string) (filetool.ReadSeekCloser, error) {
 		return nil, fmt.Errorf("objectfs: cannot open the object root as a file")
 	}
 
-	data, err := f.ReadFile(name)
+	rc, err := f.mgr.ReadActualFile(f.ctx, f.id, name)
 	if err != nil {
 		return nil, err
+	}
+	if seeker, ok := rc.(io.ReadSeeker); ok {
+		return &streamFile{ReadSeeker: seeker, closer: rc}, nil
+	}
+
+	data, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		return nil, fmt.Errorf("objectfs: read %q: %w", name, err)
 	}
 	return &memoryFile{Reader: bytes.NewReader(data)}, nil
 }
@@ -135,23 +146,60 @@ func (f *ObjectFS) WriteFile(p string, data []byte, _ os.FileMode) error {
 	return f.mgr.WriteActualFile(f.ctx, f.id, name, bytes.NewReader(data))
 }
 
+// WriteFileFrom replaces one file inside the object from a stream.
+//
+// The manager holds exclusive object custody for the whole write and the
+// adapter copies the stream, so a large source is never buffered in memory and
+// a cooperating process cannot interleave its own write.
+func (f *ObjectFS) WriteFileFrom(p string, r io.Reader, _ os.FileMode) error {
+	name, err := normalize(p)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot write the object root as a file")
+	}
+	return f.mgr.WriteActualFile(f.ctx, f.id, name, r)
+}
+
 // AppendFile appends to one file inside the object.
 //
-// The existing content is read first and the combined content is written back
-// through the manager, so the append is atomic and lock-protected. A missing
-// file is treated as empty content.
-func (f *ObjectFS) AppendFile(p string, data []byte, perm os.FileMode) error {
-	existing, err := f.ReadFile(p)
+// The manager holds exclusive object custody for the whole append and the
+// adapter appends in place, so a cooperating process cannot interleave its own
+// write and the existing content is never read back into memory.
+func (f *ObjectFS) AppendFile(p string, data []byte, _ os.FileMode) error {
+	return f.AppendFrom(p, bytes.NewReader(data), 0o644)
+}
+
+// AppendFrom appends a stream to one file inside the object.
+//
+// The stream is copied by the adapter, so a large source is never buffered in
+// memory.
+func (f *ObjectFS) AppendFrom(p string, r io.Reader, _ os.FileMode) error {
+	name, err := normalize(p)
 	if err != nil {
-		if !errors.Is(err, apperrors.ErrObjectNotFound) {
-			return err
-		}
-		existing = nil
+		return err
 	}
-	combined := make([]byte, 0, len(existing)+len(data))
-	combined = append(combined, existing...)
-	combined = append(combined, data...)
-	return f.WriteFile(p, combined, perm)
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot append to the object root as a file")
+	}
+	return f.mgr.AppendActualFile(f.ctx, f.id, name, r)
+}
+
+// UpdateFile performs a lock-protected read-modify-write on one file.
+//
+// Exclusive object custody is acquired once and held across both the read and
+// the write, so a cooperating process cannot interleave its own update between
+// them. The callback receives the current content and whether the file exists.
+func (f *ObjectFS) UpdateFile(p string, fn func(existing []byte, exists bool) ([]byte, error)) error {
+	name, err := normalize(p)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot update the object root as a file")
+	}
+	return f.mgr.UpdateActualFile(f.ctx, f.id, name, fn)
 }
 
 // Stat reports information about one file or folder inside the object.
@@ -169,9 +217,9 @@ func (f *ObjectFS) Stat(p string) (os.FileInfo, error) {
 		return objectInfo{name: f.objectName(), dir: true}, nil
 	}
 
-	data, readErr := f.ReadFile(name)
+	size, readErr := f.fileSize(name)
 	if readErr == nil {
-		return objectInfo{name: path.Base(name), size: int64(len(data))}, nil
+		return objectInfo{name: path.Base(name), size: size}, nil
 	}
 
 	// A folder has no readable content, so a failed read falls through to the
@@ -185,6 +233,37 @@ func (f *ObjectFS) Stat(p string) (os.FileInfo, error) {
 		return objectInfo{name: path.Base(name), dir: true}, nil
 	}
 	return nil, readErr
+}
+
+// fileSize reports the byte length of one file without reading its content.
+//
+// The size comes from the underlying file information when the adapter stream
+// exposes it, so a large file is never loaded into memory just to report its
+// length and a folder is never mistaken for an empty file. A stream without
+// file information falls back to seeking to the end.
+func (f *ObjectFS) fileSize(name string) (int64, error) {
+	fd, err := f.Open(name)
+	if err != nil {
+		return 0, err
+	}
+	defer fd.Close()
+
+	if statter, ok := fd.(interface{ Stat() (os.FileInfo, error) }); ok {
+		info, statErr := statter.Stat()
+		if statErr != nil {
+			return 0, fmt.Errorf("objectfs: size %q: %w", name, statErr)
+		}
+		if info.IsDir() {
+			return 0, fmt.Errorf("objectfs: size %q: is a folder", name)
+		}
+		return info.Size(), nil
+	}
+
+	size, err := fd.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, fmt.Errorf("objectfs: size %q: %w", name, err)
+	}
+	return size, nil
 }
 
 // isDir reports whether a path is a folder inside the object.
@@ -414,4 +493,29 @@ func (e objectDirEntry) Type() os.FileMode {
 // Info returns file information for the entry.
 func (e objectDirEntry) Info() (os.FileInfo, error) {
 	return objectInfo{name: e.name, dir: e.dir}, nil
+}
+
+// streamFile forwards a seekable adapter stream and closes it on Close.
+//
+// It exists so a large object file is read directly from the adapter instead of
+// being buffered in memory.
+type streamFile struct {
+	io.ReadSeeker
+	closer io.Closer
+}
+
+// Close closes the underlying adapter stream.
+func (s *streamFile) Close() error { return s.closer.Close() }
+
+// Stat reports the underlying file information when the stream exposes it.
+//
+// The size and folder flag come from the adapter's own file handle, so a folder
+// is never mistaken for an empty file and a large file is never read to measure
+// its length.
+func (s *streamFile) Stat() (os.FileInfo, error) {
+	statter, ok := s.closer.(interface{ Stat() (os.FileInfo, error) })
+	if !ok {
+		return nil, fmt.Errorf("objectfs: stream does not expose file information")
+	}
+	return statter.Stat()
 }
