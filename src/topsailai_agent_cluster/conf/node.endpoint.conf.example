@@ -32,6 +32,11 @@ ADAPTERS='[{"adapter_id":"topsailai-local","provider_type":"topsailai","command"
 # expensive; lowering it below the discovery cost only wastes provider launches.
 COLLECTION_DELAY_MS=5000
 
+# Retain a provider's last successful source cache for this duration. The
+# Endpoint removes older source snapshots before collection, so a failed provider
+# cannot keep obsolete sessions visible forever. Use a positive Go duration.
+SOURCE_CACHE_EXPIRY=10m
+
 # Command allowlist for the `!` operator command. Paths are relative to the
 # bundle root. Each line is one entry matched as a prefix of the argv array, so
 # `git status` permits `git status --short` but not `git commit`. Programs that can

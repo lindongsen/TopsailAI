@@ -156,6 +156,9 @@ function load_config() {
     esac
     [ "${COLLECTION_DELAY_MS}" -gt 0 ] ||
         die "COLLECTION_DELAY_MS must be greater than zero"
+    # The binary parses and validates this Go duration. Keeping the launcher
+    # default explicit makes generated and hand-written node configuration agree.
+    SOURCE_CACHE_EXPIRY="${SOURCE_CACHE_EXPIRY:-10m}"
 
     TLS_CA_FILE=$(resolve_path "${TLS_CA_FILE:-certs/ca.pem}")
     TLS_CERTIFICATE_FILE=$(resolve_path "${TLS_CERTIFICATE_FILE:-certs/node.pem}")
@@ -318,6 +321,8 @@ function start_node() {
         # The collection delay is likewise environment-only, so the binary owns
         # the single parsing and fallback rule instead of duplicating it here.
         export AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS="${COLLECTION_DELAY_MS}"
+        # Source-cache retention is Endpoint-owned and validated by the binary.
+        export AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY="${SOURCE_CACHE_EXPIRY}"
     fi
 
     [ -n "${LOG_MAX_SIZE_MB:-}" ] && args+=(--log-max-size-mb "${LOG_MAX_SIZE_MB}")

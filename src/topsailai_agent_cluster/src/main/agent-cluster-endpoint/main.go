@@ -172,7 +172,16 @@ func main() {
 		}
 		bindings = append(bindings, endpointservice.Binding{AdapterID: item.AdapterID, ProviderType: item.ProviderType, DisplayName: descriptor.DisplayName, Version: descriptor.Version, Capabilities: descriptor.Capabilities, Adapter: instance})
 	}
-	collector, err := endpointservice.NewCollector(ctx, bindings, 30*time.Second, store)
+	cacheExpiry, err := sourceCacheExpiry()
+	if err != nil {
+		logger.Error("load source cache expiry", "error", err)
+		_ = client.Close()
+		_ = store.Close()
+		os.Exit(1)
+	}
+	collector, err := endpointservice.NewCollectorWithOptions(ctx, bindings, 30*time.Second, store, endpointservice.CollectorOptions{SourceCacheExpiry: cacheExpiry, LogCacheDeletion: func(adapterID string) {
+		logger.Info("deleted expired source cache", "adapter_id", adapterID, "retention", cacheExpiry.String())
+	}})
 	if err != nil {
 		logger.Error("create collector", "error", err)
 		_ = client.Close()

@@ -24,27 +24,49 @@ type Binding struct {
 
 // Collector runs independent, bounded discovery operations for configured bindings.
 type Collector struct {
-	bindings []Binding
-	timeout  time.Duration
-	store    *endpointstorage.Store
-	mu       sync.Mutex
-	sources  map[string]endpointstorage.SourceSnapshot
-	revision int64
+	bindings          []Binding
+	timeout           time.Duration
+	store             *endpointstorage.Store
+	sourceCacheExpiry time.Duration
+	logCacheDeletion  func(string)
+	mu                sync.Mutex
+	sources           map[string]endpointstorage.SourceSnapshot
+	revision          int64
 }
 
-// NewCollector creates a collector and optionally restores source cache from storage.
+// CollectorOptions controls durable source-cache lifecycle.
+type CollectorOptions struct {
+	SourceCacheExpiry time.Duration
+	LogCacheDeletion  func(string)
+}
+
+// NewCollector creates a collector and restores cache only for configured bindings.
 func NewCollector(ctx context.Context, bindings []Binding, timeout time.Duration, store *endpointstorage.Store) (*Collector, error) {
+	return NewCollectorWithOptions(ctx, bindings, timeout, store, CollectorOptions{})
+}
+
+// NewCollectorWithOptions creates a collector with explicit cache retention.
+func NewCollectorWithOptions(ctx context.Context, bindings []Binding, timeout time.Duration, store *endpointstorage.Store, options CollectorOptions) (*Collector, error) {
 	if timeout <= 0 {
 		return nil, fmt.Errorf("collection timeout must be positive")
 	}
-	c := &Collector{bindings: append([]Binding(nil), bindings...), timeout: timeout, store: store, sources: make(map[string]endpointstorage.SourceSnapshot)}
+	if options.SourceCacheExpiry < 0 {
+		return nil, fmt.Errorf("source cache expiry must not be negative")
+	}
+	configured := make(map[string]struct{}, len(bindings))
+	for _, binding := range bindings {
+		configured[binding.AdapterID] = struct{}{}
+	}
+	c := &Collector{bindings: append([]Binding(nil), bindings...), timeout: timeout, store: store, sourceCacheExpiry: options.SourceCacheExpiry, logCacheDeletion: options.LogCacheDeletion, sources: make(map[string]endpointstorage.SourceSnapshot)}
 	if store != nil {
 		items, err := store.ListSourceSnapshots(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("restore source cache: %w", err)
 		}
 		for _, item := range items {
-			c.sources[item.AdapterID] = item
+			if _, ok := configured[item.AdapterID]; ok {
+				c.sources[item.AdapterID] = item
+			}
 		}
 	}
 	return c, nil
@@ -59,6 +81,9 @@ func NewCollector(ctx context.Context, bindings []Binding, timeout time.Duration
 func (c *Collector) Collect(ctx context.Context, observedAtMS int64) (protocol.InventoryReport, error) {
 	if observedAtMS < 1 {
 		return protocol.InventoryReport{}, fmt.Errorf("observation time must be positive")
+	}
+	if err := c.expireSourceCache(ctx, observedAtMS); err != nil {
+		return protocol.InventoryReport{}, err
 	}
 	c.mu.Lock()
 	bindings := append([]Binding(nil), c.bindings...)
@@ -77,6 +102,37 @@ func (c *Collector) Collect(ctx context.Context, observedAtMS int64) (protocol.I
 		}
 	}
 	return c.compose(observedAtMS), nil
+}
+
+// expireSourceCache removes durable and in-memory observations older than the
+// configured retention window. A disabled window is used only by tests and
+// callers that have not opted into lifecycle management.
+func (c *Collector) expireSourceCache(ctx context.Context, observedAtMS int64) error {
+	if c.store == nil || c.sourceCacheExpiry == 0 {
+		return nil
+	}
+	cutoffMS := observedAtMS - c.sourceCacheExpiry.Milliseconds()
+	if cutoffMS < 1 {
+		return nil
+	}
+	adapterIDs, err := c.store.ExpireSourceSnapshots(ctx, cutoffMS)
+	if err != nil {
+		return fmt.Errorf("expire source cache: %w", err)
+	}
+	if len(adapterIDs) == 0 {
+		return nil
+	}
+	c.mu.Lock()
+	for _, adapterID := range adapterIDs {
+		delete(c.sources, adapterID)
+	}
+	c.mu.Unlock()
+	if c.logCacheDeletion != nil {
+		for _, adapterID := range adapterIDs {
+			c.logCacheDeletion(adapterID)
+		}
+	}
+	return nil
 }
 
 // RefreshDescriptors re-describes only the selected provider bindings and composes

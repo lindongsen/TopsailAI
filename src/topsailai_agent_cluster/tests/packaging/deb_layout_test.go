@@ -767,6 +767,16 @@ func TestDebLauncherForwardsServerEndpointExpiry(t *testing.T) {
 	}
 }
 
+// TestDebLauncherForwardsEndpointSourceCacheExpiry proves the packaged launcher
+// exports the configured cache retention to the Endpoint process.
+func TestDebLauncherForwardsEndpointSourceCacheExpiry(t *testing.T) {
+	packages := buildDebPackages(t)
+	launcher := readPackagedFile(t, packages["node"], debOptDir+"/agent-clusterctl")
+	if !hasLineContaining(launcher, "AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY", "SOURCE_CACHE_EXPIRY") {
+		t.Fatal("the packaged launcher never exports SOURCE_CACHE_EXPIRY to the Endpoint")
+	}
+}
+
 // TestCLIEnvWriterUsesExplicitServerTokenName prevents the generated per-user
 // configuration from collapsing the two independent credentials back into one
 // ambiguous CLI token. The writer is shared by bundle and Debian installation,

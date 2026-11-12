@@ -131,3 +131,64 @@ func TestCollectReportsStoreFailureThatIsNotCancellation(t *testing.T) {
 		t.Fatalf("failed mapping still published sessions: %#v", report.Sessions)
 	}
 }
+
+func TestNewCollectorRestoresOnlyConfiguredAdapters(t *testing.T) {
+	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, adapterID := range []string{"old", "current"} {
+		snapshot := endpointstorage.SourceSnapshot{AdapterID: adapterID, ProviderType: "fixture", DisplayName: adapterID, Health: "healthy", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 100, LastSuccessAtMS: ptrInt64(100), DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: adapterID + "-session", AdapterID: adapterID}}}
+		if err := store.ApplySourceSnapshot(context.Background(), snapshot, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	collector, err := NewCollector(context.Background(), []Binding{{AdapterID: "current", ProviderType: "fixture", Adapter: fakeAdapter{err: errors.New("offline")}}}, time.Second, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := collector.sources["old"]; ok {
+		t.Fatalf("unconfigured adapter was restored: %#v", collector.sources)
+	}
+	if _, ok := collector.sources["current"]; !ok {
+		t.Fatalf("configured adapter was not restored: %#v", collector.sources)
+	}
+}
+
+func TestCollectExpiresCacheBeforeFailedDiscovery(t *testing.T) {
+	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	lastSuccess := int64(100)
+	snapshot := endpointstorage.SourceSnapshot{AdapterID: "current", ProviderType: "fixture", DisplayName: "current", Health: "healthy", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 100, LastSuccessAtMS: &lastSuccess, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{ClusterSessionID: "expired-session", AdapterID: "current"}}}
+	if err := store.ApplySourceSnapshot(context.Background(), snapshot, 100); err != nil {
+		t.Fatal(err)
+	}
+	var deleted []string
+	collector, err := NewCollectorWithOptions(context.Background(), []Binding{{AdapterID: "current", ProviderType: "fixture", Adapter: fakeAdapter{err: errors.New("offline")}}}, time.Second, store, CollectorOptions{SourceCacheExpiry: 500 * time.Millisecond, LogCacheDeletion: func(adapterID string) { deleted = append(deleted, adapterID) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := collector.Collect(context.Background(), 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Sessions) != 0 {
+		t.Fatalf("expired sessions were retained after failed discovery: %#v", report.Sessions)
+	}
+	if len(deleted) != 1 || deleted[0] != "current" {
+		t.Fatalf("deletion log=%v, want [current]", deleted)
+	}
+	snapshots, err := store.ListSourceSnapshots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].DataKnown {
+		t.Fatalf("failed current observation was not persisted as unknown: %#v", snapshots)
+	}
+}
+
+func ptrInt64(value int64) *int64 { return &value }

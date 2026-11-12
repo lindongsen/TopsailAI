@@ -154,3 +154,51 @@ func TestResourceMappingLookupValidation(t *testing.T) {
 		t.Fatal("missing resource mapping was accepted")
 	}
 }
+
+func TestExpireSourceSnapshotsUsesLastSuccessAndPreservesDurableRecords(t *testing.T) {
+	store, ctx := openTestStore(t)
+	oldSuccess := int64(100)
+	freshSuccess := int64(900)
+	for _, snapshot := range []SourceSnapshot{
+		{AdapterID: "old", ProviderType: "fixture", DisplayName: "old", Health: "healthy", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 800, LastSuccessAtMS: &oldSuccess, DataKnown: true, ReportComplete: true},
+		{AdapterID: "fresh", ProviderType: "fixture", DisplayName: "fresh", Health: "healthy", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 900, LastSuccessAtMS: &freshSuccess, DataKnown: true, ReportComplete: true},
+		{AdapterID: "never-succeeded", ProviderType: "fixture", DisplayName: "unknown", Health: "unknown", CollectionStatus: protocol.CollectionFailed, LastAttemptAtMS: 200},
+	} {
+		if err := store.ApplySourceSnapshot(ctx, snapshot, snapshot.LastAttemptAtMS); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mapping, err := store.GetOrCreateResourceID(ctx, "old", "provider-key", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-cache-expiry", EndpointID: "ep", Operation: "send", OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Payload: []byte(`{}`)}
+	if _, inserted, err := store.AdmitJournal(ctx, intent, "hash-cache-expiry", 100); err != nil || !inserted {
+		t.Fatalf("admit journal inserted=%v error=%v", inserted, err)
+	}
+
+	deleted, err := store.ExpireSourceSnapshots(ctx, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 2 || deleted[0] != "never-succeeded" || deleted[1] != "old" {
+		t.Fatalf("deleted=%v, want [never-succeeded old]", deleted)
+	}
+	remaining, err := store.ListSourceSnapshots(ctx)
+	if err != nil || len(remaining) != 1 || remaining[0].AdapterID != "fresh" {
+		t.Fatalf("remaining=%#v error=%v", remaining, err)
+	}
+	if got, err := store.LookupResourceID(ctx, mapping.ResourceID); err != nil || got != mapping {
+		t.Fatalf("resource mapping was deleted: got=%#v error=%v", got, err)
+	}
+	if entry, err := store.GetJournal(ctx, intent.CommandID); err != nil || entry.CommandID != intent.CommandID {
+		t.Fatalf("command journal was deleted: entry=%#v error=%v", entry, err)
+	}
+}
+
+func TestExpireSourceSnapshotsRejectsInvalidCutoff(t *testing.T) {
+	store, ctx := openTestStore(t)
+	if _, err := store.ExpireSourceSnapshots(ctx, 0); err == nil {
+		t.Fatal("zero cutoff was accepted")
+	}
+}
