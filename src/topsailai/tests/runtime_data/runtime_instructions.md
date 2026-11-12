@@ -196,15 +196,15 @@ Repeated `/runtime`, `/runtime.get`, and `/runtime.history` invocations leave ac
 
 ### Bound Agent
 
-Within `ctxm_set_agent(agent)`, Instructions read `agent.runtime.runtime_data` through the existing Agent context accessor.
+Instructions resolve the Agent already bound by the existing Instruction Agent cache and read `agent.runtime.runtime_data`. Context-local chat binding takes precedence over the chat-level fallback, so concurrent chats do not borrow each other's Runtime Data while handling an Instruction.
 
 ### No bound Agent
 
-Outside that context, Instructions return no-runtime and do not create an Agent, Store, or process-global fallback.
+When the Instruction Agent cache has no Agent, Instructions return no-runtime and do not create an Agent, Store, or process-global Runtime Data fallback.
 
-### Released Agent
+### Unavailable Runtime
 
-If the weakly referenced Agent has been released, query failure is mapped to no-runtime or a concise unavailable result and does not expose a stack trace to the terminal.
+If the bound Agent has no available Runtime Data Store, the query maps to no-runtime and does not expose a stack trace to the terminal.
 
 ## Lifecycle Presentation
 

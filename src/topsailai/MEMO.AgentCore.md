@@ -981,3 +981,16 @@ The common session categories are defined once in `ai_base/constants.py` and ref
 `SESSION_CATEGORY_VALUES` lists all three. `context/session_cleanup.py::RETENTION_EXCLUDED_CATEGORIES` is built from `SESSION_CATEGORY_AGENT_DRIVER`, so the retention exclusion cannot drift from the constant.
 
 `ai_base/constants.py` has no imports, and `context/` already imports it elsewhere, so the dependency direction stays `context`/`workspace` → `ai_base` with no cycle. Categories are free-form validated values (`[a-z0-9_]+`), not an enum: `SESSION_CATEGORY_VALUES` documents the common ones and must not be used to reject other valid categories.
+
+
+## MEMO: Agent Runtime Data
+
+**Date:** 2026-11-12
+
+`AgentRuntime` owns one process-local `RuntimeDataStore` for extensible operational state. This data is Agent-scoped and separate from `ContextRuntimeData`: it never enters User2Agent or Agent2LLM messages, session persistence, or context summarization.
+
+Runtime state uses lowercase namespaced keys, detached JSON-compatible values, immutable snapshots, and generation leases. A lease ensures that an old operation cannot update or settle a newer owner of the same key. Active entries and settled history are both bounded; history evicts the oldest retained record and never grows without limit. Public visibility is explicit, and human-facing Instructions can read only public detached snapshots.
+
+The first producer is `llm.request.retrying`. One complete LLM request resolves its threshold once, activates when its failed-attempt count reaches the threshold, updates the same state through later failures, and removes the active state on every request exit. Only requests that activated the state produce a bounded settled record. Runtime Data publication is observability-only: missing Agent context or publication failure must not replace the LLM result or exception.
+
+The read-only commands are `/runtime`, `/runtime.get <key>`, and `/runtime.history [key]`. They resolve the current Instruction Agent, never mutate the Store, hide private state as missing, and render only approved bounded diagnostic fields. Direct LLM chat without an Agent runtime does not create a process-global fallback.

@@ -63,3 +63,12 @@ Action: keep a small behavior addition in the source code and its unit tests onl
 Additional constraint stated by the Human on 2026-11-10: "不要有代码，也不要阐述太多实现细节和设计细节". `docs/Environment_Variables.md` MUST NOT contain code blocks, shell examples, source file paths, function or class names, internal error codes, or implementation narratives. Describe only what the variable does, its default, its valid values, and the observable behavior it controls.
 
 Why this prevents recurrence: MEMO documents are injected into the agent context and are meant for architecture-level conclusions and pitfalls, so recording every small feature there dilutes the signal and costs tokens on every turn. The environment-variable reference is a configuration contract, not a changelog, so feature behavior written there goes stale and misleads readers looking for how a variable works. Implementation detail in that document also rots fastest, because internal names change while the variable contract does not. Reserve MEMO entries for structural decisions, cross-module contracts, and non-obvious traps.
+
+
+## Runtime Data must remain Agent-scoped, extensible, bounded, and separate from conversation context
+
+Trigger: the Human approved a general Runtime Data mechanism while requesting an LLM fault-retry marker, a threshold that activates when failed attempts reach 3, removal when that request ends, bounded history, read-only Instruction exposure, and documentation in MEMO and project memory.
+
+Action: keep one lease-protected Runtime Data Store under each `AgentRuntime`; producers publish namespaced operational states, active state is settled on operation exit, and retained history has a fixed maximum count. Runtime Data must not enter `ContextRuntimeData`, User2Agent or Agent2LLM messages, session persistence, or summaries. `/runtime`, `/runtime.get`, and `/runtime.history` are inspection-only and expose public bounded fields rather than raw payloads or ownership data.
+
+Why this prevents recurrence: Agent isolation and generation leases stop one request from overwriting or clearing another, bounded retention prevents memory growth, and separating operational state from conversation data prevents observability metadata from changing prompts, persisted sessions, or summarization behavior.

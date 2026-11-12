@@ -121,3 +121,8 @@ Summary: one cumulative document per model name records turn, tool, request, tok
 ## MEMO: Retention-Excluded Session Categories
 
 [MEMO.AgentCore.md](MEMO.AgentCore.md#memo-retention-excluded-session-categories) — `agent_driver` sessions are filtered out before the retention threshold is computed and before eviction candidates are selected, so they neither consume the budget nor get evicted.
+
+
+## MEMO: Agent Runtime Data
+
+[MEMO.AgentCore.md](./MEMO.AgentCore.md#memo-agent-runtime-data) — each Agent owns bounded, lease-protected operational Runtime Data outside conversation context; LLM retry state is the first producer and `/runtime*` Instructions provide read-only public inspection.

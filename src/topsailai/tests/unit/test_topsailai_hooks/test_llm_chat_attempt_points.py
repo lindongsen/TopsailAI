@@ -187,15 +187,17 @@ def test_real_discovery_and_plugin_failure(phase, tmp_path, monkeypatch):
     monkeypatch.setattr(hooks, "_point_configuration", ())
     hooks.initialize_hook_points({module.NAME: {"modules": str(plugin)}})
     result = getattr(module, module.NAME)(loop_attempts=18, **payload(phase))
+    observer = next(item for item in result.handlers if item.handler.name == "observer.py")
     assert result.status == "success"
-    assert result.handlers[0].returned.value == payload(phase)
+    assert observer.returned.value == payload(phase)
     assert result.handlers[-1].handler.name == "hook_script"
     assert result.handlers[-1].children == ()
     plugin.write_text("def main(**payload):\n    raise RuntimeError('observer failed')\n")
     result = getattr(module, module.NAME)(loop_attempts=18, **payload(phase))
+    observer = next(item for item in result.handlers if item.handler.name == "observer.py")
     assert result.status == "completed_with_errors"
-    assert result.handlers[0].error.category == "error"
-    assert type(result.handlers[0].error.exception) is RuntimeError
+    assert observer.error.category == "error"
+    assert type(observer.error.exception) is RuntimeError
 
 
 @pytest.mark.parametrize("phase", PHASES)
