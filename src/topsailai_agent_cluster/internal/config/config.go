@@ -31,7 +31,6 @@ type Config struct {
 	LogMaxSize           int
 	LogBackups           int
 	LogMaxAge            int
-	ListenAddress        string
 	APIListenAddress     string
 	ChannelListenAddress string
 	DatabasePath         string
@@ -49,7 +48,6 @@ type Config struct {
 	ChannelAddress          string
 	ChannelDirection        string
 	EndpointChannelListen   string
-	EndpointChannelAddr     string
 	EndpointDialAddresses   map[string]string
 	// TLSSharedCertificate means every Endpoint presents the same Server
 	// certificate, so the certificate no longer proves which Endpoint is
@@ -80,71 +78,83 @@ const (
 
 // Defaults returns safe defaults for a command role.
 func Defaults(role string) Config {
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, ListenAddress: ":8080", APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: ".tmp/server.sqlite", AuthToken: "development-token", InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
+	databasePath := ".tmp/server.sqlite"
+	if role == "agent-cluster-endpoint" {
+		databasePath = ".tmp/endpoint.sqlite"
+	}
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
 }
 
 // Load parses command-line flags and applies environment configuration.
 func Load(args []string, role string) (Config, error) {
 	cfg := Defaults(role)
-	if value := os.Getenv("AGENT_CLUSTER_LISTEN_ADDRESS"); value != "" {
-		cfg.ListenAddress = value
-		cfg.APIListenAddress = value
+	serverRole := role == "agent-cluster-server"
+	endpointRole := role == "agent-cluster-endpoint"
+	genericRole := !serverRole && !endpointRole
+
+	if serverRole || genericRole {
+		if value := os.Getenv("AGENT_CLUSTER_API_LISTEN_ADDR"); value != "" {
+			cfg.APIListenAddress = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_CHANNEL_LISTEN_ADDR"); value != "" {
+			cfg.ChannelListenAddress = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_AUTH_TOKEN"); value != "" {
+			cfg.AuthToken = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES"); value != "" {
+			addresses, err := ParseDialAddresses(value)
+			if err != nil {
+				return Config{}, err
+			}
+			cfg.EndpointDialAddresses = addresses
+		}
+		if value := os.Getenv("AGENT_CLUSTER_TLS_SHARED_CERTIFICATE"); value != "" {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_TLS_SHARED_CERTIFICATE: %w", err)
+			}
+			cfg.TLSSharedCertificate = parsed
+		}
 	}
-	if value := os.Getenv("AGENT_CLUSTER_API_LISTEN_ADDR"); value != "" {
-		cfg.APIListenAddress = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_LISTEN_ADDR"); value != "" {
-		cfg.ChannelListenAddress = value
+	if endpointRole || genericRole {
+		if value := os.Getenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"); value != "" {
+			cfg.CommandAllowlistFile = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_CONTROL_ACTION_FILE"); value != "" {
+			cfg.ControlActionFile = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"); value != "" {
+			cfg.EndpointAccessPolicyDir = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
+			cfg.ChannelAddress = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR"); value != "" {
+			cfg.EndpointChannelListen = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ID"); value != "" {
+			cfg.EndpointID = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_INSTANCE_ID"); value != "" {
+			cfg.InstanceID = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_ADAPTERS"); value != "" {
+			adapters, err := ParseAdapters(value)
+			if err != nil {
+				return Config{}, err
+			}
+			cfg.Adapters = adapters
+		}
 	}
 	if value := os.Getenv("AGENT_CLUSTER_DATABASE_PATH"); value != "" {
 		cfg.DatabasePath = value
 	}
-	if value := os.Getenv("AGENT_CLUSTER_AUTH_TOKEN"); value != "" {
-		cfg.AuthToken = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"); value != "" {
-		cfg.CommandAllowlistFile = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_CONTROL_ACTION_FILE"); value != "" {
-		cfg.ControlActionFile = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"); value != "" {
-		cfg.EndpointAccessPolicyDir = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
-		cfg.ChannelAddress = value
-	}
 	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_DIRECTION"); value != "" {
 		cfg.ChannelDirection = value
 	}
-	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR"); value != "" {
-		cfg.EndpointChannelListen = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS"); value != "" {
-		cfg.EndpointChannelAddr = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES"); value != "" {
-		addresses, err := ParseDialAddresses(value)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.EndpointDialAddresses = addresses
-	}
-	if value := os.Getenv("AGENT_CLUSTER_TLS_SHARED_CERTIFICATE"); value != "" {
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return Config{}, fmt.Errorf("parse AGENT_CLUSTER_TLS_SHARED_CERTIFICATE: %w", err)
-		}
-		cfg.TLSSharedCertificate = parsed
-	}
 	if value := os.Getenv("AGENT_CLUSTER_SERVER_NAME"); value != "" {
 		cfg.ServerName = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ID"); value != "" {
-		cfg.EndpointID = value
-	}
-	if value := os.Getenv("AGENT_CLUSTER_INSTANCE_ID"); value != "" {
-		cfg.InstanceID = value
 	}
 	if value := os.Getenv("AGENT_CLUSTER_TLS_CA_FILE"); value != "" {
 		cfg.TLSCAFile = value
@@ -158,13 +168,6 @@ func Load(args []string, role string) (Config, error) {
 	if value := os.Getenv("AGENT_CLUSTER_TLS_REVOKED_SERIALS_FILE"); value != "" {
 		cfg.TLSRevokedSerialsFile = value
 	}
-	if value := os.Getenv("AGENT_CLUSTER_ADAPTERS"); value != "" {
-		adapters, err := ParseAdapters(value)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.Adapters = adapters
-	}
 	if value := os.Getenv("AGENT_CLUSTER_LOG_OUTPUT"); value != "" {
 		cfg.LogOutput = value
 	}
@@ -177,30 +180,9 @@ func Load(args []string, role string) (Config, error) {
 
 	flags := flag.NewFlagSet(role, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	flags.StringVar(&cfg.APIListenAddress, "api-listen-addr", cfg.APIListenAddress, "Bearer-authenticated API listen address")
-	flags.StringVar(&cfg.ChannelListenAddress, "channel-listen-addr", cfg.ChannelListenAddress, "mTLS channel listen address")
-	flags.StringVar(&cfg.ListenAddress, "listen-address", cfg.ListenAddress, "deprecated API listen address")
 	flags.StringVar(&cfg.DatabasePath, "database-path", cfg.DatabasePath, "SQLite database path")
-	flags.StringVar(&cfg.AuthToken, "auth-token", cfg.AuthToken, "pre-provisioned bearer token")
-	flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
-	flags.StringVar(&cfg.ControlActionFile, "control-action-file", cfg.ControlActionFile, "Endpoint-local file selecting which ctl. actions are served")
-	flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
-	flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Endpoint WSS address")
 	flags.StringVar(&cfg.ChannelDirection, "channel-direction", cfg.ChannelDirection, "channel direction: endpoint-initiated, server-initiated or bidirectional")
-	flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")
-	flags.Func("endpoint-dial-addresses", "comma-separated endpoint_id=wss://address pairs the Server dials", func(value string) error {
-		addresses, err := ParseDialAddresses(value)
-		if err != nil {
-			return err
-		}
-		cfg.EndpointDialAddresses = addresses
-		return nil
-	})
-	flags.StringVar(&cfg.EndpointChannelAddr, "endpoint-channel-address", cfg.EndpointChannelAddr, "Endpoint WSS address the Server dials")
-	flags.BoolVar(&cfg.TLSSharedCertificate, "tls-shared-certificate", cfg.TLSSharedCertificate, "every Endpoint presents the same Server certificate; the certificate no longer proves Endpoint identity")
 	flags.StringVar(&cfg.ServerName, "server-name", cfg.ServerName, "expected Server certificate identity when the Endpoint accepts a connection")
-	flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
-	flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")
 	flags.StringVar(&cfg.TLSCAFile, "tls-ca-file", cfg.TLSCAFile, "TLS CA file")
 	flags.StringVar(&cfg.TLSCertificateFile, "tls-certificate-file", cfg.TLSCertificateFile, "TLS certificate file")
 	flags.StringVar(&cfg.TLSKeyFile, "tls-key-file", cfg.TLSKeyFile, "TLS key file")
@@ -210,17 +192,50 @@ func Load(args []string, role string) (Config, error) {
 	flags.IntVar(&cfg.LogMaxSize, "log-max-size-mb", cfg.LogMaxSize, "maximum log file size in megabytes")
 	flags.IntVar(&cfg.LogBackups, "log-max-backups", cfg.LogBackups, "maximum retained log backups")
 	flags.IntVar(&cfg.LogMaxAge, "log-max-age-days", cfg.LogMaxAge, "maximum log backup age in days")
+	if serverRole || genericRole {
+		flags.StringVar(&cfg.APIListenAddress, "api-listen-addr", cfg.APIListenAddress, "Bearer-authenticated API listen address")
+		flags.StringVar(&cfg.ChannelListenAddress, "channel-listen-addr", cfg.ChannelListenAddress, "mTLS channel listen address")
+		flags.StringVar(&cfg.AuthToken, "auth-token", cfg.AuthToken, "pre-provisioned bearer token")
+		flags.Func("endpoint-dial-addresses", "comma-separated endpoint_id=wss://address pairs the Server dials", func(value string) error {
+			addresses, err := ParseDialAddresses(value)
+			if err != nil {
+				return err
+			}
+			cfg.EndpointDialAddresses = addresses
+			return nil
+		})
+		flags.BoolVar(&cfg.TLSSharedCertificate, "tls-shared-certificate", cfg.TLSSharedCertificate, "every Endpoint presents the same Server certificate; the certificate no longer proves Endpoint identity")
+	}
+	if endpointRole || genericRole {
+		flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
+		flags.StringVar(&cfg.ControlActionFile, "control-action-file", cfg.ControlActionFile, "Endpoint-local file selecting which ctl. actions are served")
+		flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
+		flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Server WSS address the Endpoint dials")
+		flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")
+		flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
+		flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")
+	}
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}
-	if cfg.APIListenAddress == "" {
-		cfg.APIListenAddress = cfg.ListenAddress
-	}
-
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// EnvironmentValue returns the primary environment value or a deprecated alias.
+func EnvironmentValue(primary string, deprecated ...string) string {
+	if value := os.Getenv(primary); value != "" {
+		return value
+	}
+	for _, name := range deprecated {
+		if value := os.Getenv(name); value != "" {
+			fmt.Fprintf(os.Stderr, "warning: %s is deprecated; use %s\n", name, primary)
+			return value
+		}
+	}
+	return ""
 }
 
 // ParseDialAddresses parses endpoint_id=wss://address pairs the Server dials in
