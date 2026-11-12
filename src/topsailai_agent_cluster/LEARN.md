@@ -843,3 +843,21 @@ public migration contract is asymmetric. Tests prove that aliases work, but they
 operator can discover every alias. A single compatibility inventory makes a missing component row
 visible, and a nonempty-diff assertion prevents a path-base mistake from silently certifying files
 that were never reviewed.
+
+## A credential rename must update every negative leak assertion
+
+Trigger: after the CLI Server credential was renamed to `AGENT_CLUSTER_CLI_SERVER_TOKEN`, the trigger
+child-environment security test still populated and rejected `AGENT_CLUSTER_SERVER_TOKEN`, a name the
+CLI does not use. The production whitelist remained safe, but the test no longer proved that the
+formal Server credential, its transitional alias or its legacy alias could not reach a notification
+script.
+
+Action: whenever a credential name changes, search both positive consumers and negative assertions
+that enumerate forbidden environment keys. Update the security test with the formal name and every
+accepted compatibility alias, then run the whole owning component's test target rather than only the
+single test.
+
+Why this prevents recurrence: a whitelist implementation can stay correct while a stale test gives
+false confidence about the wrong variable. Testing every accepted spelling keeps the non-leakage
+contract aligned with the compatibility contract, so a future change from a whitelist to inherited
+environment would expose every supported credential path.
