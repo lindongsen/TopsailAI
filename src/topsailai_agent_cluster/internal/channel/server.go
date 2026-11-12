@@ -606,6 +606,36 @@ func (s *Server) currentPeer(endpointID string) (*Peer, error) {
 	return peer, nil
 }
 
+// ExpireStalePeers removes and closes authoritative peers that stopped producing
+// authenticated frames. Returning the exact peers lets the caller log the
+// transition without re-reading mutable channel state.
+func (s *Server) ExpireStalePeers(now time.Time) []Peer {
+	if s.HeartbeatTimeout <= 0 {
+		return nil
+	}
+	s.Mu.Lock()
+	expired := make([]*Peer, 0)
+	for endpointID, peer := range s.Active {
+		if now.Sub(peer.LastSeen) <= s.HeartbeatTimeout {
+			continue
+		}
+		delete(s.Active, endpointID)
+		expired = append(expired, peer)
+	}
+	s.Mu.Unlock()
+	for _, peer := range expired {
+		_ = peer.Conn.CloseNow()
+	}
+	for _, peer := range expired {
+		s.finishDisconnect(peer, now.UnixMilli())
+	}
+	result := make([]Peer, 0, len(expired))
+	for _, peer := range expired {
+		result = append(result, *peer)
+	}
+	return result
+}
+
 func (s *Server) remove(peer *Peer) {
 	s.Mu.Lock()
 	current := s.Active[peer.EndpointID]
@@ -620,6 +650,12 @@ func (s *Server) remove(peer *Peer) {
 	if !authoritative {
 		return
 	}
+	s.finishDisconnect(peer, observedAtMS)
+}
+
+// finishDisconnect releases work bound to one peer and publishes its durable
+// state transition after that peer has been authoritatively removed.
+func (s *Server) finishDisconnect(peer *Peer, observedAtMS int64) {
 	// A disconnected Endpoint can never answer a forced collection or a history
 	// read, so fail the waiters instead of letting them block until their deadline.
 	s.failPendingRefresh(peer.EndpointID)

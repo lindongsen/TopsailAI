@@ -85,7 +85,7 @@ func Defaults(role string) Config {
 	if role == "agent-cluster-endpoint" {
 		databasePath = ".tmp/endpoint.sqlite"
 	}
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 5 * time.Minute, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 24 * time.Hour, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
 }
 
 // Load parses command-line flags and applies environment configuration.

@@ -147,14 +147,15 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
-	recoveredEndpoints, err := store.MarkPersistedEndpointsOffline(ctx)
+	recoveryAtMS := time.Now().UnixMilli()
+	recoveredEndpoints, err := store.MarkPersistedEndpointsOffline(ctx, recoveryAtMS)
 	if err != nil {
 		logger.Error("recover persisted endpoint connection states", "error", err)
 		_ = store.Close()
 		os.Exit(1)
 	}
 	if recoveredEndpoints > 0 {
-		logger.Info("recovered persisted endpoint connection states", "endpoints_marked_offline", recoveredEndpoints)
+		logger.Info("recovered persisted endpoint connection states", "endpoints_marked_offline", recoveredEndpoints, "offline_since_at_ms", recoveryAtMS)
 	}
 	// Record the resolved addresses before serving: without this line a healthy
 	// start leaves no trace in the log, so a silent death cannot be told apart
@@ -164,6 +165,11 @@ func main() {
 		// during startup rather than after the API is already accepting traffic.
 		runEndpointDialer(ctx, logger, channelService, cfg)
 	}
+	livenessDone := make(chan struct{})
+	go func() {
+		defer close(livenessDone)
+		runEndpointLiveness(ctx, logger, channelService, channelService.HeartbeatTimeout)
+	}()
 	expiryDone := make(chan struct{})
 	go func() {
 		defer close(expiryDone)
@@ -172,6 +178,7 @@ func main() {
 	logger.Info("server service starting", "api_listen_address", cfg.APIListenAddress, "channel_listen_address", channelListenAddress, "channel_direction", cfg.ChannelDirection, "database_path", cfg.DatabasePath, "endpoint_expiry", cfg.EndpointExpiry.String())
 	runErr := service.Run(ctx)
 	stop()
+	<-livenessDone
 	<-expiryDone
 	if runErr != nil {
 		// Run returns nil on a graceful shutdown and the listen error when a port

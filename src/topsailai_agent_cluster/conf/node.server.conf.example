@@ -21,8 +21,8 @@ TLS_KEY_FILE=../../certs/server/node-key.pem
 
 # State and logs, relative to the bundle root.
 DATABASE_PATH=../../data/server/server.sqlite
-# Remove offline Endpoint inventory after this duration.
-ENDPOINT_EXPIRY=5m
+# Retain offline Endpoint inventory for this duration.
+ENDPOINT_EXPIRY=24h
 LOG_PATH=../../logs/server/server.log
 PID_FILE=../../run/server/server.pid
 STDOUT_LOG=../../logs/server/server.stdout.log

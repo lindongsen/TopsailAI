@@ -22,12 +22,14 @@ func TestExpireOfflineEndpointsRemovesOnlyStaleOfflineRecords(t *testing.T) {
 		id      string
 		state   string
 		updated int64
+		offline int64
 	}{
-		{id: "expired", state: "offline", updated: 100},
-		{id: "recent", state: "offline", updated: 300},
-		{id: "online", state: "online", updated: 100},
+		{id: "expired", state: "offline", updated: 300, offline: 100},
+		{id: "recent", state: "offline", updated: 100, offline: 300},
+		{id: "online", state: "online", updated: 100, offline: 0},
 	} {
 		putEndpointInventory(t, store, item.id, item.state, item.updated)
+		setOfflineSince(t, store, item.id, item.offline)
 	}
 
 	result, err := store.ExpireOfflineEndpoints(ctx, 200)
@@ -89,19 +91,81 @@ func TestMarkPersistedEndpointsOfflinePreservesAge(t *testing.T) {
 	defer store.Close()
 	putEndpointInventory(t, store, "stale-online", "online", 100)
 
-	updated, err := store.MarkPersistedEndpointsOffline(ctx)
+	updated, err := store.MarkPersistedEndpointsOffline(ctx, 300)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if updated != 1 {
 		t.Fatalf("offline updates = %d, want 1", updated)
 	}
+	var state string
+	var offlineSinceMS int64
+	if err := store.DB().QueryRowContext(ctx, `SELECT connection_state, offline_since_at_ms FROM endpoints WHERE endpoint_id = ?`, "stale-online").Scan(&state, &offlineSinceMS); err != nil {
+		t.Fatal(err)
+	}
+	if state != "offline" || offlineSinceMS != 300 {
+		t.Fatalf("recovered state=%q offline_since_at_ms=%d, want offline/300", state, offlineSinceMS)
+	}
 	result, err := store.ExpireOfflineEndpoints(ctx, 200)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.InventoryEndpointIDs) != 1 || result.InventoryEndpointIDs[0] != "stale-online" {
-		t.Fatalf("expiry result = %+v", result)
+	if len(result.InventoryEndpointIDs) != 0 {
+		t.Fatalf("startup recovery expired inventory immediately: %+v", result)
+	}
+}
+
+// TestMarkPersistedEndpointsOfflinePreservesExistingOfflineAge verifies restart
+// recovery changes only persisted online rows.
+func TestMarkPersistedEndpointsOfflinePreservesExistingOfflineAge(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	putEndpointInventory(t, store, "already-offline", "offline", 100)
+	setOfflineSince(t, store, "already-offline", 50)
+	if _, err := store.MarkPersistedEndpointsOffline(ctx, 300); err != nil {
+		t.Fatal(err)
+	}
+	var got int64
+	if err := store.DB().QueryRowContext(ctx, `SELECT offline_since_at_ms FROM endpoints WHERE endpoint_id = ?`, "already-offline").Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != 50 {
+		t.Fatalf("offline_since_at_ms=%d, want 50", got)
+	}
+}
+
+// TestUpsertEndpointOnlineClearsOfflineAge verifies reconnect starts a fresh
+// liveness period and stale cleanup cannot remove the online projection.
+func TestUpsertEndpointOnlineClearsOfflineAge(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	putEndpointInventory(t, store, "reconnected", "offline", 100)
+	setOfflineSince(t, store, "reconnected", 50)
+	endpoint := protocol.Endpoint{EndpointID: "reconnected", InstanceID: "instance-reconnected", DisplayName: "reconnected", ConnectionState: "online", ObservedAtMS: 300, CapabilityRevision: "v1"}
+	if err := store.UpsertEndpoint(ctx, endpoint, 300); err != nil {
+		t.Fatal(err)
+	}
+	var got int64
+	if err := store.DB().QueryRowContext(ctx, `SELECT offline_since_at_ms FROM endpoints WHERE endpoint_id = ?`, "reconnected").Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Fatalf("offline_since_at_ms=%d, want 0", got)
+	}
+	result, err := store.ExpireOfflineEndpoints(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.InventoryEndpointIDs) != 0 {
+		t.Fatalf("reconnected endpoint expired: %+v", result)
 	}
 }
 
@@ -128,6 +192,14 @@ func putEndpointInventory(t *testing.T, store *Store, endpointID, state string, 
 	}
 	report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: "endpoint-local", SnapshotRevision: 1, ObservedAtMS: updatedAtMS, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded}
 	if err := store.ReplaceInventory(ctx, endpointID, report, updatedAtMS); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setOfflineSince controls the retention clock independently from metadata age.
+func setOfflineSince(t *testing.T, store *Store, endpointID string, offlineSinceMS int64) {
+	t.Helper()
+	if _, err := store.DB().ExecContext(context.Background(), `UPDATE endpoints SET offline_since_at_ms = ? WHERE endpoint_id = ?`, offlineSinceMS, endpointID); err != nil {
 		t.Fatal(err)
 	}
 }

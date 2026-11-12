@@ -322,3 +322,60 @@ func TestEndpointHostnameRoundTripsThroughStorage(t *testing.T) {
 		t.Fatalf("endpoints = %#v, want hostname %q", items, endpoint.Hostname)
 	}
 }
+
+// TestOpenMigratesOfflineTimestamp verifies an existing database gains the
+// dedicated offline timestamp without losing its Endpoint records.
+func TestOpenMigratesOfflineTimestamp(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "server.db")
+	legacyDB, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = legacyDB.ExecContext(ctx, `CREATE TABLE endpoints (
+		endpoint_id TEXT PRIMARY KEY,
+		instance_id TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		hostname TEXT NOT NULL DEFAULT '',
+		connection_state TEXT NOT NULL,
+		observed_at_ms BIGINT NOT NULL,
+		capability_revision TEXT NOT NULL,
+		create_at_ms BIGINT NOT NULL,
+		update_at_ms BIGINT NOT NULL
+	); INSERT INTO endpoints(endpoint_id, instance_id, display_name, connection_state, observed_at_ms, capability_revision, create_at_ms, update_at_ms) VALUES('legacy-endpoint', 'legacy-instance', 'legacy', 'offline', 10, 'v1', 10, 10);`)
+	if err != nil {
+		_ = legacyDB.Close()
+		t.Fatal(err)
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var endpointID string
+	var offlineSinceMS int64
+	if err := store.DB().QueryRowContext(ctx, `SELECT endpoint_id, offline_since_at_ms FROM endpoints WHERE endpoint_id = 'legacy-endpoint'`).Scan(&endpointID, &offlineSinceMS); err != nil {
+		t.Fatal(err)
+	}
+	if endpointID != "legacy-endpoint" || offlineSinceMS != 0 {
+		t.Fatalf("migrated endpoint=%q offline_since_at_ms=%d", endpointID, offlineSinceMS)
+	}
+	var columns int
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('endpoints') WHERE name = 'offline_since_at_ms'`).Scan(&columns); err != nil {
+		t.Fatal(err)
+	}
+	if columns != 1 {
+		t.Fatalf("offline timestamp columns=%d, want 1", columns)
+	}
+	var indexes int
+	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_endpoints_offline_since'`).Scan(&indexes); err != nil {
+		t.Fatal(err)
+	}
+	if indexes != 1 {
+		t.Fatalf("offline timestamp indexes=%d, want 1", indexes)
+	}
+}
