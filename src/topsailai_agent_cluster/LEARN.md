@@ -822,3 +822,24 @@ Trigger: input-history rotation reported deletion or rename errors and then cont
 Action: make retention maintenance return an error to the append path and abort the append when any stat, deletion or rename fails. Log every successful backup deletion with the exact path, and test both the successful deletion event and the failure boundary, including unchanged active content and unchanged persistent recall.
 
 Why this prevents recurrence: retention is part of the write contract, not optional housekeeping. Continuing after it fails makes a bounded append-only file unbounded while still reporting the input as recorded. Failing the append preserves the last known retained state, and an explicit deletion event makes irreversible cleanup observable.
+
+## A component-prefix migration needs a symmetric compatibility inventory
+
+Trigger: the Server, Endpoint and CLI environment names were migrated in separate logical units. The
+Endpoint and CLI sections of `docs/Environment_Variables.md` gained explicit deprecated-to-primary
+mapping tables, but the Server section did not. Every Server alias worked and all tests passed, so the
+omission was visible only when the three component contracts were compared side by side during the
+final review.
+
+Action: for a cross-component naming migration, maintain one owner-by-owner inventory containing the
+primary name, deprecated name, reader, deployment emitter, documentation row and compatibility test.
+Review the inventory horizontally as well as reviewing each component vertically. When generating
+per-file Git review evidence from a project below the repository root, address files from the Git top
+level and require every expected diff file to be nonempty; a successful command that produces an
+empty diff is not review evidence.
+
+Why this prevents recurrence: independent component commits can each be internally correct while the
+public migration contract is asymmetric. Tests prove that aliases work, but they do not prove that an
+operator can discover every alias. A single compatibility inventory makes a missing component row
+visible, and a nonempty-diff assertion prevents a path-base mistake from silently certifying files
+that were never reviewed.
