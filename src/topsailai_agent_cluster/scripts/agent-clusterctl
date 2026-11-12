@@ -179,7 +179,6 @@ function doctor() {
         [ -n "${ENDPOINT_ID:-}" ] || die "ENDPOINT_ID is required for the endpoint role"
         [ -n "${INSTANCE_ID:-}" ] || die "INSTANCE_ID is required for the endpoint role"
         [ -n "${CHANNEL_ADDRESS:-}" ] || die "CHANNEL_ADDRESS is required for the endpoint role"
-        [ -n "${AUTH_TOKEN:-}" ] || die "AUTH_TOKEN is required for the endpoint role"
         [ -n "${ADAPTERS:-}" ] || die "ADAPTERS is required for the endpoint role"
         # The bundle cannot carry the provider binary, so every adapter command
         # must already exist on this node. Failing here beats a runtime spawn error.
@@ -264,7 +263,6 @@ function start_node() {
         args+=(--endpoint-id "${ENDPOINT_ID}")
         args+=(--instance-id "${INSTANCE_ID}")
         args+=(--channel-address "${CHANNEL_ADDRESS}")
-        args+=(--auth-token "${AUTH_TOKEN}")
         # The allowlist is optional. Without it the endpoint refuses command.exec
         # rather than falling back to an unrestricted shell.
         [ -n "${COMMAND_ALLOWLIST_FILE:-}" ] && args+=(--command-allowlist-file "${COMMAND_ALLOWLIST_FILE}")
@@ -281,10 +279,10 @@ function start_node() {
         # silently serves every caller.
         [ -n "${ENDPOINT_ACCESS_POLICY_DIR:-}" ] && args+=(--endpoint-access-policy-dir "${ENDPOINT_ACCESS_POLICY_DIR}")
         # Adapters are supplied through the environment; no flag exists for them.
-        export AGENT_CLUSTER_ADAPTERS="${ADAPTERS}"
+        export AGENT_CLUSTER_ENDPOINT_ADAPTERS="${ADAPTERS}"
         # The collection delay is likewise environment-only, so the binary owns
         # the single parsing and fallback rule instead of duplicating it here.
-        export AGENT_CLUSTER_COLLECTION_DELAY_MS="${COLLECTION_DELAY_MS}"
+        export AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS="${COLLECTION_DELAY_MS}"
     fi
 
     [ -n "${LOG_MAX_SIZE_MB:-}" ] && args+=(--log-max-size-mb "${LOG_MAX_SIZE_MB}")

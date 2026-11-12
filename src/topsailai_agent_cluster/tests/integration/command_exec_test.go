@@ -182,9 +182,9 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 		t.Fatal(err)
 	}
 	waitHTTP(t, c.url("/healthz"), "", http.StatusOK, 15*time.Second)
-	adapters := fmt.Sprintf(`AGENT_CLUSTER_ADAPTERS=[{"adapter_id":"topsailai-main","provider_type":"topsailai","command":%q,"timeout_ms":5000}]`, filepath.Join(providerDir, "topsailai"))
+	adapters := fmt.Sprintf(`AGENT_CLUSTER_ENDPOINT_ADAPTERS=[{"adapter_id":"topsailai-main","provider_type":"topsailai","command":%q,"timeout_ms":5000}]`, filepath.Join(providerDir, "topsailai"))
 	endpointEnv := append(os.Environ(),
-		"AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel,
+		"AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel,
 		"AGENT_CLUSTER_ENDPOINT_ID=endpoint-1",
 		"AGENT_CLUSTER_DATABASE_PATH="+c.endpointDB,
 		"AGENT_CLUSTER_TLS_CA_FILE="+certs.ca,
@@ -194,7 +194,7 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 		adapters,
 	)
 	if c.allowlist != "" {
-		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE="+c.allowlist)
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE="+c.allowlist)
 	}
 	if policy != "" {
 		policyDir := filepath.Join(root, "endpoint-access.d")
@@ -210,7 +210,7 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 	// actions the control tests address. Without it the Endpoint fails closed and
 	// every ctl. operation is refused, which would make the control tests assert
 	// the fail-closed default instead of the control channel.
-	endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CONTROL_ACTION_FILE="+c.controlActions)
+	endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE="+c.controlActions)
 	c.endpoint = exec.Command(endpointBinary)
 	c.endpoint.Dir = moduleRoot(t)
 	c.endpoint.Env = endpointEnv

@@ -16,14 +16,20 @@ type runtimeHooks struct {
 }
 
 func newRuntimeHooks(logger *slog.Logger, _ string) runtimeHooks {
-	return runtimeHooks{CollectionDelay: collectionDelayEnv(logger, "AGENT_CLUSTER_COLLECTION_DELAY_MS", 5*time.Second)}
+	return runtimeHooks{CollectionDelay: collectionDelayEnv(logger, "AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS", "AGENT_CLUSTER_COLLECTION_DELAY_MS", 5*time.Second)}
 }
 
 // collectionDelayEnv reads the post-collection delay from the process boundary.
 // A non-positive or unparsable value falls back to the default so a typo cannot
 // turn the Endpoint into a busy collection loop.
-func collectionDelayEnv(logger *slog.Logger, name string, fallback time.Duration) time.Duration {
+func collectionDelayEnv(logger *slog.Logger, name, deprecated string, fallback time.Duration) time.Duration {
 	value := os.Getenv(name)
+	if value == "" {
+		value = os.Getenv(deprecated)
+		if value != "" && logger != nil {
+			logger.Warn("deprecated environment variable", "name", deprecated, "replacement", name)
+		}
+	}
 	if value == "" {
 		return fallback
 	}

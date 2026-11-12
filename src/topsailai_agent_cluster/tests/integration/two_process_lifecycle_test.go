@@ -48,7 +48,7 @@ func TestTwoProcessLifecycle(t *testing.T) {
 	waitHTTP(t, "http://127.0.0.1:"+api+"/healthz", "", 200, 15*time.Second)
 	endpointCmd := exec.Command(endpointBin)
 	endpointCmd.Dir = moduleRoot(t)
-	endpointCmd.Env = append(os.Environ(), "AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH="+endpointDB, "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey, "AGENT_CLUSTER_ADAPTERS="+fmt.Sprintf(`[{"adapter_id":"fixture-main","provider_type":"fixture","command":%q,"args":["--mode","one"],"timeout_ms":5000}]`, fixture), "AGENT_CLUSTER_LOG_OUTPUT=stderr")
+	endpointCmd.Env = append(os.Environ(), "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH="+endpointDB, "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey, "AGENT_CLUSTER_ENDPOINT_ADAPTERS="+fmt.Sprintf(`[{"adapter_id":"fixture-main","provider_type":"fixture","command":%q,"args":["--mode","one"],"timeout_ms":5000}]`, fixture), "AGENT_CLUSTER_LOG_OUTPUT=stderr")
 	endpointCmd.Stdout, endpointCmd.Stderr = os.Stdout, os.Stderr
 	if err := endpointCmd.Start(); err != nil {
 		t.Fatal(err)

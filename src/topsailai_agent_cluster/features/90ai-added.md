@@ -140,7 +140,7 @@ nothing.
 ## Config-file-driven ctl catalog
 
 `internal/adapter/topsailai/ctl_config.go` makes the `ctl.<action>` surface entirely
-configuration-driven. The catalog file named by `AGENT_CLUSTER_CONTROL_ACTION_FILE`
+configuration-driven. The catalog file named by `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`
 is the only source of control actions: each entry defines the action name, the
 permission scope, the payload schema and the provider argv template, so adding,
 changing or removing an action requires no adapter rebuild and no Server change.

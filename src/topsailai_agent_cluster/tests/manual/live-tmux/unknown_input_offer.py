@@ -81,12 +81,12 @@ def start_services(runtime: Path, bin_dir: Path, provider: Path, project: Path) 
     }
     adapters = [{"adapter_id": "fixture-main", "provider_type": "fixture", "command": str(provider), "args": ["--mode", "one"], "timeout_ms": 5000}]
     endpoint_env = base | {
-        "AGENT_CLUSTER_CHANNEL_ADDRESS": f"wss://127.0.0.1:{channel_port}",
+        "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS": f"wss://127.0.0.1:{channel_port}",
         "AGENT_CLUSTER_ENDPOINT_ID": "live-tmux-endpoint",
         "AGENT_CLUSTER_DATABASE_PATH": str(runtime / "endpoint.db"),
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "client.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "client.key"),
-        "AGENT_CLUSTER_ADAPTERS": json.dumps(adapters),
+        "AGENT_CLUSTER_ENDPOINT_ADAPTERS": json.dumps(adapters),
     }
     children: list[subprocess.Popen] = []
     for name, executable, environment in (

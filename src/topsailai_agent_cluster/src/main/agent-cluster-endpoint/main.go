@@ -50,7 +50,7 @@ func main() {
 	dials := !serverInitiated
 	if dials && cfg.ChannelAddress == "" {
 		if bidirectional {
-			logger.Error("endpoint channel address is required for the bidirectional direction", "error", "AGENT_CLUSTER_CHANNEL_ADDRESS is empty")
+			logger.Error("endpoint channel address is required for the bidirectional direction", "error", "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS is empty")
 			_ = store.Close()
 			os.Exit(1)
 		}
@@ -116,7 +116,7 @@ func main() {
 		}
 	}
 	if len(cfg.Adapters) == 0 {
-		logger.Error("endpoint adapters are required", "error", "AGENT_CLUSTER_ADAPTERS is empty")
+		logger.Error("endpoint adapters are required", "error", "AGENT_CLUSTER_ENDPOINT_ADAPTERS is empty")
 		_ = client.Close()
 		_ = store.Close()
 		os.Exit(1)

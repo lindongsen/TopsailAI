@@ -16,7 +16,7 @@ reads the environment directly.
 
 Almost every variable also has a command-line flag. The flag takes precedence over
 the environment variable, and the environment variable takes precedence over the
-built-in default. `AGENT_CLUSTER_ADAPTERS` is the exception: it carries a JSON array
+built-in default. `AGENT_CLUSTER_ENDPOINT_ADAPTERS` is the exception: it carries a JSON array
 and has no flag, so the launcher exports it. The launcher
 `scripts/agent-clusterctl` reads a shell configuration file and passes values as
 flags, so a bundle deployment does not depend on inherited environment variables.
@@ -45,7 +45,7 @@ silently ignored rather than passed to the process. `CONTROL_ACTION_FILE` was su
 added to the set: the template shipped it and the binary accepted it, but the launcher never read it,
 so a packaged node advertised no `ctl.` action. The launcher now resolves it, prints it in `doctor` and
 passes `--control-action-file`, and `TestLauncherForwardsTheControlActionCatalog` guards all three
-sites. See `AGENT_CLUSTER_CONTROL_ACTION_FILE` below and
+sites. See `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` below and
 `issues/agent-clusterctl-drops-control-action-file.md`. A key that must reach the process regardless of
 the launcher can be exported directly, because the binary reads the environment as well.
 
@@ -98,17 +98,18 @@ listener to a trusted address.
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
 | `AGENT_CLUSTER_ENDPOINT_ID` | `--endpoint-id` | empty | Endpoint identity announced to the Server |
-| `AGENT_CLUSTER_INSTANCE_ID` | `--instance-id` | `default` | Endpoint instance identity |
-| `AGENT_CLUSTER_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
+| `AGENT_CLUSTER_ENDPOINT_INSTANCE_ID` | `--instance-id` | `default` | Endpoint instance identity |
+| `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
 | `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
 | `AGENT_CLUSTER_TLS_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity the Endpoint verifies in the `server-initiated` direction |
-| `AGENT_CLUSTER_ADAPTERS` | none | empty | JSON array of adapter bindings |
-| `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
-| `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
+| `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
+| `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
+| `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `--endpoint-access-policy-dir` | empty | Endpoint-local directory holding one access policy file per caller token; empty means every caller is permitted |
+| `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | none | `5000` | Positive post-collection delay in milliseconds; launcher value is `COLLECTION_DELAY_MS` |
 
-### `AGENT_CLUSTER_ADAPTERS`
+### `AGENT_CLUSTER_ENDPOINT_ADAPTERS`
 
 A JSON array. Each element carries `adapter_id`, `provider_type`, `command`,
 optional `args`, `timeout_ms` and optional `capabilities`. The `command` must be an
@@ -118,7 +119,22 @@ adapter IDs, a relative command path and a non-positive timeout.
 Adapters are supplied through the environment because no flag exists for them. The
 launcher exports this variable from the `ADAPTERS` configuration entry.
 
-### `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE`
+### Deprecated Endpoint environment names
+
+The names below remain fallback aliases for one compatibility cycle. The component-prefixed name
+always wins when both are present. New deployments and maintained tests must use only the primary
+name.
+
+| Deprecated name | Primary name |
+|---|---|
+| `AGENT_CLUSTER_INSTANCE_ID` | `AGENT_CLUSTER_ENDPOINT_INSTANCE_ID` |
+| `AGENT_CLUSTER_CHANNEL_ADDRESS` | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` |
+| `AGENT_CLUSTER_ADAPTERS` | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` |
+| `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` |
+| `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` |
+| `AGENT_CLUSTER_COLLECTION_DELAY_MS` | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` |
+
+### `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE`
 
 Gates the `command.exec` operation, which backs the operator `!` command. Paths are
 resolved relative to the bundle root by the launcher.
@@ -180,7 +196,7 @@ the active set, so a malformed edit keeps the previous entries in force and is
 logged. A reload that would remove every entry is refused unless the file contains
 the explicit empty directive. Each successful reload logs the entry count.
 
-### `AGENT_CLUSTER_CONTROL_ACTION_FILE`
+### `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`
 
 Defines the `ctl.<action>` surface. This file is the only source of control
 actions: the action name, its permission, its payload schema and the provider
@@ -194,7 +210,7 @@ previously forwarded only `COMMAND_ALLOWLIST_FILE`, so a packaged node advertise
 `ctl.` action even when `node.conf` named one; that gap is recorded in
 `issues/agent-clusterctl-drops-control-action-file.md` and is guarded by
 `TestLauncherForwardsTheControlActionCatalog`. A direct launch can still supply the
-path with `--control-action-file` or `AGENT_CLUSTER_CONTROL_ACTION_FILE`.
+path with `--control-action-file` or `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`.
 
 The file is one JSON document. Whole-line `#` comments are ignored, so the shipped
 example can explain itself; trailing comments are not supported. Each entry carries:
@@ -324,11 +340,11 @@ File format constraints:
 |---|---|
 | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | The known development token is accepted |
 | `AGENT_CLUSTER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
-| `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
-| `AGENT_CLUSTER_CONTROL_ACTION_FILE` | No `ctl.` action is advertised and every `ctl.` operation is refused |
+| `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
+| `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | No `ctl.` action is advertised and every `ctl.` operation is refused |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | Every caller is permitted, so the Endpoint has no authorization boundary |
 | `AGENT_CLUSTER_TLS_*` | Remote listeners cannot verify peers |
-| `AGENT_CLUSTER_ADAPTERS` | The Endpoint has no provider to collect from |
+| `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | The Endpoint has no provider to collect from |
 
 ## Related documents
 

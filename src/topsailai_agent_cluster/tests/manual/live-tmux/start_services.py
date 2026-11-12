@@ -112,12 +112,12 @@ def main() -> int:
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "server.key"),
     }
     endpoint_env = base | {
-        "AGENT_CLUSTER_CHANNEL_ADDRESS": f"wss://127.0.0.1:{channel_port}",
+        "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS": f"wss://127.0.0.1:{channel_port}",
         "AGENT_CLUSTER_ENDPOINT_ID": "live-tmux-endpoint",
         "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "endpoint.db"),
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "client.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "client.key"),
-        "AGENT_CLUSTER_ADAPTERS": json.dumps([{"adapter_id": "topsailai-live", "provider_type": "topsailai", "command": str(args.provider), "timeout_ms": 60000}]),
+        "AGENT_CLUSTER_ENDPOINT_ADAPTERS": json.dumps([{"adapter_id": "topsailai-live", "provider_type": "topsailai", "command": str(args.provider), "timeout_ms": 60000}]),
     }
     # An allowlist is optional so the same harness can prove the fail-closed path
     # when the endpoint is started without one.
@@ -126,7 +126,7 @@ def main() -> int:
             parser.error("--allowlist must be an absolute path")
         if not args.allowlist.is_file():
             parser.error("--allowlist must name an existing file")
-        endpoint_env["AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"] = str(args.allowlist)
+        endpoint_env["AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE"] = str(args.allowlist)
     # A control action catalog is optional for the same reason: without it the
     # endpoint advertises no ctl. action and every ctl. operation is refused.
     if args.control_actions is not None:
@@ -134,7 +134,7 @@ def main() -> int:
             parser.error("--control-actions must be an absolute path")
         if not args.control_actions.is_file():
             parser.error("--control-actions must name an existing file")
-        endpoint_env["AGENT_CLUSTER_CONTROL_ACTION_FILE"] = str(args.control_actions)
+        endpoint_env["AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE"] = str(args.control_actions)
     # The CLI loads .env.local from the directory of its own executable, so the
     # isolated configuration must live beside the binary rather than in runtime.
     cli_environment = args.bin_dir / ".env.local"

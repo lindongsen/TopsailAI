@@ -35,7 +35,7 @@ func TestCommandRoundTrip(t *testing.T) {
 	waitHTTP(t, "http://127.0.0.1:"+api+"/healthz", "", http.StatusOK, 15*time.Second)
 	endpoint := exec.Command(endpointBin)
 	endpoint.Dir = moduleRoot(t)
-	endpoint.Env = append(os.Environ(), "AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH="+endpointDB, "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey, "AGENT_CLUSTER_ADAPTERS="+`[{"adapter_id":"fixture-main","provider_type":"fixture","command":"`+fixture+`","args":["--mode","one"],"timeout_ms":5000}]`)
+	endpoint.Env = append(os.Environ(), "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH="+endpointDB, "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey, "AGENT_CLUSTER_ENDPOINT_ADAPTERS="+`[{"adapter_id":"fixture-main","provider_type":"fixture","command":"`+fixture+`","args":["--mode","one"],"timeout_ms":5000}]`)
 	endpoint.Stdout, endpoint.Stderr = os.Stdout, os.Stderr
 	if err := endpoint.Start(); err != nil {
 		t.Fatal(err)

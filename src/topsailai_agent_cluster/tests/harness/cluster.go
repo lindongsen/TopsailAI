@@ -332,7 +332,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal adapter configuration: %w", err)
 	}
-	args := "AGENT_CLUSTER_ADAPTERS=" + string(adapterJSON)
+	args := "AGENT_CLUSTER_ENDPOINT_ADAPTERS=" + string(adapterJSON)
 	// With one shared certificate the Endpoint presents the Server certificate as
 	// its own client certificate, so the certificate no longer proves which
 	// Endpoint is connecting.
@@ -340,7 +340,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if options.SharedCertificate {
 		endpointCert, endpointKey = certs.ServerCert, certs.ServerKey
 	}
-	endpointEnv := []string{"AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
+	endpointEnv := []string{"AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
 	if options.ChannelDirection != "" {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
 	}
@@ -360,14 +360,14 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		if writeErr != nil {
 			return nil, writeErr
 		}
-		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE="+allowlistPath)
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE="+allowlistPath)
 	}
 	if len(options.Faults.ControlActions) > 0 {
 		catalogPath, writeErr := writeControlActionCatalog(root, options.Faults.ControlActions)
 		if writeErr != nil {
 			return nil, writeErr
 		}
-		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CONTROL_ACTION_FILE="+catalogPath)
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE="+catalogPath)
 	}
 	endpointEnv = append(endpointEnv, sortedEnvironment(options.EndpointEnvironment)...)
 	cluster.EndpointPath = endpointBin

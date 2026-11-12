@@ -118,16 +118,16 @@ func Load(args []string, role string) (Config, error) {
 		}
 	}
 	if endpointRole || genericRole {
-		if value := os.Getenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE", "AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"); value != "" {
 			cfg.CommandAllowlistFile = value
 		}
-		if value := os.Getenv("AGENT_CLUSTER_CONTROL_ACTION_FILE"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE", "AGENT_CLUSTER_CONTROL_ACTION_FILE"); value != "" {
 			cfg.ControlActionFile = value
 		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"); value != "" {
 			cfg.EndpointAccessPolicyDir = value
 		}
-		if value := os.Getenv("AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS", "AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
 			cfg.ChannelAddress = value
 		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR"); value != "" {
@@ -136,10 +136,10 @@ func Load(args []string, role string) (Config, error) {
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ID"); value != "" {
 			cfg.EndpointID = value
 		}
-		if value := os.Getenv("AGENT_CLUSTER_INSTANCE_ID"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_ENDPOINT_INSTANCE_ID", "AGENT_CLUSTER_INSTANCE_ID"); value != "" {
 			cfg.InstanceID = value
 		}
-		if value := os.Getenv("AGENT_CLUSTER_ADAPTERS"); value != "" {
+		if value := EnvironmentValue("AGENT_CLUSTER_ENDPOINT_ADAPTERS", "AGENT_CLUSTER_ADAPTERS"); value != "" {
 			adapters, err := ParseAdapters(value)
 			if err != nil {
 				return Config{}, err
@@ -262,10 +262,10 @@ func ParseDialAddresses(value string) (map[string]string, error) {
 func ParseAdapters(value string) ([]AdapterConfig, error) {
 	var adapters []AdapterConfig
 	if err := json.Unmarshal([]byte(value), &adapters); err != nil {
-		return nil, fmt.Errorf("parse AGENT_CLUSTER_ADAPTERS: %w", err)
+		return nil, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_ADAPTERS: %w", err)
 	}
 	if len(adapters) == 0 {
-		return nil, fmt.Errorf("AGENT_CLUSTER_ADAPTERS must contain at least one adapter")
+		return nil, fmt.Errorf("AGENT_CLUSTER_ENDPOINT_ADAPTERS must contain at least one adapter")
 	}
 	seen := make(map[string]struct{}, len(adapters))
 	for i := range adapters {

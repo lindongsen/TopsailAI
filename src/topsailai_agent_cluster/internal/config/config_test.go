@@ -40,24 +40,24 @@ func TestRoleDefaultsUseOwnedDatabase(t *testing.T) {
 }
 
 func TestLoadIgnoresMalformedForeignRoleEnvironment(t *testing.T) {
-	t.Setenv("AGENT_CLUSTER_ADAPTERS", "{")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_ADAPTERS", "{")
 	if _, err := Load(nil, "agent-cluster-server"); err != nil {
 		t.Fatalf("server parsed Endpoint adapter configuration: %v", err)
 	}
-	t.Setenv("AGENT_CLUSTER_ADAPTERS", "")
-	t.Setenv("AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES", "invalid")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_ADAPTERS", "")
+	t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES", "invalid")
 	if _, err := Load(nil, "agent-cluster-endpoint"); err != nil {
 		t.Fatalf("Endpoint parsed Server dial configuration: %v", err)
 	}
 }
 
 func TestLoadRejectsMalformedOwnedRoleEnvironment(t *testing.T) {
-	t.Setenv("AGENT_CLUSTER_ADAPTERS", "{")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_ADAPTERS", "{")
 	if _, err := Load(nil, "agent-cluster-endpoint"); err == nil {
 		t.Fatal("Endpoint accepted malformed adapter configuration")
 	}
-	t.Setenv("AGENT_CLUSTER_ADAPTERS", "")
-	t.Setenv("AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES", "invalid")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_ADAPTERS", "")
+	t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES", "invalid")
 	if _, err := Load(nil, "agent-cluster-server"); err == nil {
 		t.Fatal("Server accepted malformed dial configuration")
 	}
@@ -112,5 +112,48 @@ func TestServerDeprecatedEnvironmentNamesRemainFallbacks(t *testing.T) {
 	}
 	if cfg.EndpointDialAddresses["old"] != "wss://old" || !cfg.TLSSharedCertificate || cfg.ServerName != "old-name" {
 		t.Fatalf("deprecated Server channel names were not loaded: %+v", cfg)
+	}
+}
+
+func TestEndpointEnvironmentNamesAndPrecedence(t *testing.T) {
+	oldAdapters := `[ {"adapter_id":"old","provider_type":"fixture","command":"/bin/echo","timeout_ms":1} ]`
+	newAdapters := `[ {"adapter_id":"new","provider_type":"fixture","command":"/bin/echo","timeout_ms":1} ]`
+	t.Setenv("AGENT_CLUSTER_CHANNEL_ADDRESS", "wss://old")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS", "wss://new")
+	t.Setenv("AGENT_CLUSTER_INSTANCE_ID", "old-instance")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_INSTANCE_ID", "new-instance")
+	t.Setenv("AGENT_CLUSTER_ADAPTERS", oldAdapters)
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_ADAPTERS", newAdapters)
+	t.Setenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE", "/old/allowlist")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE", "/new/allowlist")
+	t.Setenv("AGENT_CLUSTER_CONTROL_ACTION_FILE", "/old/catalog")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE", "/new/catalog")
+	cfg, err := Load(nil, "agent-cluster-endpoint")
+	if err != nil {
+		t.Fatalf("load Endpoint configuration: %v", err)
+	}
+	if cfg.ChannelAddress != "wss://new" || cfg.InstanceID != "new-instance" || len(cfg.Adapters) != 1 || cfg.Adapters[0].AdapterID != "new" {
+		t.Fatalf("Endpoint primary names did not win: %+v", cfg)
+	}
+	if cfg.CommandAllowlistFile != "/new/allowlist" || cfg.ControlActionFile != "/new/catalog" {
+		t.Fatalf("Endpoint file names did not win: %+v", cfg)
+	}
+}
+
+func TestEndpointDeprecatedEnvironmentNamesRemainFallbacks(t *testing.T) {
+	t.Setenv("AGENT_CLUSTER_CHANNEL_ADDRESS", "wss://old")
+	t.Setenv("AGENT_CLUSTER_INSTANCE_ID", "old-instance")
+	t.Setenv("AGENT_CLUSTER_ADAPTERS", `[ {"adapter_id":"old","provider_type":"fixture","command":"/bin/echo","timeout_ms":1} ]`)
+	t.Setenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE", "/old/allowlist")
+	t.Setenv("AGENT_CLUSTER_CONTROL_ACTION_FILE", "/old/catalog")
+	cfg, err := Load(nil, "agent-cluster-endpoint")
+	if err != nil {
+		t.Fatalf("load deprecated Endpoint configuration: %v", err)
+	}
+	if cfg.ChannelAddress != "wss://old" || cfg.InstanceID != "old-instance" || len(cfg.Adapters) != 1 || cfg.Adapters[0].AdapterID != "old" {
+		t.Fatalf("deprecated Endpoint names were not loaded: %+v", cfg)
+	}
+	if cfg.CommandAllowlistFile != "/old/allowlist" || cfg.ControlActionFile != "/old/catalog" {
+		t.Fatalf("deprecated Endpoint file names were not loaded: %+v", cfg)
 	}
 }

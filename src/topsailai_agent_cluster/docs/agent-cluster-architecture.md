@@ -279,7 +279,7 @@ The Endpoint must not contain a `switch` on `provider_type`. A provider type tha
 fails closed at startup, exactly as an unknown type does today.
 
 Configuration reaches a provider through `adapter.Config`, including an opaque `Settings` map carried
-in the `AGENT_CLUSTER_ADAPTERS` element. The Endpoint never interprets a `Settings` key. A provider
+in the `AGENT_CLUSTER_ENDPOINT_ADAPTERS` element. The Endpoint never interprets a `Settings` key. A provider
 validates its own keys and fails startup on a malformed value. A provider must not read process
 environment variables for its own configuration, because environment is external configuration read
 once at the process boundary and the Endpoint is that boundary. Reading the environment to construct a

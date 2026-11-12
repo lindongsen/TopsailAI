@@ -58,7 +58,7 @@ provider. This is what keeps it independently buildable and independently testab
 ### What a provider receives
 
 Everything arrives through `adapter.Config`, including an opaque `Settings` map carried in the
-`AGENT_CLUSTER_ADAPTERS` element. The Endpoint never interprets a `Settings` key; the provider validates
+`AGENT_CLUSTER_ENDPOINT_ADAPTERS` element. The Endpoint never interprets a `Settings` key; the provider validates
 its own keys and fails startup on a malformed value.
 
 A provider must not read process environment variables for its own configuration. Environment is
