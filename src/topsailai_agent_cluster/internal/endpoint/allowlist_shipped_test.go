@@ -179,7 +179,7 @@ func TestEndpointTemplateNamesTheInstalledAllowlist(t *testing.T) {
 	if configured == "" {
 		t.Fatalf("the endpoint template must set COMMAND_ALLOWLIST_FILE, otherwise the shipped policy is never used")
 	}
-	if !strings.HasSuffix(configured, "/command-allowlist.conf") {
+	if filepath.Base(configured) != "command-allowlist.conf" {
 		t.Fatalf("the template names %q, but the deployment scripts install command-allowlist.conf", configured)
 	}
 }

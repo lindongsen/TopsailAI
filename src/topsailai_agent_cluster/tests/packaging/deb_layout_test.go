@@ -30,11 +30,21 @@ const debTestSite = "test-site"
 // is how a state directory ends up on a full root filesystem while the operator
 // believes it lives under /opt.
 var debLayoutDirs = map[string]string{
-	debOptDir + "/conf":  "rwxr-xr-x",
-	debOptDir + "/certs": "rwxr-xr-x",
-	debOptDir + "/data":  "rwxr-x---",
-	debOptDir + "/logs":  "rwxr-x---",
-	debOptDir + "/run":   "rwxr-xr-x",
+	debOptDir + "/conf":           "rwxr-xr-x",
+	debOptDir + "/certs":          "rwxr-xr-x",
+	debOptDir + "/data":           "rwxr-x---",
+	debOptDir + "/logs":           "rwxr-x---",
+	debOptDir + "/run":            "rwxr-xr-x",
+	debOptDir + "/conf/server":    "rwxr-xr-x",
+	debOptDir + "/conf/endpoint":  "rwxr-xr-x",
+	debOptDir + "/certs/server":   "rwxr-xr-x",
+	debOptDir + "/certs/endpoint": "rwxr-xr-x",
+	debOptDir + "/data/server":    "rwxr-x---",
+	debOptDir + "/data/endpoint":  "rwxr-x---",
+	debOptDir + "/logs/server":    "rwxr-x---",
+	debOptDir + "/logs/endpoint":  "rwxr-x---",
+	debOptDir + "/run/server":     "rwxr-xr-x",
+	debOptDir + "/run/endpoint":   "rwxr-xr-x",
 }
 
 // debEntry is one path in a package payload. target is empty for a real file or
@@ -437,6 +447,11 @@ func TestDebRolePackagesExposeTheLayoutDirs(t *testing.T) {
 	for _, role := range []string{"server", "endpoint"} {
 		pkg := packages[role]
 		for path, want := range debLayoutDirs {
+			if strings.Contains(path, "/server") || strings.Contains(path, "/endpoint") {
+				if !strings.Contains(path, "/"+role) {
+					continue
+				}
+			}
 			entry, ok := pkg.entries[path]
 			if !ok {
 				t.Fatalf("the %s package is missing the layout directory %s", role, path)
@@ -515,7 +530,8 @@ func TestDebPackagedConfigReferencesEveryShippedConffile(t *testing.T) {
 
 	for _, role := range []string{"config-server", "config-endpoint"} {
 		pkg := packages[role]
-		config := readPackagedFile(t, pkg, "./opt/agent-cluster/conf/node.conf")
+		configRole := strings.TrimPrefix(role, "config-")
+		config := readPackagedFile(t, pkg, "./opt/agent-cluster/conf/"+configRole+"/node.conf")
 
 		if len(pkg.conffiles) == 0 {
 			t.Fatalf("the %s package declares no conffiles", role)
@@ -550,14 +566,14 @@ func TestDebPackagedConfigReferencesEveryShippedConffile(t *testing.T) {
 func TestDebRegistersTLSMaterialAsConffiles(t *testing.T) {
 	packages := buildDebPackages(t)
 
-	want := []string{
-		"/opt/agent-cluster/certs/ca.pem",
-		"/opt/agent-cluster/certs/node.pem",
-		"/opt/agent-cluster/certs/node-key.pem",
-	}
-
 	for _, role := range []string{"config-server", "config-endpoint"} {
 		pkg := packages[role]
+		configRole := strings.TrimPrefix(role, "config-")
+		want := []string{
+			"/opt/agent-cluster/certs/" + configRole + "/ca.pem",
+			"/opt/agent-cluster/certs/" + configRole + "/node.pem",
+			"/opt/agent-cluster/certs/" + configRole + "/node-key.pem",
+		}
 		registered := make(map[string]bool, len(pkg.conffiles))
 		for _, conffile := range pkg.conffiles {
 			registered[conffile] = true
@@ -580,7 +596,8 @@ func TestDebPackagedConfigUsesRelativePaths(t *testing.T) {
 	packages := buildDebPackages(t)
 
 	for _, role := range []string{"config-server", "config-endpoint"} {
-		config := readPackagedFile(t, packages[role], "./opt/agent-cluster/conf/node.conf")
+		configRole := strings.TrimPrefix(role, "config-")
+		config := readPackagedFile(t, packages[role], "./opt/agent-cluster/conf/"+configRole+"/node.conf")
 		for _, absolute := range []string{
 			"/etc/agent-cluster/",
 			"/var/lib/agent-cluster/",
@@ -793,4 +810,18 @@ func hasLineContaining(text string, substrings ...string) bool {
 		}
 	}
 	return false
+}
+
+// TestDebLauncherPreservesLegacyBundlePathBase proves an existing bundle with
+// conf/node.conf still resolves certs/, data/, logs/ and run/ from the bundle
+// root. Role-scoped package configurations resolve from conf/<role>/ instead.
+func TestDebLauncherPreservesLegacyBundlePathBase(t *testing.T) {
+	packages := buildDebPackages(t)
+	launcher := readPackagedFile(t, packages["node"], debOptDir+"/agent-clusterctl")
+	if !strings.Contains(launcher, `CTL_DIR}/conf/node.conf`) {
+		t.Fatal("the launcher no longer detects the legacy conf/node.conf path")
+	}
+	if !hasLineContaining(launcher, `CONFIG_DIR="${CTL_DIR}"`) {
+		t.Fatal("the launcher no longer preserves the bundle root for legacy conf/node.conf")
+	}
 }

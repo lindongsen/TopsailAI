@@ -25,7 +25,7 @@
 #   topsailai_agent_cluster, topsailai2, agent-cluster-node-setup
 #                                  symlinks to the payload above
 #
-# The config package carries conf/node.conf, certs/ca.pem, certs/node.pem and
+# The config package carries conf/<role>/node.conf, certs/ca.pem, certs/node.pem and
 # certs/node-key.pem, plus the endpoint allowlist and control action catalog. It is
 # built per site and is not interchangeable between machines.
 #
@@ -36,9 +36,9 @@
 # operator believes it lives under /opt. dpkg honours a conffile at any absolute
 # path, so an operator edit under conf/ still survives an upgrade.
 #
-# A machine has one role, so the two config packages conflict: they both own
-# /opt/agent-cluster/conf/node.conf and the same TLS paths. A host that must run
-# both roles uses the bundle path instead.
+# Multiple roles may share one product root. Role-specific configuration,
+# certificates, state, logs and pid files live below role directories so the
+# Server and Endpoint packages can coexist on gd-dev.
 #
 # Binaries are built statically (CGO disabled) so the package does not depend on
 # the node libc; the SQLite driver is pure Go, so nothing is lost.
@@ -235,7 +235,7 @@ else
 fi
 # The config role builds the configuration for another role, so every decision
 # that depends on the role being configured reads this value instead of ROLE.
-# Without it a config build would look for conf/node.config.conf.example and
+# Without it a config build would look for conf/<role>/node.config.conf.example and
 # would never append the endpoint-only keys.
 EFFECTIVE_ROLE="${ROLE}"
 [ "${ROLE}" = "config" ] && EFFECTIVE_ROLE="${CONFIG_ROLE}"
@@ -297,7 +297,7 @@ function add_link() {
 # The program payload lives under /opt/agent-cluster, and configuration, TLS
 # material, state, logs and pid files are real directories beside the controller
 # rather than symlinks into /etc, /var/lib, /var/log and /run. The controller
-# resolves every relative path against its own directory, so conf/node.conf,
+# resolves every relative path against its own directory, so conf/<role>/node.conf,
 # certs/, data/, logs/ and run/ resolve without any absolute override in the
 # configuration.
 #
@@ -314,6 +314,11 @@ function add_layout_dirs() {
     add_dir "${OPT_DIR}/data" 0750
     add_dir "${OPT_DIR}/logs" 0750
     add_dir "${OPT_DIR}/run" 0755
+    add_dir "${OPT_DIR}/conf/${EFFECTIVE_ROLE}" 0755
+    add_dir "${OPT_DIR}/certs/${EFFECTIVE_ROLE}" 0755
+    add_dir "${OPT_DIR}/data/${EFFECTIVE_ROLE}" 0750
+    add_dir "${OPT_DIR}/logs/${EFFECTIVE_ROLE}" 0750
+    add_dir "${OPT_DIR}/run/${EFFECTIVE_ROLE}" 0755
 }
 
 # Adds only the directories the config package populates. State, logs and pid
@@ -324,6 +329,8 @@ function add_layout_dirs() {
 function add_config_layout_dirs() {
     add_dir "${OPT_DIR}/conf" 0755
     add_dir "${OPT_DIR}/certs" 0755
+    add_dir "${OPT_DIR}/conf/${EFFECTIVE_ROLE}" 0755
+    add_dir "${OPT_DIR}/certs/${EFFECTIVE_ROLE}" 0755
 }
 
 # Builds one static binary into the package tree.
@@ -398,7 +405,7 @@ function write_control() {
 # directory instead of a directory of links into the policy locations.
 function write_role_config() {
     local template="$1"
-    local config="${OPT_DIR}/conf/node.conf"
+    local config="${OPT_DIR}/conf/${EFFECTIVE_ROLE}/node.conf"
 
     add_file "${template}" "${config}" 0640
 
@@ -414,7 +421,7 @@ function write_role_config() {
             {
                 echo ""
                 echo "# The package ships this conffile beside the controller."
-                echo "COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf"
+                echo "COMMAND_ALLOWLIST_FILE=command-allowlist.conf"
             } >>"${PKG_ROOT}${config}" ||
                 die "cannot append the allowlist path"
         fi
@@ -426,7 +433,7 @@ function write_role_config() {
             {
                 echo ""
                 echo "# The package ships this conffile beside the controller."
-                echo "CONTROL_ACTION_FILE=conf/control-actions.conf"
+                echo "CONTROL_ACTION_FILE=control-actions.conf"
             } >>"${PKG_ROOT}${config}" ||
                 die "cannot append the control action catalog path"
         fi
@@ -452,11 +459,11 @@ function write_role_config() {
     # The allowlist is a conffile too: an operator edits it in place, so an upgrade
     # must not silently replace the policy in force with the shipped default.
     if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
-        echo "${OPT_DIR}/conf/command-allowlist.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+        echo "${OPT_DIR}/conf/${EFFECTIVE_ROLE}/command-allowlist.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
             die "cannot register the allowlist conffile"
         # The catalog is a conffile for the same reason: an operator edits the
         # action surface in place, so an upgrade must not replace it.
-        echo "${OPT_DIR}/conf/control-actions.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+        echo "${OPT_DIR}/conf/${EFFECTIVE_ROLE}/control-actions.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
             die "cannot register the control action catalog conffile"
     fi
     # The TLS material is a conffile for the same reason, and the consequence of
@@ -468,11 +475,11 @@ function write_role_config() {
     # the certificate and the Server rejects the connection, which looks like a
     # network fault. Registering the material keeps the operator's copy in force
     # and leaves the shipped copy as a .dpkg-dist file to compare against.
-    echo "${OPT_DIR}/certs/ca.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+    echo "${OPT_DIR}/certs/${EFFECTIVE_ROLE}/ca.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
         die "cannot register the CA conffile"
-    echo "${OPT_DIR}/certs/node.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+    echo "${OPT_DIR}/certs/${EFFECTIVE_ROLE}/node.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
         die "cannot register the certificate conffile"
-    echo "${OPT_DIR}/certs/node-key.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+    echo "${OPT_DIR}/certs/${EFFECTIVE_ROLE}/node-key.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
         die "cannot register the private key conffile"
     chmod 0644 "${PKG_ROOT}/DEBIAN/conffiles"
 }
@@ -550,11 +557,11 @@ function build_role_package() {
     # the binary alone would leave a service that fails on every start.
     if [ "${ROLE}" = "endpoint" ]; then
         write_control "agent-cluster-node (= ${CONTROL_VERSION}), agent-cluster-config-endpoint (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
-            "agent-cluster-server" \
+            "" \
             "Agent Cluster endpoint daemon and operator CLI"
     else
         write_control "agent-cluster-node (= ${CONTROL_VERSION}), agent-cluster-config-server (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
-            "agent-cluster-endpoint" \
+            "" \
             "Agent Cluster server daemon"
     fi
 }
@@ -575,21 +582,21 @@ function build_config_package() {
     resolve_tls
 
     write_role_config "${template}"
-    add_file "${CA}" "${OPT_DIR}/certs/ca.pem" 0644
-    add_file "${CERT}" "${OPT_DIR}/certs/node.pem" 0644
-    add_file "${KEY}" "${OPT_DIR}/certs/node-key.pem" 0600
+    add_file "${CA}" "${OPT_DIR}/certs/${EFFECTIVE_ROLE}/ca.pem" 0644
+    add_file "${CERT}" "${OPT_DIR}/certs/${EFFECTIVE_ROLE}/node.pem" 0644
+    add_file "${KEY}" "${OPT_DIR}/certs/${EFFECTIVE_ROLE}/node-key.pem" 0600
     # The endpoint configuration names conf/command-allowlist.conf, which is a real
     # file beside the controller. Without it the Endpoint refuses to start, because
     # a missing allowlist is a configuration error rather than an implicit
     # unrestricted policy.
     if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         add_file "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
-            "${OPT_DIR}/conf/command-allowlist.conf" 0640
+            "${OPT_DIR}/conf/${EFFECTIVE_ROLE}/command-allowlist.conf" 0640
         # The control action catalog is the only source of ctl. actions. A missing
         # file fails closed by advertising no ctl. action, so the package ships the
         # reviewed catalog to keep the feature available on a fresh install.
         add_file "${PROJECT_DIR}/conf/control-actions.conf.example" \
-            "${OPT_DIR}/conf/control-actions.conf" 0640
+            "${OPT_DIR}/conf/${EFFECTIVE_ROLE}/control-actions.conf" 0640
         # The CLI env file is written from node.conf, so the hook belongs to the
         # package that installs node.conf rather than to the binary package.
         add_file "${SCRIPT_DIR}/deb/postinst.endpoint" "/DEBIAN/postinst" 0755
@@ -604,11 +611,11 @@ function build_config_package() {
     # every site without naming any of them.
     if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
-            "agent-cluster-config-server" \
+            "" \
             "Agent Cluster endpoint configuration and TLS identity for site ${SITE}"
     else
         write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
-            "agent-cluster-config-endpoint" \
+            "" \
             "Agent Cluster server configuration and TLS identity for site ${SITE}"
     fi
 }

@@ -62,7 +62,7 @@ IMAGE_CERTS_DIR := /opt/agent-cluster/certs
 # directory, so it is the single state location for both the packaged node and the
 # container.
 IMAGE_DATA_DIR := /opt/agent-cluster/data
-IMAGE_TOKEN := $(shell sed -n 's/^AUTH_TOKEN=//p' /opt/agent-cluster/conf/node.conf 2>/dev/null | head -1)
+IMAGE_TOKEN := $(shell sed -n 's/^AUTH_TOKEN=//p' /opt/agent-cluster/conf/server/node.conf 2>/dev/null | head -1)
 
 SERVER_PKG := ./src/main/agent-cluster-server
 ENDPOINT_PKG := ./src/main/agent-cluster-endpoint

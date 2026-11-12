@@ -28,11 +28,11 @@ which of them is authoritative:
 
 | Deployment | Configuration source | Consequence |
 |---|---|---|
-| Bundle | `conf/node.conf`, read by `scripts/agent-clusterctl` and passed as flags | the conffile is authoritative for every key the launcher forwards, and the environment is not consulted for those keys |
-| Debian package | `/opt/agent-cluster/conf/node.conf` and the TLS material, installed by the role's config package and registered as conffiles | an upgrade does not replace the operator's file or certificate |
+| Bundle | `conf/<role>/node.conf`, read by `scripts/agent-clusterctl` and passed as flags | the selected role conffile is authoritative for every key the launcher forwards |
+| Debian package | `/opt/agent-cluster/conf/<role>/node.conf` and role-scoped TLS material, installed by the role config package and registered as conffiles | an upgrade does not replace the operator's file or certificate |
 | Container image | `ENV` in `docker/Dockerfile` plus `-e` at run time | no conffile exists, so the environment is the only source |
 
-Both node deployments use the same file name, `conf/node.conf`; `conf/node.server.conf.example` and
+Node deployments use `conf/<role>/node.conf`; `conf/node.server.conf.example` and
 `conf/node.endpoint.conf.example` are the role templates the config package copies into place. The
 binary packages carry no configuration, so `agent-cluster-config-server-<site>` and
 `agent-cluster-config-endpoint-<site>` are the only artifacts that differ between machines. The site

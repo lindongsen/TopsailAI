@@ -32,9 +32,9 @@ set -uo pipefail
 CTL_DIR=$(dirname "$(readlink -f "$0")")
 
 # The configuration is always beside the controller: a copied bundle keeps
-# conf/node.conf in the bundle, and the package installs conf as a real directory
+# conf/<role>/node.conf in the bundle, and the package installs role-scoped conf directories
 # beside the controller. One rule therefore serves both layouts.
-CONFIG_FILE="${CTL_DIR}/conf/node.conf"
+CONFIG_FILE=""
 ACTION=""
 
 function die() {
@@ -64,13 +64,43 @@ done
 
 [ -n "${ACTION}" ] || usage
 
-# Expands a configured path against the bundle root unless it is already absolute.
+# Selects a configuration when the caller did not provide -c. A shared product
+# root may contain both roles, so an ambiguous default is rejected instead of
+# silently starting the wrong daemon.
+function select_default_config() {
+    local candidates=()
+    local candidate
+    for candidate in "${CTL_DIR}/conf/server/node.conf" "${CTL_DIR}/conf/endpoint/node.conf" "${CTL_DIR}/conf/node.conf"; do
+        [ -f "${candidate}" ] && candidates+=("${candidate}")
+    done
+    if [ "${#candidates[@]}" -eq 1 ]; then
+        CONFIG_FILE="${candidates[0]}"
+        return
+    fi
+    if [ "${#candidates[@]}" -eq 0 ]; then
+        die "no role configuration found below ${CTL_DIR}/conf; pass -c <config>"
+    fi
+    die "multiple role configurations found; pass -c <server-or-endpoint-config>"
+}
+
+[ -n "${CONFIG_FILE}" ] || select_default_config
+CONFIG_DIR=$(dirname "${CONFIG_FILE}")
+# Legacy bundles stored one configuration at conf/node.conf and defined paths
+# from the bundle root. Preserve that base while role-scoped configurations use
+# their own directory, so existing bundles remain runnable during migration.
+if [ "$(readlink -m "${CONFIG_FILE}")" = "$(readlink -m "${CTL_DIR}/conf/node.conf")" ]; then
+    CONFIG_DIR="${CTL_DIR}"
+fi
+
+# Expands a configured path against the selected configuration directory unless
+# it is already absolute. This keeps a bundle and a co-located package identical:
+# conf/node.conf uses ../certs, ../data and so on, while role files remain isolated.
 function resolve_path() {
     local value="$1"
     case "${value}" in
         /*) echo "${value}" ;;
         "") echo "" ;;
-        *) echo "${CTL_DIR}/${value}" ;;
+        *) echo "${CONFIG_DIR}/${value}" ;;
     esac
 }
 
@@ -149,10 +179,12 @@ function load_config() {
     ENDPOINT_ACCESS_POLICY_DIR=$(resolve_path "${ENDPOINT_ACCESS_POLICY_DIR:-}")
 }
 
-# Reports the binary serving the configured role.
+# Reports the binary serving the configured role. The default is relative to
+# the selected role configuration, so conf/<role>/node.conf reaches the shared
+# executable directory at ../../bin.
 function role_binary() {
     local name="agent-cluster-${ROLE}"
-    local configured="${BINARY:-bin/${name}}"
+    local configured="${BINARY:-../../bin/${name}}"
     resolve_path "${configured}"
 }
 

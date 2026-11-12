@@ -12,15 +12,15 @@ The implementation is functional but still under active development. The design 
 
 A node is provisioned from Debian packages. The payload is split into a binary package that is
 identical on every machine and a configuration package that carries this site's identity. Five
-packages exist because a machine has one role and each role has two packages.
+packages provide the shared controller, role binaries, and role-specific site configuration; a machine may run both roles under one product root.
 
 | Package | Installs | Role |
 |---|---|---|
 | `agent-cluster-node` | `agent-clusterctl`, `agent-cluster-node-setup`, the shared env writer | controller, required by every other package |
 | `agent-cluster-server` | `agent-cluster-server` | Server daemon binary |
 | `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` and `topsailai2` (symlinks) | Endpoint daemon and operator CLI binaries |
-| `agent-cluster-config-server-<site>` | `conf/node.conf`, `certs/ca.pem`, `certs/node.pem`, `certs/node-key.pem` | Server site configuration and TLS identity |
-| `agent-cluster-config-endpoint-<site>` | the same four files plus `conf/command-allowlist.conf` and `conf/control-actions.conf` | Endpoint site configuration and TLS identity |
+| `agent-cluster-config-server-<site>` | `conf/server/node.conf`, `certs/server/ca.pem`, `certs/server/node.pem`, `certs/server/node-key.pem` | Server site configuration and TLS identity |
+| `agent-cluster-config-endpoint-<site>` | `conf/endpoint/node.conf`, `certs/endpoint/*`, `conf/endpoint/command-allowlist.conf` and `conf/endpoint/control-actions.conf` | Endpoint site configuration and TLS identity |
 
 The split exists because a site replaces the shipped certificate with its own identity, and a
 certificate that lives in the binary package is overwritten on every upgrade. Keeping the identity
@@ -35,10 +35,10 @@ machine carries. Each suffixed package also provides the unsuffixed name as a vi
 generic binary package depends on one stable name and never names a site.
 
 A binary package depends on the matching config package exactly, because the daemon cannot start
-without `node.conf` and its TLS material. The two config packages conflict with each other, because
-they install the same `node.conf` and the same certificate paths; a host that must run both roles
-uses the bundle path instead. The conflict names the unsuffixed virtual package, so one entry covers
-every site.
+without `node.conf` and its TLS material. The two config packages do not conflict: their conffiles and TLS paths are role-scoped, so Server and
+Endpoint can run together on gd-dev. Each role is selected explicitly with
+`agent-clusterctl -c /opt/agent-cluster/conf/<role>/node.conf`; omitting `-c` is rejected when both
+role configurations exist.
 
 Every installed file is visible in one real directory. The program payload, configuration, TLS
 material, state, logs and pid files all live under `/opt/agent-cluster`, and each entry point is a
@@ -51,11 +51,16 @@ symlink in `/usr/local/sbin`, which is on the default `PATH`:
   bin/agent-cluster-cli         operator CLI          (endpoint binary package)
   bin/agent-cluster-node-setup  env-file regenerator  (node package)
   lib/cli-env.sh                shared env writer     (node package)
-  conf/                         configuration         (config package)
-  certs/                        TLS material          (config package)
-  data/                         SQLite state          (created at runtime)
-  logs/                         log files             (created at runtime)
-  run/                          pid files             (created at runtime)
+  conf/server/node.conf        Server configuration   (server config package)
+  conf/endpoint/node.conf       Endpoint configuration (endpoint config package)
+  certs/server/                 Server TLS material   (server config package)
+  certs/endpoint/               Endpoint TLS material (endpoint config package)
+  data/server/                  Server SQLite state   (created at runtime)
+  data/endpoint/                Endpoint SQLite state (created at runtime)
+  logs/server/                  Server logs           (created at runtime)
+  logs/endpoint/                Endpoint logs         (created at runtime)
+  run/server/                   Server pid files      (created at runtime)
+  run/endpoint/                 Endpoint pid files   (created at runtime)
 ```
 
 The binary package owns the program payload and declares all six layout directories (`bin/`, `conf/`,
@@ -72,8 +77,9 @@ operator believes it lives under `/opt`. One real tree also makes backup, remova
 single-path operation. `dpkg` honours a conffile at any absolute path, so an operator edit under
 `conf/` still survives an upgrade.
 
-The controller finds its configuration beside itself in both the bundle and the package layout, and
-the configuration keeps the same relative paths in both.
+The controller selects a role configuration explicitly in the co-located package layout. A standalone
+bundle contains one `conf/<role>/node.conf`, which the controller can select automatically. Relative
+paths are resolved from the selected role configuration directory.
 
 A bundle install is not the same file set. `install-node.sh` copies only the role binary and, for
 an endpoint, the operator CLI into `/opt/agent-cluster/bin`, then links them from
