@@ -277,3 +277,55 @@ func TestControlActionsUseTheSafetyClassVocabulary(t *testing.T) {
 		t.Fatalf("a control action must declare a valid safety class: %v", err)
 	}
 }
+
+// TestModelCatalogReportsCurrentStateAsUnknown proves the adapter states that it did
+// not observe which profile the session is using.
+//
+// The provider's `models list --json` document describes the registry, not the
+// runtime: it carries no field naming the model a session is using. Reporting
+// "unknown" states that honestly, where the zero value would claim the session is
+// using no profile at all. The assertion covers every published profile, because a
+// single populated row would be enough to make the column look trustworthy.
+func TestModelCatalogReportsCurrentStateAsUnknown(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`[{"id":"m1","name":"claude","protocol":"openai-compatible"},{"id":"m2","name":"gpt","protocol":"openai-compatible"},{"id":"m3","name":"legacy","protocol":"openai-compatible","enabled":false}]`)}
+	instance := newTestAdapter(t, runner)
+	sessionID := mintSession(t, instance)
+	catalog, err := instance.ModelCatalog(context.Background(), modelCatalogQuery(sessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Profiles) != 3 {
+		t.Fatalf("expected 3 profiles, got %d", len(catalog.Profiles))
+	}
+	for index, profile := range catalog.Profiles {
+		if profile.CurrentState != protocol.ModelCurrentUnknown {
+			t.Fatalf("profile %d current state = %q, want %q", index, profile.CurrentState, protocol.ModelCurrentUnknown)
+		}
+		if err := protocol.ValidateModelCurrentState(profile.CurrentState); err != nil {
+			t.Fatalf("profile %d published an invalid current state: %v", index, err)
+		}
+	}
+}
+
+// TestModelCatalogNeverClaimsADefiniteCurrentState proves the adapter cannot report
+// "yes" or "no" from a document that carries no current-model field.
+//
+// This is the regression guard for the original defect: the column was always "no"
+// because the field was never assigned. A test that only asserted "not yes" would
+// pass on that defect, so the assertion names the exact expected value.
+func TestModelCatalogNeverClaimsADefiniteCurrentState(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`[{"id":"m1","name":"claude","protocol":"openai-compatible"}]`)}
+	instance := newTestAdapter(t, runner)
+	sessionID := mintSession(t, instance)
+	catalog, err := instance.ModelCatalog(context.Background(), modelCatalogQuery(sessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Profiles) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(catalog.Profiles))
+	}
+	switch catalog.Profiles[0].CurrentState {
+	case protocol.ModelCurrentYes, protocol.ModelCurrentNo:
+		t.Fatalf("the registry document cannot prove a current model, got %q", catalog.Profiles[0].CurrentState)
+	}
+}

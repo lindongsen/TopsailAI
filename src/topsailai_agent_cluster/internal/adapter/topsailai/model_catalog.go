@@ -100,8 +100,13 @@ func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQ
 		result.Profiles = append(result.Profiles, protocol.ModelProfile{
 			ModelProfileID:      profileID,
 			ProviderDisplayName: boundedModelDisplayName(entry.Name),
-			Available:           available,
-			UnavailableReason:   reason,
+			// The provider's `models list --json` document describes the registry,
+			// not the runtime: it carries no field naming the model a session is
+			// using. Reporting "unknown" states that observation honestly, where a
+			// zero value would claim the session is using nothing.
+			CurrentState:      protocol.ModelCurrentUnknown,
+			Available:         available,
+			UnavailableReason: reason,
 		})
 	}
 	return result, nil

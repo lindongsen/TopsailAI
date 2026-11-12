@@ -31,6 +31,8 @@ var featurePaths = []string{
 	"../../features/endpoint_access_policy.feature",
 	"../../features/messages.feature",
 	"../../features/model_command.feature",
+	"../../features/endpoint_permission_matrix.feature",
+	"../../features/endpoint_query_permission_matrix.feature",
 }
 
 // TestFeatures runs the strict real-boundary BDD suite.
@@ -80,6 +82,9 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerQReturnsToWorkspaceSteps(ctx)
 	registerMessagesSteps(ctx)
 	registerModelSteps(ctx)
+	registerEndpointPermissionMatrixSteps(ctx)
+	registerEndpointControlActionSteps(ctx)
+	registerEndpointQueryPermissionSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone

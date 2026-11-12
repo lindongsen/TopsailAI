@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -153,5 +154,65 @@ func TestValidateModelSelectPayloadRejectsMalformedJSON(t *testing.T) {
 		if _, err := ValidateModelSelectPayload([]byte(payload)); err == nil {
 			t.Fatalf("expected %q to be rejected", payload)
 		}
+	}
+}
+
+// TestValidateModelCurrentStateAcceptsClosedVocabulary pins the three standard
+// values. The vocabulary is closed because the value states a fact about the
+// session, and a free-form string would let an adapter invent a fourth answer the
+// renderer cannot interpret.
+func TestValidateModelCurrentStateAcceptsClosedVocabulary(t *testing.T) {
+	for _, value := range []string{ModelCurrentYes, ModelCurrentNo, ModelCurrentUnknown} {
+		if err := ValidateModelCurrentState(value); err != nil {
+			t.Fatalf("expected %q to be accepted, got %v", value, err)
+		}
+	}
+}
+
+// TestValidateModelCurrentStateRejectsUnknownValue proves an unrecognized value is
+// rejected rather than guessed at.
+//
+// The empty string is included deliberately: it is what a document that omits the
+// field decodes to, and accepting it would let an absent observation pass as a
+// classified one.
+func TestValidateModelCurrentStateRejectsUnknownValue(t *testing.T) {
+	for _, value := range []string{"", "YES", "No", "true", "false", "maybe", "not_observed"} {
+		if err := ValidateModelCurrentState(value); err == nil {
+			t.Fatalf("expected %q to be rejected", value)
+		}
+	}
+}
+
+// TestModelCurrentUnknownIsNotADefiniteNegative pins the distinction the whole
+// tri-state exists for.
+//
+// "unknown" and "no" must stay different values, because only one of them is a
+// claim about the session. Collapsing them would restore the defect this vocabulary
+// was introduced to remove: a provider that reports nothing would be rendered as
+// "this session is using no profile".
+func TestModelCurrentUnknownIsNotADefiniteNegative(t *testing.T) {
+	if ModelCurrentUnknown == ModelCurrentNo {
+		t.Fatal("unknown and no must be different values")
+	}
+	if ModelCurrentUnknown == ModelCurrentYes {
+		t.Fatal("unknown and yes must be different values")
+	}
+	if ModelCurrentYes == ModelCurrentNo {
+		t.Fatal("yes and no must be different values")
+	}
+}
+
+// TestModelProfileCurrentStateHasNoOmitEmpty pins the wire shape of the new field.
+//
+// The field must always be serialized, because an omitted key would decode to the
+// empty string, and a consumer that treats an absent value as "no" would silently
+// reintroduce the definite negative this field exists to avoid.
+func TestModelProfileCurrentStateHasNoOmitEmpty(t *testing.T) {
+	encoded, err := json.Marshal(ModelProfile{ModelProfileID: "mp-1", Available: true})
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"current_state"`) {
+		t.Fatalf("encoded profile = %s, want the current_state key always present", encoded)
 	}
 }

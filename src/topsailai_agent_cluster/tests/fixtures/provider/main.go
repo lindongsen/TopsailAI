@@ -111,8 +111,18 @@ func main() {
 		os.Exit(2)
 	}
 	result := response{Complete: true}
-	if *mode == "one" {
+	switch *mode {
+	case "one":
 		result.Sessions = []map[string]string{{"session_id": "fixture-session", "generation": "fixture-generation", "state": "idle", "agent_id": "fixture-agent"}}
+	case "mixed":
+		// A resume authorizes on the absence of a live target, so a scenario that
+		// proves resume reaches the policy hook needs a row the provider lists but
+		// cannot prove is running. The live row stays first because the inventory
+		// resolver reads the first session as the default target.
+		result.Sessions = []map[string]string{
+			{"session_id": "fixture-session", "generation": "fixture-generation", "state": "idle", "agent_id": "fixture-agent"},
+			{"session_id": "stopped-session", "generation": "", "state": "stopped", "agent_id": "fixture-agent"},
+		}
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(result)
 }

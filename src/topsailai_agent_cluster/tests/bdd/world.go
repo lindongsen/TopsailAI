@@ -146,9 +146,50 @@ func (w *World) SubmitRealCommandWithID(commandID, operation, target, generation
 }
 
 func (w *World) submitRealCommand(commandID, operation, target, generation, payload string) (string, error) {
+	return w.submitRealCommandWithToken(commandID, commandSubmission{Operation: operation, Target: target, Generation: generation, Payload: payload})
+}
+
+// commandSubmission describes one immutable command a scenario submits.
+//
+// The two version fields are separate because they are separate contract values:
+// operation_version is what the Endpoint matches against the advertised
+// capability version, while payload_schema_version is what the adapter uses to
+// decode the payload. command.exec and agent.model.select declare "1" for both,
+// so a helper that derived one from the other would look correct today and break
+// the first time an operation versions them independently.
+type commandSubmission struct {
+	Operation            string
+	Target               string
+	Generation           string
+	Payload              string
+	OperationVersion     string
+	PayloadSchemaVersion string
+	EndpointToken        string
+}
+
+// SubmitRealCommandWithToken submits one immutable command that presents an
+// Endpoint token and caller-selected contract versions.
+//
+// The Endpoint token is the second, independent credential the Endpoint verifies,
+// so a scenario that proves authorization has to present one; the Server forwards
+// it unchanged and never interprets it as permission.
+func (w *World) SubmitRealCommandWithToken(submission commandSubmission) (string, error) {
+	return w.submitRealCommandWithToken(fmt.Sprintf("bdd-real-%d", time.Now().UnixNano()), submission)
+}
+
+func (w *World) submitRealCommandWithToken(commandID string, submission commandSubmission) (string, error) {
 	if w.realCluster == nil {
 		return "", fmt.Errorf("real cluster is not running")
 	}
+	operationVersion := submission.OperationVersion
+	if operationVersion == "" {
+		operationVersion = "v1"
+	}
+	payloadSchemaVersion := submission.PayloadSchemaVersion
+	if payloadSchemaVersion == "" {
+		payloadSchemaVersion = "v1"
+	}
+	target, generation := submission.Target, submission.Generation
 	if target != "" {
 		resolvedTarget, resolvedGeneration, err := w.resolveRealTarget(target, generation)
 		if err != nil {
@@ -157,18 +198,25 @@ func (w *World) submitRealCommand(commandID, operation, target, generation, payl
 		target, generation = resolvedTarget, resolvedGeneration
 	}
 	var raw json.RawMessage
-	if payload == "" {
+	if submission.Payload == "" {
 		raw = json.RawMessage(`{}`)
-	} else if !json.Valid([]byte(payload)) {
+	} else if !json.Valid([]byte(submission.Payload)) {
 		return "", fmt.Errorf("invalid command payload")
 	} else {
-		raw = json.RawMessage(payload)
+		raw = json.RawMessage(submission.Payload)
 	}
-	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": "fixture-main", "operation": operation, "operation_version": "v1", "capability_revision": "v1", "payload_schema_version": "v1", "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
+	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": "fixture-main", "operation": submission.Operation, "operation_version": operationVersion, "capability_revision": "v1", "payload_schema_version": payloadSchemaVersion, "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
+	// agent.start is the only operation that carries a profile revision, and the
+	// Endpoint compares it against the descriptor revision before the policy hook
+	// runs. Omitting it would reject every start with profile_revision_mismatch,
+	// so a start scenario would pass while proving nothing about authorization.
+	if submission.Operation == protocol.OperationAgentStart {
+		intent["profile_revision"] = "v1"
+	}
 	if target != "" {
 		intent["target"] = map[string]any{"kind": "session", "resource_id": target, "provider_generation": generation}
 	}
-	status, body, err := w.realRequestE(http.MethodPost, "/api/v1/commands", intent)
+	status, body, err := w.realCluster.RequestWithEndpointTokenE(http.MethodPost, "/api/v1/commands", intent, submission.EndpointToken)
 	if err != nil {
 		return "", err
 	}
@@ -178,9 +226,16 @@ func (w *World) submitRealCommand(commandID, operation, target, generation, payl
 	return commandID, nil
 }
 
-// resolveRealTarget translates the fixture provider key into the opaque resource ID published by inventory.
+// resolveRealTarget translates a fixture provider session key into the opaque
+// resource ID published by inventory.
+//
+// Two fixture keys are resolved. fixture-session is the live row. stopped-session
+// is the row the provider lists without proving a live process, and it exists
+// because agent.resume authorizes on the absence of a live target: a resume
+// scenario that used the live row would be refused by target validation before
+// the policy hook ever ran, so it would prove nothing about authorization.
 func (w *World) resolveRealTarget(target, generation string) (string, string, error) {
-	if target != "fixture-session" {
+	if target != "fixture-session" && target != "stopped-session" {
 		return target, generation, nil
 	}
 	report, err := w.RealInventory()
@@ -191,9 +246,9 @@ func (w *World) resolveRealTarget(target, generation string) (string, string, er
 	if !ok || len(data) == 0 {
 		return "", "", fmt.Errorf("resolve fixture resource: inventory has no sessions")
 	}
-	session, ok := data[0].(map[string]any)
+	session, ok := findInventorySession(data, target)
 	if !ok {
-		return "", "", fmt.Errorf("resolve fixture resource: invalid session record")
+		return "", "", fmt.Errorf("resolve fixture resource: inventory has no session %q", target)
 	}
 	resourceID, ok := session["cluster_session_id"].(string)
 	if !ok || resourceID == "" {
@@ -203,6 +258,29 @@ func (w *World) resolveRealTarget(target, generation string) (string, string, er
 		generation = value
 	}
 	return resourceID, generation, nil
+}
+
+// findInventorySession locates one reported session by its provider session key.
+//
+// The live fixture row is also the first row, so a report that omits
+// provider_session_id keeps resolving fixture-session to the first row exactly as
+// before. The stopped row is only ever found by its provider key, because it is
+// deliberately not the first row.
+func findInventorySession(sessions []any, providerSessionID string) (map[string]any, bool) {
+	for _, entry := range sessions {
+		session, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if value, ok := session["provider_session_id"].(string); ok && value == providerSessionID {
+			return session, true
+		}
+	}
+	if providerSessionID != "fixture-session" {
+		return nil, false
+	}
+	session, ok := sessions[0].(map[string]any)
+	return session, ok
 }
 
 // realRequestE performs a real-cluster request without terminating the BDD test process.

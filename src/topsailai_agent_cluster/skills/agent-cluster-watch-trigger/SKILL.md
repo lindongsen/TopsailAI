@@ -1,7 +1,7 @@
 ---
 name: agent-cluster-watch-trigger
-description: Use when a user wants a local script to run automatically when a watched Agent Cluster session becomes blocked on input, or when they ask what environment variables such a script receives, why it did not run, or how to make `watch --trigger` fire. Covers the `watch --trigger` command surface, the default script path, the thirteen `AGENT_CLUSTER_*` payload variables, the whitelisted child environment, the five second timeout, the foreground-only limits of the mechanism, and a ready-to-install Python script that rings one terminal bell on `running -> waiting_input`.
-version: 1.1.0
+description: Use when a user wants a local script to run automatically when a watched Agent Cluster session becomes blocked on input, or when they ask what environment variables such a script receives, why it did not run, how to make `watch --trigger` fire, or how to add a reaction of their own. Covers the `watch --trigger` command surface, the default script path, the thirteen `AGENT_CLUSTER_*` payload variables, the whitelisted child environment, the five second timeout, the foreground-only limits of the mechanism, and the shipped generic executor that dispatches on the state transition and runs one independent behaviour script per reaction (a system bell sound and a desktop notification popup on `running -> waiting_input`).
+version: 1.3.0
 author: DawsonLin
 license: Apache-2.0
 metadata:
@@ -189,57 +189,152 @@ curl -sS -X POST https://example.invalid/hook \
 notify-send "agent needs input" "$AGENT_CLUSTER_SESSION_NAME"
 ```
 
-### Ring the terminal bell
+### The executor and its behaviour scripts
 
-The shipped script `scripts/watch-trigger-bell.py` rings one bell on the documented
-transition. It is the smallest useful trigger, and it demonstrates the only channel that
-actually reaches the operator.
+The shipped trigger is split in two, and the split is the point:
 
-```python
-import signal
+| File | Role | Owns |
+|---|---|---|
+| `scripts/watch-trigger-exec.py` | Executor | **When** something runs. It reads the transition, resolves the behaviour directory, and runs every behaviour in it under one deadline. |
+| `scripts/behaviours/<previous>_to_<state>/<name>` | Behaviour | **What** runs. One reaction per file: a sound, a popup, a log line, a chat message. |
+| `scripts/behaviours/_desktop.py` | Shared helper | Desktop session discovery used by more than one behaviour. It is not a behaviour, so the executor never runs it. |
 
-PREVIOUS_STATE = "running"
-STATE = "waiting_input"
-BELL = b"\a"
-TERMINAL_DEVICE = "/dev/tty"
+The executor contains no reaction and no transition-specific condition. Adding a reaction is a
+new file in a transition directory, not an edit to shared code. That is what keeps the two
+concerns from drifting: a behaviour cannot change *when* it runs, and the executor cannot change
+*what* a reaction does.
 
-
-def should_ring(previous_state, state):
-    """Return True only for the running -> waiting_input transition."""
-    return previous_state == PREVIOUS_STATE and state == STATE
-
-
-def ring():
-    """Write one bell to the controlling terminal."""
-    try:
-        signal.signal(signal.SIGTTOU, signal.SIG_IGN)
-    except (AttributeError, ValueError, OSError):
-        pass
-    try:
-        with open(TERMINAL_DEVICE, "wb", buffering=0) as terminal:
-            terminal.write(BELL)
-        return True
-    except OSError:
-        return False
+```text
+scripts/
+- watch-trigger-exec.py
+- behaviours/
+  - _desktop.py
+  - running_to_waiting_input/
+    - bell.py
+    - notify.py
 ```
 
-`scripts/watch-trigger-bell.py` is the complete file; read it rather than retyping this
-excerpt, so the installed script and the documented behaviour cannot drift apart.
+### The transition key
 
-Three details make it correct rather than merely short:
+A behaviour directory is named after the transition it reacts to:
 
-- **It writes to `/dev/tty`, not to stdout.** `print("\a")` would be captured and discarded
-  with the rest of the script's output, so the operator would hear nothing. The terminal
-  device is the only channel the runner does not own.
-- **It ignores `SIGTTOU`.** The runner puts the script in its own process group, so a
-  terminal with `TOSTOP` set would otherwise stop the script on that write.
-- **A missing terminal is not a failure.** The script exits 0 without a bell, because a
-  headless run has no operator to alert and a non-zero exit would only add a diagnostic row
-  to the table.
+```text
+<AGENT_CLUSTER_PREVIOUS_STATE>_to_<AGENT_CLUSTER_STATE>
+```
 
-The state check is a guard, not a second detection path: `watch` already fires only on
-`running -> waiting_input`. It keeps the script correct when it is invoked by hand or by a
-future caller, and it costs one string comparison.
+So `running -> waiting_input` resolves to `running_to_waiting_input/`.
+
+The separator is `_to_` rather than `->` on purpose. A directory name is also a shell word, and
+`->` is a redirection operator: `cd running->waiting_input` would create a file named
+`waiting_input` instead of entering a directory. A key that cannot be typed into a shell is a key
+that will be mistyped during debugging.
+
+An empty state becomes `unknown`, so a partial payload resolves to a real directory name instead
+of a name with a hole in it.
+
+### Behaviour resolution
+
+The executor searches these roots in order, and a file name is the behaviour identity:
+
+| Order | Root | Purpose |
+|---|---|---|
+| 1 | `$AGENT_CLUSTER_TRIGGER_BEHAVIOURS` | Explicit override, for running the executor by hand. |
+| 2 | `$HOME/.topsailai/topsailai-agent-cluster.triggers` | Per-user additions and overrides. |
+| 3 | `scripts/behaviours` beside the executor | The shipped reactions. |
+
+A user file **shadows** a shipped file of the same name rather than running beside it. Without
+that rule, overriding `notify.py` would fire two popups, and a double-fire is the one failure a
+user cannot see by reading the code. Files whose names begin with `_` or `.` are skipped, which is
+how `_desktop.py` stays a helper instead of becoming a behaviour.
+
+The override variable exists for hand runs only. The trigger runner builds the child environment
+from a whitelist, so it never reaches a script in normal operation; behaviour discovery is
+path-based for that reason.
+
+### Behaviour execution
+
+| Property | Behaviour |
+|---|---|
+| Invocation | One argv array per behaviour, never a shell. |
+| Executable file | Run directly, so the kernel honours its own shebang and a behaviour may be written in any language. |
+| Non-executable `.py` | Run through the executor's interpreter instead of being skipped, because a missing mode bit is a packaging mistake rather than an intent. |
+| Process group | Each behaviour runs in its own session, so a timeout kills the behaviour **and everything it started**. |
+| Deadline | One four-second budget shared by every behaviour in the dispatch, below the runner's five-second kill. |
+| Output | Discarded. The editor owns the terminal. |
+| Failure | Ignored. One behaviour cannot prevent the next one from running. |
+| Exit | Always 0, so a headless run never adds a diagnostic row to the table. |
+
+The shared budget is a deliberate trade: a behaviour that spends it leaves nothing for the next
+one. A bounded total matters more than every behaviour getting a turn, because the runner kills
+the whole group at five seconds regardless.
+
+### The shipped behaviours
+
+`running_to_waiting_input/bell.py` plays the system bell sound. `running_to_waiting_input/notify.py`
+raises a desktop notification popup. Both are external channels, because the runner captures and
+discards the script's terminal streams and a terminal BEL was not audible to the operator.
+
+```python
+def behaviour_files(key):
+    """Return the behaviour files for one transition, highest precedence first."""
+    selected = {}
+    for root in behaviour_roots():
+        directory = os.path.join(root, key)
+        if not os.path.isdir(directory):
+            continue
+        for name in sorted(os.listdir(directory)):
+            if name.startswith(".") or name.startswith("_"):
+                continue
+            path = os.path.join(directory, name)
+            if not os.path.isfile(path):
+                continue
+            selected.setdefault(name, path)
+    return [selected[name] for name in sorted(selected)]
+```
+
+Read the shipped files rather than retyping this excerpt, so the installed scripts and the
+documented behaviour cannot drift apart.
+
+The popup body names the session and the Endpoint, for example
+`demo-session on ai-dev is waiting for input`. It is built from `AGENT_CLUSTER_SESSION_NAME` and
+`AGENT_CLUSTER_ENDPOINT_ID`, and it degrades to a generic sentence when either is empty, so a
+popup never shows a dangling `on`. The title and the phrase come from the observed state rather
+than from a hardcoded transition, so the same file reads correctly under any transition directory;
+an unrecognised state falls back to naming the transition itself instead of inventing a sentence
+that would be wrong.
+
+Six details make the pair correct rather than merely short:
+
+- **They find the real PulseAudio socket.** The trigger environment deliberately omits
+  `PULSE_SERVER`, so the behaviour discovers accessible `/tmp/pulse-*/native` sockets instead
+  of relying on the caller's default.
+- **They find the real session bus.** The trigger environment is a whitelist, so it carries no
+  `DBUS_SESSION_BUS_ADDRESS` and no `DISPLAY`. A bare `notify-send` therefore fails with
+  `Cannot autolaunch D-Bus without X11 $DISPLAY`, which is why the behaviour discovers the bus
+  itself: it checks `/run/user/<uid>/bus` and also reads `DBUS_SESSION_BUS_ADDRESS` from the
+  processes of the desktop account. The second source is required, not redundant: a desktop
+  session started by a display manager publishes an abstract socket such as
+  `unix:abstract=/tmp/dbus-XXXXXXXX`, and `/run/user/<uid>/bus` does not exist on such a host.
+- **They send as the desktop account when needed.** A session bus refuses a connection from
+  another account, and the refusal is reported as `The connection is closed` rather than as a
+  permission error. A root-owned trigger therefore drops only the notification subprocess to the
+  desktop account's UID and primary group, so the popup reaches the session the operator is
+  actually looking at.
+- **They share one deadline.** The runner kills the whole process group after five seconds, so
+  every behaviour draws from one four-second budget instead of each taking its own timeout. A slow
+  audio service therefore cannot consume the time the popup needs.
+- **Missing desktop support is not a failure.** Both behaviours exit 0 when `paplay`,
+  `notify-send`, a sound file, an audio socket or a reachable session bus is unavailable, because a
+  headless run has no operator to alert and a non-zero exit would only add a diagnostic row.
+- **The popup is not a durable alert.** It is one notification with a 15-second expiry. It is
+  not retried, it does not survive a closed session, and it is not a substitute for the
+  Endpoint drive controller when the operator is away from the screen.
+
+The transition check lives in the executor, not in a behaviour. `watch` already fires only on
+`running -> waiting_input`, and the directory name is the second guard: a behaviour installed
+under `running_to_waiting_input/` cannot run for any other transition, so it needs no condition of
+its own. That is why a behaviour file can be reused under a different transition directory without
+an edit.
 
 ### Install and run
 
@@ -253,15 +348,15 @@ SCRIPT
 chmod +x "$HOME/.topsailai/topsailai-agent-cluster.on-state-change.trigger"
 ```
 
-To install the shipped bell script instead of writing your own, point the default path at it
-with a one-line bash wrapper. The wrapper keeps the shebang `bash` and the body a single
-executable command:
+To install the shipped executor instead of writing your own, point the default path at it with a
+one-line bash wrapper. The wrapper keeps the shebang `bash` and the body a single executable
+command:
 
 ```bash
 mkdir -p "$HOME/.topsailai"
 cat > "$HOME/.topsailai/topsailai-agent-cluster.on-state-change.trigger" <<'SCRIPT'
 #!/bin/bash
-exec /usr/bin/python3 /absolute/path/to/scripts/watch-trigger-bell.py
+exec /usr/bin/python3 /absolute/path/to/scripts/watch-trigger-exec.py
 SCRIPT
 chmod +x "$HOME/.topsailai/topsailai-agent-cluster.on-state-change.trigger"
 ```
@@ -272,9 +367,22 @@ the interpreter, so the runner sees one process instead of a shell waiting on a 
 timeout kills the interpreter directly rather than orphaning it.
 
 The wrapper is required rather than optional: the default path is a single fixed file, so the
-trigger must live there to be found by a bare `watch --trigger`. Keeping the Python logic in
-the skill folder also means an edit to the shipped script takes effect on the next transition
-without reinstalling the wrapper.
+trigger must live there to be found by a bare `watch --trigger`. Keeping the logic in the skill
+folder also means an edit to a behaviour takes effect on the next transition without reinstalling
+the wrapper.
+
+To add a reaction of your own, create the transition directory under the per-user root and drop
+one executable file in it. No wrapper change is needed, because the executor already searches that
+root:
+
+```bash
+mkdir -p "$HOME/.topsailai/topsailai-agent-cluster.triggers/running_to_waiting_input"
+cat > "$HOME/.topsailai/topsailai-agent-cluster.triggers/running_to_waiting_input/log.sh" <<'SCRIPT'
+#!/bin/bash
+printf '%s %s\n' "$(date -Is)" "$AGENT_CLUSTER_SESSION_NAME" >> "$HOME/.topsailai/trigger.log"
+SCRIPT
+chmod +x "$HOME/.topsailai/topsailai-agent-cluster.triggers/running_to_waiting_input/log.sh"
+```
 
 Then inside the REPL:
 
@@ -318,7 +426,15 @@ Check these in order. Each one has a distinct symptom.
 - **Reading a credential from the environment.** The environment is a whitelist and carries
   no credential. A script that needs one reads its own file.
 - **Printing to the terminal.** Output is discarded, and the editor owns the terminal. A
-  bell or a message must go to `/dev/tty` or to a file, never to stdout.
+  notification should use the system audio service, the desktop notification service, or write
+  to a file, never to stdout.
+- **Calling `notify-send` without a session bus.** The trigger environment is a whitelist, so a
+  bare `notify-send` fails with `Cannot autolaunch D-Bus without X11 $DISPLAY`. Discover the bus
+  address first, and send as the account that owns the desktop session, because a session bus
+  refuses a connection from another account.
+- **Trusting a zero exit status as proof of a popup.** A script that cannot find `notify-send`,
+  a bus, or a desktop account still exits 0 by design. Confirm the popup on screen, or capture
+  the `org.freedesktop.Notifications.Notify` call, before claiming it works.
 - **`eval`-ing a payload value.** `SESSION_NAME` and `PROJECT_WORKSPACE` are provider text.
   Quote them, never evaluate them.
 - **Killing a PID.** The payload carries no PID on purpose. Use the cluster session ID with
@@ -332,8 +448,8 @@ Check these in order. Each one has a distinct symptom.
 - [ ] The script has a shebang and the executable bit set.
 - [ ] The script reads only the documented `AGENT_CLUSTER_*` variables and the six
       inherited basics.
-- [ ] The script writes to a file, sends a message, or rings `/dev/tty` instead of printing
-      to stdout, which the runner discards.
+- [ ] The script uses the system audio service, the desktop notification service, or a file
+      instead of printing to stdout, which the runner discards.
 - [ ] The script quotes every payload value and never evaluates one.
 - [ ] The script finishes well inside five seconds, or does its slow work in the background.
 - [ ] The script tolerates `AGENT_CLUSTER_STALE=true` and `AGENT_CLUSTER_UNVERIFIED=true`
@@ -341,13 +457,19 @@ Check these in order. Each one has a distinct symptom.
 - [ ] The banner printed `trigger: <path> on running -> waiting_input`, not a note.
 - [ ] The user was told the delay is the collection interval and that the mechanism ends
       with the terminal.
+- [ ] A popup was observed on the operator's screen, not merely a zero exit status. A script
+      that cannot reach the session bus still exits 0, so the exit status alone proves nothing.
 
 ## File Structure Description
 
 - **bin/**: None. This skill documents an existing CLI capability and needs no executable.
-- **scripts/**: `watch-trigger-bell.py` is a ready-to-install trigger that rings one terminal
-  bell on `running -> waiting_input`. It is a reference implementation of the payload check
-  and of the `/dev/tty` output channel; install it by pointing a one-line bash wrapper at it
-  from the default path.
+- **scripts/**: `watch-trigger-exec.py` is the generic executor. It reads the transition from the
+  payload, resolves the behaviour directory and runs every behaviour in it under one deadline. It
+  contains no reaction and no transition-specific condition. `behaviours/` holds the reactions:
+  `running_to_waiting_input/bell.py` plays one system bell sound and
+  `running_to_waiting_input/notify.py` raises one desktop notification popup, while
+  `behaviours/_desktop.py` is a shared helper that the executor skips because its name begins with
+  an underscore. Install the executor by pointing a one-line bash wrapper at it from the default
+  path; add a reaction by dropping one executable file into a transition directory.
 - **references/**: None. The payload table and the execution contract above are complete.
 - **assets/**: None.

@@ -18,6 +18,14 @@ import (
 	"time"
 )
 
+// endpointTokenHeader is the header that carries the Endpoint token.
+//
+// It is declared here rather than imported from the Server or the client because
+// both of those packages are production code and the harness must not depend on
+// an unexported constant. The value is the wire contract, so it is stated once
+// and the two production declarations must agree with it.
+const endpointTokenHeader = "X-Endpoint-Token"
+
 // ClusterOptions controls the real Server, Endpoint, and fixture process wiring.
 type ClusterOptions struct {
 	// Environment is applied to the Server process only. The Endpoint is a
@@ -85,6 +93,77 @@ type FaultInjection struct {
 	// body while appearing to prove the configured one.
 	MessagesBody  string
 	MessagesCount int
+	// CapabilityRevision overrides the descriptor revision the fixture adapter
+	// advertises. An empty value keeps the harness default, so existing
+	// scenarios are unchanged. A scenario that submits agent.start must use the
+	// same value as its profile revision, because the Endpoint compares them
+	// before the policy hook runs.
+	CapabilityRevision string
+	// CapabilityVersions overrides the advertised version of named capabilities.
+	// The default is "v1", which is correct for every operation whose payload
+	// schema version is also "v1". command.exec and agent.model.select carry a
+	// payload schema version of "1", so a scenario that drives one declares it
+	// here instead of changing what every deployment advertises.
+	CapabilityVersions map[string]string
+	// FixtureMode selects the fixture discovery document. An empty value keeps
+	// "one", so existing scenarios are unchanged. "mixed" publishes one live and
+	// one stopped session, which is what a resume scenario needs: resume
+	// authorizes on the absence of a live target, so a live-only inventory
+	// rejects the command with target_still_active before the policy hook runs.
+	FixtureMode string
+	// CommandAllowlist makes the Endpoint accept the given argv prefixes for
+	// command.exec. An empty value leaves the allowlist unconfigured, so
+	// command.exec fails closed with a configuration error rather than reaching
+	// the policy hook's positive path.
+	CommandAllowlist [][]string
+	// ControlActions makes the Endpoint advertise the given ctl. actions. An
+	// empty value leaves the catalog unconfigured, so no ctl. action is
+	// advertised and every ctl. operation is refused as unsupported before the
+	// policy hook runs.
+	ControlActions []ControlAction
+}
+
+// ControlAction describes one ctl. action the harness writes into the
+// Endpoint-local catalog.
+//
+// The catalog is the only source of ctl. actions, so a scenario that proves the
+// positive authorization path needs a real entry: advertising an action the
+// catalog does not define would end as unsupported, which proves nothing about
+// authorization.
+type ControlAction struct {
+	// Name is the action name after the ctl. prefix.
+	Name string
+	// Permission is the operator scope required to invoke the action.
+	Permission string
+	// Command is the provider argv template.
+	Command []string
+}
+
+// advertisedCapabilityRevision returns the descriptor revision the fixture
+// adapter advertises.
+//
+// The revision is a declared value rather than a constant because agent.start
+// compares the requested profile revision against it. A scenario that submits a
+// start must therefore know the value, and a fixed constant would force every
+// such scenario to hardcode it.
+func advertisedCapabilityRevision(faults FaultInjection) string {
+	if faults.CapabilityRevision != "" {
+		return faults.CapabilityRevision
+	}
+	return "v1"
+}
+
+// advertisedCapabilityVersion returns the advertised version of one capability.
+//
+// The default is "v1" because that is the version of every operation whose
+// payload schema version is also "v1". The two operations that carry a payload
+// schema version of "1" are declared explicitly, so a scenario that drives one
+// does not have to restate the whole list.
+func advertisedCapabilityVersion(faults FaultInjection, name string) string {
+	if version, ok := faults.CapabilityVersions[name]; ok {
+		return version
+	}
+	return "v1"
 }
 
 // serverReadinessWait bounds how long StartCluster waits for the Server health
@@ -189,6 +268,13 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if options.Faults.NoSessions {
 		mode = "empty"
 	}
+	// A scenario that needs a second, non-live session selects the mixed
+	// document. It is a separate mode rather than an extra row in "one" because
+	// every existing scenario resolves the first session as its default target,
+	// and widening "one" would change what those scenarios observe.
+	if options.Faults.FixtureMode != "" {
+		mode = options.Faults.FixtureMode
+	}
 	discoveryCount := filepath.Join(root, "discovery-count")
 	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, "timeout_ms": 5000}}
 	// The TopsailAI adapter is the only adapter that can stream output, so a
@@ -207,17 +293,27 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	// as context.inject, so a scenario that drives one declares the list it needs.
 	// The default is a production value, so it is replaced here rather than
 	// widened for every deployment.
+	//
+	// The descriptor revision is declared alongside the list because agent.start
+	// compares the requested profile revision against it before the policy hook
+	// runs. A descriptor without a revision therefore rejects every start with
+	// profile_revision_mismatch, which would make a start scenario pass while
+	// proving nothing about authorization.
 	if len(options.Faults.AdvertisedCapabilities) > 0 {
 		declared := make([]map[string]string, 0, len(options.Faults.AdvertisedCapabilities))
 		for _, name := range options.Faults.AdvertisedCapabilities {
-			declared = append(declared, map[string]string{"name": name, "version": "v1"})
+			declared = append(declared, map[string]string{"name": name, "version": advertisedCapabilityVersion(options.Faults, name)})
 		}
-		adapterArgs[0]["capabilities"] = map[string]any{"capabilities": declared}
+		adapterArgs[0]["capabilities"] = map[string]any{"revision": advertisedCapabilityRevision(options.Faults), "capabilities": declared}
 	}
 	if options.Faults.UnsupportedCapability != "" {
 		capabilities := []map[string]string{{"name": "message.send", "version": "v1"}, {"name": "execution.interrupt", "version": "v1"}, {"name": "agent.stop", "version": "v1"}}
+		revision := advertisedCapabilityRevision(options.Faults)
 		if declared, ok := adapterArgs[0]["capabilities"].(map[string]any); ok {
 			capabilities = declared["capabilities"].([]map[string]string)
+			if value, ok := declared["revision"].(string); ok {
+				revision = value
+			}
 		}
 		filtered := capabilities[:0]
 		for _, capability := range capabilities {
@@ -225,7 +321,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 				filtered = append(filtered, capability)
 			}
 		}
-		adapterArgs[0]["capabilities"] = map[string]any{"capabilities": filtered}
+		adapterArgs[0]["capabilities"] = map[string]any{"revision": revision, "capabilities": filtered}
 	}
 	for i := range adapterArgs {
 		if options.Faults.ProviderFailAdapterID == adapterArgs[i]["adapter_id"] {
@@ -255,6 +351,27 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
 	}
 	endpointEnv = appendFaultEnvironment(endpointEnv, options.Faults)
+	// The command allowlist and the control action catalog are Endpoint-local
+	// administrative configuration, so they are written into the scenario
+	// directory and exported to the Endpoint process only. A scenario that
+	// proves the positive authorization path for command.exec or ctl. needs them:
+	// without the allowlist command.exec fails closed with a configuration error,
+	// and without the catalog no ctl. action is advertised at all, so both would
+	// end before the policy hook and prove nothing about authorization.
+	if len(options.Faults.CommandAllowlist) > 0 {
+		allowlistPath, writeErr := writeCommandAllowlist(root, options.Faults.CommandAllowlist)
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE="+allowlistPath)
+	}
+	if len(options.Faults.ControlActions) > 0 {
+		catalogPath, writeErr := writeControlActionCatalog(root, options.Faults.ControlActions)
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CONTROL_ACTION_FILE="+catalogPath)
+	}
 	endpointEnv = append(endpointEnv, sortedEnvironment(options.EndpointEnvironment)...)
 	cluster.EndpointPath = endpointBin
 	cluster.EndpointEnv = append([]string(nil), endpointEnv...)
@@ -289,6 +406,60 @@ func sortedEnvironment(values map[string]string) []string {
 		entries = append(entries, key+"="+values[key])
 	}
 	return entries
+}
+
+// writeCommandAllowlist writes the Endpoint-local command.exec allowlist and
+// returns its path.
+//
+// Each entry is one argv prefix, one line per entry, which is the document shape
+// the Endpoint parses. The file is written rather than the entries being passed
+// inline because the allowlist is a file-only configuration surface: the Endpoint
+// reads a path and reloads that file on SIGHUP.
+func writeCommandAllowlist(root string, entries [][]string) (string, error) {
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if len(entry) == 0 {
+			return "", fmt.Errorf("command allowlist entry must not be empty")
+		}
+		lines = append(lines, strings.Join(entry, " "))
+	}
+	path := filepath.Join(root, "command-allowlist.conf")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		return "", fmt.Errorf("write command allowlist: %w", err)
+	}
+	return path, nil
+}
+
+// writeControlActionCatalog writes the Endpoint-local ctl. action catalog and
+// returns its path.
+//
+// The catalog is the only source of ctl. actions, so a scenario that proves the
+// positive authorization path needs a real entry here. The document is JSON with
+// one object per action, matching the shape the Endpoint validates at load time.
+func writeControlActionCatalog(root string, actions []ControlAction) (string, error) {
+	type entry struct {
+		Name       string   `json:"name"`
+		Permission string   `json:"permission"`
+		Command    []string `json:"command"`
+	}
+	document := struct {
+		Actions []entry `json:"actions"`
+	}{Actions: make([]entry, 0, len(actions))}
+	for _, action := range actions {
+		if action.Name == "" || action.Permission == "" || len(action.Command) == 0 {
+			return "", fmt.Errorf("control action %q requires a name, a permission and a command", action.Name)
+		}
+		document.Actions = append(document.Actions, entry{Name: action.Name, Permission: action.Permission, Command: action.Command})
+	}
+	data, err := json.Marshal(document)
+	if err != nil {
+		return "", fmt.Errorf("marshal control action catalog: %w", err)
+	}
+	path := filepath.Join(root, "control-actions.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("write control action catalog: %w", err)
+	}
+	return path, nil
 }
 
 // inventoryAdapterID returns the adapter ID the inventory wait should expect.
@@ -392,6 +563,19 @@ func (c *Cluster) URL(path string) string { return "http://127.0.0.1:" + c.API +
 
 // RequestE performs an authenticated request against the real Server.
 func (c *Cluster) RequestE(method, path string, payload any) (int, []byte, error) {
+	return c.RequestWithEndpointTokenE(method, path, payload, "")
+}
+
+// RequestWithEndpointTokenE performs an authenticated request that also presents
+// an Endpoint token.
+//
+// The Endpoint token is a second, independent credential: the Server verifies the
+// Server token and forwards the Endpoint token unchanged, while the Endpoint
+// verifies it and decides whether the caller may exercise the operation. A
+// request without it is refused by a policy-enforcing Endpoint, so a scenario
+// that proves authorization must present one. An empty token keeps the previous
+// behaviour, so existing scenarios are unchanged.
+func (c *Cluster) RequestWithEndpointTokenE(method, path string, payload any, endpointToken string) (int, []byte, error) {
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -405,6 +589,9 @@ func (c *Cluster) RequestE(method, path string, payload any) (int, []byte, error
 		return 0, nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer secret")
+	if endpointToken != "" {
+		req.Header.Set(endpointTokenHeader, endpointToken)
+	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

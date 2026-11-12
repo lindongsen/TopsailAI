@@ -83,6 +83,55 @@ func writeAccessPolicyDir(tokens map[string][]string) (string, error) {
 	return dir, nil
 }
 
+// accessPolicyGrant is one caller token and the authority it is granted.
+//
+// Scopes and permissions are separate declarations because they answer different
+// questions: a scope is a named bundle of operations, while a permission names one
+// operation directly. A scenario that must grant exactly one operation uses a
+// permission, so the grant cannot widen through a scope that covers more than the
+// operation under test.
+type accessPolicyGrant struct {
+	// Token is the caller credential the Endpoint selects this file by.
+	Token string
+	// Scopes are the named scope bundles granted to the token.
+	Scopes []string
+	// Permissions are the individual operations granted to the token.
+	Permissions []string
+}
+
+// writeAccessPolicyGrants writes one policy file per grant and returns the
+// directory path.
+//
+// It is the permissions-aware sibling of writeAccessPolicyDir. The older helper
+// stays because every existing scenario grants scopes only, and rewriting those
+// call sites would change what they prove for no gain.
+func writeAccessPolicyGrants(grants []accessPolicyGrant) (string, error) {
+	if activeTest == nil {
+		return "", fmt.Errorf("active BDD test is not initialized")
+	}
+	dir := filepath.Join(activeTest.TempDir(), "endpoint-access.d")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create access policy directory: %w", err)
+	}
+	for _, grant := range grants {
+		if grant.Token == "" {
+			return "", fmt.Errorf("access policy grant requires a token")
+		}
+		lines := []string{"token " + grant.Token}
+		if len(grant.Scopes) > 0 {
+			lines = append(lines, "scopes "+strings.Join(grant.Scopes, " "))
+		}
+		if len(grant.Permissions) > 0 {
+			lines = append(lines, "permissions "+strings.Join(grant.Permissions, " "))
+		}
+		path := filepath.Join(dir, grant.Token+".conf")
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			return "", fmt.Errorf("write access policy file %q: %w", path, err)
+		}
+	}
+	return dir, nil
+}
+
 // startViewOnlyCluster starts a real cluster whose Endpoint grants one token the
 // view scope only. Narrowing the grant is the whole point: an Endpoint with no
 // policy directory permits every caller, so a cluster started without the policy
