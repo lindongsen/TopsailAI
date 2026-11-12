@@ -4,8 +4,8 @@ author: DawsonLin
 ---
 # File command path escape is clamped but documented as rejected
 
-`docs/DESIGN.md` §20.2 and the earlier `skills/topsailai-data/SKILL.md` both
-state that a path escaping the object folder, such as `../outside.md`, is
+`docs/DESIGN.md` section 20.2 and the earlier `skills/topsailai-data/SKILL.md`
+both state that a path escaping the object folder, such as `../outside.md`, is
 rejected. The implementation does not reject it: the path is silently clamped
 to the object root, so `../outside.md` addresses `outside.md` inside the object
 and the command succeeds.
@@ -36,6 +36,6 @@ clamp.
 ## Resolution
 
 The skill documentation was corrected to describe the clamp. `docs/DESIGN.md`
-§20.2 still states that escaping paths are rejected and needs the same
+section 20.2 still states that escaping paths are rejected and needs the same
 correction, or the implementation needs to reject instead of clamp. Choose one
 and make the code and both documents agree.

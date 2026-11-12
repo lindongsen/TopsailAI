@@ -324,44 +324,155 @@ bin/topsailai-data show hello
 
 ### Command examples
 
-Create:
+Every example below was executed against a real store. Output is shown as
+printed, so you can compare your own run against it.
+
+#### Create an object
+
+When the content already exists as a file, pass it with `--from`:
 
 ```
-bin/topsailai-data create note --classify work/2026 --description "Work notes for 2026" --tag work,important <<'EOF'
----
-description: Work notes for 2026
----
-
-# Work Notes
-EOF
-bin/topsailai-data create report --description "Monthly report" --from report.md
-bin/topsailai-data create bundle --description "Bundle archive" --from bundle.tar
-echo "---
-description: Inline note
----
-
-inline content" | bin/topsailai-data create inline-note
+bin/topsailai-data create demo --description "Lifecycle demo object" --tag alpha,beta --from ./demo.md
 ```
 
-Update metadata:
-
 ```
-bin/topsailai-data update <id> --description "Updated description"
-bin/topsailai-data update <id> --description ""  # clear description
+created object demo at 2026/1112/1706/demo
 ```
 
-Read metadata:
+The printed path is the object's `Path` relative to `object/`. Add classify
+directories with `--classify`:
 
 ```
-bin/topsailai-data show <id>
-bin/topsailai-data list [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
-bin/topsailai-data search <query> [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
+bin/topsailai-data create note --classify work/2026 --description "Work notes for 2026" --tag work,important --from ./note.md
+```
+
+```
+created object note at 2026/1112/1706/work/2026/note
+```
+
+Use stdin only when the content is generated in memory and has no file:
+
+```
+printf '# Inline\n\ninline content\n' | bin/topsailai-data create inline-note --description "Inline note"
+```
+
+A tar archive is also accepted, which lets you create an object with several
+files at once:
+
+```
+bin/topsailai-data create bundle --description "Bundle archive" --from ./bundle.tar
+```
+
+#### Show one object
+
+```
+bin/topsailai-data show demo
+```
+
+```
+ID:            demo
+Name:          demo
+Path:          2026/1112/1706/demo
+Description:   Lifecycle demo object
+Status:        active
+SchemaVersion: 2
+CreatedAt:     2026-11-12T17:06:15+08:00
+UpdatedAt:     2026-11-12T17:06:15+08:00
+Tags:          alpha, beta
+DataRef:       2026/1112/1706/demo
+
+Stat:
+  ReadCount:     0
+  LastReadAt:    never
+  WriteCount:    1
+  LastWrittenAt: 2026-11-12T17:06:15+08:00
+
+--- Markdown ---
+# Demo
+
+body line
+
+--- folder structure ---
+demo/
+└── demo.md
+no additional files
+```
+
+`show` works for every status. For `deleted` and `ceased` objects the two
+actual-data sections are replaced by a single line:
+
+```
+--- Actual data unavailable for deleted object ---
+```
+
+#### List objects
+
+```
+bin/topsailai-data list
+```
+
+```
+- id: demo
+  name: demo
+  path: 2026/1112/1706/demo
+  description: Lifecycle demo object
+  status: active
+  tags:
+    - alpha
+    - beta
+  created_at: 2026-11-12T17:06:15.819311178+08:00
+  updated_at: 2026-11-12T17:06:15.822979908+08:00
+  schema_version: 2
+  data_ref: 2026/1112/1706/demo
+```
+
+Filter by tag with `--tag`. Repeat the flag, or pass a comma-separated list, to
+require several tags at once. Multiple tags are combined with AND, so an object
+must carry every named tag:
+
+```
+bin/topsailai-data list --tag alpha
+bin/topsailai-data list --tag alpha --tag beta
+bin/topsailai-data list --tag alpha,beta
+```
+
+Requiring a tag the object does not carry yields an empty result:
+
+```
+bin/topsailai-data list --tag alpha,nomatch
+```
+
+```
+[]
+```
+
+#### Search objects
+
+```
+bin/topsailai-data search demo
+```
+
+Search matches object names, tags, and classify paths. Use `|` for OR logic,
+and quote the query so the shell does not treat `|` as a pipe:
+
+```
+bin/topsailai-data search 'alpha|nomatch'
+```
+
+No match prints `[]`. A query containing a space is rejected:
+
+```
+bin/topsailai-data search 'a b'
+```
+
+```
+error: search: search query cannot contain spaces or tabs
 ```
 
 #### Search query syntax
 
 - `search` performs a case-insensitive substring match against object names, tags, and classify paths.
-- Use `|` to separate multiple terms. An object matches if any term matches (OR logic). Example: `search foo|bar` matches objects whose name, tags, or classify path contain `foo` or `bar`.
+- Use `|` to separate multiple terms. An object matches if any term matches (OR logic). Example: `search 'foo|bar'` matches objects whose name, tags, or classify path contain `foo` or `bar`.
 - Spaces, tabs, and backslash escapes are not supported in search queries. To match multi-word tags, search for one word at a time.
 
 #### Sorting results
@@ -378,35 +489,355 @@ bin/topsailai-data list --sort time:desc
 bin/topsailai-data search work --sort time:asc
 ```
 
-Modify tags:
+#### Update the description
 
 ```
-bin/topsailai-data tag add <id> <tag>
-bin/topsailai-data tag remove <id> <tag>
+bin/topsailai-data update demo --description "Rewritten description"
 ```
 
-Move:
-
 ```
-bin/topsailai-data move <id> <new-classify...>
-bin/topsailai-data move hello archive/2026
+updated object demo
 ```
 
-Delete and cleanup:
+Pass an empty value to clear the description. The field is then printed with
+no value:
 
 ```
-bin/topsailai-data delete <id>
-bin/topsailai-data gc [--dry-run] [--status creating|deleted|ceased]
-bin/topsailai-data recover <id> [--from <archive|->]
+bin/topsailai-data update demo --description ""
 ```
 
-Actual data I/O:
+```
+updated object demo
+```
+
+#### Add and remove tags
 
 ```
-bin/topsailai-data get <id> <object-file>
-bin/topsailai-data get-archive <id> > backup.tar
-bin/topsailai-data put <id> <dest-file> [--from <file|->]
-bin/topsailai-data put-archive <id> <archive|->
+bin/topsailai-data tag add demo gamma
+```
+
+```
+added tag "gamma" to demo
+```
+
+```
+bin/topsailai-data tag remove demo gamma
+```
+
+```
+removed tag "gamma" from demo
+```
+
+Removing a tag the object does not carry fails instead of silently succeeding:
+
+```
+bin/topsailai-data tag remove demo nosuch
+```
+
+```
+error: tag remove: tag not found: tag "nosuch" not found
+```
+
+#### Move an object
+
+```
+bin/topsailai-data move demo archive/2026
+```
+
+```
+moved object demo
+```
+
+The ID, name, and tags are unchanged; only `Path` and `DataRef` gain the new
+classify directories:
+
+```
+ID:            demo
+Path:          2026/1112/1706/archive/2026/demo
+Tags:          alpha, beta
+DataRef:       2026/1112/1706/archive/2026/demo
+```
+
+#### Soft delete and recover
+
+`delete` on an active object marks it `deleted` and keeps the payload, so the
+operation is reversible:
+
+```
+bin/topsailai-data delete demo
+```
+
+```
+deleted object demo
+```
+
+The object disappears from `list` but `show` still resolves it:
+
+```
+bin/topsailai-data list
+```
+
+```
+[]
+```
+
+```
+bin/topsailai-data show demo
+```
+
+```
+Status:        deleted
+DeletedAt:     2026-11-12T17:04:18+08:00
+```
+
+Use `--include-deleted` to see it in a collection query:
+
+```
+bin/topsailai-data list --include-deleted
+```
+
+`recover` restores it to `active` without needing `--from`, because the
+payload was never removed:
+
+```
+bin/topsailai-data recover demo
+```
+
+```
+recovered object demo
+```
+
+Recovering an object that is already active fails:
+
+```
+bin/topsailai-data recover demo
+```
+
+```
+error: recover: object already exists: object demo is already active
+```
+
+If the payload is gone but you still have an archive, supply it:
+
+```
+bin/topsailai-data recover demo --from ./backup.tar
+```
+
+#### Finalize and purge
+
+A second `delete` on a `deleted` object removes the payload and moves the
+object to `ceased`:
+
+```
+bin/topsailai-data delete demo
+```
+
+```
+deleted object demo
+```
+
+```
+bin/topsailai-data show demo
+```
+
+```
+Status:        ceased
+DeletedAt:     2026-11-12T17:04:29+08:00
+CeasedAt:      2026-11-12T17:04:29+08:00
+```
+
+A `ceased` object keeps its metadata and tags but has no payload, so actual
+data commands fail:
+
+```
+bin/topsailai-data get demo demo.md
+```
+
+```
+error: get: object not found: demo
+```
+
+`ceased` is terminal. Recovery is refused even when an archive is supplied:
+
+```
+bin/topsailai-data recover demo --from ./backup.tar
+```
+
+```
+error: recover: object has ceased: object demo has ceased and cannot be restored
+```
+
+#### Garbage collect
+
+Always preview first. `--dry-run` reports the plan without changing anything:
+
+```
+bin/topsailai-data gc --dry-run
+```
+
+```
+dry-run: would run GC for ceased objects
+```
+
+When nothing matches, the message says so:
+
+```
+bin/topsailai-data gc --dry-run --status deleted
+```
+
+```
+no deleted objects to gc
+```
+
+Default `gc` honors `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`, so a freshly
+ceased object survives:
+
+```
+bin/topsailai-data gc
+```
+
+```
+gc completed for ceased objects
+```
+
+`--status ceased` ignores the retention window and purges immediately:
+
+```
+bin/topsailai-data gc --status ceased
+```
+
+```
+gc completed for ceased objects
+```
+
+After the purge the object is gone entirely:
+
+```
+bin/topsailai-data show demo
+```
+
+```
+error: show: metadata for "demo": object not found
+```
+
+`--status deleted` finalizes every deleted object in one pass, which is the
+batch equivalent of deleting twice:
+
+```
+bin/topsailai-data gc --status deleted
+```
+
+```
+finalized deleted object demo
+```
+
+`--status creating` cleans up objects whose creation was interrupted:
+
+```
+bin/topsailai-data gc --status creating
+```
+
+```
+no creating objects to gc
+```
+
+#### Create over a ceased object
+
+A `ceased` object does not block reuse of its name. Creation purges the old
+record and starts clean, so no stale `CeasedAt` survives:
+
+```
+bin/topsailai-data create demo --description "Second life" --from ./demo.md
+```
+
+```
+created object demo at 2026/1112/1706/demo
+```
+
+```
+Status:        active
+Description:   Second life
+```
+
+An `active`, `creating`, or `deleted` object still blocks creation:
+
+```
+bin/topsailai-data create demo --description "dup" --from ./demo.md
+```
+
+```
+error: create: object already exists: demo
+```
+
+#### Read and write actual data
+
+Read one file to stdout:
+
+```
+bin/topsailai-data get demo demo.md
+```
+
+Write one file into the object. The destination name is relative to the object
+folder, and missing parent folders are created:
+
+```
+bin/topsailai-data put demo notes/a.md --from ./demo.md
+```
+
+Export the whole payload as a tar archive:
+
+```
+bin/topsailai-data get-archive demo > ./backup.tar
+```
+
+```
+tar -tvf ./backup.tar
+```
+
+```
+-rw-r--r-- root/root        62 2026-11-12 17:04 demo.md
+drwxr-xr-x root/root         0 2026-11-12 17:04 notes
+-rw-r--r-- root/root        62 2026-11-12 17:04 notes/a.md
+```
+
+Replace the payload from an archive:
+
+```
+bin/topsailai-data put-archive demo ./backup.tar
+```
+
+```
+wrote archive to object demo
+```
+
+#### Writes require an active object
+
+Every actual-data write is rejected unless the object is `active`. The error
+names the reason, so a script can tell a lifecycle problem from a missing
+object:
+
+```
+bin/topsailai-data put demo x.md --from ./demo.md
+```
+
+```
+error: put: object "demo" is not active: object is not active
+```
+
+```
+bin/topsailai-data tag add demo zeta
+```
+
+```
+error: tag add: object "demo" is not active: object is not active
+```
+
+```
+bin/topsailai-data move demo other
+```
+
+```
+error: move: object is not active: object demo is deleted
 ```
 
 #### Binary files with `get`
