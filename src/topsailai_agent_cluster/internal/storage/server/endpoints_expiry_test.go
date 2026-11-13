@@ -216,3 +216,35 @@ func assertRowCount(t *testing.T, store *Store, table, endpointID string, want i
 		t.Fatalf("%s count for %s = %d, want %d", table, endpointID, got, want)
 	}
 }
+
+// TestExpireOfflineEndpointsNeverSelectsOnlineRows verifies the connection-state
+// guard is load-bearing rather than redundant.
+//
+// The production write paths cannot produce an online row with a positive
+// offline_since_at_ms: UpsertEndpoint forces the clock to zero for an online
+// state, and MarkPersistedEndpointsOffline converts every online row to offline
+// before a sweep runs. The guard therefore protects against a corrupt or
+// hand-edited row, which is exactly the state this test writes directly. Without
+// the guard, a positive clock alone would make an online Endpoint eligible and
+// its live inventory would be deleted.
+func TestExpireOfflineEndpointsNeverSelectsOnlineRows(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	putEndpointInventory(t, store, "corrupt-online", "online", 100)
+	setOfflineSince(t, store, "corrupt-online", 100)
+
+	result, err := store.ExpireOfflineEndpoints(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.InventoryEndpointIDs) != 0 || len(result.DeletedEndpointIDs) != 0 {
+		t.Fatalf("expiry selected an online row: %+v", result)
+	}
+	assertRowCount(t, store, "endpoints", "corrupt-online", 1)
+	assertRowCount(t, store, "endpoint_session_state", "corrupt-online", 1)
+}

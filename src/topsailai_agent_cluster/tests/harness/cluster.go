@@ -56,6 +56,13 @@ type ClusterOptions struct {
 	// implements streaming output follow; the generic fixture adapter answers a
 	// follow with "unsupported" because it cannot stream.
 	ProviderType string
+	// SeedServerDB writes rows into the Server database before the Server process
+	// opens it. A scenario that must observe a startup repair has no other way to
+	// create the pre-existing state: the repair runs immediately after the
+	// database is opened, so a row inserted through the HTTP API afterwards would
+	// never exercise it. The callback receives the database path and must create
+	// the schema itself, because the Server has not opened the file yet.
+	SeedServerDB func(path string) error
 }
 
 // FaultInjection contains test-only process-composition controls shared by integration and BDD tests.
@@ -249,6 +256,13 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	}
 	serverEnv = appendFaultEnvironment(serverEnv, options.Faults)
 	serverEnv = append(serverEnv, sortedEnvironment(options.Environment)...)
+	// The seed runs before the Server process exists, because the startup repair
+	// it must exercise happens immediately after the Server opens the database.
+	if options.SeedServerDB != nil {
+		if err := options.SeedServerDB(cluster.ServerDB); err != nil {
+			return nil, fmt.Errorf("seed server database: %w", err)
+		}
+	}
 	cluster.Server, err = StartProcessE(serverBin, serverEnv)
 	if err != nil {
 		return nil, err
