@@ -11,21 +11,22 @@ import (
 // endpointExpiryStore is the Server storage seam used by the retention loop.
 type endpointExpiryStore interface {
 	ExpireOfflineEndpoints(context.Context, int64) (serverstorage.EndpointExpiryResult, error)
+	PurgeExpiredCommands(context.Context, int64) (int64, error)
 }
 
 // runEndpointExpiry removes expired records immediately at startup and then on
 // a bounded cadence until the Server context is cancelled.
-func runEndpointExpiry(ctx context.Context, logger *slog.Logger, store endpointExpiryStore, retention time.Duration) {
-	runEndpointExpiryAtInterval(ctx, logger, store, retention, endpointExpiryInterval(retention))
+func runEndpointExpiry(ctx context.Context, logger *slog.Logger, store endpointExpiryStore, retention, commandRetention time.Duration) {
+	runEndpointExpiryAtInterval(ctx, logger, store, retention, commandRetention, endpointExpiryInterval(retention))
 }
 
 // runEndpointExpiryAtInterval owns the recurring loop with an explicit cadence
 // so periodic execution can be verified without waiting for a production tick.
-func runEndpointExpiryAtInterval(ctx context.Context, logger *slog.Logger, store endpointExpiryStore, retention, interval time.Duration) {
+func runEndpointExpiryAtInterval(ctx context.Context, logger *slog.Logger, store endpointExpiryStore, retention, commandRetention, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		expireEndpointRecords(ctx, logger, store, retention, time.Now())
+		expireEndpointRecords(ctx, logger, store, retention, commandRetention, time.Now())
 		select {
 		case <-ctx.Done():
 			return
@@ -48,8 +49,19 @@ func endpointExpiryInterval(retention time.Duration) time.Duration {
 }
 
 // expireEndpointRecords executes one sweep and logs every removed durable row.
-func expireEndpointRecords(ctx context.Context, logger *slog.Logger, store endpointExpiryStore, retention time.Duration, now time.Time) {
+//
+// The command purge runs before endpoint expiry so a metadata row blocked only
+// by a now-purgeable command is removed in the same sweep instead of surviving
+// one extra cycle.
+func expireEndpointRecords(ctx context.Context, logger *slog.Logger, store endpointExpiryStore, retention, commandRetention time.Duration, now time.Time) {
 	cutoff := now.Add(-retention)
+	commandCutoff := now.Add(-commandRetention)
+	if _, err := store.PurgeExpiredCommands(ctx, commandCutoff.UnixMilli()); err != nil {
+		if ctx.Err() == nil {
+			logger.Error("purge expired command records", "command_retention", commandRetention.String(), "cutoff_at_ms", commandCutoff.UnixMilli(), "error", err)
+		}
+		return
+	}
 	result, err := store.ExpireOfflineEndpoints(ctx, cutoff.UnixMilli())
 	if err != nil {
 		if ctx.Err() == nil {

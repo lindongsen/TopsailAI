@@ -129,7 +129,19 @@ Persist intent before dispatch. Endpoint has its own private durable deduplicati
 
 No Session-history retention job exists. Replacing current inventory does not append old JSON to audit, SSE replay or logs. Revoke/clear Endpoint state through explicit administrative workflows that never touch remote agent workspaces or implicitly stop agents.
 
-Terminal commands initially have a proposed 30-day retention. Never purge executing or uncertain records solely by age. Archive/reconcile explicitly and retain deduplication evidence at least through validity/reconnect windows. Expired repeated commands remain rejected even after detailed result cleanup; globally unique IDs and immutable validity are enforced. Bound prompts/results by size, permission and retention; hash/redact where possible without breaking recoverable execution.
+Terminal commands are purged after `AGENT_CLUSTER_SERVER_COMMAND_RETENTION` (default `720h`). The purge
+is an allowlist over `finished`, `rejected`, `failed`, `expired` and `cancelled_before_execution`, so a
+status added later is retained until it is reviewed. `unconfirmed` is never purged by age: delivery
+happened and the exit was never confirmed, so the row is the only evidence of an unknown effect and is
+retained until an explicit reconciliation resolves it. Executing and other in-flight records are never
+purged by age either. Archive/reconcile explicitly rather than deleting uncertain records.
+
+Purging a command row does not weaken deduplication. The immutable deadline, not the stored row, is
+what prevents a replayed expired command from executing: admission re-inserts the row and immediately
+expires it once its deadline has passed, so an expired repeated command remains rejected even after
+detailed result cleanup. Globally unique IDs and immutable validity are enforced independently of
+retention. Bound prompts/results by size, permission and retention; hash/redact where possible without
+breaking recoverable execution.
 
 Keep latest standard metadata bounded (capabilities, profiles, labels, errors and inventory). All stored sensitive inputs require restricted access and deliberate protection; never log raw request bodies by default. Authentication enrollment/rotation and audit retention beyond command evidence remain separate security design items, not reasons to add an adapter registry to Server.
 

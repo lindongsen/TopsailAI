@@ -87,12 +87,34 @@ a container.
 | `AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
 | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
 | `AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY` | `--endpoint-expiry` | `24h` | Positive offline-retention duration after which the Server removes Endpoint inventory; Endpoint metadata is also removed when no retained command references it |
+| `AGENT_CLUSTER_SERVER_COMMAND_RETENTION` | `--command-retention` | `720h` | Positive retention duration for terminal command records; purging them is what lets an expired Endpoint metadata row be removed |
 
 ### `AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY`
 
 The Server owns expiry because it owns the persisted fleet projection. The value is a positive Go duration such as `1h`, `24h`, or `168h`; zero and negative values are rejected. A cleanup runs once at Server startup and then at a bounded interval of at most one minute.
 
 When an Endpoint has remained offline beyond the configured duration, measured from its dedicated `offline_since_at_ms`, the Server removes its `endpoint_session_state` row so stale sessions no longer appear in `list`. The Server also removes the Endpoint metadata row when no retained command references it. If command evidence exists, the metadata row remains so historical command lookup retains its Endpoint identity. Online and recently disconnected Endpoints are never selected. This retention setting is independent of the connection heartbeat timeout and is not an Endpoint retirement or credential-revocation operation.
+
+### `AGENT_CLUSTER_SERVER_COMMAND_RETENTION`
+
+The Server owns command retention because it owns the command journal. The value is a positive Go
+duration such as `24h`, `720h`, or `8760h`; zero and negative values are rejected. The same sweep that
+expires offline Endpoints purges terminal command records older than this window, and it runs once at
+Server startup and then at a bounded interval of at most one minute.
+
+Only terminal statuses whose effect is known are purged: `finished`, `rejected`, `failed`, `expired`
+and `cancelled_before_execution`. The list is an allowlist rather than a denylist, so a status added
+later is retained until someone decides it is safe to delete. `unconfirmed` is deliberately excluded
+even though it is terminal for polling: delivery happened and the exit was never confirmed, so an
+operator investigating an unknown effect still needs the row, and it is retained until an explicit
+reconciliation resolves it. In-flight statuses are never purged by age.
+
+The purge runs before Endpoint expiry in the same sweep, so a metadata row blocked only by a
+now-purgeable command is removed in that sweep instead of surviving one extra cycle. A failed purge
+aborts the sweep and is logged, because reporting a partial sweep as a complete one would hide the
+failure. Deleting a command row does not weaken duplicate detection: the immutable deadline, not the
+stored row, is what prevents a replayed expired command from executing, because admission re-inserts
+the row and immediately expires it once its deadline has passed.
 
 ### `AGENT_CLUSTER_SERVER_AUTH_TOKEN`
 

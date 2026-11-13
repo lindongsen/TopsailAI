@@ -131,6 +131,36 @@ func (s *Store) CancelCommand(ctx context.Context, commandID string, nowMS int64
 	return false, fmt.Errorf("cancel command: database remained locked")
 }
 
+// PurgeExpiredCommands deletes terminal command records older than the cutoff.
+//
+// The status list is an allowlist rather than a denylist, so a status added
+// later is retained until someone decides it is safe to delete. A denylist
+// would silently start deleting the new status the moment it was introduced.
+//
+// unconfirmed is deliberately excluded even though it is terminal for polling.
+// Its effect is unknown: delivery happened and the exit was never confirmed, so
+// an operator investigating an unknown effect still needs the row. It is
+// retained until an explicit reconciliation resolves it.
+//
+// Deleting a row removes the duplicate-detection evidence for that command ID,
+// and that is safe because the immutable deadline, not the stored row, is what
+// prevents a replayed expired command from executing: admission re-inserts the
+// row and immediately expires it when ExecuteBeforeAtMS has passed.
+func (s *Store) PurgeExpiredCommands(ctx context.Context, cutoffMS int64) (int64, error) {
+	if cutoffMS <= 0 {
+		return 0, fmt.Errorf("command purge cutoff must be positive")
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM commands WHERE update_at_ms <= ? AND status IN (?, ?, ?, ?, ?)`, cutoffMS, protocol.StatusFinished, protocol.StatusRejected, protocol.StatusFailed, protocol.StatusExpired, protocol.StatusCancelled)
+	if err != nil {
+		return 0, fmt.Errorf("purge expired commands: %w", err)
+	}
+	purged, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count purged commands: %w", err)
+	}
+	return purged, nil
+}
+
 func nullableTarget(target *protocol.CommandTarget) any {
 	if target == nil {
 		return nil

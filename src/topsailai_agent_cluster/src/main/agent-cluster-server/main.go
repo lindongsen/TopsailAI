@@ -186,7 +186,7 @@ func main() {
 	expiryDone := make(chan struct{})
 	go func() {
 		defer close(expiryDone)
-		runEndpointExpiry(ctx, logger, store, cfg.EndpointExpiry)
+		runEndpointExpiry(ctx, logger, store, cfg.EndpointExpiry, cfg.CommandRetention)
 	}()
 	logger.Info("server service starting", "api_listen_address", cfg.APIListenAddress, "channel_listen_address", channelListenAddress, "channel_direction", cfg.ChannelDirection, "database_path", cfg.DatabasePath, "endpoint_expiry", cfg.EndpointExpiry.String())
 	runErr := service.Run(ctx)
