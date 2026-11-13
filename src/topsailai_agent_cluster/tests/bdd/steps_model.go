@@ -42,20 +42,27 @@ var modelInvocationLog string
 // modelListScript navigates to the sole session and lists the catalog. Two
 // navigations are required: model reads the endpoint and the session from the
 // current scope, and both are empty at workspace scope.
-const modelListScript = "cd 1\ncd 1\nmodel\nquit\n"
+//
+// The trailing empty line answers the guided selection question with "keep the
+// current model", so the script ends the way an operator who only wanted to look
+// would end it.
+const modelListScript = "cd 1\ncd 1\nmodel\n\nquit\n"
 
 // modelSelectScript lists the catalog and then applies the second row. The
 // catalog must be rendered in the same session, because a number is resolved
 // against the catalog the operator last saw.
-const modelSelectScript = "cd 1\ncd 1\nmodel\nmodel 2\ny\nquit\n"
+//
+// The row number answers the guided question, and the following "y" answers the
+// confirmation that every mutating operation still requires.
+const modelSelectScript = "cd 1\ncd 1\nmodel\n2\ny\nquit\n"
 
 // modelWorkspaceListScript names the session explicitly, because workspace scope
 // does not already name a target.
-const modelWorkspaceListScript = "model fixture-session\nquit\n"
+const modelWorkspaceListScript = "model fixture-session\n\nquit\n"
 
 // modelWorkspaceSelectScript lists the catalog and applies the first row from
 // workspace scope, where the session has to be named on both commands.
-const modelWorkspaceSelectScript = "model fixture-session\nmodel fixture-session 1\ny\nquit\n"
+const modelWorkspaceSelectScript = "model fixture-session\n1\ny\nquit\n"
 
 // startModelCluster starts a real cluster whose adapter can answer a catalog
 // request. The generic fixture adapter cannot, so the TopsailAI adapter is
