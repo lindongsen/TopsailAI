@@ -70,6 +70,16 @@ COVERAGE_HTML := $(TMP_DIR)/coverage.html
 # in a 0600 file so the user needs no further configuration; when it is unset,
 # the bundle requires CONNECTOR_NODE_TUNNEL_TOKEN in the environment.
 #
+# PACKAGE_ALLOW_FILESYSTEM_ROOT is off by default and is the only way a bundle
+# can expose a whole volume. When it is set to 1, the bundle's start script
+# accepts a scope whose path is a drive root (`C:\`) or `/`, and the generated
+# policy carries `allow_filesystem_root: true`. The Node still refuses such a
+# scope unless that key is present, so the decision is written down at packaging
+# time by the operator who understands the blast radius, rather than by whoever
+# receives the bundle and edits scopes.txt. The bundle's own config directory
+# stays unreadable through such a scope: the Node denies it by resolved path and
+# omits it from a listing.
+#
 # PACKAGE_GOOS and PACKAGE_GOARCH default to this host, so a bundle for the
 # operator's own machine needs no platform argument. `make package-windows`
 # sets them to windows/amd64.
@@ -80,6 +90,7 @@ PACKAGE_SERVER_URL ?=
 PACKAGE_SCOPES ?=
 PACKAGE_SCOPES_FILE ?=
 PACKAGE_TUNNEL_TOKEN ?=
+PACKAGE_ALLOW_FILESYSTEM_ROOT ?=
 
 # The unit suite is what `go test ./...` runs. Integration and BDD suites are
 # behind build tags so a plain unit run stays fast and needs no built binary.
@@ -104,7 +115,7 @@ help:
 	@echo "  coverage-html   Write an HTML coverage report to $(COVERAGE_HTML)"
 	@echo "  integration     Build the binaries, then run the integration suite"
 	@echo "  bdd             Run the Gherkin scenarios in tests/bdd/"
-	@echo "  e2e             Build the binaries, then drive one read through two real processes"
+	@echo "  e2e             Build the binaries, then drive real processes and a real bundle"
 	@echo "  check           vet, unit, coverage, integration, bdd and e2e in that order"
 	@echo "  fmt             Format every Go source file"
 	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
@@ -123,6 +134,9 @@ help:
 	@echo "                      by package. Example:"
 	@echo "                      'PACKAGE_SCOPES=project=/home/me/project tool=/opt/tool'"
 	@echo "  PACKAGE_SCOPES_FILE A file of name=path lines, for paths with spaces"
+	@echo "  PACKAGE_ALLOW_FILESYSTEM_ROOT  Set to 1 to let a bundle expose a whole"
+	@echo "                      volume (C:\\ or /). Off by default. The Node still"
+	@echo "                      denies the bundle's own config directory"
 	@echo "  PACKAGE_TUNNEL_TOKEN Optional tunnel_token to embed in the bundle"
 	@echo "  PACKAGE_NAME        Bundle name. Default connector-node-<goos>-<goarch>"
 	@echo "  PACKAGE_GOOS        Target OS. Default this host"
@@ -199,12 +213,21 @@ bdd:
 # it on the way out. long_run.sh restarts the real Node twenty times and asserts the
 # Server's own log balances established against closed channels, which is the
 # process-level evidence that no registration is left behind.
+#
+# verify_package.sh is the only check that exercises the delivery path: it builds a
+# real zip, unzips it, and starts the bundle with the bundle's own start script
+# rather than with a command written for the test. A bundle that is well formed but
+# cannot start is exactly the failure the other scripts cannot see, because they
+# never run the artifact that is handed to another person. It also asserts the
+# filesystem-root opt-in: off by default, on only when the packaging operator asked
+# for it, and never a way to allow the home directory.
 e2e: build
 	@mkdir -p $(TMP_DIR)
 	bash tests/e2e/start.sh 2>&1 | tee $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/reconnect.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/long_run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/verify_package.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 
 # Windows is a supported platform for the Node, so the Node must be compiled for
 # it on every check. The Server is deployed on Linux and is not built here: a
@@ -261,6 +284,7 @@ package: build-node
 	PACKAGE_SCOPES='$(PACKAGE_SCOPES)' \
 	PACKAGE_SCOPES_FILE='$(PACKAGE_SCOPES_FILE)' \
 	PACKAGE_TUNNEL_TOKEN='$(PACKAGE_TUNNEL_TOKEN)' \
+	PACKAGE_ALLOW_FILESYSTEM_ROOT='$(PACKAGE_ALLOW_FILESYSTEM_ROOT)' \
 	BIN_DIR='$(BIN_DIR)' \
 	TMP_DIR='$(TMP_DIR)' \
 	bash packaging/build-package.sh

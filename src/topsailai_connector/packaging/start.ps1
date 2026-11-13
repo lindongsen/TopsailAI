@@ -55,6 +55,7 @@ $Policy = Join-Path $ConfigDir 'policy.yaml'
 $ScopesFile = Join-Path $Here 'scopes.txt'
 $ServerUrlFile = Join-Path $Here 'server_url'
 $TokenFile = Join-Path $ConfigDir 'tunnel_token'
+$AllowRootFile = Join-Path $Here 'allow_filesystem_root'
 $NodeBinary = Join-Path $Here 'connector-node.exe'
 
 function Fail([string]$Message) {
@@ -121,6 +122,23 @@ if ([string]::IsNullOrWhiteSpace($TunnelToken)) {
     Fail "no tunnel token: the bundle has no config\tunnel_token and CONNECTOR_NODE_TUNNEL_TOKEN is unset"
 }
 
+# The filesystem-root opt-in is read from the bundle, not from the environment.
+# An environment variable would let whoever runs the bundle widen the blast radius
+# without touching a file, which is exactly the control this flag exists to keep
+# in the operator's hands. A missing file means the bundle was built before the
+# flag existed, and the safe reading of that is "off".
+$AllowFilesystemRoot = '0'
+if (Test-Path -LiteralPath $AllowRootFile) {
+    $recorded = (Read-TextFile $AllowRootFile).Trim()
+    if ($recorded -eq '1') {
+        $AllowFilesystemRoot = '1'
+    } elseif ($recorded -eq '' -or $recorded -eq '0') {
+        $AllowFilesystemRoot = '0'
+    } else {
+        Fail "$AllowRootFile holds '$recorded'; it must hold 0 or 1"
+    }
+}
+
 # Resolve-ScopePath turns one entry into an absolute path.
 #
 # A relative path is resolved against the bundle directory rather than refused.
@@ -158,6 +176,14 @@ function ConvertTo-YamlScalar([string]$Value) {
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add('version: 1')
+# The key is written only when the operator enabled it, so a bundle built without
+# the flag produces exactly the policy it produced before the key existed.
+# Writing `allow_filesystem_root: false` unconditionally would also work, but it
+# would put a security switch in every policy file and invite someone to flip it
+# by hand.
+if ($AllowFilesystemRoot -eq '1') {
+    $lines.Add('allow_filesystem_root: true')
+}
 $lines.Add('scopes:')
 
 $grants = New-Object System.Collections.Generic.List[string]
@@ -190,9 +216,18 @@ foreach ($raw in ((Read-TextFile $ScopesFile) -split "`r?`n")) {
     # The Node refuses these at startup. Checking them here names the scope and
     # the reason, which a startup failure from inside the binary does not do as
     # clearly.
-    $root = [System.IO.Path]::GetPathRoot($resolved)
-    if ([string]::Equals($resolved.TrimEnd('\'), $root.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
-        Fail "scope '$name' is the root of a drive, whose blast radius is the whole volume"
+    #
+    # The drive-root refusal is skipped when the operator enabled the opt-in at
+    # packaging time, because the Node accepts such a scope only when the policy
+    # carries `allow_filesystem_root: true`, which this script writes in that
+    # case. The home-directory refusal is never skipped: the Node refuses it
+    # unconditionally, so a bundle that allowed it would fail on the user's
+    # machine instead of here.
+    if ($AllowFilesystemRoot -ne '1') {
+        $root = [System.IO.Path]::GetPathRoot($resolved)
+        if ([string]::Equals($resolved.TrimEnd('\'), $root.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            Fail "scope '$name' is the root of a drive, whose blast radius is the whole volume"
+        }
     }
     $homeDir = [Environment]::GetFolderPath('UserProfile')
     if ($homeDir -and [string]::Equals($resolved.TrimEnd('\'), $homeDir.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -202,8 +237,17 @@ foreach ($raw in ((Read-TextFile $ScopesFile) -split "`r?`n")) {
     # The bundle keeps its credentials in .\config. A scope that contains that
     # directory lets a caller list the names and sizes of the identity and policy
     # files, so the overlap is refused rather than denied per request.
-    if ((Test-Within $resolved $ConfigDir) -or (Test-Within $ConfigDir $resolved)) {
-        Fail "scope '$name' path '$resolved' overlaps the bundle's config directory $ConfigDir; move the folder or the bundle"
+    #
+    # A drive root necessarily contains the config directory, so the overlap
+    # check is skipped under the opt-in for the same reason the root check is.
+    # The protection does not disappear: the Node denies the config directory by
+    # resolved path and omits it from a listing, which is what the live
+    # verification recorded in
+    # issues/done/issue-no-way-to-expose-a-whole-volume.md measured.
+    if ($AllowFilesystemRoot -ne '1') {
+        if ((Test-Within $resolved $ConfigDir) -or (Test-Within $ConfigDir $resolved)) {
+            Fail "scope '$name' path '$resolved' overlaps the bundle's config directory $ConfigDir; move the folder or the bundle"
+        }
     }
 
     $lines.Add("  ${name}:")

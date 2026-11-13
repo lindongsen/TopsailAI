@@ -802,6 +802,36 @@ everything inside it are refused, and a listing omits it rather than reporting i
 name and size. Without that deny entry the opt-in would hand a caller the identity
 file, which is the credential that authorizes every operation on the Node.
 
+### How a bundle expresses the opt-in
+
+A bundle is a zip that someone else unzips and starts, so the opt-in is decided by
+the person who builds the bundle, not by the person who receives it. The decision
+is a packaging-time variable:
+
+```
+make package PACKAGE_SERVER_URL=... PACKAGE_SCOPES=... PACKAGE_ALLOW_FILESYSTEM_ROOT=1
+```
+
+It is unset by default, and unset means off. The value is validated strictly: `1`
+enables it, an empty value or `0` disables it, and anything else fails packaging
+rather than being read as "off". A value such as `true` is refused because a
+security switch that silently accepts a spelling it does not understand is a switch
+whose state nobody can state.
+
+The decision is recorded in the bundle as a file named `allow_filesystem_root`
+holding `0` or `1`, and the start scripts read that file. It is deliberately not an
+environment variable: an environment variable would let whoever runs the bundle
+widen the blast radius without touching a file, which is exactly the control this
+split exists to prevent. The file is always written, so "not enabled" is a recorded
+decision rather than a missing file that could mean either.
+
+Under the opt-in the start scripts skip two refusals, the same two the Node relaxes:
+a scope rooted at a volume, and a scope that contains the config directory. The
+home-directory refusal is never skipped, because the Node refuses it unconditionally
+and a bundle that allowed it would fail on the recipient's machine instead of at
+packaging time. The deny list still protects the credential, so a bundle that
+exposes a whole volume still cannot read `config/identity`.
+
 Validation rules, all of which fail startup rather than warn:
 
 - `version` is required, so a future format change is detectable.
@@ -956,6 +986,14 @@ request path.
 - [ ] The opt-in relaxes the filesystem-root and config-overlap rules and nothing
       else: a relative path, a symlink root, a mount point, the home directory and
       every escaping path are still refused.
+- [ ] A bundle records the opt-in as a file named `allow_filesystem_root` holding
+      `0` or `1`, never as an environment variable, so the recipient cannot widen
+      the blast radius without editing a file the packaging step wrote.
+- [ ] The packaging variable is unset by default, and a value other than `1`, `0`
+      or empty fails packaging instead of being read as "off".
+- [ ] Under the opt-in the start scripts skip the volume-root and config-overlap
+      refusals and never the home-directory refusal, because the Node refuses the
+      home directory unconditionally.
 - [ ] The `node-id.node-token` pair is split on the first dot, and a pair with no
       dot, an empty half, a second dot in the token half, a missing `node_` prefix
       or any whitespace is refused rather than repaired.

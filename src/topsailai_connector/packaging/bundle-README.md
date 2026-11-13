@@ -43,10 +43,21 @@ Restart the Node after editing. `policy.yaml` is rebuilt from `scopes.txt` on
 every start, so `scopes.txt` is the only file you edit and a scope you delete
 stops being served.
 
-A folder that does not exist, a folder that is a drive root or your home
-directory, and a folder that overlaps this bundle's `config` folder are all
-refused at start with a message naming the scope. Those refusals are deliberate:
-each one would expose far more than the folder you meant to share.
+A folder that does not exist, a folder that is your home directory, and a folder
+that overlaps this bundle's `config` folder are all refused at start with a
+message naming the scope. Those refusals are deliberate: each one would expose far
+more than the folder you meant to share.
+
+A folder that is a drive root (`C:\`) or `/` is refused too, unless the operator
+who built this bundle enabled the filesystem-root opt-in. That decision is
+recorded in the `allow_filesystem_root` file next to this README, and it is not
+something you can turn on by editing `scopes.txt`: a whole-volume scope exposes
+every file the Node's user can read, so the person who built the bundle decides
+whether that is acceptable, not the person who receives it. When the file holds
+`1`, a drive root is accepted and the generated policy carries
+`allow_filesystem_root: true`. When it holds `0`, a drive root is refused exactly
+as before. The bundle's own `config` folder stays unreadable either way: the Node
+denies it by resolved path and omits it from a listing.
 
 ## What is in the folder
 
@@ -55,6 +66,7 @@ each one would expose far more than the folder you meant to share.
 | `connector-node` / `connector-node.exe` | The Node binary |
 | `start.sh` / `start.ps1` | Turns `scopes.txt` into `policy.yaml` and starts the Node |
 | `scopes.txt` | The folders this Node exposes. Edit this one |
+| `allow_filesystem_root` | `1` when the operator allowed a whole-volume scope, `0` otherwise. Set at packaging time; do not edit |
 | `server_url` | The Server address the Node dials |
 | `config/identity` | This Node's `node-id.node-token` pair |
 | `config/tunnel_token` | The `tunnel_token` this Node presents, when the operator provisioned one |

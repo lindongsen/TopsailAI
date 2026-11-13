@@ -39,6 +39,7 @@ PACKAGE_SERVER_URL=${PACKAGE_SERVER_URL:-}
 PACKAGE_SCOPES=${PACKAGE_SCOPES:-}
 PACKAGE_SCOPES_FILE=${PACKAGE_SCOPES_FILE:-}
 PACKAGE_TUNNEL_TOKEN=${PACKAGE_TUNNEL_TOKEN:-}
+PACKAGE_ALLOW_FILESYSTEM_ROOT=${PACKAGE_ALLOW_FILESYSTEM_ROOT:-}
 BIN_DIR=${BIN_DIR:-bin}
 TMP_DIR=${TMP_DIR:-.tmp}
 
@@ -140,6 +141,19 @@ validate_scope_name() {
 [ -n "$PACKAGE_SCOPES$PACKAGE_SCOPES_FILE" ] ||
 	fail "PACKAGE_SCOPES is required; pass one or more name=path entries, for example PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool'"
 
+# PACKAGE_ALLOW_FILESYSTEM_ROOT is a security decision, so it accepts exactly two
+# spellings and refuses everything else. A value such as `true`, `yes` or `1 ` that
+# was silently treated as "off" would produce a bundle that refuses the volume root
+# the operator asked for, and the operator would debug the scope path instead of
+# the flag. Refusing an unrecognised value names the flag.
+case "$PACKAGE_ALLOW_FILESYSTEM_ROOT" in
+'' | 0) ALLOW_FILESYSTEM_ROOT=0 ;;
+1) ALLOW_FILESYSTEM_ROOT=1 ;;
+*)
+	fail "PACKAGE_ALLOW_FILESYSTEM_ROOT '$PACKAGE_ALLOW_FILESYSTEM_ROOT' is not recognised; use 1 to allow a volume root, or leave it unset"
+	;;
+esac
+
 CHANNEL_URL=$(normalize_channel_url "$PACKAGE_SERVER_URL")
 HTTP_BASE=$(http_base_from_channel "$CHANNEL_URL")
 
@@ -233,6 +247,14 @@ done <"$SCOPES_OUT"
 # user can point the bundle at a different Server without editing a script.
 printf '%s\n' "$CHANNEL_URL" >"$STAGE/server_url"
 
+# The opt-in is recorded in the bundle as a file rather than baked into the start
+# script, for the same reason server_url is: the start script is a copy of a
+# repository file, and a value baked into it would be lost the next time the
+# script is updated. The file always exists and always holds 0 or 1, so "the
+# operator did not enable it" is a recorded decision rather than a missing file
+# that a later reader has to interpret.
+printf '%s\n' "$ALLOW_FILESYSTEM_ROOT" >"$STAGE/allow_filesystem_root"
+
 if [ -n "$PACKAGE_TUNNEL_TOKEN" ]; then
 	printf '%s\n' "$PACKAGE_TUNNEL_TOKEN" >"$STAGE/config/tunnel_token"
 	chmod 600 "$STAGE/config/tunnel_token"
@@ -258,6 +280,7 @@ cat <<SUMMARY
 
 package: wrote $ZIP_PATH
 package: platform $PACKAGE_GOOS/$PACKAGE_GOARCH, scopes $SCOPE_COUNT, channel $CHANNEL_URL
+package: filesystem root opt-in $ALLOW_FILESYSTEM_ROOT (0 means a volume root is refused)
 
 The bundle carries a credential. Hand it over the way you would hand over a
 password, and regenerate the pair if it leaks.

@@ -227,4 +227,82 @@ grep -q "overlaps the bundle's config directory" "$WORK/symlink.log" ||
 	fail "the symlinked-bundle refusal did not name the config overlap"
 echo "verify: symlinked bundle refuses a scope containing config, as expected"
 
+echo "--- the filesystem-root opt-in is off unless the operator enabled it ---"
+# The opt-in is a security decision made at packaging time, so it is checked on
+# the delivery path rather than only in the Node's own tests. Three properties
+# matter: a bundle built without the flag refuses a volume root, a bundle built
+# with it accepts one and records the decision in the policy, and an
+# unrecognised value fails packaging instead of being read as "off".
+OPTIN_WORK="$WORK/optin"
+rm -rf "$OPTIN_WORK"
+mkdir -p "$OPTIN_WORK"
+
+build_optin_bundle() {
+	local name="$1"
+	local flag="$2"
+	(
+		cd "$ROOT"
+		make --no-print-directory package \
+			PACKAGE_NAME="$name" \
+			PACKAGE_GOOS=linux \
+			PACKAGE_GOARCH=amd64 \
+			PACKAGE_SERVER_URL="http://127.0.0.1:$PORT" \
+			PACKAGE_SCOPES="root=/" \
+			PACKAGE_TUNNEL_TOKEN="$TUNNEL_TOKEN" \
+			PACKAGE_ALLOW_FILESYSTEM_ROOT="$flag"
+	) >"$OPTIN_WORK/$name.log" 2>&1 || fail "make package $name failed; see $OPTIN_WORK/$name.log"
+	unzip -q "$BIN/$name.zip" -d "$OPTIN_WORK/$name" || fail "unzip $name failed"
+	echo "$OPTIN_WORK/$name/$name"
+}
+
+OFF_BUNDLE=$(build_optin_bundle optin-off "")
+[ "$(tr -d '\r\n' <"$OFF_BUNDLE/allow_filesystem_root")" = "0" ] ||
+	fail "a bundle built without the flag did not record 0"
+if (cd "$OFF_BUNDLE" && CONNECTOR_NODE_TUNNEL_TOKEN="$TUNNEL_TOKEN" ./start.sh) >"$OPTIN_WORK/off.log" 2>&1; then
+	fail "a bundle built without the flag accepted a volume root"
+fi
+grep -q "blast radius is the whole machine" "$OPTIN_WORK/off.log" ||
+	fail "the volume-root refusal did not name the blast radius"
+echo "verify: a bundle built without the flag refuses a volume root, as expected"
+
+ON_BUNDLE=$(build_optin_bundle optin-on 1)
+[ "$(tr -d '\r\n' <"$ON_BUNDLE/allow_filesystem_root")" = "1" ] ||
+	fail "a bundle built with the flag did not record 1"
+# The Node is started and then stopped: the policy is written before the dial, so
+# a short run is enough to prove the scope was accepted. The Server is not
+# reachable on this port, which is why the run is bounded rather than waited on.
+(cd "$ON_BUNDLE" && CONNECTOR_NODE_TUNNEL_TOKEN="$TUNNEL_TOKEN" timeout 5 ./start.sh) >"$OPTIN_WORK/on.log" 2>&1 || true
+grep -q "scope root -> /" "$OPTIN_WORK/on.log" ||
+	fail "a bundle built with the flag refused a volume root; see $OPTIN_WORK/on.log"
+grep -q "^allow_filesystem_root: true$" "$ON_BUNDLE/config/policy.yaml" ||
+	fail "the generated policy does not carry allow_filesystem_root: true"
+echo "verify: a bundle built with the flag accepts a volume root and records it in the policy"
+
+# The home-directory refusal is never skipped, because the Node refuses it
+# unconditionally. A bundle that allowed it would fail on the user's machine
+# instead of at start.
+printf 'home=%s\n' "$HOME" >"$ON_BUNDLE/scopes.txt"
+if (cd "$ON_BUNDLE" && CONNECTOR_NODE_TUNNEL_TOKEN="$TUNNEL_TOKEN" ./start.sh) >"$OPTIN_WORK/home.log" 2>&1; then
+	fail "the opt-in also allowed the home directory"
+fi
+grep -q "blast radius is every file you own" "$OPTIN_WORK/home.log" ||
+	fail "the home-directory refusal did not fire under the opt-in"
+echo "verify: the opt-in does not allow the home directory"
+
+if (
+	cd "$ROOT"
+	make --no-print-directory package \
+		PACKAGE_NAME=optin-bad \
+		PACKAGE_GOOS=linux \
+		PACKAGE_GOARCH=amd64 \
+		PACKAGE_SERVER_URL="http://127.0.0.1:$PORT" \
+		PACKAGE_SCOPES="root=/" \
+		PACKAGE_ALLOW_FILESYSTEM_ROOT=true
+) >"$OPTIN_WORK/bad.log" 2>&1; then
+	fail "an unrecognised PACKAGE_ALLOW_FILESYSTEM_ROOT value was accepted"
+fi
+grep -q "PACKAGE_ALLOW_FILESYSTEM_ROOT 'true' is not recognised" "$OPTIN_WORK/bad.log" ||
+	fail "the unrecognised-value refusal did not name the flag"
+echo "verify: an unrecognised opt-in value fails packaging"
+
 echo "verify: all bundle checks passed"

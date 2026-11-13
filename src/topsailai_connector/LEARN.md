@@ -212,3 +212,28 @@ AI reflection archive, not here.
 - The same applies to the generated artifact: a script that emits a policy from a
   simpler input format cannot express a new policy-level key until that input
   format grows a way to state it. Adding the key to the schema is half the change.
+
+## A test that no target runs is not a test
+
+- `tests/e2e/verify_package.sh` existed and passed when invoked by hand, but no
+  Makefile target ran it. `grep -n "verify_package" Makefile` returned nothing
+  while the file was 308 lines long and asserted the whole delivery path. The
+  `e2e` target ran four other scripts and stopped.
+- The consequence is worse than a missing test, because the file's existence
+  suggests coverage. A reviewer who sees `verify_package.sh` in `tests/e2e/`
+  reasonably assumes `make check` runs it, and the assertions it holds are then
+  trusted without ever executing. The bundle could have stopped starting and
+  `make check` would still have been green.
+- The detection failure is structural: a test file is discovered by a runner, and
+  a shell script is discovered by nothing. Go tests are found by `go test ./...`,
+  Gherkin by the BDD tag, but a `.sh` under `tests/` is only run if a target names
+  it. Adding a script is therefore half a change; wiring it into a target is the
+  other half.
+- Check this by listing what a target actually invokes and comparing it with what
+  exists: `grep -n "tests/e2e" Makefile` against `ls tests/e2e/`. A file in the
+  second list that is absent from the first is a test nobody runs.
+- The same reasoning applies to the assertions themselves. The five opt-in
+  assertions were written before the wiring, so for one turn the repository
+  contained evidence that had never been produced by the standard suite. Running
+  the script by hand proves the assertions are correct; only the wiring proves
+  they keep being correct.

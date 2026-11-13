@@ -31,6 +31,7 @@ POLICY="$CONFIG_DIR/policy.yaml"
 SCOPES="$HERE/scopes.txt"
 SERVER_URL_FILE="$HERE/server_url"
 TOKEN_FILE="$CONFIG_DIR/tunnel_token"
+ALLOW_ROOT_FILE="$HERE/allow_filesystem_root"
 
 fail() {
 	echo "start: $*" >&2
@@ -56,6 +57,21 @@ else
 fi
 [ -n "$TUNNEL_TOKEN" ] ||
 	fail "no tunnel token: the bundle has no config/tunnel_token and CONNECTOR_NODE_TUNNEL_TOKEN is unset"
+
+# The filesystem-root opt-in is read from the bundle, not from the environment.
+# An environment variable would let whoever runs the bundle widen the blast radius
+# without touching a file, which is exactly the control this flag exists to keep
+# in the operator's hands. A missing file means the bundle was built before the
+# flag existed, and the safe reading of that is "off".
+ALLOW_FILESYSTEM_ROOT=0
+if [ -f "$ALLOW_ROOT_FILE" ]; then
+	recorded=$(tr -d '\r\n' <"$ALLOW_ROOT_FILE")
+	case "$recorded" in
+	1) ALLOW_FILESYSTEM_ROOT=1 ;;
+	0 | '') ALLOW_FILESYSTEM_ROOT=0 ;;
+	*) fail "$ALLOW_ROOT_FILE holds '$recorded'; it must hold 0 or 1" ;;
+	esac
+fi
 
 # resolve_scope_path turns one entry into an absolute path.
 #
@@ -95,6 +111,14 @@ write_policy() {
 
 	{
 		echo "version: 1"
+		# The key is written only when the operator enabled it, so a bundle built
+		# without the flag produces exactly the policy it produced before the key
+		# existed. Writing `allow_filesystem_root: false` unconditionally would
+		# also work, but it would put a security switch in every policy file and
+		# invite someone to flip it by hand.
+		if [ "$ALLOW_FILESYSTEM_ROOT" = "1" ]; then
+			echo "allow_filesystem_root: true"
+		fi
 		echo "scopes:"
 	} >"$temporary"
 
@@ -131,7 +155,16 @@ write_policy() {
 		# The Node refuses these at startup. Checking them here names the scope
 		# and the reason, which a startup failure from inside the binary does
 		# not do as clearly.
-		[ "$resolved" != "/" ] || fail "scope '$name' is '/', whose blast radius is the whole machine"
+		#
+		# The filesystem-root refusal is skipped when the operator enabled the
+		# opt-in at packaging time, because the Node accepts such a scope only
+		# when the policy carries `allow_filesystem_root: true`, which this
+		# script writes in that case. The home-directory refusal is never
+		# skipped: the Node refuses it unconditionally, so a bundle that allowed
+		# it would fail on the user's machine instead of here.
+		if [ "$ALLOW_FILESYSTEM_ROOT" != "1" ]; then
+			[ "$resolved" != "/" ] || fail "scope '$name' is '/', whose blast radius is the whole machine"
+		fi
 		[ "$resolved" != "${HOME:-/nonexistent}" ] ||
 			fail "scope '$name' is the home directory, whose blast radius is every file you own"
 
@@ -139,8 +172,17 @@ write_policy() {
 		# that directory lets a caller list the names and sizes of the identity
 		# and policy files, so the overlap is refused rather than denied per
 		# request.
-		if is_within "$resolved" "$CONFIG_DIR" || is_within "$CONFIG_DIR" "$resolved"; then
-			fail "scope '$name' path '$resolved' overlaps the bundle's config directory $CONFIG_DIR; move the folder or the bundle"
+		#
+		# A volume root necessarily contains the config directory, so the
+		# overlap check is skipped under the opt-in for the same reason the root
+		# check is. The protection does not disappear: the Node denies the
+		# config directory by resolved path and omits it from a listing, which
+		# is what the live verification recorded in
+		# issues/done/issue-no-way-to-expose-a-whole-volume.md measured.
+		if [ "$ALLOW_FILESYSTEM_ROOT" != "1" ]; then
+			if is_within "$resolved" "$CONFIG_DIR" || is_within "$CONFIG_DIR" "$resolved"; then
+				fail "scope '$name' path '$resolved' overlaps the bundle's config directory $CONFIG_DIR; move the folder or the bundle"
+			fi
 		fi
 
 		# The path is written as a double-quoted YAML scalar. A plain scalar
