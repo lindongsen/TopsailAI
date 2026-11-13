@@ -237,6 +237,7 @@ func handleUnary(request request, fault string, options mockOptions) response {
 // migrated scenario keeps asserting the same Cluster behaviour instead of a new
 // invented shape.
 type operationEvidence struct {
+	version          string
 	deliveryBoundary string
 	effectCertainty  string
 	providerOutcome  string
@@ -247,18 +248,26 @@ type operationEvidence struct {
 //
 // A missing entry is a deliberate rejection rather than a silent success, so an
 // operation that is advertised but not answered cannot pass unnoticed.
+//
+// The version is part of the entry because the Cluster intersects the configured
+// capability list with the advertised one by name AND version. An operation whose
+// payload schema is versioned independently therefore advertises that payload
+// version, not the generic "v1": command.exec and agent.model.select carry their
+// own payload version, and advertising "v1" for them would silently drop them from
+// the intersection, so every such command would be rejected as unsupported while
+// the descriptor looked complete.
 var operationEvidenceTable = map[string]operationEvidence{
-	"message.send":        {deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"context.inject":      {deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"execution.interrupt": {deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.stop":          {deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.resume":        {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.start":         {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.drive.start":   {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.drive.stop":    {deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.model.select":  {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"command.exec":        {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"ok":true}`},
-	"workspace.clean":     {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"ok":true}`},
+	"message.send":        {version: "v1", deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"context.inject":      {version: "v1", deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"execution.interrupt": {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.stop":          {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.resume":        {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.start":         {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.drive.start":   {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.drive.stop":    {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.model.select":  {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"command.exec":        {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"ok":true}`},
+	"workspace.clean":     {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"ok":true}`},
 }
 
 // nonLiveOperations are the operations the Cluster contract allows to address a
@@ -324,7 +333,7 @@ func mockOperations() []namedContract {
 	sort.Strings(names)
 	operations := make([]namedContract, 0, len(names))
 	for _, name := range names {
-		operations = append(operations, namedContract{Name: name, Version: "v1"})
+		operations = append(operations, namedContract{Name: name, Version: operationEvidenceTable[name].version})
 	}
 	return operations
 }

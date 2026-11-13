@@ -26,6 +26,18 @@ var wantOperations = []string{
 	"workspace.clean",
 }
 
+// wantVersions states the advertised version of every operation whose payload
+// schema is versioned independently of the generic "v1". The Cluster intersects
+// the configured capability list with the advertised one by name AND version, so
+// an operation advertised at the wrong version is silently dropped and every
+// command for it is rejected as unsupported. The map is written out literally
+// rather than read from the evidence table for the same reason wantOperations is:
+// a test that reads the table it verifies cannot detect a wrong entry.
+var wantVersions = map[string]string{
+	"agent.model.select": "1",
+	"command.exec":       "1",
+}
+
 // TestDescriptorAdvertisesEveryOperation proves the advertised surface is the
 // full eleven-operation set, so a scenario that drives one of them cannot fail
 // with "unsupported" merely because the mock forgot to advertise it.
@@ -36,8 +48,12 @@ func TestDescriptorAdvertisesEveryOperation(t *testing.T) {
 	}
 	for index, want := range wantOperations {
 		got := descriptor.Operations[index]
-		if got.Name != want || got.Version != "v1" {
-			t.Fatalf("operation %d = %#v, want %q/v1", index, got, want)
+		wantVersion := "v1"
+		if versioned, ok := wantVersions[want]; ok {
+			wantVersion = versioned
+		}
+		if got.Name != want || got.Version != wantVersion {
+			t.Fatalf("operation %d = %#v, want %q/%s", index, got, want, wantVersion)
 		}
 	}
 }
