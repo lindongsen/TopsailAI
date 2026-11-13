@@ -118,6 +118,48 @@ func TestEndpointExpiryIntervalBounds(t *testing.T) {
 	}
 }
 
+// TestExpireEndpointRecordsLogsCompletionWhenNothingDeleted verifies a sweep
+// that selects zero rows still reports that it ran. Without this line a sweep
+// that deleted nothing is indistinguishable from a sweep that never ran, which
+// is how the unreachable offline state stayed hidden.
+func TestExpireEndpointRecordsLogsCompletionWhenNothingDeleted(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	stub := &expiryStoreStub{}
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+
+	logged := output.String()
+	if !strings.Contains(logged, "retention sweep complete") {
+		t.Fatalf("completion line missing from %q", logged)
+	}
+	for _, field := range []string{"purged_commands=0", "deleted_inventory=0", "deleted_metadata=0"} {
+		if !strings.Contains(logged, field) {
+			t.Fatalf("field %q missing from %q", field, logged)
+		}
+	}
+}
+
+// TestExpireEndpointRecordsLogsCountsWhenRowsDeleted verifies the completion
+// line carries the real counts and that the per-row lines are still emitted.
+func TestExpireEndpointRecordsLogsCountsWhenRowsDeleted(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	stub := &expiryStoreStub{purged: 3, inventoryIDs: []string{"gone-1"}, deletedIDs: []string{"gone-1"}}
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+
+	logged := output.String()
+	for _, field := range []string{"purged_commands=3", "deleted_inventory=1", "deleted_metadata=1"} {
+		if !strings.Contains(logged, field) {
+			t.Fatalf("field %q missing from %q", field, logged)
+		}
+	}
+	for _, line := range []string{"expired offline endpoint inventory", "expired offline endpoint metadata"} {
+		if !strings.Contains(logged, line) {
+			t.Fatalf("per-row line %q missing from %q", line, logged)
+		}
+	}
+}
+
 // TestExpireEndpointRecordsPurgesCommandsBeforeEndpointExpiry verifies the purge
 // runs first, so a metadata row blocked only by a now-purgeable command is
 // removed in the same sweep instead of surviving one extra cycle.

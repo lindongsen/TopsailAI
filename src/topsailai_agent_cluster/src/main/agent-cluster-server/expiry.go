@@ -53,10 +53,17 @@ func endpointExpiryInterval(retention time.Duration) time.Duration {
 // The command purge runs before endpoint expiry so a metadata row blocked only
 // by a now-purgeable command is removed in the same sweep instead of surviving
 // one extra cycle.
+//
+// The completion line is emitted at Info even when nothing was deleted. Without
+// it a sweep that selects zero rows is indistinguishable from a sweep that never
+// ran, which is exactly how the unreachable offline state stayed hidden. Info is
+// required rather than Debug because the logger has no level option, so the
+// effective level is Info and a Debug line would never appear in production.
 func expireEndpointRecords(ctx context.Context, logger *slog.Logger, store endpointExpiryStore, retention, commandRetention time.Duration, now time.Time) {
 	cutoff := now.Add(-retention)
 	commandCutoff := now.Add(-commandRetention)
-	if _, err := store.PurgeExpiredCommands(ctx, commandCutoff.UnixMilli()); err != nil {
+	purgedCommands, err := store.PurgeExpiredCommands(ctx, commandCutoff.UnixMilli())
+	if err != nil {
 		if ctx.Err() == nil {
 			logger.Error("purge expired command records", "command_retention", commandRetention.String(), "cutoff_at_ms", commandCutoff.UnixMilli(), "error", err)
 		}
@@ -75,4 +82,5 @@ func expireEndpointRecords(ctx context.Context, logger *slog.Logger, store endpo
 	for _, endpointID := range result.DeletedEndpointIDs {
 		logger.Info("expired offline endpoint metadata", "endpoint_id", endpointID, "retention", retention.String(), "cutoff_at_ms", cutoff.UnixMilli())
 	}
+	logger.Info("retention sweep complete", "retention", retention.String(), "cutoff_at_ms", cutoff.UnixMilli(), "command_retention", commandRetention.String(), "command_cutoff_at_ms", commandCutoff.UnixMilli(), "purged_commands", purgedCommands, "deleted_inventory", len(result.InventoryEndpointIDs), "deleted_metadata", len(result.DeletedEndpointIDs))
 }
