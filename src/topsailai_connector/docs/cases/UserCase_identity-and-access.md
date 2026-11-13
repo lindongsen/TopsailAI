@@ -19,7 +19,7 @@ machine at home. They want to read it without opening a port on the home router.
 **Steps:**
 
 1. The home machine runs `connector-node`, which dials out to the Server.
-2. The operator runs `connector-server file read --scope project --path notes.md`.
+2. The operator runs `connector-server cli --scope project --path notes.md file.read`.
 3. The CLI sends `client_token` and the pair to the Server.
 4. The Server compares `client_token`, checks the `node-id`, forwards the
    `node-token`.

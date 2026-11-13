@@ -15,7 +15,7 @@ agree.
 
 **Precondition:** A Node connected, a policy granting `project: [read]`.
 
-**Action:** `connector-server file read --scope project --path notes.md`.
+**Action:** `connector-server cli --scope project --path notes.md file.read`.
 
 **Expected:** A `POST` to `/v1/nodes/<node-id>/operations` with
 `Authorization: Bearer <client_token>`, `X-Connector-Node-Token: <node-token>` and a
@@ -23,13 +23,13 @@ body naming `file.read`, `project` and `notes.md`.
 
 ### TC-CLI-2: `file list` sends the documented request
 
-**Action:** `connector-server file list --scope project`.
+**Action:** `connector-server cli --scope project file.list`.
 
 **Expected:** A request naming `file.list`.
 
 ### TC-CLI-3: `file stat` sends the documented request
 
-**Action:** `connector-server file stat --scope project --path notes.md`.
+**Action:** `connector-server cli --scope project --path notes.md file.stat`.
 
 **Expected:** A request naming `file.stat`.
 
@@ -100,25 +100,25 @@ advertise a capability the binary refuses.
 
 ### TC-CLI-12: An unknown subcommand exits non-zero
 
-**Action:** `connector-server file delete ...`.
+**Action:** `connector-server cli ... file.delete`.
 
 **Expected:** A message and a non-zero exit code.
 
 ### TC-CLI-13: A missing `--scope` exits non-zero
 
-**Action:** `connector-server file read --path notes.md`.
+**Action:** `connector-server cli --path notes.md file.read`.
 
 **Expected:** A message naming the missing flag, exit code non-zero, no request sent.
 
 ### TC-CLI-14: A missing `--path` exits non-zero for `read`
 
-**Action:** `connector-server file read --scope project`.
+**Action:** `connector-server cli --scope project file.read`.
 
 **Expected:** A message, exit code non-zero, no request sent.
 
 ### TC-CLI-15: `--path` is optional for `list`
 
-**Action:** `connector-server file list --scope project`.
+**Action:** `connector-server cli --scope project file.list`.
 
 **Expected:** The request names the scope root.
 

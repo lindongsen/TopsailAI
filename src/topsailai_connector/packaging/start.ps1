@@ -62,12 +62,50 @@ function Fail([string]$Message) {
     exit 1
 }
 
+# Read-TextFile reads a bundle text file without guessing the encoding wrong.
+#
+# Windows PowerShell 5.1 Get-Content defaults to the ANSI code page, so a UTF-8
+# scopes.txt holding a non-ASCII folder path decodes to mojibake and the scope is
+# refused as "not a directory". A user whose home directory is named in Chinese,
+# Japanese or Cyrillic hits that on the first start, so the encoding is decided
+# here rather than left to the default:
+#
+#   1. A byte order mark wins, because it is an explicit statement.
+#   2. Otherwise strict UTF-8 is attempted. Valid UTF-8 is not valid ANSI text by
+#      accident for non-ASCII bytes, so a successful decode is strong evidence.
+#   3. Otherwise the ANSI code page is used, which is what a file written by
+#      Notepad on an older system actually is.
+#
+# The file is read as bytes first because decoding is the decision being made;
+# letting Get-Content decode it would decide before the check.
+function Read-TextFile([string]$Path) {
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -eq 0) { return '' }
+
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        return [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+    }
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+    }
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+        return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+    }
+
+    $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    try {
+        return $strictUtf8.GetString($bytes)
+    } catch [System.Text.DecoderFallbackException] {
+        return [System.Text.Encoding]::Default.GetString($bytes)
+    }
+}
+
 if (-not (Test-Path -LiteralPath $NodeBinary)) { Fail "$NodeBinary is missing" }
 if (-not (Test-Path -LiteralPath $ScopesFile)) { Fail "$ScopesFile is missing; it lists the folders this Node exposes" }
 if (-not (Test-Path -LiteralPath $ServerUrlFile)) { Fail "$ServerUrlFile is missing; it holds the Server address" }
 if (-not (Test-Path -LiteralPath $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir | Out-Null }
 
-$ServerUrl = (Get-Content -LiteralPath $ServerUrlFile -Raw).Trim()
+$ServerUrl = (Read-TextFile $ServerUrlFile).Trim()
 if ([string]::IsNullOrWhiteSpace($ServerUrl)) { Fail "$ServerUrlFile is empty" }
 
 # The tunnel token comes from the bundle when the operator provisioned one, and
@@ -75,7 +113,7 @@ if ([string]::IsNullOrWhiteSpace($ServerUrl)) { Fail "$ServerUrlFile is empty" }
 # whether it was found, because a token in a terminal is a token in a scrollback
 # buffer.
 if (Test-Path -LiteralPath $TokenFile) {
-    $TunnelToken = (Get-Content -LiteralPath $TokenFile -Raw).Trim()
+    $TunnelToken = (Read-TextFile $TokenFile).Trim()
 } else {
     $TunnelToken = $env:CONNECTOR_NODE_TUNNEL_TOKEN
 }
@@ -126,7 +164,7 @@ $grants = New-Object System.Collections.Generic.List[string]
 $count = 0
 $seen = @{}
 
-foreach ($raw in (Get-Content -LiteralPath $ScopesFile)) {
+foreach ($raw in ((Read-TextFile $ScopesFile) -split "`r?`n")) {
     $line = $raw.Trim()
     if ($line -eq '' -or $line.StartsWith('#')) { continue }
     if (-not $line.Contains('=')) { Fail "scopes.txt line '$line' is not name=path" }

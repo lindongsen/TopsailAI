@@ -139,3 +139,59 @@ AI reflection archive, not here.
   nothing to merge. `cmd/connector-server` was the only such package. The fix is a
   test file, not an environment change: the missing tool is a symptom of a package
   nobody tested.
+
+## A documented command is a claim that must be executed
+
+- The README "First run" block documented four commands and none of them ran:
+  `-listen` and `-server` are not flags on either binary, `file read` is not a
+  subcommand, and the CLI flags must precede the operation name. See
+  `issues/done/issue-readme-first-run-commands-do-not-run.md`.
+- The cause is writing documentation from the design intent instead of from the
+  implemented interface. `runServer` and the Node's `run` register no flags at
+  all, so a flag-shaped example cannot be right no matter how natural it reads.
+- The same wrong CLI shape had already been fixed in `docs/API.md` and left in
+  `README.md`. A fix scoped to one file fixes one file, not the claim: when a
+  defect is a wrong example, search every document for that example.
+- Execute a documented command before publishing it, and again after changing the
+  interface it names. A README that looks right but was never run is the same
+  class of defect as a test that was never run.
+
+## A cleanup script is a destructive program and must be written like one
+
+- A cleanup script deleted `C:\Users\Administrator\Documents` in full, including
+  an unrelated pre-existing folder, because a path was built by concatenation
+  inside an array literal: `"C:\Users\Administrator\Documents\" + $name`. The
+  trailing backslash escaped the closing quote, the `+ $name` was dropped, and
+  the array held the parent directory. See `issues/91critical_issues.md`.
+- `Remove-Item -Force` bypasses the Recycle Bin, so the deletion had no recovery
+  path. The host had no shadow copies and no restore points.
+- The log line looked correct because the non-ASCII child name was invisible in
+  the console, so `removed C:\Users\Administrator\Documents\` read as if it named
+  the child. A deletion log must print the resolved path and its codepoints, not
+  a name the console may render as nothing.
+- The residue check only asserted that this task's own artifacts were gone. A
+  cleanup check must also assert that pre-existing directories still exist, or it
+  cannot distinguish "cleaned up" from "deleted too much".
+- Rules that follow: build paths with `Join-Path`; delete only paths recorded at
+  creation time; never delete a parent of a known user directory; never use
+  `-Force` on a directory this task did not create; put every artifact under one
+  dedicated scratch root so cleanup is a single deletion of a directory this task
+  created.
+
+## A test harness must not encode the bug it is testing
+
+- PowerShell 5.1 decodes a `.ps1` file as the ANSI code page unless it has a BOM.
+  A harness script containing a non-ASCII path was silently mangled, so the
+  extraction landed in a directory whose name was mojibake and the later
+  `Start-Process` failed with a path that did not exist. The product was fine;
+  the harness was wrong.
+- `Start-Process -ArgumentList` also mangles non-ASCII arguments through the ANSI
+  code page. Passing `-File <non-ASCII path>` failed while `-File start.ps1` plus
+  `-WorkingDirectory <non-ASCII path>` worked, because the path never entered the
+  child command line.
+- Build non-ASCII test paths from codepoints inside a pure-ASCII script
+  (`-join ([char]26032, ...)`) and compare codepoints rather than displayed text.
+  The console code page renders `中文` as `????` and `café` as `caf‚`, so a
+  visual comparison proves nothing either way.
+- `[string]::Concat` has no three-argument overload; `-join` on a char array is
+  the form that works.

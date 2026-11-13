@@ -126,19 +126,22 @@ The Node generates its own identity, so the order matters:
 ```
 1. Start the Server with its two secrets set
    CONNECTOR_SERVER_TUNNEL_TOKEN=<secret> CONNECTOR_SERVER_CLIENT_TOKEN=<secret> \
-     connector-server -listen :8443
+   CONNECTOR_SERVER_LISTEN=:8443 \
+     connector-server run
 
 2. Start the Node once to create its identity
    connector-node id
      -> node_7f3a...9c1e.9f2b...4d7a      copy this whole pair
 
 3. Give the Node the tunnel_token, then start it
-   CONNECTOR_NODE_TUNNEL_TOKEN=<secret> connector-node -server wss://host/channel
+   CONNECTOR_NODE_TUNNEL_TOKEN=<secret> \
+   CONNECTOR_NODE_SERVER_URL=wss://host/channel \
+     connector-node run
 
 4. Point the CLI at the Node
    CONNECTOR_CLI_CLIENT_TOKEN=<secret> \
    CONNECTOR_CLI_NODE=node_7f3a...9c1e.9f2b...4d7a \
-     connector-server file read --scope project --path a.txt
+     connector-server cli --server https://host --scope project --path a.txt file.read
 ```
 
 The Node must run once before anyone can address it, because the Server never
