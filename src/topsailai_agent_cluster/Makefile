@@ -27,6 +27,7 @@ SHELL := /bin/bash
 BIN_DIR := bin
 TESTHOOKS_DIR := .tmp/artifacts
 CONFORMANCE_DIR := .tmp/provider-conformance
+TOPSAILAI_CONFORMANCE_DIR := .tmp/provider-topsailai-conformance
 DEB_DIR ?= .tmp/deb
 DEB_BUILD_DIR ?= .tmp/deb/build
 LAUNCHER := scripts/start-local-cluster.sh
@@ -135,7 +136,8 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
 .PHONY: help build build-testhooks vet fmt \
         test test-all test-unit test-unit-common test-unit-server \
         test-unit-endpoint test-unit-cli test-provider-schema test-conformance \
-        test-provider-topsailai test-bdd test-integration test-packaging test-harness \
+        test-provider-topsailai test-provider-topsailai-conformance \
+        test-bdd test-integration test-packaging test-harness \
         bdd integration \
         deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint \
         deb-inspect deb-clean \
@@ -162,6 +164,7 @@ help:
 	@echo "  test-provider-schema run the Provider CLI DTO and JSON Schema contract tests"
 	@echo "  test-conformance   build and verify the independent Mock Provider executable"
 	@echo "  test-provider-topsailai test the independent TopsailAI Provider module"
+	@echo "  test-provider-topsailai-conformance drive the real TopsailAI Provider executable through the conformance suite"
 	@echo "  test-bdd          run the BDD feature suite"
 	@echo "  test-integration  run the integration suite with test hooks"
 	@echo "  test-packaging    run the Debian packaging tests"
@@ -277,6 +280,23 @@ test-conformance:
 test-provider-topsailai:
 	mkdir -p .tmp/provider-topsailai/go-cache .tmp/provider-topsailai/go-tmp
 	cd providers/topsailai && TMPDIR=$(abspath .tmp/provider-topsailai) GOCACHE=$(abspath .tmp/provider-topsailai/go-cache) GOTMPDIR=$(abspath .tmp/provider-topsailai/go-tmp) go test -count=1 ./...
+
+# The TopsailAI Provider is a separate executable, so the provider-neutral
+# conformance suite is driven against its real binary instead of the Mock. The
+# business CLI behind it is a conformance fixture, because the suite must not
+# require a real TopsailAI installation. Every generated binary, cache entry and
+# compiler temporary file stays under .tmp/.
+test-provider-topsailai-conformance:
+	mkdir -p $(TOPSAILAI_CONFORMANCE_DIR)/bin $(TOPSAILAI_CONFORMANCE_DIR)/go-cache $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp
+	GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/topsailai-provider-conformance-fixture) ./tests/fixtures/topsailai_provider_conformance
+	cd providers/topsailai && GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/agent-cluster-provider-topsailai) .
+	AGENT_CLUSTER_PROVIDER_EXECUTABLE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/agent-cluster-provider-topsailai) \
+	AGENT_CLUSTER_PROVIDER_ADAPTER_ID=topsailai \
+	AGENT_CLUSTER_PROVIDER_SESSION_ID=fixture-session \
+	AGENT_CLUSTER_PROVIDER_ENVIRONMENT=AGENT_CLUSTER_TOPSAILAI_EXECUTABLE \
+	AGENT_CLUSTER_PROVIDER_TIMEOUT_MS=5000 \
+	AGENT_CLUSTER_TOPSAILAI_EXECUTABLE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/topsailai-provider-conformance-fixture) \
+	GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go test -count=1 ./internal/providerconformance
 
 # The BDD suite is cross-component on purpose: a scenario drives the real Server,
 # Endpoint and CLI together, so splitting it by component would either duplicate
