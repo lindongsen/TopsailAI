@@ -33,9 +33,16 @@ type Config struct {
 // version it never validated against. A retired instance is closed only after its
 // last caller releases, so replacing a version never closes a process that is
 // still serving a request.
+//
+// The configuration is retained because a replacement has to reuse everything the
+// operator did not change. Only the executable path names the version, so a
+// candidate is built from the previous configuration with one field overridden;
+// rebuilding from scratch would silently drop the timeout, the arguments and the
+// declared capabilities.
 type instance struct {
 	adapterID string
 	adapter   Adapter
+	config    Config
 	refs      int
 	retired   bool
 }
@@ -92,8 +99,49 @@ func (r *Registry) Configure(ctx context.Context, config Config) (Adapter, error
 	if err != nil {
 		return nil, fmt.Errorf("configure adapter %q: %w", config.AdapterID, err)
 	}
-	r.instances[config.AdapterID] = &instance{adapterID: config.AdapterID, adapter: configured}
+	r.instances[config.AdapterID] = &instance{adapterID: config.AdapterID, adapter: configured, config: config}
 	return configured, nil
+}
+
+// Prepare builds one candidate instance without registering it.
+//
+// It exists for activation: a candidate Provider CLI version must be constructed
+// and validated before it can replace anything, and a candidate that fails
+// validation must leave the registry untouched. Configure cannot serve that
+// purpose because it rejects an adapter ID that is already configured, which is
+// exactly the ID a replacement targets.
+//
+// The factory runs outside the registry lock, so a slow candidate bootstrap never
+// blocks command dispatch on the versions that are already serving.
+func (r *Registry) Prepare(ctx context.Context, config Config) (Adapter, error) {
+	if config.AdapterID == "" || config.ProviderType == "" {
+		return nil, fmt.Errorf("adapter ID and provider type are required")
+	}
+	r.mu.RLock()
+	factory, exists := r.factories[config.ProviderType]
+	r.mu.RUnlock()
+	if !exists {
+		return nil, fmt.Errorf("provider type %q is not registered", config.ProviderType)
+	}
+	configured, err := factory(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("configure adapter %q: %w", config.AdapterID, err)
+	}
+	return configured, nil
+}
+
+// Config returns the configuration one adapter was built from.
+//
+// Activation reads it to reuse the timeout, arguments and declared capabilities
+// the operator configured, so a replacement changes only the executable path.
+func (r *Registry) Config(adapterID string) (Config, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.instances[adapterID]
+	if !ok {
+		return Config{}, false
+	}
+	return entry.config, true
 }
 
 // Get returns a configured instance by its stable local adapter ID.
@@ -218,6 +266,15 @@ func (r *Registry) forgetDraining(entry *instance) {
 // the last of them releases. A failed replacement therefore leaves the previous
 // version serving traffic, which is the property that makes activation safe.
 func (r *Registry) Replace(adapterID string, next Adapter) (Adapter, error) {
+	return r.ReplaceWithConfig(adapterID, next, Config{})
+}
+
+// ReplaceWithConfig swaps the instance and records the configuration the new
+// instance was built from, so a later replacement or rollback reuses it.
+//
+// An empty configuration keeps the previous one, which is what a caller that only
+// has a new instance can supply.
+func (r *Registry) ReplaceWithConfig(adapterID string, next Adapter, config Config) (Adapter, error) {
 	if adapterID == "" {
 		return nil, fmt.Errorf("adapter ID is required")
 	}
@@ -234,8 +291,12 @@ func (r *Registry) Replace(adapterID string, next Adapter) (Adapter, error) {
 		r.mu.Unlock()
 		return nil, fmt.Errorf("adapter ID %q already uses the requested instance", adapterID)
 	}
+	effective := config
+	if effective.AdapterID == "" {
+		effective = previous.config
+	}
 	previous.retired = true
-	r.instances[adapterID] = &instance{adapterID: adapterID, adapter: next}
+	r.instances[adapterID] = &instance{adapterID: adapterID, adapter: next, config: effective}
 	closeNow := previous.refs == 0
 	if !closeNow {
 		r.draining[adapterID] = append(r.draining[adapterID], previous)
@@ -245,6 +306,62 @@ func (r *Registry) Replace(adapterID string, next Adapter) (Adapter, error) {
 		_ = previous.adapter.Close()
 	}
 	return previous.adapter, nil
+}
+
+// RestoreWithConfig reinstates an instance that a previous replacement retired.
+//
+// It exists for rollback. ReplaceWithConfig cannot serve that purpose because it
+// installs the supplied adapter in a fresh instance record, which would leave the
+// retired record still holding a reference count: when its last caller released,
+// it would close the very adapter that had just been restored. Restoring the
+// original record instead keeps the reference count attached to the instance that
+// is serving again, so a caller that was mid-request when the replacement happened
+// still finishes on the version it started on and nothing closes it underneath.
+//
+// It fails when the previous instance is no longer available, which happens when
+// nothing held it at replacement time and it was therefore closed immediately. A
+// caller that needs rollback in that case must rebuild the previous version from
+// its configuration instead of restoring the closed instance.
+func (r *Registry) RestoreWithConfig(adapterID string, previous Adapter, config Config) error {
+	if adapterID == "" {
+		return fmt.Errorf("adapter ID is required")
+	}
+	if previous == nil {
+		return fmt.Errorf("previous adapter is required")
+	}
+	r.mu.Lock()
+	current, exists := r.instances[adapterID]
+	if !exists {
+		r.mu.Unlock()
+		return fmt.Errorf("adapter ID %q is not configured", adapterID)
+	}
+	var restored *instance
+	for _, candidate := range r.draining[adapterID] {
+		if candidate.adapter == previous {
+			restored = candidate
+			break
+		}
+	}
+	if restored == nil {
+		r.mu.Unlock()
+		return fmt.Errorf("previous instance for adapter %q is no longer available", adapterID)
+	}
+	r.forgetDraining(restored)
+	restored.retired = false
+	if config.AdapterID != "" {
+		restored.config = config
+	}
+	current.retired = true
+	closeNow := current.refs == 0
+	if !closeNow {
+		r.draining[adapterID] = append(r.draining[adapterID], current)
+	}
+	r.instances[adapterID] = restored
+	r.mu.Unlock()
+	if closeNow {
+		_ = current.adapter.Close()
+	}
+	return nil
 }
 
 // InFlight reports how many callers still hold an instance for one adapter,

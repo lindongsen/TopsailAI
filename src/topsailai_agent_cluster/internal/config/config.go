@@ -48,10 +48,15 @@ type Config struct {
 	// working. A directory that holds at least one policy file restricts every
 	// caller to the tokens it lists.
 	EndpointAccessPolicyDir string
-	ChannelAddress          string
-	ChannelDirection        string
-	EndpointChannelListen   string
-	EndpointDialAddresses   map[string]string
+	// ReplaceRequestFile is the Endpoint-local request document that activates one
+	// Provider CLI version for one adapter. An empty value disables activation
+	// entirely, which is the fail-closed default: an Endpoint that names no request
+	// file cannot be asked to swap the program it runs.
+	ReplaceRequestFile    string
+	ChannelAddress        string
+	ChannelDirection      string
+	EndpointChannelListen string
+	EndpointDialAddresses map[string]string
 	// TLSSharedCertificate means every Endpoint presents the same Server
 	// certificate, so the certificate no longer proves which Endpoint is
 	// connecting. It is opt-in because that binding is a real security property.
@@ -137,6 +142,9 @@ func Load(args []string, role string) (Config, error) {
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"); value != "" {
 			cfg.EndpointAccessPolicyDir = value
 		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_REPLACE_REQUEST_FILE"); value != "" {
+			cfg.ReplaceRequestFile = value
+		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS"); value != "" {
 			cfg.ChannelAddress = value
 		}
@@ -221,6 +229,7 @@ func Load(args []string, role string) (Config, error) {
 		flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
 		flags.StringVar(&cfg.ControlActionFile, "control-action-file", cfg.ControlActionFile, "Endpoint-local file selecting which ctl. actions are served")
 		flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
+		flags.StringVar(&cfg.ReplaceRequestFile, "replace-request-file", cfg.ReplaceRequestFile, "Endpoint-local request document that activates one Provider CLI version for one adapter")
 		flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Server WSS address the Endpoint dials")
 		flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")
 		flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")

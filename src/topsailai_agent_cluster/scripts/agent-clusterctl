@@ -24,8 +24,8 @@
 # configuration is found beside the controller in both layouts, one path rule
 # serves both; -c still overrides it.
 #
-# Actions: start, stop, restart, status, doctor.
-# Usage:   agent-clusterctl [-c <config>] <action>
+# Actions: start, stop, restart, status, doctor, replace.
+# Usage:   agent-clusterctl [-c <config>] <action> [replace options]
 
 set -uo pipefail
 
@@ -36,6 +36,12 @@ CTL_DIR=$(dirname "$(readlink -f "$0")")
 # beside the controller. One rule therefore serves both layouts.
 CONFIG_FILE=""
 ACTION=""
+# Replace options. They are parsed here rather than inside the action so a
+# mistyped option fails before any configuration is loaded or any signal is sent.
+REPLACE_ADAPTER=""
+REPLACE_EXECUTABLE=""
+REPLACE_SHA256=""
+REPLACE_TIMEOUT_SECONDS=""
 
 function die() {
     echo "ERROR: $*" >&2
@@ -43,7 +49,8 @@ function die() {
 }
 
 function usage() {
-    echo "usage: $(basename "$0") [-c <config>] {start|stop|restart|status|doctor}" >&2
+    echo "usage: $(basename "$0") [-c <config>] {start|stop|restart|status|doctor|replace}" >&2
+    echo "       $(basename "$0") [-c <config>] replace --adapter <id> --executable <path> [--sha256 <hex>] [--timeout <seconds>]" >&2
     exit 2
 }
 
@@ -52,6 +59,26 @@ while [ $# -gt 0 ]; do
         -c)
             [ $# -ge 2 ] || usage
             CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --adapter)
+            [ $# -ge 2 ] || usage
+            REPLACE_ADAPTER="$2"
+            shift 2
+            ;;
+        --executable)
+            [ $# -ge 2 ] || usage
+            REPLACE_EXECUTABLE="$2"
+            shift 2
+            ;;
+        --sha256)
+            [ $# -ge 2 ] || usage
+            REPLACE_SHA256="$2"
+            shift 2
+            ;;
+        --timeout)
+            [ $# -ge 2 ] || usage
+            REPLACE_TIMEOUT_SECONDS="$2"
             shift 2
             ;;
         -h | --help) usage ;;
@@ -180,6 +207,13 @@ function load_config() {
     # whole authorization boundary while every other capability keeps working, so
     # the value is resolved here and passed as a flag below.
     ENDPOINT_ACCESS_POLICY_DIR=$(resolve_path "${ENDPOINT_ACCESS_POLICY_DIR:-}")
+    # The replace request file is optional in the same way as the allowlist and
+    # catalog, but its absence is fail-closed: an Endpoint that names no file
+    # cannot be asked to swap the Provider CLI version it runs. It is resolved
+    # here and forwarded as a flag below, because a node that names the file in
+    # node.conf but never forwards it would silently ignore every activation
+    # request while the controller reported one was sent.
+    REPLACE_REQUEST_FILE=$(resolve_path "${REPLACE_REQUEST_FILE:-}")
 }
 
 # Reports the binary serving the configured role. The default is relative to
@@ -243,6 +277,9 @@ function doctor() {
         # every caller is permitted, which an operator must be able to see before
         # trusting a node's authorization boundary.
         echo "policy     : ${ENDPOINT_ACCESS_POLICY_DIR:-<permissive>}"
+        # Printed because an absent request file is fail-closed: activation is
+        # unavailable, which an operator must be able to see before sending one.
+        echo "replace    : ${REPLACE_REQUEST_FILE:-<disabled>}"
     fi
 }
 
@@ -316,6 +353,11 @@ function start_node() {
         # force, and a node that names it in node.conf but never passes it here
         # silently serves every caller.
         [ -n "${ENDPOINT_ACCESS_POLICY_DIR:-}" ] && args+=(--endpoint-access-policy-dir "${ENDPOINT_ACCESS_POLICY_DIR}")
+        # The replace request file is optional and fail-closed. Forwarding it is
+        # what makes activation reachable at all: a node that names the file in
+        # node.conf but never passes it here would accept every SIGHUP and ignore
+        # every request, while the controller reported the request was sent.
+        [ -n "${REPLACE_REQUEST_FILE:-}" ] && args+=(--replace-request-file "${REPLACE_REQUEST_FILE}")
         # Adapters are supplied through the environment; no flag exists for them.
         export AGENT_CLUSTER_ENDPOINT_ADAPTERS="${ADAPTERS}"
         # The collection delay is likewise environment-only, so the binary owns
@@ -420,6 +462,107 @@ function status_node() {
     fi
 }
 
+# Activates one Provider CLI version for one adapter without restarting the role.
+#
+# The Endpoint has no HTTP surface for this and the controller has no HTTP client,
+# so the transport is the same one the allowlist, catalog and access policy already
+# use: a configured local file plus SIGHUP. The controller writes the request
+# document, signals the running process, then waits for the correlated answer the
+# Endpoint writes beside the request. The answer is the only evidence that
+# activation happened, so a missing answer is reported as a failure rather than
+# assumed to be a success.
+function replace_provider() {
+    [ "${ROLE}" = "endpoint" ] ||
+        die "replace applies to the endpoint role only, this node is ${ROLE}"
+    [ -n "${REPLACE_REQUEST_FILE}" ] ||
+        die "REPLACE_REQUEST_FILE is not configured; activation is disabled on this node"
+    [ -n "${REPLACE_ADAPTER}" ] || die "replace requires --adapter <id>"
+    [ -n "${REPLACE_EXECUTABLE}" ] || die "replace requires --executable <path>"
+
+    local pid
+    pid=$(pid_of) ||
+        die "${ROLE} is not running; activation needs a live Endpoint to signal"
+
+    local timeout="${REPLACE_TIMEOUT_SECONDS:-30}"
+    case "${timeout}" in
+        '' | *[!0-9]*) die "--timeout must be a whole number of seconds" ;;
+    esac
+    [ "${timeout}" -gt 0 ] || die "--timeout must be greater than zero"
+
+    local request_dir result_file
+    request_dir=$(dirname "${REPLACE_REQUEST_FILE}")
+    result_file="${request_dir}/replace-result.json"
+    ensure_dir "${request_dir}"
+
+    # A stale answer from an earlier activation must never be read as this one's
+    # outcome, so it is removed before the request is written.
+    if [ -f "${result_file}" ]; then
+        rm -f "${result_file}"
+        echo "removed stale result ${result_file}"
+    fi
+
+    local request_id
+    request_id="replace-$(date +%Y%m%dT%H%M%S)-$$"
+    # The request is written to a temporary file and renamed, so the Endpoint can
+    # never read a half-written document after the signal.
+    local request_tmp="${REPLACE_REQUEST_FILE}.tmp.$$"
+    {
+        printf '{\n'
+        printf '  "request_id": "%s",\n' "${request_id}"
+        printf '  "adapter_id": "%s",\n' "${REPLACE_ADAPTER}"
+        printf '  "executable": "%s"' "${REPLACE_EXECUTABLE}"
+        if [ -n "${REPLACE_SHA256}" ]; then
+            printf ',\n  "expected_sha256": "%s"' "${REPLACE_SHA256}"
+        fi
+        printf '\n}\n'
+    } >"${request_tmp}" || die "cannot write ${request_tmp}"
+    mv "${request_tmp}" "${REPLACE_REQUEST_FILE}" || die "cannot install ${REPLACE_REQUEST_FILE}"
+
+    echo "requesting activation of ${REPLACE_EXECUTABLE} for adapter ${REPLACE_ADAPTER}"
+    kill -HUP "${pid}" || die "cannot signal ${ROLE} pid ${pid}"
+
+    # Bounded wait for the correlated answer. The Endpoint writes it after the
+    # swap and the republish attempt, so its presence means the outcome is known.
+    local iterations=$((timeout * 10))
+    local waited=0
+    while [ "${waited}" -lt "${iterations}" ]; do
+        [ -f "${result_file}" ] && break
+        kill -0 "${pid}" 2>/dev/null || die "${ROLE} pid ${pid} exited during activation"
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    [ -f "${result_file}" ] ||
+        die "no activation answer after ${timeout}s; check ${LOG_PATH}"
+
+    # The answer is parsed with the tools the package already depends on, so the
+    # controller needs no JSON library. Every field is printed because an operator
+    # must be able to see which version is serving now, not only whether the call
+    # returned.
+    local answer_id ok error effective previous revision reverted
+    answer_id=$(sed -n 's/.*"request_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${result_file}" | head -n 1)
+    ok=$(sed -n 's/.*"ok"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "${result_file}" | head -n 1)
+    error=$(sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${result_file}" | head -n 1)
+    effective=$(sed -n 's/.*"effective_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${result_file}" | head -n 1)
+    previous=$(sed -n 's/.*"previous_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${result_file}" | head -n 1)
+    revision=$(sed -n 's/.*"effective_revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${result_file}" | head -n 1)
+    reverted=$(sed -n 's/.*"reverted"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "${result_file}" | head -n 1)
+
+    if [ "${answer_id}" != "${request_id}" ]; then
+        die "activation answer ${answer_id:-<none>} does not match request ${request_id}"
+    fi
+
+    echo "adapter   : ${REPLACE_ADAPTER}"
+    echo "previous  : ${previous:-<unknown>}"
+    echo "effective : ${effective:-<unknown>}"
+    echo "revision  : ${revision:-<unknown>}"
+    echo "reverted  : ${reverted:-false}"
+    if [ "${ok}" != "true" ]; then
+        echo "ERROR: activation rejected: ${error:-<no reason reported>}" >&2
+        return 1
+    fi
+    echo "activated ${REPLACE_ADAPTER} on ${effective}"
+}
+
 load_config
 
 case "${ACTION}" in
@@ -428,5 +571,6 @@ case "${ACTION}" in
     restart) stop_node; doctor >/dev/null; start_node ;;
     status) status_node ;;
     doctor) doctor ;;
+    replace) replace_provider ;;
     *) usage ;;
 esac

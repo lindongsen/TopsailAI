@@ -319,6 +319,44 @@ func main() {
 		}
 		defer stopControlReload()
 	}
+	// The replace request file is Endpoint-local administrative configuration and
+	// the only way to activate a different Provider CLI version for one adapter.
+	// An Endpoint that names no file cannot be asked to swap the program it runs,
+	// which is the fail-closed default. Activation is reachable only from this
+	// local file, never from a Server payload, because a Provider CLI version is an
+	// Endpoint deployment detail the Cluster contract deliberately does not model.
+	if cfg.ReplaceRequestFile != "" {
+		replacer := &endpointservice.Replacer{Registry: registry, Publisher: service}
+		replaceFile := &endpointservice.ReplaceFile{
+			Path:     cfg.ReplaceRequestFile,
+			Replacer: replacer,
+			LogConsumed: func(path string) {
+				logger.Info("consumed replace request", "path", path)
+			},
+		}
+		stopReplaceReload, replaceErr := replaceFile.WatchReload(ctx, func(result endpointservice.ReplaceFileResult, processErr error) {
+			if processErr != nil {
+				logger.Error("activate provider cli version", "adapter", result.Result.AdapterID, "request_id", result.RequestID, "error", processErr)
+				return
+			}
+			logger.Info("activated provider cli version",
+				"adapter", result.Result.AdapterID,
+				"request_id", result.RequestID,
+				"previous_version", result.Result.PreviousVersion,
+				"effective_version", result.Result.EffectiveVersion,
+				"effective_revision", result.Result.EffectiveRevision,
+				"in_flight", result.Result.InFlight,
+				"reverted", result.Result.Reverted)
+		})
+		if replaceErr != nil {
+			logger.Error("watch replace request file", "error", replaceErr)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		defer stopReplaceReload()
+		logger.Info("watching replace request file", "path", cfg.ReplaceRequestFile)
+	}
 	if err := service.Run(ctx); err != nil {
 		logger.Error("endpoint service stopped", "error", err)
 	}
