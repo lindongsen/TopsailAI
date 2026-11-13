@@ -146,6 +146,7 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
             _record_approval_event(
                 "tool_approval.request",
                 {
+                    "instance_id": instance.id,
                     "tool_name": effective_tool_name,
                     "rule_name": instance.rule_name,
                     "timeout": decision.timeout,
@@ -159,6 +160,7 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
             _record_approval_event(
                 "tool_approval.decision",
                 {
+                    "instance_id": instance.id,
                     "tool_name": effective_tool_name,
                     "rule_name": instance.rule_name,
                     "status": status,

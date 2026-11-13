@@ -124,15 +124,58 @@ class TestApprovalEventWiring:
         assert types == ["tool_approval.request", "tool_approval.decision"]
 
         request_payload = recorded_events[0][1]
+        assert request_payload["instance_id"]
         assert request_payload["tool_name"] == "demo_tool"
         assert request_payload["rule_name"] == "test-rule"
         assert request_payload["timeout"] == 5
         assert request_payload["policy"] == "deny"
 
         decision_payload = recorded_events[1][1]
+        assert decision_payload["instance_id"] == request_payload["instance_id"]
         assert decision_payload["tool_name"] == "demo_tool"
         assert decision_payload["rule_name"] == "test-rule"
         assert decision_payload["status"] == "approved"
+
+    def test_concurrent_approvals_pair_by_instance_id(
+        self, monkeypatch, recorded_events
+    ):
+        """Two concurrent approvals of the same tool must stay distinguishable."""
+        _make_ask_rule(monkeypatch)
+        transport = RecordingTransport(resolve_status="approve")
+        wrapped = _build_wrapped(transport)
+
+        errors = []
+
+        def run_one():
+            try:
+                wrapped(_tool, {}, tool_name="demo_tool")
+            except BaseException as error:  # pragma: no cover - failure path
+                errors.append(error)
+
+        threads = [threading.Thread(target=run_one) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert errors == []
+        assert len(recorded_events) == 4
+
+        requests = {}
+        decisions = {}
+        for event_type, payload in recorded_events:
+            instance_id = payload["instance_id"]
+            assert instance_id
+            if event_type == "tool_approval.request":
+                requests[instance_id] = payload
+            else:
+                decisions[instance_id] = payload
+
+        assert len(requests) == 2
+        assert set(requests) == set(decisions)
+        for instance_id, decision in decisions.items():
+            assert decision["status"] == "approved"
+            assert decision["tool_name"] == requests[instance_id]["tool_name"]
 
     def test_denied_decision_still_records_before_raising(
         self, monkeypatch, recorded_events

@@ -511,6 +511,8 @@ def receives_approval_request(channel_state, subscriber_id):
     payload = frame["event"]["payload"]
     assert payload["tool_name"] == channel_state.tool_name
     assert payload["rule_name"] == "bdd-rule"
+    assert payload["instance_id"]
+    channel_state.approval_instance_id = payload["instance_id"]
     assert "tool_args" not in payload
     assert "/tmp/x" not in json.dumps(payload)
 
@@ -529,6 +531,10 @@ def decision_reports_status(channel_state, status):
     """Assert the decision payload carries the human's real answer."""
     assert channel_state.decision_payload["status"] == status, channel_state.decision_payload
     assert channel_state.decision_payload["tool_name"] == channel_state.tool_name
+    assert (
+        channel_state.decision_payload["instance_id"]
+        == channel_state.approval_instance_id
+    ), channel_state.decision_payload
 
 
 @when("an LLM request is stopped by a hard interrupt")
