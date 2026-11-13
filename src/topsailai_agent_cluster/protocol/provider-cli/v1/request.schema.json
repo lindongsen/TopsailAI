@@ -105,6 +105,44 @@
       "if": {
         "properties": {
           "function": {
+            "const": "execute"
+          },
+          "operation": {
+            "properties": {
+              "name": {
+                "not": {
+                  "enum": [
+                    "agent.resume",
+                    "agent.drive.stop",
+                    "workspace.clean"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "required": [
+          "function",
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "target": {
+            "required": [
+              "expected_generation"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "function": {
             "const": "query"
           }
         },
@@ -454,8 +492,7 @@
       "additionalProperties": false,
       "required": [
         "resource_kind",
-        "provider_resource_key",
-        "expected_generation"
+        "provider_resource_key"
       ],
       "properties": {
         "resource_kind": {

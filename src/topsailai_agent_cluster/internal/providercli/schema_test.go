@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 var requiredSchemaFiles = []string{
@@ -92,6 +94,80 @@ func assertClosedObjects(t *testing.T, name string, value any, path string) {
 		for index, child := range node {
 			assertClosedObjects(t, name, child, fmt.Sprintf("%s/%d", path, index))
 		}
+	}
+}
+
+func TestSchemaGenerationExceptionsMatchValidation(t *testing.T) {
+	request := loadSchema(t, "request.schema.json")
+	branches := request["allOf"].([]any)
+	if len(branches) < 2 {
+		t.Fatalf("request branch count = %d, want at least 2", len(branches))
+	}
+	generationBranch := branches[1].(map[string]any)
+	condition := generationBranch["if"].(map[string]any)
+	properties := condition["properties"].(map[string]any)
+	operation := properties["operation"].(map[string]any)
+	operationProperties := operation["properties"].(map[string]any)
+	name := operationProperties["name"].(map[string]any)
+	not := name["not"].(map[string]any)
+	values := not["enum"].([]any)
+
+	var schemaExceptions []string
+	for _, value := range values {
+		schemaExceptions = append(schemaExceptions, value.(string))
+	}
+	goExceptions := append([]string(nil), nonLiveAuthorityOperations[:]...)
+	sort.Strings(schemaExceptions)
+	sort.Strings(goExceptions)
+	if !reflect.DeepEqual(schemaExceptions, goExceptions) {
+		t.Fatalf("schema generation exceptions = %v, Go exceptions = %v", schemaExceptions, goExceptions)
+	}
+	for _, operation := range goExceptions {
+		if operationNeedsLiveGeneration(operation) {
+			t.Errorf("frozen exception %q requires generation", operation)
+		}
+	}
+	for _, operation := range []string{protocol.OperationAgentStart, "future.mutation"} {
+		if !operationNeedsLiveGeneration(operation) {
+			t.Errorf("generation-required operation %q was treated as an exception", operation)
+		}
+	}
+
+	then := generationBranch["then"].(map[string]any)
+	target := then["properties"].(map[string]any)["target"].(map[string]any)
+	if !reflect.DeepEqual(target["required"], []any{"expected_generation"}) {
+		t.Fatalf("generation branch target requirement = %v", target["required"])
+	}
+	definitions := request["$defs"].(map[string]any)
+	mutationTarget := definitions["mutation_target"].(map[string]any)
+	if !reflect.DeepEqual(mutationTarget["required"], []any{"resource_kind", "provider_resource_key"}) {
+		t.Fatalf("mutation target required fields = %v", mutationTarget["required"])
+	}
+
+	exceptionSet := make(map[string]struct{}, len(schemaExceptions))
+	for _, operation := range schemaExceptions {
+		exceptionSet[operation] = struct{}{}
+	}
+	tests := []struct {
+		name               string
+		operation          string
+		expectedGeneration string
+		wantValid          bool
+	}{
+		{name: "exception omits generation", operation: protocol.OperationAgentResume, wantValid: true},
+		{name: "non-exception omits generation", operation: protocol.OperationMessageSend, wantValid: false},
+		{name: "unknown omits generation", operation: "future.mutation", wantValid: false},
+		{name: "exception supplies generation", operation: protocol.OperationAgentResume, expectedGeneration: "generation-1", wantValid: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, exception := exceptionSet[test.operation]
+			requiresGeneration := !exception
+			valid := !requiresGeneration || test.expectedGeneration != ""
+			if valid != test.wantValid {
+				t.Fatalf("schema operation %q generation %q valid = %t, want %t", test.operation, test.expectedGeneration, valid, test.wantValid)
+			}
+		})
 	}
 }
 

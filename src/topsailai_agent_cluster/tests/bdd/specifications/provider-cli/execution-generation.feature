@@ -1,13 +1,14 @@
 Feature: Provider mutation execution and generation safety
   The Endpoint owns admission, journal state, and complete Cluster receipts.
-  The provider receives only the minimum provider target and must revalidate the
-  expected generation in the same path that performs a mutation.
+  The provider receives only the minimum provider target and must perform the
+  operation-specific authority check in the same path that performs a mutation.
 
   Background:
     Given an admitted mutating Cluster command
     And the Endpoint has resolved its Cluster target to a configured Adapter instance and key
 
-  Scenario: A provider mutation receives a minimal request
+  Scenario: A live-resource provider mutation receives a minimal request
+    Given the operation targets a live resource
     When the Endpoint prepares the provider execute request
     Then the request contains a stable opaque "invocation_id"
     And the request contains the standard operation name and version
@@ -16,6 +17,25 @@ Feature: Provider mutation execution and generation safety
     And the request does not contain operator credentials
     And the request does not grant Cluster resource ID authority
     And the request does not contain the Endpoint journal phase or command revision
+
+  Scenario Outline: A non-live provider mutation uses its same-path authority check
+    Given the operation is "<operation>"
+    And the execute request identifies the exact provider record without expected generation
+    When provider execute performs its same-path authority check
+    Then the authority condition "<authority>" is checked before the business mutation
+    And a failed authority check rejects the request before the business mutation
+
+    Examples:
+      | operation        | authority                                      |
+      | agent.resume     | the record exists and is not live              |
+      | agent.drive.stop | the exact controller record still exists       |
+      | workspace.clean  | the exact mapped row has an unambiguous selector |
+
+  Scenario: An unknown mutation remains generation-required
+    Given the operation is not a frozen non-live exception
+    When the Endpoint prepares the provider execute request without expected generation
+    Then the request is rejected before provider execute
+    And the business mutation is not invoked
 
   Scenario: Preflight inspection rejects a known generation mismatch
     Given the requested generation is "generation-1"

@@ -110,19 +110,38 @@ func (r Request) validateExecute() error {
 	if r.Target == nil {
 		return errors.New("execute target is required")
 	}
-	if err := r.Target.validate(true); err != nil {
-		return err
-	}
 	if r.Operation == nil {
 		return errors.New("execute operation is required")
 	}
 	if err := r.Operation.validate("operation"); err != nil {
 		return err
 	}
+	if err := r.Target.validate(operationNeedsLiveGeneration(r.Operation.Name)); err != nil {
+		return err
+	}
 	if r.Query != nil {
 		return errors.New("execute request must not contain query")
 	}
 	return nil
+}
+
+// nonLiveAuthorityOperations is the frozen Go source for operations whose
+// authority comes from an exact non-live record check instead of process
+// generation evidence. Schema tests require its set to match the wire contract.
+var nonLiveAuthorityOperations = [...]string{
+	protocol.OperationAgentResume,
+	protocol.OperationAgentDriveStop,
+	protocol.OperationWorkspaceClean,
+}
+
+// operationNeedsLiveGeneration keeps unknown operations fail-closed.
+func operationNeedsLiveGeneration(operation string) bool {
+	for _, exception := range nonLiveAuthorityOperations {
+		if operation == exception {
+			return false
+		}
+	}
+	return true
 }
 
 func (r Request) validateQuery() error {

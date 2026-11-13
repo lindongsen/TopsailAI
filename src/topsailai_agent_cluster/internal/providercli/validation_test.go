@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 func validVersion() Version {
@@ -165,7 +167,7 @@ func TestDecodeRequiresFieldsWithZeroValues(t *testing.T) {
 }
 
 func TestRequestValidation(t *testing.T) {
-	t.Run("execute requires identity target generation and operation", func(t *testing.T) {
+	t.Run("execute requires identity target operation and operation-sensitive generation", func(t *testing.T) {
 		request := validRequest(FunctionExecute)
 		if err := request.Validate(); err == nil || !strings.Contains(err.Error(), "invocation_id") {
 			t.Fatalf("missing invocation ID accepted: %v", err)
@@ -174,11 +176,47 @@ func TestRequestValidation(t *testing.T) {
 		request.Target = &Target{ResourceKind: ResourceSession, ProviderResourceKey: "provider-session-1"}
 		request.Operation = &NamedContract{Name: "message.send", Version: "v1"}
 		if err := request.Validate(); err == nil || !strings.Contains(err.Error(), "expected_generation") {
-			t.Fatalf("missing expected generation accepted: %v", err)
+			t.Fatalf("live mutation without expected generation accepted: %v", err)
 		}
 		request.Target.ExpectedGeneration = "generation-1"
 		if err := request.Validate(); err != nil {
-			t.Fatalf("valid execute request rejected: %v", err)
+			t.Fatalf("valid live execute request rejected: %v", err)
+		}
+	})
+
+	t.Run("non-live authority operations may omit generation", func(t *testing.T) {
+		for _, operation := range []string{
+			protocol.OperationAgentResume,
+			protocol.OperationAgentDriveStop,
+			protocol.OperationWorkspaceClean,
+		} {
+			t.Run(operation, func(t *testing.T) {
+				request := validRequest(FunctionExecute)
+				request.InvocationID = "invocation-1"
+				request.Target = &Target{ResourceKind: ResourceSession, ProviderResourceKey: "provider-session-1"}
+				request.Operation = &NamedContract{Name: operation, Version: "v1"}
+				if err := request.Validate(); err != nil {
+					t.Fatalf("non-live mutation without generation rejected: %v", err)
+				}
+				request.Target.ExpectedGeneration = "generation-1"
+				if err := request.Validate(); err != nil {
+					t.Fatalf("non-live mutation with generation rejected: %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("unknown operation and agent start require generation", func(t *testing.T) {
+		for _, operation := range []string{"future.mutation", protocol.OperationAgentStart} {
+			t.Run(operation, func(t *testing.T) {
+				request := validRequest(FunctionExecute)
+				request.InvocationID = "invocation-1"
+				request.Target = &Target{ResourceKind: ResourceSession, ProviderResourceKey: "provider-session-1"}
+				request.Operation = &NamedContract{Name: operation, Version: "v1"}
+				if err := request.Validate(); err == nil || !strings.Contains(err.Error(), "expected_generation") {
+					t.Fatalf("generation-required operation accepted without generation: %v", err)
+				}
+			})
 		}
 	})
 

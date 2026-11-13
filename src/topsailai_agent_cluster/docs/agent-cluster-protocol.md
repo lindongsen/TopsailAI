@@ -631,9 +631,20 @@ opaque provider resource key plus the generation evidence last reported by that 
 empty generations never prove identity.
 
 A separate `inspect` is a useful preflight but cannot prevent a target from changing before another
-process performs `execute`. Every mutating request therefore carries `expected_generation`, and the
-provider CLI revalidates it in the same call path that applies the behavior. If it cannot provide that
-property, it must report the limitation and must not advertise safe support for that operation.
+process performs `execute`. Every mutation that targets a live resource therefore carries
+`expected_generation`, and the provider CLI re-reads the target and compares its actual generation in
+the same call path, before applying the behavior. Unknown or future operations use this live-target
+rule by default. If a provider cannot provide that property, it must report the limitation and must
+not advertise safe support for that operation.
+
+Exactly three non-live mutations use a different same-path authority check and may omit
+`expected_generation`: `agent.resume` rechecks that the exact record exists and is not live, rejecting
+a record that has become live; `agent.drive.stop` rechecks the exact provider record and addresses its
+controller without treating Session process generation as controller generation; and
+`workspace.clean` rechecks that the exact mapped row still exists and that its provider selector is
+unambiguous. Supplying generation on these requests remains valid, but it does not replace the
+operation-specific authority check. Every failed live or non-live authority check is reported before
+the provider invokes the business mutation, so rejection proves that the mutation was not applied.
 
 Every mutating request also carries a stable opaque `invocation_id`. Recovery of the same Cluster
 command reuses the same value. A provider may use it for deduplication or reconciliation, but it does
