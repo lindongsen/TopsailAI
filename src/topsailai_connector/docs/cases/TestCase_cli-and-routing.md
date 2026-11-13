@@ -75,12 +75,21 @@ Server.
 whole pair never appears in one place, so the Server never holds a value that is
 half public and half secret.
 
-### TC-CLI-9: The CLI does not accept a secret as a flag value
+### TC-CLI-9: The CLI accepts a secret as a flag, and the flag wins over the environment
 
-**Action:** `connector-server file read --client-token gamma ...`.
+**Action:** `connector-server cli --client-token gamma --node node_a.b --scope project file.list`,
+with `CONNECTOR_CLI_CLIENT_TOKEN` and `CONNECTOR_CLI_NODE` also set to different
+values.
 
-**Expected:** The flag does not exist, or it is refused with a message that the
-value would be recorded in the shell history and the process table.
+**Expected:** The request is sent with the flag values, not the environment values.
+`parseArguments` resolves each value with `firstNonEmpty(*flag, lookup(env))`, so a
+flag that is present takes precedence.
+
+**Status:** accepted trade-off, decided by the human on 2026-11-13. A secret on the
+command line is visible in `argv` and in shell history, and that exposure is
+recorded in the residual risks of `docs/permission-design.md`. The environment
+variable remains the recommended form because it keeps the secret out of both. See
+`issues/done/issue-cli-accepts-a-secret-as-a-flag.md`.
 
 ### TC-CLI-10: The CLI does not echo a secret in an error
 

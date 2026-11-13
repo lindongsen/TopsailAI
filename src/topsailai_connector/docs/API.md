@@ -297,11 +297,15 @@ the first non-flag argument.
 
 Rules:
 
-- `client_token` is read from the environment as well as from a flag, because a
-  script that calls the CLI repeatedly should not repeat the credential on every
-  line. The cost is that a Server-wide credential in the environment is inherited
-  by every child process, so an operator who cares about that passes the flag and
-  leaves the variable unset.
+- `client_token` and the `node-id.node-token` pair are read from the environment as
+  well as from a flag, because a script that calls the CLI repeatedly should not
+  repeat the credential on every line. **The environment variable is the
+  recommended form**, because a flag value is visible in `argv` to every account on
+  the host and is written to shell history by default. The flag exists for a script
+  that already holds the secret and would otherwise have to export it, and a flag
+  that is present takes precedence over the environment variable. That exposure is
+  an accepted trade-off recorded in the residual risks of
+  `docs/permission-design.md`.
 - The CLI never prints a secret, and it never includes one in an error message.
   `cli.Describe` prints the `node-id` in full because it is the public half, and
   replaces both secrets with `<redacted>` without revealing a prefix or a length.

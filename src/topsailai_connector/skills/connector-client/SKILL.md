@@ -107,6 +107,12 @@ positional argument and refuses it. This is the single most common usage mistake
 A flag wins over its environment variable. The environment exists so a script can
 export a value once instead of repeating it on every line.
 
+**Prefer the environment variable for the two secrets.** A secret passed as a flag
+is visible in `argv` to every account on the host and is written to shell history
+by default. The flag is there for a script that already holds the secret and would
+otherwise have to export it; that exposure is an accepted trade-off recorded in the
+residual risks of `docs/permission-design.md`.
+
 ### Operations
 
 | Operation | Needs `--path` | Returns |
