@@ -39,9 +39,10 @@ const interactiveSendScript = "cd 1\nsend bdd provider response probe\nquit\n"
 
 // startInteractiveCluster starts a real cluster whose provider succeeds.
 //
-// The generic fixture adapter's default capability list omits context.inject, so
-// the scenario declares the operations it drives. The default is a production
-// value, so it is replaced here rather than widened for every deployment.
+// The scenario declares the operations it drives instead of relying on the
+// harness default. The default mirrors the production descriptor, which is the
+// right value for a deployment, so a scenario that needs a narrower surface
+// states it here rather than widening the default for everyone.
 func startInteractiveCluster() error {
 	return startInteractiveClusterWith(harness.FaultInjection{
 		AdvertisedCapabilities: []string{"message.send", "context.inject", "execution.interrupt", "agent.stop"},
@@ -171,7 +172,11 @@ func assertReceiptBeforeProvider() error {
 // surfaces the provider's own diagnostic instead of discarding it.
 func assertInteractiveProviderDiagnostic() error {
 	text := interactiveOutput()
-	if !strings.Contains(text, "fixture execution failure") {
+	// The literal is the diagnostic of the provider the harness actually runs,
+	// which is providers/mock (tests/harness/cluster.go builds it). The previous
+	// literal came from tests/fixtures/provider, a binary the harness no longer
+	// builds, so the assertion could not pass no matter what the Cluster did.
+	if !strings.Contains(text, "mock execution failure") {
 		return fmt.Errorf("interactive output is missing the provider diagnostic: %s", text)
 	}
 	return nil

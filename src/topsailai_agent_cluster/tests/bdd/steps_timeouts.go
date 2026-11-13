@@ -109,8 +109,14 @@ func registerTimeoutSteps(ctx *godog.ScenarioContext) {
 			return err
 		}
 		status, _ := value["status"].(string)
-		if !isTerminalCommandStatus(status, "") {
-			return fmt.Errorf("TUI did not report terminal status=%q body=%s", status, activeScenario.lastBody)
+		// The certainty is read from the same body rather than passed as an empty
+		// string. isTerminalCommandStatus treats "executing" as terminal only when
+		// the effect is unknown, so an empty certainty made every executing
+		// command look non-terminal and the step waited out its whole budget even
+		// when the body already carried the answer.
+		certainty, _ := value["effect_certainty"].(string)
+		if !isTerminalCommandStatus(status, certainty) {
+			return fmt.Errorf("TUI did not report terminal status=%q certainty=%q body=%s", status, certainty, activeScenario.lastBody)
 		}
 		return nil
 	})
