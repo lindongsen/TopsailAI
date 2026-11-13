@@ -450,7 +450,7 @@ func stoppedObservation() providerObservation {
 		ResourceKind:        resourceSession,
 		State:               "stopped",
 		ObservedAtMS:        fixtureTimeMS,
-		Attributes:          json.RawMessage(`{"provider_display_name":"Stopped Session"}`),
+		Attributes:          json.RawMessage(`{"provider_session_id":"session:stopped","provider_display_name":"Stopped Session"}`),
 	}
 }
 
@@ -500,7 +500,13 @@ func fixtureObservation() providerObservation {
 		ResourceKind:        resourceSession,
 		State:               "running",
 		ObservedAtMS:        fixtureTimeMS,
-		Attributes:          json.RawMessage(`{"provider_display_name":"Mock Session"}`),
+		// provider_session_id is the provider's own session identifier, and the
+		// Cluster copies it into the Session resource verbatim. Omitting it left
+		// every reported session with an empty provider_session_id, so a caller
+		// addressing a session by its provider key could not find the row it had
+		// just been told about. The provider resource key is that identifier here,
+		// so it is reported rather than invented.
+		Attributes: json.RawMessage(`{"provider_session_id":"session:stable","provider_display_name":"Mock Session"}`),
 	}
 }
 
