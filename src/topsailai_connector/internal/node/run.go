@@ -53,7 +53,7 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 	// caller the credential that authorizes every operation on this Node.
 	denyPaths := []string{identityPath, config.PolicyPath}
 
-	authority, err := LoadAuthority(config.PolicyPath, denyPaths)
+	authority, err := LoadAuthority(config.PolicyPath, denyPaths, config.ConfigDir)
 	if err != nil {
 		return nil, fmt.Errorf("load authority: %w", err)
 	}

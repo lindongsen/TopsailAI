@@ -74,8 +74,10 @@ What the decision does **not** change:
 - The Node's `node-token` is **not** an environment variable on the Server. It is
   never configured there at all, because the Server must never learn it.
 - The Node's own `node-id.node-token` lives in the Node's config directory with
-  `0600` on POSIX and an owner-only ACL on Windows, because it is per-Node and
-  long-lived and there is no reason to put it in the environment.
+  `0600` on POSIX. On Windows the file carries no explicit ACL: it inherits the
+  default descriptor of its parent directory, which grants read access to
+  `BUILTIN\Users` and therefore to every local account. See "Windows file
+  protection" below.
 
 A deployment that must not use environment variables for secrets can pass them
 through a systemd `EnvironmentFile=` with `0600` permissions, which is a file with
@@ -162,14 +164,43 @@ they never need a dial target or a tunnel token, and requiring one would make th
 documented first-run order impossible.
 
 The Node's identity — the `node-id.node-token` pair — is **not** an environment
-variable. It lives in `<config>/identity` with `0600` on POSIX and an owner-only
-ACL on Windows, because it is per-Node, long-lived and regenerable, and because a
-value that the Node rewrites itself belongs in a file the Node owns rather than in
-the environment of whatever process launched it.
+variable. It lives in `<config>/identity` with `0600` on POSIX, because it is
+per-Node, long-lived and regenerable, and because a value that the Node rewrites
+itself belongs in a file the Node owns rather than in the environment of whatever
+process launched it.
 
-The Node's config directory is created with `0700` on POSIX and an owner-only ACL
-on Windows, because it holds the `node-token`. A scope whose root is inside this
-directory, or which contains it, is refused at startup.
+The Node's config directory is created with `0700` on POSIX. A scope whose root is
+inside this directory, or which contains it, is refused at startup.
+
+#### Windows file protection
+
+On Windows the Node sets **no** ACL on the identity file or on the config
+directory. `os.MkdirAll` ignores its permission argument on Windows, and
+`os.Chmod` only toggles the read-only attribute; neither writes a security
+descriptor. Both therefore inherit the default descriptor of their parent
+directory.
+
+The inherited descriptor grants `BUILTIN\Users` read access, so **every local
+account on the machine can read the identity file**, which holds a `node-token`
+that never expires. This was measured on Windows Server 2022 with `Get-Acl`:
+
+```
+Path   : C:\connector\config\identity
+Access : NT AUTHORITY\SYSTEM Allow  FullControl
+         BUILTIN\Administrators Allow  FullControl
+         BUILTIN\Users Allow  ReadAndExecute, Synchronize
+```
+
+`checkIdentityFileMode` does not detect this, because on Windows the permission
+bits Go reports are synthesised from the read-only attribute and carry no
+ownership information. The check is skipped there rather than pretending to
+answer a question it cannot.
+
+The consequence for an operator: on Windows, place the config directory somewhere
+whose ACL is already restrictive, for example a directory whose inherited
+permissions have been replaced with an owner-only descriptor. The Node does not do
+this for you, and it does not warn you that it has not. On POSIX no action is
+needed, because `0600` is enforced and verified at load time.
 
 #### `CONNECTOR_NODE_POLICY_FILE` validation and failure modes
 

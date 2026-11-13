@@ -739,6 +739,14 @@ scope means.
   behaviour the fence wants: the scope means the directory that was validated, not
   whatever now occupies that name.
 
+The overlap rule is a startup refusal, not a per-request deny, because the deny list
+protects the contents of the credential files while the scope still lets a caller
+list the directory and learn their names and sizes. The comparison is on path
+components rather than on a string prefix, so a sibling named `config-backup` is not
+mistaken for a child of `config`, and on Windows it is case-insensitive because the
+filesystem is. A scope that equals the config directory, contains it, or sits inside
+it is refused with a message naming both paths.
+
 ### Policy file
 
 The policy file is the only place a scope is defined. It is YAML, it is required,
@@ -897,6 +905,9 @@ request path.
       is not a directory is refused for `list`.
 - [ ] The Node's own config, secret and policy files are denied by resolved path,
       not by file name.
+- [ ] A scope whose resolved path equals, contains or sits inside the Node's
+      config directory is refused at startup, so the names and sizes of the
+      credential files are not listable even though their contents are denied.
 - [ ] The `node-id.node-token` pair is split on the first dot, and a pair with no
       dot, an empty half, a second dot in the token half, a missing `node_` prefix
       or any whitespace is refused rather than repaired.

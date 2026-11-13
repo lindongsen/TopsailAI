@@ -73,7 +73,7 @@ func mustSymlink(t *testing.T, target string, link string) {
 // openFixtureScope opens a scope over the fixture root.
 func openFixtureScope(t *testing.T, root string) *Scope {
 	t.Helper()
-	scope, err := OpenScope("project", root, nil)
+	scope, err := OpenScope("project", root, nil, "")
 	if err != nil {
 		t.Fatalf("OpenScope(%q) = %v, want nil", root, err)
 	}
@@ -103,7 +103,7 @@ func TestOpenScopeRejectsBadMappings(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			scope, err := OpenScope("project", testCase.path, nil)
+			scope, err := OpenScope("project", testCase.path, nil, "")
 			if err == nil {
 				scope.Close()
 				t.Fatalf("OpenScope(%q) = nil error, want a refusal", testCase.path)
@@ -129,7 +129,7 @@ func TestOpenScopeRejectsSymlinkRoot(t *testing.T) {
 	symlinkPath := filepath.Join(filepath.Dir(root), "scope-link")
 	mustSymlink(t, root, symlinkPath)
 
-	scope, err := OpenScope("project", symlinkPath, nil)
+	scope, err := OpenScope("project", symlinkPath, nil, "")
 	if err == nil {
 		scope.Close()
 		t.Fatalf("OpenScope(%q) = nil error, want a refusal", symlinkPath)
@@ -168,7 +168,7 @@ func TestOpenScopeRejectsBadScopeName(t *testing.T) {
 
 	for _, name := range []string{"", "a b", "a/b", "a.b", "-flag", "_under", "a\x00b", strings.Repeat("a", 65)} {
 		t.Run(name, func(t *testing.T) {
-			scope, err := OpenScope(name, root, nil)
+			scope, err := OpenScope(name, root, nil, "")
 			if err == nil {
 				scope.Close()
 				t.Fatalf("OpenScope(%q) = nil error, want a refusal", name)
@@ -189,7 +189,7 @@ func TestOpenScopeRejectsHomeDirectory(t *testing.T) {
 		t.Skipf("cannot resolve home: %v", err)
 	}
 
-	scope, err := OpenScope("project", resolved, nil)
+	scope, err := OpenScope("project", resolved, nil, "")
 	if err == nil {
 		scope.Close()
 		t.Fatalf("OpenScope(home) = nil error, want a refusal")

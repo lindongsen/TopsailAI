@@ -358,8 +358,10 @@ path to resolve.
 
 **Action:** Start the Node with a config directory that does not exist.
 
-**Expected:** The directory is created with `0700` on POSIX and an owner-only ACL on
-Windows.
+**Expected:** The directory is created with `0700` on POSIX. On Windows the Node
+sets no ACL, so the directory inherits its parent's default descriptor, which
+grants `BUILTIN\Users` read access; the operator must choose a parent directory
+with a restrictive ACL.
 
 ### TC-POL-51: A config directory readable by a group is refused or fixed
 

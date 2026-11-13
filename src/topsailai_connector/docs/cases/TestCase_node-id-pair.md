@@ -159,14 +159,20 @@ start would need its pair copied to the CLI on every start.
 
 **Action:** Start the Node, then inspect the file mode.
 
-**Expected:** `0600` on POSIX, an owner-only ACL on Windows. The file holds the
-`node-token`, so a group-readable file is a leaked secret.
+**Expected:** `0600` on POSIX. On Windows the file inherits the parent directory's
+default descriptor, which grants `BUILTIN\Users` read access, so the expectation
+there is "readable by every local account" rather than "owner-only". The file holds
+the `node-token`, so on POSIX a group-readable file is a leaked secret; on Windows
+the protection is the operator's responsibility, as stated in
+`docs/Environment_Variables.md`.
 
 ### TC-PAIR-20: The config directory is created with restrictive permissions
 
 **Action:** Start the Node with a fresh config directory, then inspect the mode.
 
-**Expected:** `0700` on POSIX, an owner-only ACL on Windows.
+**Expected:** `0700` on POSIX. On Windows the directory inherits its parent's
+default descriptor, which grants `BUILTIN\Users` read access; the Node sets no ACL
+there, so the operator must choose a parent directory with a restrictive ACL.
 
 ## Regeneration
 

@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
 severity: low
 created: 2026-11-11
 platform: all
@@ -105,3 +105,66 @@ Compare with `samePath` so the Windows case rule applies.
 
 Windows Server 2022 (10.0.20348.587), `connector-node.exe` built from
 `cmd/connector-node` at commit `b544bc19`.
+
+## Resolution
+
+Fixed. `OpenScope` in `internal/node/fence.go` now takes the config directory and
+`validateScopeMapping` refuses a scope whose resolved path equals, contains or sits
+inside it:
+
+```
+scope %q: path %q overlaps the Node's config directory %q; a scope that can list
+its own credentials is a configuration mistake
+```
+
+The comparison is on path components, not on a string prefix. `isPathInside` uses
+`filepath.Rel` and requires the relative result to be `.` or to not begin with
+`..` followed by a separator, so a sibling named `config-backup` is not mistaken for
+a child of `config`. `overlapsConfigDir` checks all three directions: equal,
+scope contains config, scope inside config. `samePath` is reused for the equality
+case, so the Windows case-insensitive rule applies without a second comparison.
+
+An empty config directory disables the check rather than refusing everything, which
+keeps `OpenScope` usable from a caller that has no config directory to protect.
+
+The config directory is threaded through `LoadAuthority` from `Config.ConfigDir` in
+`internal/node/run.go`, so the value the check compares against is the one the Node
+actually uses, not a second derivation.
+
+Tests: `internal/node/fence_config_overlap_test.go` covers equal, containing,
+ancestor, inside, deeply inside, sibling and unrelated layouts, plus the separator
+boundary against `config-backup`, `config2` and `configuration`, a redundant
+spelling with a trailing separator, a `.` segment and a doubled separator, and the
+empty-config-dir case. `internal/node/fence_config_overlap_windows_test.go` covers
+the case-insensitive comparison and the different-volume case on Windows.
+
+`TestOpenDeniesTheIdentityFile` was replaced, because it deliberately pointed a
+scope at the config directory and therefore asserted the behaviour this issue
+reports as a defect. It is now
+`TestOpenRefusesAScopeThatOverlapsTheConfigDirectory` for the three overlap
+directions, plus `TestOpenDeniesThePolicyFileInsideAScope`, which keeps the deny-list
+coverage for a policy file that legitimately sits inside a scope.
+
+The rule is now in the enforcement checklist in `docs/permission-design.md`, next to
+the deny-list item, because the two are halves of one protection: the deny list
+hides the contents and the startup refusal hides the names and sizes.
+
+Live verification on the build host, through the real binary:
+
+```
+scope = <root>/.tmp/ovl, config = <root>/.tmp/ovl/config
+  -> rc=1, load authority: scope "whole": path ".../.tmp/ovl" overlaps the Node's
+     config directory ".../.tmp/ovl/config"; a scope that can list its own
+     credentials is a configuration mistake
+
+scope = <root>/.tmp/ok/project, config = <root>/.tmp/ok/config
+  -> starts, logs "connector-node ready ... scopes=[project]"
+
+scope = <root>/.tmp/bnd/config-backup, config = <root>/.tmp/bnd/config
+  -> starts, so the separator boundary is not over-refused
+```
+
+`go test ./...` passes, including `cmd/connector-node`, whose fixture had to be
+corrected: `writeNodePolicy` created the scope inside the config directory, so the
+fixture encoded the very misconfiguration this issue is about. The scope is now a
+sibling `t.TempDir()`.

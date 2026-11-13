@@ -82,21 +82,53 @@ and the two sentences in `docs/Environment_Variables.md` must be corrected.
 
 Deferred by the human on 2026-11-11: this is a file-permission problem and is not
 being fixed now. The issue stays open as a record rather than being closed, because
-the documentation still claims a protection the code does not provide.
+the ACL implementation is still missing.
 
-Two things must not be lost while it is deferred:
+The issue named two things that must not be lost while it is deferred. One is now
+done and one is not:
 
-- `docs/Environment_Variables.md` states at lines 77, 153 and 157 that the identity
-  file and the config directory are protected by "an owner-only ACL on Windows".
-  No ACL code exists. The claim is false on a supported platform, which is worse
-  than the missing feature, because an operator reads it and believes the token is
-  protected.
-- The exposure is real: the identity file holds a `node-token` that never expires,
-  and on Windows it is readable by every local account.
+- **Done: the false documentation claim is corrected.** `docs/Environment_Variables.md`
+  no longer says the identity file is protected by "an owner-only ACL on Windows".
+  It now states that no ACL is set, that `os.MkdirAll` and `os.Chmod` cannot write a
+  security descriptor, that the inherited descriptor grants `BUILTIN\Users` read
+  access, that `checkIdentityFileMode` cannot detect this, and that the operator must
+  choose a restrictive parent directory. The measured `Get-Acl` output is quoted in
+  the document, so the claim is a measurement rather than an intention. The same
+  correction was applied to `docs/cases/TestCase_node-id-pair.md` (TC-PAIR-19 and
+  TC-PAIR-20) and `docs/cases/TestCase_policy-and-scope.md` (TC-POL-50), which
+  asserted the non-existent ACL.
+- **Not done: the exposure is unchanged.** The identity file still holds a
+  `node-token` that never expires, and on Windows it is still readable by every local
+  account. Correcting the document tells the operator the truth; it does not protect
+  the credential.
 
-When this is picked up, the choice is between implementing the ACL and correcting
-the document to state the actual behaviour and its consequence. Correcting the
-document is the smaller change and is required either way.
+The remaining choice is unchanged and still needs a decision, because it adds the
+project's second third-party dependency:
+
+- **Set a real ACL.** Create the file with a security descriptor granting access to
+  the creating user only. `syscall` on Windows exposes the SID helpers but no
+  `SetNamedSecurityInfo`, `InitializeAcl` or `SetSecurityDescriptorDacl`, so this
+  needs `golang.org/x/sys/windows` or a hand-written `advapi32` binding through
+  `LazyDLL`. Neither is a change to make without approval.
+- **Leave it as documented.** The operator owns the parent directory's ACL. This is
+  the current state and is now stated honestly.
+
+Either way, a test must assert the actual protection on Windows rather than skip.
+`TestSaveIdentityWritesOwnerOnlyFile` still skips there, so the gap remains invisible
+in a green run.
+
+## Documentation correction
+
+Applied on 2026-11-13. The three false claims were replaced with the measured
+behaviour, and a `#### Windows file protection` subsection was added to
+`docs/Environment_Variables.md` so the consequence is stated where an operator
+configures the Node rather than only in this issue.
+
+The correction was verified against a real Windows host rather than inferred:
+`connector-node.exe` built for `GOOS=windows` was run with a fresh config directory,
+and `Get-Acl` on the resulting identity file reported
+`BUILTIN\Users Allow ReadAndExecute, Synchronize`. The document now quotes that
+output.
 
 ## Live confirmation on a real Windows host
 

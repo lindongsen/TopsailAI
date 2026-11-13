@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"topsailai_connector/internal/protocol"
@@ -110,8 +111,8 @@ func (s *Scope) Close() error {
 // denyPaths are the Node's own files: their identity is recorded now, so a
 // request is refused by identity rather than by name and a symlink or a
 // different spelling cannot rename them.
-func OpenScope(name string, path string, denyPaths []string) (*Scope, error) {
-	if err := validateScopeMapping(name, path); err != nil {
+func OpenScope(name string, path string, denyPaths []string, configDir string) (*Scope, error) {
+	if err := validateScopeMapping(name, path, configDir); err != nil {
 		return nil, err
 	}
 
@@ -138,8 +139,16 @@ func OpenScope(name string, path string, denyPaths []string) (*Scope, error) {
 
 // validateScopeMapping checks the rules that do not need a handle: the name is
 // an identifier, the path is absolute, it exists, it is a directory, it is not a
-// symlink and it is not a filesystem root.
-func validateScopeMapping(name string, path string) error {
+// symlink, it is not a filesystem root, and it does not overlap the Node's own
+// config directory.
+//
+// The config-directory rule is a startup refusal rather than a per-request deny
+// because the deny list protects the contents of the Node's own files while a
+// listing of the directory still reports their names and sizes. Refusing the
+// overlap removes the metadata leak as well as the contents, which is why the
+// design requires the check instead of treating it as redundant with the deny
+// list.
+func validateScopeMapping(name string, path string, configDir string) error {
 	if err := validateScopeIdentifier(name); err != nil {
 		return err
 	}
@@ -169,7 +178,68 @@ func validateScopeMapping(name string, path string) error {
 	if isMountPoint(path) {
 		return fmt.Errorf("scope %q: path %q is a mount point; a scope that contains a bind mount is readable through the fence", name, path)
 	}
+	if overlapsConfigDir(path, configDir) {
+		return fmt.Errorf("scope %q: path %q overlaps the Node's config directory %q; a scope that can list its own credentials is a configuration mistake", name, path, configDir)
+	}
 	return nil
+}
+
+// overlapsConfigDir reports whether a scope root and the Node's config directory
+// overlap in either direction: the scope contains the config directory, the
+// scope is inside it, or the two name the same directory.
+//
+// All three are refused because all three expose the Node's own credential files.
+// A scope that contains the config directory can list it, which reports the names
+// and sizes of the identity and policy files even though reading them is denied.
+// A scope inside the config directory is a directory whose parent holds the
+// credentials, and a scope equal to it is the same directory under another name.
+//
+// The comparison goes through samePath so the Windows case rule applies: a
+// deny-list entry for `config` must not be bypassed by `CONFIG`, and a scope
+// spelled with a different drive-letter case must still be recognised as the
+// config directory.
+//
+// An empty configDir disables the check. That is not a relaxation: it is how a
+// caller that has no config directory states that it has none, and the Node's own
+// startup path always supplies one.
+func overlapsConfigDir(path string, configDir string) bool {
+	if configDir == "" {
+		return false
+	}
+	cleanedScope := filepath.Clean(path)
+	cleanedConfig := filepath.Clean(configDir)
+
+	if samePath(cleanedScope, cleanedConfig) {
+		return true
+	}
+	if isPathInside(cleanedScope, cleanedConfig) {
+		return true
+	}
+	return isPathInside(cleanedConfig, cleanedScope)
+}
+
+// isPathInside reports whether child is inside parent, using the platform's path
+// comparison rule.
+//
+// The check is done on cleaned paths with a separator boundary rather than with a
+// string prefix, because a prefix test would treat `/home/me/project-secret` as
+// inside `/home/me/project`. The boundary is what makes the answer correct; the
+// prefix is only how the boundary is found.
+func isPathInside(child string, parent string) bool {
+	relative, err := filepath.Rel(parent, child)
+	if err != nil {
+		// A relative path cannot be computed across volumes on Windows, which
+		// means the two paths are on different volumes and neither contains the
+		// other.
+		return false
+	}
+	if relative == "." {
+		return true
+	}
+	if relative == ".." {
+		return false
+	}
+	return !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // validateScopeIdentifier checks that a scope name is an identifier. The rule is

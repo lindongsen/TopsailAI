@@ -37,7 +37,12 @@ type Authority struct {
 // denyPaths are the Node's own files. Their identity is recorded per scope, so a
 // request is refused by identity rather than by name and a symlink or a different
 // spelling cannot rename them.
-func LoadAuthority(policyPath string, denyPaths []string) (*Authority, error) {
+//
+// configDir is the Node's own config directory. A scope that contains it, sits
+// inside it or equals it is refused at startup, because such a scope can list the
+// Node's credential files even though reading them is denied. An empty value
+// states that the caller has no config directory to protect.
+func LoadAuthority(policyPath string, denyPaths []string, configDir string) (*Authority, error) {
 	loaded, err := policy.Load(policyPath)
 	if err != nil {
 		return nil, err
@@ -51,7 +56,7 @@ func LoadAuthority(policyPath string, denyPaths []string) (*Authority, error) {
 			closeScopes(scopes)
 			return nil, fmt.Errorf("scope %q is listed but has no path", name)
 		}
-		scope, err := OpenScope(string(name), path, denyPaths)
+		scope, err := OpenScope(string(name), path, denyPaths, configDir)
 		if err != nil {
 			closeScopes(scopes)
 			return nil, err

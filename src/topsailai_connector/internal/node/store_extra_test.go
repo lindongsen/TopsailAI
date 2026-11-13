@@ -188,7 +188,7 @@ func TestOpenScopeRejectsASymlinkedParent(t *testing.T) {
 	mustSymlink(t, real, link)
 
 	throughLink := filepath.Join(link, "sub")
-	scope, err := OpenScope("project", throughLink, nil)
+	scope, err := OpenScope("project", throughLink, nil, "")
 	if err == nil {
 		scope.Close()
 		t.Fatalf("OpenScope(%q) = nil error, want a refusal for a symlinked parent", throughLink)

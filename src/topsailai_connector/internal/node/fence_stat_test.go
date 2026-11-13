@@ -105,7 +105,7 @@ func TestScopeDenyListByIdentity(t *testing.T) {
 		t.Skipf("hard link unsupported here: %v", err)
 	}
 
-	scope, err := OpenScope("project", root, []string{secretPath})
+	scope, err := OpenScope("project", root, []string{secretPath}, "")
 	if err != nil {
 		t.Fatalf("OpenScope = %v, want nil", err)
 	}
@@ -125,7 +125,7 @@ func TestScopeDenyListByIdentity(t *testing.T) {
 func TestScopeDenyListSkipsMissingPath(t *testing.T) {
 	root, _ := newScopeFixture(t)
 
-	scope, err := OpenScope("project", root, []string{filepath.Join(root, "absent-secret")})
+	scope, err := OpenScope("project", root, []string{filepath.Join(root, "absent-secret")}, "")
 	if err != nil {
 		t.Fatalf("OpenScope = %v, want nil", err)
 	}
@@ -144,7 +144,7 @@ func TestScopeDenyListDoesNotDenyUnrelatedFile(t *testing.T) {
 	secretPath := filepath.Join(filepath.Dir(root), "node-secret")
 	writeFile(t, secretPath, "node secret value")
 
-	scope, err := OpenScope("project", root, []string{secretPath})
+	scope, err := OpenScope("project", root, []string{secretPath}, "")
 	if err != nil {
 		t.Fatalf("OpenScope = %v, want nil", err)
 	}
@@ -227,7 +227,7 @@ func TestScopeResolvedPathIsAbsolute(t *testing.T) {
 // because a shutdown path may close scopes it did not open.
 func TestScopeCloseIsIdempotent(t *testing.T) {
 	root, _ := newScopeFixture(t)
-	scope, err := OpenScope("project", root, nil)
+	scope, err := OpenScope("project", root, nil, "")
 	if err != nil {
 		t.Fatalf("OpenScope = %v, want nil", err)
 	}

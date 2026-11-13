@@ -81,6 +81,40 @@ AI reflection archive, not here.
   `tunnel_token` against a real Server produced the exact line in one command,
   and that run is what showed the paraphrase was wrong.
 
+## A rule stated only in prose is not implemented
+
+- `docs/permission-design.md` said a scope must not contain the Node's config
+  directory, and the enforcement checklist repeated it, but `validateScopeMapping`
+  never received the config directory and so had nothing to compare against. The
+  rule was documented, reviewed and unenforced at the same time. A checklist item
+  is a claim about the code, so it must be traced to a call site before it is
+  ticked; see `issues/done/issue-scope-may-contain-config-directory.md`.
+- The consequence was narrower than "the config is readable" and still real: the
+  contents were denied, but `file.list` reported the names and sizes of `identity`
+  and `policy.yaml`. A partial leak is the failure mode to look for, because a
+  rule that is half-implemented reads as implemented.
+- A containment check needs the separator boundary, not a string prefix.
+  `config-backup` and `config2` share a prefix with `config` and are not inside
+  it, so the check compares `filepath.Rel` output against `..` plus a separator.
+  A prefix check would refuse a legitimate sibling, which is the failure that gets
+  a security rule deleted rather than fixed.
+
+## A test fixture can encode the misconfiguration a new rule forbids
+
+- `cmd/connector-node/main_test.go` created its scope at
+  `filepath.Join(configDir, "project")`, which is exactly the layout the new
+  overlap rule refuses. Adding the rule turned five passing tests red without any
+  production behaviour changing. The fixture was wrong, not the rule.
+- The same shape appeared in `internal/node/run_test.go`, where
+  `TestOpenDeniesTheIdentityFile` pointed a scope at the config directory to prove
+  the per-file deny worked. The new startup refusal makes that state unreachable,
+  so the test had to be replaced rather than adjusted: it now proves the startup
+  refusal, and a separate test proves the per-file deny still works for a policy
+  file that legitimately sits inside a scope.
+- When a new rule invalidates a fixture, decide which property the test was really
+  protecting before rewriting it. Deleting the test because its setup is now
+  illegal would drop the coverage the setup existed to provide.
+
 ## Verification tooling must be tested too
 
 - `make check` reported success while the BDD suite failed, because every test

@@ -135,7 +135,7 @@ func TestOpenScopeAcceptsEquivalentSpellings(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			scope, err := OpenScope("project", testCase.path, nil)
+			scope, err := OpenScope("project", testCase.path, nil, "")
 			if err != nil {
 				t.Fatalf("OpenScope(%q) = %v, want nil", testCase.path, err)
 			}
