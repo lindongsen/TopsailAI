@@ -19,14 +19,14 @@ func registerProviderResponseSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a session scope send is driven through the interactive REPL$`, driveInteractiveSend)
 	ctx.Step(`^the interactive output shows the service receipt section$`, assertInteractiveReceiptSection)
 	ctx.Step(`^the interactive output shows the provider raw return section$`, assertInteractiveProviderSection)
-	ctx.Step(`^the interactive output carries the provider document verbatim$`, assertProviderDocumentVerbatim)
+	ctx.Step(`^the interactive output renders the provider document as readable text$`, assertProviderDocumentReadable)
 	ctx.Step(`^the service receipt section appears before the provider raw return section$`, assertReceiptBeforeProvider)
 	ctx.Step(`^the interactive output shows the provider diagnostic$`, assertInteractiveProviderDiagnostic)
 	ctx.Step(`^a session scope btw is driven through the standalone command$`, driveStandaloneContextInject)
 	ctx.Step(`^a session scope btw is driven through the standalone command with --json$`, driveStandaloneContextInjectJSON)
 	ctx.Step(`^the standalone output shows the service receipt section$`, assertStandaloneReceiptSection)
 	ctx.Step(`^the standalone output shows the provider raw return section$`, assertStandaloneProviderSection)
-	ctx.Step(`^the standalone output carries the provider document verbatim$`, assertStandaloneProviderDocumentVerbatim)
+	ctx.Step(`^the standalone output renders the provider document as readable text$`, assertStandaloneProviderDocumentReadable)
 	ctx.Step(`^the standalone output is one parseable JSON document$`, assertStandaloneJSONDocument)
 	ctx.Step(`^the JSON document carries the provider document as a string$`, assertStandaloneJSONProviderDocument)
 }
@@ -125,13 +125,15 @@ func assertInteractiveProviderSection() error {
 	return nil
 }
 
-// assertProviderDocumentVerbatim proves the provider's own document appears
-// unmodified, so the section carries provider evidence rather than a re-rendered
-// summary. The fixture provider's success document is the expected content.
-func assertProviderDocumentVerbatim() error {
+// assertProviderDocumentReadable proves the provider's own document reaches the
+// operator, so the section carries provider evidence rather than a re-rendered
+// summary. The document is rendered as readable text, so the fixture provider's
+// success document is asserted by its key and value rather than by its JSON
+// punctuation.
+func assertProviderDocumentReadable() error {
 	text := interactiveOutput()
-	if !strings.Contains(text, `"effect_certainty":"acknowledged"`) {
-		return fmt.Errorf("interactive output does not carry the provider document verbatim: %s", text)
+	if !strings.Contains(text, "effect_certainty: acknowledged") {
+		return fmt.Errorf("interactive output does not carry the provider document: %s", text)
 	}
 	return nil
 }
@@ -261,14 +263,15 @@ func assertStandaloneProviderSection() error {
 	return nil
 }
 
-// assertStandaloneProviderDocumentVerbatim proves the document is not escaped
+// assertStandaloneProviderDocumentReadable proves the document is not escaped
 // inside a JSON string, which is the defect this scenario guards. The fixture
 // provider answers every non-stop operation with its accepted document, so that
-// document is the expected verbatim content.
-func assertStandaloneProviderDocumentVerbatim() error {
+// document is the expected content. It is rendered as readable text, so the
+// assertion names the key and value rather than the JSON punctuation.
+func assertStandaloneProviderDocumentReadable() error {
 	text := standaloneOutput()
-	if !strings.Contains(text, `"outcome":"accepted"`) {
-		return fmt.Errorf("standalone output does not carry the provider document verbatim: %s", text)
+	if !strings.Contains(text, "outcome: accepted") {
+		return fmt.Errorf("standalone output does not carry the provider document: %s", text)
 	}
 	if strings.Contains(text, `\"`) {
 		return fmt.Errorf("standalone output escaped the provider document: %s", text)

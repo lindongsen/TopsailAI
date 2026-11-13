@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -28,19 +29,30 @@ const (
 	messagesBodyBullet = "- "
 )
 
-// renderStructuredBody converts a message body that is still a JSON object or
+// renderStructuredBody converts one document that is still a JSON object or
 // array into readable text.
 //
-// The cluster is the abstraction layer, so a structured body is rendered for a
-// human instead of being forwarded as JSON. The rule is deliberately generic: it
+// The cluster is the abstraction layer, so a structured document is rendered for
+// a human instead of being forwarded as JSON. The rule is deliberately generic: it
 // never names a provider field, because provider vocabulary belongs to the adapter
-// and must not appear in the renderer. A body that is not valid JSON, or that
-// decodes to a bare scalar, is returned unchanged, so nothing is ever lost.
+// and must not appear in the renderer. A document that is not one JSON value, or
+// that decodes to a bare scalar, is returned unchanged, so nothing is ever lost.
 //
-// The rendering is applied after the adapter has already unwrapped its own step
-// records. A body that reaches this function is therefore either a structure the
-// adapter does not model, or a structure it could not safely unwrap. Both cases
-// are better shown as readable text than as braces and quotes.
+// Two callers share this renderer: a conversation body that the adapter could not
+// unwrap, and the provider's own return document shown after a receipt. Both are
+// opaque provider evidence, so both are better shown as readable text than as
+// braces and quotes.
+//
+// Numbers are decoded as json.Number rather than float64. A provider document
+// carries epoch-millisecond timestamps, byte counts and process identifiers, and
+// float64 would print 1794470400000 as 1.7944704e+12, which is the same value
+// written in a form the operator cannot compare against anything.
+//
+// The whole document must be exactly one JSON value. A decoder reads one value and
+// ignores whatever follows, so a JSON Lines document would otherwise render only
+// its first record and silently drop the rest. Trailing content therefore keeps the
+// document verbatim, because a partial rendering would present a fragment as the
+// complete answer.
 func renderStructuredBody(content string) string {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
@@ -51,8 +63,13 @@ func renderStructuredBody(content string) string {
 	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
 		return content
 	}
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	decoder.UseNumber()
 	var decoded any
-	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+	if err := decoder.Decode(&decoded); err != nil {
+		return content
+	}
+	if _, err := decoder.Token(); err != io.EOF {
 		return content
 	}
 	switch value := decoded.(type) {

@@ -1392,11 +1392,12 @@ func (s *providerDocumentStub) GetCommand(context.Context, string) (map[string]a
 	}, nil
 }
 
-// TestStandaloneContextInjectPrintsProviderDocumentVerbatim proves the operator
-// receives the provider's own return document as its own section, unescaped.
-// The provider prints this document on stdout, so a JSON envelope that quotes it
-// would show the operator an escaped copy instead of the provider's answer.
-func TestStandaloneContextInjectPrintsProviderDocumentVerbatim(t *testing.T) {
+// TestStandaloneContextInjectPrintsProviderDocumentReadable proves the operator
+// receives the provider's own return document as its own section, unescaped and
+// rendered as readable text. The provider prints this document on stdout, so a
+// JSON envelope that quotes it would show the operator an escaped copy instead of
+// the provider's answer, and a raw dump would show one line of punctuation.
+func TestStandaloneContextInjectPrintsProviderDocumentReadable(t *testing.T) {
 	document := `{"ok": true, "action": "btw", "delivery_state": "injection_queued"}`
 	stub := &providerDocumentStub{document: document}
 	var out strings.Builder
@@ -1404,8 +1405,15 @@ func TestStandaloneContextInjectPrintsProviderDocumentVerbatim(t *testing.T) {
 		t.Fatalf("btw: %v", err)
 	}
 	rendered := out.String()
-	if !strings.Contains(rendered, "provider_response:\n"+document+"\n") {
-		t.Fatalf("provider document missing or not verbatim in %q", rendered)
+	for _, want := range []string{
+		"provider_response:\n",
+		"action: btw",
+		"delivery_state: injection_queued",
+		"ok: true",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("provider document missing %q in %q", want, rendered)
+		}
 	}
 	if strings.Contains(rendered, `\"`) {
 		t.Fatalf("provider document was escaped in %q", rendered)

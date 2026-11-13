@@ -912,7 +912,8 @@ func startRefreshDiagnostic(out io.Writer, err error) error {
 
 // renderInteractiveStartResult writes the durable start result without JSON formatting.
 // The provider's own return document is printed as a separate section so the
-// operator sees both this service's receipt and the provider's raw answer.
+// operator sees both this service's receipt and the provider's answer, rendered
+// through the same shared section renderer the other surfaces use.
 func renderInteractiveStartResult(out io.Writer, commandID string, result map[string]any) error {
 	if _, err := fmt.Fprintf(out, "CommandID: %s\nStatus: %s\nDeliveryBoundary: %s\nEffectCertainty: %s\nErrorCode: %s\n", commandID, valueString(result, "status", "Status"), valueString(result, "delivery_boundary", "DeliveryBoundary"), valueString(result, "effect_certainty", "EffectCertainty"), valueString(result, "error_code", "ErrorCode")); err != nil {
 		return err

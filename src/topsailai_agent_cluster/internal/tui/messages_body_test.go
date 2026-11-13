@@ -165,6 +165,42 @@ func TestRenderStructuredBodyBoundsDepth(t *testing.T) {
 	}
 }
 
+// TestRenderStructuredBodyKeepsLargeNumbersLiteral proves a large integer is not
+// rewritten in scientific notation.
+//
+// A provider document carries epoch-millisecond timestamps, byte counts and
+// process identifiers. Decoding them as float64 would print 1794470400000 as
+// 1.7944704e+12, so the digits are asserted exactly rather than approximately.
+func TestRenderStructuredBodyKeepsLargeNumbersLiteral(t *testing.T) {
+	got := renderStructuredBody(`{"started_at_ms":1794470399900,"bytes_written":1048576,"ratio":0.5}`)
+	for _, want := range []string{"started_at_ms: 1794470399900", "bytes_written: 1048576", "ratio: 0.5"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered body = %q, want %q", got, want)
+		}
+	}
+	if strings.Contains(got, "e+") {
+		t.Fatalf("rendered body = %q, want no scientific notation", got)
+	}
+}
+
+// TestRenderStructuredBodyKeepsTrailingContentVerbatim proves a document that is
+// more than one JSON value is not rendered from its first value alone.
+//
+// A decoder reads one value and ignores whatever follows, so a JSON Lines document
+// would otherwise render only its first record and silently drop the rest. A
+// partial rendering presented as the complete answer is worse than raw JSON,
+// because the operator cannot tell that records are missing.
+func TestRenderStructuredBodyKeepsTrailingContentVerbatim(t *testing.T) {
+	const lines = "{\"a\":1}\n{\"b\":2}"
+	if got := renderStructuredBody(lines); got != lines {
+		t.Fatalf("rendered body = %q, want the multi-value document unchanged", got)
+	}
+	const adjacent = `{"a":1}{"b":2}`
+	if got := renderStructuredBody(adjacent); got != adjacent {
+		t.Fatalf("rendered body = %q, want the adjacent-value document unchanged", got)
+	}
+}
+
 // TestRenderMessagesRendersStructuredBody proves the renderer applies the
 // structured-body rule, so a JSON body never reaches the terminal as JSON.
 //

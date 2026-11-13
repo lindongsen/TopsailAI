@@ -955,3 +955,41 @@ Trigger: interactive `watch` and an idle `logf` produced about 5 KB/s of SSH tra
 Action: make the pending-output function report whether it actually wrote terminal bytes, and redraw the input block only after real output. Track the width used for the last render separately, so a terminal resize still causes one necessary idle redraw and subsequent unchanged polls return to complete silence. Test byte identity between zero idle polls and several empty idle polls, then separately test that a width change adds exactly one redraw.
 
 Why this prevents recurrence: polling frequency controls detection latency, not permission to write. Keeping the 50 ms poll preserves responsive streaming, while making an unchanged poll byte-silent removes transport amplification. Treating resize as an explicit state change avoids the tempting but incorrect one-line optimization that would suppress all idle redraws and leave wrapped prompts stale until the next keypress or output record.
+
+## Reusing a renderer means inheriting its decoder assumptions
+
+Trigger: `provider_response` was rendered by reusing `renderStructuredBody`, which already existed for
+conversation bodies. The reuse was correct, but the function's decoder carried two assumptions that
+were harmless for a message body and wrong for a provider document. `json.Unmarshal` into `any`
+decodes every number as `float64`, so `1794470400000` printed as `1.7944704e+12`; and a decoder reads
+one value and ignores the rest, so a JSON Lines document would have rendered only its first record and
+silently dropped the others. Both were found by running the decoder on the real shapes before
+committing to the reuse, not by reading the function.
+
+Action: before reusing an existing renderer or parser for a new input, run it on the new input's real
+shapes and compare the output against what the operator needs. Check the numeric representation, the
+number of values the decoder consumes, and whether trailing content is detected. Here the fix was
+`json.NewDecoder` with `UseNumber()` plus an EOF guard that falls back to verbatim output, so a
+document that is not exactly one JSON value is never partially rendered.
+
+Why this prevents recurrence: a shared helper is reviewed as a solved problem, so its assumptions stop
+being visible the moment it is reused. The two defects are both silent in the direction that matters:
+scientific notation is still the same value, and a dropped trailing record still looks like a complete
+answer. Neither shows up as a changed line in the diff, because the reuse itself is the change.
+
+## A nested fixture's indentation is one level deeper than the parent key
+
+Trigger: while asserting that a nested list renders as bullets, the expectation used two spaces
+(`"  - a"`) for a list that sits inside `response.items`. The renderer emitted four spaces, because
+`items` is one level below `response`, which is itself one level below the document root. The renderer
+was correct and the expectation was wrong, and the failure read like a rendering defect.
+
+Action: when asserting indentation, count the depth from the document root to the value, not from the
+nearest key that happens to be mentioned in the test name. Prefer an exact whole-line comparison so the
+indentation is actually asserted, and derive the expected depth from the fixture rather than from the
+sentence describing it.
+
+Why this prevents recurrence: an indentation assertion is the only thing that proves nesting, so
+loosening it to a substring match would make the test pass while losing the property it exists to
+check. The failure is also easy to misattribute, because the message names the renderer's output rather
+than the expectation, and the renderer's output is the part that looks wrong.

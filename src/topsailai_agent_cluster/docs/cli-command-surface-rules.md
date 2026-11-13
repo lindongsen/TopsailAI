@@ -112,10 +112,15 @@ provider document is escaped.
 - The default output of an action command is the rendered receipt: the status
   label, the durable receipt fields, then the provider document as its own
   `provider_response:` section.
-- The provider document is printed verbatim. It is opaque provider evidence, so
-  it is never re-encoded, re-escaped or reinterpreted as a provider success claim.
-  An escaped copy is not the provider's answer, and an operator who asked for the
-  provider's result must not have to unescape it by eye.
+- The provider document is rendered as readable text. It is opaque provider
+  evidence, so it is never reinterpreted as a provider success claim, but it is
+  also not dumped as one line of JSON punctuation: a first-level value that is
+  itself an object or a list is indented under its key, so a nested answer stays
+  legible. The rendering is display-only; the stored document and the `--json`
+  envelope keep the provider's original bytes.
+- A document that is not one JSON value is printed unchanged. A failed invocation
+  carries the provider's stderr and a truncated answer is invalid JSON by
+  construction, so re-encoding either would drop the only diagnostic available.
 - `--json` keeps the machine envelope, because a script parses that document. The
   envelope carries the same document in `provider_response`, so no evidence is
   lost by choosing the machine form.
@@ -126,9 +131,10 @@ provider document is escaped.
 
 The rule exists because the two surfaces previously disagreed: the interactive
 REPL rendered the receipt while the standalone command emitted the envelope for
-every invocation, so the same `btw` result appeared verbatim in one surface and
-escaped in the other. Sharing one renderer makes that divergence structurally
-impossible rather than dependent on someone remembering to change both.
+every invocation, so the same `btw` result appeared as a rendered section in one
+surface and as an escaped JSON string in the other. Sharing one renderer makes
+that divergence structurally impossible rather than dependent on someone
+remembering to change both.
 
 ## Automatic follow-up steps
 

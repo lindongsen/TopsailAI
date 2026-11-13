@@ -123,14 +123,15 @@ func (r CommandRunner) RenderAction(out io.Writer, result map[string]any) error 
 
 // RenderReceipt writes the human-readable receipt for one durable command
 // result: the conservative status label, the receipt fields and the provider's
-// own return document verbatim.
+// own return document as a readable section.
 //
 // Both surfaces render through this function, so the standalone command and the
-// interactive REPL cannot disagree about which fields are shown or whether the
-// provider document is escaped. The document is printed as its own section
+// interactive REPL cannot disagree about which fields are shown or how the
+// provider document is presented. The document is printed as its own section
 // instead of inside a JSON envelope, because an escaped document is not the
 // provider's answer: the operator asked for the provider's result, not for a
-// quoted copy of it.
+// quoted copy of it. The section renders a structured document as readable text,
+// while the stored document and the --json envelope keep the provider's bytes.
 func RenderReceipt(out io.Writer, result map[string]any) error {
 	receipt := ReceiptForStatus(result)
 	if _, err := fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(stringValue(result, "status")), receipt)); err != nil {
@@ -162,17 +163,30 @@ func renderReceiptDetails(out io.Writer, receipt protocol.ExecutionReceipt) erro
 	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated)
 }
 
-// renderProviderResponse prints the provider's own return document verbatim as a
-// separate section, so the operator can distinguish this service's receipt from
-// the provider's raw answer. An absent document prints nothing, which keeps the
+// renderProviderResponse prints the provider's own return document as a separate
+// section, so the operator can distinguish this service's receipt from the
+// provider's raw answer. An absent document prints nothing, which keeps the
 // previous output byte-identical for providers that return no document.
-// Escape sequences are not stripped here: the terminal boundary already does
-// that, and the stored document must stay faithful to what the provider returned.
+//
+// A document that is one JSON object or array is rendered as readable text through
+// renderStructuredBody, because raw JSON is not something an operator can read: a
+// first-level value that is itself an object or a list arrives as one long line of
+// braces and quotes. The rendering is generic and names no provider field, so a new
+// provider needs no renderer change.
+//
+// The rendering is display-only. The stored document and the --json envelope keep
+// the provider's own bytes, so choosing the human form never loses evidence. A
+// document that is not one JSON value, such as provider stderr or a truncated
+// answer, is printed verbatim: re-encoding it would either fail or drop the part
+// that did not parse, and that part is the only diagnostic the operator has.
+//
+// Escape sequences are not stripped here: the terminal boundary already does that,
+// and the stored document must stay faithful to what the provider returned.
 func renderProviderResponse(out io.Writer, response string, truncated bool) error {
 	if response == "" {
 		return nil
 	}
-	if _, err := fmt.Fprintf(out, "provider_response:\n%s\n", response); err != nil {
+	if _, err := fmt.Fprintf(out, "provider_response:\n%s\n", renderStructuredBody(response)); err != nil {
 		return err
 	}
 	if !truncated {
