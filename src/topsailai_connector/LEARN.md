@@ -80,3 +80,28 @@ AI reflection archive, not here.
 - Verify a documented message by triggering it. Running a Node with a wrong
   `tunnel_token` against a real Server produced the exact line in one command,
   and that run is what showed the paraphrase was wrong.
+
+## Verification tooling must be tested too
+
+- `make check` reported success while the BDD suite failed, because every test
+  target pipes through `| tee` and bash returns the status of the last stage.
+  `SHELL := /bin/bash` was already set; `pipefail` was not. A green `make check`
+  was therefore not evidence of anything, and it hid a real failure for three
+  commits; see `issues/done/issue-make-check-masks-suite-failures.md`.
+- The variable is `.SHELLFLAGS`, with a leading dot. A plain `SHELLFLAGS` is an
+  ordinary variable that Make silently ignores, so the first attempt at the fix
+  changed nothing and looked correct. `make -p` is what showed the default
+  `.SHELLFLAGS := -c` still in force.
+- Only `pipefail` is needed. `-e` and `-u` change nothing here, because each recipe
+  line already runs in its own shell, so Make stops at the first failing line
+  without help. Adding them with a plausible-sounding justification is scope creep
+  in a file that decides whether anything is verified.
+- The same trap catches a human: `cmd | tail -3; echo $?` reports `tail`'s status,
+  so a refusal that exited 1 was recorded as `rc=0` until the command was re-run
+  without the pipe. Read the exit status of the command under test, never of the
+  pipeline that displays it.
+- A package with source and no test files breaks `go test -coverprofile` on this
+  toolchain with `go: no such tool "covdata"`, because the coverage merge step has
+  nothing to merge. `cmd/connector-server` was the only such package. The fix is a
+  test file, not an environment change: the missing tool is a symptom of a package
+  nobody tested.

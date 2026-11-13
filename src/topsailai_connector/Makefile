@@ -7,6 +7,22 @@
 
 SHELL := /bin/bash
 
+# `.SHELLFLAGS` is the special variable Make uses to build the shell command
+# line; the leading dot is required. A plain `SHELLFLAGS` is an ordinary
+# variable that Make silently ignores, which is how the first attempt at this
+# fix did nothing.
+#
+# `-o pipefail` makes a recipe fail when any stage of a pipeline fails. Without
+# it the exit status of `go test ... | tee log` is tee's status, so a failing
+# suite reported success as long as tee could write the log. That defect hid a
+# real BDD failure for three commits; see
+# issues/issue-make-check-masks-suite-failures.md.
+#
+# Only `pipefail` is added. `-e` and `-u` would change nothing here: every recipe
+# line already runs in its own shell, so Make stops at the first failing line
+# without help, and no recipe uses a shell variable that could be unset.
+.SHELLFLAGS := -o pipefail -c
+
 # BIN_DIR and TMP_DIR are overridable from the command line, so a release build
 # can write somewhere other than bin/ without editing this file:
 #
