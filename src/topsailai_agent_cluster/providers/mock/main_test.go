@@ -67,7 +67,11 @@ func TestExecuteAnswersEveryAdvertisedOperation(t *testing.T) {
 		request := request{
 			RequestID: "req-" + name,
 			Function:  functionExecute,
-			Operation: &namedContract{Name: name, Version: "v1"},
+			// The version comes from the table, because two operations carry their
+			// own payload schema version. Hardcoding "v1" here asserted that every
+			// operation shares one version, which is exactly the assumption the
+			// descriptor had to stop making.
+			Operation: &namedContract{Name: name, Version: operationEvidenceTable[name].version},
 			Target:    &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"},
 			Payload:   json.RawMessage(`{}`),
 		}

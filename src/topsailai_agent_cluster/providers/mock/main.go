@@ -274,17 +274,17 @@ type operationEvidence struct {
 // the intersection, so every such command would be rejected as unsupported while
 // the descriptor looked complete.
 var operationEvidenceTable = map[string]operationEvidence{
-	"message.send":        {version: "v1", deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"context.inject":      {version: "v1", deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"execution.interrupt": {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.stop":          {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.resume":        {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.start":         {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.drive.start":   {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.drive.stop":    {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"agent.model.select":  {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
-	"command.exec":        {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"ok":true}`},
-	"workspace.clean":     {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"ok":true}`},
+	"message.send":        {version: "v1", deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"pipe_written"}`},
+	"context.inject":      {version: "v1", deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"pipe_written"}`},
+	"execution.interrupt": {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"signal_sent"}`},
+	"agent.stop":          {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"delivery_boundary":"signal_sent","signal_sent":true,"exit_confirmed":false}`},
+	"agent.resume":        {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"agent.start":         {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"agent.drive.start":   {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"agent.drive.stop":    {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"signal_sent"}`},
+	"agent.model.select":  {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"command.exec":        {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"workspace.clean":     {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
 }
 
 // nonLiveOperations are the operations the Cluster contract allows to address a
@@ -300,11 +300,20 @@ var nonLiveOperations = map[string]struct{}{
 
 // executeResponse revalidates generation inside the mutation path.
 func executeResponse(request request, fault string) response {
-	if request.Operation == nil || request.Operation.Version != "v1" {
+	if request.Operation == nil {
 		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
 	}
 	evidence, ok := operationEvidenceTable[request.Operation.Name]
 	if !ok {
+		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
+	}
+	// The version is compared against the table entry rather than against a fixed
+	// "v1", because two operations carry their own payload schema version. A fixed
+	// comparison rejected them as unsupported even though the descriptor advertised
+	// them, so the Cluster intersected them in and the provider then refused them:
+	// the descriptor and the answer disagreed about the same operation, and the
+	// operator saw "unsupported" for an operation the Endpoint had just listed.
+	if request.Operation.Version != evidence.version {
 		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
 	}
 	// A live operation must prove which process it reaches, so an absent target
