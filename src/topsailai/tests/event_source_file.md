@@ -36,10 +36,16 @@ In scope:
 - `tool_call.start` and `tool_call.end` produced by `exec_tool_func()`.
 - `tool_approval.request` and `tool_approval.decision` produced by the ASK branch
   of `with_tool_approval()`.
+- `llm.response.raw` produced by the response-event mixin.
+- `tool_call.warning` produced by the repeated tool-call warning rule.
+- `thought.line_pattern.warning` produced by the thought line-pattern detector.
 - The disabled configuration, which must write nothing.
 
 Out of scope:
 
+- `summary.hook.observed`. Reaching it needs a full summarization cycle, so it is
+  registered as a coverage gap in
+  `issues/issue-event-type-summary-hook-observed-not-covered-by-bdd.md`.
 - Channel transport, heartbeat, reconnect, and drop accounting. Those are
   covered by `tests/bdd/features/event_channel.feature`.
 - Backend adapters other than `file`. `db` and `webhook` are stubs.
@@ -164,6 +170,49 @@ Then no events file was written
 Rationale: the master switch must be a real off switch. A disabled collector
 that still creates the file would leave operators with an empty artifact that
 looks like a recording failure.
+
+### Scenario: A raw LLM response writes a response record
+
+```gherkin
+Given an events file owned by this scenario with raw response events enabled
+When a real LLM request completes successfully
+Then the events file holds exactly one "llm.response.raw" record
+And the raw response record reports the reply content
+And the raw response record omits the raw provider object
+```
+
+Rationale: this source is enabled by default in production, so it is the one
+previously uncovered type that operators see without changing configuration. The
+scenario also pins the `TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW` boundary: with
+the switch off, the provider object must not appear in the record.
+
+### Scenario: A repeated tool call writes a warning record
+
+```gherkin
+Given an events file owned by this scenario with a repeated tool-call warning rule
+When the same real tool call executes twice
+Then the events file holds exactly one "tool_call.warning" record
+And the tool-call warning record reports the tool name and count
+```
+
+Rationale: the warning is advisory, so the scenario asserts the record exists and
+names the tool and the observed count. It runs the real decorated
+`exec_tool_func()` twice under one scenario agent, which is what makes the second
+call exceed `max_calls`.
+
+### Scenario: An abnormal thought writes a line-pattern warning record
+
+```gherkin
+Given an events file owned by this scenario with thought line-pattern detection enabled
+When a real thought evaluation matches the configured pattern
+Then the events file holds exactly one "thought.line_pattern.warning" record
+And the thought warning record reports the matched pattern
+```
+
+Rationale: detection is off by default, so the scenario turns it on with one rule
+and drives the real `evaluate_and_maybe_inject()` entry point. Asserting the
+matched pattern proves the record describes the rule that actually fired rather
+than a generic placeholder.
 
 ## Observed file content
 

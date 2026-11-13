@@ -56,3 +56,22 @@ Feature: Recorded events reach the on-disk events file
     Given an events file owned by this scenario with events disabled
     When a real LLM request completes successfully
     Then no events file was written
+
+  Scenario: A raw LLM response writes a response record
+    Given an events file owned by this scenario with raw response events enabled
+    When a real LLM request completes successfully
+    Then the events file holds exactly one "llm.response.raw" record
+    And the raw response record reports the reply content
+    And the raw response record omits the raw provider object
+
+  Scenario: A repeated tool call writes a warning record
+    Given an events file owned by this scenario with a repeated tool-call warning rule
+    When the same real tool call executes twice
+    Then the events file holds exactly one "tool_call.warning" record
+    And the tool-call warning record reports the tool name and count
+
+  Scenario: An abnormal thought writes a line-pattern warning record
+    Given an events file owned by this scenario with thought line-pattern detection enabled
+    When a real thought evaluation matches the configured pattern
+    Then the events file holds exactly one "thought.line_pattern.warning" record
+    And the thought warning record reports the matched pattern
