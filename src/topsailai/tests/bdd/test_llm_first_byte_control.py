@@ -90,12 +90,14 @@ def controlled_case(monkeypatch, tmp_path, request, phase, timeout):
         monkeypatch.setenv(key, value)
     model = LLMModel()
     resources["model"] = model
-    from topsailai.workspace.folder_utils import get_interrupt_flag_path
+    from topsailai.workspace.folder_utils import get_interrupt_flag_path, get_pause_flag_path
     from topsailai.workspace import folder_constants
     monkeypatch.setattr(folder_constants, "FOLDER_WORKSPACE_TASK", str(tmp_path))
     monkeypatch.setenv("SESSION_ID", "wire")
     agent = SimpleNamespace(runtime=SimpleNamespace(llm_model=model))
     agent._get_interrupt_flag_path = lambda: get_interrupt_flag_path(str(tmp_path), "wire", os.getpid())
+    agent._get_pause_flag_path = lambda: get_pause_flag_path(str(tmp_path), "wire", os.getpid())
+    agent._clear_pause_marker = lambda: AgentRun._clear_pause_marker(agent)
     agent._check_hard_interrupt = lambda: AgentRun._check_hard_interrupt(agent)
     agent_chat = SimpleNamespace(ai_agent=agent)
     registry = ControlHandlerRegistry()
@@ -129,21 +131,43 @@ def controlled_case(monkeypatch, tmp_path, request, phase, timeout):
     yield state
 
 
+def stage_retry_until_retried(state, payload, action, deadline_seconds=40.0):
+    """Resend only when a staged flag was lost, until the retry actually happens.
+
+    Two production facts make a single send unreliable. The waiting marker exists only
+    while a wait scope is active, and a scope removes a staged retry marker on entry, so
+    a flag staged outside an active scope is silently discarded. Acceptance therefore
+    does not guarantee execution.
+
+    Resending unconditionally is also wrong: every accepted flag that does reach a tick
+    produces a real retry, and repeated retries consume the attempt budget until the
+    request fails. The loop below resends only after an accepted flag failed to produce
+    the second request within the retry backoff window, and stops at the first retry.
+    """
+    capture = state["server"].lifecycle_capture
+    deadline = time.monotonic() + deadline_seconds
+    receipt = None
+    while time.monotonic() < deadline:
+        receipt = send(state["path"], payload, action=action)
+        if receipt.get("status") != "ok":
+            threading.Event().wait(0.05)
+            continue
+        if capture.wait_for_request(2, timeout=8.0):
+            return receipt
+    return receipt
+
+
 @when(parsers.parse('the operator stages "{operation}" through the control socket'))
 def command(control_case, operation):
     """Send the retained command directly, without discovery or proposals."""
     state = control_case
     state["operation"] = operation
+    payload = {} if operation == "hard_interrupt" else {"operation": "force_retry"}
+    action = "hard_interrupt" if operation == "hard_interrupt" else "llm_control"
     if operation == "force_retry":
-        from topsailai.ai_base.llm_control.control_runtime import _paths
-        waiting, _ = _paths("wire", os.getpid())
-        deadline = time.monotonic() + 3
-        while not waiting.exists() and time.monotonic() < deadline:
-            threading.Event().wait(0.01)
-        assert waiting.exists()
-    state["receipt"] = send(state["path"], {} if operation == "hard_interrupt" else
-                            {"operation": "force_retry"},
-                            action="hard_interrupt" if operation == "hard_interrupt" else "llm_control")
+        state["receipt"] = stage_retry_until_retried(state, payload, action)
+    else:
+        state["receipt"] = send(state["path"], payload, action=action)
     assert state["receipt"]["status"] == "ok", state["receipt"]
     if operation == "force_retry":
         assert state["receipt"]["result"] == {"state": "flag_written"}

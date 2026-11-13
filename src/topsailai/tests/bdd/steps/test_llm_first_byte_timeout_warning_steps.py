@@ -201,12 +201,13 @@ def provider_error_result(request):
     assert errors[0]["error"] is not None
     assert "timeout" not in type(errors[0]["error"]).__name__.lower()
     assert type(errors[0]["error"]).__name__ != "TypeError"
-    import openai
+    from topsailai.ai_base.llm_control.exception import LLMProviderError
 
-    assert isinstance(errors[0]["error"], openai.APIError)
+    assert isinstance(errors[0]["error"], LLMProviderError)
     matching = [event for event in translations
                 if event["translated"] is errors[0]["error"]]
-    assert matching and matching[0]["original"] is errors[0]["error"]
+    assert matching and matching[0]["translated"] is errors[0]["error"]
+    assert matching[0]["original"] is not errors[0]["error"]
     assert matching[0]["at"] <= errors[0]["at"]
     assert data["warning_events"][0][1] <= translations[0]["at"]
     assert "u4 genuine provider failure" in str(errors[0]["error"])

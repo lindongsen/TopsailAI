@@ -37,7 +37,14 @@ EXPECTED_CORRECTION = [
         "tool_args": {"cmd": "echo ok"},
     }
 ]
-CONTROL_MODULES = ("heartbeat", "instruction", "interrupt", "llm_control", "message")
+CONTROL_MODULES = (
+    "heartbeat",
+    "instruction",
+    "interrupt",
+    "llm_control",
+    "message",
+    "pause",
+)
 SHARED_MODULE_ALLOWLISTS = {
     "topsailai.tools": {
         "cmd_tool",
@@ -75,6 +82,7 @@ SHARED_MODULE_ALLOWLISTS = {
 CONTROL_ORIGIN_PROBE = r'''
 import importlib.util
 import json
+import sys
 from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
 from topsailai.workspace.control_handlers import register_control_handlers
 
@@ -86,7 +94,7 @@ print(json.dumps({
         name: importlib.util.find_spec(
             "topsailai.workspace.control_handlers." + name
         ).origin
-        for name in ("heartbeat", "instruction", "interrupt", "llm_control", "message")
+        for name in sys.argv[1:]
     },
 }))
 '''
@@ -405,6 +413,7 @@ def when_register_control_handlers(compiled_discovery_ctx: CompiledDiscoveryCont
     package_result = _run_probe(
         compiled_discovery_ctx.packaged_root,
         CONTROL_ORIGIN_PROBE,
+        *CONTROL_MODULES,
     )
     compiled_discovery_ctx.packaged_actions = package_result["actions"]
     compiled_discovery_ctx.control_origins = package_result["origins"]

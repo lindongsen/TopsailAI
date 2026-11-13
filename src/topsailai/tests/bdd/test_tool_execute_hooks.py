@@ -107,7 +107,9 @@ def verify_wire_pair(tool_scenario):
     result = results[0]
     assert result['tool_call_id'] == 'call_bdd_runtime_1'
     expected = 'ORIGINAL-TOOL-RESULT' if tool_scenario.outcome == 'success' else 'ORIGINAL-TOOL-ERROR'
-    assert result['content'] == 'topsailai.observation\n' + expected
+    payload = json.loads(result['content'])
+    assert payload['step_name'] == 'observation'
+    assert payload['raw_text'] == expected
     owners = [message for message in messages[:messages.index(result)]
               if any(call['id'] == result['tool_call_id'] for call in message.get('tool_calls', []))]
     assert len(owners) == 1
@@ -197,7 +199,9 @@ def verify_streaming_wire_pair(tool_scenario):
     result = results[0]
     assert result['tool_call_id'] == 'call_bdd_runtime_1'
     expected = 'ORIGINAL-TOOL-RESULT' if tool_scenario.outcome == 'success' else 'ORIGINAL-TOOL-ERROR'
-    assert result['content'] == 'topsailai.observation\n' + expected
+    payload = json.loads(result['content'])
+    assert payload['step_name'] == 'observation'
+    assert payload['raw_text'] == expected
     owners = [message for message in messages[:messages.index(result)]
               if any(call['id'] == result['tool_call_id'] for call in message.get('tool_calls', []))]
     assert len(owners) == 1

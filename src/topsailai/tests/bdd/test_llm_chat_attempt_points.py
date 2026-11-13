@@ -53,7 +53,10 @@ def check_attempt(attempt_case, status):
     case = attempt_case
     assert case.marker.read_text() == "called"
     assert case.result.status == status
-    handler = case.result.handlers[0]
+    handlers = [item for item in case.result.handlers
+                if item.handler.name == "observer.py"]
+    assert len(handlers) == 1
+    handler = handlers[0]
     if status == "success":
         assert handler.returned.value == case.payload
         assert "loop_attempts" not in handler.returned.value
