@@ -128,7 +128,7 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
                 $(call deb_arg,--key,$(DEB_KEY)) \
                 $(call deb_arg,--ca,$(DEB_CA))
 
-.DEFAULT_GOAL := help
+.DEFAULT_GOAL := build
 
 .PHONY: help build build-testhooks vet fmt \
         test test-all test-unit test-unit-common test-unit-server \
