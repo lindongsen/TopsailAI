@@ -64,12 +64,21 @@ func assertTUIList() error {
 		return fmt.Errorf("TUI list exit code=%d body=%s", activeScenario.lastStatus, activeScenario.lastBody)
 	}
 	text := string(activeScenario.lastBody)
-	for _, value := range []string{"endpoint-1", "fixture-main", "fixture-generation", "idle"} {
+	// The generation is asserted through the translation layer rather than as a
+	// literal, because the literal names the fixture provider that used to serve
+	// this scenario. Asserting it directly would make the scenario fail the moment
+	// the provider behind the adapter changed, while proving nothing about the
+	// Cluster: what matters is that the reported generation is the one the
+	// provider reported, not that it is spelled a particular way.
+	for _, value := range []string{"endpoint-1", "fixture-main", providerGeneration("fixture-generation"), providerState("idle")} {
 		if !strings.Contains(text, value) {
 			return fmt.Errorf("TUI list missing %q: %s", value, text)
 		}
 	}
-	if !strings.Contains(text, "res_") || !strings.Contains(text, "fixture-session") {
+	// The provider session ID is asserted through the translation layer for the
+	// same reason as the generation: the literal names the fixture provider's key,
+	// while what the Cluster must preserve is whatever key the provider reported.
+	if !strings.Contains(text, "res_") || !strings.Contains(text, providerSessionKey("fixture-session")) {
 		return fmt.Errorf("TUI list does not preserve both opaque resource ID and provider session ID: %s", text)
 	}
 	return nil
@@ -98,12 +107,12 @@ func assertTUIShow() error {
 		return fmt.Errorf("decode TUI show JSON: %w", err)
 	}
 	text := string(activeScenario.lastBody)
-	for _, field := range []string{"session", "capabilities", "fixture-generation"} {
+	for _, field := range []string{"session", "capabilities", providerGeneration("fixture-generation")} {
 		if !strings.Contains(text, field) {
 			return fmt.Errorf("TUI show missing %q: %s", field, text)
 		}
 	}
-	if !strings.Contains(text, "res_") || !strings.Contains(text, "fixture-session") {
+	if !strings.Contains(text, "res_") || !strings.Contains(text, providerSessionKey("fixture-session")) {
 		return fmt.Errorf("TUI show does not preserve both opaque resource ID and provider session ID: %s", text)
 	}
 	if _, ok := value["capabilities"]; !ok {
