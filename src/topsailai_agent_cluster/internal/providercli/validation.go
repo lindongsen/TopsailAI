@@ -116,7 +116,7 @@ func (r Request) validateExecute() error {
 	if err := r.Operation.validate("operation"); err != nil {
 		return err
 	}
-	if err := r.Target.validate(operationNeedsLiveGeneration(r.Operation.Name)); err != nil {
+	if err := r.Target.validate(OperationNeedsLiveGeneration(r.Operation.Name)); err != nil {
 		return err
 	}
 	if r.Query != nil {
@@ -144,8 +144,10 @@ var nonLiveAuthorityOperations = [...]string{
 	protocol.OperationWorkspaceClean,
 }
 
-// operationNeedsLiveGeneration keeps unknown operations fail-closed.
-func operationNeedsLiveGeneration(operation string) bool {
+// OperationNeedsLiveGeneration reports whether an operation requires live
+// generation evidence. Unknown operations require generation so new mutations
+// remain fail-closed until their authority rule is frozen explicitly.
+func OperationNeedsLiveGeneration(operation string) bool {
 	for _, exception := range nonLiveAuthorityOperations {
 		if operation == exception {
 			return false

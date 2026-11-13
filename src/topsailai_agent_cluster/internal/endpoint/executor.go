@@ -134,6 +134,20 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			if inspection.Live {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_still_active"))
 			}
+		} else if intent.Operation == protocol.OperationAgentDriveStop {
+			// Drive stop addresses the recorded controller, including a residual
+			// record whose process is already gone, so it authorizes on the exact
+			// provider record rather than on a live process generation. A session
+			// process generation is not controller generation, so it is never
+			// compared here: doing so would reject the residual-record case this
+			// operation exists for.
+			inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
+			if inspectErr != nil {
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_observation_failed"))
+			}
+			if !inspection.Found {
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_not_found"))
+			}
 		} else if intent.Operation == protocol.OperationWorkspaceClean && intent.Target.ProviderGeneration == "" {
 			// Cleanup addresses provider-owned expired artifacts by the exact
 			// session/PID mapping rather than a live process generation. Require

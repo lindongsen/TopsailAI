@@ -30,8 +30,37 @@ const (
 	queryModelCatalog    = "model.catalog"
 	querySessionMessages = "session.messages"
 
-	effectNotApplied = "not_applied"
+	effectNotApplied   = "not_applied"
+	effectAcknowledged = "acknowledged"
+	effectUnknown      = "unknown"
+
+	deliveryNotStarted = "not_started"
+	deliverySubmitted  = "submitted"
+
 	providerVersion  = "1.0.0"
+	operationVersion = "v1"
+)
+
+// Standard operation names this Provider serves.
+//
+// The names are the frozen Cluster contract, repeated here as literals because
+// this executable is an independent module and must not import Cluster packages.
+// A name that is not listed is not implemented, so an unknown operation fails
+// closed instead of reaching a provider command.
+const (
+	operationMessageSend      = "message.send"
+	operationContextInject    = "context.inject"
+	operationAgentStart       = "agent.start"
+	operationAgentResume      = "agent.resume"
+	operationAgentStop        = "agent.stop"
+	operationAgentDriveStart  = "agent.drive.start"
+	operationAgentDriveStop   = "agent.drive.stop"
+	operationWorkspaceClean   = "workspace.clean"
+	operationAgentModelSelect = "agent.model.select"
+
+	// controlOperationPrefix addresses the provider control family, whose action
+	// names come from local configuration rather than from this list.
+	controlOperationPrefix = "ctl."
 )
 
 const (
@@ -98,6 +127,7 @@ type response struct {
 	Descriptor  *descriptor       `json:"descriptor,omitempty"`
 	Discovery   *discoveryResult  `json:"discovery,omitempty"`
 	Inspection  *inspectionResult `json:"inspection,omitempty"`
+	Result      *operationResult  `json:"result,omitempty"`
 	QueryResult json.RawMessage   `json:"query_result,omitempty"`
 	Output      *outputSnapshot   `json:"output,omitempty"`
 	Error       *providerError    `json:"error,omitempty"`
@@ -136,6 +166,22 @@ type inspectionResult struct {
 	Found       bool                 `json:"found"`
 	Live        bool                 `json:"live"`
 	Observation *providerObservation `json:"observation,omitempty"`
+}
+
+// operationResult carries Provider evidence for one mutation.
+//
+// It deliberately holds no Cluster identity, journal state or receipt: the
+// Endpoint owns those, and a Provider that reported them would be a second source
+// of truth for facts it cannot observe.
+type operationResult struct {
+	ProviderRequestRef        string `json:"provider_request_ref,omitempty"`
+	DeliveryBoundary          string `json:"delivery_boundary"`
+	EffectCertainty           string `json:"effect_certainty"`
+	ProviderOutcome           string `json:"provider_outcome"`
+	ProviderResponse          string `json:"provider_response,omitempty"`
+	ProviderResponseTruncated bool   `json:"provider_response_truncated"`
+	StartedAtMS               int64  `json:"started_at_ms,omitempty"`
+	FinishedAtMS              int64  `json:"finished_at_ms,omitempty"`
 }
 
 type outputSnapshot struct {

@@ -533,9 +533,9 @@ func agentStartExecutionPayload(intent protocol.ImmutableIntent) (json.RawMessag
 
 func (a *Adapter) executionTarget(ctx context.Context, intent protocol.ImmutableIntent) (*providercli.Target, error) {
 	if intent.Target != nil {
-		return a.providerTarget(ctx, *intent.Target, true)
+		return a.providerTarget(ctx, *intent.Target, providercli.OperationNeedsLiveGeneration(intent.Operation))
 	}
-	if intent.Operation != "agent.start" || intent.LaunchProfileID == "" || intent.ProfileRevision == "" {
+	if intent.Operation != protocol.OperationAgentStart || intent.LaunchProfileID == "" || intent.ProfileRevision == "" {
 		return nil, errors.New("operation requires a target or launch profile")
 	}
 	mapping, err := a.config.Mapper.LookupResourceID(ctx, intent.LaunchProfileID)

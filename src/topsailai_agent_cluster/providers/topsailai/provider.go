@@ -19,10 +19,17 @@ type commandRunner interface {
 type provider struct {
 	runner commandRunner
 	now    func() time.Time
+	// control is the Provider-local ctl. action catalog loaded at startup. An
+	// empty catalog advertises no action and refuses every ctl. operation.
+	control controlCatalog
 }
 
-func newProvider(runner commandRunner) *provider {
-	return &provider{runner: runner, now: time.Now}
+// newProvider builds one Provider from its immutable startup configuration.
+//
+// The catalog is a parameter rather than a process read, so the action surface is
+// decided once at the boundary and every later decision uses the same value.
+func newProvider(runner commandRunner, control controlCatalog) *provider {
+	return &provider{runner: runner, now: time.Now, control: control}
 }
 
 // dispatch handles only functions truthfully advertised by the descriptor.
@@ -31,13 +38,15 @@ func (p *provider) dispatch(ctx context.Context, request request) response {
 	var err error
 	switch request.Function {
 	case functionDescribe:
-		descriptor := topsailaiDescriptor()
+		descriptor := topsailaiDescriptor(p.control)
 		base.OK = true
 		base.Descriptor = &descriptor
 	case functionDiscover:
 		base.Discovery, err = p.discover(ctx)
 	case functionInspect:
 		base.Inspection, err = p.inspect(ctx, request.Target)
+	case functionExecute:
+		base.Result, err = p.execute(ctx, request)
 	case functionQuery:
 		base.QueryResult, err = p.query(ctx, request.Query, request.Target, request.Payload)
 	case functionReadOutput:

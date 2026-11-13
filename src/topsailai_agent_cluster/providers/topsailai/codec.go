@@ -48,6 +48,36 @@ func validateRequest(value request) error {
 	if len(value.Payload) == 0 || !json.Valid(value.Payload) || bytes.Equal(bytes.TrimSpace(value.Payload), []byte("null")) {
 		return errors.New("payload must be non-null JSON")
 	}
+	if value.Function == functionExecute {
+		return validateExecuteEnvelope(value)
+	}
+	return nil
+}
+
+// validateExecuteEnvelope checks the frozen execute request constraints.
+//
+// The checks mirror protocol/provider-cli/v1/request.schema.json, which requires
+// invocation_id, target and operation for execute, forbids query, and requires
+// expected_generation for every operation except the three non-live ones. They are
+// repeated here because this executable is an independent module that cannot import
+// the Cluster validator, and because a caller may reach dispatch without passing
+// through the Cluster request builder.
+func validateExecuteEnvelope(value request) error {
+	if value.InvocationID == "" {
+		return errors.New("invocation_id is required for execute")
+	}
+	if value.Target == nil {
+		return errors.New("target is required for execute")
+	}
+	if value.Operation == nil {
+		return errors.New("operation is required for execute")
+	}
+	if value.Query != nil {
+		return errors.New("execute request must not contain query")
+	}
+	if operationNeedsLiveGeneration(value.Operation.Name) && value.Target.ExpectedGeneration == "" {
+		return errors.New("target expected_generation is required for this operation")
+	}
 	return nil
 }
 

@@ -30,7 +30,13 @@ func serve(reader io.Reader, writer io.Writer) error {
 	if err != nil {
 		return err
 	}
-	provider := newProvider(newCLIRunner(os.Environ()))
+	// The control action catalog is immutable startup configuration: it is read once
+	// here and passed down, so no later decision re-reads the process environment.
+	control, err := loadControlCatalog(os.Environ())
+	if err != nil {
+		return err
+	}
+	provider := newProvider(newCLIRunner(os.Environ()), control)
 	if request.Function == functionFollowOutput {
 		return provider.followOutput(context.Background(), request, writer)
 	}

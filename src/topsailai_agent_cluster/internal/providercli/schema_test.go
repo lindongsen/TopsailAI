@@ -125,12 +125,12 @@ func TestSchemaGenerationExceptionsMatchValidation(t *testing.T) {
 		t.Fatalf("schema generation exceptions = %v, Go exceptions = %v", schemaExceptions, goExceptions)
 	}
 	for _, operation := range goExceptions {
-		if operationNeedsLiveGeneration(operation) {
+		if OperationNeedsLiveGeneration(operation) {
 			t.Errorf("frozen exception %q requires generation", operation)
 		}
 	}
 	for _, operation := range []string{protocol.OperationAgentStart, "future.mutation"} {
-		if !operationNeedsLiveGeneration(operation) {
+		if !OperationNeedsLiveGeneration(operation) {
 			t.Errorf("generation-required operation %q was treated as an exception", operation)
 		}
 	}

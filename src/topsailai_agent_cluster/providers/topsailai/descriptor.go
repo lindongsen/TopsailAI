@@ -1,7 +1,12 @@
 package main
 
 // topsailaiDescriptor reports only functions implemented by this executable.
-func topsailaiDescriptor() descriptor {
+//
+// The advertised operation list is derived from the same table dispatch uses, so a
+// capability cannot be advertised without a handler and a handler cannot exist
+// without being advertised. The control actions come from the Provider-local
+// catalog, so an unconfigured deployment advertises none.
+func topsailaiDescriptor(control controlCatalog) descriptor {
 	return descriptor{
 		ProviderType:       "topsailai",
 		ProviderVersion:    providerVersion,
@@ -12,15 +17,15 @@ func topsailaiDescriptor() descriptor {
 			Minimum:  protocolMinor,
 			Maximum:  protocolMinor,
 		},
-		Functions:  []string{functionDescribe, functionDiscover, functionInspect, functionQuery, functionReadOutput, functionFollowOutput},
-		Operations: []namedContract{},
+		Functions:  []string{functionDescribe, functionDiscover, functionInspect, functionExecute, functionQuery, functionReadOutput, functionFollowOutput},
+		Operations: mutationOperations(),
 		Queries: []namedContract{
 			{Name: queryLaunchOptions, Version: queryVersion},
 			{Name: queryHistoryMessages, Version: queryVersion},
 			{Name: queryModelCatalog, Version: queryVersion},
 			{Name: querySessionMessages, Version: queryVersion},
 		},
-		ControlActions: []namedContract{},
+		ControlActions: control.contracts(),
 		Limits: budget{
 			MaxStdoutBytes: 1 << 20,
 			MaxStderrBytes: 64 << 10,

@@ -49,11 +49,11 @@ func TestServeDescribe(t *testing.T) {
 	if !response.OK || response.Descriptor == nil {
 		t.Fatalf("response = %+v", response)
 	}
-	wantFunctions := []string{functionDescribe, functionDiscover, functionInspect, functionQuery, functionReadOutput, functionFollowOutput}
+	wantFunctions := []string{functionDescribe, functionDiscover, functionInspect, functionExecute, functionQuery, functionReadOutput, functionFollowOutput}
 	if got := response.Descriptor.Functions; !reflect.DeepEqual(got, wantFunctions) {
 		t.Fatalf("functions = %v want %v", got, wantFunctions)
 	}
-	if len(response.Descriptor.Operations) != 0 || len(response.Descriptor.Queries) != 4 {
+	if len(response.Descriptor.Operations) != 9 || len(response.Descriptor.Queries) != 4 || len(response.Descriptor.ControlActions) != 0 {
 		t.Fatalf("descriptor contracts: %+v", response.Descriptor)
 	}
 }
@@ -82,8 +82,11 @@ func TestServeRejectsExtraDocument(t *testing.T) {
 }
 
 // TestDispatchRejectsUnimplementedFunction verifies fail-closed dispatch.
+//
+// The function must be one this executable genuinely does not serve. execute is
+// implemented now, so using it here would assert the opposite of the truth.
 func TestDispatchRejectsUnimplementedFunction(t *testing.T) {
-	response := newProvider(stubCommandRunner{}).dispatch(context.Background(), validRequest(functionExecute))
+	response := newProvider(stubCommandRunner{}, controlCatalog{}).dispatch(context.Background(), validRequest(functionWatch))
 	if response.OK || response.Error == nil {
 		t.Fatalf("response = %+v", response)
 	}
