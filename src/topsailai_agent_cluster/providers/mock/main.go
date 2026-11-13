@@ -468,8 +468,16 @@ func recordInvocation(options mockOptions, request request, kind string) {
 		"request_id": request.RequestID,
 		"pid":        os.Getpid(),
 	}
+	// The operation name is recorded for every invocation, not only for the
+	// mutation path. A read function carries no Operation field, so keying the
+	// record on it alone left the read invocations with a kind but no operation,
+	// and a caller counting provider reads by operation name counted zero while
+	// the provider had in fact been invoked. The kind is the operation name for a
+	// function call, so it is the honest fallback rather than an invented value.
 	if request.Operation != nil {
 		record["operation"] = request.Operation.Name
+	} else {
+		record["operation"] = kind
 	}
 	if request.Target != nil {
 		record["target_resource_key"] = request.Target.ProviderResourceKey

@@ -272,6 +272,35 @@ func TestRecordInvocationWritesOneRecordPerCall(t *testing.T) {
 	}
 }
 
+// TestRecordInvocationNamesFunctionCalls proves a read invocation is recorded
+// with an operation name even though it carries no Operation field. A caller
+// counting provider reads by operation name counted zero while the provider had
+// been invoked, so the record has to name the operation for a function call too.
+func TestRecordInvocationNamesFunctionCalls(t *testing.T) {
+	recordFile := filepath.Join(t.TempDir(), "records.jsonl")
+	options := mockOptions{recordFile: recordFile}
+	request := request{
+		RequestID: "req-read",
+		Function:  functionReadOutput,
+		Target:    &target{ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"},
+	}
+	recordInvocation(options, request, "output.read")
+	data, err := os.ReadFile(recordFile)
+	if err != nil {
+		t.Fatalf("read record file: %v", err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &record); err != nil {
+		t.Fatalf("decode record: %v", err)
+	}
+	if record["operation"] != "output.read" {
+		t.Fatalf("record operation = %v, want output.read", record["operation"])
+	}
+	if record["kind"] != "output.read" {
+		t.Fatalf("record kind = %v, want output.read", record["kind"])
+	}
+}
+
 // TestRecordInvocationIsOptional proves an unconfigured record file is not an
 // error, because the conformance suite launches the mock without one.
 func TestRecordInvocationIsOptional(t *testing.T) {
