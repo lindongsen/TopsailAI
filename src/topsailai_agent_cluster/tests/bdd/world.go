@@ -66,6 +66,12 @@ type World struct {
 	Transport   *bddTransport
 	events      chan []byte
 	realCluster *harness.Cluster
+	// launchProfileToken is the Endpoint credential used to read the launch
+	// catalog. A policy-enforcing Endpoint refuses the catalog read without it,
+	// and the resulting 403 fallback would hand agent.start a provider key
+	// instead of the Cluster-minted profile identity. Empty keeps the previous
+	// behaviour for clusters that do not enforce a policy.
+	launchProfileToken string
 }
 
 // NewWorld creates a scenario-scoped server and SQLite database on a dynamic port.
@@ -270,7 +276,7 @@ func (w *World) resolveLaunchProfile() (string, string, error) {
 	if w.realCluster == nil {
 		return "", "", fmt.Errorf("real cluster is not running")
 	}
-	status, body, err := w.realRequestE(http.MethodGet, "/api/v1/launch-options?endpoint_id=endpoint-1", nil)
+	status, body, err := w.realCluster.RequestWithEndpointTokenE(http.MethodGet, "/api/v1/launch-options?endpoint_id=endpoint-1", nil, w.launchProfileToken)
 	if err != nil {
 		return "", "", fmt.Errorf("read launch options: %w", err)
 	}

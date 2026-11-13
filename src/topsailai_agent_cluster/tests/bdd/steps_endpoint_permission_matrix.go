@@ -66,9 +66,9 @@ var permissionMatrixOperations = map[string]permissionMatrixOperation{
 	// Cleanup addresses provider-owned expired artifacts by the exact session
 	// mapping rather than a live process generation, so the live row is a valid
 	// target and the policy hook is the only remaining reason to refuse.
-	protocol.OperationWorkspaceClean: {Permission: protocol.OperationWorkspaceClean, Target: "fixture-session", Payload: `{}`},
-	protocol.OperationAgentDriveStart:    {Permission: protocol.OperationAgentDriveStart, Target: "fixture-session", Payload: `{}`},
-	protocol.OperationAgentDriveStop:     {Permission: protocol.OperationAgentDriveStop, Target: "fixture-session", Payload: `{}`},
+	protocol.OperationWorkspaceClean:  {Permission: protocol.OperationWorkspaceClean, Target: "fixture-session", Payload: `{}`},
+	protocol.OperationAgentDriveStart: {Permission: protocol.OperationAgentDriveStart, Target: "fixture-session", Payload: `{}`},
+	protocol.OperationAgentDriveStop:  {Permission: protocol.OperationAgentDriveStop, Target: "fixture-session", Payload: `{}`},
 	// Resume addresses the stopped row, because resume authorizes on the absence
 	// of a live target: the live row would be refused by target validation before
 	// the policy hook ran.
@@ -161,6 +161,11 @@ func startPermissionMatrixCluster() error {
 	}
 	activeScenario.world.realCluster = cluster
 	activeScenario.realCluster = cluster
+	// The launch catalog is read with the view credential, which the policy
+	// grants launch.query. Reading it with the row token would 403 on every
+	// row that does not hold launch.query, and agent.start would then be
+	// submitted with a provider key instead of the minted profile identity.
+	activeScenario.world.launchProfileToken = permissionMatrixToken(security.ScopeView)
 	return nil
 }
 

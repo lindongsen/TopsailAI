@@ -197,7 +197,19 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			Checkpoint:   "checkpoint-1",
 		}
 	case functionInspect:
+		// Inspection answers for the exact target it was asked about, because the
+		// Cluster authorizes resume on the absence of a live target. A mock that
+		// reported every target as live would make resume unreachable: the
+		// Endpoint would refuse it with target_still_active before the policy hook
+		// ran, so a resume scenario would pass while proving nothing about
+		// authorization. The stopped row is therefore found but not live, which is
+		// exactly what a provider reports for a record whose process is gone.
 		observation := fixtureObservation()
+		if request.Target != nil && request.Target.ProviderResourceKey == stoppedObservation().ProviderResourceKey {
+			stopped := stoppedObservation()
+			base.Inspection = &inspectionResult{Found: true, Live: false, Observation: &stopped}
+			break
+		}
 		base.Inspection = &inspectionResult{Found: true, Live: true, Observation: &observation}
 	case functionExecute:
 		if options.delayMS > 0 {
