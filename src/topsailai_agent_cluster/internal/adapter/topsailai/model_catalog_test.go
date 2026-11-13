@@ -2,6 +2,7 @@ package topsailai
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -42,20 +43,28 @@ func TestModelCatalogListsProfilesWithOpaqueIDs(t *testing.T) {
 
 // TestModelCatalogInvokesTheProviderJSONSurface proves the adapter consumes the
 // provider's machine-readable list rather than parsing human text.
+//
+// The catalog now makes two provider calls, so the assertion reads the first one.
+// A runner that records only the last argv would silently assert the current-model
+// read instead of the registry read, which is the surface this test exists to pin.
 func TestModelCatalogInvokesTheProviderJSONSurface(t *testing.T) {
-	runner := &fakeRunner{out: []byte(`[]`)}
-	instance := newTestAdapter(t, runner)
+	runner := &perCallRunner{answers: [][]byte{[]byte(`[]`)}}
+	instance := messagesAdapter(t, runner)
 	sessionID := mintSession(t, instance)
 	if _, err := instance.ModelCatalog(context.Background(), modelCatalogQuery(sessionID)); err != nil {
 		t.Fatal(err)
 	}
+	if len(runner.calls) == 0 {
+		t.Fatal("the catalog must invoke the provider")
+	}
 	want := []string{"models", "list", "--json"}
-	if len(runner.args) != len(want) {
-		t.Fatalf("expected argv %v, got %v", want, runner.args)
+	first := runner.calls[0]
+	if len(first) != len(want) {
+		t.Fatalf("expected argv %v, got %v", want, first)
 	}
 	for index := range want {
-		if runner.args[index] != want[index] {
-			t.Fatalf("expected argv %v, got %v", want, runner.args)
+		if first[index] != want[index] {
+			t.Fatalf("expected argv %v, got %v", want, first)
 		}
 	}
 }
@@ -278,17 +287,22 @@ func TestControlActionsUseTheSafetyClassVocabulary(t *testing.T) {
 	}
 }
 
-// TestModelCatalogReportsCurrentStateAsUnknown proves the adapter states that it did
-// not observe which profile the session is using.
+// TestModelCatalogReportsTheObservedCurrentProfile proves the catalog names the
+// profile the session is using now.
 //
-// The provider's `models list --json` document describes the registry, not the
-// runtime: it carries no field naming the model a session is using. Reporting
-// "unknown" states that honestly, where the zero value would claim the session is
-// using no profile at all. The assertion covers every published profile, because a
-// single populated row would be enough to make the column look trustworthy.
-func TestModelCatalogReportsCurrentStateAsUnknown(t *testing.T) {
-	runner := &fakeRunner{out: []byte(`[{"id":"m1","name":"claude","protocol":"openai-compatible"},{"id":"m2","name":"gpt","protocol":"openai-compatible"},{"id":"m3","name":"legacy","protocol":"openai-compatible","enabled":false}]`)}
-	instance := newTestAdapter(t, runner)
+// The registry document cannot answer this, so the adapter reads the provider's
+// registered `agent.llm` instruction. This is the regression guard for the defect
+// where the column was always empty: the assertion names the exact expected value
+// per row, because a test that only asserted "not unknown" would pass on a catalog
+// that marked every row current.
+func TestModelCatalogReportsTheObservedCurrentProfile(t *testing.T) {
+	runner := &perCallRunner{
+		answers: [][]byte{
+			[]byte(`[{"id":"m1","name":"claude","protocol":"openai-compatible"},{"id":"m2","name":"gpt","protocol":"openai-compatible"},{"id":"m3","name":"legacy","protocol":"openai-compatible","enabled":false}]`),
+			[]byte(`{"ok":true,"exit_code":0,"delivery_state":"control_acknowledged","error_code":null,"response":{"status":"ok","result":"gpt"}}`),
+		},
+	}
+	instance := messagesAdapter(t, runner)
 	sessionID := mintSession(t, instance)
 	catalog, err := instance.ModelCatalog(context.Background(), modelCatalogQuery(sessionID))
 	if err != nil {
@@ -297,9 +311,10 @@ func TestModelCatalogReportsCurrentStateAsUnknown(t *testing.T) {
 	if len(catalog.Profiles) != 3 {
 		t.Fatalf("expected 3 profiles, got %d", len(catalog.Profiles))
 	}
+	want := []string{protocol.ModelCurrentNo, protocol.ModelCurrentYes, protocol.ModelCurrentNo}
 	for index, profile := range catalog.Profiles {
-		if profile.CurrentState != protocol.ModelCurrentUnknown {
-			t.Fatalf("profile %d current state = %q, want %q", index, profile.CurrentState, protocol.ModelCurrentUnknown)
+		if profile.CurrentState != want[index] {
+			t.Fatalf("profile %d (%s) current state = %q, want %q", index, profile.ProviderDisplayName, profile.CurrentState, want[index])
 		}
 		if err := protocol.ValidateModelCurrentState(profile.CurrentState); err != nil {
 			t.Fatalf("profile %d published an invalid current state: %v", index, err)
@@ -307,15 +322,113 @@ func TestModelCatalogReportsCurrentStateAsUnknown(t *testing.T) {
 	}
 }
 
-// TestModelCatalogNeverClaimsADefiniteCurrentState proves the adapter cannot report
-// "yes" or "no" from a document that carries no current-model field.
+// TestModelCatalogReadsTheCurrentModelThroughTheRegisteredInstruction proves the
+// second read uses the provider's own instruction surface and the same argv shape
+// as model selection, so the two call sites cannot drift.
+func TestModelCatalogReadsTheCurrentModelThroughTheRegisteredInstruction(t *testing.T) {
+	runner := &perCallRunner{
+		answers: [][]byte{
+			[]byte(`[{"id":"m1","name":"claude","protocol":"openai-compatible"}]`),
+			[]byte(`{"ok":true,"response":{"status":"ok","result":"claude"}}`),
+		},
+	}
+	instance := messagesAdapter(t, runner)
+	sessionID := mintSession(t, instance)
+	if _, err := instance.ModelCatalog(context.Background(), modelCatalogQuery(sessionID)); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 provider calls, got %d: %v", len(runner.calls), runner.calls)
+	}
+	wantFirst := []string{"models", "list", "--json"}
+	for index := range wantFirst {
+		if runner.calls[0][index] != wantFirst[index] {
+			t.Fatalf("first call = %v, want %v", runner.calls[0], wantFirst)
+		}
+	}
+	second := runner.calls[1]
+	if len(second) < 5 || second[0] != "runtime" || second[1] != "control" || second[2] != "call_instruction" {
+		t.Fatalf("second call = %v, want the runtime control call_instruction surface", second)
+	}
+	payload := ""
+	for index := 0; index+1 < len(second); index++ {
+		if second[index] == "-a" {
+			payload = second[index+1]
+			break
+		}
+	}
+	if payload == "" {
+		t.Fatalf("second call = %v, want an -a payload", second)
+	}
+	if !strings.Contains(payload, `"instruction":"agent.llm"`) {
+		t.Fatalf("second call payload = %q, want the agent.llm instruction", payload)
+	}
+}
+
+// TestModelCatalogKeepsEveryProfileUnknownWhenTheCurrentReadFails proves an
+// unavailable observation degrades to unknown instead of failing the catalog.
 //
-// This is the regression guard for the original defect: the column was always "no"
-// because the field was never assigned. A test that only asserted "not yes" would
-// pass on that defect, so the assertion names the exact expected value.
-func TestModelCatalogNeverClaimsADefiniteCurrentState(t *testing.T) {
-	runner := &fakeRunner{out: []byte(`[{"id":"m1","name":"claude","protocol":"openai-compatible"}]`)}
-	instance := newTestAdapter(t, runner)
+// The menu is still usable without the current-model fact, so taking it away
+// because one observation failed would remove a capability the operator needs.
+// Every row must stay unknown: reporting "no" for all of them would be a definite
+// negative the evidence does not support.
+func TestModelCatalogKeepsEveryProfileUnknownWhenTheCurrentReadFails(t *testing.T) {
+	cases := []struct {
+		name    string
+		answer  []byte
+		runErr  error
+		comment string
+	}{
+		{name: "provider error", answer: nil, runErr: errors.New("provider failed"), comment: "a failed invocation"},
+		{name: "not ok", answer: []byte(`{"ok":false,"error_code":"control_failed"}`), comment: "a refused instruction"},
+		{name: "no response", answer: []byte(`{"ok":true}`), comment: "a missing response document"},
+		{name: "not ok status", answer: []byte(`{"ok":true,"response":{"status":"error","result":"claude"}}`), comment: "a non-ok status"},
+		{name: "empty result", answer: []byte(`{"ok":true,"response":{"status":"ok","result":""}}`), comment: "an empty result"},
+		{name: "malformed", answer: []byte(`not json`), comment: "an undecodable document"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			runner := &perCallRunner{
+				answers: [][]byte{
+					[]byte(`[{"id":"m1","name":"claude","protocol":"openai-compatible"},{"id":"m2","name":"gpt","protocol":"openai-compatible"}]`),
+					testCase.answer,
+				},
+				errs: []error{nil, testCase.runErr},
+			}
+			instance := messagesAdapter(t, runner)
+			sessionID := mintSession(t, instance)
+			catalog, err := instance.ModelCatalog(context.Background(), modelCatalogQuery(sessionID))
+			if err != nil {
+				t.Fatalf("%s must not fail the catalog: %v", testCase.comment, err)
+			}
+			if len(catalog.Profiles) != 2 {
+				t.Fatalf("expected 2 profiles, got %d", len(catalog.Profiles))
+			}
+			for index, profile := range catalog.Profiles {
+				if profile.CurrentState != protocol.ModelCurrentUnknown {
+					t.Fatalf("profile %d current state = %q, want %q for %s", index, profile.CurrentState, protocol.ModelCurrentUnknown, testCase.comment)
+				}
+			}
+		})
+	}
+}
+
+// TestModelCatalogReportsNoProfileWhenTheCurrentModelIsUnlisted proves an observed
+// current model that matches no published profile marks every row "no".
+//
+// The provider can report a model the registry does not list, for example after a
+// registry edit while the session keeps running. The observation is real, so the
+// answer is a definite "no" for every published profile: the session is using
+// something else. Reporting "unknown" here would throw away an observation the
+// Endpoint actually made, and "unknown" must stay reserved for "not observed".
+func TestModelCatalogReportsNoProfileWhenTheCurrentModelIsUnlisted(t *testing.T) {
+	runner := &perCallRunner{
+		answers: [][]byte{
+			[]byte(`[{"id":"m1","name":"claude","protocol":"openai-compatible"}]`),
+			[]byte(`{"ok":true,"response":{"status":"ok","result":"retired-model"}}`),
+		},
+	}
+	instance := messagesAdapter(t, runner)
 	sessionID := mintSession(t, instance)
 	catalog, err := instance.ModelCatalog(context.Background(), modelCatalogQuery(sessionID))
 	if err != nil {
@@ -324,8 +437,7 @@ func TestModelCatalogNeverClaimsADefiniteCurrentState(t *testing.T) {
 	if len(catalog.Profiles) != 1 {
 		t.Fatalf("expected 1 profile, got %d", len(catalog.Profiles))
 	}
-	switch catalog.Profiles[0].CurrentState {
-	case protocol.ModelCurrentYes, protocol.ModelCurrentNo:
-		t.Fatalf("the registry document cannot prove a current model, got %q", catalog.Profiles[0].CurrentState)
+	if catalog.Profiles[0].CurrentState != protocol.ModelCurrentNo {
+		t.Fatalf("current state = %q, want %q for an observed but unlisted current model", catalog.Profiles[0].CurrentState, protocol.ModelCurrentNo)
 	}
 }

@@ -16,6 +16,12 @@ Feature: Selecting a model profile for a session
     When the second model row is applied in session scope
     Then the provider receives the second profile name and no row number
 
+  Scenario: The catalog reports which profile the session is using
+    Given a real cluster with a healthy provider for the model catalog
+    When the model command is run in session scope
+    Then the model catalog is rendered with numbered rows
+    And the model catalog marks the profile the provider reports as current
+
   Scenario: A workspace-scope model command applies to a named session
     Given a real cluster with a healthy provider for the model catalog
     When the model command is run in workspace scope for the fixture session

@@ -60,9 +60,19 @@ func (a *Adapter) modelProviderName(ctx context.Context, profileID string) (stri
 // someone had also written a catalog entry would be a capability the Endpoint
 // silently does not have.
 func modelSelectArgs(providerKey, modelName string) ([]string, error) {
+	return callInstructionArgs(providerKey, "agent.models", []string{modelName})
+}
+
+// callInstructionArgs builds the provider argv for one registered instruction.
+//
+// Every instruction this adapter invokes goes through the same provider surface,
+// so the argv shape is built in one place. A second copy would let the two call
+// sites drift in flag order or in the payload envelope, and the drift would only
+// appear as a provider parse failure at runtime.
+func callInstructionArgs(providerKey, instruction string, args []string) ([]string, error) {
 	payload, err := json.Marshal(map[string]any{
-		"instruction": "agent.models",
-		"args":        []string{modelName},
+		"instruction": instruction,
+		"args":        args,
 	})
 	if err != nil {
 		return nil, err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,10 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/tests/harness"
 )
+
+// sgrPattern matches one ANSI SGR sequence, which is how the table renderer
+// applies colour to a header or a cell.
+var sgrPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 // registerModelSteps registers the model catalog scenarios. They drive the real
 // binaries over a real WebSocket, because the row-number rule is a client-side
@@ -24,6 +29,7 @@ func registerModelSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the model command is run in session scope$`, runModelListInSessionScope)
 	ctx.Step(`^the model command is run in workspace scope for the fixture session$`, runModelListInWorkspaceScope)
 	ctx.Step(`^the model catalog is rendered with numbered rows$`, assertModelCatalogRendered)
+	ctx.Step(`^the model catalog marks the profile the provider reports as current$`, assertModelCatalogMarksTheCurrentProfile)
 	ctx.Step(`^the second model row is applied in session scope$`, applySecondModelRowInSessionScope)
 	ctx.Step(`^the first model row is applied in workspace scope$`, applyFirstModelRowInWorkspaceScope)
 	ctx.Step(`^the provider receives the second profile name and no row number$`, assertProviderReceivedSecondProfileName)
@@ -186,6 +192,67 @@ func assertModelCatalogRendered() error {
 	return nil
 }
 
+// assertModelCatalogMarksTheCurrentProfile proves the CURRENT column reports the
+// profile the provider said the session is using.
+//
+// The assertion is positional rather than a substring search, because "yes" also
+// appears in the AVAILABLE column: a substring hit would pass even if CURRENT were
+// still unknown. Each row is split on the table's own cell separator and the
+// CURRENT cell is read by index, so the column that carries the value is the
+// column that is checked.
+func assertModelCatalogMarksTheCurrentProfile() error {
+	rows, err := modelCatalogRows(interactiveOutput())
+	if err != nil {
+		return err
+	}
+	want := map[string]string{"fixture-model-a": "yes", "fixture-model-b": "no"}
+	for name, expected := range want {
+		current, ok := rows[name]
+		if !ok {
+			return fmt.Errorf("the catalog table has no row for profile %q", name)
+		}
+		if current != expected {
+			return fmt.Errorf("profile %q reports CURRENT=%q, want %q", name, current, expected)
+		}
+	}
+	return nil
+}
+
+// modelCatalogRows maps each rendered profile name to its CURRENT cell.
+//
+// The table prints cells separated by " │ " and pads them to the column width, so
+// the value is trimmed before comparison. Styling is removed first, because the
+// header and the cells are styled on a real terminal and an SGR sequence inside a
+// cell would make a correct value look wrong.
+func modelCatalogRows(text string) (map[string]string, error) {
+	rows := make(map[string]string)
+	for _, line := range strings.Split(stripTableSGR(text), "\n") {
+		cells := strings.Split(line, " │ ")
+		if len(cells) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(cells[1])
+		if name != "fixture-model-a" && name != "fixture-model-b" {
+			continue
+		}
+		rows[name] = strings.TrimSpace(cells[2])
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no catalog row could be parsed from the rendered table: %s", text)
+	}
+	return rows, nil
+}
+
+// stripTableSGR removes every SGR sequence the table renderer can emit.
+//
+// The table styles headers, states and warned cells, so the set of sequences is
+// wider than the follow prefix. A general pattern is used instead of a fixed
+// replacer list, because a replacer silently stops covering a sequence the moment
+// the palette gains one, and the failure would look like a wrong cell value.
+func stripTableSGR(text string) string {
+	return sgrPattern.ReplaceAllString(text, "")
+}
+
 // modelSelectPayloadArgs returns the args array of the -a payload the adapter sent
 // with a model select.
 //
@@ -320,14 +387,39 @@ func readModelInvocations() ([][]string, error) {
 }
 
 // selectInvocations keeps only the argv records that carry a model select.
+//
+// The subcommand alone cannot identify a select: the catalog read and the select
+// both invoke `runtime control call_instruction`, so filtering on that name would
+// count the current-model read as a selection. The instruction inside the `-a`
+// payload is the only field that distinguishes them, so it is what this filter
+// reads.
 func selectInvocations(records [][]string) [][]string {
 	selects := make([][]string, 0, len(records))
 	for _, argv := range records {
-		if containsArg(argv, "call_instruction") {
+		if instructionOf(argv) == "agent.models" {
 			selects = append(selects, argv)
 		}
 	}
 	return selects
+}
+
+// instructionOf returns the registered instruction carried by one invocation, or
+// an empty string when the argv carries no decodable payload. A malformed payload
+// is not a select, so it is excluded rather than guessed at.
+func instructionOf(argv []string) string {
+	for index, arg := range argv {
+		if arg != "-a" || index+1 >= len(argv) {
+			continue
+		}
+		var payload struct {
+			Instruction string `json:"instruction"`
+		}
+		if err := json.Unmarshal([]byte(argv[index+1]), &payload); err != nil {
+			return ""
+		}
+		return payload.Instruction
+	}
+	return ""
 }
 
 // containsArg reports whether one argv element equals the value exactly. An exact

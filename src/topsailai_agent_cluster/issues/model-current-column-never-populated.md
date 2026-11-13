@@ -47,3 +47,51 @@ states `unknown` because the provider document carries no current-model field; t
 `unknown` for any value outside the vocabulary. No provider runtime read is added.
 
 See `.task/plan_20261111T182547_model-current-tri-state.md`.
+
+## Reversal: the provider does expose the current model
+
+Recorded on 2026-11-13, after the human asked why CURRENT still carries no information.
+
+The Option C resolution above was correct about the registry document and wrong about the provider.
+`models list --json` really does describe only the registry, but the provider exposes the runtime
+model through a second, non-interactive surface that the adapter never called.
+
+Producer chain, verified in source:
+
+- `INSTRUCTIONS` registers `llm=get_llm` (`workspace/plugin_instruction/agent.py:430`).
+- `get_llm()` returns `agent.runtime.llm_model.model_name` (`agent.py:285-294`).
+- `call_instruction` returns that value in `result` (`workspace/control_handlers/instruction.py:105-109`).
+
+Verified live on session `wa-912fd0e49de3`:
+
+```text
+topsailai runtime control call_instruction -s wa-912fd0e49de3 \
+  -a '{"instruction":"agent.llm","args":[]}' --json
+```
+
+returns `"result": "DeepSeek-V4-Flash-Preview"`, which is exactly a registry `name`, so it maps onto
+a rendered row without any provider-specific parsing in the cluster.
+
+The defect was therefore not a missing provider capability. It was a cluster-side omission: the
+adapter hardcoded `ModelCurrentUnknown` (`internal/adapter/topsailai/model_catalog.go:107`) and never
+asked.
+
+## Resolution now in force
+
+Option A, authorized by the human on 2026-11-13: the adapter reads the current model through the
+registered `agent.llm` instruction while composing the catalog, and maps the observation onto the
+existing tri-state vocabulary.
+
+- An observed name that matches a profile is `yes`; every other profile is `no`.
+- An unobserved name, including any read failure, leaves every profile `unknown`. A failed read never
+  fails the catalog, because a missing current-model answer must not hide the profiles that exist.
+- An observed name absent from the registry yields `no` for every row, because the session is then
+  using something other than every published profile. That is an observation, not a gap.
+
+The protocol, the renderer and the column layout are unchanged: the tri-state vocabulary introduced
+by Option C is exactly what Option A needed, so the earlier work was not wasted.
+
+The cost is one bounded provider process per catalog read, which is acceptable because the catalog is
+read on demand rather than on a timer.
+
+See `.task/plan_20261113T094029_model-guided-selection-and-current-column.md`.

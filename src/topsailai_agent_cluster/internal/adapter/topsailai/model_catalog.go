@@ -80,6 +80,11 @@ func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQ
 		return protocol.ModelCatalog{ErrorCode: protocol.ModelCatalogTooLarge}, fmt.Errorf("model profile count exceeds limit")
 	}
 	entries = collapseModelEntriesByName(entries)
+	// The registry document names what can be selected, never what is selected, so
+	// the current model is a second read. It is deliberately non-fatal: a catalog
+	// that cannot prove the current model is still a usable menu, and failing the
+	// whole read would take the menu away because one observation was unavailable.
+	currentName := a.currentModelName(ctx, providerKey)
 	nowMS := time.Now().UnixMilli()
 	result := protocol.ModelCatalog{Profiles: make([]protocol.ModelProfile, 0, len(entries)), ObservedAtMS: nowMS}
 	for _, entry := range entries {
@@ -100,16 +105,74 @@ func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQ
 		result.Profiles = append(result.Profiles, protocol.ModelProfile{
 			ModelProfileID:      profileID,
 			ProviderDisplayName: boundedModelDisplayName(entry.Name),
-			// The provider's `models list --json` document describes the registry,
-			// not the runtime: it carries no field naming the model a session is
-			// using. Reporting "unknown" states that observation honestly, where a
-			// zero value would claim the session is using nothing.
-			CurrentState:      protocol.ModelCurrentUnknown,
-			Available:         available,
-			UnavailableReason: reason,
+			CurrentState:        modelCurrentState(entry.Name, currentName),
+			Available:           available,
+			UnavailableReason:   reason,
 		})
 	}
 	return result, nil
+}
+
+// currentModelName reads the model one session is using now.
+//
+// The provider exposes this as the registered `agent.llm` instruction, which
+// returns the live model name as a plain string. The registry read cannot answer
+// this question, so the column would otherwise stay empty forever.
+//
+// An empty return means the observation was unavailable, and it is never an error.
+// The caller reports "unknown" for every profile in that case, which is the honest
+// answer: the operator learns that the Endpoint did not observe the current model,
+// rather than being told the session uses nothing.
+func (a *Adapter) currentModelName(ctx context.Context, providerKey string) string {
+	args, err := callInstructionArgs(providerKey, "agent.llm", nil)
+	if err != nil {
+		return ""
+	}
+	output, err := a.run(ctx, args, nil)
+	if err != nil {
+		return ""
+	}
+	if len(output) > protocol.MaxModelCatalogBytes {
+		return ""
+	}
+	var envelope struct {
+		OK        bool   `json:"ok"`
+		ErrorCode string `json:"error_code"`
+		Response  *struct {
+			Status string `json:"status"`
+			Result string `json:"result"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(output, &envelope); err != nil {
+		return ""
+	}
+	if !envelope.OK || envelope.ErrorCode != "" {
+		return ""
+	}
+	if envelope.Response == nil || envelope.Response.Status != "ok" {
+		return ""
+	}
+	return strings.TrimSpace(envelope.Response.Result)
+}
+
+// modelCurrentState maps one observed current model name onto the closed
+// tri-state vocabulary.
+//
+// An unobserved name leaves every profile unknown, because "the Endpoint did not
+// look" and "the session uses none of these" are different facts. Once a name was
+// observed, every profile that does not match it is a definite "no", including the
+// case where the observed name is absent from the registry: the provider can report
+// a model the registry no longer lists, and the session is then using something
+// other than every published profile. That is an observation, not a gap, so it must
+// not be reported as unknown.
+func modelCurrentState(profileName, currentName string) string {
+	if currentName == "" {
+		return protocol.ModelCurrentUnknown
+	}
+	if profileName == currentName {
+		return protocol.ModelCurrentYes
+	}
+	return protocol.ModelCurrentNo
 }
 
 // collapseModelEntriesByName keeps one entry per provider name.
