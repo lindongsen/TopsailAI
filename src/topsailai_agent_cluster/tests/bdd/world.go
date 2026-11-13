@@ -205,13 +205,24 @@ func (w *World) submitRealCommandWithToken(commandID string, submission commandS
 	} else {
 		raw = json.RawMessage(submission.Payload)
 	}
-	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": "fixture-main", "operation": submission.Operation, "operation_version": operationVersion, "capability_revision": "v1", "payload_schema_version": payloadSchemaVersion, "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
+	// The launch profile is a Cluster-minted opaque identity, not a provider key,
+	// so it is read from the live catalog instead of being written into the
+	// scenario. A scenario that hardcoded it would be asserting a provider detail
+	// and would break the moment the adapter behind the profile changed.
+	launchProfileID, launchProfileRevision, profileErr := w.resolveLaunchProfile()
+	if profileErr != nil && submission.Operation == protocol.OperationAgentStart {
+		return "", profileErr
+	}
+	if launchProfileID == "" {
+		launchProfileID = "fixture-main"
+	}
+	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": launchProfileID, "operation": submission.Operation, "operation_version": operationVersion, "capability_revision": "v1", "payload_schema_version": payloadSchemaVersion, "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
 	// agent.start is the only operation that carries a profile revision, and the
 	// Endpoint compares it against the descriptor revision before the policy hook
 	// runs. Omitting it would reject every start with profile_revision_mismatch,
 	// so a start scenario would pass while proving nothing about authorization.
 	if submission.Operation == protocol.OperationAgentStart {
-		intent["profile_revision"] = "v1"
+		intent["profile_revision"] = launchProfileRevision
 	}
 	if target != "" {
 		intent["target"] = map[string]any{"kind": "session", "resource_id": target, "provider_generation": generation}
@@ -226,6 +237,41 @@ func (w *World) submitRealCommandWithToken(commandID string, submission commandS
 	return commandID, nil
 }
 
+// resolveLaunchProfile reads the Cluster-minted launch profile identity from the
+// live catalog.
+//
+// The identity is minted by the Endpoint from the provider's private profile key,
+// so it is not knowable in advance and must never be written into a scenario. The
+// revision is read from the same response because agent.start compares it against
+// the descriptor revision before the policy hook runs.
+func (w *World) resolveLaunchProfile() (string, string, error) {
+	if w.realCluster == nil {
+		return "", "", fmt.Errorf("real cluster is not running")
+	}
+	status, body, err := w.realRequestE(http.MethodGet, "/api/v1/launch-options?endpoint_id=endpoint-1", nil)
+	if err != nil {
+		return "", "", fmt.Errorf("read launch options: %w", err)
+	}
+	if status != http.StatusOK {
+		return "", "", fmt.Errorf("launch options status=%d body=%s", status, body)
+	}
+	var envelope struct {
+		Data struct {
+			Handlers []struct {
+				LaunchProfileID string `json:"launch_profile_id"`
+				Revision        string `json:"revision"`
+			} `json:"handlers"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", "", fmt.Errorf("decode launch options: %w", err)
+	}
+	if len(envelope.Data.Handlers) == 0 {
+		return "", "", fmt.Errorf("launch options reported no handler")
+	}
+	return envelope.Data.Handlers[0].LaunchProfileID, envelope.Data.Handlers[0].Revision, nil
+}
+
 // resolveRealTarget translates a fixture provider session key into the opaque
 // resource ID published by inventory.
 //
@@ -235,6 +281,7 @@ func (w *World) submitRealCommandWithToken(commandID string, submission commandS
 // scenario that used the live row would be refused by target validation before
 // the policy hook ever ran, so it would prove nothing about authorization.
 func (w *World) resolveRealTarget(target, generation string) (string, string, error) {
+	generation = providerGeneration(generation)
 	if target != "fixture-session" && target != "stopped-session" {
 		return target, generation, nil
 	}
@@ -267,20 +314,57 @@ func (w *World) resolveRealTarget(target, generation string) (string, string, er
 // before. The stopped row is only ever found by its provider key, because it is
 // deliberately not the first row.
 func findInventorySession(sessions []any, providerSessionID string) (map[string]any, bool) {
+	// A scenario names a session by the role it plays, not by the provider key
+	// that happens to implement that role today. The translation lives here so a
+	// scenario keeps asserting Cluster behaviour while the Provider CLI behind it
+	// changes. fixture-session is the live row and stopped-session is the row the
+	// provider lists without proving a live process.
+	wanted := providerSessionKey(providerSessionID)
 	for _, entry := range sessions {
 		session, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
-		if value, ok := session["provider_session_id"].(string); ok && value == providerSessionID {
+		if value, ok := session["provider_session_id"].(string); ok && value == wanted {
 			return session, true
 		}
 	}
-	if providerSessionID != "fixture-session" {
+	if wanted != "session:stable" {
 		return nil, false
 	}
 	session, ok := sessions[0].(map[string]any)
 	return session, ok
+}
+
+// providerSessionKey maps a scenario session role onto the Provider CLI key that
+// currently implements it.
+//
+// The mapping is one-directional and deliberately small: a scenario says which
+// role it needs, and this function says which provider key that role is. A key
+// that is not a known role is returned unchanged, so a scenario may also address
+// a provider key directly.
+func providerSessionKey(role string) string {
+	switch role {
+	case "fixture-session":
+		return "session:stable"
+	case "stopped-session":
+		return "session:stopped"
+	default:
+		return role
+	}
+}
+
+// providerGeneration maps a scenario generation role onto the Provider CLI
+// generation that currently implements it.
+//
+// A generation is runtime evidence, so it cannot be invented by a scenario: the
+// value has to be the one the provider actually reports. The role name is kept in
+// the scenario so the scenario does not encode a provider detail.
+func providerGeneration(role string) string {
+	if role == "fixture-generation" {
+		return "generation-1"
+	}
+	return role
 }
 
 // realRequestE performs a real-cluster request without terminating the BDD test process.

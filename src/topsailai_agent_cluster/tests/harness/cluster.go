@@ -193,14 +193,17 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create certificates: %w", err)
 	}
-	serverBin, endpointBin, fixtureBin := filepath.Join(root, "server"), filepath.Join(root, "endpoint"), filepath.Join(root, "fixture")
+	serverBin, endpointBin, mockBin := filepath.Join(root, "server"), filepath.Join(root, "endpoint"), filepath.Join(root, "mock")
 	if err := Build(serverBin, "./src/main/agent-cluster-server"); err != nil {
 		return nil, err
 	}
 	if err := Build(endpointBin, "./src/main/agent-cluster-endpoint"); err != nil {
 		return nil, err
 	}
-	if err := Build(fixtureBin, "./tests/fixtures/provider"); err != nil {
+	// The Provider CLI is a separate Go module, so it is built from its own
+	// directory. Building it from the repository root fails with "main module
+	// does not contain package", which is why BuildModule exists.
+	if err := BuildModule(mockBin, filepath.Join(ModuleRootForBuild(), "providers", "mock"), "."); err != nil {
 		return nil, err
 	}
 	// The TopsailAI adapter resolves topsailai_session_info as a sibling of the
@@ -276,7 +279,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		mode = options.Faults.FixtureMode
 	}
 	discoveryCount := filepath.Join(root, "discovery-count")
-	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, "timeout_ms": 5000}}
+	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, "timeout_ms": 5000}}
 	// The TopsailAI adapter is the only adapter that can stream output, so a
 	// follow scenario selects it explicitly. Its fixture answers discovery from a
 	// workspace document and streams plain text records on the follow path.
@@ -284,7 +287,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		adapterArgs = []map[string]any{{"adapter_id": "topsailai-main", "provider_type": "topsailai", "command": filepath.Join(providerDir, "topsailai"), "args": []string{}, "timeout_ms": 5000}}
 	}
 	if options.Faults.TwoAdapters {
-		adapterArgs = []map[string]any{{"adapter_id": "adapter-a", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", "one", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-a"}, "timeout_ms": 5000}, {"adapter_id": "adapter-b", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", "one", "--always-fail", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-b"}, "timeout_ms": 5000}}
+		adapterArgs = []map[string]any{{"adapter_id": "adapter-a", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-a"}, "timeout_ms": 5000}, {"adapter_id": "adapter-b", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--always-fail", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-b"}, "timeout_ms": 5000}}
 	}
 	if options.Faults.ProviderAlwaysFail && !options.Faults.TwoAdapters {
 		adapterArgs[0]["args"].([]string)[1] = "fail"
@@ -325,7 +328,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	}
 	for i := range adapterArgs {
 		if options.Faults.ProviderFailAdapterID == adapterArgs[i]["adapter_id"] {
-			adapterArgs[i]["args"] = append(adapterArgs[i]["args"].([]string), "--fail-execution")
+			adapterArgs[i]["args"] = append(adapterArgs[i]["args"].([]string), "--fault", "exit-result-conflict")
 		}
 	}
 	adapterJSON, err := marshalAdapterConfigurationFn(adapterArgs)

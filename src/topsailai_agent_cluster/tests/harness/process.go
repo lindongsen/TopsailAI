@@ -72,6 +72,24 @@ func Build(output, packagePath string) error {
 	return nil
 }
 
+// BuildModule compiles one command that lives in its own Go module.
+//
+// Build always runs in the repository root, which is correct for every command
+// inside the main module. A standalone Provider CLI is a separate module, so
+// building it from the repository root fails with "main module does not contain
+// package". The module directory is therefore an explicit parameter rather than
+// being derived, because deriving it would make this helper guess which module a
+// package path belongs to.
+func BuildModule(output, moduleDir, packagePath string) error {
+	cmd := exec.Command("go", "build", "-tags=testhooks", "-o", output, packagePath)
+	cmd.Dir = moduleDir
+	outputBytes, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("build %s in %s: %w\n%s", packagePath, moduleDir, err, outputBytes)
+	}
+	return nil
+}
+
 // ModuleRootForBuild returns the repository root without coupling build failures to a test.
 func ModuleRootForBuild() string {
 	wd, err := os.Getwd()
