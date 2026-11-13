@@ -1,0 +1,61 @@
+# Author: DawsonLin
+# Purpose: Run the Connector Server on gd-dev.
+#
+# Two decisions are deliberate:
+#
+#   - The two secrets arrive through `env_file`, not through `environment` in this
+#     file. A secret written here would be committed, and a committed secret is a
+#     leaked secret. The env file lives beside this compose file on the host, is
+#     mode 0600, and is never copied into the image.
+#   - The root filesystem is read-only. The Server holds no state: it forwards a
+#     request and relays the answer, and it keeps no copy of a Node token. A
+#     writable root would be a place for a future change to start persisting
+#     something the design forbids.
+#
+# `read_only` plus `tmpfs` for /tmp is the ordinary shape for a stateless service.
+# The Server writes no file, so the tmpfs is there only because some libraries
+# expect /tmp to exist.
+
+services:
+  connector-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # The deployment host cannot reach Docker Hub, so the base image comes
+        # from the local registry. A host with Docker Hub access overrides this.
+        BASE_IMAGE: ${BASE_IMAGE:-192.168.2.3:5000/alpine:latest}
+    image: ${IMAGE_TAG:-connector-server:local}
+    container_name: connector-server
+    restart: unless-stopped
+    env_file:
+      - ./server.env
+    environment:
+      # The listen address is not a secret, so it is stated here rather than in
+      # the env file. It must match the published port below.
+      CONNECTOR_SERVER_LISTEN: "0.0.0.0:8443"
+    ports:
+      # One listener serves both surfaces: the channel at /channel and the CLI API
+      # at /v1/. Publishing one port is the whole point of the single-listener
+      # design, and a second mapping would suggest an isolation that does not
+      # exist.
+      - "${PUBLISH_PORT:-18444}:8443"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # The Server has no health endpoint, and adding one would be a new surface
+      # on a security boundary. The check therefore proves only that the process
+      # is alive and the port is bound, which is what a restart policy needs.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8443 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
