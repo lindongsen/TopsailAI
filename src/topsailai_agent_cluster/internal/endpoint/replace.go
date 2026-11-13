@@ -177,7 +177,12 @@ func (r *Replacer) Replace(ctx context.Context, request ReplaceRequest) (Replace
 		// rather than leave that window open.
 		return r.revert(ctx, result, previous, previousConfig, previousDescriptor.Capabilities.Revision, errors.New("no descriptor publisher is configured"))
 	}
-	if err := r.Publisher.RefreshDescriptors(ctx, candidateDescriptor.ProviderType); err != nil {
+	// The publish key is the configured provider type of the adapter being
+	// replaced, not the type the candidate reports about itself. The collector
+	// selects bindings by their configured provider type, so publishing with the
+	// provider's self-reported type would match no binding whenever the two
+	// differ, and the activation would be reverted even though the swap succeeded.
+	if err := r.Publisher.RefreshDescriptors(ctx, previousConfig.ProviderType); err != nil {
 		return r.revert(ctx, result, previous, previousConfig, previousDescriptor.Capabilities.Revision, fmt.Errorf("publish effective revision: %w", err))
 	}
 	return result, nil

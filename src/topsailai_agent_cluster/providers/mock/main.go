@@ -244,7 +244,7 @@ func fixtureObservation() providerObservation {
 		ResourceKind:        resourceSession,
 		State:               "running",
 		ObservedAtMS:        fixtureTimeMS,
-		Attributes:          json.RawMessage(`{"display_name":"Mock Session"}`),
+		Attributes:          json.RawMessage(`{"provider_display_name":"Mock Session"}`),
 	}
 }
 
