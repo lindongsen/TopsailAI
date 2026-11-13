@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -178,9 +179,14 @@ func (w *World) submitRealCommand(commandID, operation, target, generation, payl
 // so a helper that derived one from the other would look correct today and break
 // the first time an operation versions them independently.
 type commandSubmission struct {
-	Operation            string
-	Target               string
-	Generation           string
+	Operation  string
+	Target     string
+	Generation string
+	// Folder is the launch directory an agent.start carries. It is a separate
+	// intent field, not a payload field: the adapter decodes the payload strictly
+	// and rejects unknown keys, so a folder smuggled into the payload would be
+	// refused before the provider was reached.
+	Folder               string
 	Payload              string
 	OperationVersion     string
 	PayloadSchemaVersion string
@@ -237,6 +243,9 @@ func (w *World) submitRealCommandWithToken(commandID string, submission commandS
 		launchProfileID = "fixture-main"
 	}
 	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": launchProfileID, "operation": submission.Operation, "operation_version": operationVersion, "capability_revision": "v1", "payload_schema_version": payloadSchemaVersion, "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
+	if submission.Folder != "" {
+		intent["folder"] = submission.Folder
+	}
 	// agent.start is the only operation that carries a profile revision, and the
 	// Endpoint compares it against the descriptor revision before the policy hook
 	// runs. Omitting it would reject every start with profile_revision_mismatch,
@@ -399,6 +408,73 @@ func providerGeneration(role string) string {
 		return "generation-1"
 	}
 	return role
+}
+
+// providerState maps a scenario state role onto the state the Provider CLI
+// currently reports for that role.
+//
+// The state is provider evidence, not a Cluster decision: the Cluster copies what
+// the provider observed. The fixture provider used to report a live session as
+// idle, and the Provider CLI reports the same session as running, so a scenario
+// that asserted the literal would be asserting the removed provider rather than
+// the Cluster's behaviour of reporting the provider's own state.
+func providerState(role string) string {
+	switch role {
+	case "idle":
+		return "running"
+	default:
+		return role
+	}
+}
+
+// resolveModelProfile reads the live model catalog and returns the Cluster-minted
+// identity of the first selectable profile.
+//
+// The identity is minted by the adapter, so a scenario cannot know it in advance.
+// Writing a provider key into the payload instead would be refused by the adapter
+// before the provider was reached, and the scenario would then pass while proving
+// nothing about authorization. The catalog is read with the view credential
+// because model.list is a view-scope read, and the row token under test may hold
+// only the operation being exercised.
+func (w *World) resolveModelProfile(target, generation string) (string, error) {
+	if w.realCluster == nil {
+		return "", fmt.Errorf("real cluster is not running")
+	}
+	resourceID, providerGeneration, err := w.resolveRealTarget(target, generation)
+	if err != nil {
+		return "", err
+	}
+	path := "/api/v1/model-catalog?endpoint_id=endpoint-1&resource_id=" + url.QueryEscape(resourceID)
+	if providerGeneration != "" {
+		path += "&provider_generation=" + url.QueryEscape(providerGeneration)
+	}
+	status, body, err := w.realCluster.RequestWithEndpointTokenE(http.MethodGet, path, nil, w.launchProfileToken)
+	if err != nil {
+		return "", fmt.Errorf("read model catalog: %w", err)
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("read model catalog status=%d body=%s", status, body)
+	}
+	// The catalog is returned inside the standard API envelope, so the profiles
+	// live under data rather than at the top level. Decoding the envelope as if it
+	// were the payload reported "no selectable profile" for a catalog that had
+	// just listed one, which would have made the scenario fail for a decoding
+	// mistake instead of the authorization behaviour it exists to prove.
+	var envelope struct {
+		Data struct {
+			Profiles []struct {
+				ModelProfileID string `json:"model_profile_id"`
+			} `json:"profiles"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", fmt.Errorf("decode model catalog: %w", err)
+	}
+	catalog := envelope.Data
+	if len(catalog.Profiles) == 0 || catalog.Profiles[0].ModelProfileID == "" {
+		return "", fmt.Errorf("model catalog reported no selectable profile: %s", body)
+	}
+	return catalog.Profiles[0].ModelProfileID, nil
 }
 
 // realRequestE performs a real-cluster request without terminating the BDD test process.

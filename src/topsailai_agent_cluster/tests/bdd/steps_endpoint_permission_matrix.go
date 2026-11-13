@@ -1,6 +1,7 @@
 package bdd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -75,7 +76,7 @@ var permissionMatrixOperations = map[string]permissionMatrixOperation{
 	protocol.OperationAgentResume: {Permission: protocol.OperationAgentResume, Target: "stopped-session", Payload: `{}`},
 	// Start carries no target: the Endpoint resolves the adapter from the launch
 	// profile, and the profile revision must match the descriptor revision.
-	protocol.OperationAgentStart: {Permission: protocol.OperationAgentStart, Target: "", Payload: `{"task":"bdd task"}`},
+	protocol.OperationAgentStart: {Permission: protocol.OperationAgentStart, Target: "", Payload: `{"task":"bdd task"}`, Folder: "/work/bdd-project"},
 	// Model select declares operation and payload schema version "1", not "v1".
 	protocol.OperationAgentModelSelect: {Permission: protocol.OperationAgentModelSelect, Target: "fixture-session", Payload: `{"model_profile_id":"fixture-model-a"}`, OperationVersion: protocol.ModelSelectPayloadVersion, PayloadSchemaVersion: protocol.ModelSelectPayloadVersion},
 	// Command exec declares operation and payload schema version "1", and its argv
@@ -100,6 +101,11 @@ type permissionMatrixOperation struct {
 	// PayloadSchemaVersion is the version the adapter uses to decode the payload.
 	// Empty means the default "v1".
 	PayloadSchemaVersion string
+	// Folder is the launch directory an agent.start carries. It is a separate
+	// intent field rather than a payload field, because the adapter decodes the
+	// payload strictly and would reject an unknown key before the provider was
+	// reached. Empty means the operation carries no folder.
+	Folder string
 }
 
 // permissionMatrixToken derives a token name from the granted permission, so two
@@ -221,6 +227,17 @@ func grantViewOnly() error {
 // submitPermissionMatrixOperation submits one matrix row with the scenario's
 // token and records the provider invocation count before submission.
 func submitPermissionMatrixOperation(operation string) error {
+	row, ok := permissionMatrixOperations[operation]
+	if !ok {
+		return fmt.Errorf("operation %q is not part of the permission matrix", operation)
+	}
+	return submitPermissionMatrixOperationWithPayload(operation, row.Payload)
+}
+
+// submitPermissionMatrixOperationWithPayload submits one matrix row with a
+// caller-supplied payload, so a row whose payload depends on a Cluster-minted
+// identity can still reuse the same invocation accounting and token handling.
+func submitPermissionMatrixOperationWithPayload(operation, payload string) error {
 	if activeScenario.world == nil || activeScenario.world.realCluster == nil {
 		return fmt.Errorf("real cluster is not running")
 	}
@@ -236,9 +253,10 @@ func submitPermissionMatrixOperation(operation string) error {
 	commandID, err := activeScenario.world.SubmitRealCommandWithToken(commandSubmission{
 		Operation:            operation,
 		Target:               row.Target,
-		Payload:              row.Payload,
+		Payload:              payload,
 		OperationVersion:     row.OperationVersion,
 		PayloadSchemaVersion: row.PayloadSchemaVersion,
+		Folder:               row.Folder,
 		EndpointToken:        permissionMatrixGranted,
 	})
 	if err != nil {
@@ -274,8 +292,26 @@ func submitDriveStop() error {
 }
 func submitAgentResume() error { return submitPermissionMatrixOperation(protocol.OperationAgentResume) }
 func submitAgentStart() error  { return submitPermissionMatrixOperation(protocol.OperationAgentStart) }
+
+// submitModelSelect resolves the Cluster-minted model profile identity before
+// submitting, because the payload must carry the identity the adapter minted, not
+// the provider key the fixture happens to use. A provider key would be refused by
+// the adapter before the provider was reached, so the scenario would pass while
+// proving nothing about authorization.
 func submitModelSelect() error {
-	return submitPermissionMatrixOperation(protocol.OperationAgentModelSelect)
+	row, ok := permissionMatrixOperations[protocol.OperationAgentModelSelect]
+	if !ok {
+		return fmt.Errorf("operation %q is not part of the permission matrix", protocol.OperationAgentModelSelect)
+	}
+	profileID, err := activeScenario.world.resolveModelProfile(row.Target, "")
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]string{"model_profile_id": profileID})
+	if err != nil {
+		return err
+	}
+	return submitPermissionMatrixOperationWithPayload(protocol.OperationAgentModelSelect, string(payload))
 }
 func submitCommandExec() error { return submitPermissionMatrixOperation(protocol.OperationCommandExec) }
 
