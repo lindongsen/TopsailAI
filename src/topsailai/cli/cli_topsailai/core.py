@@ -965,13 +965,16 @@ def prompt_selection(
                     print("[ERROR] /driver is only available in the ordinary workspace task list.")
                     continue
                 parts = lower_input.split()
-                method = parts[1] if len(parts) > 1 and parts[1] in ("status", "stop", "log", "meta") else None
+                method = parts[1] if len(parts) > 1 and parts[1] in ("start", "status", "stop", "log", "meta") else None
                 number = parts[-1]
                 expected = 3 if method else 2
                 if len(parts) != expected or len(number) > 9 or not re.fullmatch(r"[0-9]+", number) or int(number) < 1:
-                    print("[ERROR] Usage: /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, or /driver meta <number>")
+                    print("[ERROR] Usage: /driver <number>, /driver start <number>, /driver status <number>, /driver stop <number>, /driver log <number>, or /driver meta <number>")
                     continue
-                return ("driver_" + method if method else "driver_start", int(number))
+                # The bare form reads driver metadata, so "/driver 3" and
+                # "/driver meta 3" are the same command. Launching requires the
+                # explicit "start" method.
+                return ("driver_" + method if method else "driver_meta", int(number))
 
             # Restricted command set when workspace is showing the managed
             # project list. Only r/recent, p/projects, q/quit/cd, and
@@ -1319,7 +1322,7 @@ def prompt_selection(
                         f"Please enter a number, /refresh (alias: /list, /l), r all, "
                         f"/session {{number}} (alias: /messages), "
                         f"/agent {{number|folder}}, /resume {{number}}, "
-                        f"{'/kill <number>, /meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, /driver meta <number>, ' if state.current_scope == 'workspace' else ''}"
+                        f"{'/kill <number>, /meta <number>, /driver <number>, /driver start <number>, /driver status <number>, /driver stop <number>, /driver log <number>, /driver meta <number>, ' if state.current_scope == 'workspace' else ''}"
                         f"/clean, {'/send, ' if state.current_scope != 'workspace' else ''}/help, or 'q'.{Colors.RESET}"
                     )
                 _consecutive_unrecognized += 1

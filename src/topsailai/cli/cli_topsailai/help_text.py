@@ -76,7 +76,7 @@ def print_scopes() -> None:
         (
             "workspace",
             "The default task-watcher scope. It lists discovered session and task log files so you can monitor and manage work across the current TopsailAI home.",
-            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, terminate a displayed PID with /kill <number> after confirmation, launch agents, use /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, or /driver meta <number> for session drivers, enter project or doc scope, and show help.",
+            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, terminate a displayed PID with /kill <number> after confirmation, launch agents, use /driver <number> (alias /driver meta <number>) to read driver metadata, /driver start <number> to start a session driver, or /driver status <number>, /driver stop <number> and /driver log <number> for session drivers, enter project or doc scope, and show help.",
         ),
         (
             "runtime",
@@ -149,6 +149,12 @@ def print_help(
         },
         {
             "cmd": "/driver <number>",
+            "desc": "Read the validated driver metadata snapshot for the selected session; this is the same command as /driver meta <number> and is distinct from /meta session metadata.",
+            "example": "Example: /driver 3",
+            "scopes": ["workspace"],
+        },
+        {
+            "cmd": "/driver start <number>",
             "desc": (
                 "Start a session driver for an unambiguous RUN/INPUT session in the ordinary workspace task list only."
                 + (" Driver: - no record/ineligible; numeric PID means ON with a verified driver; "
@@ -156,7 +162,7 @@ def print_help(
                    ":( STALE absent process; x( EXIT/FAIL residual terminal record; ? unverified"
                    if current_scope == "workspace" else "")
             ),
-            "example": "Example: /driver 3",
+            "example": "Example: /driver start 3",
             "scopes": ["workspace"],
         },
         {

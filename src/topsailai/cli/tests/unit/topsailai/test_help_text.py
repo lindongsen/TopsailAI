@@ -166,10 +166,11 @@ if __name__ == "__main__":
 
 
 def test_driver_help_scope(capsys):
-    """Keep both driver syntaxes discoverable only in workspace help."""
+    """Keep every driver syntax discoverable only in workspace help."""
     print_help([], "workspace")
     output = capsys.readouterr().out
     assert "/driver <number>" in output
+    assert "/driver start <number>" in output
     assert "/driver status <number>" in output
     assert "/driver log <number>" in output
     assert "/driver meta <number>" in output
@@ -181,7 +182,7 @@ def test_driver_help_scope(capsys):
 
 
 def test_driver_legend_in_workspace_help_only(capsys):
-    """Keep the legend inside the workspace driver description, never the footer."""
+    """Keep the legend inside the workspace start description, never the footer."""
     legend = ("Driver: - no record/ineligible; numeric PID means ON with a verified driver; "
               "same-session rows share that display, but may remain ineligible for driver operations; "
               ":( STALE absent process; x( EXIT/FAIL residual terminal record; ? unverified")
@@ -189,17 +190,27 @@ def test_driver_legend_in_workspace_help_only(capsys):
         print_help([], "workspace", keyword=keyword)
         output = capsys.readouterr().out
         assert output.count(legend) == 1
-        driver_entry = output.split("/driver <number>", 1)[1].split("Example: /driver 3", 1)[0]
+        driver_entry = output.split("/driver start <number>", 1)[1].split("Example: /driver start 3", 1)[0]
         assert "Start a session driver" in driver_entry
         assert legend in driver_entry
         assert "task list only. Driver:" in driver_entry
-        assert "Driver:" not in output.split("Example: /driver 3", 1)[1]
+        assert "Driver:" not in output.split("Example: /driver start 3", 1)[1]
     for scope in ("runtime", "project", "session", "doc"):
         for keyword in (None, "driver"):
             print_help([], scope, keyword=keyword)
             assert "Driver:" not in capsys.readouterr().out
     print_help([], "workspace", keyword="refresh")
     assert "Driver:" not in capsys.readouterr().out
+
+
+def test_bare_driver_help_is_the_metadata_reader(capsys):
+    """The bare form must advertise reading metadata, not launching a driver."""
+    print_help([], "workspace", keyword="driver")
+    output = capsys.readouterr().out
+    bare_entry = output.split("/driver <number>", 1)[1].split("Example: /driver 3", 1)[0]
+    assert "metadata" in bare_entry
+    assert "Start a session driver" not in bare_entry
+    assert "same command as /driver meta <number>" in bare_entry
 
 
 def test_driver_stop_help_discovery(capsys):

@@ -217,14 +217,18 @@ def test_driver_completion_scope(monkeypatch):
     monkeypatch.setattr(cli_state, "workspace_showing_managed_projects", False)
     monkeypatch.setattr(cli_state, "current_scope", "workspace")
     completions = get_available_completions()
-    for command in ("/driver", "/driver status", "/driver stop", "/driver log", "/driver meta"):
+    for command in ("/driver", "/driver start", "/driver status", "/driver stop", "/driver log", "/driver meta"):
         assert command in completions
     import readline
     monkeypatch.setattr(readline, "get_line_buffer", lambda: "/driver st")
     monkeypatch.setattr(readline, "get_begidx", lambda: 8)
-    assert tab_completer("st", 0) == "status"
-    assert tab_completer("st", 1) == "stop"
-    assert tab_completer("st", 2) is None
+    assert tab_completer("st", 0) == "start"
+    assert tab_completer("st", 1) == "status"
+    assert tab_completer("st", 2) == "stop"
+    assert tab_completer("st", 3) is None
+    assert tab_completer("sta", 0) == "start"
+    assert tab_completer("sta", 1) == "status"
+    assert tab_completer("sta", 2) is None
     assert tab_completer("sto", 0) == "stop"
     assert tab_completer("stop", 0) == "stop"
     assert tab_completer("sto", 1) is None
