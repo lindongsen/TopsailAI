@@ -341,3 +341,65 @@ func TestTypedQueryRejectsUnadvertisedContractWithoutInvocation(t *testing.T) {
 		t.Fatalf("history error = %v requests = %d, want unsupported and %d", err, len(provider.requests), before)
 	}
 }
+
+// TestReadOutputMapsProviderUnsupportedToAdapterUnsupported proves a provider
+// capability gap is reported as unsupported rather than as a provider failure.
+//
+// The Endpoint maps adapter.ErrUnsupported onto the standard "unsupported" error
+// code and every other error onto "provider_error". Returning the plain provider
+// error therefore told the operator the read had failed when the provider had
+// actually said it cannot do it, and the two conditions need different operator
+// responses: one is a capability gap, the other is a fault.
+func TestReadOutputMapsProviderUnsupportedToAdapterUnsupported(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			return describeResponseWithFunctions(request, providercli.FunctionReadOutput), nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: false,
+			Error: &providercli.ProviderError{Code: "unsupported", Message: "output is unsupported", EffectCertainty: providercli.EffectNotApplied},
+		}, nil
+	}
+	binding := mustAdapter(t, provider)
+	mapping, err := binding.config.Mapper.GetOrCreateResourceID(context.Background(), "a", protocol.ResourceSession, "session:stable", 1)
+	if err != nil {
+		t.Fatalf("map session: %v", err)
+	}
+	_, err = binding.ReadOutput(context.Background(), adapter.OutputRequest{
+		Target: protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: mapping.ResourceID, ProviderGeneration: "generation-1"},
+	})
+	if !errors.Is(err, adapter.ErrUnsupported) {
+		t.Fatalf("read output error = %v, want %v", err, adapter.ErrUnsupported)
+	}
+}
+
+// TestReadOutputKeepsOtherProviderErrorsAsFailures proves the mapping is narrow.
+//
+// Only the provider's own "unsupported" code is a capability gap. A provider that
+// reports any other failure must still surface as a failure, otherwise a broken
+// provider would be reported as a missing capability and the operator would stop
+// looking for the fault.
+func TestReadOutputKeepsOtherProviderErrorsAsFailures(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			return describeResponseWithFunctions(request, providercli.FunctionReadOutput), nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: false,
+			Error: &providercli.ProviderError{Code: "provider_error", Message: "output read failed", EffectCertainty: providercli.EffectNotApplied},
+		}, nil
+	}
+	binding := mustAdapter(t, provider)
+	mapping, err := binding.config.Mapper.GetOrCreateResourceID(context.Background(), "a", protocol.ResourceSession, "session:stable", 1)
+	if err != nil {
+		t.Fatalf("map session: %v", err)
+	}
+	_, err = binding.ReadOutput(context.Background(), adapter.OutputRequest{
+		Target: protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: mapping.ResourceID, ProviderGeneration: "generation-1"},
+	})
+	if err == nil || errors.Is(err, adapter.ErrUnsupported) {
+		t.Fatalf("read output error = %v, want a plain failure", err)
+	}
+}

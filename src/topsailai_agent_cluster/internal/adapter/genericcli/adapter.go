@@ -216,7 +216,7 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 		return adapter.OutputResult{}, err
 	}
 	if err := responseError(response); err != nil {
-		return adapter.OutputResult{}, err
+		return adapter.OutputResult{}, outputError(response, err)
 	}
 	if response.Output == nil {
 		return adapter.OutputResult{}, errors.New("provider output response is missing")
@@ -625,6 +625,25 @@ func receiptFromProviderError(providerError *providercli.ProviderError) protocol
 		ErrorCode: providerError.Code, ErrorMessage: providerError.Message,
 	}
 }
+
+// outputError classifies a provider output rejection.
+//
+// A provider that answers "unsupported" is reporting a capability gap, not a
+// failure: the Endpoint maps adapter.ErrUnsupported onto the standard
+// "unsupported" error code and every other error onto "provider_error". Returning
+// the plain error made a provider capability gap indistinguishable from a broken
+// provider, so the operator was told the read failed instead of being told the
+// provider cannot do it.
+func outputError(response providercli.Response, err error) error {
+	if response.Error != nil && response.Error.Code == providerUnsupportedCode {
+		return fmt.Errorf("%w: %s", adapter.ErrUnsupported, response.Error.Message)
+	}
+	return err
+}
+
+// providerUnsupportedCode is the provider's own code for an unsupported
+// capability. It is a provider protocol value, not a Cluster error code.
+const providerUnsupportedCode = "unsupported"
 
 func responseError(response providercli.Response) error {
 	if response.Error == nil {
