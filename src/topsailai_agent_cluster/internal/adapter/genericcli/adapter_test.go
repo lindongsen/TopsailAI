@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -437,4 +439,44 @@ func TestReceiptFromOperationCarriesExitConfirmation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReceiptFromProviderErrorCarriesTheProviderDiagnostic proves a rejected
+// invocation still carries the provider's own evidence.
+//
+// The operator surface renders ProviderResponse as a separate section and prints
+// nothing for an empty document, so an unset field silently removed the whole
+// section: the operator saw a receipt with an error code and no provider answer.
+// The stderr case is asserted separately because a provider that dies before
+// writing a document has no structured evidence, and its stderr is then the only
+// diagnostic available.
+func TestReceiptFromProviderErrorCarriesTheProviderDiagnostic(t *testing.T) {
+	t.Run("structured document", func(t *testing.T) {
+		receipt := receiptFromProviderError(&providercli.ProviderError{
+			Code: "provider_error", Message: "mock execution failure", EffectCertainty: providercli.EffectNotApplied,
+		}, nil)
+		if receipt.ProviderResponse == "" {
+			t.Fatal("receipt provider response is empty, want the provider error document")
+		}
+		if !strings.Contains(receipt.ProviderResponse, "mock execution failure") {
+			t.Fatalf("receipt provider response = %q, want it to carry the provider message", receipt.ProviderResponse)
+		}
+		if receipt.ProviderResponseTruncated {
+			t.Fatal("receipt provider response is truncated, want it complete")
+		}
+	})
+
+	t.Run("stderr fallback", func(t *testing.T) {
+		receipt := receiptFromProviderError(&providercli.ProviderError{EffectCertainty: providercli.EffectNotApplied}, &exec.ExitError{Stderr: []byte("provider died before answering")})
+		if !strings.Contains(receipt.ProviderResponse, "provider died before answering") {
+			t.Fatalf("receipt provider response = %q, want the provider stderr", receipt.ProviderResponse)
+		}
+	})
+
+	t.Run("no evidence at all", func(t *testing.T) {
+		receipt := receiptFromProviderError(&providercli.ProviderError{EffectCertainty: providercli.EffectNotApplied}, nil)
+		if receipt.ProviderResponse != "" {
+			t.Fatalf("receipt provider response = %q, want empty when the provider supplied nothing", receipt.ProviderResponse)
+		}
+	})
 }

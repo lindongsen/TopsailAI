@@ -186,7 +186,7 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	operation := &providercli.NamedContract{Name: intent.Operation, Version: intent.OperationVersion}
 	response, invokeErr := a.call(ctx, classMutation, providercli.FunctionExecute, target, operation, nil, intent.CommandID, payload)
 	if response.Error != nil {
-		result := adapter.ExecuteResult{Receipt: receiptFromProviderError(response.Error)}
+		result := adapter.ExecuteResult{Receipt: receiptFromProviderError(response.Error, invokeErr)}
 		if invokeErr != nil {
 			return result, invokeErr
 		}
@@ -400,7 +400,7 @@ func (a *Adapter) QueryCommand(ctx context.Context, query adapter.CommandQuery) 
 		return adapter.CommandResult{}, err
 	}
 	if response.Error != nil {
-		return adapter.CommandResult{Receipt: receiptFromProviderError(response.Error)}, fmt.Errorf("provider command query failed: %s", response.Error.Message)
+		return adapter.CommandResult{Receipt: receiptFromProviderError(response.Error, err)}, fmt.Errorf("provider command query failed: %s", response.Error.Message)
 	}
 	if response.Result == nil {
 		return adapter.CommandResult{}, errors.New("provider command result is missing")
@@ -623,12 +623,47 @@ func receiptFromOperation(result providercli.OperationResult) protocol.Execution
 	}
 }
 
-func receiptFromProviderError(providerError *providercli.ProviderError) protocol.ExecutionReceipt {
+// receiptFromProviderError builds the receipt for a rejected invocation.
+//
+// The provider's own error document is carried as ProviderResponse, because it
+// is the only evidence of why the call failed and the operator surface renders
+// that field as a separate section. Leaving it empty made the section disappear
+// entirely: renderProviderResponse prints nothing for an empty document, so a
+// failed invocation looked like a receipt with no provider answer at all.
+//
+// invokeErr is the transport-level failure, and its captured stderr is the
+// fallback when the provider produced no structured document. A provider that
+// dies before writing a document still has a diagnostic, and discarding it would
+// leave the operator with a bare error code.
+func receiptFromProviderError(providerError *providercli.ProviderError, invokeErr error) protocol.ExecutionReceipt {
+	document := providerErrorDocument(providerError)
+	if document == "" {
+		document = adapter.ProviderFailureText(invokeErr)
+	}
+	bounded, truncated := adapter.BoundedProviderResponse(document)
 	return protocol.ExecutionReceipt{
 		DeliveryBoundary: protocol.DeliveryNotStarted,
 		EffectCertainty:  protocol.EffectCertainty(providerError.EffectCertainty), Outcome: "rejected",
 		ErrorCode: providerError.Code, ErrorMessage: providerError.Message,
+		ProviderResponse: bounded, ProviderResponseTruncated: truncated,
 	}
+}
+
+// providerErrorDocument renders one provider error document as JSON.
+//
+// The field order is fixed by the struct, so the rendered document is stable and
+// a scenario can assert its content without depending on map iteration order. An
+// empty document is returned when the provider supplied no code and no message,
+// which is the case where the stderr fallback is the only evidence available.
+func providerErrorDocument(providerError *providercli.ProviderError) string {
+	if providerError == nil || (providerError.Code == "" && providerError.Message == "") {
+		return ""
+	}
+	document, err := json.Marshal(providerError)
+	if err != nil {
+		return ""
+	}
+	return string(document)
 }
 
 // outputError classifies a provider output rejection.
