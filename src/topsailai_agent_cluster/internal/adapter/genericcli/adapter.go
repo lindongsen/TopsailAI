@@ -179,7 +179,7 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	if err != nil {
 		return adapter.ExecuteResult{}, err
 	}
-	payload, err := executionPayload(intent)
+	payload, err := a.executionPayload(ctx, intent)
 	if err != nil {
 		return adapter.ExecuteResult{}, err
 	}
@@ -472,10 +472,32 @@ func (a *Adapter) request(ctx context.Context, function string, target *provider
 	}, nil
 }
 
-func executionPayload(intent protocol.ImmutableIntent) (json.RawMessage, error) {
-	if intent.Operation != protocol.OperationAgentStart {
+func (a *Adapter) executionPayload(ctx context.Context, intent protocol.ImmutableIntent) (json.RawMessage, error) {
+	switch intent.Operation {
+	case protocol.OperationAgentStart:
+		return agentStartExecutionPayload(intent)
+	case protocol.OperationAgentModelSelect:
+		selection, err := protocol.ValidateModelSelectPayload(intent.Payload)
+		if err != nil {
+			return nil, err
+		}
+		mapping, err := a.config.Mapper.LookupResourceID(ctx, selection.ModelProfileID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve model profile: %w", err)
+		}
+		if mapping.AdapterID != a.config.AdapterID {
+			return nil, errors.New("model profile is not owned by this adapter")
+		}
+		if mapping.ResourceKind != protocol.ResourceModelProfile {
+			return nil, errors.New("model profile mapping has the wrong resource kind")
+		}
+		return providercli.MarshalModelSelectPayload(providercli.ModelSelectPayload{ProviderResourceKey: mapping.ProviderResourceKey})
+	default:
 		return intent.Payload, nil
 	}
+}
+
+func agentStartExecutionPayload(intent protocol.ImmutableIntent) (json.RawMessage, error) {
 	if !utf8.Valid(intent.Payload) {
 		return nil, errors.New("Cluster agent.start payload must be valid UTF-8")
 	}

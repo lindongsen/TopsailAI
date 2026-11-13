@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/model-select-payload.schema.json",
+  "title": "agent.model.select payload",
+  "description": "Provider-private model identity after the Endpoint resolves the Cluster opaque model profile ID.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provider_resource_key"
+  ],
+  "properties": {
+    "provider_resource_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    }
+  }
+}

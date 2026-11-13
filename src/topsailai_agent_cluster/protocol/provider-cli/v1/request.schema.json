@@ -173,6 +173,50 @@
       "if": {
         "properties": {
           "function": {
+            "const": "execute"
+          },
+          "operation": {
+            "properties": {
+              "name": {
+                "const": "agent.model.select"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "required": [
+          "function",
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "model-select-payload.schema.json"
+          },
+          "target": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/mutation_target"
+              },
+              {
+                "properties": {
+                  "resource_kind": {
+                    "const": "session"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "function": {
             "const": "query"
           }
         },

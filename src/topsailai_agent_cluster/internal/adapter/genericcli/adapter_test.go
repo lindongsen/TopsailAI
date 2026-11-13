@@ -165,6 +165,78 @@ func TestFollowReturnsConsumerStopUnchanged(t *testing.T) {
 	}
 }
 
+func TestAdapterMapsModelSelectPayloadToProviderKey(t *testing.T) {
+	provider := newFakeProvider(t)
+	binding := mustAdapter(t, provider)
+	mapper := binding.config.Mapper.(*fakeMapper)
+	mapper.mappings["session-id"] = adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "provider-session", ResourceID: "session-id"}
+	mapper.mappings["model-id"] = adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceModelProfile, ProviderResourceKey: "provider-model", ResourceID: "model-id"}
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		return providercli.Response{Version: request.Version, RequestID: request.RequestID, OK: true, Result: &providercli.OperationResult{DeliveryBoundary: providercli.DeliverySubmitted, EffectCertainty: providercli.EffectAcknowledged, ProviderOutcome: "selected"}}, nil
+	}
+
+	result, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+		CommandID: "command-1", Operation: protocol.OperationAgentModelSelect, OperationVersion: "v1",
+		Target:  &protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: "session-id", ProviderGeneration: "generation-1"},
+		Payload: json.RawMessage(`{"model_profile_id":"model-id"}`), ExecuteBeforeAtMS: time.Now().Add(time.Second).UnixMilli(),
+	}})
+	if err != nil || result.Receipt.Outcome != "selected" {
+		t.Fatalf("execute = %+v, %v", result, err)
+	}
+	request := provider.requests[len(provider.requests)-1]
+	if request.Target.ResourceKind != protocol.ResourceSession || request.Target.ProviderResourceKey != "provider-session" || request.Target.ExpectedGeneration != "generation-1" {
+		t.Fatalf("target = %+v", request.Target)
+	}
+	payload, err := providercli.DecodeModelSelectPayload(request.Payload)
+	if err != nil {
+		t.Fatalf("decode Provider model-select payload: %v", err)
+	}
+	if payload.ProviderResourceKey != "provider-model" {
+		t.Fatalf("Provider model key = %q", payload.ProviderResourceKey)
+	}
+	if string(request.Payload) == `{"model_profile_id":"model-id"}` {
+		t.Fatal("Cluster model_profile_id reached Provider unchanged")
+	}
+}
+
+func TestAdapterRejectsInvalidModelSelectMappingBeforeProviderInvocation(t *testing.T) {
+	tests := []struct {
+		name    string
+		mapping *adapter.ResourceMapping
+		payload json.RawMessage
+	}{
+		{name: "unknown Cluster ID", payload: json.RawMessage(`{"model_profile_id":"missing"}`)},
+		{name: "wrong adapter", mapping: &adapter.ResourceMapping{AdapterID: "other", ResourceKind: protocol.ResourceModelProfile, ProviderResourceKey: "provider-model", ResourceID: "model-id"}, payload: json.RawMessage(`{"model_profile_id":"model-id"}`)},
+		{name: "wrong resource kind", mapping: &adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "provider-model", ResourceID: "model-id"}, payload: json.RawMessage(`{"model_profile_id":"model-id"}`)},
+		{name: "empty Provider key", mapping: &adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceModelProfile, ResourceID: "model-id"}, payload: json.RawMessage(`{"model_profile_id":"model-id"}`)},
+		{name: "invalid Provider key", mapping: &adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceModelProfile, ProviderResourceKey: " provider-model", ResourceID: "model-id"}, payload: json.RawMessage(`{"model_profile_id":"model-id"}`)},
+		{name: "unknown public field", payload: json.RawMessage(`{"model_profile_id":"model-id","provider_resource_key":"provider-model"}`)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := newFakeProvider(t)
+			binding := mustAdapter(t, provider)
+			mapper := binding.config.Mapper.(*fakeMapper)
+			mapper.mappings["session-id"] = adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "provider-session", ResourceID: "session-id"}
+			if test.mapping != nil {
+				mapper.mappings[test.mapping.ResourceID] = *test.mapping
+			}
+			before := len(provider.requests)
+			_, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+				CommandID: "command-1", Operation: protocol.OperationAgentModelSelect, OperationVersion: "v1",
+				Target:  &protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: "session-id", ProviderGeneration: "generation-1"},
+				Payload: test.payload, ExecuteBeforeAtMS: time.Now().Add(time.Second).UnixMilli(),
+			}})
+			if err == nil {
+				t.Fatal("invalid model selection was accepted")
+			}
+			if len(provider.requests) != before {
+				t.Fatalf("Provider requests = %d, want %d", len(provider.requests), before)
+			}
+		})
+	}
+}
+
 func newFakeProvider(t *testing.T) *fakeRunner {
 	t.Helper()
 	provider := &fakeRunner{}

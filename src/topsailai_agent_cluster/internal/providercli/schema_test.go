@@ -17,6 +17,7 @@ import (
 var requiredSchemaFiles = []string{
 	"request.schema.json",
 	"agent-start-payload.schema.json",
+	"model-select-payload.schema.json",
 	"response.schema.json",
 	"stream-frame.schema.json",
 	"launch-options-request.schema.json",
@@ -316,5 +317,62 @@ func TestAgentStartPayloadSchemaMatchesGoContract(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("request Schema has no agent.start payload branch")
+	}
+}
+
+func TestModelSelectPayloadSchemaMatchesGoContract(t *testing.T) {
+	schema := loadSchema(t, "model-select-payload.schema.json")
+	properties := schema["properties"].(map[string]any)
+	var schemaFields []string
+	for field := range properties {
+		schemaFields = append(schemaFields, field)
+	}
+	sort.Strings(schemaFields)
+	goFields := []string{"provider_resource_key"}
+	if !reflect.DeepEqual(schemaFields, goFields) {
+		t.Fatalf("agent.model.select schema fields = %v, Go fields = %v", schemaFields, goFields)
+	}
+	if !reflect.DeepEqual(schema["required"], []any{"provider_resource_key"}) {
+		t.Fatalf("agent.model.select required fields = %v", schema["required"])
+	}
+
+	request := loadSchema(t, "request.schema.json")
+	branches := request["allOf"].([]any)
+	found := false
+	for _, raw := range branches {
+		branch := raw.(map[string]any)
+		condition, ok := branch["if"].(map[string]any)
+		if !ok {
+			continue
+		}
+		conditionProperties, ok := condition["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		operation, ok := conditionProperties["operation"].(map[string]any)
+		if !ok {
+			continue
+		}
+		operationProperties := operation["properties"].(map[string]any)
+		name, ok := operationProperties["name"].(map[string]any)
+		if !ok || name["const"] != protocol.OperationAgentModelSelect {
+			continue
+		}
+		then := branch["then"].(map[string]any)
+		thenProperties := then["properties"].(map[string]any)
+		payload := thenProperties["payload"].(map[string]any)
+		if payload["$ref"] != "model-select-payload.schema.json" {
+			t.Fatalf("agent.model.select payload ref = %v", payload["$ref"])
+		}
+		target := thenProperties["target"].(map[string]any)
+		targetParts := target["allOf"].([]any)
+		targetKind := targetParts[1].(map[string]any)["properties"].(map[string]any)["resource_kind"].(map[string]any)["const"]
+		if targetKind != protocol.ResourceSession {
+			t.Fatalf("agent.model.select target kind = %v", targetKind)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("request Schema has no agent.model.select payload branch")
 	}
 }
