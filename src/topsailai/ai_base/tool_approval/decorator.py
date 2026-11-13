@@ -22,9 +22,29 @@ from topsailai.ai_base.tool_approval.registry import (
     register_pending_approval,
     unregister_pending_approval,
 )
+from topsailai.events.collector import record_event
 
 
 logger = logging.getLogger(__name__)
+
+
+def _record_approval_event(event_type: str, payload: dict) -> None:
+    """Record one approval event without ever affecting the approval flow.
+
+    Approval is a security boundary, so telemetry must never be able to change
+    its outcome: a recording failure is logged and swallowed, and the caller
+    keeps its original return value or exception.
+
+    Args:
+        event_type: Event type such as ``tool_approval.request``.
+        payload: Bounded operational fields; never tool arguments.
+    """
+    try:
+        record_event(event_type, payload)
+    except Exception:
+        logger.warning(
+            "approval event recording failed event_type=%s", event_type, exc_info=True
+        )
 
 
 def _get_default_transport():
@@ -123,9 +143,26 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
         )
         try:
             instance.transport.send_request(instance)
+            _record_approval_event(
+                "tool_approval.request",
+                {
+                    "tool_name": effective_tool_name,
+                    "rule_name": instance.rule_name,
+                    "timeout": decision.timeout,
+                    "policy": decision.policy,
+                },
+            )
             status = instance.wait_for_decision(
                 timeout=decision.timeout,
                 policy=decision.policy,
+            )
+            _record_approval_event(
+                "tool_approval.decision",
+                {
+                    "tool_name": effective_tool_name,
+                    "rule_name": instance.rule_name,
+                    "status": status,
+                },
             )
 
             if status in (ToolApprovalInstance.STATUS_DENIED, ToolApprovalInstance.STATUS_TIMEOUT):

@@ -105,6 +105,12 @@ from .llm_control.request_failure_log import (
     log_llm_request_failures as _log_llm_request_failures,
     record_llm_request_failure as _record_llm_request_failure,
 )
+from .llm_control.request_events import (
+    build_llm_request_end_payload as _build_llm_request_end_payload,
+    build_llm_request_start_payload as _build_llm_request_start_payload,
+    record_llm_request_event as _record_llm_request_event,
+    resolve_model_name as _resolve_model_name,
+)
 from .llm_control.null_response_recovery import (
     bind_null_response_operation as _bind_null_response_operation,
     track_null_response_recovery as _track_null_response_recovery,
@@ -632,6 +638,17 @@ class LLMModel(
         return_mode = "raw" if for_raw else (
             "response_and_parsed" if for_response else "parsed"
         )
+        _record_llm_request_event(
+            "llm.request.start",
+            _build_llm_request_start_payload(
+                operation_id=operation_id,
+                model_name=_resolve_model_name(self),
+                messages=messages,
+                stream=for_stream,
+                return_mode=return_mode,
+            ),
+        )
+        request_started_at = time.monotonic()
         policy = retry_interaction_policy or LLMRetryInteractionPolicy()
         prompt_allowed = policy.can_prompt() and thread_tool.is_main_thread()
         attempts_per_cycle = 18
@@ -666,6 +683,17 @@ class LLMModel(
                     if action == "retry":
                         manual_cycle_count += 1
                     elif action == "back":
+                        _record_llm_request_event(
+                            "llm.request.end",
+                            _build_llm_request_end_payload(
+                                operation_id=operation_id,
+                                model_name=_resolve_model_name(self),
+                                outcome="abandoned",
+                                attempt_count=total_attempt - 1,
+                                duration_sec=time.monotonic() - request_started_at,
+                                error_category="LLMBackToChatError",
+                            ),
+                        )
                         raise LLMBackToChatError(
                             attempts=total_attempt - 1,
                             manual_cycle_count=manual_cycle_count,
@@ -677,6 +705,17 @@ class LLMModel(
                         # User2Agent loop does not mistake this for automatic
                         # exhaustion and abandon the turn instead of exiting.
                         exhausted_error.explicit_exit = True
+                        _record_llm_request_event(
+                            "llm.request.end",
+                            _build_llm_request_end_payload(
+                                operation_id=operation_id,
+                                model_name=_resolve_model_name(self),
+                                outcome="exhausted",
+                                attempt_count=total_attempt - 1,
+                                duration_sec=time.monotonic() - request_started_at,
+                                error_category="LLMRetryExhaustedError",
+                            ),
+                        )
                         raise exhausted_error from last_error
             try:
                 agent = get_agent_object()
@@ -834,10 +873,32 @@ class LLMModel(
                 print_error(f"!!! [{i}] BadRequestError, {e}")
                 e_str = str(e).lower()
                 if "exceed" in e_str or "maximum context" in e_str:
+                    _record_llm_request_event(
+                        "llm.request.end",
+                        _build_llm_request_end_payload(
+                            operation_id=operation_id,
+                            model_name=_resolve_model_name(self),
+                            outcome="failed",
+                            attempt_count=total_attempt,
+                            duration_sec=time.monotonic() - request_started_at,
+                            error_category="LLMProviderBadRequestError",
+                        ),
+                    )
                     raise
 
                 marker = _match_non_retryable_bad_request(e_str)
                 if marker:
+                    _record_llm_request_event(
+                        "llm.request.end",
+                        _build_llm_request_end_payload(
+                            operation_id=operation_id,
+                            model_name=_resolve_model_name(self),
+                            outcome="failed",
+                            attempt_count=total_attempt,
+                            duration_sec=time.monotonic() - request_started_at,
+                            error_category="LLMProviderBadRequestError",
+                        ),
+                    )
                     raise LLMProviderBadRequestError(
                         "Non-retryable request-shape 400 "
                         f"(matched marker: '{marker}'). The request payload is "
@@ -926,8 +987,29 @@ class LLMModel(
                 point_name="hook__aibase__after__llm_chat_attempt", outcome="success",
                 duration_sec=time.monotonic() - attempt_started,
             )
+            _record_llm_request_event(
+                "llm.request.end",
+                _build_llm_request_end_payload(
+                    operation_id=operation_id,
+                    model_name=_resolve_model_name(self),
+                    outcome="success",
+                    attempt_count=total_attempt,
+                    duration_sec=time.monotonic() - request_started_at,
+                ),
+            )
             return result
 
+        _record_llm_request_event(
+            "llm.request.end",
+            _build_llm_request_end_payload(
+                operation_id=operation_id,
+                model_name=_resolve_model_name(self),
+                outcome="exhausted",
+                attempt_count=loop_attempts,
+                duration_sec=time.monotonic() - request_started_at,
+                error_category=type(last_error).__name__ if last_error else None,
+            ),
+        )
         raise LLMRetryExhaustedError(
             attempts=loop_attempts,
             manual_cycle_count=manual_cycle_count,

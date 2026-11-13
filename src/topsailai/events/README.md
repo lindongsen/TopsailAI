@@ -297,14 +297,32 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
 
 Because `@record_tool_call_events` is the innermost decorator, it measures the actual tool execution time and captures the raw result before `with_tool_response_safe` truncates it.
 
-### 9.2 Not Mounted
+### 9.2 Mounted Through Direct `record_event()` Calls
 
-| Intended Location | Decorator | Status |
-|-------------------|-----------|--------|
-| Tool approval decision | `record_approval_events` | Decorator exists but not mounted in `ai_base/tool_approval/decorator.py` or `instance.py`. |
-| LLM chat response / exceptions | `record_llm_chat_events` | Decorator exists but not mounted in `ai_base/llm_base.py`. |
+Two event sources are mounted by calling `record_event()` directly instead of
+using the decorators above, because the decorators record too little to be
+useful at those locations.
 
-No production code calls `record_event()` directly outside of the mounted decorator.
+| Location | Event types | Why not the decorator |
+|----------|-------------|-----------------------|
+| `ai_base/tool_approval/decorator.py` | `tool_approval.request`, `tool_approval.decision` | `record_approval_events` records only `{"decision": decision}`, which serializes the whole decision object and loses the tool name, the matched rule name, and the human's actual answer. |
+| `ai_base/llm_base.py` | `llm.request.start`, `llm.request.end` | `record_llm_chat_events` wraps one attempt, so an internally retried request would emit one event per attempt instead of one per logical request. |
+
+`record_approval_events` and `record_llm_chat_events` remain available for
+callers that want the coarse decorator behavior, but no production path uses
+them.
+
+**`decide()` is deliberately not instrumented.** It only answers whether a human
+must be asked, so recording it would emit an event for every tool call even when
+no approval rule is configured.
+
+**One logical LLM request emits exactly one start and one terminal end.** The
+terminal `outcome` is one of `success`, `exhausted`, `abandoned`, or `failed`,
+and every early exit inside the retry loop records its own terminal event before
+raising, so a request can never leave a dangling start event.
+
+No production code calls `record_event()` directly outside of these two mounted
+locations and the mounted `record_tool_call_events` decorator.
 
 ---
 
@@ -461,4 +479,3 @@ context and never enters session messages or summaries.
 - Implement `DBEventBackend.write()` for persistent database storage.
 - Implement `WebhookEventBackend.write()` for outbound event streaming.
 - Add correlation `trace_id` propagation through the agent call stack.
-- Mount `record_approval_events` and `record_llm_chat_events` at the intended production locations once required.

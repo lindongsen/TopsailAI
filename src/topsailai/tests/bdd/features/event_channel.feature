@@ -68,3 +68,12 @@ Feature: Push recorded events to external subscribers
     And a subscriber "sub-j" that never drains its queue
     When the session records 3 events
     Then the runtime view reports no dropped events
+
+  Scenario: A real approval decision reaches a subscriber
+    Given an event channel serving session "bdd-session" with a 30 second heartbeat timeout
+    And a subscriber "sub-k" connects and subscribes to "tool_approval.*"
+    And an approval rule that requires a human decision for tool "danger_tool"
+    When the tool "danger_tool" is approved by the human
+    Then subscriber "sub-k" receives the approval request event
+    And subscriber "sub-k" receives the approval decision event
+    And the approval decision event reports status "approved"

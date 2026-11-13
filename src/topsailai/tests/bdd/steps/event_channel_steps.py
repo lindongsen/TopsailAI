@@ -56,15 +56,25 @@ def _connect(state, subscriber_id, event_types=None):
     return sock
 
 
+_FRAME_BUFFERS = {}
+
+
 def _read_frame(sock):
-    """Read exactly one JSONL frame from a link."""
-    buffer = b""
+    """Read exactly one JSONL frame from a link.
+
+    A single ``recv`` can deliver several frames at once, so the bytes after
+    the first newline are kept per socket instead of being discarded. Without
+    this, two events emitted back to back would lose the second one.
+    """
+    buffer = _FRAME_BUFFERS.pop(sock, b"")
     while b"\n" not in buffer:
         chunk = sock.recv(65536)
         if not chunk:
             raise AssertionError("link closed before a frame arrived")
         buffer += chunk
-    line, _, _ = buffer.partition(b"\n")
+    line, _, remainder = buffer.partition(b"\n")
+    if remainder:
+        _FRAME_BUFFERS[sock] = remainder
     return json.loads(line.decode("utf-8"))
 
 
@@ -104,6 +114,7 @@ def channel_state(bdd_tmp_path, monkeypatch):
         set_drop_observer(None)
         reset_event_channel_stats()
         runtime_state.clear_event_channel_runtime_state()
+        _FRAME_BUFFERS.clear()
 
 
 @given(
@@ -169,6 +180,9 @@ def subscribe_all(channel_state, subscriber_id):
     channel_state.links[subscriber_id] = _connect(channel_state, subscriber_id)
 
 
+@given(
+    parsers.parse('a subscriber "{subscriber_id}" connects and subscribes to "{pattern}"')
+)
 @when(
     parsers.parse('a subscriber "{subscriber_id}" connects and subscribes to "{pattern}"')
 )
@@ -368,3 +382,143 @@ def runtime_reports_no_drops(channel_state):
     """Assert a healthy channel publishes no drop state at all."""
     text = runtime_instruction.show_runtime()
     assert "Dropped total" not in text
+
+
+@given(
+    parsers.parse('an approval rule that requires a human decision for tool "{tool_name}"')
+)
+def approval_rule_requires_human(channel_state, tool_name, monkeypatch):
+    """Install a real approval rule that routes the tool through the ASK branch."""
+    from topsailai.ai_base.tool_approval import decorator as approval_decorator
+    from topsailai.ai_base.tool_approval.instance import ApprovalDecision
+    from topsailai.ai_base.tool_approval.transport import ApprovalTransport
+
+    class _RecordingTransport(ApprovalTransport):
+        """Transport that records requests and resolves them on demand."""
+
+        def __init__(self):
+            self.instances = []
+            self.request_ready = threading.Event()
+            self._lock = threading.Lock()
+            self._events = {}
+
+        def send_request(self, instance):
+            """Record the request and signal that it is ready to resolve."""
+            self.instances.append(instance)
+            with self._lock:
+                self._events[instance.id] = threading.Event()
+            self.request_ready.set()
+
+        def wait_response(self, instance, timeout=None):
+            """Block until the decision is resolved or the timeout expires."""
+            with self._lock:
+                event = self._events.get(instance.id)
+            if event is None:
+                return instance.status
+            effective = timeout if timeout is not None else instance.timeout
+            if event.wait(timeout=effective):
+                return instance.status
+            return instance.STATUS_TIMEOUT
+
+        def on_resolved(self, instance):
+            """Wake the waiter for a resolved instance."""
+            with self._lock:
+                event = self._events.pop(instance.id, None)
+            if event is not None:
+                event.set()
+
+        def supports_external_resolution(self):
+            """Allow another thread to approve or deny while waiting."""
+            return True
+
+        def resolve(self, instance_id, status):
+            """Resolve one recorded instance with the given status."""
+            instance = next((i for i in self.instances if i.id == instance_id), None)
+            if instance is None:
+                return
+            if status == "approve":
+                instance.approve()
+            elif status == "deny":
+                instance.deny()
+
+    transport = _RecordingTransport()
+    channel_state.transport = transport
+    channel_state.tool_name = tool_name
+
+    def _decide(self):
+        """Force the ASK branch for the configured tool."""
+        return ApprovalDecision(
+            action=ApprovalDecision.ASK,
+            rule=SimpleNamespace(name="bdd-rule"),
+            timeout=5.0,
+            policy="deny",
+        )
+
+    monkeypatch.setattr(
+        approval_decorator.ToolApprovalInstance, "decide", _decide, raising=True
+    )
+    monkeypatch.setattr(
+        approval_decorator, "_get_default_transport", lambda: transport, raising=True
+    )
+    return channel_state
+
+
+@when(parsers.parse('the tool "{tool_name}" is approved by the human'))
+def tool_approved_by_human(channel_state, tool_name):
+    """Run the real decorated tool call and approve it from another thread."""
+    from topsailai.ai_base.tool_approval.decorator import with_tool_approval
+
+    executed = []
+
+    def _danger_tool(tool_func, args, tool_name=None, **kwargs):
+        """Stand-in tool body that records its own execution."""
+        executed.append(tool_name)
+        return "executed"
+
+    decorated = with_tool_approval(_danger_tool)
+
+    def _approve_later():
+        """Approve the pending request once the transport has it."""
+        if not channel_state.transport.request_ready.wait(timeout=RECV_TIMEOUT):
+            return
+        instance = channel_state.transport.instances[0]
+        channel_state.transport.resolve(instance.id, "approve")
+
+    thread = threading.Thread(target=_approve_later, daemon=True)
+    thread.start()
+    channel_state.tool_result = decorated(
+        tool_func=_danger_tool, args={"path": "/tmp/x"}, tool_name=tool_name
+    )
+    thread.join(timeout=RECV_TIMEOUT)
+    channel_state.executed = executed
+    assert channel_state.tool_result == "executed"
+    assert executed == [tool_name]
+
+
+@then(parsers.parse('subscriber "{subscriber_id}" receives the approval request event'))
+def receives_approval_request(channel_state, subscriber_id):
+    """Assert the request event arrives over the real link."""
+    frame = _read_frame(channel_state.links[subscriber_id])
+    assert frame["type"] == "event", frame
+    assert frame["event"]["event_type"] == "tool_approval.request", frame
+    payload = frame["event"]["payload"]
+    assert payload["tool_name"] == channel_state.tool_name
+    assert payload["rule_name"] == "bdd-rule"
+    assert "tool_args" not in payload
+    assert "/tmp/x" not in json.dumps(payload)
+
+
+@then(parsers.parse('subscriber "{subscriber_id}" receives the approval decision event'))
+def receives_approval_decision(channel_state, subscriber_id):
+    """Assert the decision event arrives over the real link."""
+    frame = _read_frame(channel_state.links[subscriber_id])
+    assert frame["type"] == "event", frame
+    assert frame["event"]["event_type"] == "tool_approval.decision", frame
+    channel_state.decision_payload = frame["event"]["payload"]
+
+
+@then(parsers.parse('the approval decision event reports status "{status}"'))
+def decision_reports_status(channel_state, status):
+    """Assert the decision payload carries the human's real answer."""
+    assert channel_state.decision_payload["status"] == status, channel_state.decision_payload
+    assert channel_state.decision_payload["tool_name"] == channel_state.tool_name
