@@ -77,3 +77,12 @@ Feature: Push recorded events to external subscribers
     Then subscriber "sub-k" receives the approval request event
     And subscriber "sub-k" receives the approval decision event
     And the approval decision event reports status "approved"
+
+
+  Scenario: A hard-interrupted LLM request publishes its terminal event
+    Given an event channel serving session "bdd-session" with a 30 second heartbeat timeout
+    And a subscriber "sub-l" connects and subscribes to "llm.request.*"
+    When an LLM request is stopped by a hard interrupt
+    Then subscriber "sub-l" receives the LLM request start event
+    And subscriber "sub-l" receives the interrupted LLM request end event
+    And the original hard interrupt still reaches the caller

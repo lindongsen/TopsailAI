@@ -16,6 +16,7 @@ import pytest
 from pytest_bdd import given, parsers, then, when
 
 from topsailai.ai_base.runtime_data import RuntimeDataStore
+from topsailai.events import reset_event_collector
 from topsailai.events.models import Event
 from topsailai.events.subscribers import (
     SubscriptionRegistry,
@@ -96,6 +97,11 @@ def channel_state(bdd_tmp_path, monkeypatch):
     )
     monkeypatch.setattr(runtime_state, "get_agent_object", lambda: state.agent)
     monkeypatch.setattr(runtime_instruction, "get_ai_agent", lambda: state.agent)
+    monkeypatch.setenv("TOPSAILAI_EVENTS_ENABLED", "1")
+    monkeypatch.setenv(
+        "TOPSAILAI_EVENTS_FILE_PATH", str(bdd_tmp_path / "recorded.events")
+    )
+    reset_event_collector()
     reset_event_channel_stats()
     runtime_state.clear_event_channel_runtime_state()
     try:
@@ -112,6 +118,7 @@ def channel_state(bdd_tmp_path, monkeypatch):
             assert not __import__("os").path.exists(state.socket_path)
         set_subscription_registry(None)
         set_drop_observer(None)
+        reset_event_collector()
         reset_event_channel_stats()
         runtime_state.clear_event_channel_runtime_state()
         _FRAME_BUFFERS.clear()
@@ -522,3 +529,67 @@ def decision_reports_status(channel_state, status):
     """Assert the decision payload carries the human's real answer."""
     assert channel_state.decision_payload["status"] == status, channel_state.decision_payload
     assert channel_state.decision_payload["tool_name"] == channel_state.tool_name
+
+
+@when("an LLM request is stopped by a hard interrupt")
+def hard_interrupt_llm_request(channel_state, monkeypatch):
+    """Run the production chat lifecycle until its real interrupt checkpoint."""
+    from topsailai.ai_base import llm_base
+    from topsailai.ai_base.exception import HardInterruptError
+
+    interrupt = HardInterruptError("BDD hard interrupt")
+
+    class _InterruptingAgent:
+        """Raise the exact interruption supplied by the scenario."""
+
+        def _check_hard_interrupt(self):
+            raise interrupt
+
+    model = object.__new__(llm_base.LLMModel)
+    model.model_name = "bdd-model"
+    monkeypatch.setattr(llm_base, "get_agent_object", lambda: _InterruptingAgent())
+    try:
+        model.chat([{"role": "user", "content": "private BDD prompt"}])
+    except HardInterruptError as error:
+        channel_state.original_interrupt = interrupt
+        channel_state.observed_interrupt = error
+    else:
+        raise AssertionError("HardInterruptError did not reach the caller")
+
+
+@then(parsers.parse('subscriber "{subscriber_id}" receives the LLM request start event'))
+def receives_llm_request_start(channel_state, subscriber_id):
+    """Read the real start frame and retain its operation identifier."""
+    frame = _read_frame(channel_state.links[subscriber_id])
+    assert frame["type"] == "event", frame
+    event = frame["event"]
+    assert event["event_type"] == "llm.request.start", frame
+    payload = event["payload"]
+    assert payload["model_name"] == "bdd-model"
+    assert payload["message_count"] == 1
+    assert "private BDD prompt" not in json.dumps(payload)
+    channel_state.llm_operation_id = payload["operation_id"]
+
+
+@then(
+    parsers.parse(
+        'subscriber "{subscriber_id}" receives the interrupted LLM request end event'
+    )
+)
+def receives_interrupted_llm_request_end(channel_state, subscriber_id):
+    """Read the real terminal frame and verify interruption classification."""
+    frame = _read_frame(channel_state.links[subscriber_id])
+    assert frame["type"] == "event", frame
+    event = frame["event"]
+    assert event["event_type"] == "llm.request.end", frame
+    payload = event["payload"]
+    assert payload["operation_id"] == channel_state.llm_operation_id
+    assert payload["outcome"] == "interrupted"
+    assert payload["error_category"] == "HardInterruptError"
+    assert payload["attempt_count"] == 0
+
+
+@then("the original hard interrupt still reaches the caller")
+def original_hard_interrupt_preserved(channel_state):
+    """Assert telemetry did not replace or swallow the business control signal."""
+    assert channel_state.observed_interrupt is channel_state.original_interrupt

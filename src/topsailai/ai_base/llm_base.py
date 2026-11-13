@@ -108,8 +108,10 @@ from .llm_control.request_failure_log import (
 from .llm_control.request_events import (
     build_llm_request_end_payload as _build_llm_request_end_payload,
     build_llm_request_start_payload as _build_llm_request_start_payload,
+    observe_llm_request_attempt as _observe_llm_request_attempt,
     record_llm_request_event as _record_llm_request_event,
     resolve_model_name as _resolve_model_name,
+    track_llm_request_events as _track_llm_request_events,
 )
 from .llm_control.null_response_recovery import (
     bind_null_response_operation as _bind_null_response_operation,
@@ -583,6 +585,7 @@ class LLMModel(
             tool_choice=tool_choice,
         )
 
+    @_track_llm_request_events
     @_track_retry_runtime_state
     @_track_null_response_recovery
     @_log_llm_request_failures
@@ -726,6 +729,7 @@ class LLMModel(
             except Exception:
                 pass
 
+            _observe_llm_request_attempt(total_attempt)
             if attempt_in_cycle > 1:
                 sec = 5 if manual_retry_requested else (i % attempts_per_cycle) * 5
                 manual_retry_requested = False

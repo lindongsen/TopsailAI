@@ -299,6 +299,10 @@ class TestLlmRequestEventPayloads:
 
         assert len(payload["error_category"]) == 128
 
+    def test_record_llm_request_event_swallows_malformed_payload(self):
+        """A malformed payload must not raise into the business path."""
+        request_events.record_llm_request_event("llm.request.end", None)
+
     def test_record_llm_request_event_swallows_failures(self, monkeypatch):
         def exploding_record(event_type, payload):
             raise RuntimeError("backend exploded")
@@ -362,27 +366,139 @@ class TestLlmRequestLifecyclePairing:
         assert outcomes["abandoned"]["error_category"] == "LLMBackToChatError"
         assert outcomes["failed"]["error_category"] == "LLMProviderBadRequestError"
 
-    def test_every_early_exit_records_a_terminal_event(self):
-        """Source-level guard: no early exit may skip the terminal event."""
-        import inspect
+    def test_hard_interrupt_records_terminal_event_and_preserves_exception(
+        self, monkeypatch, recorded_events
+    ):
+        """A hard interrupt is observable without changing control flow."""
+        from topsailai.ai_base import llm_base
+        from topsailai.ai_base.exception import HardInterruptError
 
+        interrupt = HardInterruptError("stop now")
+
+        class InterruptingAgent:
+            """Raise the exact host interruption from the production check seam."""
+
+            def _check_hard_interrupt(self):
+                raise interrupt
+
+        model, _ = self._build_model(monkeypatch, recorded_events)
+        monkeypatch.setattr(llm_base, "get_agent_object", lambda: InterruptingAgent())
+
+        with pytest.raises(HardInterruptError) as captured:
+            model.chat([{"role": "user", "content": "private prompt"}])
+
+        assert captured.value is interrupt
+        assert [event_type for event_type, _ in recorded_events] == [
+            "llm.request.start",
+            "llm.request.end",
+        ]
+        start_payload = recorded_events[0][1]
+        end_payload = recorded_events[1][1]
+        assert end_payload["operation_id"] == start_payload["operation_id"]
+        assert end_payload["outcome"] == "interrupted"
+        assert end_payload["error_category"] == "HardInterruptError"
+        assert "private prompt" not in repr(recorded_events)
+
+    def test_keyboard_interrupt_records_terminal_event_and_stays_host_interrupt(
+        self, monkeypatch, recorded_events
+    ):
+        """KeyboardInterrupt remains a BaseException while gaining an end event."""
         from topsailai.ai_base import llm_base
 
-        source = inspect.getsource(llm_base.LLMModel.chat)
-        lines = source.splitlines()
+        interrupt = KeyboardInterrupt("operator interrupt")
 
-        start_index = next(
-            i for i, line in enumerate(lines) if '"llm.request.start"' in line
-        )
-        tail = lines[start_index:]
+        class InterruptingAgent:
+            """Raise the exact host interruption from the production check seam."""
 
-        # Every raise/return after the start event must be preceded by an
-        # end-event emission within the same block.
-        for index, line in enumerate(tail):
-            stripped = line.strip()
-            if not (stripped.startswith("raise ") or stripped == "return result"):
-                continue
-            window = "\n".join(tail[max(0, index - 20):index])
-            assert '"llm.request.end"' in window, (
-                f"early exit without terminal event: {stripped}"
+            def _check_hard_interrupt(self):
+                raise interrupt
+
+        model, _ = self._build_model(monkeypatch, recorded_events)
+        monkeypatch.setattr(llm_base, "get_agent_object", lambda: InterruptingAgent())
+
+        with pytest.raises(KeyboardInterrupt) as captured:
+            model.chat([{"role": "user", "content": "private prompt"}])
+
+        assert captured.value is interrupt
+        assert [event_type for event_type, _ in recorded_events] == [
+            "llm.request.start",
+            "llm.request.end",
+        ]
+        assert recorded_events[1][1]["outcome"] == "interrupted"
+        assert recorded_events[1][1]["error_category"] == "KeyboardInterrupt"
+
+    @pytest.mark.parametrize(
+        ("outcome", "error_category"),
+        (
+            ("abandoned", "LLMBackToChatError"),
+            ("exhausted", "LLMRetryExhaustedError"),
+            ("failed", "LLMProviderBadRequestError"),
+        ),
+    )
+    def test_existing_exception_terminal_event_is_not_duplicated(
+        self, recorded_events, outcome, error_category
+    ):
+        """An existing exceptional end remains the sole terminal event."""
+        original = RuntimeError("original control flow")
+
+        @request_events.track_llm_request_events
+        def request(_model):
+            request_events.record_llm_request_event(
+                "llm.request.start",
+                request_events.build_llm_request_start_payload(
+                    operation_id="op-existing-end",
+                    model_name="test-model",
+                    messages=[],
+                    stream=False,
+                    return_mode="parsed",
+                ),
             )
+            request_events.record_llm_request_event(
+                "llm.request.end",
+                request_events.build_llm_request_end_payload(
+                    operation_id="op-existing-end",
+                    model_name="test-model",
+                    outcome=outcome,
+                    attempt_count=2,
+                    duration_sec=0.1,
+                    error_category=error_category,
+                ),
+            )
+            raise original
+
+        with pytest.raises(RuntimeError) as captured:
+            request(object())
+
+        assert captured.value is original
+        assert [event_type for event_type, _ in recorded_events] == [
+            "llm.request.start",
+            "llm.request.end",
+        ]
+        assert recorded_events[1][1]["outcome"] == outcome
+        assert recorded_events[1][1]["error_category"] == error_category
+
+    def test_existing_terminal_event_is_not_duplicated(
+        self, monkeypatch, recorded_events
+    ):
+        """The lifecycle owner does not duplicate an end emitted by chat()."""
+        from topsailai.ai_base import llm_base
+
+        model, _ = self._build_model(monkeypatch, recorded_events)
+        monkeypatch.setattr(llm_base, "get_agent_object", lambda: None)
+        model.call_llm_model = lambda *args, **kwargs: (object(), "answer")
+        model._split_native_tool_call_response = (
+            lambda response, content: (response, content, 1, 1)
+        )
+        model._return_chat_response = lambda *args, **kwargs: ["success"]
+        model.tokenStat = type(
+            "TokenStat", (), {"current_tokens": 0, "current_cached_tokens": 0}
+        )()
+
+        assert model.chat([{"role": "user", "content": "private prompt"}]) == [
+            "success"
+        ]
+        assert [event_type for event_type, _ in recorded_events] == [
+            "llm.request.start",
+            "llm.request.end",
+        ]
+        assert recorded_events[1][1]["outcome"] == "success"
