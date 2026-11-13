@@ -151,6 +151,7 @@ type operationResult struct {
 	ProviderResponseTruncated bool   `json:"provider_response_truncated"`
 	StartedAtMS               int64  `json:"started_at_ms,omitempty"`
 	FinishedAtMS              int64  `json:"finished_at_ms,omitempty"`
+	ExitConfirmed             bool   `json:"exit_confirmed,omitempty"`
 }
 
 type outputSnapshot struct {

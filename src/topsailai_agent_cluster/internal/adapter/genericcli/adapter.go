@@ -615,6 +615,11 @@ func receiptFromOperation(result providercli.OperationResult) protocol.Execution
 		StartedAtMS: result.StartedAtMS, FinishedAtMS: result.FinishedAtMS,
 		ProviderRequestRef: result.ProviderRequestRef, ProviderResponse: result.ProviderResponse,
 		ProviderResponseTruncated: result.ProviderResponseTruncated,
+		// The provider is the only side that can observe the exit, so its answer
+		// is the sole source of this field. Leaving it unset made every
+		// signal_sent operation non-terminal in the Cluster journal, because
+		// storage keeps signal_sent && !exit_confirmed at "executing".
+		ExitConfirmed: result.ExitConfirmed,
 	}
 }
 

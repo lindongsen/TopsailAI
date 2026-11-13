@@ -302,6 +302,18 @@ type operationEvidence struct {
 	effectCertainty  string
 	providerOutcome  string
 	providerResponse string
+	// exitConfirmed is the provider's own observation that the signalled process
+	// exited. It is only meaningful for a signal_sent operation, and it is not a
+	// decoration: the Cluster keeps signal_sent && !exit_confirmed at "executing"
+	// forever, so a provider that never confirms an exit leaves the operator
+	// watching a command that can never finish.
+	//
+	// execution.interrupt confirms the exit because the provider kills the
+	// process and observes it die. agent.stop deliberately does not: the shipped
+	// provider reports a stop request as sent with the exit unconfirmed, and
+	// features/real_boundary.feature asserts exactly that, so confirming it here
+	// would make the mock disagree with the provider it stands in for.
+	exitConfirmed bool
 }
 
 // operationEvidenceTable answers every operation the mock advertises.
@@ -319,7 +331,7 @@ type operationEvidence struct {
 var operationEvidenceTable = map[string]operationEvidence{
 	"message.send":        {version: "v1", deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"pipe_written"}`},
 	"context.inject":      {version: "v1", deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"pipe_written"}`},
-	"execution.interrupt": {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"signal_sent"}`},
+	"execution.interrupt": {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"signal_sent","exit_confirmed":true}`, exitConfirmed: true},
 	"agent.stop":          {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"delivery_boundary":"signal_sent","signal_sent":true,"exit_confirmed":false}`},
 	"agent.resume":        {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
 	"agent.start":         {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
@@ -400,6 +412,7 @@ func executeResponse(request request, fault string) response {
 			ProviderOutcome:           evidence.providerOutcome,
 			ProviderResponse:          evidence.providerResponse,
 			ProviderResponseTruncated: false,
+			ExitConfirmed:             evidence.exitConfirmed,
 			StartedAtMS:               fixtureTimeMS,
 			FinishedAtMS:              fixtureTimeMS + 1,
 		},

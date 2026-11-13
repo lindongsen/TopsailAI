@@ -320,3 +320,36 @@ func TestRecordInvocationNamesFunctionCalls(t *testing.T) {
 func TestRecordInvocationIsOptional(t *testing.T) {
 	recordInvocation(mockOptions{}, request{RequestID: "req-1"}, "execute")
 }
+
+// TestExecuteConfirmsOnlyTheInterruptExit proves the mock distinguishes the two
+// signal_sent operations by exit confirmation.
+//
+// execution.interrupt kills the process and observes it die, so the exit is
+// confirmed. agent.stop reports a stop request as sent with the exit
+// unconfirmed, which is what the shipped provider does and what
+// features/real_boundary.feature asserts. Confirming both would make the mock
+// disagree with the provider it stands in for, and the disagreement would be
+// invisible because both operations would still report signal_sent.
+func TestExecuteConfirmsOnlyTheInterruptExit(t *testing.T) {
+	cases := map[string]bool{
+		"execution.interrupt": true,
+		"agent.stop":          false,
+		"agent.drive.stop":    false,
+	}
+	for name, wantExit := range cases {
+		request := request{
+			RequestID: "req-" + name,
+			Function:  functionExecute,
+			Operation: &namedContract{Name: name, Version: "v1"},
+			Target:    &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"},
+			Payload:   json.RawMessage(`{}`),
+		}
+		response := executeResponse(request, "")
+		if !response.OK || response.Result == nil {
+			t.Fatalf("operation %q rejected: %#v", name, response.Error)
+		}
+		if response.Result.ExitConfirmed != wantExit {
+			t.Fatalf("operation %q exit confirmed = %t, want %t", name, response.Result.ExitConfirmed, wantExit)
+		}
+	}
+}

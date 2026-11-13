@@ -215,6 +215,13 @@ type OperationResult struct {
 	ProviderResponseTruncated bool   `json:"provider_response_truncated"`
 	StartedAtMS               int64  `json:"started_at_ms,omitempty"`
 	FinishedAtMS              int64  `json:"finished_at_ms,omitempty"`
+	// ExitConfirmed reports whether the provider confirmed that the signalled
+	// process actually exited. It is separate from the delivery boundary because
+	// a signal can be delivered without the exit being observed: the Cluster
+	// keeps such a command at "executing" until the exit is confirmed, so a
+	// provider that never reports this field leaves every signal_sent operation
+	// permanently non-terminal.
+	ExitConfirmed bool `json:"exit_confirmed,omitempty"`
 }
 
 // ProviderError is one standard Provider CLI error document.

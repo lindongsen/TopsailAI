@@ -403,3 +403,38 @@ func TestReadOutputKeepsOtherProviderErrorsAsFailures(t *testing.T) {
 		t.Fatalf("read output error = %v, want a plain failure", err)
 	}
 }
+
+// TestReceiptFromOperationCarriesExitConfirmation proves the provider's exit
+// observation reaches the Cluster receipt.
+//
+// The field is load-bearing rather than informational: storage keeps a
+// signal_sent receipt at "executing" while exit_confirmed is false, so a
+// provider that confirms an exit and an adapter that drops the confirmation
+// together produce a command that can never reach a terminal state. The false
+// case is asserted in the same table because a mapping that hardcodes true
+// would pass a true-only test while silently claiming every signal exited.
+func TestReceiptFromOperationCarriesExitConfirmation(t *testing.T) {
+	cases := []struct {
+		name string
+		exit bool
+	}{
+		{name: "confirmed", exit: true},
+		{name: "unconfirmed", exit: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			receipt := receiptFromOperation(providercli.OperationResult{
+				DeliveryBoundary: providercli.DeliverySignalSent,
+				EffectCertainty:  providercli.EffectAcknowledged,
+				ProviderOutcome:  "submitted",
+				ExitConfirmed:    testCase.exit,
+			})
+			if receipt.ExitConfirmed != testCase.exit {
+				t.Fatalf("receipt exit confirmed = %t, want %t", receipt.ExitConfirmed, testCase.exit)
+			}
+			if receipt.DeliveryBoundary != protocol.DeliverySignalSent {
+				t.Fatalf("receipt delivery boundary = %q, want signal_sent", receipt.DeliveryBoundary)
+			}
+		})
+	}
+}
