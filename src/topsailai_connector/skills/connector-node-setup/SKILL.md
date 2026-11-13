@@ -380,9 +380,14 @@ reachable surface depends on which line happened to parse.
   `<config>/identity`. The Node rewrites it on regeneration, and an environment
   variable cannot be rewritten by the process that owns it.
 - **Making a scope root the home directory or `/`.** Refused at startup, because
-  the blast radius is the whole machine.
+  the blast radius is the whole machine. A whole volume such as `C:\` is refused
+  for the same reason unless the policy states `allow_filesystem_root: true`, which
+  is the operator writing that blast radius down on purpose.
 - **Making a scope contain the config directory.** Refused at startup, because a
-  scope that can read its own credentials is a configuration mistake.
+  scope that can read its own credentials is a configuration mistake. The one
+  exception is the filesystem-root opt-in, which necessarily contains the config
+  directory; the deny list then refuses the directory and everything inside it, and
+  a listing omits it.
 - **Expecting `write` to work because the policy grants it.** `file.write` is not
   enabled in this version and is refused at dispatch.
 - **Assuming a regeneration needs a restart.** A running Node adopts the new pair

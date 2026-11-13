@@ -37,6 +37,12 @@ type file struct {
 	Version int                        `yaml:"version"`
 	Scopes  map[string]ScopeDefinition `yaml:"scopes"`
 	Grants  []GrantDefinition          `yaml:"grants"`
+	// AllowFilesystemRoot is the explicit opt-in that lets a scope map to a
+	// filesystem root such as `C:\` or `/`. It is absent by default, so a policy
+	// that does not state it keeps the refusal: a scope rooted at a volume
+	// exposes every file on that volume, and that blast radius must be written
+	// down rather than inferred from a path that happens to be a root.
+	AllowFilesystemRoot bool `yaml:"allow_filesystem_root"`
 }
 
 // Policy is a validated policy: the scopes it defines and the grants it holds.
@@ -47,6 +53,21 @@ type file struct {
 type Policy struct {
 	scopes map[security.Scope]string
 	grants []security.Grant
+	// allowFilesystemRoot records the policy's explicit opt-in for a scope
+	// rooted at a filesystem root. It is read by the fence, which refuses such a
+	// scope unless this is true.
+	allowFilesystemRoot bool
+}
+
+// AllowsFilesystemRoot reports whether the policy explicitly opted in to a scope
+// rooted at a filesystem root.
+//
+// The answer is false for every policy that does not state the key, so the
+// refusal is the default and an operator has to write the opt-in down. A policy
+// that opted in is not thereby granting anything: the scope still needs a grant,
+// and the fence still refuses every path that leaves the root.
+func (p *Policy) AllowsFilesystemRoot() bool {
+	return p.allowFilesystemRoot
 }
 
 // ScopeNames returns the defined scope names in sorted order, so a startup
@@ -116,7 +137,11 @@ func Parse(decoded file) (*Policy, error) {
 		return nil, err
 	}
 
-	return &Policy{scopes: scopes, grants: grants}, nil
+	return &Policy{
+		scopes:              scopes,
+		grants:              grants,
+		allowFilesystemRoot: decoded.AllowFilesystemRoot,
+	}, nil
 }
 
 // parseScopes validates every scope definition.

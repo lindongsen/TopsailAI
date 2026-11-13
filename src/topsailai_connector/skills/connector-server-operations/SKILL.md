@@ -177,6 +177,15 @@ because the bundle keeps its credentials inside its own folder, which is exactly
 layout that check exists to refuse. Both sides of that comparison are resolved
 physically, so a bundle reached through a symlink or a junction is still refused.
 
+A bundle cannot express the policy's `allow_filesystem_root` opt-in. The start
+scripts refuse a volume root and generate a policy without the key, so a bundle
+always exposes named folders rather than a whole drive. That is the safer default
+for a bundle, because the recipient did not write the policy and should not be able
+to widen the blast radius by editing one line of `scopes.txt`. An operator who
+genuinely needs a whole volume writes the policy by hand and runs the Node directly
+instead of from a bundle. The gap is recorded in
+`issues/issue-bundle-cannot-express-the-filesystem-root-optin.md`.
+
 ## Configuration
 
 Every value comes from the environment. There is no configuration file and no flag

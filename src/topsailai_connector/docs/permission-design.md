@@ -729,11 +729,16 @@ scope means.
   working directory, which is a different meaning per launch.
 - The path exists and is a directory.
 - The path is not a symlink or a junction.
-- The path is not `/`, not the user's home directory, and not a filesystem or mount
-  root, because the blast radius of those is the whole machine.
+- The path is not `/`, not the user's home directory, and not a mount root, because
+  the blast radius of those is the whole machine. A filesystem root such as `C:\` is
+  refused for the same reason, unless the policy states `allow_filesystem_root: true`
+  and the operator has therefore written the blast radius down.
 - The path is not inside the Node's own config directory, and the config directory
   is not inside the path. A scope that can read its own credentials is a
   configuration mistake worth refusing at startup rather than denying per request.
+  This rule is relaxed together with the filesystem-root rule, because a scope
+  rooted at a volume necessarily contains the config directory; the deny list then
+  refuses the directory and everything inside it, and a listing omits it.
 - The `os.Root` handle is opened once and reused. If the directory is moved, the
   handle keeps referencing the original directory in its new location, which is the
   behaviour the fence wants: the scope means the directory that was validated, not
@@ -746,6 +751,12 @@ components rather than on a string prefix, so a sibling named `config-backup` is
 mistaken for a child of `config`, and on Windows it is case-insensitive because the
 filesystem is. A scope that equals the config directory, contains it, or sits inside
 it is refused with a message naming both paths.
+
+When the policy opts in to a filesystem root, the overlap refusal is relaxed and the
+deny list takes over. The config directory is then a deny entry, so the directory
+itself and every path inside it are refused before they are opened, and a listing
+omits the entry rather than reporting its name and size. The deny list is what
+protects the credential in that case; the startup refusal is not available.
 
 ### Policy file
 
@@ -763,6 +774,33 @@ grants:
   - scope: project
     permissions: [read, list, stat]
 ```
+
+A policy that must expose a whole volume states the opt-in explicitly:
+
+```yaml
+version: 1
+allow_filesystem_root: true
+scopes:
+  cdrive:
+    path: C:\
+grants:
+  - scope: cdrive
+    permissions: [read, list, stat]
+```
+
+`allow_filesystem_root` is absent by default, and its absence is the refusal. It
+relaxes exactly two startup rules: a scope rooted at a filesystem root, and a scope
+that contains the Node's config directory. The second follows from the first rather
+than being a separate permission, because a scope rooted at `C:\` necessarily
+contains the config directory. Every other rule still applies: the path must be
+absolute, real, a directory and not a symlink, and the fence still refuses every
+path that leaves the root.
+
+The opt-in is safe only because the config directory is on the deny list. Once the
+startup refusal is relaxed, the deny list carries the protection: the directory and
+everything inside it are refused, and a listing omits it rather than reporting its
+name and size. Without that deny entry the opt-in would hand a caller the identity
+file, which is the credential that authorizes every operation on the Node.
 
 Validation rules, all of which fail startup rather than warn:
 
@@ -909,6 +947,15 @@ request path.
 - [ ] A scope whose resolved path equals, contains or sits inside the Node's
       config directory is refused at startup, so the names and sizes of the
       credential files are not listable even though their contents are denied.
+- [ ] A scope rooted at a filesystem root is refused at startup unless the policy
+      states `allow_filesystem_root: true`, and the opt-in is absent by default.
+- [ ] When the opt-in is set, the config directory is on the deny list, so the
+      directory and everything inside it are refused and a listing omits it. The
+      deny list, not the startup refusal, is what protects the credential in that
+      case.
+- [ ] The opt-in relaxes the filesystem-root and config-overlap rules and nothing
+      else: a relative path, a symlink root, a mount point, the home directory and
+      every escaping path are still refused.
 - [ ] The `node-id.node-token` pair is split on the first dot, and a pair with no
       dot, an empty half, a second dot in the token half, a missing `node_` prefix
       or any whitespace is refused rather than repaired.

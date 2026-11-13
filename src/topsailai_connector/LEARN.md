@@ -195,3 +195,20 @@ AI reflection archive, not here.
   visual comparison proves nothing either way.
 - `[string]::Concat` has no three-argument overload; `-join` on a char array is
   the form that works.
+
+## A validation duplicated in a wrapper script must be updated with the rule it copies
+
+- `packaging/start.sh` and `packaging/start.ps1` repeat the Node's startup
+  refusals so the message appears next to the person who can fix it. That
+  duplication is deliberate, but it means one rule has two implementations and
+  only the Node's was updated when `allow_filesystem_root` was added.
+- The result was a feature that worked in the binary and was unreachable on the
+  delivery path the operator actually uses: a bundle refused a volume root before
+  the Node ever read the policy, and the generated policy never carried the key.
+- When a rule gains an exception, grep the wrapper scripts for the refusal message
+  rather than only the Go source. A duplicated check is a second place the rule
+  lives, and it fails silently because the wrapper refuses earlier and more
+  clearly than the binary would.
+- The same applies to the generated artifact: a script that emits a policy from a
+  simpler input format cannot express a new policy-level key until that input
+  format grows a way to state it. Adding the key to the schema is half the change.

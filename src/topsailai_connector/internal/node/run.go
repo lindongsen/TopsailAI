@@ -51,7 +51,13 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 	// The deny list names the Node's own files. The identity file is the one that
 	// must never be readable through a scope, because reading it would hand a
 	// caller the credential that authorizes every operation on this Node.
-	denyPaths := []string{identityPath, config.PolicyPath}
+	//
+	// The config directory is listed as well, and that entry is what makes the
+	// policy's filesystem-root opt-in safe. A scope rooted at a volume necessarily
+	// contains the config directory, so the startup refusal that used to hide it
+	// is relaxed when the policy opts in; the deny list then carries the
+	// protection, refusing the directory itself and everything inside it.
+	denyPaths := []string{identityPath, config.PolicyPath, config.ConfigDir}
 
 	authority, err := LoadAuthority(config.PolicyPath, denyPaths, config.ConfigDir)
 	if err != nil {

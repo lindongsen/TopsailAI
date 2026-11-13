@@ -82,6 +82,16 @@ type Scope struct {
 	root     *os.Root
 	resolved string
 	denied   []os.FileInfo
+	// deniedPrefixes are the deny-listed directories expressed as paths
+	// relative to the scope root, in slash form. A request whose path equals one
+	// of them or sits inside one is refused before it is opened.
+	//
+	// The identity comparison in denied covers a file, but it cannot cover a
+	// directory's contents: a file created inside a denied directory is a
+	// different inode, so it would not match. The prefix rule is what makes a
+	// denied directory deny everything beneath it, which is the property the
+	// config directory needs once a scope may contain it.
+	deniedPrefixes []string
 }
 
 // Name returns the scope name the policy uses.
@@ -111,8 +121,28 @@ func (s *Scope) Close() error {
 // denyPaths are the Node's own files: their identity is recorded now, so a
 // request is refused by identity rather than by name and a symlink or a
 // different spelling cannot rename them.
+//
+// This entry point never permits a scope rooted at a filesystem root. The opt-in
+// lives in the policy file and is applied by LoadAuthority, so a caller that has
+// not read a policy cannot widen the fence by accident.
 func OpenScope(name string, path string, denyPaths []string, configDir string) (*Scope, error) {
-	if err := validateScopeMapping(name, path, configDir); err != nil {
+	return openScope(name, path, denyPaths, configDir, false)
+}
+
+// openScope is OpenScope with the policy's filesystem-root opt-in applied.
+//
+// allowFilesystemRoot is true only when the policy file states
+// `allow_filesystem_root: true`. It relaxes exactly two startup refusals: a scope
+// rooted at a filesystem root, and a scope that contains the Node's config
+// directory. The second follows from the first rather than being a separate
+// permission: a scope rooted at `C:\` necessarily contains the config directory,
+// so refusing the overlap would make the opt-in unusable.
+//
+// Relaxing the overlap is safe only because the config directory is itself on the
+// deny list, so listing it is refused and its contents are never reported. The
+// deny list carries the protection once the startup refusal is gone.
+func openScope(name string, path string, denyPaths []string, configDir string, allowFilesystemRoot bool) (*Scope, error) {
+	if err := validateScopeMapping(name, path, configDir, allowFilesystemRoot); err != nil {
 		return nil, err
 	}
 
@@ -129,12 +159,89 @@ func OpenScope(name string, path string, denyPaths []string, configDir string) (
 		return nil, fmt.Errorf("scope %q: %w", name, err)
 	}
 
+	deniedPrefixes, err := collectDeniedPrefixes(denyPaths, resolved)
+	if err != nil {
+		return nil, fmt.Errorf("scope %q: %w", name, err)
+	}
+
 	root, err := os.OpenRoot(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("scope %q: open root %q: %w", name, resolved, err)
 	}
 
-	return &Scope{name: name, root: root, resolved: resolved, denied: denied}, nil
+	return &Scope{
+		name:           name,
+		root:           root,
+		resolved:       resolved,
+		denied:         denied,
+		deniedPrefixes: deniedPrefixes,
+	}, nil
+}
+
+// collectDeniedPrefixes expresses every deny path that is a directory as a path
+// relative to the scope root, so a request inside it can be refused before it is
+// opened.
+//
+// A deny path outside the scope root is skipped: it cannot be addressed through
+// this scope, so it needs no prefix. A deny path equal to the scope root is
+// refused as a startup failure, because a scope whose root is denied is a scope
+// that serves nothing and the operator should be told rather than left with a
+// Node that denies every request.
+func collectDeniedPrefixes(denyPaths []string, scopeRoot string) ([]string, error) {
+	prefixes := make([]string, 0, len(denyPaths))
+	for _, path := range denyPaths {
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("stat deny path %q: %w", path, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		if samePath(path, scopeRoot) {
+			return nil, fmt.Errorf("deny path %q is the scope root; a scope whose root is denied serves nothing", path)
+		}
+		if !isPathInside(path, scopeRoot) {
+			continue
+		}
+		relative, err := filepath.Rel(scopeRoot, path)
+		if err != nil {
+			return nil, fmt.Errorf("relativise deny path %q: %w", path, err)
+		}
+		prefixes = append(prefixes, filepath.ToSlash(relative))
+	}
+	return prefixes, nil
+}
+
+// isDeniedPath reports whether a request path names a deny-listed directory or
+// something inside one.
+//
+// The comparison is on cleaned slash-form paths with a separator boundary, so a
+// sibling whose name merely starts with the denied directory's name is not
+// refused. The path is compared as the caller wrote it, before any open, so a
+// denied directory is refused even when the entry inside it does not exist yet.
+func (s *Scope) isDeniedPath(path string) bool {
+	if len(s.deniedPrefixes) == 0 {
+		return false
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(path))
+	if cleaned == "." {
+		return false
+	}
+	for _, prefix := range s.deniedPrefixes {
+		if cleaned == prefix {
+			return true
+		}
+		if strings.HasPrefix(cleaned, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // validateScopeMapping checks the rules that do not need a handle: the name is
@@ -148,7 +255,13 @@ func OpenScope(name string, path string, denyPaths []string, configDir string) (
 // overlap removes the metadata leak as well as the contents, which is why the
 // design requires the check instead of treating it as redundant with the deny
 // list.
-func validateScopeMapping(name string, path string, configDir string) error {
+//
+// allowFilesystemRoot relaxes the filesystem-root and config-overlap refusals
+// together, because a scope rooted at a volume necessarily contains the config
+// directory. Every other rule still applies: the path must be absolute, real, a
+// directory and not a symlink, and the fence still refuses every path that leaves
+// the root.
+func validateScopeMapping(name string, path string, configDir string, allowFilesystemRoot bool) error {
 	if err := validateScopeIdentifier(name); err != nil {
 		return err
 	}
@@ -169,7 +282,7 @@ func validateScopeMapping(name string, path string, configDir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("scope %q: path %q is not a directory", name, path)
 	}
-	if isFilesystemRoot(path) {
+	if !allowFilesystemRoot && isFilesystemRoot(path) {
 		return fmt.Errorf("scope %q: path %q is a filesystem root; its blast radius is the whole machine", name, path)
 	}
 	if isHomeDirectory(path) {
@@ -178,7 +291,7 @@ func validateScopeMapping(name string, path string, configDir string) error {
 	if isMountPoint(path) {
 		return fmt.Errorf("scope %q: path %q is a mount point; a scope that contains a bind mount is readable through the fence", name, path)
 	}
-	if overlapsConfigDir(path, configDir) {
+	if !allowFilesystemRoot && overlapsConfigDir(path, configDir) {
 		return fmt.Errorf("scope %q: path %q overlaps the Node's config directory %q; a scope that can list its own credentials is a configuration mistake", name, path, configDir)
 	}
 	return nil
@@ -313,6 +426,9 @@ func (s *Scope) openValidated(path string, allowRoot bool) (*os.File, os.FileInf
 	if err := ValidateRelativePath(path, allowRoot); err != nil {
 		return nil, nil, newError(protocol.CodeInvalidArgument, "%v", err)
 	}
+	if s.isDeniedPath(path) {
+		return nil, nil, newError(protocol.CodeDenied, "path %q is inside one of the Node's own directories", path)
+	}
 
 	name := path
 	if name == "" {
@@ -422,10 +538,23 @@ func (s *Scope) List(path string) ([]Entry, error) {
 			// is being written to is a normal directory.
 			continue
 		}
+		if entry.Type == deniedEntryType {
+			// A deny-listed entry is omitted rather than reported, so a listing
+			// never discloses the name or the size of the Node's own files. The
+			// omission is the reason a scope may contain the config directory at
+			// all: the startup refusal is gone, so the listing must not leak what
+			// the refusal used to hide.
+			continue
+		}
 		entries = append(entries, entry)
 	}
 	return entries, nil
 }
+
+// deniedEntryType marks a listed entry that the deny list covers. It is an
+// internal sentinel rather than a wire value: List drops it, so a caller never
+// sees it.
+const deniedEntryType = "denied"
 
 // statEntry describes one entry of a listed directory. The name is joined with
 // the listed path so the grammar is applied to the same form a caller would send.
@@ -440,10 +569,16 @@ func (s *Scope) statEntry(parent string, name string) (Entry, error) {
 		// file whose name the grammar dislikes.
 		return Entry{Name: name, Type: "unknown"}, nil
 	}
+	if s.isDeniedPath(joined) {
+		return Entry{Name: name, Type: deniedEntryType}, nil
+	}
 
 	info, err := s.root.Lstat(joined)
 	if err != nil {
 		return Entry{}, err
+	}
+	if s.isDenied(info) {
+		return Entry{Name: name, Type: deniedEntryType}, nil
 	}
 	return describe(name, info), nil
 }
@@ -457,6 +592,9 @@ func (s *Scope) statEntry(parent string, name string) (Entry, error) {
 func (s *Scope) Stat(path string) (Entry, error) {
 	if err := ValidateRelativePath(path, false); err != nil {
 		return Entry{}, newError(protocol.CodeInvalidArgument, "%v", err)
+	}
+	if s.isDeniedPath(path) {
+		return Entry{}, newError(protocol.CodeDenied, "path %q is inside one of the Node's own directories", path)
 	}
 
 	info, err := s.root.Lstat(path)

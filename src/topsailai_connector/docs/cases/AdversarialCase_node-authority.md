@@ -380,7 +380,9 @@ configuration mistake that turns one leaked secret into a permanent one.
 
 **Action:** Set `path: /`.
 
-**Expected:** Startup fails. The blast radius is the whole machine.
+**Expected:** Startup fails. The blast radius is the whole machine. The one
+exception is a policy that states `allow_filesystem_root: true`, which is the
+operator writing that blast radius down on purpose. See AC-NODE-66.
 
 ### AC-NODE-49: A policy with a scope pointing at a mount point
 
@@ -523,3 +525,67 @@ permission and fence refusals may differ, because a caller that has already
 authenticated is not being told anything it could not learn by trying. The distinction
 is deliberate: an unauthenticated caller learns nothing, an authenticated one learns
 why its own request failed.
+
+## The filesystem-root opt-in
+
+### AC-NODE-66: An opted-in volume root still cannot read the Node's credentials
+
+**Precondition:** A policy with `allow_filesystem_root: true` and a scope rooted at
+a volume. The Node's config directory sits inside that volume.
+
+**Action:** `file.read` on the config directory's relative path, on `identity`, on
+`policy.yaml` and on `tunnel_token`, and `file.list` on the scope root.
+
+**Expected:** `denied` for every read, and the listing omits the config directory.
+The opt-in is a statement about the blast radius, not a grant: the deny list still
+refuses the Node's own files, and the listing still hides them.
+
+**Why this case exists:** the opt-in is the one change that lets a scope contain
+the config directory, so it is the one change that could turn a startup refusal
+into a credential leak. The case asserts that the protection moved rather than
+disappeared.
+
+### AC-NODE-67: The opt-in does not grant a permission
+
+**Precondition:** A policy with `allow_filesystem_root: true`, a scope rooted at a
+volume, and no grant for that scope.
+
+**Action:** Send `file.read` on a file inside the volume.
+
+**Expected:** `denied`. The opt-in relaxes a startup refusal about where a scope may
+point; it does not add a grant. A scope with no grant still refuses every operation,
+so an operator who writes the opt-in and forgets the grant gets a Node that starts
+and denies everything rather than one that silently allows everything.
+
+### AC-NODE-68: The opt-in is not inferred from the path
+
+**Precondition:** A policy with a scope rooted at a volume and **no**
+`allow_filesystem_root` key.
+
+**Action:** Start the Node.
+
+**Expected:** Startup fails with the filesystem-root refusal. The opt-in is never
+inferred from the path being a root, because an inferred opt-in is not an opt-in: a
+typo or a copied policy would widen the blast radius without anyone writing it down.
+
+### AC-NODE-69: An unknown key near the opt-in is still refused
+
+**Precondition:** A policy with `allow_filesystem_root: true` and a second key such
+as `allow_all: true`.
+
+**Action:** Start the Node.
+
+**Expected:** Startup fails. Decoding is strict, so a key that looks like a wider
+version of the opt-in is refused rather than ignored. The opt-in is one named key,
+not the start of a family of allow-everything switches.
+
+### AC-NODE-70: The opt-in does not relax the other scope rules
+
+**Precondition:** A policy with `allow_filesystem_root: true`.
+
+**Action:** Set a scope path to a relative path, to a symlink, to a regular file, to
+a missing path, or to the home directory.
+
+**Expected:** Startup fails for each. The opt-in relaxes exactly two refusals, the
+filesystem root and the config-directory overlap, because the second follows from
+the first. Every other rule about what a scope root may be still applies.

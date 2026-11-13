@@ -56,7 +56,7 @@ func LoadAuthority(policyPath string, denyPaths []string, configDir string) (*Au
 			closeScopes(scopes)
 			return nil, fmt.Errorf("scope %q is listed but has no path", name)
 		}
-		scope, err := OpenScope(string(name), path, denyPaths, configDir)
+		scope, err := openScope(string(name), path, denyPaths, configDir, loaded.AllowsFilesystemRoot())
 		if err != nil {
 			closeScopes(scopes)
 			return nil, err
