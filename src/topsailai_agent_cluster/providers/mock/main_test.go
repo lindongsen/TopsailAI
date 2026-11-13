@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -138,4 +141,119 @@ func TestExecuteRejectsUnknownOperation(t *testing.T) {
 	if response.OK || response.Error == nil || response.Error.Code != "unsupported" {
 		t.Fatalf("unknown operation was not rejected: %#v", response)
 	}
+}
+
+// TestDiscoveryObservationsCoverEveryMode proves each discovery mode produces
+// the document a migrated scenario depends on. "mixed" is load-bearing: a resume
+// scenario needs a row the provider lists but cannot prove is live, and "empty"
+// proves an empty inventory is not a failure.
+func TestDiscoveryObservationsCoverEveryMode(t *testing.T) {
+	cases := []struct {
+		mode      string
+		wantCount int
+		wantLive  bool
+	}{
+		{mode: "one", wantCount: 1, wantLive: true},
+		{mode: "", wantCount: 1, wantLive: true},
+		{mode: "mixed", wantCount: 2, wantLive: true},
+		{mode: "empty", wantCount: 0},
+	}
+	for _, testCase := range cases {
+		observations, err := discoveryObservations(mockOptions{mode: testCase.mode, failAfterN: -1})
+		if err != nil {
+			t.Fatalf("mode %q: unexpected error: %v", testCase.mode, err)
+		}
+		if len(observations) != testCase.wantCount {
+			t.Fatalf("mode %q: got %d observations, want %d", testCase.mode, len(observations), testCase.wantCount)
+		}
+		if testCase.wantLive && observations[0].ProviderGeneration != "generation-1" {
+			t.Fatalf("mode %q: first observation generation = %q, want generation-1", testCase.mode, observations[0].ProviderGeneration)
+		}
+	}
+}
+
+// TestDiscoveryObservationsMixedKeepsUnverifiedRow proves the second row of the
+// mixed document carries an empty generation, because that emptiness is the
+// provider's own statement that no process holds the session. A non-empty value
+// would make resume refuse the very target it exists for.
+func TestDiscoveryObservationsMixedKeepsUnverifiedRow(t *testing.T) {
+	observations, err := discoveryObservations(mockOptions{mode: "mixed", failAfterN: -1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("got %d observations, want 2", len(observations))
+	}
+	if observations[1].ProviderGeneration != "" {
+		t.Fatalf("unverified row generation = %q, want empty", observations[1].ProviderGeneration)
+	}
+	if observations[1].State != "stopped" {
+		t.Fatalf("unverified row state = %q, want stopped", observations[1].State)
+	}
+}
+
+// TestDiscoveryObservationsHonourFailureKnobs proves the two failure knobs the
+// harness uses still work: always-fail fails every call, and fail-after-n fails
+// only once the durable counter passes the threshold.
+func TestDiscoveryObservationsHonourFailureKnobs(t *testing.T) {
+	if _, err := discoveryObservations(mockOptions{mode: "one", alwaysFail: true, failAfterN: -1}); err == nil {
+		t.Fatal("always-fail produced no error")
+	}
+	counter := filepath.Join(t.TempDir(), "discovery-count")
+	options := mockOptions{mode: "one", discoveryCountFile: counter, failAfterN: 2}
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := discoveryObservations(options); err != nil {
+			t.Fatalf("attempt %d failed before the threshold: %v", attempt, err)
+		}
+	}
+	if _, err := discoveryObservations(options); err == nil {
+		t.Fatal("attempt 3 succeeded past fail-after-n=2")
+	}
+}
+
+// TestDiscoveryObservationsRejectUnknownMode proves a stale mode fails loudly
+// instead of silently falling back to a default document.
+func TestDiscoveryObservationsRejectUnknownMode(t *testing.T) {
+	if _, err := discoveryObservations(mockOptions{mode: "nonsense", failAfterN: -1}); err == nil {
+		t.Fatal("unknown mode produced no error")
+	}
+}
+
+// TestRecordInvocationWritesOneRecordPerCall proves the invocation record is the
+// evidence a scenario reads to assert the provider was reached. Without it, a
+// "provider was not called" assertion has no source.
+func TestRecordInvocationWritesOneRecordPerCall(t *testing.T) {
+	recordFile := filepath.Join(t.TempDir(), "records.jsonl")
+	options := mockOptions{recordFile: recordFile}
+	request := request{
+		RequestID: "req-1",
+		Operation: &namedContract{Name: "agent.stop", Version: "v1"},
+		Target:    &target{ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"},
+	}
+	recordInvocation(options, request, "execute")
+	recordInvocation(options, request, "execute")
+	data, err := os.ReadFile(recordFile)
+	if err != nil {
+		t.Fatalf("read record file: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d records, want 2: %q", len(lines), string(data))
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &record); err != nil {
+		t.Fatalf("decode record: %v", err)
+	}
+	if record["operation"] != "agent.stop" {
+		t.Fatalf("record operation = %v, want agent.stop", record["operation"])
+	}
+	if record["target_generation"] != "generation-1" {
+		t.Fatalf("record target_generation = %v, want generation-1", record["target_generation"])
+	}
+}
+
+// TestRecordInvocationIsOptional proves an unconfigured record file is not an
+// error, because the conformance suite launches the mock without one.
+func TestRecordInvocationIsOptional(t *testing.T) {
+	recordInvocation(mockOptions{}, request{RequestID: "req-1"}, "execute")
 }
