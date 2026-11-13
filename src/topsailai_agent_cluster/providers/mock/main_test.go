@@ -58,6 +58,20 @@ func TestDescriptorAdvertisesEveryOperation(t *testing.T) {
 	}
 }
 
+// executeTestTarget returns the target an operation must carry to be answered.
+//
+// agent.start addresses a launch profile, so its generation is the profile
+// revision rather than a session process generation. Reusing the session target
+// for every operation asserted that one target shape fits all of them, which is
+// the assumption the mock had to stop making when start began validating its own
+// target.
+func executeTestTarget(operation string) *target {
+	if operation == "agent.start" {
+		return &target{ResourceKind: resourceLaunchProfile, ProviderResourceKey: "launch:mock", ExpectedGeneration: launchProfileRevision}
+	}
+	return &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"}
+}
+
 // TestExecuteAnswersEveryAdvertisedOperation proves the answered surface equals
 // the advertised surface. An operation that is advertised but rejected would be
 // a capability lie, and the Cluster would surface it as a provider failure
@@ -72,7 +86,7 @@ func TestExecuteAnswersEveryAdvertisedOperation(t *testing.T) {
 			// operation shares one version, which is exactly the assumption the
 			// descriptor had to stop making.
 			Operation: &namedContract{Name: name, Version: operationEvidenceTable[name].version},
-			Target:    &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"},
+			Target:    executeTestTarget(name),
 			Payload:   json.RawMessage(`{}`),
 		}
 		response := executeResponse(request, "")

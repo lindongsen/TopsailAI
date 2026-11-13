@@ -335,6 +335,14 @@ var operationEvidenceTable = map[string]operationEvidence{
 // the mock is a separate Go module and cannot import the Cluster's internal
 // package, so the duplication is the price of the module boundary. A drift is
 // caught by the conformance suite, which drives both sides.
+// resourceLaunchProfile and launchProfileRevision mirror the launch profile the
+// mock advertises through its launch-options query, so the target an agent.start
+// carries can be validated against the same values the Cluster was told about.
+const (
+	resourceLaunchProfile = "launch_profile"
+	launchProfileRevision = "launch-r1"
+)
+
 var nonLiveOperations = map[string]struct{}{
 	"agent.resume":     {},
 	"agent.drive.stop": {},
@@ -363,7 +371,17 @@ func executeResponse(request request, fault string) response {
 	// or a changed generation is rejected before any effect is claimed. A
 	// non-live operation addresses a durable record instead, so it is allowed to
 	// carry no generation at all.
-	if _, nonLive := nonLiveOperations[request.Operation.Name]; !nonLive {
+	//
+	// agent.start is neither: it addresses a launch profile, so the generation it
+	// must prove is the profile revision rather than a session process
+	// generation. Comparing it against a session generation rejected every start
+	// with generation_mismatch even though the Cluster had validated the profile
+	// revision against the descriptor it was advertised.
+	if request.Operation.Name == "agent.start" {
+		if request.Target == nil || request.Target.ResourceKind != resourceLaunchProfile || request.Target.ExpectedGeneration != launchProfileRevision {
+			return failureResponse(request.RequestID, "generation_mismatch", "launch profile revision changed", "not_applied")
+		}
+	} else if _, nonLive := nonLiveOperations[request.Operation.Name]; !nonLive {
 		if request.Target == nil || request.Target.ExpectedGeneration != "generation-1" {
 			return failureResponse(request.RequestID, "generation_mismatch", "provider generation changed", "not_applied")
 		}
