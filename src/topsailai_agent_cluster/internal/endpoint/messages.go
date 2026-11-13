@@ -21,7 +21,9 @@ const messagesBudget = 10 * time.Second
 // "this session recorded no messages", which is a different claim from "this
 // adapter cannot answer".
 func (e *Executor) Messages(ctx context.Context, query protocol.MessagesQuery) (protocol.MessagesResult, error) {
-	for _, instance := range e.registry.All() {
+	instances, release := e.registry.AcquireAll()
+	defer release()
+	for _, instance := range instances {
 		handler, ok := instance.(adapter.MessagesHandler)
 		if !ok {
 			continue

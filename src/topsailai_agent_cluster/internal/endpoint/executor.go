@@ -73,7 +73,7 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 		receipt.Outcome = "expired"
 		return e.recordEarlyRejection(ctx, intent, receipt)
 	}
-	instance, adapterID, err := e.adapterForIntent(ctx, intent)
+	instance, adapterID, release, err := e.adapterForIntent(ctx, intent)
 	if err != nil {
 		// A coded resolution failure is a decision about the target, so it must
 		// become a durable terminal rejection. Returning a bare error here left
@@ -87,6 +87,11 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 		}
 		return protocol.ExecutionReceipt{}, err
 	}
+	// Hold the instance for the whole command. A Provider CLI version replacement
+	// retires the previous instance instead of closing it, so this command finishes
+	// on the version it validated against and the instance is closed only after
+	// this release runs.
+	defer release()
 	descriptor, err := instance.Describe(ctx)
 	if err != nil {
 		// The adapter is configured but cannot describe itself, so no capability
@@ -248,10 +253,11 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	if err != nil {
 		return protocol.OutputSnapshotResponse{ErrorCode: "unknown_resource"}, err
 	}
-	instance, ok := e.registry.Get(mapping.AdapterID)
+	instance, release, ok := e.registry.Acquire(mapping.AdapterID)
 	if !ok {
 		return protocol.OutputSnapshotResponse{ErrorCode: "unknown_adapter"}, fmt.Errorf("adapter %q is not configured", mapping.AdapterID)
 	}
+	defer release()
 	// Revalidate the target generation from the Endpoint's own latest accepted
 	// collection snapshot. A live inspection re-runs the provider's full discovery,
 	// which costs seconds per read, so it is reserved for the cases the snapshot
@@ -309,10 +315,14 @@ func (e *Executor) FollowOutput(ctx context.Context, request protocol.OutputFoll
 	if err != nil {
 		return err
 	}
-	instance, ok := e.registry.Get(mapping.AdapterID)
+	instance, release, ok := e.registry.Acquire(mapping.AdapterID)
 	if !ok {
 		return fmt.Errorf("adapter %q is not configured", mapping.AdapterID)
 	}
+	// A follow is long-lived, so this reference is what pins the stream to the
+	// version it started on. Releasing it after the stream ends lets a replacement
+	// close the retired instance at that point instead of interrupting the stream.
+	defer release()
 	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}); err != nil {
 		return err
 	}
@@ -353,43 +363,43 @@ func (e *Executor) revalidateGeneration(ctx context.Context, instance adapter.Ad
 // resolved to a configured adapter is reported as a coded resolution error so the
 // caller can record a terminal rejection; a storage failure stays a plain error
 // because it says nothing about the target's validity.
-func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.ImmutableIntent) (adapter.Adapter, string, error) {
+func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.ImmutableIntent) (adapter.Adapter, string, func(), error) {
 	if intent.Target != nil {
 		mapping, err := e.store.LookupResourceID(ctx, intent.Target.ResourceID)
 		if err != nil {
 			if errors.Is(err, endpointstorage.ErrResourceNotFound) {
-				return nil, "", resolutionFailure("target_not_found", err)
+				return nil, "", nil, resolutionFailure("target_not_found", err)
 			}
-			return nil, "", fmt.Errorf("resource_id %q mapping lookup failed: %w", intent.Target.ResourceID, err)
+			return nil, "", nil, fmt.Errorf("resource_id %q mapping lookup failed: %w", intent.Target.ResourceID, err)
 		}
-		instance, ok := e.registry.Get(mapping.AdapterID)
+		instance, release, ok := e.registry.Acquire(mapping.AdapterID)
 		if !ok {
-			return nil, "", resolutionFailure("adapter_not_configured", fmt.Errorf("resource_id %q adapter %q is not configured", intent.Target.ResourceID, mapping.AdapterID))
+			return nil, "", nil, resolutionFailure("adapter_not_configured", fmt.Errorf("resource_id %q adapter %q is not configured", intent.Target.ResourceID, mapping.AdapterID))
 		}
-		return instance, mapping.AdapterID, nil
+		return instance, mapping.AdapterID, release, nil
 	}
 	if intent.Operation != "agent.start" {
-		return nil, "", resolutionFailure("target_required", fmt.Errorf("resource_id is required for operation %q", intent.Operation))
+		return nil, "", nil, resolutionFailure("target_required", fmt.Errorf("resource_id is required for operation %q", intent.Operation))
 	}
 	mapping, err := e.store.LookupResourceID(ctx, intent.LaunchProfileID)
 	if err == nil {
 		if mapping.ResourceKind != protocol.ResourceLaunchProfile {
-			return nil, "", resolutionFailure("profile_not_found", fmt.Errorf("resource_id %q is not a launch profile", intent.LaunchProfileID))
+			return nil, "", nil, resolutionFailure("profile_not_found", fmt.Errorf("resource_id %q is not a launch profile", intent.LaunchProfileID))
 		}
-		instance, ok := e.registry.Get(mapping.AdapterID)
+		instance, release, ok := e.registry.Acquire(mapping.AdapterID)
 		if !ok {
-			return nil, "", resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile %q adapter %q is not configured", intent.LaunchProfileID, mapping.AdapterID))
+			return nil, "", nil, resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile %q adapter %q is not configured", intent.LaunchProfileID, mapping.AdapterID))
 		}
-		return instance, mapping.AdapterID, nil
+		return instance, mapping.AdapterID, release, nil
 	}
 	if !errors.Is(err, endpointstorage.ErrResourceNotFound) {
-		return nil, "", fmt.Errorf("launch profile %q mapping lookup failed: %w", intent.LaunchProfileID, err)
+		return nil, "", nil, fmt.Errorf("launch profile %q mapping lookup failed: %w", intent.LaunchProfileID, err)
 	}
-	instance, ok := e.registry.Get(intent.LaunchProfileID)
+	instance, release, ok := e.registry.Acquire(intent.LaunchProfileID)
 	if !ok {
-		return nil, "", resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile %q is not configured", intent.LaunchProfileID))
+		return nil, "", nil, resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile %q is not configured", intent.LaunchProfileID))
 	}
-	return instance, intent.LaunchProfileID, nil
+	return instance, intent.LaunchProfileID, release, nil
 }
 
 func (e *Executor) lockFor(key string) *sync.Mutex {

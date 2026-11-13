@@ -15,7 +15,9 @@ import (
 // LaunchOptions queries only explicitly configured, start-capable adapter handlers.
 func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery) (protocol.LaunchOptions, error) {
 	result := protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{}, Projects: []protocol.Project{}}
-	for _, instance := range e.registry.All() {
+	instances, release := e.registry.AcquireAll()
+	defer release()
+	for _, instance := range instances {
 		descriptor, err := instance.Describe(ctx)
 		if err != nil {
 			return result, err

@@ -21,7 +21,9 @@ const historyBudget = 10 * time.Second
 // returning an empty list, because an empty list would read as "this Endpoint has
 // no history", which is a different claim from "this adapter cannot answer".
 func (e *Executor) History(ctx context.Context, query protocol.HistoryQuery) (protocol.HistoryResult, error) {
-	for _, instance := range e.registry.All() {
+	instances, release := e.registry.AcquireAll()
+	defer release()
+	for _, instance := range instances {
 		handler, ok := instance.(adapter.HistoryHandler)
 		if !ok {
 			continue

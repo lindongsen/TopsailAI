@@ -23,16 +23,41 @@ type Config struct {
 	Capabilities *protocol.CapabilityDescriptor
 }
 
+// instance holds one configured adapter together with the number of callers that
+// are still using it.
+//
+// The reference count exists so a Provider CLI version can be replaced while work
+// is in flight. A caller that acquired the instance keeps using it until it
+// releases, which is what makes an in-flight command or a long output stream
+// finish on the version it started on instead of being silently redirected to a
+// version it never validated against. A retired instance is closed only after its
+// last caller releases, so replacing a version never closes a process that is
+// still serving a request.
+type instance struct {
+	adapterID string
+	adapter   Adapter
+	refs      int
+	retired   bool
+}
+
 // Registry contains explicitly registered adapter factories.
 type Registry struct {
 	mu        sync.RWMutex
 	factories map[string]Factory
-	instances map[string]Adapter
+	instances map[string]*instance
+	// draining holds retired instances that still have callers. They are kept so
+	// activation can report how much work is still finishing on the previous
+	// version instead of claiming an immediate clean handover.
+	draining map[string][]*instance
 }
 
 // NewRegistry returns an empty explicit adapter registry.
 func NewRegistry() *Registry {
-	return &Registry{factories: make(map[string]Factory), instances: make(map[string]Adapter)}
+	return &Registry{
+		factories: make(map[string]Factory),
+		instances: make(map[string]*instance),
+		draining:  make(map[string][]*instance),
+	}
 }
 
 // RegisterType registers one provider type without plugin loading or hot reload.
@@ -63,20 +88,28 @@ func (r *Registry) Configure(ctx context.Context, config Config) (Adapter, error
 	if !exists {
 		return nil, fmt.Errorf("provider type %q is not registered", config.ProviderType)
 	}
-	instance, err := factory(ctx, config)
+	configured, err := factory(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("configure adapter %q: %w", config.AdapterID, err)
 	}
-	r.instances[config.AdapterID] = instance
-	return instance, nil
+	r.instances[config.AdapterID] = &instance{adapterID: config.AdapterID, adapter: configured}
+	return configured, nil
 }
 
 // Get returns a configured instance by its stable local adapter ID.
+//
+// It is the read-only accessor used by bounded listing paths, which only read a
+// descriptor and never run provider work. A caller that runs provider work must
+// use Acquire instead, because only Acquire keeps the instance alive across a
+// replacement.
 func (r *Registry) Get(adapterID string) (Adapter, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	instance, ok := r.instances[adapterID]
-	return instance, ok
+	entry, ok := r.instances[adapterID]
+	if !ok {
+		return nil, false
+	}
+	return entry.adapter, true
 }
 
 // All returns a detached snapshot of configured instances for read-only discovery.
@@ -84,8 +117,149 @@ func (r *Registry) All() []Adapter {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make([]Adapter, 0, len(r.instances))
-	for _, instance := range r.instances {
-		result = append(result, instance)
+	for _, entry := range r.instances {
+		result = append(result, entry.adapter)
 	}
 	return result
+}
+
+// Acquire returns the current instance for one adapter and a release function.
+//
+// The returned instance stays usable until release is called, even if the adapter
+// is replaced in the meantime. Release is idempotent so a caller can defer it
+// without tracking whether it already ran.
+func (r *Registry) Acquire(adapterID string) (Adapter, func(), bool) {
+	r.mu.Lock()
+	entry, ok := r.instances[adapterID]
+	if !ok {
+		r.mu.Unlock()
+		return nil, nil, false
+	}
+	entry.refs++
+	configured := entry.adapter
+	r.mu.Unlock()
+	var once sync.Once
+	release := func() {
+		once.Do(func() { r.release(entry) })
+	}
+	return configured, release, true
+}
+
+// AcquireAll returns every configured instance together with one release function.
+//
+// It exists for the bounded read paths that must consult every adapter, such as a
+// launch catalog or a conversation read. Holding a reference for the whole scan
+// means a replacement that lands mid-scan cannot close an instance the scan is
+// still calling, and the scan finishes on the versions it started with.
+func (r *Registry) AcquireAll() ([]Adapter, func()) {
+	r.mu.Lock()
+	entries := make([]*instance, 0, len(r.instances))
+	result := make([]Adapter, 0, len(r.instances))
+	for _, entry := range r.instances {
+		entry.refs++
+		entries = append(entries, entry)
+		result = append(result, entry.adapter)
+	}
+	r.mu.Unlock()
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			for _, entry := range entries {
+				r.release(entry)
+			}
+		})
+	}
+	return result, release
+}
+
+// release decrements one reference and closes a retired instance when it becomes
+// unreachable. Closing happens outside the registry lock so a slow Close cannot
+// block every other adapter lookup.
+func (r *Registry) release(entry *instance) {
+	r.mu.Lock()
+	if entry.refs > 0 {
+		entry.refs--
+	}
+	closeNow := entry.retired && entry.refs == 0
+	if closeNow {
+		r.forgetDraining(entry)
+	}
+	r.mu.Unlock()
+	if closeNow {
+		_ = entry.adapter.Close()
+	}
+}
+
+// forgetDraining removes one retired instance from the draining list. The caller
+// must hold the write lock.
+func (r *Registry) forgetDraining(entry *instance) {
+	entries := r.draining[entry.adapterID]
+	for index, candidate := range entries {
+		if candidate != entry {
+			continue
+		}
+		entries = append(entries[:index], entries[index+1:]...)
+		break
+	}
+	if len(entries) == 0 {
+		delete(r.draining, entry.adapterID)
+		return
+	}
+	r.draining[entry.adapterID] = entries
+}
+
+// Replace atomically swaps the instance registered for one adapter ID and returns
+// the instance that was replaced.
+//
+// The swap is a single map assignment under the write lock, so a concurrent
+// Acquire observes either the previous instance or the next one and never a
+// partially configured adapter. The previous instance is retired rather than
+// closed: callers that already acquired it keep working, and it is closed when
+// the last of them releases. A failed replacement therefore leaves the previous
+// version serving traffic, which is the property that makes activation safe.
+func (r *Registry) Replace(adapterID string, next Adapter) (Adapter, error) {
+	if adapterID == "" {
+		return nil, fmt.Errorf("adapter ID is required")
+	}
+	if next == nil {
+		return nil, fmt.Errorf("replacement adapter is required")
+	}
+	r.mu.Lock()
+	previous, exists := r.instances[adapterID]
+	if !exists {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("adapter ID %q is not configured", adapterID)
+	}
+	if previous.adapter == next {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("adapter ID %q already uses the requested instance", adapterID)
+	}
+	previous.retired = true
+	r.instances[adapterID] = &instance{adapterID: adapterID, adapter: next}
+	closeNow := previous.refs == 0
+	if !closeNow {
+		r.draining[adapterID] = append(r.draining[adapterID], previous)
+	}
+	r.mu.Unlock()
+	if closeNow {
+		_ = previous.adapter.Close()
+	}
+	return previous.adapter, nil
+}
+
+// InFlight reports how many callers still hold an instance for one adapter,
+// including callers finishing on a retired version. It exists so activation can
+// report whether a replacement is still draining instead of claiming an immediate
+// clean handover.
+func (r *Registry) InFlight(adapterID string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	total := 0
+	if entry, ok := r.instances[adapterID]; ok {
+		total += entry.refs
+	}
+	for _, entry := range r.draining[adapterID] {
+		total += entry.refs
+	}
+	return total
 }

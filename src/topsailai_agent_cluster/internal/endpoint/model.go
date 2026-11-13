@@ -23,7 +23,9 @@ const modelCatalogBudget = 10 * time.Second
 // offers no selectable profile", which is a different claim from "this adapter
 // cannot answer".
 func (e *Executor) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
-	for _, instance := range e.registry.All() {
+	instances, release := e.registry.AcquireAll()
+	defer release()
+	for _, instance := range instances {
 		handler, ok := instance.(adapter.ModelCatalogHandler)
 		if !ok {
 			continue
