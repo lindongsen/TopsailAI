@@ -44,10 +44,10 @@
 # the node libc; the SQLite driver is pure Go, so nothing is lost.
 #
 # Usage:
-#   make-deb.sh --role <node|server|endpoint|config> --dest <dir> [options]
+#   make-deb.sh --role <node|server|endpoint|config|provider> --dest <dir> [options]
 #
 # Options:
-#   --role      node, server, endpoint or config (required)
+#   --role      node, server, endpoint, config or provider (required)
 #   --dest      directory that receives the .deb (required)
 #   --version   package version (default: derived from git)
 #   --revision  package revision (default: 1)
@@ -61,8 +61,13 @@
 #   --key       private key paired with --cert (default: development key)
 #   --ca        CA certificate (default: /opt/agent-cluster/certs/ca.pem)
 #   --adapters  adapter JSON for the endpoint role; replaces the template value
+#   --provider-type  Provider type a provider package carries (default: topsailai)
 #   --build-dir staging tree root (default: .tmp/deb/build)
 #   --keep      keep the staging tree for inspection
+#
+# The provider role builds agent-cluster-provider-topsailai. Its payload path is
+# versioned from the binary's own describe output, so the installed path and the
+# identity the binary reports cannot disagree.
 
 set -uo pipefail
 
@@ -102,6 +107,9 @@ CERT=""
 KEY=""
 CA="${LOCAL_CERTS}/ca.pem"
 ADAPTERS=""
+# A provider package carries one Provider type. The type names the payload
+# directory and the package name, so two Provider types never share a path.
+PROVIDER_TYPE="topsailai"
 # The staging tree is where the package payload is assembled before dpkg-deb
 # packs it. It is separate from --dest so the output directory holds only
 # finished packages, and so a caller can place the staging tree on a different
@@ -120,7 +128,7 @@ function warn() {
 }
 
 function usage() {
-    sed -n '2,63p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2
 }
 
@@ -138,6 +146,7 @@ while [ $# -gt 0 ]; do
         --key) KEY="${2:-}"; shift 2 ;;
         --ca) CA="${2:-}"; shift 2 ;;
         --adapters) ADAPTERS="${2:-}"; shift 2 ;;
+        --provider-type) PROVIDER_TYPE="${2:-}"; shift 2 ;;
         --build-dir) BUILD_DIR="${2:-}"; shift 2 ;;
         --keep) KEEP=1; shift ;;
         --print-version) PRINT_VERSION=1; shift ;;
@@ -195,7 +204,16 @@ case "${ROLE}" in
             *) die "--role config requires --config-role server or endpoint" ;;
         esac
         ;;
-    *) die "--role must be node, server, endpoint or config" ;;
+    provider)
+        # A Provider type names a payload directory and a package name, so it must
+        # be a plain lowercase token. A type carrying a slash would escape the
+        # provider root, and a type carrying an uppercase letter would produce a
+        # package name dpkg rejects.
+        case "${PROVIDER_TYPE}" in
+            *[!a-z0-9-]* | "") die "--provider-type must be lowercase letters, digits and hyphens, got '${PROVIDER_TYPE}'" ;;
+        esac
+        ;;
+    *) die "--role must be node, server, endpoint, config or provider" ;;
 esac
 [ -n "${DEST}" ] || die "--dest is required"
 
@@ -230,6 +248,11 @@ if [ "${ROLE}" = "config" ]; then
     esac
     CONFIG_PACKAGE_BASE="agent-cluster-config-${CONFIG_ROLE}"
     PACKAGE="${CONFIG_PACKAGE_BASE}-${SITE}"
+elif [ "${ROLE}" = "provider" ]; then
+    # A provider package is named after the Provider type it carries, so two
+    # Provider types never collide and an operator reading dpkg output knows which
+    # Provider a package installs.
+    PACKAGE="agent-cluster-provider-${PROVIDER_TYPE}"
 else
     PACKAGE="agent-cluster-${ROLE}"
 fi
@@ -241,9 +264,12 @@ EFFECTIVE_ROLE="${ROLE}"
 [ "${ROLE}" = "config" ] && EFFECTIVE_ROLE="${CONFIG_ROLE}"
 # The control description names what the package actually provides. A config
 # package provides the site configuration for a role, not the role itself, and
-# saying otherwise would mislead an operator reading dpkg output.
+# saying otherwise would mislead an operator reading dpkg output. A provider
+# package provides one Provider CLI, not a node role.
 if [ "${ROLE}" = "config" ]; then
     ROLE_PHRASE="the ${EFFECTIVE_ROLE} configuration for this site"
+elif [ "${ROLE}" = "provider" ]; then
+    ROLE_PHRASE="the ${PROVIDER_TYPE} Provider CLI"
 else
     ROLE_PHRASE="the ${ROLE} role"
 fi
@@ -620,10 +646,87 @@ function build_config_package() {
     fi
 }
 
+# Builds the optional Provider CLI package.
+#
+# The payload path is versioned by the package version, so a new build never
+# overwrites an installed version and a rollback can name an exact directory. The
+# Provider's own identity is recorded in manifest.json beside the binary, because
+# the directory names the artifact build while the manifest names the Provider
+# behaviour; the postinst compares the two instead of trusting the path.
+#
+# This package is deliberately independent of every other package. The Endpoint
+# package neither depends on nor recommends any Provider, so a node can run with
+# zero Adapters and a Provider can be installed, upgraded or removed without
+# touching the Endpoint. The Mock Provider is never packaged: it exists only to
+# prove the protocol in tests.
+function build_provider_package() {
+    local module_dir="${PROJECT_DIR}/providers/${PROVIDER_TYPE}"
+    [ -d "${module_dir}" ] || die "missing Provider module ${module_dir}"
+    local version_dir="${OPT_DIR}/providers/${PROVIDER_TYPE}/${FULL_VERSION}"
+    local binary="${version_dir}/agent-cluster-provider-${PROVIDER_TYPE}"
+    local manifest="${version_dir}/manifest.json"
+
+    # The Provider is a separate Go module, so it is built from its own directory
+    # rather than through the root module. The caches are pinned under .tmp so a
+    # package build never writes outside the workspace.
+    local go_cache="${PROJECT_DIR}/.tmp/go-cache"
+    local go_tmp="${PROJECT_DIR}/.tmp/go-tmp"
+    mkdir -p "${go_cache}" "${go_tmp}" || die "cannot create the Go cache directories"
+    ( cd "${module_dir}" && CGO_ENABLED=0 GOCACHE="${go_cache}" GOTMPDIR="${go_tmp}" \
+        go build -trimpath -ldflags "-s -w" -o "${PKG_ROOT}${binary}" . ) ||
+        die "static build failed for the ${PROVIDER_TYPE} Provider"
+    chmod 0755 "${PKG_ROOT}${binary}" || die "cannot set mode on ${binary}"
+
+    # The identity is read from the binary that was just built, so the manifest
+    # cannot describe a different build than the one shipped.
+    local describe_request='{"protocol":"agent-cluster-adapter","major":1,"minor":0,"request_id":"package-identity","function":"describe","adapter_id":"package-identity","deadline_at_ms":9999999999999,"budget":{"max_stdout_bytes":1048576,"max_stderr_bytes":65536,"max_records":10000},"payload":{}}'
+    local describe_response
+    describe_response=$(printf '%s' "${describe_request}" | "${PKG_ROOT}${binary}") ||
+        die "the ${PROVIDER_TYPE} Provider did not answer describe"
+    local provider_version descriptor_revision
+    provider_version=$(printf '%s' "${describe_response}" | sed -n 's/.*"provider_version":"\([^"]*\)".*/\1/p')
+    descriptor_revision=$(printf '%s' "${describe_response}" | sed -n 's/.*"descriptor_revision":"\([^"]*\)".*/\1/p')
+    [ -n "${provider_version}" ] || die "the ${PROVIDER_TYPE} Provider reported no provider_version"
+    [ -n "${descriptor_revision}" ] || die "the ${PROVIDER_TYPE} Provider reported no descriptor_revision"
+    local digest
+    digest=$(sha256sum "${PKG_ROOT}${binary}" | cut -d' ' -f1)
+
+    mkdir -p "$(dirname "${PKG_ROOT}${manifest}")" || die "cannot create ${manifest}"
+    {
+        echo "{"
+        echo "  \"provider_type\": \"${PROVIDER_TYPE}\","
+        echo "  \"provider_version\": \"${provider_version}\","
+        echo "  \"descriptor_revision\": \"${descriptor_revision}\","
+        echo "  \"protocol\": \"agent-cluster-adapter\","
+        echo "  \"protocol_major\": 1,"
+        echo "  \"protocol_minimum_minor\": 0,"
+        echo "  \"protocol_maximum_minor\": 0,"
+        echo "  \"package_version\": \"${FULL_VERSION}\","
+        echo "  \"sha256\": \"${digest}\""
+        echo "}"
+    } >"${PKG_ROOT}${manifest}" || die "cannot write ${manifest}"
+    chmod 0644 "${PKG_ROOT}${manifest}"
+
+    # The postinst carries the Provider type and the package version, because it
+    # verifies the version this package installed and never guesses it.
+    add_file "${SCRIPT_DIR}/deb/postinst.provider" "/DEBIAN/postinst" 0755
+    sed -i "s/@PROVIDER_TYPE@/${PROVIDER_TYPE}/g; s/@PACKAGE_VERSION@/${FULL_VERSION}/g" \
+        "${PKG_ROOT}/DEBIAN/postinst" || die "cannot specialise the postinst"
+
+    add_copyright
+
+    # No dependency on the Endpoint package and none on the node controller: a
+    # Provider CLI is a standalone executable the Endpoint invokes, so installing
+    # it must not pull in a role.
+    write_control "bash (>= 4.0), coreutils" "" \
+        "Agent Cluster ${PROVIDER_TYPE} Provider CLI"
+}
+
 case "${ROLE}" in
     node) build_node_package ;;
     server | endpoint) build_role_package ;;
     config) build_config_package ;;
+    provider) build_provider_package ;;
 esac
 
 # --root-owner-group makes every entry root:root, so the package does not depend

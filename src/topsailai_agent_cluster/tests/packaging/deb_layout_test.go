@@ -166,16 +166,21 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 	// The test uses a single site, which is enough to prove the suffix reaches
 	// the package name and the virtual name stays stable.
 	builds := []struct {
-		key        string
-		role       string
-		configRole string
-		site       string
+		key          string
+		role         string
+		configRole   string
+		providerType string
+		site         string
 	}{
 		{key: "node", role: "node"},
 		{key: "server", role: "server"},
 		{key: "endpoint", role: "endpoint"},
 		{key: "config-server", role: "config", configRole: "server", site: debTestSite},
 		{key: "config-endpoint", role: "config", configRole: "endpoint", site: debTestSite},
+		// The Provider CLI package is built here so the layout assertions below
+		// cover it. It is a standalone executable, so it is built without a
+		// certificate and without a site configuration.
+		{key: "provider-topsailai", role: "provider", providerType: "topsailai"},
 	}
 	for _, build := range builds {
 		args := []string{
@@ -189,10 +194,16 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 		if build.configRole != "" {
 			args = append(args, "--config-role", build.configRole)
 		}
+		if build.providerType != "" {
+			args = append(args, "--provider-type", build.providerType)
+		}
 		if build.site != "" {
 			args = append(args, "--site", build.site)
 		}
-		if build.role != "node" {
+		// Only the role and config packages carry a TLS identity. The node
+		// package ships the controller and the Provider package ships a
+		// standalone executable, so neither needs a certificate.
+		if build.role == "server" || build.role == "endpoint" || build.role == "config" {
 			args = append(args,
 				"--cert", filepath.Join(certs, "node.pem"),
 				"--key", filepath.Join(certs, "node-key.pem"),

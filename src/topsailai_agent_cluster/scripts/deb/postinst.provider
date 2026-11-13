@@ -1,0 +1,122 @@
+#!/bin/bash
+# Author: DawsonLin
+# Purpose: Debian postinst for the agent-cluster-provider-topsailai package.
+#
+# Installing a Provider CLI is not the same as activating it. This script proves
+# the installed bytes are the bytes that were verified at build time, proves the
+# binary still reports the identity recorded in its manifest, and then bounds how
+# many superseded versions stay on disk. It never selects a version for an
+# Adapter: activation is a per-adapter decision made by the controller, so a
+# package install must not change which Provider version an Adapter runs.
+#
+# Two checks are deliberate:
+#
+#   - The digest check compares the installed file with the digest recorded in
+#     manifest.json at build time. A path that names a version is not proof that
+#     the file at that path is that version, and dpkg accepts a same-version
+#     replacement silently.
+#   - The describe check runs the installed binary and compares the identity it
+#     reports with the manifest. A binary that cannot answer describe cannot serve
+#     any request, so installing it would leave an Adapter that fails on every
+#     call.
+#
+# Retention is bounded and configurable. The version this package installed is
+# never removed, and an invalid setting falls back to the default instead of
+# deleting anything.
+
+set -uo pipefail
+
+PROVIDER_TYPE="@PROVIDER_TYPE@"
+PACKAGE_VERSION="@PACKAGE_VERSION@"
+PROVIDER_ROOT="/opt/agent-cluster/providers/${PROVIDER_TYPE}"
+VERSION_DIR="${PROVIDER_ROOT}/${PACKAGE_VERSION}"
+BINARY="${VERSION_DIR}/agent-cluster-provider-${PROVIDER_TYPE}"
+MANIFEST="${VERSION_DIR}/manifest.json"
+
+# Defaults keep one previous version for a rollback and retire anything older than
+# a month. Both are overridable at install time, because a site that rolls back
+# often needs more history and a small disk needs less.
+RETENTION_COUNT="${AGENT_CLUSTER_PROVIDER_RETENTION_COUNT:-2}"
+RETENTION_DAYS="${AGENT_CLUSTER_PROVIDER_RETENTION_DAYS:-30}"
+
+function warn() {
+    echo "agent-cluster-provider-${PROVIDER_TYPE}: WARNING: $*" >&2
+}
+
+function fail() {
+    echo "agent-cluster-provider-${PROVIDER_TYPE}: ERROR: $*" >&2
+    exit 1
+}
+
+case "${1:-configure}" in
+    configure) ;;
+    abort-upgrade | abort-remove | abort-deconfigure) exit 0 ;;
+    *) exit 0 ;;
+esac
+
+[ -f "${BINARY}" ] || fail "missing ${BINARY}"
+[ -f "${MANIFEST}" ] || fail "missing ${MANIFEST}"
+
+# The digest proves the installed bytes are the verified bytes. A mismatch means
+# the package payload and its manifest disagree, which no later check can repair.
+expected_digest=$(sed -n 's/.*"sha256":"\([0-9a-f]*\)".*/\1/p' "${MANIFEST}")
+[ -n "${expected_digest}" ] || fail "the manifest carries no sha256"
+actual_digest=$(sha256sum "${BINARY}" | cut -d' ' -f1)
+[ "${expected_digest}" = "${actual_digest}" ] ||
+    fail "digest mismatch for ${BINARY}: manifest ${expected_digest}, installed ${actual_digest}"
+
+# The describe probe proves the binary runs and reports the identity its manifest
+# records. It is a read-only request: no provider command is invoked.
+describe_request='{"protocol":"agent-cluster-adapter","major":1,"minor":0,"request_id":"postinst-identity","function":"describe","adapter_id":"postinst-identity","deadline_at_ms":9999999999999,"budget":{"max_stdout_bytes":1048576,"max_stderr_bytes":65536,"max_records":10000},"payload":{}}'
+describe_response=$(printf '%s' "${describe_request}" | "${BINARY}") ||
+    fail "${BINARY} did not answer describe"
+reported_type=$(printf '%s' "${describe_response}" | sed -n 's/.*"provider_type":"\([^"]*\)".*/\1/p')
+reported_version=$(printf '%s' "${describe_response}" | sed -n 's/.*"provider_version":"\([^"]*\)".*/\1/p')
+manifest_version=$(sed -n 's/.*"provider_version":"\([^"]*\)".*/\1/p' "${MANIFEST}")
+[ "${reported_type}" = "${PROVIDER_TYPE}" ] ||
+    fail "${BINARY} reports provider_type ${reported_type}, expected ${PROVIDER_TYPE}"
+[ -n "${manifest_version}" ] || fail "the manifest carries no provider_version"
+[ "${reported_version}" = "${manifest_version}" ] ||
+    fail "${BINARY} reports provider_version ${reported_version}, manifest records ${manifest_version}"
+
+# A retention setting that is not a positive integer is a configuration mistake.
+# Falling back to the default keeps the install working and, more importantly,
+# keeps a typo from turning into an unbounded delete.
+function positive_integer() {
+    case "$1" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -gt 0 ]
+}
+
+if ! positive_integer "${RETENTION_COUNT}"; then
+    warn "AGENT_CLUSTER_PROVIDER_RETENTION_COUNT=${RETENTION_COUNT} is not a positive integer; using 2"
+    RETENTION_COUNT=2
+fi
+if ! positive_integer "${RETENTION_DAYS}"; then
+    warn "AGENT_CLUSTER_PROVIDER_RETENTION_DAYS=${RETENTION_DAYS} is not a positive integer; using 30"
+    RETENTION_DAYS=30
+fi
+
+# Superseded versions are visited newest-first, so the count limit keeps the most
+# recent ones. The version this package installed is skipped explicitly: removing
+# it would leave the package installed with no payload. The count starts at one
+# because the installed version is already kept.
+kept=1
+for directory in $(ls -1dt "${PROVIDER_ROOT}"/*/ 2>/dev/null); do
+    name=$(basename "${directory}")
+    [ "${name}" = "${PACKAGE_VERSION}" ] && continue
+    case "${name}" in
+        '' | */*) continue ;;
+    esac
+    modified=$(stat -c %Y "${directory}" 2>/dev/null) || continue
+    age_days=$(( ($(date +%s) - modified) / 86400 ))
+    if [ "${kept}" -ge "${RETENTION_COUNT}" ] || [ "${age_days}" -ge "${RETENTION_DAYS}" ]; then
+        echo "agent-cluster-provider-${PROVIDER_TYPE}: removing superseded version ${name} (age ${age_days}d, ${kept} newer kept)" >&2
+        rm -rf "${PROVIDER_ROOT:?}/${name}"
+    else
+        kept=$((kept + 1))
+    fi
+done
+
+exit 0

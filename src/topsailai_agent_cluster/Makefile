@@ -110,6 +110,12 @@ DEB_CERT :=
 DEB_KEY :=
 DEB_CA :=
 DEB_ADAPTERS :=
+# Provider type the optional Provider CLI package is built for. A Provider CLI is
+# a standalone executable the Endpoint invokes, so its package is built on demand
+# rather than as part of `deb`: an Endpoint deployment must not depend on any
+# specific Provider, and a site that runs a different Provider must not receive
+# this one by accident.
+DEB_PROVIDER_TYPE ?= topsailai
 # Site identifier that suffixes a config package name. Two sites build config
 # packages with identical names and versions but different contents, so without
 # this suffix dpkg cannot tell them apart and accepts the wrong one silently.
@@ -139,7 +145,7 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
         test-provider-topsailai test-provider-topsailai-conformance \
         test-bdd test-integration test-packaging test-harness \
         bdd integration \
-        deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint \
+        deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint deb-provider \
         deb-inspect deb-clean \
         image image-build image-run image-stop image-inspect image-clean \
         server-start server-stop server-restart server-status \
@@ -186,6 +192,8 @@ help:
 	@echo "  deb-endpoint      build the endpoint binary package only"
 	@echo "  deb-config-server build the server site configuration package only"
 	@echo "  deb-config-endpoint build the endpoint site configuration package only"
+	@echo "  deb-provider      build the optional Provider CLI package only"
+	@echo "                    (DEB_PROVIDER_TYPE, default $(DEB_PROVIDER_TYPE))"
 	@echo "  deb-inspect       list the packages and their control fields"
 	@echo "  deb-clean         remove the package output and staging trees"
 	@echo ""
@@ -365,6 +373,16 @@ deb-config-endpoint:
 	@mkdir -p $(DEB_DIR)
 	@bash $(DEB_BUILDER) --role config --config-role endpoint --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS) \
 		$(call deb_arg,--adapters,$(DEB_ADAPTERS))
+
+# Builds the optional Provider CLI package. It is deliberately not part of `deb`:
+# an Endpoint deployment must not depend on any specific Provider, and a site that
+# runs a different Provider must not receive this one by accident. The payload
+# path carries the package version, so installing a new version never overwrites
+# the bytes an Adapter is currently running and a rollback is a path change rather
+# than a rebuild.
+deb-provider:
+	@mkdir -p $(DEB_DIR)
+	@bash $(DEB_BUILDER) --role provider --provider-type $(DEB_PROVIDER_TYPE) --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS)
 
 # Builds every package. Packages left by an earlier version are removed first: a
 # directory holding two versions of the same package is what `dpkg -i *.deb`
