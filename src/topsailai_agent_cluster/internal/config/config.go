@@ -270,9 +270,12 @@ func ParseAdapters(value string) ([]AdapterConfig, error) {
 	if err := json.Unmarshal([]byte(value), &adapters); err != nil {
 		return nil, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_ADAPTERS: %w", err)
 	}
-	if len(adapters) == 0 {
-		return nil, fmt.Errorf("AGENT_CLUSTER_ENDPOINT_ADAPTERS must contain at least one adapter")
-	}
+	// An empty list is valid and means the Endpoint is configured with no
+	// Adapter. Such an Endpoint still starts, connects and reports health; it
+	// simply advertises no resource and refuses every command, because there is
+	// no Adapter to route to. Rejecting the empty list would make a
+	// zero-Adapter node impossible to run, which is the state a fresh install
+	// and a Provider CLI rollout both pass through.
 	seen := make(map[string]struct{}, len(adapters))
 	for i := range adapters {
 		item := &adapters[i]

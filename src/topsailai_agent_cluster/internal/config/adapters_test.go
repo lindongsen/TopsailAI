@@ -8,8 +8,14 @@ func TestParseAdaptersValidatesSchema(t *testing.T) {
 	if err != nil || len(adapters) != 1 || adapters[0].Command != "/bin/echo" {
 		t.Fatalf("valid adapter rejected: %#v %v", adapters, err)
 	}
+	// An empty list is valid: a zero-Adapter Endpoint must be able to start so an
+	// operator can verify the channel before configuring any Adapter.
+	empty, err := ParseAdapters(`[]`)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty adapter list rejected: %#v %v", empty, err)
+	}
 	cases := []string{
-		`{`, `[]`, `[{"adapter_id":"a","provider_type":"fixture","command":"relative","timeout_ms":1}]`,
+		`{`, `[{"adapter_id":"a","provider_type":"fixture","command":"relative","timeout_ms":1}]`,
 		`[{"adapter_id":"a","provider_type":"fixture","command":"/bin/echo","timeout_ms":1},{"adapter_id":"a","provider_type":"fixture","command":"/bin/echo","timeout_ms":1}]`,
 	}
 	for _, value := range cases {

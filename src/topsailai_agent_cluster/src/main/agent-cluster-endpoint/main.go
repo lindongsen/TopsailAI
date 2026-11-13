@@ -115,11 +115,12 @@ func main() {
 			logger.Error("connect endpoint channel; reconnecting", "error", err)
 		}
 	}
+	// A zero-Adapter Endpoint is a supported state, not a startup failure. It
+	// connects, reports health and advertises no resource, so an operator can
+	// verify the channel and the deployment before any Adapter is configured.
+	// Exiting here would make the first step of a rollout impossible to observe.
 	if len(cfg.Adapters) == 0 {
-		logger.Error("endpoint adapters are required", "error", "AGENT_CLUSTER_ENDPOINT_ADAPTERS is empty")
-		_ = client.Close()
-		_ = store.Close()
-		os.Exit(1)
+		logger.Info("endpoint has no configured adapter; no resource is advertised and every command is refused")
 	}
 	registry := adapter.NewRegistry()
 	// The control action file is Endpoint-local administrative configuration and
