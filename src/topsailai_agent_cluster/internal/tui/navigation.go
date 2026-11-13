@@ -106,16 +106,18 @@ func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *i
 	// A session entry is not an action result, so it carries no receipt and the
 	// tail keeps its previous behaviour: selecting a session is exactly when the
 	// operator wants to see its output.
-	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, "session selected", nil)
+	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, "session selected", nil, 0)
 }
 
 // renderAutomaticSnapshot renders one bounded output snapshot for the selected
 // session and reports a failed read as a diagnostic instead of an error. The
 // caller has already validated the selection, so a follow-up read must never
 // turn an accepted action into a failure. failurePrefix names the action that
-// triggered the read, so the operator can tell which step failed.
-func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *interactiveState, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string) error {
-	return renderSnapshotForTarget(parent, api, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, color, options, failurePrefix)
+// triggered the read, so the operator can tell which step failed. maxLines is the
+// budget the step asked for, so the substitute reads the same amount the stream
+// it replaces would have read.
+func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *interactiveState, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string, maxLines int) error {
+	return renderSnapshotForTarget(parent, api, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, color, options, failurePrefix, maxLines)
 }
 
 // renderSnapshotForTarget renders one bounded output snapshot for an explicit
@@ -123,12 +125,15 @@ func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *
 // two routes cannot drift into two renderers, two budgets or two failure
 // messages. The target is passed explicitly because a recovery addresses the
 // session that was followed, which is not necessarily the current selection.
-func renderSnapshotForTarget(parent context.Context, api InteractiveAPI, endpointID, sessionID, generation string, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string) error {
-	maxBytes, maxLines := interactiveOutputBounds(options)
+// A non-positive maxLines keeps the REPL budget, which is what the follow
+// recovery wants: it recovers a stream that already ran, so it has no smaller
+// budget of its own to honour.
+func renderSnapshotForTarget(parent context.Context, api InteractiveAPI, endpointID, sessionID, generation string, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string, maxLines int) error {
+	maxBytes, lines := outputBoundsForLines(options, maxLines)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	if err := runner.RenderSessionSnapshot(ctx, trustedOut, endpointID, sessionID, generation, maxBytes, maxLines, color); err != nil {
+	if err := runner.RenderSessionSnapshot(ctx, trustedOut, endpointID, sessionID, generation, maxBytes, lines, color); err != nil {
 		// The diagnostic interpolates a provider error, so it is sanitized
 		// before it reaches the trusted writer.
 		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic logs failed: "+sanitizeTerminal([]byte(err.Error())))
@@ -176,7 +181,7 @@ func recoverFollowOutput(parent context.Context, api InteractiveAPI, watch Watch
 	if _, err := fmt.Fprintln(trustedOut, renderFollowStatus(message, ansiDim, OutputColorPolicy(trustedOut), false)); err != nil {
 		return err
 	}
-	return renderSnapshotForTarget(parent, api, request.EndpointID, request.ResourceID, request.ProviderGeneration, trustedOut, OutputColorPolicy(trustedOut), options, "follow recovery")
+	return renderSnapshotForTarget(parent, api, request.EndpointID, request.ResourceID, request.ProviderGeneration, trustedOut, OutputColorPolicy(trustedOut), options, "follow recovery", 0)
 }
 
 // refreshSelectedSession asks the selected session's Endpoint for one fresh
@@ -232,6 +237,23 @@ func interactiveOutputBounds(options InteractiveOptions) (int, int) {
 		maxBytes = 64 << 10
 	}
 	return maxBytes, maxLines
+}
+
+// outputBoundsForLines resolves the bounded output read limits for one step that
+// may carry its own trailing line count. A positive maxLines is used as given,
+// because a step such as the post-send tail deliberately reads fewer lines than
+// the REPL default; a non-positive value keeps the REPL budget through
+// interactiveOutputBounds. The byte budget is always the REPL byte budget, so a
+// smaller line count never widens the record bound.
+//
+// This is the only place the two budgets meet, so a stream and the snapshot that
+// substitutes for it cannot disagree about how much output they read.
+func outputBoundsForLines(options InteractiveOptions, maxLines int) (int, int) {
+	maxBytes, lines := interactiveOutputBounds(options)
+	if maxLines > 0 {
+		lines = maxLines
+	}
+	return maxBytes, lines
 }
 
 // rerenderNavigatedList refreshes the visible list for workspace and endpoint scopes.

@@ -152,25 +152,36 @@ see the effect.
   primary action may already have exhausted.
 - A follow-up step is interactive-only. The standalone surface keeps one command
   per action, so a script never receives extra output it did not ask for.
-- Four interactive steps arm the same live tail as `logs -f`: entering a session,
-  `send`, `btw` and `start`. They share one arm-or-snapshot helper, so the four
-  cannot drift into four copies of the capability check, the announcement or the
-  degradation wording. `interrupt` is deliberately excluded, because stopping a
-  turn is not a reason to expect new output.
+- Four interactive steps arm a live tail: entering a session, `send`, `btw` and
+  `start`. They share one arm-or-snapshot helper, so the four cannot drift into
+  four copies of the capability check, the announcement or the degradation
+  wording. `interrupt` is deliberately excluded, because stopping a turn is not a
+  reason to expect new output.
+- The tail's trailing line count is a per-step budget, not one global value.
+  Entering a session and `start` read the REPL budget, because the operator is
+  looking at a session for the first time and wants its recent context. `send` and
+  `btw` read 10 lines, so they behave as `logs -n 10 -f`: the operator just acted
+  on a session they were already reading, so the tail only has to show the effect
+  of that action. The two budgets meet in one resolver, so a stream and the
+  snapshot that substitutes for it can never read a different amount.
+- The 10-line budget is deliberately below the REPL minimum of 100. It is a fixed
+  budget for one automatic step, so it must not pass through the startup-budget
+  clamp, which would silently turn 10 into 100 and make the step read the whole
+  REPL budget again.
 - Entering a session arms the tail for the identity the transition already
   validated, so the entry costs one output read and no repeated discovery. It
   degrades to one bounded snapshot, with a diagnostic that says so, when the client
   cannot stream or the input mode cannot observe a keypress.
 - `btw` arms the tail after its durable receipt, because injected context usually
   makes the agent keep working and the operator should not have to type `logs` to
-  see the effect.
-- `send` arms the same live tail as `logs -f` and then forces one collection for the
-  selected endpoint and revalidates only the selected session, so a later `list`
-  reads a newer persisted document. The tail is armed first because it binds the
-  generation validated before the send, while a refresh can replace that
-  generation; the stream itself opens on the next prompt, through the same seam
-  that starts an explicit `logs -f`. A one-shot snapshot is not used here, because
-  it stops at the moment it was read while the agent keeps writing.
+  see the effect. It reads 10 trailing lines, so it behaves as `logs -n 10 -f`.
+- `send` arms the same 10-line tail as `logs -n 10 -f` and then forces one
+  collection for the selected endpoint and revalidates only the selected session,
+  so a later `list` reads a newer persisted document. The tail is armed first
+  because it binds the generation validated before the send, while a refresh can
+  replace that generation; the stream itself opens on the next prompt, through the
+  same seam that starts an explicit `logs -f`. A one-shot snapshot is not used
+  here, because it stops at the moment it was read while the agent keeps writing.
 - `start` arms the same live tail as `logs -f` for the session it launched, so the
   operator watches the new session without typing `logf`. The tail is armed
   **after** the post-start collection, and that order is the opposite of `send` on
@@ -193,7 +204,9 @@ see the effect.
   so, when the client cannot stream or the input mode cannot observe a keypress.
   A live tail that cannot be stopped would be worse than a snapshot, and a
   snapshot presented as a stream would look complete while silently missing
-  everything written after it.
+  everything written after it. The substitute reads the same trailing line count
+  the stream would have read, so a degraded `send` or `btw` still shows 10 lines
+  and a degraded entry or `start` still shows the REPL budget.
 - A refresh that replaces the selected session drops the armed tail and reports
   it, because a stream bound to the replaced generation must never start.
 - `send` asks for confirmation only when the payload is not already on screen. An

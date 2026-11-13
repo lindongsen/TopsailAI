@@ -76,11 +76,13 @@ func TestUnitBtwAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 	}
 }
 
-// TestUnitBtwAutoFollowIsBoundedByTheReplDefaults proves the automatic tail
-// carries the REPL budget. Without it the adapter would clamp the tail to 20
-// lines, so the operator would see a 300-line entry tail followed by a stream
-// that only tailed 20.
-func TestUnitBtwAutoFollowIsBoundedByTheReplDefaults(t *testing.T) {
+// TestUnitBtwAutoFollowUsesTheTenLineBudget proves the automatic tail reads the
+// same 10 trailing lines as logs -n 10 -f, so a completed btw shows the recent
+// effect instead of the whole REPL budget. The literal 10 is asserted rather than
+// a named constant, because the value must stay below MinInteractiveMaxLines: a
+// budget routed through NormalizeInteractiveMaxLines would be clamped up to 100
+// and this test would still pass if it compared against that resolver.
+func TestUnitBtwAutoFollowUsesTheTenLineBudget(t *testing.T) {
 	stub := newSendFollowStub()
 	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "quit"}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
@@ -89,8 +91,8 @@ func TestUnitBtwAutoFollowIsBoundedByTheReplDefaults(t *testing.T) {
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
-	if got := requests[0].maxLines; got != DefaultInteractiveMaxLines {
-		t.Fatalf("automatic follow maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
+	if got := requests[0].maxLines; got != 10 {
+		t.Fatalf("automatic follow maxLines=%d want=10", got)
 	}
 	if got := requests[0].maxBytes; got != 64<<10 {
 		t.Fatalf("automatic follow maxBytes=%d want=%d", got, 64<<10)
@@ -135,8 +137,15 @@ func TestUnitBtwAutoFollowDegradesToASnapshotWithoutStreaming(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	if requests := sendOutputRequests(stub); len(requests) != 1 {
+	requests := sendOutputRequests(stub)
+	if len(requests) != 1 {
 		t.Fatalf("post-btw snapshot reads=%+v, want exactly one", requests)
+	}
+	// The substitute must read the same 10 lines the stream would have read, so a
+	// degraded step never shows a different amount of output than the live tail it
+	// replaced.
+	if got := requests[0].maxLines; got != 10 {
+		t.Fatalf("degraded post-btw snapshot maxLines=%d want=10", got)
 	}
 	if !strings.Contains(output, "btw completed; automatic follow unavailable:") {
 		t.Fatalf("missing degradation diagnostic: %q", output)
