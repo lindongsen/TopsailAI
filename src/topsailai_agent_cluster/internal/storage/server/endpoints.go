@@ -57,6 +57,36 @@ func (s *Store) MarkPersistedEndpointsOffline(ctx context.Context, offlineSinceM
 	return updated, nil
 }
 
+// BackfillOfflineSince repairs rows that are offline but carry no retention
+// clock. Such a row is unreachable: the expiry predicate requires
+// offline_since_at_ms > 0, so no cutoff can ever select it. The state was
+// created by a schema change that added the column with a zero default and did
+// not backfill existing rows, and no later write path repairs it because these
+// Endpoints never reconnect.
+//
+// update_at_ms is the correct source here even though it must never be the
+// expiry predicate. The predicate needs a clock that unrelated metadata writes
+// cannot refresh; a one-time backfill asks a different question, namely what the
+// best available evidence of the offline moment is. For a row that has not been
+// written since it went offline, that moment is its last write. After the
+// backfill the value is frozen, so the predicate still reads only
+// offline_since_at_ms.
+//
+// The update_at_ms > 0 guard makes the repair fail closed. A corrupt zero
+// timestamp would otherwise copy zero into offline_since_at_ms and recreate the
+// unreachable state, which is the defect this function exists to remove.
+func (s *Store) BackfillOfflineSince(ctx context.Context) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE endpoints SET offline_since_at_ms = update_at_ms WHERE connection_state != 'online' AND offline_since_at_ms = 0 AND update_at_ms > 0`)
+	if err != nil {
+		return 0, fmt.Errorf("backfill endpoint offline timestamp: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count backfilled endpoint offline timestamps: %w", err)
+	}
+	return updated, nil
+}
+
 // EndpointExpiryResult identifies every stale Server projection removed.
 type EndpointExpiryResult struct {
 	InventoryEndpointIDs []string

@@ -157,6 +157,19 @@ func main() {
 	if recoveredEndpoints > 0 {
 		logger.Info("recovered persisted endpoint connection states", "endpoints_marked_offline", recoveredEndpoints, "offline_since_at_ms", recoveryAtMS)
 	}
+	// Repair rows that are offline but carry no retention clock. They are
+	// unreachable by the expiry predicate, so without this step a legacy row
+	// stays forever. It runs after the recovery above so a row that just
+	// reconnected already holds a positive clock and is excluded.
+	backfilledEndpoints, err := store.BackfillOfflineSince(ctx)
+	if err != nil {
+		logger.Error("backfill endpoint offline timestamps", "error", err)
+		_ = store.Close()
+		os.Exit(1)
+	}
+	if backfilledEndpoints > 0 {
+		logger.Info("backfilled endpoint offline timestamps", "endpoints_backfilled", backfilledEndpoints)
+	}
 	// Record the resolved addresses before serving: without this line a healthy
 	// start leaves no trace in the log, so a silent death cannot be told apart
 	// from a start that never happened.
