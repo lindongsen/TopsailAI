@@ -111,6 +111,15 @@ func main() {
 		}
 		return
 	}
+	// A crash after the invocation was recorded but before any answer is written
+	// is the uncertain boundary the Cluster must report as unknown. It is a
+	// separate fault from exit-result-conflict, which writes a valid answer and
+	// then exits non-zero: that one proves a conflict between exit and result,
+	// while this one proves that no result exists at all.
+	if fault == "crash-after-invocation" && request.Function == functionExecute {
+		recordInvocation(options, request, "execute")
+		os.Exit(97)
+	}
 	response := handleUnary(request, fault, options)
 	if fault == "wrong-request-id" {
 		response.RequestID = "wrong-request-id"
@@ -136,6 +145,13 @@ func main() {
 	}
 	if fault == "exit-result-conflict" {
 		os.Exit(7)
+	}
+	// The exit code is gated on the function, because a fault that also broke
+	// describe or discover would make the adapter unhealthy and the session
+	// invisible, so a scenario that only wants a failing execution would fail
+	// before it could submit one.
+	if fault == "execute-failure" && request.Function == functionExecute {
+		os.Exit(2)
 	}
 }
 
@@ -188,6 +204,14 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			time.Sleep(time.Duration(options.delayMS) * time.Millisecond)
 		}
 		recordInvocation(options, request, "execute")
+		// The diagnostic goes to stderr and the answer is a failure document, so
+		// the Cluster keeps the provider's own words as evidence instead of
+		// flattening the failure into a generic error. The invocation is recorded
+		// first, because a failing execution still happened.
+		if fault == "execute-failure" {
+			writeDiagnostic("mock execution failure")
+			return failureResponse(request.RequestID, "provider_error", "mock execution failure", "not_applied")
+		}
 		return executeResponse(request, fault)
 	case functionQuery:
 		if request.Query == nil || request.Query.Version != "v1" || fault == "false-capability" {
@@ -217,6 +241,13 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		}
 	case functionReadOutput:
 		recordInvocation(options, request, "output.read")
+		// A provider that cannot read output reports the capability gap instead of
+		// returning an empty snapshot, because an empty snapshot is a successful
+		// read of nothing and would be indistinguishable from a session that has
+		// produced no output yet.
+		if fault == "output-unsupported" {
+			return failureResponse(request.RequestID, "unsupported", "output is unsupported", "not_applied")
+		}
 		// The content and the truncation rule mirror what the removed argv
 		// fixture emitted, so a migrated scenario keeps asserting the same
 		// Cluster behaviour instead of a new invented shape. The marker text is

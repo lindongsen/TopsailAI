@@ -279,7 +279,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		mode = options.Faults.FixtureMode
 	}
 	discoveryCount := filepath.Join(root, "discovery-count")
-	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, "timeout_ms": 5000}}
+	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": append([]string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, providerFaultArgs(options.Faults)...), "timeout_ms": 5000}}
 	// The TopsailAI adapter is the only adapter that can stream output, so a
 	// follow scenario selects it explicitly. Its fixture answers discovery from a
 	// workspace document and streams plain text records on the follow path.
@@ -348,7 +348,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	adapterArgs[0]["capabilities"] = map[string]any{"revision": revision, "capabilities": declared}
 	for i := range adapterArgs {
 		if options.Faults.ProviderFailAdapterID == adapterArgs[i]["adapter_id"] {
-			adapterArgs[i]["args"] = append(adapterArgs[i]["args"].([]string), "--fault", "exit-result-conflict")
+			adapterArgs[i]["args"] = append(adapterArgs[i]["args"].([]string), "--fault", "execute-failure")
 		}
 	}
 	adapterJSON, err := marshalAdapterConfigurationFn(adapterArgs)
@@ -684,6 +684,32 @@ func (c *Cluster) ProviderInvocations(t testing.TB) []map[string]any {
 		t.Fatal(err)
 	}
 	return result
+}
+
+// providerFaultArgs translates the provider-side faults into Provider CLI argv.
+//
+// The faults cannot travel through the environment. The Generic CLI Adapter
+// starts the Provider CLI with exactly the environment its configuration names,
+// and the Endpoint adapter document has no environment field, so a variable set
+// on the Endpoint process never reaches the provider child. argv is the only
+// channel the harness controls, which is why the mock accepts these as flags.
+//
+// Only provider-side faults are translated here. Endpoint-side faults such as a
+// receipt delay or a crash before invocation belong to the Endpoint process and
+// are still delivered through appendFaultEnvironment, because they describe when
+// the Endpoint acts rather than what the provider answers.
+func providerFaultArgs(faults FaultInjection) []string {
+	var args []string
+	switch {
+	case faults.CrashAfterInvocationStarted:
+		args = append(args, "--fault", "crash-after-invocation")
+	case faults.OutputUnsupported:
+		args = append(args, "--fault", "output-unsupported")
+	}
+	if faults.ProviderFailAfterN > 0 {
+		args = append(args, "--fail-after-n", fmt.Sprint(faults.ProviderFailAfterN))
+	}
+	return args
 }
 
 func appendFaultEnvironment(env []string, faults FaultInjection) []string {
