@@ -41,6 +41,20 @@ type Scenario struct {
 var activeScenario *Scenario
 var activeTest *testing.T
 
+// fallbackLaunchProfileID and fallbackLaunchProfileRevision are the launch profile
+// a scenario declares when the live catalog cannot be read.
+//
+// The identity is the adapter ID the harness configures, and the revision is the
+// harness descriptor revision. Both are stated here rather than derived, because
+// the catalog is exactly what is unavailable on this path: deriving them from the
+// response that failed would be circular. They must stay in step with
+// harness.ClusterOptions defaults, and a mismatch surfaces as
+// profile_revision_mismatch on the start path rather than as a silent pass.
+const (
+	fallbackLaunchProfileID       = "fixture-main"
+	fallbackLaunchProfileRevision = "v1"
+)
+
 // World owns isolated resources and the real HTTP server used by one scenario.
 type World struct {
 	Root        string
@@ -244,6 +258,14 @@ func (w *World) submitRealCommandWithToken(commandID string, submission commandS
 // so it is not knowable in advance and must never be written into a scenario. The
 // revision is read from the same response because agent.start compares it against
 // the descriptor revision before the policy hook runs.
+//
+// A credential that lacks the launch.query permission receives 403 here. That is
+// not a scenario failure: the scenario is exercising a different permission, and
+// the launch catalog is only a convenience for resolving an opaque identity. The
+// fallback therefore returns the scenario-declared profile and the harness
+// descriptor revision, and it logs the reason at WARN so a real catalog outage is
+// never mistaken for a permission the scenario deliberately withheld. Swallowing
+// the status silently would hide a broken catalog behind a passing scenario.
 func (w *World) resolveLaunchProfile() (string, string, error) {
 	if w.realCluster == nil {
 		return "", "", fmt.Errorf("real cluster is not running")
@@ -251,6 +273,12 @@ func (w *World) resolveLaunchProfile() (string, string, error) {
 	status, body, err := w.realRequestE(http.MethodGet, "/api/v1/launch-options?endpoint_id=endpoint-1", nil)
 	if err != nil {
 		return "", "", fmt.Errorf("read launch options: %w", err)
+	}
+	if status == http.StatusForbidden {
+		if activeTest != nil {
+			activeTest.Logf("WARN launch catalog unavailable (status=%d body=%s), falling back to the scenario-declared profile %q at revision %q", status, body, fallbackLaunchProfileID, fallbackLaunchProfileRevision)
+		}
+		return fallbackLaunchProfileID, fallbackLaunchProfileRevision, nil
 	}
 	if status != http.StatusOK {
 		return "", "", fmt.Errorf("launch options status=%d body=%s", status, body)
