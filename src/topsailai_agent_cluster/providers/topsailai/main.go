@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -29,23 +30,5 @@ func serve(reader io.Reader, writer io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return encodeResponse(writer, dispatch(request))
-}
-
-// dispatch handles only functions truthfully advertised by the descriptor.
-func dispatch(request request) response {
-	base := response{version: currentVersion(), RequestID: request.RequestID}
-	if request.Function == functionDescribe {
-		descriptor := topsailaiDescriptor()
-		base.OK = true
-		base.Descriptor = &descriptor
-		return base
-	}
-	base.Error = &providerError{
-		Code:            "unsupported",
-		Message:         "provider function is not implemented",
-		Retryable:       false,
-		EffectCertainty: effectNotApplied,
-	}
-	return base
+	return encodeResponse(writer, newProvider(newCLIRunner(os.Environ())).dispatch(context.Background(), request))
 }

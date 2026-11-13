@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -47,11 +49,12 @@ func TestServeDescribe(t *testing.T) {
 	if !response.OK || response.Descriptor == nil {
 		t.Fatalf("response = %+v", response)
 	}
-	if got := response.Descriptor.Functions; len(got) != 1 || got[0] != functionDescribe {
-		t.Fatalf("functions = %v", got)
+	wantFunctions := []string{functionDescribe, functionDiscover, functionInspect, functionQuery, functionReadOutput}
+	if got := response.Descriptor.Functions; !reflect.DeepEqual(got, wantFunctions) {
+		t.Fatalf("functions = %v want %v", got, wantFunctions)
 	}
-	if len(response.Descriptor.Operations) != 0 || len(response.Descriptor.Queries) != 0 {
-		t.Fatalf("unimplemented contracts advertised: %+v", response.Descriptor)
+	if len(response.Descriptor.Operations) != 0 || len(response.Descriptor.Queries) != 4 {
+		t.Fatalf("descriptor contracts: %+v", response.Descriptor)
 	}
 }
 
@@ -80,11 +83,17 @@ func TestServeRejectsExtraDocument(t *testing.T) {
 
 // TestDispatchRejectsUnimplementedFunction verifies fail-closed dispatch.
 func TestDispatchRejectsUnimplementedFunction(t *testing.T) {
-	response := dispatch(validRequest(functionDiscover))
+	response := newProvider(stubCommandRunner{}).dispatch(context.Background(), validRequest(functionExecute))
 	if response.OK || response.Error == nil {
 		t.Fatalf("response = %+v", response)
 	}
 	if response.Error.Code != "unsupported" || response.Error.EffectCertainty != effectNotApplied {
 		t.Fatalf("error = %+v", response.Error)
 	}
+}
+
+type stubCommandRunner struct{}
+
+func (stubCommandRunner) Run(context.Context, []string, []byte) ([]byte, []byte, error) {
+	return nil, nil, nil
 }

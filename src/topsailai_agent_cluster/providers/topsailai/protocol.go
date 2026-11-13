@@ -21,6 +21,15 @@ const (
 )
 
 const (
+	resourceSession       = "session"
+	resourceLaunchProfile = "launch_profile"
+	resourceModelProfile  = "model_profile"
+
+	queryLaunchOptions   = "launch.options"
+	queryHistoryMessages = "history.messages"
+	queryModelCatalog    = "model.catalog"
+	querySessionMessages = "session.messages"
+
 	effectNotApplied = "not_applied"
 	providerVersion  = "1.0.0"
 )
@@ -78,10 +87,44 @@ type providerError struct {
 // response is one non-streaming Provider CLI result.
 type response struct {
 	version
-	RequestID  string         `json:"request_id"`
-	OK         bool           `json:"ok"`
-	Descriptor *descriptor    `json:"descriptor,omitempty"`
-	Error      *providerError `json:"error,omitempty"`
+	RequestID   string            `json:"request_id"`
+	OK          bool              `json:"ok"`
+	Descriptor  *descriptor       `json:"descriptor,omitempty"`
+	Discovery   *discoveryResult  `json:"discovery,omitempty"`
+	Inspection  *inspectionResult `json:"inspection,omitempty"`
+	QueryResult json.RawMessage   `json:"query_result,omitempty"`
+	Output      *outputSnapshot   `json:"output,omitempty"`
+	Error       *providerError    `json:"error,omitempty"`
+}
+
+// providerObservation is one provider-owned fact before Endpoint ID mapping.
+type providerObservation struct {
+	ProviderResourceKey string          `json:"provider_resource_key"`
+	ProviderGeneration  string          `json:"provider_generation,omitempty"`
+	ResourceKind        string          `json:"resource_kind"`
+	State               string          `json:"state"`
+	StateReason         string          `json:"state_reason,omitempty"`
+	ObservedAtMS        int64           `json:"observed_at_ms"`
+	Attributes          json.RawMessage `json:"attributes,omitempty"`
+}
+
+type discoveryResult struct {
+	Observations []providerObservation `json:"observations"`
+	Complete     bool                  `json:"complete"`
+	Checkpoint   string                `json:"checkpoint,omitempty"`
+}
+
+type inspectionResult struct {
+	Found       bool                 `json:"found"`
+	Live        bool                 `json:"live"`
+	Observation *providerObservation `json:"observation,omitempty"`
+}
+
+type outputSnapshot struct {
+	ObservedAtMS int64  `json:"observed_at_ms"`
+	Content      string `json:"content"`
+	Truncated    bool   `json:"truncated"`
+	Complete     bool   `json:"complete"`
 }
 
 // descriptor reports the independently built TopsailAI Provider surface.
