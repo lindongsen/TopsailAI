@@ -34,6 +34,12 @@ const (
 	providerVersion  = "1.0.0"
 )
 
+const (
+	frameStarted = "started"
+	frameRecord  = "record"
+	frameEnd     = "end"
+)
+
 // version identifies the public Provider CLI protocol revision.
 type version struct {
 	Protocol string `json:"protocol"`
@@ -95,6 +101,18 @@ type response struct {
 	QueryResult json.RawMessage   `json:"query_result,omitempty"`
 	Output      *outputSnapshot   `json:"output,omitempty"`
 	Error       *providerError    `json:"error,omitempty"`
+}
+
+// streamFrame is one strict JSON Lines lifecycle frame.
+type streamFrame struct {
+	version
+	RequestID    string          `json:"request_id"`
+	Type         string          `json:"type"`
+	Sequence     int64           `json:"sequence"`
+	ObservedAtMS int64           `json:"observed_at_ms,omitempty"`
+	Record       json.RawMessage `json:"record,omitempty"`
+	Truncated    bool            `json:"truncated,omitempty"`
+	Error        *providerError  `json:"error,omitempty"`
 }
 
 // providerObservation is one provider-owned fact before Endpoint ID mapping.

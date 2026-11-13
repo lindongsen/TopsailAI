@@ -12,7 +12,7 @@ func topsailaiDescriptor() descriptor {
 			Minimum:  protocolMinor,
 			Maximum:  protocolMinor,
 		},
-		Functions:  []string{functionDescribe, functionDiscover, functionInspect, functionQuery, functionReadOutput},
+		Functions:  []string{functionDescribe, functionDiscover, functionInspect, functionQuery, functionReadOutput, functionFollowOutput},
 		Operations: []namedContract{},
 		Queries: []namedContract{
 			{Name: queryLaunchOptions, Version: queryVersion},

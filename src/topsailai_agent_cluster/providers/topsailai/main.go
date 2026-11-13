@@ -17,7 +17,7 @@ func main() {
 	}
 }
 
-// serve reads and handles exactly one unary request.
+// serve reads and handles exactly one Provider CLI request.
 func serve(reader io.Reader, writer io.Writer) error {
 	document, err := io.ReadAll(io.LimitReader(reader, maxRequestBytes+1))
 	if err != nil {
@@ -30,5 +30,9 @@ func serve(reader io.Reader, writer io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return encodeResponse(writer, newProvider(newCLIRunner(os.Environ())).dispatch(context.Background(), request))
+	provider := newProvider(newCLIRunner(os.Environ()))
+	if request.Function == functionFollowOutput {
+		return provider.followOutput(context.Background(), request, writer)
+	}
+	return encodeResponse(writer, provider.dispatch(context.Background(), request))
 }

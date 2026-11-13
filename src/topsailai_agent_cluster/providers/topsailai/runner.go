@@ -15,6 +15,7 @@ const (
 	executableEnvironment = "AGENT_CLUSTER_TOPSAILAI_EXECUTABLE"
 	defaultExecutable     = "topsailai"
 	defaultCommandTimeout = 30 * time.Second
+	followWaitDelay       = 5 * time.Second
 )
 
 // cliRunner executes the locally configured TopsailAI business CLI directly.
@@ -59,6 +60,46 @@ func (r cliRunner) Run(parent context.Context, args []string, stdin []byte) ([]b
 	}
 	return stdout.Bytes(), stderr.Bytes(), nil
 }
+
+// Follow streams plain-text output from one owned business CLI invocation.
+func (r cliRunner) Follow(parent context.Context, args []string, limit int, emit func(followRecord) error) error {
+	command := exec.CommandContext(parent, r.executable, args...)
+	command.Env = followEnvironment(r.executable, r.environment)
+	configureProcessGroup(command)
+	command.Cancel = func() error { return killProcessGroup(command) }
+	command.WaitDelay = followWaitDelay
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("prepare follow stdout: %w", err)
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("start follow command: %w", err)
+	}
+	readErr := scanFollowLines(stdout, limit, emit)
+	if readErr != nil {
+		_ = killProcessGroup(command)
+	}
+	waitErr := command.Wait()
+	if readErr != nil {
+		return readErr
+	}
+	if parent.Err() != nil {
+		return parent.Err()
+	}
+	if waitErr != nil {
+		message := boundedText(stderr.Bytes(), 4096)
+		if message == "" {
+			return fmt.Errorf("follow command failed: %w", waitErr)
+		}
+		return fmt.Errorf("follow command failed: %w: stderr=%q", waitErr, message)
+	}
+	return nil
+}
+
+var _ commandRunner = cliRunner{}
+var _ streamCommandRunner = cliRunner{}
 
 // providerEnvironment puts an absolute Provider executable directory first on PATH.
 func providerEnvironment(executable string, base []string) []string {
