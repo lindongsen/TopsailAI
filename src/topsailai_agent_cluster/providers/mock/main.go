@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -171,13 +172,70 @@ func handleUnary(request request, fault string) response {
 	return base
 }
 
+// operationEvidence is the deterministic provider evidence for one operation.
+//
+// The delivery boundary and outcome are not decoration: the Cluster receipt is
+// built from exactly these two fields, so a scenario that asserts "stop request
+// sent" needs signal_sent here and a scenario that asserts "delivered" needs
+// pipe_written. The values mirror what the removed argv fixture emitted, so a
+// migrated scenario keeps asserting the same Cluster behaviour instead of a new
+// invented shape.
+type operationEvidence struct {
+	deliveryBoundary string
+	effectCertainty  string
+	providerOutcome  string
+	providerResponse string
+}
+
+// operationEvidenceTable answers every operation the mock advertises.
+//
+// A missing entry is a deliberate rejection rather than a silent success, so an
+// operation that is advertised but not answered cannot pass unnoticed.
+var operationEvidenceTable = map[string]operationEvidence{
+	"message.send":        {deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"context.inject":      {deliveryBoundary: "pipe_written", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"execution.interrupt": {deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.stop":          {deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.resume":        {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.start":         {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.drive.start":   {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.drive.stop":    {deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"agent.model.select":  {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"ok":true}`},
+	"command.exec":        {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"ok":true}`},
+	"workspace.clean":     {deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"ok":true}`},
+}
+
+// nonLiveOperations are the operations the Cluster contract allows to address a
+// resource without a live generation. The list is duplicated here on purpose:
+// the mock is a separate Go module and cannot import the Cluster's internal
+// package, so the duplication is the price of the module boundary. A drift is
+// caught by the conformance suite, which drives both sides.
+var nonLiveOperations = map[string]struct{}{
+	"agent.resume":     {},
+	"agent.drive.stop": {},
+	"workspace.clean":  {},
+}
+
 // executeResponse revalidates generation inside the mutation path.
 func executeResponse(request request, fault string) response {
-	if request.Target == nil || request.Target.ExpectedGeneration != "generation-1" || fault == "generation-race" {
-		return failureResponse(request.RequestID, "generation_mismatch", "provider generation changed", "not_applied")
-	}
-	if request.Operation == nil || request.Operation.Name != "message.send" || request.Operation.Version != "v1" {
+	if request.Operation == nil || request.Operation.Version != "v1" {
 		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
+	}
+	evidence, ok := operationEvidenceTable[request.Operation.Name]
+	if !ok {
+		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
+	}
+	// A live operation must prove which process it reaches, so an absent target
+	// or a changed generation is rejected before any effect is claimed. A
+	// non-live operation addresses a durable record instead, so it is allowed to
+	// carry no generation at all.
+	if _, nonLive := nonLiveOperations[request.Operation.Name]; !nonLive {
+		if request.Target == nil || request.Target.ExpectedGeneration != "generation-1" {
+			return failureResponse(request.RequestID, "generation_mismatch", "provider generation changed", "not_applied")
+		}
+	}
+	if fault == "generation-race" {
+		return failureResponse(request.RequestID, "generation_mismatch", "provider generation changed", "not_applied")
 	}
 	return response{
 		version:   currentVersion(),
@@ -185,15 +243,34 @@ func executeResponse(request request, fault string) response {
 		OK:        true,
 		Result: &operationResult{
 			ProviderRequestRef:        "provider-ref-1",
-			DeliveryBoundary:          "pipe_written",
-			EffectCertainty:           "acknowledged",
-			ProviderOutcome:           "submitted",
-			ProviderResponse:          `{"ok":true}`,
+			DeliveryBoundary:          evidence.deliveryBoundary,
+			EffectCertainty:           evidence.effectCertainty,
+			ProviderOutcome:           evidence.providerOutcome,
+			ProviderResponse:          evidence.providerResponse,
 			ProviderResponseTruncated: false,
 			StartedAtMS:               fixtureTimeMS,
 			FinishedAtMS:              fixtureTimeMS + 1,
 		},
 	}
+}
+
+// mockOperations returns every operation the mock advertises.
+//
+// The list is derived from the evidence table so the advertised surface and the
+// answered surface cannot drift apart: an operation that is advertised but not
+// answered would be a capability lie, and an operation that is answered but not
+// advertised would be unreachable.
+func mockOperations() []namedContract {
+	names := make([]string, 0, len(operationEvidenceTable))
+	for name := range operationEvidenceTable {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	operations := make([]namedContract, 0, len(names))
+	for _, name := range names {
+		operations = append(operations, namedContract{Name: name, Version: "v1"})
+	}
+	return operations
 }
 
 // mockDescriptor returns the deterministic Provider CLI surface.
@@ -224,7 +301,7 @@ func mockDescriptor(fault string) descriptor {
 			functionReadOutput,
 			functionFollowOutput,
 		},
-		Operations:     []namedContract{{Name: "message.send", Version: "v1"}},
+		Operations:     mockOperations(),
 		Queries:        queries,
 		ControlActions: []namedContract{},
 		Limits: budget{
