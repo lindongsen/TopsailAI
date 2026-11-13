@@ -5,6 +5,7 @@ Author: DawsonLin
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -397,8 +398,17 @@ class TestEndToEnd:
         task_dir = tmp_path / "workspace" / "task"
         task_dir.mkdir(parents=True)
         record = task_dir / "sad-e2e.999999.session.meta"
-        record.write_text(json.dumps({"session_id": "sad-e2e", "pid": 999999}),
-                          encoding="utf-8")
+        # The probe authorizes deletion only from a complete owner record:
+        # production create_session_meta always writes hostname and status, and
+        # the atexit finalizer turns a still-running owner into "interrupted".
+        # A minimal {"session_id", "pid"} fixture is therefore not a realistic
+        # owner record and is correctly refused as incomplete evidence.
+        record.write_text(json.dumps({
+            "session_id": "sad-e2e",
+            "pid": 999999,
+            "hostname": socket.gethostname(),
+            "status": "interrupted",
+        }), encoding="utf-8")
         environment = dict(os.environ)
         environment["TOPSAILAI_HOME"] = str(tmp_path)
         environment["TOPSAILAI_SESSION_DRIVER_REAPER_ENABLED"] = "0"
