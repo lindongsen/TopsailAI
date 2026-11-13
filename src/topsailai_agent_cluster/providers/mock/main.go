@@ -217,11 +217,28 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		}
 	case functionReadOutput:
 		recordInvocation(options, request, "output.read")
-		content := "mock output\n"
+		// The content and the truncation rule mirror what the removed argv
+		// fixture emitted, so a migrated scenario keeps asserting the same
+		// Cluster behaviour instead of a new invented shape. The marker text is
+		// what the policy and output-scope scenarios look for, and max_bytes is
+		// the budget the Cluster forwards, so honouring it is what makes a
+		// bounded snapshot actually bounded rather than merely labelled.
+		content := "provider output marker"
+		truncated := false
+		var budget struct {
+			MaxBytes int `json:"max_bytes"`
+		}
+		if len(request.Payload) > 0 {
+			_ = json.Unmarshal(request.Payload, &budget)
+		}
+		if budget.MaxBytes > 0 && len(content) > budget.MaxBytes {
+			content = content[:budget.MaxBytes]
+			truncated = true
+		}
 		if options.outputSize > len(content) {
 			content += strings.Repeat("x", options.outputSize-len(content))
 		}
-		base.Output = &outputSnapshot{ObservedAtMS: fixtureTimeMS, Content: content, Complete: true}
+		base.Output = &outputSnapshot{ObservedAtMS: fixtureTimeMS, Content: content, Truncated: truncated, Complete: !truncated}
 	default:
 		return failureResponse(request.RequestID, "unsupported", "function is unsupported", "not_applied")
 	}
