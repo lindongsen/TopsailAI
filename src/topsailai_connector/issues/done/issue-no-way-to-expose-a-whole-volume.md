@@ -151,3 +151,42 @@ amd64, arm64 and 386, and the Windows test binaries, all compiled.
 it opens `C:\`, lists 22 entries, and still refuses `..\Windows\win.ini` with
 `path escapes from parent`. The fence therefore remains effective at a volume root,
 which is what makes the opt-in safe rather than merely convenient.
+
+## Live end-to-end verification
+
+The unit tests proved the deny list works, but the claim "a volume-root scope does
+not disclose the Node's own credentials" was still resting on tests alone. It was
+then verified through a real Server and a real Node, with a policy whose only scope
+was `root` mapped to `/` and `allow_filesystem_root: true`.
+
+Setup: `connector-server run` on `:8443`, `connector-node run` dialling
+`ws://127.0.0.1:8443/channel`, config directory inside the scope. The Node logged
+`scopes=[root]` and `channel established`, so the opt-in was genuinely active and
+the scope genuinely covered the config directory.
+
+| Check | Command target | Result |
+|---|---|---|
+| Read the identity file through `/` | `config/identity` | `denied`, RC=1 |
+| Read the policy file through `/` | `config/policy.yaml` | `denied`, RC=1 |
+| Read the config directory itself | `config` | `denied`, RC=1 |
+| Stat the identity file | `config/identity` | `denied`, RC=1 |
+| List the parent directory | the bundle directory | `config` absent from the output; only the four ordinary files listed, RC=0 |
+| Read an ordinary file through `/` | `etc/hostname` | `topsail`, RC=0 |
+| Escape with `..` | `../etc/hostname` | `invalid_argument`, RC=1 |
+| Escape with an absolute path | `/etc/hostname` | `invalid_argument`, RC=1 |
+| Sibling directory not over-denied | `config-backup/probe.txt` | `sibling-ok`, RC=0 |
+
+The listing row is the one that matters most. Before the change, `List` never
+consulted the deny list, so a volume-root scope would have disclosed the config
+directory's name and the size of every file in it even though reading them was
+refused. The output above shows the directory is omitted entirely rather than
+listed with a refusal marker, so the metadata leak is closed as well as the content
+leak.
+
+The sibling row guards the opposite failure. A deny rule written as a string prefix
+comparison would refuse `config-backup` because it starts with `config`. The
+separator-boundary comparison in `isDeniedPath` does not, and the live check
+confirms it.
+
+Both processes were stopped by exact PID after the run, and the temporary directory
+was removed.
