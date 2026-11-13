@@ -993,3 +993,49 @@ Why this prevents recurrence: an indentation assertion is the only thing that pr
 loosening it to a substring match would make the test pass while losing the property it exists to
 check. The failure is also easy to misattribute, because the message names the renderer's output rather
 than the expectation, and the renderer's output is the part that looks wrong.
+
+## A shared wait-marker that depends on the guard under test collapses attribution
+
+Trigger: the endpoint-expiry BDD suite seeded a `sweep-sentinel` endpoint in every scenario and waited
+for it to disappear as proof that a sweep had run. The sentinel was seeded with
+`offline_since_at_ms = 0`, so it only became expirable through the startup backfill. Breaking the
+backfill therefore failed **all six** scenarios, including `a_connected_endpoint_is_never_expired`,
+which has nothing to do with the backfill. The suite looked sensitive, but it could not attribute a
+failure to a boundary.
+
+Action: when a test needs a marker that proves a shared mechanism ran, seed that marker so it is
+eligible on its own, independent of every guard the scenarios are meant to discriminate. Here the
+sentinel now carries a positive `offline_since_at_ms`, so it expires regardless of the backfill, and
+breaking the backfill fails only the legacy scenario. Write the reason into the seed function's
+comment, because the zero value looks like the natural choice and the coupling is invisible.
+
+Why this prevents recurrence: a shared marker is convenient precisely because it is shared, so it is
+easy to give it the same shape as the scenario fixtures. That shape is what couples every scenario to
+one guard. The failure mode is the opposite of a missing test: the suite is green, and it does fail
+when the guard breaks, so it appears to work. Only breaking one guard at a time reveals that the
+failures are not attributable. The same trap applies to any shared readiness probe, shared fixture row
+or shared "wait until" condition whose eligibility depends on the code path under test.
+
+## A guard that production writes cannot reach must be proven at the storage layer
+
+Trigger: removing `connection_state != 'online'` from both expiry DELETEs did not fail any BDD
+scenario, including the one named `a_connected_endpoint_is_never_expired`. Investigation showed the
+guard is unreachable through production writes: `UpsertEndpoint` forces `offline_since_at_ms = 0` for
+an online state, and `MarkPersistedEndpointsOffline` converts every online row to offline before a
+sweep runs. So `offline_since_at_ms > 0` already excludes online rows, and the state guard only
+protects against a corrupt or hand-edited row.
+
+Action: when a deliberate break does not fail the test that claims to guard it, first decide whether
+the guard is redundant or the test is wrong, and prove which by tracing the write paths that can
+produce the guarded state. If no production path can produce it, the guard is defense-in-depth and
+must be proven where the state can be created directly, which is usually the storage layer. Seed the
+corrupt state there, assert the row survives, and confirm the test fails when the guard is removed.
+Then narrow the BDD scenario's stated claim to the reachable invariant, and record the distinction so
+nobody later reads that scenario as proof of the guard.
+
+Why this prevents recurrence: a safety scenario that passes for the wrong reason is worse than no
+scenario, because it certifies a guard nobody has exercised. The tempting response to a break that
+does not fail is to assume the guard is redundant and delete it, which removes the only protection
+against a corrupt row. The other tempting response is to leave the green scenario alone, which keeps
+a false claim in the suite. Tracing the write paths answers the question with evidence, and moving the
+proof to the layer that can create the state keeps the guard tested without pretending BDD covers it.
