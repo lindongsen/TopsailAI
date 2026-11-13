@@ -292,40 +292,60 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if options.Faults.ProviderAlwaysFail && !options.Faults.TwoAdapters {
 		adapterArgs[0]["args"].([]string)[1] = "fail"
 	}
-	// The generic fixture adapter's default capability list omits operations such
-	// as context.inject, so a scenario that drives one declares the list it needs.
-	// The default is a production value, so it is replaced here rather than
-	// widened for every deployment.
+	// The harness always declares a capability descriptor, because the Generic CLI
+	// Adapter has no built-in default. It intersects the configured list with what
+	// the provider advertises, so an empty configured list advertises nothing and
+	// every command is rejected as unsupported. The removed command adapter
+	// supplied three operations implicitly; that implicit default is replaced here
+	// by an explicit one, so the harness states the surface it exercises instead of
+	// inheriting it from a seam that no longer exists.
+	//
+	// The list mirrors the production TopsailAI descriptor, restricted to the
+	// operations the mock provider answers. An operation the provider does not
+	// advertise is dropped by the intersection, so declaring one here would look
+	// like coverage while advertising nothing.
+	//
+	// An operation that changes provider state declares the mutating safety class
+	// and the control permission, and a read-only operation declares the view
+	// permission. Leaving either field empty would make the descriptor a contract
+	// lie: the safety class decides whether an operator must confirm, and the
+	// permission decides which credential may invoke.
 	//
 	// The descriptor revision is declared alongside the list because agent.start
 	// compares the requested profile revision against it before the policy hook
 	// runs. A descriptor without a revision therefore rejects every start with
 	// profile_revision_mismatch, which would make a start scenario pass while
 	// proving nothing about authorization.
-	if len(options.Faults.AdvertisedCapabilities) > 0 {
-		declared := make([]map[string]string, 0, len(options.Faults.AdvertisedCapabilities))
-		for _, name := range options.Faults.AdvertisedCapabilities {
-			declared = append(declared, map[string]string{"name": name, "version": advertisedCapabilityVersion(options.Faults, name)})
-		}
-		adapterArgs[0]["capabilities"] = map[string]any{"revision": advertisedCapabilityRevision(options.Faults), "capabilities": declared}
+	declared := []map[string]any{
+		{"name": "message.send", "version": "v1", "target_kinds": []string{"session"}},
+		{"name": "context.inject", "version": "v1", "target_kinds": []string{"session"}},
+		{"name": "execution.interrupt", "version": "v1", "target_kinds": []string{"session"}},
+		{"name": "agent.start", "version": "v1", "target_kinds": []string{"endpoint"}},
+		{"name": "agent.resume", "version": "v1", "target_kinds": []string{"session"}},
+		{"name": "agent.stop", "version": "v1", "target_kinds": []string{"session"}},
+		{"name": "agent.drive.start", "version": "v1", "target_kinds": []string{"session"}},
+		{"name": "agent.drive.stop", "version": "v1", "target_kinds": []string{"session"}},
+		{"name": "workspace.clean", "version": "v1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
+		{"name": "command.exec", "version": "1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
+		{"name": "agent.model.select", "version": "1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
 	}
-	if options.Faults.UnsupportedCapability != "" {
-		capabilities := []map[string]string{{"name": "message.send", "version": "v1"}, {"name": "execution.interrupt", "version": "v1"}, {"name": "agent.stop", "version": "v1"}}
-		revision := advertisedCapabilityRevision(options.Faults)
-		if declared, ok := adapterArgs[0]["capabilities"].(map[string]any); ok {
-			capabilities = declared["capabilities"].([]map[string]string)
-			if value, ok := declared["revision"].(string); ok {
-				revision = value
-			}
+	if len(options.Faults.AdvertisedCapabilities) > 0 {
+		declared = make([]map[string]any, 0, len(options.Faults.AdvertisedCapabilities))
+		for _, name := range options.Faults.AdvertisedCapabilities {
+			declared = append(declared, map[string]any{"name": name, "version": advertisedCapabilityVersion(options.Faults, name)})
 		}
-		filtered := capabilities[:0]
-		for _, capability := range capabilities {
+	}
+	revision := advertisedCapabilityRevision(options.Faults)
+	if options.Faults.UnsupportedCapability != "" {
+		filtered := make([]map[string]any, 0, len(declared))
+		for _, capability := range declared {
 			if capability["name"] != options.Faults.UnsupportedCapability {
 				filtered = append(filtered, capability)
 			}
 		}
-		adapterArgs[0]["capabilities"] = map[string]any{"revision": revision, "capabilities": filtered}
+		declared = filtered
 	}
+	adapterArgs[0]["capabilities"] = map[string]any{"revision": revision, "capabilities": declared}
 	for i := range adapterArgs {
 		if options.Faults.ProviderFailAdapterID == adapterArgs[i]["adapter_id"] {
 			adapterArgs[i]["args"] = append(adapterArgs[i]["args"].([]string), "--fault", "exit-result-conflict")
