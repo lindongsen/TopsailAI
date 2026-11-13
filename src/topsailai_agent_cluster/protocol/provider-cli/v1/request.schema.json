@@ -143,6 +143,36 @@
       "if": {
         "properties": {
           "function": {
+            "const": "execute"
+          },
+          "operation": {
+            "properties": {
+              "name": {
+                "const": "agent.start"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "required": [
+          "function",
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "agent-start-payload.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "function": {
             "const": "query"
           }
         },

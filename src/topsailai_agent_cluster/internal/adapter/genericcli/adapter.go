@@ -3,13 +3,16 @@
 package genericcli
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
+	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/protocol"
@@ -176,8 +179,12 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	if err != nil {
 		return adapter.ExecuteResult{}, err
 	}
+	payload, err := executionPayload(intent)
+	if err != nil {
+		return adapter.ExecuteResult{}, err
+	}
 	operation := &providercli.NamedContract{Name: intent.Operation, Version: intent.OperationVersion}
-	response, invokeErr := a.call(ctx, classMutation, providercli.FunctionExecute, target, operation, nil, intent.CommandID, intent.Payload)
+	response, invokeErr := a.call(ctx, classMutation, providercli.FunctionExecute, target, operation, nil, intent.CommandID, payload)
 	if response.Error != nil {
 		result := adapter.ExecuteResult{Receipt: receiptFromProviderError(response.Error)}
 		if invokeErr != nil {
@@ -463,6 +470,43 @@ func (a *Adapter) request(ctx context.Context, function string, target *provider
 		Budget: providercli.Budget{MaxStdoutBytes: a.config.MaxStdoutBytes, MaxStderrBytes: a.config.MaxStderrBytes, MaxRecords: a.config.MaxRecords},
 		Target: target, Operation: operation, Query: query, Payload: payload,
 	}, nil
+}
+
+func executionPayload(intent protocol.ImmutableIntent) (json.RawMessage, error) {
+	if intent.Operation != protocol.OperationAgentStart {
+		return intent.Payload, nil
+	}
+	if !utf8.Valid(intent.Payload) {
+		return nil, errors.New("Cluster agent.start payload must be valid UTF-8")
+	}
+	var source struct {
+		Task json.RawMessage `json:"task"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(intent.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&source); err != nil {
+		return nil, fmt.Errorf("decode Cluster agent.start payload: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("Cluster agent.start payload contains an extra JSON document")
+		}
+		return nil, fmt.Errorf("decode Cluster agent.start payload trailer: %w", err)
+	}
+	var task string
+	if len(source.Task) > 0 {
+		if bytes.Equal(bytes.TrimSpace(source.Task), []byte("null")) {
+			return nil, errors.New("Cluster agent.start task must not be null")
+		}
+		if err := json.Unmarshal(source.Task, &task); err != nil {
+			return nil, fmt.Errorf("decode Cluster agent.start task: %w", err)
+		}
+		if task == "" {
+			return nil, errors.New("Cluster agent.start task must not be empty")
+		}
+	}
+	return providercli.MarshalAgentStartPayload(providercli.AgentStartPayload{Folder: intent.Folder, Task: task})
 }
 
 func (a *Adapter) executionTarget(ctx context.Context, intent protocol.ImmutableIntent) (*providercli.Target, error) {

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/agent-start-payload.schema.json",
+  "title": "agent.start payload",
+  "description": "Provider-neutral launch input. The launch-profile identity and revision remain in the common request target.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "folder"
+  ],
+  "properties": {
+    "folder": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S(?:[^\\u0000-\\u001F\\u007F]*\\S)?$"
+    },
+    "task": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "pattern": "^(?=.*\\S)[^\\u0000]+$"
+    }
+  }
+}

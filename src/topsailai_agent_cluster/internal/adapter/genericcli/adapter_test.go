@@ -90,13 +90,49 @@ func TestAdapterUsesLaunchProfileAndPreservesProviderFailure(t *testing.T) {
 		failure := &providercli.ProviderError{Code: "denied", Message: "no", EffectCertainty: providercli.EffectNotApplied}
 		return providercli.Response{Version: request.Version, RequestID: request.RequestID, OK: false, Error: failure}, &invocationError{response: providercli.Response{}, cause: errors.New("exit 2")}
 	}
-	result, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c", Operation: "agent.start", OperationVersion: "v1", LaunchProfileID: "profile-id", ProfileRevision: "r1", Payload: json.RawMessage(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Second).UnixMilli()}})
+	result, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c", Operation: "agent.start", OperationVersion: "v1", LaunchProfileID: "profile-id", ProfileRevision: "r1", Folder: "/work/project", Payload: json.RawMessage(`{"task":"initial task"}`), ExecuteBeforeAtMS: time.Now().Add(time.Second).UnixMilli()}})
 	if err == nil || result.Receipt.ErrorCode != "denied" {
 		t.Fatalf("execute = %+v, %v", result, err)
 	}
 	request := provider.requests[len(provider.requests)-1]
-	if request.Target.ProviderResourceKey != "native-profile" || request.Target.ExpectedGeneration != "r1" {
+	if request.Target.ResourceKind != protocol.ResourceLaunchProfile || request.Target.ProviderResourceKey != "native-profile" || request.Target.ExpectedGeneration != "r1" {
 		t.Fatalf("target = %+v", request.Target)
+	}
+	payload, decodeErr := providercli.DecodeAgentStartPayload(request.Payload)
+	if decodeErr != nil {
+		t.Fatalf("decode Provider start payload: %v", decodeErr)
+	}
+	if payload.Folder != "/work/project" || payload.Task != "initial task" {
+		t.Fatalf("Provider start payload = %+v", payload)
+	}
+}
+
+func TestAdapterRejectsInvalidAgentStartPayloadBeforeProviderInvocation(t *testing.T) {
+	tests := []struct {
+		name    string
+		folder  string
+		payload json.RawMessage
+	}{
+		{name: "missing folder", payload: json.RawMessage(`{}`)},
+		{name: "null task", folder: "/work", payload: json.RawMessage(`{"task":null}`)},
+		{name: "empty task", folder: "/work", payload: json.RawMessage(`{"task":""}`)},
+		{name: "unknown field", folder: "/work", payload: json.RawMessage(`{"task":"work","resource_id":"cluster-id"}`)},
+		{name: "invalid UTF-8", folder: "/work", payload: json.RawMessage{'{', '"', 't', 'a', 's', 'k', '"', ':', '"', 0xff, '"', '}'}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := newFakeProvider(t)
+			binding := mustAdapter(t, provider)
+			binding.config.Mapper.(*fakeMapper).mappings["profile-id"] = adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceLaunchProfile, ProviderResourceKey: "native-profile", ResourceID: "profile-id"}
+			before := len(provider.requests)
+			_, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c", Operation: protocol.OperationAgentStart, OperationVersion: "v1", LaunchProfileID: "profile-id", ProfileRevision: "r1", Folder: test.folder, Payload: test.payload, ExecuteBeforeAtMS: time.Now().Add(time.Second).UnixMilli()}})
+			if err == nil {
+				t.Fatal("invalid start payload was accepted")
+			}
+			if len(provider.requests) != before {
+				t.Fatalf("Provider requests = %d, want %d", len(provider.requests), before)
+			}
+		})
 	}
 }
 

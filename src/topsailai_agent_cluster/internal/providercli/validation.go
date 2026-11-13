@@ -122,6 +122,11 @@ func (r Request) validateExecute() error {
 	if r.Query != nil {
 		return errors.New("execute request must not contain query")
 	}
+	if r.Operation.Name == protocol.OperationAgentStart {
+		if _, err := DecodeAgentStartPayload(r.Payload); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

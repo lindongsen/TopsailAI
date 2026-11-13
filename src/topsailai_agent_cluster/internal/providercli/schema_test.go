@@ -16,6 +16,7 @@ import (
 
 var requiredSchemaFiles = []string{
 	"request.schema.json",
+	"agent-start-payload.schema.json",
 	"response.schema.json",
 	"stream-frame.schema.json",
 	"launch-options-request.schema.json",
@@ -266,5 +267,54 @@ func TestTypedQuerySchemasUseEnvelopeCorrelation(t *testing.T) {
 		if _, ok := properties["version"]; ok {
 			t.Errorf("%s result duplicates envelope version", stem)
 		}
+	}
+}
+
+func TestAgentStartPayloadSchemaMatchesGoContract(t *testing.T) {
+	schema := loadSchema(t, "agent-start-payload.schema.json")
+	properties := schema["properties"].(map[string]any)
+	var schemaFields []string
+	for field := range properties {
+		schemaFields = append(schemaFields, field)
+	}
+	sort.Strings(schemaFields)
+	goFields := []string{"folder", "task"}
+	if !reflect.DeepEqual(schemaFields, goFields) {
+		t.Fatalf("agent.start schema fields = %v, Go fields = %v", schemaFields, goFields)
+	}
+	if !reflect.DeepEqual(schema["required"], []any{"folder"}) {
+		t.Fatalf("agent.start required fields = %v", schema["required"])
+	}
+	request := loadSchema(t, "request.schema.json")
+	branches := request["allOf"].([]any)
+	found := false
+	for _, raw := range branches {
+		branch := raw.(map[string]any)
+		condition, ok := branch["if"].(map[string]any)
+		if !ok {
+			continue
+		}
+		conditionProperties, ok := condition["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		operation, ok := conditionProperties["operation"].(map[string]any)
+		if !ok {
+			continue
+		}
+		operationProperties := operation["properties"].(map[string]any)
+		name, ok := operationProperties["name"].(map[string]any)
+		if !ok || name["const"] != protocol.OperationAgentStart {
+			continue
+		}
+		then := branch["then"].(map[string]any)
+		payload := then["properties"].(map[string]any)["payload"].(map[string]any)
+		if payload["$ref"] != "agent-start-payload.schema.json" {
+			t.Fatalf("agent.start payload ref = %v", payload["$ref"])
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("request Schema has no agent.start payload branch")
 	}
 }
