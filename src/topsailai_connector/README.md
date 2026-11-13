@@ -158,6 +158,22 @@ make build
 Binaries are written to `bin/`. Test artifacts are written to `.tmp/`, which is
 ignored by git.
 
+## Package a Node for someone else
+
+`make package` produces a zip that a user unzips and starts. The bundle carries
+the Node binary, a start script for the target platform, the scope list and a
+pre-generated identity pair, so the operator can reach the machine with the CLI
+as soon as the user runs the start script.
+
+```
+make package PACKAGE_SERVER_URL=wss://cloud.example.com:8443/channel \
+             PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool'
+```
+
+The command prints the `node-id.node-token` pair and a CLI invocation to paste.
+`make package-windows` builds the same bundle for Windows. See
+`packaging/bundle-README.md` for what the recipient does with it.
+
 ## Author
 
 DawsonLin

@@ -1,6 +1,6 @@
 ---
 name: connector-node-setup
-description: Use when a user needs to install, configure, start, or regenerate the identity of a TopsailAI Connector Node on their own computer, i.e. when they ask how to get their node-id.node-token pair, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, or how to revoke a leaked token. Covers the first-run order, the policy file schema and its startup failures, scope path rules, and regeneration.
+description: Use when a user needs to install, configure, start, or regenerate the identity of a TopsailAI Connector Node on their own computer, i.e. when they ask how to get their node-id.node-token pair, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to start a Node from a zip they were handed, or how to revoke a leaked token. Covers the first-run order, the policy file schema and its startup failures, scope path rules, the ready-to-run bundle and regeneration.
 version: 1.0.0
 author: DawsonLin
 license: MIT
@@ -36,6 +36,7 @@ Use this skill when the user asks to:
 - Change which directory a scope exposes, or add a scope.
 - Revoke a leaked token by regenerating the pair.
 - Understand why a request came back `denied`.
+- Start a Node from a zip someone handed them, and change which folders it exposes.
 
 Do **not** use this skill for the client's command syntax (that is
 `connector-client`) or for deploying the Server (that is
@@ -92,6 +93,83 @@ That produces `windows/amd64`, `windows/arm64` and `windows/386` builds under
 Windows is a supported platform, not a later port. The path fence is the standard
 library `os.Root`, which enforces the boundary on Windows as well as on POSIX, so
 the platform cost is a set of path rules rather than a second fence implementation.
+
+## Running from a bundle you were given
+
+If someone handed you a zip instead of a repository, you do not need this build
+section at all. The bundle already contains a Node binary built for your platform,
+its identity, the Server address and a scope list. Unzip it and start it:
+
+```
+./start.sh                                        # Linux or macOS
+powershell -ExecutionPolicy Bypass -File start.ps1   # Windows
+```
+
+There is nothing to install and nothing to configure before the first start. The
+bundle's own `README.md` describes the folder.
+
+### The one file you edit
+
+`scopes.txt` lists the folders this Node exposes, one `name=path` per line:
+
+```
+project=/home/me/project
+notes=/home/me/Documents/notes
+```
+
+`name` is what a caller asks for and must be an identifier: letters, digits, `-` and
+`_`, starting with a letter or a digit. `path` is the folder on this machine; an
+absolute path is best, and a relative one is resolved against the bundle folder.
+
+Restart the Node after editing. `policy.yaml` is rebuilt from `scopes.txt` on every
+start, so `scopes.txt` is the only file you edit and a scope you delete stops being
+served. Do not edit `policy.yaml` itself: your change is discarded on the next
+start.
+
+Every scope is granted `read`, `list` and `stat`. This version cannot write or run
+commands, so there is nothing else to grant.
+
+### What the start script refuses, and why
+
+| Message | Meaning |
+|---|---|
+| `scope 'x' path '...' is not a directory on this machine` | The path in `scopes.txt` does not exist here. Fix the path |
+| `scope 'x' is '/'` | Expose a subfolder instead; the whole filesystem is every file on the machine |
+| `scope 'x' is the home directory` | Expose a subfolder instead; the home directory is every file you own |
+| `scope 'x' path '...' overlaps the bundle's config directory` | The folder you exposed contains the bundle, so a caller could list the credential files. Move the bundle outside the folder, or expose a subfolder |
+| `no tunnel token` | The bundle has no `config/tunnel_token` and `CONNECTOR_NODE_TUNNEL_TOKEN` is unset. Ask the operator for the token |
+
+These are the same refusals the Node makes, moved earlier so the message names the
+scope and the reason. The config-overlap refusal is the one the start script adds,
+because a bundle keeps its credentials inside its own folder.
+
+A wrong `tunnel_token` is not a start-script refusal, because the script cannot
+check it: only the Server knows the right value. The script starts the Node, the
+Node dials, the Server refuses the handshake, and the Node logs a warning and
+retries:
+
+```
+level=WARN msg="channel ended" error="the server refused the handshake: unauthenticated" retry_in=...
+```
+
+That line means the `tunnel_token` is wrong or stale. Ask the operator for the
+current one. The Node keeps retrying, so the line repeats until the token is fixed
+or the Node is stopped.
+
+### The bundle holds credentials
+
+`config/identity` is this Node's `node-id.node-token` pair and `config/tunnel_token`
+is the shared secret that opens the channel. Both never expire.
+
+- Do not put the folder in a public repository, a shared drive or a chat message.
+- Do not paste `config/identity` into a ticket or a retained shell history.
+- If the folder leaks, tell the operator. They regenerate the pair and give you a
+  new bundle; the old one stops working within about a second.
+
+You do not need to read the pair out to anyone. The operator generated it when the
+bundle was built, so they already hold it and can call this Node as soon as it
+connects. If they ask for it, it is the single line in `config/identity`, and it is
+a password.
 
 ## Configuration
 

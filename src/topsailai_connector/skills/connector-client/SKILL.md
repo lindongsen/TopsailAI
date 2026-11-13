@@ -1,6 +1,6 @@
 ---
 name: connector-client
-description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next. Covers the connector-server cli command, its flags, the node-id.node-token pair, the three read-only operations and every error code.
+description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next. Covers the connector-server cli command, its flags, the node-id.node-token pair, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
 version: 1.0.0
 author: DawsonLin
 license: MIT
@@ -38,6 +38,8 @@ Use this skill when the user asks to:
 - Work out why a Connector request failed, from an error code or a message.
 - Set up a script that calls the Connector repeatedly.
 - Understand what the `node-id.node-token` pair is and where to get it.
+- Call a Node that was handed to a user as a zip, where the operator already holds
+  the pair.
 
 Do **not** use this skill to deploy or operate the Server (that is
 `connector-server-operations`) or to install and configure the Node (that is
@@ -61,6 +63,22 @@ whole pair to `--node`.
 If the user has only a `node-id` and no token, they cannot proceed. A `node-id`
 grants nothing on its own. Tell them to run `connector-node id` on the Node
 machine, or to ask whoever set the Node up.
+
+### When the Node came from a bundle
+
+If the Node was distributed as a zip, the operator already holds the pair: it was
+generated when the bundle was built, and the packaging output printed it together
+with a ready-to-run CLI command. Do not ask the user to read the pair out of
+`config/identity` in that case, and do not ask them to run `connector-node id`; the
+operator has the value already.
+
+The printed command is the one to copy. It puts every flag before the operation,
+which is the only order the CLI accepts, and it uses an empty `--path` to list the
+scope root. Retyping it from memory is how the flag-order mistake gets made.
+
+The user's only job is to start the bundle. Until they do, the CLI answers
+`node_offline`, because the Server has no live connection to route to. That is not a
+credential problem and retrying will not fix it; the Node has to be running.
 
 ## The command
 

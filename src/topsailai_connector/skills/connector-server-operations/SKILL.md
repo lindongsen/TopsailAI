@@ -1,6 +1,6 @@
 ---
 name: connector-server-operations
-description: Use when an operator needs to deploy, configure, run, monitor, rotate secrets for or troubleshoot the TopsailAI Connector Server in the cloud, i.e. when they ask how to start the Server, which environment variables it needs, how to rotate tunnel_token or client_token, how to expose only the channel and hide the CLI API, how to read its log, or why a Node cannot connect. Covers the Server's configuration surface, its single listener with two surfaces, rotation procedure and the limits that are constants rather than settings.
+description: Use when an operator needs to deploy, configure, run, monitor, rotate secrets for, package or troubleshoot the TopsailAI Connector Server in the cloud, i.e. when they ask how to start the Server, which environment variables it needs, how to rotate tunnel_token or client_token, how to expose only the channel and hide the CLI API, how to read its log, why a Node cannot connect, or how to hand a Node to someone else as a zip that unzips and starts. Covers the Server's configuration surface, its single listener with two surfaces, rotation procedure, the make package bundle and the limits that are constants rather than settings.
 version: 1.0.0
 author: DawsonLin
 license: MIT
@@ -42,6 +42,7 @@ Use this skill when the operator asks to:
 - Keep the CLI API unreachable from the internet while the channel stays open.
 - Diagnose "a Node cannot connect" or "the CLI gets `node_offline`".
 - Understand a limit, such as why a large read is truncated or a request times out.
+- Hand a Node to someone who does not build software, as a zip they unzip and start.
 
 Do **not** use this skill for the client's command syntax (that is
 `connector-client`) or for installing the Node (that is `connector-node-setup`).
@@ -66,6 +67,115 @@ The Server is deployed on Linux. It is **not** cross-compiled for Windows: a
 Windows Server binary would be a build nobody runs, and producing one would invite
 the belief that the Server is supported there. The Node is the component that
 supports Windows.
+
+## Packaging a Node for someone else
+
+Handing a Node to a user who does not build software is a distribution problem, not
+an installation problem. `make package` produces one zip that the user unzips and
+starts, and that you can address with the CLI as soon as it connects. The user needs
+no Go, no compiler and no configuration file.
+
+```
+make package \
+  PACKAGE_SERVER_URL=wss://cloud.example:8443/channel \
+  PACKAGE_SCOPES='project=/home/me/project notes=/home/me/Documents/notes'
+```
+
+For a Windows user, the same inputs through a separate target:
+
+```
+make package-windows PACKAGE_SERVER_URL=... PACKAGE_SCOPES='...'
+```
+
+`package-windows` is a target rather than a variable you must remember, because
+forgetting it produces a Linux binary in a zip a Windows user cannot run, and that
+failure appears on their machine instead of yours.
+
+### Inputs
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `PACKAGE_SERVER_URL` | yes | The Server address. `http`, `https`, `ws` and `wss` are all accepted |
+| `PACKAGE_SCOPES` | yes, unless `PACKAGE_SCOPES_FILE` is set | One or more `name=path` entries, space separated |
+| `PACKAGE_SCOPES_FILE` | no | A file of `name=path` lines, for paths containing spaces or a long list |
+| `PACKAGE_TUNNEL_TOKEN` | no | The `tunnel_token` to embed. Without it the user must supply `CONNECTOR_NODE_TUNNEL_TOKEN` |
+| `PACKAGE_NAME` | no | Bundle name. Default `connector-node-<goos>-<goarch>` |
+| `PACKAGE_GOOS`, `PACKAGE_GOARCH` | no | Target platform. Default this host |
+
+The output is `bin/<PACKAGE_NAME>.zip`.
+
+### What the zip contains
+
+| Path | What it is |
+|---|---|
+| `connector-node` / `connector-node.exe` | The Node binary for the target platform |
+| `start.sh` / `start.ps1` | Rebuilds `policy.yaml` from `scopes.txt`, then starts the Node |
+| `scopes.txt` | The folders this Node exposes. The user edits this one |
+| `server_url` | The channel address the Node dials |
+| `config/identity` | The `node-id.node-token` pair, generated at packaging time |
+| `config/tunnel_token` | The `tunnel_token`, mode `0600`, when you supplied one |
+| `README.md` | The user-facing instructions |
+
+### Three decisions that make it work
+
+**The scope paths are not baked into a policy file.** A policy requires absolute
+paths, and your paths are not the user's paths. The bundle therefore carries an
+editable `scopes.txt`, and the start script rebuilds `policy.yaml` from it on every
+start. That is what makes one zip usable on a machine whose folders this host has
+never seen. Because the file is rebuilt rather than merged, a scope the user deletes
+stops being served.
+
+**The identity pair is generated at packaging time**, with the Node's own `id`
+command rather than a second implementation of the pair format. If the Node
+generated it on the user's machine, you would have to ask the user to read the pair
+back before the CLI could address the Node, which defeats the point of handing over
+a bundle. The consequence is that the pair is known to you before the user starts
+anything, and the packaging output prints it.
+
+**The tunnel token is written to a `0600` file** that the start script exports as
+`CONNECTOR_NODE_TUNNEL_TOKEN`. The Node still reads the documented environment
+variable; the file is your provisioning store, the same shape as a systemd
+`EnvironmentFile=`.
+
+### The URL is normalised for you
+
+The Node dials WebSocket and refuses any other scheme at startup, while the CLI uses
+HTTP. You pass one address and the packaging converts it: `http` becomes `ws`,
+`https` becomes `wss`, and a URL with no path gets `/channel`. Pasting the HTTP
+address you use for the CLI therefore produces a working bundle instead of a startup
+failure on the user's machine.
+
+### What the packaging prints
+
+The pair, and a CLI command that runs as soon as the user starts the bundle. The
+flags come before the operation because the CLI stops parsing flags at the first
+positional argument, so the operation must be last. Copy the command rather than
+retyping it.
+
+### The bundle is a credential
+
+It carries the Node's identity pair and, when you supply one, the `tunnel_token`.
+Hand it over the way you would hand over a password: not through a public
+repository, a shared drive or a chat message. If it leaks, run
+`connector-node regenerate` on that Node and hand over a new bundle; the old pair
+stops working within about a second.
+
+### What the start script refuses
+
+Each refusal is one the Node would also make, moved earlier so the message appears
+next to the person who can fix it:
+
+| Refusal | Why |
+|---|---|
+| The scope path is not a directory on this machine | The path in `scopes.txt` does not exist there |
+| The scope is `/` or the home directory | The blast radius is the whole machine |
+| The scope overlaps the bundle's `config` directory | A caller could list the credential files |
+| `scopes.txt` defines no scope | A Node that exposes nothing serves nothing |
+
+The config-overlap check is enforced by the start script rather than by the Node,
+because the bundle keeps its credentials inside its own folder, which is exactly the
+layout that check exists to refuse. Both sides of that comparison are resolved
+physically, so a bundle reached through a symlink or a junction is still refused.
 
 ## Configuration
 
@@ -252,7 +362,7 @@ Work from the outside in. Each step rules out one layer.
 |---|---|---|
 | Process exits immediately | A required secret is missing, empty or too short | The log names the variable |
 | Process alive, port closed | Bind failed | The log has the bind error; the process should have exited |
-| Node cannot connect | Wrong `tunnel_token`, or TLS mismatch | The Node's log shows the handshake refusal |
+| Node cannot connect | Wrong `tunnel_token`, or TLS mismatch | The Server logs `refusing a hello with a wrong tunnel token`; the Node logs `the server refused the handshake: unauthenticated` |
 | Node connects then drops repeatedly | The Node's pair was regenerated, or the Server restarted | Both logs show the reconnect |
 | CLI gets `node_offline` | No live connection for that `node_id` | Is the Node running? Did it regenerate its `node-id`? |
 | CLI gets `unauthenticated` | Wrong `client_token`, or the Node refused the `node-token` | The Server cannot tell these apart; see below |

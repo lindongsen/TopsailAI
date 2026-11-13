@@ -35,13 +35,43 @@ SHARED_PKGS := ./internal/protocol/... ./internal/security/...
 COVERAGE_FILE := $(TMP_DIR)/coverage.out
 COVERAGE_HTML := $(TMP_DIR)/coverage.html
 
+# Packaging inputs. `make package` builds one zip that a user unzips and starts,
+# and that the operator can address with the CLI immediately.
+#
+# The two required inputs are the Server address and the folders to expose:
+#
+#   make package \
+#     PACKAGE_SERVER_URL=https://connector.example.com:8443 \
+#     PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool'
+#
+# PACKAGE_SCOPES takes one or more `name=path` entries. The paths are the paths
+# on the machine that will run the Node, not on this build host, because the
+# bundle turns them into a policy file when it starts. A path containing spaces
+# is easier to supply through PACKAGE_SCOPES_FILE, which takes a file with the
+# same `name=path` lines.
+#
+# PACKAGE_TUNNEL_TOKEN is optional. When it is set, the bundle carries the token
+# in a 0600 file so the user needs no further configuration; when it is unset,
+# the bundle requires CONNECTOR_NODE_TUNNEL_TOKEN in the environment.
+#
+# PACKAGE_GOOS and PACKAGE_GOARCH default to this host, so a bundle for the
+# operator's own machine needs no platform argument. `make package-windows`
+# sets them to windows/amd64.
+PACKAGE_NAME ?= connector-node-$(PACKAGE_GOOS)-$(PACKAGE_GOARCH)
+PACKAGE_GOOS ?= $(shell go env GOOS)
+PACKAGE_GOARCH ?= $(shell go env GOARCH)
+PACKAGE_SERVER_URL ?=
+PACKAGE_SCOPES ?=
+PACKAGE_SCOPES_FILE ?=
+PACKAGE_TUNNEL_TOKEN ?=
+
 # The unit suite is what `go test ./...` runs. Integration and BDD suites are
 # behind build tags so a plain unit run stays fast and needs no built binary.
 UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
 
-.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile
+.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile package package-windows
 
 help:
 	@echo "Targets:"
@@ -63,12 +93,24 @@ help:
 	@echo "  fmt             Format every Go source file"
 	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
 	@echo "  test-windows-compile  Compile the windows test binaries and run vet for windows"
+	@echo "  package         Build a zip a user unzips and starts; needs PACKAGE_SERVER_URL and PACKAGE_SCOPES"
+	@echo "  package-windows Build that zip for windows/amd64"
 	@echo "  clean           Remove build and test artifacts"
 	@echo ""
 	@echo "Variables:"
 	@echo "  BIN_DIR         Where binaries are written. Default bin. Override with"
 	@echo "                  'make build BIN_DIR=/somewhere/else'"
 	@echo "  TMP_DIR         Where test artifacts are written. Default .tmp"
+	@echo "  PACKAGE_SERVER_URL  Server address the bundle dials. Required by package."
+	@echo "                      http/https is accepted and converted to ws/wss"
+	@echo "  PACKAGE_SCOPES      Folders to expose, as name=path entries. Required"
+	@echo "                      by package. Example:"
+	@echo "                      'PACKAGE_SCOPES=project=/home/me/project tool=/opt/tool'"
+	@echo "  PACKAGE_SCOPES_FILE A file of name=path lines, for paths with spaces"
+	@echo "  PACKAGE_TUNNEL_TOKEN Optional tunnel_token to embed in the bundle"
+	@echo "  PACKAGE_NAME        Bundle name. Default connector-node-<goos>-<goarch>"
+	@echo "  PACKAGE_GOOS        Target OS. Default this host"
+	@echo "  PACKAGE_GOARCH      Target architecture. Default this host"
 
 build: build-server build-node
 
@@ -176,6 +218,44 @@ test-windows-compile:
 	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/security.test.exe ./internal/security/
 	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/connector-node.test.exe ./cmd/connector-node/
 	@echo "compiled the windows test binaries"
+
+# package builds one zip that a user unzips and starts, and that the operator can
+# address with the CLI immediately.
+#
+# It depends on build-node because the identity pair is generated with the host
+# build of the Node. Generating the pair with a second implementation here would
+# be a second definition of the pair format, and the two would eventually
+# disagree about what a valid pair is.
+#
+# The scope paths are not baked into a policy file. A policy requires absolute
+# paths, and the build host's paths are not the user's paths, so the bundle
+# carries an editable scopes.txt and its start script writes policy.yaml on the
+# machine that will serve the files. That is what makes the same zip usable on a
+# machine whose folders this host has never seen.
+#
+# The bundle is a credential bundle: it carries the Node's identity pair and,
+# when PACKAGE_TUNNEL_TOKEN is set, the tunnel token. The script prints the pair
+# so the operator can copy it into the CLI, and says so rather than leaving it to
+# be discovered.
+package: build-node
+	@PACKAGE_NAME='$(PACKAGE_NAME)' \
+	PACKAGE_GOOS='$(PACKAGE_GOOS)' \
+	PACKAGE_GOARCH='$(PACKAGE_GOARCH)' \
+	PACKAGE_SERVER_URL='$(PACKAGE_SERVER_URL)' \
+	PACKAGE_SCOPES='$(PACKAGE_SCOPES)' \
+	PACKAGE_SCOPES_FILE='$(PACKAGE_SCOPES_FILE)' \
+	PACKAGE_TUNNEL_TOKEN='$(PACKAGE_TUNNEL_TOKEN)' \
+	BIN_DIR='$(BIN_DIR)' \
+	TMP_DIR='$(TMP_DIR)' \
+	bash packaging/build-package.sh
+
+# package-windows is the same bundle for windows/amd64, which is the platform the
+# Node is most often handed to a user on. It is a separate target rather than a
+# variable the caller must remember, because forgetting it produces a Linux
+# binary in a zip that a Windows user cannot run, and the failure appears on
+# their machine rather than here.
+package-windows:
+	@$(MAKE) --no-print-directory package PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
 
 check: vet test-unit coverage integration bdd e2e build-windows test-windows-compile
 

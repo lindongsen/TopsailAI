@@ -268,8 +268,9 @@ comes from a flag or from an environment variable, and a flag wins over the
 environment because a flag is the more explicit statement of intent.
 
 ```
-connector-server cli file.list --server https://cloud.example:8443 \
-    --client-token <client_token> --node node_7f3a.kQ2v... --scope project --path .
+connector-server cli --server https://cloud.example:8443 \
+    --client-token <client_token> --node node_7f3a.kQ2v... --scope project \
+    --path notes.md file.read
 ```
 
 `--node` takes the whole pair, not just the identifier, because the pair is what
