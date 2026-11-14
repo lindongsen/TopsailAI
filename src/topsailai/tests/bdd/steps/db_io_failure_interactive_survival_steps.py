@@ -298,11 +298,16 @@ def process_exits_non_zero(bdd_state):
     assert bdd_state["outcome"]["exit_codes"] == [1]
 
 
-@then("the session metadata records an error")
-def metadata_records_error(bdd_state):
-    """The metadata must record the error before the fallback exit."""
+@then("the session metadata is left untouched")
+def metadata_is_left_untouched(bdd_state):
+    """An abnormal exit must preserve the on-disk scene, not rewrite it.
+
+    ``os._exit`` is an abnormal termination, so the metadata keeps the state the
+    failure left it in. Rewriting it to ``error`` would fabricate evidence after
+    the fact and hide that the process died without finalizing.
+    """
     meta_status = bdd_state["outcome"]["meta_status"]
-    meta_status.assert_any_call("error", "bdd-db-io-session")
+    meta_status.assert_not_called()
 
 
 @then("the stdout artifact keeps the failure evidence")

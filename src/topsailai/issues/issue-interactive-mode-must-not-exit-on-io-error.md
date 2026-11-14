@@ -95,18 +95,24 @@ Behavior matrix:
 | Caller | Behavior |
 |---|---|
 | Interactive, main thread | Warn, print the already-produced answer, return to the input prompt, restore the turn budget |
-| Non-interactive, main thread | Print an explicit failure answer, write `error` metadata, flush both streams, `os._exit(1)` |
+| Non-interactive, main thread | Print an explicit failure answer, flush both streams, `os._exit(1)` |
 | Worker thread, any mode | Abandon only this turn, never finalize the metadata, never terminate the process |
 
-Why the fallback settles state before exiting: `os._exit` skips `atexit`, and
-`workspace/session_meta.py` registers `_finalize_on_exit` through `atexit`. An
-unguarded `os._exit` leaves the metadata at `running` forever, which is exactly
-how the stale `running` records in this incident were produced. The fallback
-therefore writes the metadata through `_atomic_write`, which performs `flush`,
-`os.fsync` and `os.replace`, and flushes `sys.stdout` and `sys.stderr` so the
-`TeeOutput` artifact keeps the failure evidence up to the exit instant. Both
-settling steps are wrapped so a failure to settle cannot block the non-zero
-exit. Neither artifact is ever removed.
+Why the fallback must NOT rewrite the metadata: `os._exit` is an abnormal
+termination, so the on-disk scene is the evidence. The metadata keeps the state
+the failure left it in, which is `running` with `end_ts: null`. That state is
+exactly what proves the process died without finalizing, and it is what makes
+the abnormal exit observable afterwards. Rewriting it to `error` would fabricate
+a finalized record after the fact and erase the only trace that the exit was
+abnormal. The fallback therefore only flushes `sys.stdout` and `sys.stderr`, so
+the `TeeOutput` artifact keeps the bytes already produced up to the exit
+instant. Flushing delivers buffered bytes; it never invents state. Neither
+artifact is ever removed, and the flush is wrapped so a flush failure cannot
+block the non-zero exit.
+
+An earlier revision of this fix wrote `error` metadata inside the fallback. That
+was wrong for the reason above and has been reverted: the fallback now takes no
+session identity at all, so it cannot touch the metadata even by accident.
 
 Corrections to this issue's original text:
 
@@ -127,23 +133,28 @@ Completed:
 
 - An interactive session survives an injected database I/O failure and returns to the
   input prompt, with the already-produced answer printed.
-- A non-interactive run exits with code `1` after writing `error` metadata and flushing
-  both streams, so a lost write never looks like success.
+- A non-interactive run exits with code `1` after flushing both streams, so a lost write
+  never looks like success.
 - A worker thread abandons only its own turn, never finalizes the metadata of the live
   session, and never terminates the process.
 - A failure while persisting the answer keeps the answer and continues the session.
-- A failure to finalize the metadata does not block the non-zero exit.
+- The fallback never reads or writes the metadata, so an unavailable metadata store
+  cannot block the non-zero exit.
 - Session metadata, stdout and event records are retained on normal exit, on SIGTERM,
   and on a failed write.
 - `tests/unit/test_topsailai_workspace_agent_agent_shell_base_db_io.py` and
-  `tests/unit/test_db_write_io_policy.py` pass, 62 tests, including assertions on the
-  exit code, the metadata write, the flush order, and metadata-finalize tolerance.
+  `tests/unit/test_db_write_io_policy.py` pass, 66 tests, including assertions on the
+  exit code, the metadata being left untouched, and the flush order.
 - BDD coverage exists in `tests/bdd/features/db_io_failure_interactive_survival.feature`
   with four scenarios, all passing.
 - Mutation check, interactive guard removed: both interactive scenarios fail, proving the
   scenarios reach the guarded branch.
 - Mutation check, fallback exit removed: the non-interactive scenario fails on the exit
   code, proving the fallback is genuinely asserted.
+- Mutation check, metadata write re-added inside the fallback: the non-interactive BDD
+  scenario and the non-interactive unit test both fail on
+  `Expected 'update_session_meta_status' to not have been called`, proving the
+  scene-preservation contract is genuinely asserted.
 - `make core-bdd-test` reports 42 failed and 746 passed against a pre-change baseline of
   44 failed and 737 passed, so this change introduces no regression.
 

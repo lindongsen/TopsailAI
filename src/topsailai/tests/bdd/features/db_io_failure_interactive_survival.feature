@@ -23,7 +23,7 @@ Feature: Survive a database write failure without losing the session
     When the turn is abandoned
     Then the run reports an explicit failure answer
     And the process exits with a non-zero code
-    And the session metadata records an error
+    And the session metadata is left untouched
     And the stdout artifact keeps the failure evidence
 
   Scenario: A worker thread abandons only its own turn

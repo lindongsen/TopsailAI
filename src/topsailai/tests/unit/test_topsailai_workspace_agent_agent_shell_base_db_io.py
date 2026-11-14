@@ -276,10 +276,11 @@ def test_non_interactive_io_failure_returns_failure_answer(agent_chat):
     input_mock.assert_not_called()
     agent_chat.call_hooks_post_fail_run.assert_called_once_with(io_error)
     agent_chat.call_hooks_post_succ_run.assert_not_called()
-    # The fallback must exit non-zero, and it must settle the metadata first
-    # because ``os._exit`` skips the ``atexit`` finalizer.
+    # The fallback must exit non-zero. It must not rewrite the metadata:
+    # ``os._exit`` is an abnormal termination, so the on-disk scene stays
+    # exactly as the failure left it.
     exit_mock.assert_called_once_with(1)
-    meta_status.assert_any_call("error", "db-io-session")
+    meta_status.assert_not_called()
 
 
 def test_non_interactive_fallback_flushes_output_before_exit(agent_chat):
@@ -308,8 +309,12 @@ def test_non_interactive_fallback_flushes_output_before_exit(agent_chat):
     stderr_flush.assert_called()
 
 
-def test_non_interactive_fallback_survives_metadata_finalize_failure(agent_chat):
-    """A failing metadata write must not prevent the non-zero exit."""
+def test_non_interactive_fallback_never_depends_on_metadata(agent_chat):
+    """The fallback must not read or write metadata on its way out.
+
+    An abnormal exit preserves the on-disk scene, so an unavailable metadata
+    store cannot block the non-zero exit: the fallback never touches it.
+    """
     io_error = _sqlite_error(13, "database or disk is full")
     agent_chat.ai_agent.run.side_effect = io_error
     patches = _run_patches(runtime_input=None, input_messages=())
@@ -319,7 +324,7 @@ def test_non_interactive_fallback_survives_metadata_finalize_failure(agent_chat)
         patch(
             "topsailai.workspace.agent.agent_shell_base.update_session_meta_status",
             side_effect=RuntimeError("metadata unavailable"),
-        ),
+        ) as meta_status,
     ):
         _run_with_patches(
             agent_chat,
@@ -330,6 +335,7 @@ def test_non_interactive_fallback_survives_metadata_finalize_failure(agent_chat)
         )
 
     exit_mock.assert_called_once_with(1)
+    meta_status.assert_not_called()
 
 
 def test_worker_thread_io_failure_returns_failure_answer(agent_chat):

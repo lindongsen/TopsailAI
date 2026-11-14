@@ -152,27 +152,19 @@ def _resolve_db_io_failure(error):
 DB_IO_FALLBACK_EXIT_CODE = 1
 
 
-def _exit_after_db_io_failure(session_id, error) -> None:
+def _exit_after_db_io_failure(error) -> None:
     """Terminate a non-interactive run after a database I/O failure.
 
     This is the last-resort fallback for a caller that cannot wait for a human.
-    ``os._exit`` skips ``atexit``, so the session metadata and the diagnostic
-    artifacts are settled explicitly first: the metadata records ``error``
-    instead of staying ``running``, and both output streams are flushed so the
-    stdout artifact keeps the failure evidence. The artifacts themselves are
-    never removed.
+    ``os._exit`` is an abnormal termination, so the on-disk scene is preserved
+    exactly as the failure left it: the session metadata keeps its ``running``
+    state instead of being rewritten, and both output streams are flushed so
+    the stdout artifact keeps the evidence already produced. Flushing only
+    delivers buffered bytes; it never fabricates state. No artifact is removed.
 
     Args:
-        session_id: Session identity whose metadata must be finalized.
         error: The database I/O failure that ended the run.
     """
-    try:
-        update_session_meta_status("error", session_id)
-    except Exception:
-        logger.critical(
-            "Failed to finalize session metadata before fallback exit: [%s] %s",
-            type(error).__name__, error, exc_info=True,
-        )
     try:
         sys.stdout.flush()
         sys.stderr.flush()
@@ -808,15 +800,14 @@ class AgentChat(AgentChatBase):
                     if not interactive_enabled and thread_tool.is_main_thread():
                         # Last-resort fallback: a lost write must never look
                         # like success to a script, a CI job or the launcher, so
-                        # the process exits non-zero. The metadata and the
-                        # artifacts are settled first because ``os._exit`` skips
-                        # ``atexit``. A worker thread never reaches this call:
-                        # it must not terminate the interpreter that owns a
-                        # possibly usable interactive session.
-                        _exit_after_db_io_failure(
-                            getattr(self.ctx_runtime_data, "session_id", None),
-                            db_error,
-                        )
+                        # the process exits non-zero. The on-disk scene is left
+                        # untouched: ``os._exit`` is an abnormal termination, so
+                        # the metadata keeps its ``running`` state and the
+                        # artifacts stay exactly as the failure left them. A
+                        # worker thread never reaches this call: it must not
+                        # terminate the interpreter that owns a possibly usable
+                        # interactive session.
+                        _exit_after_db_io_failure(db_error)
                     break
                 print_warning(
                     "Database write failed; this turn was not persisted: "
