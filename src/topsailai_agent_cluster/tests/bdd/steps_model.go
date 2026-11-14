@@ -40,11 +40,24 @@ const modelSelectScript = "cd 1\ncd 1\nmodel\nmodel 2\ny\nquit\n"
 
 // modelWorkspaceListScript names the session explicitly, because workspace scope
 // does not already name a target.
-const modelWorkspaceListScript = "model fixture-session\nquit\n"
+//
+// The name is the provider session key the running provider actually reports, not
+// the scenario's role name. The deleted argv fixture answered with
+// session_id "fixture-session", so the literal used to resolve; the mock reports
+// provider_session_id "session:stable", so the literal resolved to nothing and the
+// command failed with `session "fixture-session" was not found on any endpoint`
+// before the catalog could render. providerSessionKey is the single place that
+// maps a role onto the provider key, so the scenario keeps naming a role.
+func modelWorkspaceListScript() string {
+	return "model " + providerSessionKey("fixture-session") + "\nquit\n"
+}
 
 // modelWorkspaceSelectScript lists the catalog and applies the first row from
 // workspace scope, where the session has to be named on both commands.
-const modelWorkspaceSelectScript = "model fixture-session\nmodel fixture-session 1\ny\nquit\n"
+func modelWorkspaceSelectScript() string {
+	session := providerSessionKey("fixture-session")
+	return "model " + session + "\nmodel " + session + " 1\ny\nquit\n"
+}
 
 // startModelCluster starts a real cluster whose adapter can answer a catalog
 // request. The generic fixture adapter cannot, so the TopsailAI adapter is
@@ -107,7 +120,7 @@ func runModelListInSessionScope() error {
 // runModelListInWorkspaceScope lists the catalog from workspace scope, naming the
 // session explicitly.
 func runModelListInWorkspaceScope() error {
-	return runModelScript(modelWorkspaceListScript)
+	return runModelScript(modelWorkspaceListScript())
 }
 
 // applySecondModelRowInSessionScope applies row 2 from session scope.
@@ -117,7 +130,7 @@ func applySecondModelRowInSessionScope() error {
 
 // applyFirstModelRowInWorkspaceScope applies row 1 from workspace scope.
 func applyFirstModelRowInWorkspaceScope() error {
-	return runModelScript(modelWorkspaceSelectScript)
+	return runModelScript(modelWorkspaceSelectScript())
 }
 
 // runModelScript drives one REPL session and records its output.
