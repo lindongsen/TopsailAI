@@ -33,6 +33,33 @@ const (
 // CLI Adapter. It is a value rather than a constant because the type is a struct.
 var genericCLIConcurrency = providercli.ConcurrencyLimits{Total: 4, Discovery: 2, Mutation: 1, Follow: 2}
 
+// withControlActions merges the Endpoint-local control action catalog into the
+// configured capability descriptor.
+//
+// The catalog is the only source of ctl. actions, and it is Endpoint-local
+// administrative configuration rather than part of the operator-facing adapter
+// document. Without this merge the catalog never reached the effective
+// descriptor: the adapter intersected the configured list with what the provider
+// advertised, the catalog was not in that list, so no ctl. capability was
+// published and every control command was refused as unsupported before the
+// policy hook could authorize it. A configured catalog therefore had no effect.
+//
+// The revision is preserved because it is the operator's declared value and the
+// adapter carries it through unchanged. A nil catalog leaves the descriptor
+// untouched, which is the fail-closed default: no catalog, no ctl. capability.
+func withControlActions(configured *protocol.CapabilityDescriptor, set *controlaction.ControlActionSet) *protocol.CapabilityDescriptor {
+	actions := controlaction.Capabilities(set)
+	if len(actions) == 0 {
+		return configured
+	}
+	merged := protocol.CapabilityDescriptor{Capabilities: actions}
+	if configured != nil {
+		merged.Revision = configured.Revision
+		merged.Capabilities = append(append([]protocol.Capability(nil), configured.Capabilities...), actions...)
+	}
+	return &merged
+}
+
 // registerAdapterType installs the factory for one provider type.
 //
 // genericcli is the only provider type an Endpoint can be configured with. The

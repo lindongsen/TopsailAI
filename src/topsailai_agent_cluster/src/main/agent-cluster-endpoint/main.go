@@ -157,7 +157,7 @@ func main() {
 	}
 	bindings := make([]endpointservice.Binding, 0, len(cfg.Adapters))
 	for _, item := range cfg.Adapters {
-		instance, err := registry.Configure(ctx, adapter.Config{AdapterID: item.AdapterID, ProviderType: item.ProviderType, Command: item.Command, Args: item.Args, TimeoutMS: item.TimeoutMS, Capabilities: item.Capabilities})
+		instance, err := registry.Configure(ctx, adapter.Config{AdapterID: item.AdapterID, ProviderType: item.ProviderType, Command: item.Command, Args: item.Args, TimeoutMS: item.TimeoutMS, Capabilities: withControlActions(item.Capabilities, controlActions)})
 		if err != nil {
 			logger.Error("configure adapter", "adapter_id", item.AdapterID, "error", err)
 			_ = client.Close()

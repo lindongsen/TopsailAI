@@ -450,6 +450,56 @@ func TestReceiptFromOperationCarriesExitConfirmation(t *testing.T) {
 // The stderr case is asserted separately because a provider that dies before
 // writing a document has no structured evidence, and its stderr is then the only
 // diagnostic available.
+// TestIntersectCapabilitiesAcceptsTheControlActionFamily proves a control action
+// the provider advertises is reachable.
+//
+// The provider reports its control actions in their own contract list rather than
+// as operations, so reading only the operation list dropped every ctl. capability
+// the operator had configured. The Endpoint then advertised no control surface at
+// all and refused every control command as unsupported before the policy hook, so
+// a configured catalog had no effect.
+func TestIntersectCapabilitiesAcceptsTheControlActionFamily(t *testing.T) {
+	configured := protocol.CapabilityDescriptor{
+		Revision: "rev-1",
+		Capabilities: []protocol.Capability{
+			{Name: "ctl.fixture_probe", Version: "v1", TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
+			{Name: "message.send", Version: "v1", TargetKinds: []string{"session"}},
+		},
+	}
+	offered := []providercli.NamedContract{{Name: "message.send", Version: "v1"}}
+	controlActions := []providercli.NamedContract{{Name: "ctl.fixture_probe", Version: "v1"}}
+
+	effective := intersectCapabilities(configured, offered, controlActions)
+	if effective.Revision != "rev-1" {
+		t.Fatalf("effective revision = %q, want the configured revision", effective.Revision)
+	}
+	names := make([]string, 0, len(effective.Capabilities))
+	for _, capability := range effective.Capabilities {
+		names = append(names, capability.Name)
+	}
+	if len(names) != 2 {
+		t.Fatalf("effective capabilities = %v, want both the operation and the control action", names)
+	}
+}
+
+// TestIntersectCapabilitiesDropsAnUnadvertisedControlAction is the reverse case.
+//
+// Without it, treating every configured ctl. capability as reachable would pass
+// the positive test while advertising an action the provider cannot serve, and
+// the operator would see a provider error instead of a capability gap.
+func TestIntersectCapabilitiesDropsAnUnadvertisedControlAction(t *testing.T) {
+	configured := protocol.CapabilityDescriptor{
+		Revision: "rev-1",
+		Capabilities: []protocol.Capability{
+			{Name: "ctl.fixture_probe", Version: "v1", TargetKinds: []string{"session"}},
+		},
+	}
+	effective := intersectCapabilities(configured, nil, []providercli.NamedContract{{Name: "ctl.other_action", Version: "v1"}})
+	if len(effective.Capabilities) != 0 {
+		t.Fatalf("effective capabilities = %v, want none because the provider does not advertise the configured action", effective.Capabilities)
+	}
+}
+
 func TestReceiptFromProviderErrorCarriesTheProviderDiagnostic(t *testing.T) {
 	t.Run("structured document", func(t *testing.T) {
 		receipt := receiptFromProviderError(&providercli.ProviderError{

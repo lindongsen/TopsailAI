@@ -104,7 +104,7 @@ func newWithRunner(ctx context.Context, config Config, runner cliRunner) (*Adapt
 	candidate.descriptor = descriptor
 	candidate.version = version
 	candidate.scheduler = bounded
-	candidate.capability = intersectCapabilities(config.Capabilities, descriptor.Operations)
+	candidate.capability = intersectCapabilities(config.Capabilities, descriptor.Operations, descriptor.ControlActions)
 	return candidate, nil
 }
 
@@ -594,9 +594,25 @@ type sessionAttributes struct {
 	Drive                    *protocol.DriveSummary `json:"drive,omitempty"`
 }
 
-func intersectCapabilities(configured protocol.CapabilityDescriptor, offered []providercli.NamedContract) protocol.CapabilityDescriptor {
-	allowed := make(map[string]struct{}, len(offered))
+// intersectCapabilities keeps only the configured capabilities the provider
+// actually offers.
+//
+// The provider advertises two separate contract lists, and both are offers: the
+// fixed operation list and the control action family. Reading only the operation
+// list made every ctl. capability unreachable, because a provider reports its
+// control actions in their own field rather than as operations. The Endpoint then
+// advertised no ctl. capability at all and refused every control command as
+// unsupported before the policy hook could authorize it, so a configured catalog
+// had no effect.
+//
+// The revision is carried through unchanged, which is what makes a published
+// effective revision meaningful.
+func intersectCapabilities(configured protocol.CapabilityDescriptor, offered []providercli.NamedContract, controlActions []providercli.NamedContract) protocol.CapabilityDescriptor {
+	allowed := make(map[string]struct{}, len(offered)+len(controlActions))
 	for _, item := range offered {
+		allowed[item.Name+"\x00"+item.Version] = struct{}{}
+	}
+	for _, item := range controlActions {
 		allowed[item.Name+"\x00"+item.Version] = struct{}{}
 	}
 	result := protocol.CapabilityDescriptor{Revision: configured.Revision}
