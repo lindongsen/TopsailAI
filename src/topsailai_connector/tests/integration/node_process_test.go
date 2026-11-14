@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,11 @@ import (
 	"testing"
 	"time"
 )
+
+// runOnceTimeout bounds a child process that is expected to exit on its own. It
+// is generous, because the point is to catch a child that never exits rather
+// than to measure how fast a correct one is.
+const runOnceTimeout = 30 * time.Second
 
 // nodeBinary is the path to the built Node binary. TestMain builds it once so a
 // suite of process tests does not pay the compiler cost per test.
@@ -118,11 +124,24 @@ func start(t *testing.T, environment []string, arguments ...string) (*exec.Cmd, 
 }
 
 // runOnce runs the binary to completion and returns its combined output.
+//
+// The child is bounded by a deadline. Without one, a child that does not exit
+// blocks this call forever, and `go test -timeout` does not help: it panics the
+// test binary and reparents the child to PID 1, so the process outlives the run
+// with its binary already deleted. A test that expects a failure is exactly the
+// case where the child may not exit, so the bound is not optional here.
 func runOnce(t *testing.T, environment []string, arguments ...string) (string, error) {
 	t.Helper()
-	command := exec.Command(nodeBinary, arguments...)
+	ctx, cancel := context.WithTimeout(context.Background(), runOnceTimeout)
+	t.Cleanup(cancel)
+
+	command := exec.CommandContext(ctx, nodeBinary, arguments...)
 	command.Env = append(baseEnvironment(), environment...)
 	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("connector-node %v did not exit within %s; output:\n%s",
+			arguments, runOnceTimeout, output)
+	}
 	return string(output), err
 }
 
@@ -331,6 +350,21 @@ func TestNodeRejectsAnUnknownSubcommand(t *testing.T) {
 		t.Fatalf("process exited 0 for an unknown subcommand; output:\n%s", text)
 	}
 	if !strings.Contains(text, "unknown command") {
+		t.Fatalf("failure does not name the problem; got:\n%s", text)
+	}
+}
+
+// TestNodeRejectsAnArgumentAfterRun proves a leftover positional argument is a
+// failure rather than a silently ignored word. `run serve` used to start the
+// Node, because flag.Parse accepts a positional argument and nothing checked it:
+// the word was dropped and the default subcommand ran.
+func TestNodeRejectsAnArgumentAfterRun(t *testing.T) {
+	env := newEnvironment(t)
+	text, err := runOnce(t, env.vars(), "run", "serve")
+	if err == nil {
+		t.Fatalf("process exited 0 for a stray argument after run; output:\n%s", text)
+	}
+	if !strings.Contains(text, "unexpected argument") {
 		t.Fatalf("failure does not name the problem; got:\n%s", text)
 	}
 }
