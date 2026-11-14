@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 # Author: DawsonLin
-# Purpose: Verify a packaged bundle end to end: build the zip, unzip it, start a
-# real Server, start the bundle with its own start script, then drive real CLI
-# requests against it.
+# Purpose: Verify a packaged artifact end to end: build it, start a real Server,
+# start the artifact the way a recipient would, then drive real CLI requests
+# against it.
 #
-# This is the check that the bundle is actually usable, not merely well formed.
-# It asserts what the bundle promises: it starts with no arguments and no
-# environment variables, it serves the folders listed in scopes.txt, the pair
-# printed by the packaging step addresses it from the CLI, and the fence still
-# refuses an escape.
+# Both packaging modes are covered, because they fail differently. The zip mode is
+# built explicitly with PACKAGE_EMBED_CONFIG=0 and started through its own start
+# script. The default mode is built with no PACKAGE_EMBED_CONFIG at all, so the
+# check follows whatever the default is rather than a value that happens to equal
+# it today; it is started with no configuration file and no CONNECTOR_NODE_*
+# variable, which is the promise the embedded mode makes.
 #
-# The script creates its own fixtures and its own bundle, so a run does not
+# This is the check that the artifact is actually usable, not merely well formed.
+# It asserts what the artifact promises: it starts with no arguments, it serves
+# the folders listed in scopes.txt, the pair it prints addresses it from the CLI,
+# and the fence still refuses an escape.
+#
+# The script creates its own fixtures and its own artifacts, so a run does not
 # depend on a previous run's leftovers. Everything it writes lives under
 # .tmp/pkgtest, which is git-ignored.
 
@@ -34,24 +40,25 @@ CLIENT_TOKEN='pkg-client-token-0123456789'
 
 SERVER_PID=""
 NODE_PID=""
+EMBEDDED_PID=""
 
 fail() {
 	echo "verify: $*" >&2
 	exit 1
 }
 
-# stop_all kills exactly the two processes this script started, by PID. It never
+# stop_all kills exactly the processes this script started, by PID. It never
 # matches on a process name, because a name match would also kill a Server or a
 # Node that belongs to another test or to the operator.
 stop_all() {
 	local pid
-	for pid in "$NODE_PID" "$SERVER_PID"; do
+	for pid in "$EMBEDDED_PID" "$NODE_PID" "$SERVER_PID"; do
 		[ -n "$pid" ] || continue
 		if kill -0 "$pid" 2>/dev/null; then
 			kill "$pid" 2>/dev/null || true
 		fi
 	done
-	for pid in "$NODE_PID" "$SERVER_PID"; do
+	for pid in "$EMBEDDED_PID" "$NODE_PID" "$SERVER_PID"; do
 		[ -n "$pid" ] || continue
 		local deadline=$((SECONDS + 10))
 		while kill -0 "$pid" 2>/dev/null && ((SECONDS < deadline)); do
@@ -320,5 +327,87 @@ fi
 grep -q "PACKAGE_ALLOW_FILESYSTEM_ROOT 'true' is not recognised" "$OPTIN_WORK/bad.log" ||
 	fail "the unrecognised-value refusal did not name the flag"
 echo "verify: an unrecognised opt-in value fails packaging"
+
+echo "--- the default packaging mode is one executable, not a zip ---"
+# The default is what an operator gets by typing `make package` with no flag, so
+# it is checked by not passing PACKAGE_EMBED_CONFIG at all. Passing =1 would test
+# a value that happens to equal today's default, and the check would keep passing
+# after the default changed.
+#
+# The artifact path is read from the packaging summary rather than assumed, and
+# the assertion is on that path. Asserting that no zip exists would fail on a
+# machine that ever built one: the embedded branch never removes a stale zip, so
+# a leftover from an earlier run survives with its original modification time and
+# checksum.
+EMBEDDED_WORK="$WORK/embedded"
+rm -rf "$EMBEDDED_WORK"
+mkdir -p "$EMBEDDED_WORK/home"
+
+EMBEDDED_NAME="embedded-default"
+(
+	cd "$ROOT"
+	make --no-print-directory package \
+		PACKAGE_NAME="$EMBEDDED_NAME" \
+		PACKAGE_GOOS=linux \
+		PACKAGE_GOARCH=amd64 \
+		PACKAGE_SERVER_URL="http://127.0.0.1:$PORT" \
+		PACKAGE_SCOPES="project=$SHARED" \
+		PACKAGE_TUNNEL_TOKEN="$TUNNEL_TOKEN"
+) >"$EMBEDDED_WORK/package.log" 2>&1 || fail "the default packaging mode failed; see $EMBEDDED_WORK/package.log"
+
+EMBEDDED_ARTIFACT=$(sed -n 's/^package: wrote //p' "$EMBEDDED_WORK/package.log" | head -1)
+[ -n "$EMBEDDED_ARTIFACT" ] || fail "the default packaging mode reported no artifact"
+[ -x "$EMBEDDED_ARTIFACT" ] || fail "the default artifact $EMBEDDED_ARTIFACT is not executable"
+case "$EMBEDDED_ARTIFACT" in
+*.zip) fail "the default packaging mode produced a zip: $EMBEDDED_ARTIFACT" ;;
+esac
+echo "verify: the default packaging mode produced one executable, $EMBEDDED_ARTIFACT"
+
+echo "verify: starting the default artifact with no configuration file and no CONNECTOR_NODE_* variable" >&2
+: >"$EMBEDDED_WORK/node.log"
+# HOME is set because the Node resolves its config directory through
+# os.UserConfigDir, which needs one of XDG_CONFIG_HOME or HOME. Without either it
+# refuses to start, and the failure would be about the platform directory rather
+# than about the embedded configuration. No CONNECTOR_NODE_* variable is set, so
+# every value the Node uses comes from the binary.
+env -i HOME="$EMBEDDED_WORK/home" PATH=/usr/bin:/bin "$EMBEDDED_ARTIFACT" run >"$EMBEDDED_WORK/node.log" 2>&1 &
+EMBEDDED_PID=$!
+wait_for_log "$EMBEDDED_WORK/node.log" 'msg="channel established"' ||
+	fail "the default artifact did not connect; see $EMBEDDED_WORK/node.log"
+
+# Each of these three values arrives through a separate -X linker flag. A -X
+# whose package path does not match the module path is silently ignored: the
+# build succeeds, the binary starts, and the value is simply absent. Only the
+# startup log can show that the wiring survived, because the unit tests assign
+# the variables directly and never exercise the linker.
+grep -q 'policy=embedded' "$EMBEDDED_WORK/node.log" ||
+	fail "the default artifact did not report an embedded policy"
+grep -q "server=ws://127.0.0.1:$PORT/channel" "$EMBEDDED_WORK/node.log" ||
+	fail "the embedded Server URL did not reach the binary"
+grep -q 'scopes=\[project\]' "$EMBEDDED_WORK/node.log" ||
+	fail "the embedded policy did not define the project scope"
+echo "verify: the embedded policy, Server URL and scopes all reached the binary"
+
+# The pair comes from the platform config directory, not from a config folder
+# beside the executable, because the default mode has no start script to set
+# CONNECTOR_NODE_CONFIG_DIR. Looking for config/identity beside the binary would
+# find nothing and the failure would look like a missing identity.
+EMBEDDED_PAIR=$(tr -d '\r\n' <"$EMBEDDED_WORK/home/.config/topsailai-connector/identity")
+[ -n "$EMBEDDED_PAIR" ] || fail "the default artifact created no identity in the platform config directory"
+
+echo "--- file.read project hello.txt through the default artifact ---"
+CONNECTOR_CLI_SERVER_URL="http://127.0.0.1:$PORT" \
+	CONNECTOR_CLI_CLIENT_TOKEN="$CLIENT_TOKEN" \
+	"$BIN/connector-server" cli --node "$EMBEDDED_PAIR" --scope project --path hello.txt file.read ||
+	fail "file.read through the default artifact failed"
+echo "verify: the default artifact served a file"
+
+echo "--- refusal: the default artifact still refuses an escape ---"
+if CONNECTOR_CLI_SERVER_URL="http://127.0.0.1:$PORT" \
+	CONNECTOR_CLI_CLIENT_TOKEN="$CLIENT_TOKEN" \
+	"$BIN/connector-server" cli --node "$EMBEDDED_PAIR" --scope project --path ../etc/passwd file.read 2>&1; then
+	fail "the default artifact served a traversal path"
+fi
+echo "verify: the default artifact refused a traversal path, as expected"
 
 echo "verify: all bundle checks passed"

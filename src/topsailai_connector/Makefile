@@ -51,8 +51,10 @@ SHARED_PKGS := ./internal/protocol/... ./internal/security/...
 COVERAGE_FILE := $(TMP_DIR)/coverage.out
 COVERAGE_HTML := $(TMP_DIR)/coverage.html
 
-# Packaging inputs. `make package` builds one zip that a user unzips and starts,
-# and that the operator can address with the CLI immediately.
+# Packaging inputs. `make package` builds one executable with the configuration
+# compiled in, and that the operator can address with the CLI immediately. Set
+# PACKAGE_EMBED_CONFIG=0, or run `make package-zip`, for a zip that a user unzips
+# and starts instead.
 #
 # The two required inputs are the Server address and the folders to expose:
 #
@@ -286,13 +288,16 @@ test-windows-compile:
 	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/connector-node.test.exe ./cmd/connector-node/
 	@echo "compiled the windows test binaries"
 
-# package builds one zip that a user unzips and starts, and that the operator can
-# address with the CLI immediately.
+# package builds one executable with the configuration compiled in, and that the
+# operator can address with the CLI immediately. Set PACKAGE_EMBED_CONFIG=0, or
+# run `make package-zip`, for a zip that a user unzips and starts instead.
 #
-# It depends on build-node because the identity pair is generated with the host
-# build of the Node. Generating the pair with a second implementation here would
-# be a second definition of the pair format, and the two would eventually
-# disagree about what a valid pair is.
+# It depends on build-node because the zip mode generates the identity pair with
+# the host build of the Node. Generating the pair with a second implementation
+# here would be a second definition of the pair format, and the two would
+# eventually disagree about what a valid pair is. The default mode does not read
+# the host binary, because the identity is created on the target machine, so the
+# dependency is only load-bearing for the zip.
 #
 # The scope paths are not baked into a policy file. A policy requires absolute
 # paths, and the build host's paths are not the user's paths, so the bundle
