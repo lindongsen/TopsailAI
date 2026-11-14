@@ -234,9 +234,15 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
     if not tips:
         tips = INPUT_TIPS
 
-    print(tips + " Press 'CTRL D' or Enter 'EOF' for end")
-    sys.stdout.flush()
     for _attempt in range(MAX_INPUT_RETRY_COUNT):
+        # The prompt belongs to every attempt, not only to the first one. A
+        # message consumed by a hook requests a fresh message, and the user must
+        # see that a new message is expected. Printing it once before the loop
+        # left the CLI silent after a slash command, so the waiting state became
+        # invisible. The retry count still bounds the total number of prints, so
+        # a closed input channel cannot reprint the prompt without end.
+        print(tips + " Press 'CTRL D' or Enter 'EOF' for end")
+        sys.stdout.flush()
         message = ""
         count = 0
         hook_triggered = False

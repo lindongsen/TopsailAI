@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 author: DawsonLin
-status: open
+status: fixed
 ---
 
 # Issue: A slash command no longer reprints the prompt after it is consumed
@@ -108,18 +108,32 @@ first attempt of one call.
 
 ## Resolution
 
-Not implemented. The fix must decide whether the prompt is reprinted per retry
-attempt inside `input_multi_line`, or whether the retry is moved back to a caller
-that re-enters the function. Either way the bounded retry count introduced by
-`68e5e80a` must be preserved, because it is what stops the unbounded prompt growth
-that produced the original disk-growth incident.
+Implemented in `workspace/input_tool.py::input_multi_line`. The prompt print and
+its `sys.stdout.flush()` moved from before the retry loop to the start of every
+retry attempt. The retry itself stays a bounded `for _attempt in
+range(MAX_INPUT_RETRY_COUNT)` loop, so the reprint is bounded by the same count
+that `68e5e80a` introduced.
+
+`input_one_line` needed no change: it passes `tips` into `_input(tips)`, so
+`input()` already prints the prompt on every retry.
 
 ## Verification
 
-Pending. Acceptance requires:
+Verified at `efadf5c4` with the fix applied.
 
-- The failing BDD scenario passes without weakening its assertions or adding a skip.
-- The bounded retry behavior from `68e5e80a` still holds: a closed input channel
-  must not reprint the prompt without bound.
-- A focused unit test asserts that a hook-consumed message reprints the prompt,
-  and a negative control proves the assertion fails when the reprint is removed.
+- The failing BDD scenario passes without weakening its assertions or adding a
+  skip: `tests/bdd/test_two_layer_message_verification.py` reports
+  `3 passed` on three consecutive runs (55.36s, 54.26s, 56.76s).
+- The bounded retry behavior from `68e5e80a` still holds. A hook that consumes
+  every message still ends with
+  `EOFError: no usable multi-line input after 999 attempts`, and the prompt is
+  printed exactly `MAX_INPUT_RETRY_COUNT` times instead of without bound.
+- Two focused unit tests were added to
+  `tests/unit/test_topsailai_workspace_input_tool.py`:
+  `test_prompt_is_reprinted_after_a_hook_consumes_a_message` and
+  `test_prompt_reprint_stays_bounded_when_every_message_is_consumed`.
+- Negative control: reverting only the prompt move makes both new tests fail
+  with `AssertionError: 1 != 2` and `AssertionError: 1 != 999`, which reproduces
+  the original symptom as a counted difference. Restoring the fix returns the
+  file to `76 passed`.
+- CLI BDD full suite: `141 passed` in 31.60s.
