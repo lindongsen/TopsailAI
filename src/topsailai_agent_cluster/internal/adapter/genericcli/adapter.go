@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/adapter"
+	"topsailai_agent_cluster/internal/commandexec"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/providercli"
 )
@@ -36,6 +37,10 @@ type Config struct {
 	Capabilities   protocol.CapabilityDescriptor
 	Mapper         adapter.ResourceMapper
 	Now            func() time.Time
+	// CommandRunner executes one allowlisted argv array on the Endpoint itself.
+	// It is a field rather than a package-level call so a test can observe the
+	// exact argv, directory and executable without running a real program.
+	CommandRunner commandexec.Runner
 }
 
 type cliRunner interface {
@@ -47,6 +52,7 @@ type cliRunner interface {
 type Adapter struct {
 	config     Config
 	runner     cliRunner
+	commands   commandexec.Runner
 	scheduler  *scheduler
 	descriptor providercli.Descriptor
 	version    providercli.Version
@@ -80,11 +86,14 @@ func newWithRunner(ctx context.Context, config Config, runner cliRunner) (*Adapt
 	if config.Now == nil {
 		config.Now = time.Now
 	}
+	if config.CommandRunner == nil {
+		config.CommandRunner = commandexec.ExecRunner{}
+	}
 	bootstrap, err := newScheduler(config.AdapterLimits)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap scheduler: %w", err)
 	}
-	candidate := &Adapter{config: config, runner: runner, scheduler: bootstrap, version: providercli.Version{Protocol: providercli.ProtocolName, Major: providercli.ProtocolMajor, Minor: providercli.ProtocolMinor}}
+	candidate := &Adapter{config: config, runner: runner, commands: config.CommandRunner, scheduler: bootstrap, version: providercli.Version{Protocol: providercli.ProtocolName, Major: providercli.ProtocolMajor, Minor: providercli.ProtocolMinor}}
 	descriptor, err := candidate.describeProvider(ctx)
 	if err != nil {
 		return nil, err
@@ -166,6 +175,18 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	if response.Inspection.Observation != nil {
 		result.ProviderGeneration = response.Inspection.Observation.ProviderGeneration
 		result.State = response.Inspection.Observation.State
+		// The workspace is provider evidence, so it is read from the same
+		// observation the generation came from. An operator command resolves its
+		// working directory from this value, and a command that ran in the
+		// Endpoint's own directory instead of the session's would be a silent
+		// wrong-place execution rather than a visible failure.
+		var attributes sessionAttributes
+		if len(response.Inspection.Observation.Attributes) > 0 {
+			if err := decodeStrictJSON(response.Inspection.Observation.Attributes, &attributes); err != nil {
+				return adapter.InspectResult{}, fmt.Errorf("decode inspection attributes: %w", err)
+			}
+		}
+		result.ProviderProjectWorkspace = attributes.ProviderProjectWorkspace
 	}
 	return result, nil
 }
@@ -175,6 +196,15 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	ctx, cancel := boundedContext(ctx, request.Intent.Budget.CLITimeoutMS, request.Intent.ExecuteBeforeAtMS)
 	defer cancel()
 	intent := request.Intent
+	// command.exec is Endpoint-native by contract: the Endpoint owns the
+	// allowlist, the working-directory resolution, the confinement decision, the
+	// minimal environment, the timeout, the output bounds and the exact-process
+	// cleanup. Forwarding it to the provider would move the execution to a
+	// process that never saw the allowlist and cannot report the real exit status
+	// of the operator's own program, so it returns before any provider call.
+	if intent.Operation == protocol.OperationCommandExec {
+		return a.executeCommand(ctx, intent)
+	}
 	target, err := a.executionTarget(ctx, intent)
 	if err != nil {
 		return adapter.ExecuteResult{}, err

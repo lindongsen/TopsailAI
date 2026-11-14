@@ -38,6 +38,13 @@ type mockOptions struct {
 	outputSize         int
 	failAfterN         int
 	alwaysFail         bool
+	// sessionDir is the working directory the mock reports for every session it
+	// publishes. The Cluster resolves an operator command's directory from this
+	// provider evidence and refuses the command when it is absent, so a mock that
+	// never reports one cannot exercise command.exec at all. It is a flag rather
+	// than an environment variable because the adapter sets a child's environment
+	// to exactly the configured Environment, which is empty.
+	sessionDir string
 }
 
 // parseOptions reads the argv knobs. Unknown flags are rejected by flag.Parse,
@@ -59,6 +66,7 @@ func parseOptions() mockOptions {
 	flag.IntVar(&options.outputSize, "output-size", 0, "pad the output snapshot to this many bytes")
 	flag.IntVar(&options.failAfterN, "fail-after-n", -1, "fail discovery after N successful calls; zero fails immediately")
 	flag.BoolVar(&options.alwaysFail, "always-fail", false, "fail every discovery call")
+	flag.StringVar(&options.sessionDir, "session-dir", "", "working directory reported for every published session")
 	flag.Parse()
 	return options
 }
@@ -211,9 +219,9 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		// ran, so a resume scenario would pass while proving nothing about
 		// authorization. The stopped row is therefore found but not live, which is
 		// exactly what a provider reports for a record whose process is gone.
-		observation := fixtureObservation()
-		if request.Target != nil && request.Target.ProviderResourceKey == stoppedObservation().ProviderResourceKey {
-			stopped := stoppedObservation()
+		observation := fixtureObservation(options)
+		if request.Target != nil && request.Target.ProviderResourceKey == "session:stopped" {
+			stopped := stoppedObservation(options)
 			base.Inspection = &inspectionResult{Found: true, Live: false, Observation: &stopped}
 			break
 		}
@@ -425,6 +433,14 @@ func executeResponse(request request, fault string) response {
 	if !ok {
 		evidence, ok = controlActionEvidenceTable[request.Operation.Name]
 	}
+	if !ok && strings.HasPrefix(request.Operation.Name, mockControlPrefix) {
+		// Any other ctl. operation is answered with the generic control evidence.
+		// The Endpoint-local catalog is the only source of action names, so the
+		// mock cannot enumerate them; refusing an action the catalog defined would
+		// make the control channel testable only for the one name this file
+		// happens to list.
+		evidence, ok = genericControlEvidence, true
+	}
 	if !ok {
 		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
 	}
@@ -489,6 +505,18 @@ func executeResponse(request request, fault string) response {
 // provider: any ctl. operation the Endpoint admits is one the Endpoint-local
 // catalog defined, and the catalog is the only source of action names. A mock that
 // answered one hardcoded name would make a scenario pass only for that name.
+// mockControlPrefix is the Cluster's prefix for a control action capability. It
+// is a wire contract value, so it is stated once here and the production
+// declaration must agree.
+const mockControlPrefix = "ctl."
+
+// genericControlEvidence answers a ctl. operation the table does not name.
+//
+// A control action is submitted and acknowledged: the provider accepted the
+// request and reports that it reached the provider, which is the strongest claim
+// a control action can make without observing the effect itself.
+var genericControlEvidence = operationEvidence{version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`}
+
 var controlActionEvidenceTable = map[string]operationEvidence{
 	"ctl.fixture_probe": {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
 }
@@ -588,9 +616,9 @@ func discoveryObservations(options mockOptions) ([]providerObservation, error) {
 	}
 	switch options.mode {
 	case "one", "":
-		return []providerObservation{fixtureObservation()}, nil
+		return []providerObservation{fixtureObservation(options)}, nil
 	case "mixed":
-		return []providerObservation{fixtureObservation(), stoppedObservation()}, nil
+		return []providerObservation{fixtureObservation(options), stoppedObservation(options)}, nil
 	case "empty":
 		return []providerObservation{}, nil
 	case "fail":
@@ -605,14 +633,14 @@ func discoveryObservations(options mockOptions) ([]providerObservation, error) {
 // An empty generation is the provider's own statement that no process holds the
 // session, which is exactly what a resume scenario needs: resume authorizes on
 // the absence of a live target.
-func stoppedObservation() providerObservation {
+func stoppedObservation(options mockOptions) providerObservation {
 	return providerObservation{
 		ProviderResourceKey: "session:stopped",
 		ProviderGeneration:  "",
 		ResourceKind:        resourceSession,
 		State:               "stopped",
 		ObservedAtMS:        fixtureTimeMS,
-		Attributes:          json.RawMessage(`{"provider_session_id":"session:stopped","provider_display_name":"Stopped Session"}`),
+		Attributes:          sessionAttributesJSON("session:stopped", "Stopped Session", options.sessionDir),
 	}
 }
 
@@ -685,8 +713,26 @@ func recordInvocationInterval(options mockOptions, request request, kind string,
 	_ = json.NewEncoder(file).Encode(record)
 }
 
+// sessionAttributesJSON builds the provider attribute document for one session.
+//
+// provider_project_workspace is reported only when the mock was told a directory,
+// because the Cluster treats an absent workspace as "the provider did not say"
+// and refuses an operator command rather than inventing one. Reporting a made-up
+// path would let a command run somewhere the operator never selected.
+func sessionAttributesJSON(sessionID, displayName, workspace string) json.RawMessage {
+	document := map[string]any{"provider_session_id": sessionID, "provider_display_name": displayName}
+	if workspace != "" {
+		document["provider_project_workspace"] = workspace
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(encoded)
+}
+
 // fixtureObservation returns the stable cross-process discovery identity.
-func fixtureObservation() providerObservation {
+func fixtureObservation(options mockOptions) providerObservation {
 	return providerObservation{
 		ProviderResourceKey: "session:stable",
 		ProviderGeneration:  "generation-1",
@@ -699,7 +745,7 @@ func fixtureObservation() providerObservation {
 		// addressing a session by its provider key could not find the row it had
 		// just been told about. The provider resource key is that identifier here,
 		// so it is reported rather than invented.
-		Attributes: json.RawMessage(`{"provider_session_id":"session:stable","provider_display_name":"Mock Session"}`),
+		Attributes: sessionAttributesJSON("session:stable", "Mock Session", options.sessionDir),
 	}
 }
 

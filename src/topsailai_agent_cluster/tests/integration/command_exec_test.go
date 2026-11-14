@@ -38,6 +38,15 @@ type execCommandView struct {
 	ProviderResponse string `json:"provider_response"`
 }
 
+// commandExecCapabilities is the operator-declared capability allowlist for the
+// command-execution cluster.
+//
+// The revision is mandatory: the adapter keeps the declared revision and
+// activation rejects a descriptor without one. The two operations are the ones
+// these tests address, and command.exec carries payload schema version "1"
+// because that is the version the Cluster contract defines for it.
+const commandExecCapabilities = `{"revision":"mock-cli-r1","capabilities":[{"name":"command.exec","version":"1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"},{"name":"agent.model.select","version":"1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"}]}`
+
 // controlActionCatalog is the Endpoint-local ctl. catalog the fixture node uses.
 //
 // The catalog is the only source of ctl. actions, so a fixture Endpoint without
@@ -128,17 +137,13 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 	certs := makeIntegrationCerts(t, root)
 	serverBinary := filepath.Join(root, "server")
 	endpointBinary := filepath.Join(root, "endpoint")
-	// Both provider entry points must share one directory: the adapter resolves
-	// topsailai_session_info as a sibling of the configured executable and never
-	// through PATH.
-	providerDir := filepath.Join(root, "provider")
+	// The Provider CLI is a separate Go module, so it is built from its own
+	// directory. Building it from the repository root fails with "main module
+	// does not contain package".
+	providerBin := filepath.Join(root, "provider-mock")
 	build(t, serverBinary, "./src/main/agent-cluster-server")
 	build(t, endpointBinary, "./src/main/agent-cluster-endpoint")
-	// The source directories carry a _fixture suffix so they never collide with
-	// the real provider tree, while the built binaries keep the provider names
-	// the adapter resolves.
-	build(t, filepath.Join(providerDir, "topsailai"), "./tests/fixtures/topsailai_fixture")
-	build(t, filepath.Join(providerDir, "topsailai_session_info"), "./tests/fixtures/topsailai_session_info_fixture")
+	buildProviderModule(t, providerBin, filepath.Join(moduleRoot(t), "providers", "mock"))
 	c := &execCluster{
 		root: root, api: free(t),
 		serverDB:      filepath.Join(root, "server.db"),
@@ -182,7 +187,17 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 		t.Fatal(err)
 	}
 	waitHTTP(t, c.url("/healthz"), "", http.StatusOK, 15*time.Second)
-	adapters := fmt.Sprintf(`AGENT_CLUSTER_ENDPOINT_ADAPTERS=[{"adapter_id":"topsailai-main","provider_type":"topsailai","command":%q,"timeout_ms":5000}]`, filepath.Join(providerDir, "topsailai"))
+	// The adapter declares the capabilities the tests address, because the Generic
+	// CLI Adapter has no built-in default: it intersects the declared list with
+	// what the provider advertises, so an empty list advertises nothing and every
+	// command is refused before the provider is reached.
+	// The session directory is passed as a provider argv flag, not as an
+	// environment variable: the adapter sets a child's environment to exactly the
+	// configured Environment, which is empty, so an environment variable would
+	// never reach the mock. The mock reports this directory as the session's
+	// provider_project_workspace, which is the only source the Cluster accepts for
+	// an operator command's working directory.
+	adapters := fmt.Sprintf(`AGENT_CLUSTER_ENDPOINT_ADAPTERS=[{"adapter_id":"mock-main","provider_type":"genericcli","command":%q,"args":["--session-dir",%q],"timeout_ms":5000,"capabilities":%s}]`, providerBin, c.sessionDir, commandExecCapabilities)
 	endpointEnv := append(os.Environ(),
 		"AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel,
 		"AGENT_CLUSTER_ENDPOINT_ID=endpoint-1",
@@ -190,7 +205,6 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 		"AGENT_CLUSTER_TLS_CA_FILE="+certs.ca,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey,
-		"AGENT_CLUSTER_TEST_SESSION_DIR="+c.sessionDir,
 		adapters,
 	)
 	if c.allowlist != "" {
@@ -249,7 +263,7 @@ func waitExecInventory(t *testing.T, url string, limit time.Duration) {
 			resp.Body.Close()
 			var decoded envelope
 			if readErr == nil && resp.StatusCode == http.StatusOK && json.Unmarshal(body, &decoded) == nil &&
-				len(decoded.Data.Adapters) > 0 && decoded.Data.Adapters[0].AdapterID == "topsailai-main" &&
+				len(decoded.Data.Adapters) > 0 && decoded.Data.Adapters[0].AdapterID == "mock-main" &&
 				len(decoded.Data.Sessions) > 0 && decoded.Data.Sessions[0].ResourceID != "" && decoded.Data.Sessions[0].ProviderGeneration != "" {
 				return
 			}
@@ -268,8 +282,8 @@ func postExecCommand(t *testing.T, c *execCluster, id string, argv []string) {
 	}
 	intent := map[string]any{
 		"hash_version": "v1", "command_id": id, "endpoint_id": "endpoint-1",
-		"launch_profile_id": "topsailai-main", "operation": "command.exec",
-		"operation_version": "1", "capability_revision": "topsailai-v1",
+		"launch_profile_id": "mock-main", "operation": "command.exec",
+		"operation_version": "1", "capability_revision": "mock-cli-r1",
 		"payload_schema_version": "1", "payload": json.RawMessage(payload),
 		"execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli(),
 	}

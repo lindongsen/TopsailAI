@@ -54,6 +54,12 @@ type InspectResult struct {
 	Live               bool
 	ProviderGeneration string
 	State              string
+	// ProviderProjectWorkspace is the workspace the provider reports for this
+	// record. It is the only trustworthy source for the working directory of an
+	// operator command, because the Endpoint never invents a directory: falling
+	// back to its own working directory would run the command somewhere the
+	// operator never selected.
+	ProviderProjectWorkspace string
 }
 
 // ExecuteRequest carries a validated standard operation.
