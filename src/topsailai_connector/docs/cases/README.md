@@ -51,10 +51,19 @@ fails because the Node is offline has not tested the fence.
 | Unit | `internal/*/**_test.go` | One function, no IO |
 | Integration | `tests/integration/` | Server and Node over a real socket |
 | BDD | `tests/bdd/` | A user story end to end |
-| Manual | `tests/e2e/` | A platform behaviour that cannot be automated cheaply |
+| End-to-end | `tests/e2e/` | Two real processes over a real socket, driven by `make check` |
+| Manual | a real Windows host | A platform behaviour that cannot be automated on this host |
 
-The adversarial cases are unit and integration cases, not manual ones. A path
-escape is a deterministic input, so it belongs in a test that runs on every
+Every script under `tests/e2e/` is automated: each one picks its own port, starts
+and stops its own processes by exact PID, and exits non-zero on failure, so
+`make check` runs all of them. The only case that needs a human is
+`windows_deep_nesting.sh`, which must run on a real Windows host because wine
+resolves paths through the Linux filesystem and therefore does not enforce
+`MAX_PATH`. Its evidence is recorded in `docs/permission-design.md` rather than
+asserted by a test that cannot run here.
+
+The adversarial cases are unit, integration and end-to-end cases, not manual ones.
+A path escape is a deterministic input, so it belongs in a test that runs on every
 commit rather than in a checklist a human follows.
 
 ## What is not covered here

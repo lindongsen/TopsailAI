@@ -244,6 +244,27 @@ bdd:
 # Server's own log balances established against closed channels, which is the
 # process-level evidence that no registration is left behind.
 #
+# deep_nesting.sh proves depth does not weaken the fence across the wire: it reads,
+# stats and lists at nine depths up to 200, refuses a symlink planted at depth 20,
+# reports that symlink without following it, and refuses a path over the grammar
+# limit. The unit test proves the same property in-process, but a depth limit could
+# also come from the frame cap, the JSON encoding or the CLI's own argument parsing,
+# none of which the unit test touches.
+#
+# manual_probe.sh is the only script that asserts the secrets never reach a log: it
+# greps the Server log for the node token, the client token and the tunnel token, and
+# asserts the node token appears exactly once in the Node log, from the first-run
+# print. It also covers a dot component being refused rather than normalised, which
+# no other script asserts. It is named "manual" because it was written to be read
+# line by line, not because it needs a human: it picks its own port, starts and stops
+# its own processes by exact PID, and exits non-zero on failure, so it runs here.
+#
+# windows_deep_nesting.sh is deliberately absent. It exercises the Windows path rules
+# and cannot run on this host: wine resolves paths through the Linux filesystem, so it
+# does not enforce MAX_PATH and a tree Windows refuses would pass there. The Windows
+# coverage that does run here is test-windows-compile, which compiles the Windows test
+# binaries; the live Windows evidence is recorded in docs/permission-design.md.
+#
 # verify_package.sh is the only check that exercises the delivery path: it builds a
 # real zip, unzips it, and starts the bundle with the bundle's own start script
 # rather than with a command written for the test. A bundle that is well formed but
@@ -257,6 +278,8 @@ e2e: build
 	bash tests/e2e/run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/reconnect.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/long_run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/deep_nesting.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/manual_probe.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/verify_package.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 
 # Windows is a supported platform for the Node, so the Node must be compiled for
