@@ -204,6 +204,18 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 	// does not have.
 	authenticatedID := d.holder.Current().ID
 	stopIdentityWatcher := context.AfterFunc(changeCtx, func() {
+		// changeCtx is derived from ctx, so it is cancelled both when the identity
+		// signal fires and when the session context ends. Only the first is an
+		// identity change; a shutdown must not be reported as one, because an
+		// operator reading the log would look for a regeneration that never
+		// happened.
+		//
+		// The shutdown branch closes nothing, because the watcher registered on
+		// ctx above already closes the connection when the context ends. Closing
+		// it here as well would be a second close of the same socket.
+		if ctx.Err() != nil {
+			return
+		}
 		d.logger.Info("identity changed; closing the channel authenticated with the retired pair",
 			"node_id", authenticatedID,
 		)

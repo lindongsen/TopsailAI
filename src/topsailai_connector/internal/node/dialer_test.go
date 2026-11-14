@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +32,13 @@ type dialerFixture struct {
 // package, because the Node must be testable without the Server: a test that
 // needed both would fail for either side's reason and would not say which.
 func newDialerFixture(t *testing.T, answer func(protocol.Hello) []protocol.Frame) *dialerFixture {
+	t.Helper()
+	return newDialerFixtureWithLogger(t, answer, slog.New(slog.DiscardHandler))
+}
+
+// newDialerFixtureWithLogger builds a dialer whose log lines the caller can
+// inspect, so a test can assert what a shutdown does and does not report.
+func newDialerFixtureWithLogger(t *testing.T, answer func(protocol.Hello) []protocol.Frame, logger *slog.Logger) *dialerFixture {
 	t.Helper()
 
 	hello := make(chan protocol.Hello, 1)
@@ -90,7 +99,7 @@ func newDialerFixture(t *testing.T, answer func(protocol.Hello) []protocol.Frame
 	}
 
 	dispatcher := NewDispatcher(nil, identity, slog.New(slog.DiscardHandler))
-	dialer, err := NewDialer(config, identity, dispatcher, slog.New(slog.DiscardHandler))
+	dialer, err := NewDialer(config, identity, dispatcher, logger)
 	if err != nil {
 		t.Fatalf("build dialer: %v", err)
 	}
@@ -346,6 +355,125 @@ func TestDialerRunStopsOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("run did not return after the context was cancelled")
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent use, because the identity
+// callback runs on its own goroutine while the test reads the log.
+type syncBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+// Write appends to the buffer under the lock.
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(p)
+}
+
+// String returns the log written so far under the lock.
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
+// waitForLog waits until the log contains a marker, so a test can act only once
+// the dialer has reached the state it means to exercise.
+//
+// Waiting on the log rather than on a fixed sleep is what makes the shutdown test
+// meaningful: cancelling before the session starts would return from the context
+// check at the top of the loop and never reach the blocked read that the socket
+// close exists to interrupt.
+func (b *syncBuffer) waitForLog(t *testing.T, marker string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(b.String(), marker) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("the log never contained %q: %q", marker, b.String())
+}
+
+// TestDialerShutdownDoesNotReportAnIdentityChange checks that a normal shutdown
+// does not claim the identity changed. The change context is derived from the
+// session context, so it is cancelled by a shutdown as well as by a real change;
+// reporting the shutdown as a change sends an operator looking for a
+// regeneration that never happened.
+func TestDialerShutdownDoesNotReportAnIdentityChange(t *testing.T) {
+	logs := &syncBuffer{}
+	fixture := newDialerFixtureWithLogger(t, func(protocol.Hello) []protocol.Frame {
+		return []protocol.Frame{confirmFrame()}
+	}, slog.New(slog.NewTextHandler(logs, nil)))
+
+	// A real channel rather than nil, because a nil channel never delivers and
+	// the watcher goroutine would not start, which is the state that hid this
+	// defect from every other test in this file.
+	changes := make(chan struct{}, 1)
+	fixture.dialer.identityChanges = changes
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- fixture.dialer.connectOnce(ctx)
+	}()
+
+	// Wait for the session to be serving, not merely for the hello to arrive.
+	// Cancelling before the session starts would return from the context check at
+	// the top of the loop and never reach the blocked read that the socket close
+	// exists to interrupt, so the test would pass without exercising the path.
+	logs.waitForLog(t, "channel established")
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connectOnce did not return after the context was cancelled")
+	}
+
+	if report := logs.String(); strings.Contains(report, "identity changed") {
+		t.Fatalf("a shutdown reported an identity change: %q", report)
+	}
+}
+
+// TestDialerReportsAGenuineIdentityChange checks that a real change is still
+// reported. Without this test the shutdown test above could be satisfied by
+// deleting the message, which would hide a real regeneration instead of fixing
+// the false report.
+func TestDialerReportsAGenuineIdentityChange(t *testing.T) {
+	logs := &syncBuffer{}
+	fixture := newDialerFixtureWithLogger(t, func(protocol.Hello) []protocol.Frame {
+		return []protocol.Frame{confirmFrame()}
+	}, slog.New(slog.NewTextHandler(logs, nil)))
+
+	changes := make(chan struct{}, 1)
+	fixture.dialer.identityChanges = changes
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- fixture.dialer.connectOnce(ctx)
+	}()
+
+	// Wait for the session to be serving, so the change arrives while the read is
+	// blocked and the callback is the thing that ends it.
+	logs.waitForLog(t, "channel established")
+
+	changes <- struct{}{}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connectOnce did not return after an identity change")
+	}
+
+	if report := logs.String(); !strings.Contains(report, "identity changed") {
+		t.Fatalf("an identity change was not reported: %q", report)
 	}
 }
 
