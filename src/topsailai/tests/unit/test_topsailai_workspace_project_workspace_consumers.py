@@ -9,8 +9,8 @@
 
 import json
 import os
-import subprocess
 from collections import OrderedDict
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,24 +36,23 @@ def _isolated_home(monkeypatch, tmp_path):
 
 
 def _persist(monkeypatch, workspace):
-    """Make the session-info command report *workspace* for any session.
+    """Make the shared context manager report *workspace* for any session.
 
-    The consumers are tested through the same command boundary the resolver
-    uses, so no test opens the session database.
+    The consumers are tested through the same storage boundary the resolver
+    uses, so no test opens a real database.
     """
-    monkeypatch.setattr(
-        "topsailai.workspace.project_workspace._resolve_lookup_command",
-        lambda: "/fake/session_info",
-    )
+    from topsailai.context import ctx_manager
 
-    def fake_run(cmd):
-        """Return a canned session-info document."""
-        payload = {"session_id": cmd[-1], "project_workspace": workspace}
-        return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
+    class FakeManager:
+        """Minimal session manager exposing only ``get_session``."""
 
-    monkeypatch.setattr(
-        "topsailai.workspace.project_workspace._run_lookup_command", fake_run,
-    )
+        def get_session(self, session_id):
+            """Return a record carrying the persisted workspace."""
+            if workspace is None:
+                return None
+            return SimpleNamespace(project_workspace=workspace)
+
+    monkeypatch.setattr(ctx_manager, "get_session_manager", lambda: FakeManager())
 
 
 def _read_meta(path):
@@ -83,10 +82,7 @@ def test_session_meta_prefers_environment_over_persisted_workspace(monkeypatch):
 
 def test_session_meta_records_empty_when_nothing_is_available(monkeypatch):
     """With no environment and no persisted row the field stays empty."""
-    monkeypatch.setattr(
-        "topsailai.workspace.project_workspace._resolve_lookup_command",
-        lambda: None,
-    )
+    _persist(monkeypatch, None)
 
     path = session_meta.create_session_meta("s-meta-none")
 
@@ -121,10 +117,7 @@ def test_lock_tool_explicit_argument_wins(monkeypatch):
 
 def test_lock_tool_returns_none_when_nothing_is_available(monkeypatch):
     """With no environment and no persisted row the lock target is None."""
-    monkeypatch.setattr(
-        "topsailai.workspace.project_workspace._resolve_lookup_command",
-        lambda: None,
-    )
+    _persist(monkeypatch, None)
 
     assert lock_tool._resolve_project_workspace() is None
 
