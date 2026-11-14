@@ -535,6 +535,54 @@ class TestStepCallToolInteractiveInputTimeout(unittest.TestCase):
         mock_get_input.assert_called_once()
         mock_get_with_timeout.assert_not_called()
         mock_builtin.assert_called_once()
+    @patch("topsailai.ai_base.agent_types.tool.is_main_thread")
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_runtime_input")
+    def test_execute_step_interactive_bounds_empty_input_retries(
+        self, mock_get_input, mock_is_main_thread
+    ):
+        """A source that always returns an empty message cannot loop forever.
+
+        The retry loop is bounded so a defective input source degrades into a
+        clean end of input instead of printing the prompt without bound.
+        """
+        from topsailai.ai_base.agent_types.tool import StepCallTool
+        from topsailai.utils.input_tool import MAX_INPUT_RETRY_COUNT
+
+        mock_is_main_thread.return_value = True
+        mock_get_input.return_value = MagicMock(return_value="   ")
+
+        instance = StepCallTool()
+        instance.flag_interactive = True
+
+        with self.assertRaises(EOFError) as ctx:
+            instance.execute_step_interactive()
+
+        self.assertIn(str(MAX_INPUT_RETRY_COUNT), str(ctx.exception))
+        self.assertEqual(
+            mock_get_input.return_value.call_count, MAX_INPUT_RETRY_COUNT
+        )
+
+    @patch("topsailai.ai_base.agent_types.tool.is_main_thread")
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_runtime_input")
+    def test_execute_step_interactive_retry_bound_keeps_valid_input(
+        self, mock_get_input, mock_is_main_thread
+    ):
+        """The bound only applies to empty input, not to a valid reply."""
+        from topsailai.ai_base.agent_types.tool import StepCallTool
+
+        mock_is_main_thread.return_value = True
+        mock_get_input.return_value = MagicMock(
+            side_effect=["", "  ", "real reply"]
+        )
+
+        instance = StepCallTool()
+        instance.flag_interactive = True
+        result = instance.execute_step_interactive()
+
+        self.assertEqual(result, "real reply")
+        self.assertEqual(mock_get_input.return_value.call_count, 3)
+
+
 
 
 

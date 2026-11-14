@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 SPLIT_LINE = "--------------------------------------------------------------------------------"
 INPUT_TIPS = f">>> Your Turn: (pid={os.getpid()}) "
 
+# Upper bound on how many times one prompt may be re-issued before the input
+# source is treated as unusable. Every retry is expected to consume a real user
+# action (an empty line, a hook command, or a new message), so a source that
+# keeps returning unusable input is not going to produce a message. The bound
+# exists so a defect in the input source degrades into a clean end of input
+# instead of an unbounded prompt loop.
+MAX_INPUT_RETRY_COUNT = 999
+
 
 def _load_input_history_jsonl(history_file: str | None = None) -> None:
     """Load previous input history from the JSONL file into readline.
@@ -160,7 +168,7 @@ def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
         tips = INPUT_TIPS
 
     message = ""
-    while True:
+    for _ in range(MAX_INPUT_RETRY_COUNT):
         try:
             message = _input(tips)
         except EOFError:
@@ -178,6 +186,15 @@ def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
         if hook_message(message, hook):
             continue
         break
+    else:
+        # Every retry produced an unusable message, so the input source is not
+        # going to yield one. EOFError is raised rather than returning an empty
+        # message because the callers already treat it as "the input channel
+        # ended", and returning empty would only move the retry loop one level
+        # up instead of stopping it.
+        raise EOFError(
+            f"no usable input after {MAX_INPUT_RETRY_COUNT} attempts"
+        )
     if message.lower() == "/noop":
         return ""
     _append_input_history_jsonl(message)
@@ -219,12 +236,15 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
 
     print(tips + " Press 'CTRL D' or Enter 'EOF' for end")
     sys.stdout.flush()
-    while True:
+    for _attempt in range(MAX_INPUT_RETRY_COUNT):
         message = ""
         count = 0
         hook_triggered = False
         channel_closed = False
-        while True:
+        # The line count is bounded as well: a source that never emits an EOF
+        # marker would otherwise accumulate lines without end. Reaching the
+        # bound simply ends the message, so the text collected so far is kept.
+        for _line_no in range(MAX_INPUT_RETRY_COUNT):
             count += 1
 
             try:
@@ -276,6 +296,15 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
         # is an interactive action, not a closed channel, so a fresh message is
         # requested.
         continue
+    else:
+        # Every retry produced an unusable message, so the input source is not
+        # going to yield one. EOFError is raised rather than returning an empty
+        # message because the callers already treat it as "the input channel
+        # ended", and returning empty would only move the retry loop one level
+        # up instead of stopping it.
+        raise EOFError(
+            f"no usable multi-line input after {MAX_INPUT_RETRY_COUNT} attempts"
+        )
 
 
 def input_message(tips: str = "", hook: HookInstruction = None) -> str:

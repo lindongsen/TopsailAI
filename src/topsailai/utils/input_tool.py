@@ -28,6 +28,14 @@ from topsailai.utils.env_tool import get_history_load_max_entries, resolve_pytho
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on how many times one prompt may be re-issued before the input
+# source is treated as unusable. Every retry is expected to consume a real user
+# action (an empty line, a hook command, or a new message), so a source that
+# keeps returning unusable input is not going to produce a message. The bound
+# exists so a defect in the input source degrades into a clean end of input
+# instead of an unbounded prompt loop.
+MAX_INPUT_RETRY_COUNT = 999
+
 
 class InputTimeoutError(TimeoutError):
     """Raised when :func:`input_with_timeout` exceeds the requested timeout."""
@@ -1181,6 +1189,7 @@ def input_from_pipe(
 
         chunks: list[bytes] = []
         deadline = None if timeout is None else time.monotonic() + float(timeout)
+        pipe_closed = False
 
         while True:
             remaining = None
@@ -1193,9 +1202,14 @@ def input_from_pipe(
                     )
                 remaining = max(remaining, 0.0)
 
-            fds = [pipe_fd]
+            fds = []
+            if not pipe_closed:
+                fds.append(pipe_fd)
             if helper_read_fd is not None:
                 fds.append(helper_read_fd)
+            if not fds:
+                # Every input channel has closed, so no further data can arrive.
+                break
 
             try:
                 ready, _, _ = select.select(fds, [], [], remaining)
@@ -1207,7 +1221,7 @@ def input_from_pipe(
 
             # Pipe input has priority.  If data arrived, accumulate it and
             # return immediately when a complete result is ready.
-            if pipe_fd in ready:
+            if not pipe_closed and pipe_fd in ready:
                 data = _read_available(pipe_fd)
                 if data:
                     chunks.append(data)
@@ -1218,10 +1232,22 @@ def input_from_pipe(
                 elif chunks:
                     # Writer closed after sending data; return what we have.
                     break
+                elif helper_read_fd is not None:
+                    # The writer opened and closed without sending data, but
+                    # terminal input is still available, so stop watching the
+                    # closed pipe and keep waiting for the helper.
+                    pipe_closed = True
+                    continue
                 else:
-                    # No writer connected yet.  Avoid a tight busy-loop while
-                    # waiting for either a writer or terminal input.
-                    time.sleep(0.01)
+                    # select() reports the FIFO readable only after a writer has
+                    # connected, so a readable descriptor that yields no bytes
+                    # means the writer opened and closed without sending data.
+                    # Retrying can never produce data, so this is a closed
+                    # channel rather than a pending one; sleeping here would
+                    # spin forever when no timeout is configured.
+                    if raise_eof_error:
+                        raise EOFError("Pipe writer closed without sending data")
+                    return ""
 
             # Terminal input: the helper wrote a completed line.
             if helper_read_fd in ready:

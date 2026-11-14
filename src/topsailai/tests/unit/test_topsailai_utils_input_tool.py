@@ -736,6 +736,99 @@ class TestInputFromPipe:
         finally:
             writer.join(timeout=2.0)
 
+    def _close_writer_after_delay(self, pipe_path: str, delay: float = 0.05):
+        """Spawn a thread that opens the FIFO, sends nothing, then closes it."""
+
+        def writer():
+            time.sleep(delay)
+            # Opening a FIFO for writing blocks until a reader opens it.
+            fd = os.open(pipe_path, os.O_WRONLY)
+            os.close(fd)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        return thread
+
+    def test_writer_closed_without_data_returns_empty_string(self, tmp_path):
+        """A writer that opens and closes without sending data ends the read.
+
+        select() reports a FIFO readable only after a writer has connected, so a
+        readable descriptor that yields no bytes means the writer opened and
+        closed without sending anything. Retrying can never produce data, so the
+        read must return instead of waiting for a message that cannot arrive.
+        """
+        pipe_path = str(tmp_path / "closed_writer.pipe")
+        writer = self._close_writer_after_delay(pipe_path)
+        try:
+            start = time.monotonic()
+            result = input_tool.input_from_pipe(pipe_path, timeout=None)
+            elapsed = time.monotonic() - start
+            assert result == ""
+            assert elapsed < 1.0, f"did not return promptly ({elapsed:.3f}s)"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_writer_closed_without_data_raises_eof_when_requested(self, tmp_path):
+        """raise_eof_error turns a closed writer into EOFError."""
+        pipe_path = str(tmp_path / "closed_writer_eof.pipe")
+        writer = self._close_writer_after_delay(pipe_path)
+        try:
+            with pytest.raises(EOFError):
+                input_tool.input_from_pipe(
+                    pipe_path, timeout=None, raise_eof_error=True
+                )
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_writer_closed_without_data_does_not_busy_wait(self, tmp_path):
+        """A closed writer must not be handled by sleeping and retrying.
+
+        The previous implementation slept 0.01s and retried, which spins forever
+        when no timeout is configured. Counting sleep calls proves the loop
+        exits instead of polling.
+        """
+        pipe_path = str(tmp_path / "closed_writer_spin.pipe")
+        sleep_calls = {"count": 0}
+        real_sleep = time.sleep
+
+        def counting_sleep(seconds):
+            sleep_calls["count"] += 1
+            real_sleep(seconds)
+
+        writer = self._close_writer_after_delay(pipe_path)
+        try:
+            with patch.object(input_tool.time, "sleep", counting_sleep):
+                result = input_tool.input_from_pipe(pipe_path, timeout=None)
+            assert result == ""
+            assert sleep_calls["count"] == 0, (
+                f"closed writer was polled {sleep_calls['count']} times"
+            )
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_no_writer_ever_connects_still_times_out(self, tmp_path):
+        """A FIFO that never receives a writer keeps waiting until the timeout.
+
+        This distinguishes "no writer yet" from "writer closed": only the latter
+        ends the read immediately.
+        """
+        pipe_path = str(tmp_path / "never_written.pipe")
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            input_tool.input_from_pipe(pipe_path, timeout=0.3)
+        elapsed = time.monotonic() - start
+        assert elapsed >= 0.2, f"returned before the timeout ({elapsed:.3f}s)"
+
+    def test_writer_closed_after_data_returns_the_data(self, tmp_path):
+        """Data sent before the writer closes is still returned."""
+        pipe_path = str(tmp_path / "closed_after_data.pipe")
+        writer = self._write_to_pipe_after_delay(pipe_path, b"payload\n")
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=None)
+            assert result == "payload"
+        finally:
+            writer.join(timeout=2.0)
+
 
 class TestInputHistoryJsonlRotation:
     """Tests for JSONL input history rotation."""

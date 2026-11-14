@@ -269,6 +269,74 @@ class TestInputOneLine(unittest.TestCase):
         result = input_one_line("", self.mock_hook)
         self.assertEqual(result, "test")
         mock_input.assert_called_once_with(INPUT_TIPS)
+    @patch("topsailai.workspace.input_tool._input")
+    @patch("topsailai.workspace.input_tool.hook_message")
+    def test_one_line_exhausts_retry_bound(self, mock_hook_message, mock_input):
+        """A source that never yields a usable message ends with EOFError.
+
+        The retry loop is bounded so a defective input source degrades into a
+        clean end of input instead of printing the prompt without bound.
+        """
+        from topsailai.workspace.input_tool import (
+            input_one_line,
+            MAX_INPUT_RETRY_COUNT,
+        )
+        mock_input.return_value = ""
+        mock_hook_message.return_value = False
+        with self.assertRaises(EOFError) as ctx:
+            input_one_line(">>> ", self.mock_hook)
+        self.assertIn(str(MAX_INPUT_RETRY_COUNT), str(ctx.exception))
+        self.assertEqual(mock_input.call_count, MAX_INPUT_RETRY_COUNT)
+
+    @patch("topsailai.workspace.input_tool._input")
+    @patch("topsailai.workspace.input_tool.hook_message")
+    def test_one_line_retry_bound_does_not_truncate_valid_input(
+        self, mock_hook_message, mock_input
+    ):
+        """The bound only applies to unusable input, not to a valid message."""
+        from topsailai.workspace.input_tool import input_one_line
+        mock_input.side_effect = ["", "", "valid input"]
+        mock_hook_message.return_value = False
+        result = input_one_line(">>> ", self.mock_hook)
+        self.assertEqual(result, "valid input")
+        self.assertEqual(mock_input.call_count, 3)
+
+    @patch("topsailai.workspace.input_tool._input")
+    @patch("topsailai.workspace.input_tool.hook_message")
+    def test_multi_line_exhausts_retry_bound(self, mock_hook_message, mock_input):
+        """A hook that always consumes the message cannot loop forever."""
+        from topsailai.workspace.input_tool import (
+            input_multi_line,
+            MAX_INPUT_RETRY_COUNT,
+        )
+        mock_input.return_value = "consumed by hook"
+        mock_hook_message.return_value = True
+        with self.assertRaises(EOFError) as ctx:
+            input_multi_line(">>> ", self.mock_hook)
+        self.assertIn(str(MAX_INPUT_RETRY_COUNT), str(ctx.exception))
+
+    @patch("topsailai.workspace.input_tool._append_input_history_jsonl")
+    @patch("topsailai.workspace.input_tool._input")
+    @patch("topsailai.workspace.input_tool.hook_message")
+    def test_multi_line_line_bound_keeps_collected_text(
+        self, mock_hook_message, mock_input, mock_append
+    ):
+        """A source that never emits an EOF marker still ends the message.
+
+        Reaching the line bound must keep the text collected so far instead of
+        discarding it, because the user did type those lines.
+        """
+        from topsailai.workspace.input_tool import (
+            input_multi_line,
+            MAX_INPUT_RETRY_COUNT,
+        )
+        mock_input.return_value = "line"
+        mock_hook_message.return_value = False
+        result = input_multi_line(">>> ", self.mock_hook)
+        self.assertEqual(result, "\n".join(["line"] * MAX_INPUT_RETRY_COUNT))
+        self.assertEqual(mock_input.call_count, MAX_INPUT_RETRY_COUNT)
+        mock_append.assert_called_once()
+
 class TestInputMultiLine(unittest.TestCase):
     """Test cases for input_multi_line function."""
 
