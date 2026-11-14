@@ -60,11 +60,10 @@ type ClusterOptions struct {
 	// SharedCertificate makes the Endpoint present the Server certificate, so the
 	// certificate no longer proves which Endpoint is connecting.
 	SharedCertificate bool
-	// ProviderType selects the adapter implementation. An empty value keeps the
-	// Provider CLI adapter driven by the mock provider, so existing scenarios are
-	// unchanged. Selecting "topsailai" wires the real TopsailAI adapter, which is
-	// the only adapter that implements streaming output follow; the mock provider
-	// answers a follow with "unsupported" because it cannot stream.
+	// ProviderType is retained only so a stale scenario still compiles. The
+	// Generic CLI Adapter is the only adapter implementation, so every value is
+	// ignored and the harness always starts the mock Provider CLI. A scenario that
+	// still sets it is not selecting anything.
 	ProviderType string
 }
 
@@ -221,21 +220,6 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err := BuildModule(mockBin, filepath.Join(ModuleRootForBuild(), "providers", "mock"), "."); err != nil {
 		return nil, err
 	}
-	// The TopsailAI adapter resolves topsailai_session_info as a sibling of the
-	// configured executable and never through PATH, so both entry points are built
-	// into one provider directory when that adapter is selected.
-	providerDir := filepath.Join(root, "provider")
-	if options.ProviderType == "topsailai" {
-		if err := os.MkdirAll(providerDir, 0o755); err != nil {
-			return nil, fmt.Errorf("create provider directory: %w", err)
-		}
-		if err := Build(filepath.Join(providerDir, "topsailai"), "./tests/fixtures/topsailai_fixture"); err != nil {
-			return nil, err
-		}
-		if err := Build(filepath.Join(providerDir, "topsailai_session_info"), "./tests/fixtures/topsailai_session_info_fixture"); err != nil {
-			return nil, err
-		}
-	}
 	apiPort, err := FreePortE()
 	if err != nil {
 		return nil, fmt.Errorf("allocate API port: %w", err)
@@ -295,12 +279,6 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	}
 	discoveryCount := filepath.Join(root, "discovery-count")
 	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": append([]string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, providerFaultArgs(options.Faults)...), "timeout_ms": 5000}}
-	// The TopsailAI adapter is the only adapter that can stream output, so a
-	// follow scenario selects it explicitly. Its fixture answers discovery from a
-	// workspace document and streams plain text records on the follow path.
-	if options.ProviderType == "topsailai" {
-		adapterArgs = []map[string]any{{"adapter_id": "topsailai-main", "provider_type": "topsailai", "command": filepath.Join(providerDir, "topsailai"), "args": []string{}, "timeout_ms": 5000}}
-	}
 	if options.Faults.TwoAdapters {
 		adapterArgs = []map[string]any{{"adapter_id": "adapter-a", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-a"}, "timeout_ms": 5000}, {"adapter_id": "adapter-b", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--always-fail", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-b"}, "timeout_ms": 5000}}
 	}
@@ -513,12 +491,11 @@ func writeControlActionCatalog(root string, actions []ControlAction) (string, er
 }
 
 // inventoryAdapterID returns the adapter ID the inventory wait should expect.
-// The default fixture configuration publishes "fixture-main", while a scenario
-// that selects another provider type publishes its own adapter ID.
+//
+// The harness always configures one adapter, so the wait expects no particular
+// ID and accepts whatever the Endpoint reports. The function is kept because the
+// wait reads it, and it returns the empty string to mean "any adapter".
 func inventoryAdapterID(options ClusterOptions) string {
-	if options.ProviderType == "topsailai" {
-		return "topsailai-main"
-	}
 	return ""
 }
 
