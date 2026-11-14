@@ -66,9 +66,15 @@ def main():
     need_tips = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CLI_NEED_TIPS", default=True)
     if not env_tool.is_debug_mode():
         need_tips = False
-    llm_chat = get_llm_chat(
-        need_print_session=need_tips,
-    )
+    try:
+        llm_chat = get_llm_chat(
+            need_print_session=need_tips,
+        )
+    except EOFError:
+        # A closed input channel cannot supply the first message, so the
+        # session ends instead of printing a traceback.
+        print("[INFO] Input channel closed; nothing to chat about.")
+        return
     message = ""
     max_count = 100
     while True:
@@ -78,7 +84,13 @@ def main():
         print()
         if max_count == 0:
             break
-        message = input_message()
+        try:
+            message = input_message()
+        except EOFError:
+            # A closed input channel ends the conversation cleanly. Reprompting
+            # could never succeed and would print the prompt without bound.
+            print("[INFO] Input channel closed; ending the chat.")
+            break
 
     return
 

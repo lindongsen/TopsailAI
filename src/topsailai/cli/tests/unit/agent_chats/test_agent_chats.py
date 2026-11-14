@@ -214,3 +214,42 @@ def test_configured_session_id_is_never_announced() -> None:
             _run_main()
 
     mock_print.assert_not_called()
+
+
+def test_closed_input_channel_ends_the_chat_without_a_traceback() -> None:
+    """A closed input channel ends the chat instead of raising ``EOFError``.
+
+    The prompt can never be answered once the channel is closed, so the entry
+    point must report the condition and return normally. Letting ``EOFError``
+    escape would print a traceback and exit abnormally.
+    """
+    with mock.patch.object(agent_chats, "get_agent_chat") as mock_get_chat:
+        mock_get_chat.return_value.run.side_effect = EOFError()
+        with mock.patch.object(agent_chats, "print_info") as mock_print:
+            agent_chats.main()
+
+    mock_print.assert_called_once_with("Input channel closed; ending the chat.")
+
+
+def test_closed_input_channel_still_announces_the_session_first() -> None:
+    """The session identity is announced before the chat is abandoned.
+
+    A closed channel must not hide which session was created, otherwise the
+    operator cannot find the retained metadata and stdout artifacts.
+    """
+    with mock.patch.object(agent_chats, "_library_prints_session", return_value=False):
+        with mock.patch.object(agent_chats, "get_agent_chat") as mock_get_chat:
+            mock_get_chat.return_value.run.side_effect = EOFError()
+            with mock.patch.object(agent_chats, "print_info") as mock_print:
+                agent_chats.main()
+
+    _, kwargs = mock_get_chat.call_args
+    mock_print.assert_any_call(f"session_id: {kwargs['session_id']}")
+
+
+def test_unrelated_failure_is_not_swallowed() -> None:
+    """Only ``EOFError`` is handled; other failures keep their contract."""
+    with mock.patch.object(agent_chats, "get_agent_chat") as mock_get_chat:
+        mock_get_chat.return_value.run.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"):
+            agent_chats.main()

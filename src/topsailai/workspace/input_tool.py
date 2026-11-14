@@ -164,9 +164,13 @@ def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
         try:
             message = _input(tips)
         except EOFError:
-            # Pipe-based input may signal end-of-input with an EOF marker.
-            # Treat it as empty input so the loop can reprompt instead of
-            # aborting the session.
+            # A pipe EOF marker ends one message and more may still arrive, so
+            # the loop reprompts and blocks on the pipe. Without a pipe,
+            # EOFError means the input channel is closed (Ctrl+D, /dev/null, a
+            # closed stdin); reprompting can never succeed and would print the
+            # prompt without bound, so the condition is propagated instead.
+            if not env_tool.is_input_pipe_enabled():
+                raise
             message = ""
         message = message.strip()
         if not message:
@@ -215,40 +219,63 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
 
     print(tips + " Press 'CTRL D' or Enter 'EOF' for end")
     sys.stdout.flush()
-    message = ""
-    count = 0
     while True:
-        count += 1
+        message = ""
+        count = 0
+        hook_triggered = False
+        channel_closed = False
+        while True:
+            count += 1
 
-        try:
-            line = _input("")
-            # A single read may contain a multi-line payload with an EOF
-            # marker (e.g. a pipe source returning more than one line at
-            # once).  Strip the marker and everything after it, then stop
-            # reading so the marker is never returned as content.
-            if "\nEOF\n" in line or line.endswith("\nEOF"):
-                line = line.split("\nEOF", 1)[0]
+            try:
+                line = _input("")
+                # A single read may contain a multi-line payload with an EOF
+                # marker (e.g. a pipe source returning more than one line at
+                # once).  Strip the marker and everything after it, then stop
+                # reading so the marker is never returned as content.
+                if "\nEOF\n" in line or line.endswith("\nEOF"):
+                    line = line.split("\nEOF", 1)[0]
+                    message += line + "\n"
+                    break
+                if line == "EOF":
+                    break
                 message += line + "\n"
+            except EOFError:
+                channel_closed = True
                 break
-            if line == "EOF":
-                break
-            message += line + "\n"
-        except EOFError:
-            break
-        if count == 1 or '\n' not in message.strip():
-            if hook_message(message, hook):
-                message = ""
-                break
-            if message.strip().lower() == "/noop":
-                return ""
+            if count == 1 or '\n' not in message.strip():
+                if hook_message(message, hook):
+                    message = ""
+                    hook_triggered = True
+                    break
+                if message.strip().lower() == "/noop":
+                    return ""
 
-    message = message.strip()
+        message = message.strip()
 
-    if message:
-        if not hook_message(message, hook):
-            _append_input_history_jsonl(message)
-            return message
-    return input_multi_line(tips, hook)
+        if message:
+            if not hook_message(message, hook):
+                _append_input_history_jsonl(message)
+                return message
+            # A hook consumed the message, so a fresh message is required.
+            continue
+        if hook_triggered:
+            # The hook consumed the message, so a fresh message is required.
+            continue
+        if channel_closed:
+            # The input channel itself ended. With a pipe this means the
+            # current message is complete, so the caller decides what an empty
+            # message means. Without a pipe it means stdin is closed (Ctrl+D,
+            # /dev/null, a closed stdin); reprompting can never succeed and
+            # would print the prompt without bound, so the condition is
+            # propagated instead.
+            if not env_tool.is_input_pipe_enabled():
+                raise EOFError("multi-line input ended without content")
+            return ""
+        # The user deliberately ended an empty message with an EOF token. That
+        # is an interactive action, not a closed channel, so a fresh message is
+        # requested.
+        continue
 
 
 def input_message(tips: str = "", hook: HookInstruction = None) -> str:

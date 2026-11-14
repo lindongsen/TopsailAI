@@ -251,7 +251,15 @@ def input_yes_or_no(tips: str, input_func=None) -> bool:
         input_func = input
 
     while True:
-        line = input_func(tips)
+        try:
+            line = input_func(tips)
+        except EOFError:
+            # A closed input channel cannot answer, so it is treated as "no"
+            # exactly like the ``None`` contract below. Callers invoke this
+            # from inside ``except (KeyboardInterrupt, EOFError)`` handlers, so
+            # letting the condition escape would replace a clean abort with a
+            # traceback.
+            return False
         if line is None:
             # Treat EOF / pipe close as "no" so callers do not loop forever.
             return False

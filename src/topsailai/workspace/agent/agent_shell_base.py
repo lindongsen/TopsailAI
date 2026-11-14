@@ -479,10 +479,17 @@ class AgentChat(AgentChatBase):
                 print(self.ctx_rt_instruction.ctx_history())
 
             func_print_pre_input_message()
-            message = get_message(
-                self.hook_instruction,
-                need_input=interactive_enabled,
-            )
+            try:
+                message = get_message(
+                    self.hook_instruction,
+                    need_input=interactive_enabled,
+                )
+            except EOFError:
+                # The input channel is closed before the first message, so the
+                # session has nothing to run. End it cleanly instead of
+                # reprinting the prompt without bound or raising a traceback.
+                logger.info("agent loop run is exiting: input channel closed")
+                return ""
 
         if not self.first_message:
             self.first_message = message
@@ -539,12 +546,19 @@ class AgentChat(AgentChatBase):
         while True:
             if self.interrupted:
                 func_print_pre_input_message()
-                while True:
-                    message = input_message(hook=self.hook_instruction).strip()
-                    if message:
-                        message = self.format_message(message)
-                        self._clear_interrupt_state()
-                        break
+                try:
+                    while True:
+                        message = input_message(hook=self.hook_instruction).strip()
+                        if message:
+                            message = self.format_message(message)
+                            self._clear_interrupt_state()
+                            break
+                except EOFError:
+                    # The input channel is closed, so no resume message can
+                    # arrive. End the session instead of reprinting the prompt
+                    # without bound.
+                    self._clear_interrupt_state()
+                    break
                 continue
             flag_abort = False
             back_to_chat_requested = False
@@ -903,12 +917,18 @@ class AgentChat(AgentChatBase):
 
                 # next time
                 func_print_pre_input_message()
-                while True:
-                    message = input_message(hook=self.hook_instruction)
-                    message = message.strip()
-                    if message:
-                        message = self.format_message(message)
-                        break
+                try:
+                    while True:
+                        message = input_message(hook=self.hook_instruction)
+                        message = message.strip()
+                        if message:
+                            message = self.format_message(message)
+                            break
+                except EOFError:
+                    # The input channel is closed, so no next message can
+                    # arrive. End the session instead of reprinting the prompt
+                    # without bound.
+                    break
 
         # hook answer
         self.hook_for_answer(answer)

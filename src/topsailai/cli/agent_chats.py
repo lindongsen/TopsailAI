@@ -138,11 +138,16 @@ def main():
         # non-debug runs. Announce the generated identity in the remaining
         # cases so it is never silently invented, and never printed twice.
         print_info(f"session_id: {session_id}")
-    get_agent_chat(
-        disabled_tools=["agent_tool"],
-        agent_role=AGENT_ROLE_MANAGER,
-        session_id=session_id,
-    ).run()
+    try:
+        get_agent_chat(
+            disabled_tools=["agent_tool"],
+            agent_role=AGENT_ROLE_MANAGER,
+            session_id=session_id,
+        ).run()
+    except EOFError:
+        # A closed input channel ends the conversation cleanly. The prompt can
+        # never be answered, so reprompting would print it without bound.
+        print_info("Input channel closed; ending the chat.")
 
 if __name__ == "__main__":
     main()
