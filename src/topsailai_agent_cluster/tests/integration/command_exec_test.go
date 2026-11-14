@@ -45,7 +45,14 @@ type execCommandView struct {
 // activation rejects a descriptor without one. The two operations are the ones
 // these tests address, and command.exec carries payload schema version "1"
 // because that is the version the Cluster contract defines for it.
-const commandExecCapabilities = `{"revision":"mock-cli-r1","capabilities":[{"name":"command.exec","version":"1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"},{"name":"agent.model.select","version":"1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"}]}`
+//
+// The two ctl. entries are declared here rather than injected through the harness
+// fault knobs, because these tests start the cluster by hand with exec.Command and
+// never build a harness.ClusterOptions. Without them the configured side of the
+// capability intersection is empty for the control family, so the Endpoint
+// advertises no ctl. action and every control command is refused as unsupported
+// before the policy hook can decide anything.
+const commandExecCapabilities = `{"revision":"mock-cli-r1","capabilities":[{"name":"command.exec","version":"1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"},{"name":"agent.model.select","version":"1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"},{"name":"ctl.heartbeat","version":"v1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"},{"name":"ctl.get_session_messages","version":"v1","target_kinds":["session"],"safety_class":"mutating","required_permission":"read_output"}]}`
 
 // controlActionCatalog is the Endpoint-local ctl. catalog the fixture node uses.
 //

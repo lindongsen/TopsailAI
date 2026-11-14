@@ -83,10 +83,35 @@ func TestCtlActionIsAuthorizedByTheEndpoint(t *testing.T) {
 
 // TestCtlActionRejectsUnadvertisedAction proves the Server routes the intent but
 // the Endpoint rejects an action absent from its advertised capability catalog.
+//
+// The rejection alone proves nothing: if the Endpoint advertised no ctl. action at
+// all, every control command would be refused as unsupported and this test would
+// pass while the whole control family was unreachable. So the test first proves the
+// family is live by reading the published descriptor and by driving an advertised
+// action to the provider, and only then asserts that a name the descriptor does not
+// carry is refused. That is what makes the refusal attributable to the action.
 func TestCtlActionRejectsUnadvertisedAction(t *testing.T) {
 	c := startExecCluster(t, "")
 	defer c.stop(t)
-	status, code := postCtlCommand(t, c, "ctl-unadvertised", "ctl.not_a_reviewed_action", "v1", map[string]any{})
+	advertised := advertisedCapabilityNames(t, c)
+	if !advertised["ctl.heartbeat"] {
+		t.Fatalf("ctl.heartbeat is not advertised, so a refusal cannot be attributed to the action: %v", advertised)
+	}
+	if advertised["ctl.not_a_reviewed_action"] {
+		t.Fatalf("ctl.not_a_reviewed_action must not be advertised: %v", advertised)
+	}
+	status, code := postCtlCommand(t, c, "ctl-advertised-control", "ctl.heartbeat", "v1", map[string]any{})
+	if status != http.StatusAccepted {
+		t.Fatalf("Server must route the advertised command, got status=%d code=%s", status, code)
+	}
+	reached := waitCtlCommand(t, c, "ctl-advertised-control", func(v ctlCommandView) bool { return v.Status == "finished" })
+	if reached.ErrorCode != "" || reached.EffectCertainty != "acknowledged" {
+		t.Fatalf("expected the advertised action to reach the provider, got %+v", reached)
+	}
+	// The refusal code is unsupported rather than policy_denied because the
+	// capability check runs before the policy hook: an action the Endpoint does not
+	// advertise is refused before authorization is consulted at all.
+	status, code = postCtlCommand(t, c, "ctl-unadvertised", "ctl.not_a_reviewed_action", "v1", map[string]any{})
 	if status != http.StatusAccepted {
 		t.Fatalf("Server must route the command, got status=%d code=%s", status, code)
 	}
@@ -94,6 +119,45 @@ func TestCtlActionRejectsUnadvertisedAction(t *testing.T) {
 	if view.ErrorCode != "unsupported" || view.EffectCertainty != "not_applied" {
 		t.Fatalf("expected the Endpoint to reject the unadvertised action, got %+v", view)
 	}
+}
+
+// advertisedCapabilityNames reads the effective capability descriptor the Endpoint
+// published, so a test can prove which actions the control family actually offers
+// instead of inferring it from a refusal.
+func advertisedCapabilityNames(t *testing.T, c *execCluster) map[string]bool {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, c.url("/api/v1/endpoints/endpoint-1/capabilities"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("capabilities status=%d body=%s", resp.StatusCode, body)
+	}
+	var envelope struct {
+		Data struct {
+			Capabilities []struct {
+				Name string `json:"name"`
+			} `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode capabilities %s: %v", body, err)
+	}
+	names := make(map[string]bool, len(envelope.Data.Capabilities))
+	for _, capability := range envelope.Data.Capabilities {
+		names[capability.Name] = true
+	}
+	return names
 }
 
 // postCtlCommand admits one control intent against the published session and
@@ -106,8 +170,8 @@ func postCtlCommand(t *testing.T, c *execCluster, id, operation, version string,
 	}
 	intent := map[string]any{
 		"hash_version": "v1", "command_id": id, "endpoint_id": "endpoint-1",
-		"launch_profile_id": "topsailai-main", "operation": operation,
-		"operation_version": version, "capability_revision": "topsailai-v1",
+		"launch_profile_id": "mock-main", "operation": operation,
+		"operation_version": version, "capability_revision": "mock-cli-r1",
 		"payload_schema_version": "v1", "payload": json.RawMessage(encoded),
 		"execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli(),
 	}

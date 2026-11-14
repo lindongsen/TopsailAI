@@ -506,7 +506,7 @@ func executeResponse(request request, fault string) response {
 		// mock cannot enumerate them; refusing an action the catalog defined would
 		// make the control channel testable only for the one name this file
 		// happens to list.
-		evidence, ok = genericControlEvidence, true
+		evidence, ok = genericControlEvidence(request.Operation.Name), true
 	}
 	if !ok {
 		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
@@ -582,22 +582,43 @@ const mockControlPrefix = "ctl."
 // A control action is submitted and acknowledged: the provider accepted the
 // request and reports that it reached the provider, which is the strongest claim
 // a control action can make without observing the effect itself.
-var genericControlEvidence = operationEvidence{version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`}
+//
+// The document names the action and reports control_acknowledged, which is the
+// shape the real provider, the removed fixtures and docs/agent-cluster-adapters.md
+// all publish. A generic accepted document would let a caller prove that some
+// control action ran but not which one, so a wrong argv would look identical to a
+// right one in the stored evidence.
+func genericControlEvidence(operation string) operationEvidence {
+	document, err := json.Marshal(map[string]string{
+		"action":         strings.TrimPrefix(operation, mockControlPrefix),
+		"delivery_state": "control_acknowledged",
+	})
+	if err != nil {
+		document = []byte(`{}`)
+	}
+	return operationEvidence{version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: string(document)}
+}
 
 var controlActionEvidenceTable = map[string]operationEvidence{
-	"ctl.fixture_probe": {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"ctl.fixture_probe":        {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"ctl.heartbeat":            {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"action":"heartbeat","delivery_state":"control_acknowledged"}`},
+	"ctl.get_session_messages": {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"action":"get_session_messages","delivery_state":"control_acknowledged"}`},
 }
 
 // mockControlActions returns every control action the mock advertises.
+//
+// The names are listed explicitly instead of being derived from the evidence
+// table, because the advertised list is the contract the Cluster intersects
+// against: an action the mock can answer but does not advertise is unreachable,
+// and the integration suite addresses ctl.heartbeat and ctl.get_session_messages
+// by name. Deriving the list from the table made the advertised surface depend on
+// which entries happened to be added for other tests, so a name the suite
+// exercises could be answerable and still be refused as unsupported.
 func mockControlActions() []namedContract {
-	names := make([]string, 0, len(controlActionEvidenceTable))
-	for name := range controlActionEvidenceTable {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := []string{"ctl.fixture_probe", "ctl.get_session_messages", "ctl.heartbeat"}
 	actions := make([]namedContract, 0, len(names))
 	for _, name := range names {
-		actions = append(actions, namedContract{Name: name, Version: controlActionEvidenceTable[name].version})
+		actions = append(actions, namedContract{Name: name, Version: "v1"})
 	}
 	return actions
 }
