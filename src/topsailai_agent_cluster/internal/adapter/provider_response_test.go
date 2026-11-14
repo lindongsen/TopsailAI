@@ -1,9 +1,7 @@
 package adapter
 
 import (
-	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -60,96 +58,5 @@ func TestProviderFailureTextReadsExitErrorStderr(t *testing.T) {
 func TestProviderFailureTextIgnoresNonExitError(t *testing.T) {
 	if got := ProviderFailureText(errors.New("no exit error")); got != "" {
 		t.Fatalf("failure text=%q want empty", got)
-	}
-}
-
-// TestCommandAdapterExecuteCarriesProviderDocument proves the generic adapter
-// honours the documented contract: the provider's own answer is carried in the
-// receipt instead of being discarded after decoding.
-func TestCommandAdapterExecuteCarriesProviderDocument(t *testing.T) {
-	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(result.Receipt.ProviderResponse, `"effect_certainty":"acknowledged"`) {
-		t.Fatalf("receipt does not carry the provider document: %#v", result.Receipt)
-	}
-	if result.Receipt.ProviderResponseTruncated {
-		t.Fatal("small provider document must not be labelled truncated")
-	}
-}
-
-// TestCommandAdapterExecuteCarriesProviderDiagnostic proves a failed invocation
-// still surfaces the provider's own stderr, which is the only evidence of why
-// the call failed.
-func TestCommandAdapterExecuteCarriesProviderDiagnostic(t *testing.T) {
-	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
-	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "execute-fail")
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
-	if err == nil {
-		t.Fatal("expected the provider failure to be reported")
-	}
-	if result.Receipt.EffectCertainty != protocol.EffectUnknown {
-		t.Fatalf("effect certainty=%q want unknown", result.Receipt.EffectCertainty)
-	}
-	if !strings.Contains(result.Receipt.ProviderResponse, "helper provider diagnostic") {
-		t.Fatalf("receipt does not carry the provider diagnostic: %#v", result.Receipt)
-	}
-}
-
-// TestCommandAdapterExecuteCarriesUndecodableDocument proves a provider answer
-// that cannot be decoded is still preserved as evidence rather than dropped.
-func TestCommandAdapterExecuteCarriesUndecodableDocument(t *testing.T) {
-	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
-	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "execute-garbage")
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
-	if err == nil {
-		t.Fatal("expected the decode failure to be reported")
-	}
-	if result.Receipt.ProviderResponse != "not a json document" {
-		t.Fatalf("receipt does not carry the undecodable document: %#v", result.Receipt)
-	}
-}
-
-// TestCommandAdapterExecuteKeepsReceiptOnSuccess proves the added document does
-// not disturb the normalized receipt fields.
-func TestCommandAdapterExecuteKeepsReceiptOnSuccess(t *testing.T) {
-	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Receipt.CommandID != "cmd-1" {
-		t.Fatalf("command ID=%q want cmd-1", result.Receipt.CommandID)
-	}
-	if result.Receipt.DeliveryBoundary != protocol.DeliverySubmitted {
-		t.Fatalf("delivery boundary=%q want submitted", result.Receipt.DeliveryBoundary)
-	}
-	if result.Receipt.EffectCertainty != protocol.EffectAcknowledged {
-		t.Fatalf("effect certainty=%q want acknowledged", result.Receipt.EffectCertainty)
-	}
-}
-
-// TestCommandAdapterExecuteHelperIsReachable guards the test helper wiring: a
-// missing helper mode would silently fall through to the success document and
-// make the failure assertions meaningless.
-func TestCommandAdapterExecuteHelperIsReachable(t *testing.T) {
-	if os.Getenv("AGENT_CLUSTER_COMMAND_HELPER") != "" {
-		t.Skip("helper process")
-	}
-	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
-	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "execute-fail")
-	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native-1", ResourceID: "res-1"}})
-	result, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "cmd-1", Operation: "message.send", Target: &protocol.CommandTarget{ResourceID: "res-1", ProviderGeneration: "gen-1"}, Payload: []byte(`{"text":"hello"}`)}})
-	if err == nil {
-		t.Fatal("helper failure mode was not reached")
-	}
-	if result.Receipt.ProviderResponse == "" {
-		t.Fatal("helper failure mode produced no provider document")
 	}
 }

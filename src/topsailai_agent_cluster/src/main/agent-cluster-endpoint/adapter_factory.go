@@ -37,9 +37,11 @@ var genericCLIConcurrency = providercli.ConcurrencyLimits{Total: 4, Discovery: 2
 //
 // The genericcli case exists so the Provider CLI adapter is reachable from
 // Endpoint configuration at all. Without it the only adapters an Endpoint could
-// build were the in-process TopsailAI adapter and the legacy command adapter, so
-// no deployment could select a standalone Provider CLI and no activation could
-// ever be exercised against one.
+// build were the in-process TopsailAI adapter and the legacy command adapter,
+// so no deployment could select a standalone Provider CLI and no activation
+// could ever be exercised against one. The legacy command adapter has since been
+// removed, so every configured adapter is now either the in-process TopsailAI
+// adapter or a standalone Provider CLI.
 func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store, controlActions *topsailaiadapter.ControlActionSet) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
@@ -88,15 +90,6 @@ func registerAdapterType(registry *adapter.Registry, providerType string, store 
 				AdapterLimits:  genericCLIConcurrency,
 				Capabilities:   capabilities,
 				Mapper:         store,
-			})
-		}
-	case "fixture", "command":
-		factory = func(_ context.Context, local adapter.Config) (adapter.Adapter, error) {
-			return adapter.NewCommandAdapter(adapter.CommandConfig{
-				AdapterID: local.AdapterID, ProviderType: local.ProviderType,
-				Command: local.Command, Args: local.Args,
-				Timeout:        time.Duration(local.TimeoutMS) * time.Millisecond,
-				ResourceMapper: store, Capabilities: local.Capabilities,
 			})
 		}
 	default:

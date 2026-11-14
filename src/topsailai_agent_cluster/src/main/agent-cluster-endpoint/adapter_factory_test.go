@@ -29,8 +29,12 @@ func newFactoryStore(t *testing.T) *endpointstorage.Store {
 // activated. A missing case is invisible at compile time because the switch has a
 // default that returns an error only when a node is configured that way, which is
 // exactly the configuration a Provider CLI deployment uses.
+//
+// The legacy "fixture" and "command" types are deliberately absent: their factory
+// branch and the in-process command adapter behind it were removed, so configuring
+// either type must now fail loudly instead of silently registering nothing.
 func TestRegisterAdapterTypeAcceptsEverySupportedProviderType(t *testing.T) {
-	for _, providerType := range []string{"topsailai", "genericcli", "fixture", "command"} {
+	for _, providerType := range []string{"topsailai", "genericcli"} {
 		t.Run(providerType, func(t *testing.T) {
 			registry := adapter.NewRegistry()
 			if err := registerAdapterType(registry, providerType, newFactoryStore(t), nil); err != nil {
@@ -42,14 +46,22 @@ func TestRegisterAdapterTypeAcceptsEverySupportedProviderType(t *testing.T) {
 
 // TestRegisterAdapterTypeRejectsUnknownProviderType proves an unconfigured
 // provider type fails loudly instead of silently registering nothing.
+//
+// The removed legacy types are included here on purpose: a configuration that
+// still names "fixture" or "command" must be refused at startup rather than
+// accepted and then fail on the first operation.
 func TestRegisterAdapterTypeRejectsUnknownProviderType(t *testing.T) {
-	registry := adapter.NewRegistry()
-	err := registerAdapterType(registry, "not-a-provider", newFactoryStore(t), nil)
-	if err == nil {
-		t.Fatal("unknown provider type was accepted")
-	}
-	if !strings.Contains(err.Error(), "unknown adapter provider type") {
-		t.Fatalf("unexpected error: %v", err)
+	for _, providerType := range []string{"not-a-provider", "fixture", "command"} {
+		t.Run(providerType, func(t *testing.T) {
+			registry := adapter.NewRegistry()
+			err := registerAdapterType(registry, providerType, newFactoryStore(t), nil)
+			if err == nil {
+				t.Fatalf("provider type %q was accepted", providerType)
+			}
+			if !strings.Contains(err.Error(), "unknown adapter provider type") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 

@@ -174,8 +174,8 @@ func assertInteractiveProviderDiagnostic() error {
 	text := interactiveOutput()
 	// The literal is the diagnostic of the provider the harness actually runs,
 	// which is providers/mock (tests/harness/cluster.go builds it). The previous
-	// literal came from tests/fixtures/provider, a binary the harness no longer
-	// builds, so the assertion could not pass no matter what the Cluster did.
+	// literal came from tests/fixtures/provider, a binary that has since been
+	// deleted, so the assertion could not pass no matter what the Cluster did.
 	if !strings.Contains(text, "mock execution failure") {
 		return fmt.Errorf("interactive output is missing the provider diagnostic: %s", text)
 	}
