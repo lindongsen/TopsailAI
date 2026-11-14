@@ -37,6 +37,8 @@ Use this skill when the user asks to:
 - Revoke a leaked token by regenerating the pair.
 - Understand why a request came back `denied`.
 - Start a Node from a zip someone handed them, and change which folders it exposes.
+- Start a Node from a single executable someone handed them, with no configuration
+  to edit.
 
 Do **not** use this skill for the client's command syntax (that is
 `connector-client`) or for deploying the Server (that is
@@ -170,6 +172,89 @@ You do not need to read the pair out to anyone. The operator generated it when t
 bundle was built, so they already hold it and can call this Node as soon as it
 connects. If they ask for it, it is the single line in `config/identity`, and it is
 a password.
+
+## Running from a single executable you were given
+
+A second delivery shape exists: one executable with the Server address, the policy
+and the `tunnel_token` compiled into it. There is no zip, no `scopes.txt`, no
+`policy.yaml` and no environment variable to set. Copy the file, run it, and the
+Node connects.
+
+```
+./connector-node                                    # Linux or macOS
+connector-node.exe                                  # Windows
+```
+
+The first start generates this machine's identity, prints the pair once, and
+connects. Everything after that behaves exactly as a bundle does: the same
+subcommands, the same policy vocabulary, the same refusals.
+
+### What you cannot change, and what you can
+
+| Setting | Changeable here | How |
+|---|---|---|
+| Server address | yes | `CONNECTOR_NODE_SERVER_URL` overrides the compiled value |
+| `tunnel_token` | yes | `CONNECTOR_NODE_TUNNEL_TOKEN` overrides the compiled value |
+| Policy (scopes and grants) | **no** | It is compiled in. Ask the operator for a build with different scopes |
+| Config directory | yes | `CONNECTOR_NODE_CONFIG_DIR` |
+| Identity | yes | `connector-node regenerate`, as with any build |
+
+The environment wins over a compiled value, field by field, so setting only the
+Server address leaves the compiled `tunnel_token` in force.
+
+The policy is the exception, and it fails loudly rather than silently: setting
+`CONNECTOR_NODE_POLICY_FILE` on a build that compiled its policy in is a startup
+failure. The two would disagree about every scope and every grant, and the operator
+would believe the compiled policy was still in force.
+
+### The executable is a credential
+
+This is the part that differs from a bundle, and it is not a detail.
+
+A build that compiled the `tunnel_token` in carries a Server-wide secret in its own
+bytes. `strings connector-node` recovers it, because the linker stores the value as
+plain text. That is inherent to the mechanism, not a defect in this build.
+
+So the file is a password, and a more dangerous one than `config/identity`:
+
+- `config/identity` is per-Node. Leaking it exposes this one machine.
+- The `tunnel_token` is Server-wide. Leaking it lets the holder open a channel and
+  impersonate **any** Node that Server serves, not just this one.
+
+Handle it accordingly:
+
+- Do not put it in a public repository, a shared drive, a chat message or an email
+  attachment that is retained.
+- Do not copy it to a machine you do not control.
+- If it leaks, tell the operator. They rotate the `tunnel_token` on the Server,
+  which invalidates every Node and every CLI at once, and send you a new build.
+
+### The Node refuses to serve its own executable
+
+If the compiled policy exposes a folder that contains the executable, the Node
+refuses to serve that file: `file.read` and `file.stat` return `denied`, and
+`file.list` omits it. A neighbouring file in the same folder is still served.
+
+This is deliberate. Without it, a caller with `read` on that folder could download
+the binary and recover the Server-wide token from it. The refusal is conditional on
+the build actually carrying a token: a normal build is served normally, because its
+bytes disclose nothing.
+
+The refusal is by file identity, so a copy of the executable elsewhere is a
+different file and is served. The protection covers the running binary, not every
+copy of it.
+
+### What this shape does not give you
+
+- **No scope editing.** Changing a scope means a new build from the operator.
+- **No policy reload.** `SIGHUP` reloads a policy file; there is none here.
+- **No per-machine scopes.** The compiled paths are the ones the operator chose at
+  build time. A path that does not exist on this machine fails at startup, exactly
+  as a bundle's `scopes.txt` entry would.
+- **No secrecy.** The token is recoverable from the file by anyone who has the file.
+
+If you need to change scopes yourself, ask for a bundle instead. The bundle keeps
+the policy in a file you edit and holds no Server-wide secret in the binary.
 
 ## Configuration
 
@@ -414,3 +499,7 @@ reachable surface depends on which line happened to parse.
 - [ ] `run` has `CONNECTOR_NODE_SERVER_URL` and `CONNECTOR_NODE_TUNNEL_TOKEN` set.
 - [ ] The log shows a handshake accepted, not a refusal followed by silence.
 - [ ] After a regeneration, the CLI was given the new pair.
+- [ ] For a single-executable build, the file was stored as a credential, because it
+      carries the Server-wide `tunnel_token` in plain text.
+- [ ] For a single-executable build, `CONNECTOR_NODE_POLICY_FILE` is unset, because
+      setting it is a startup failure.

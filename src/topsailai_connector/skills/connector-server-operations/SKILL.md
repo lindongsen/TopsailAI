@@ -42,7 +42,8 @@ Use this skill when the operator asks to:
 - Keep the CLI API unreachable from the internet while the channel stays open.
 - Diagnose "a Node cannot connect" or "the CLI gets `node_offline`".
 - Understand a limit, such as why a large read is truncated or a request times out.
-- Hand a Node to someone who does not build software, as a zip they unzip and start.
+- Hand a Node to someone who does not build software, as a zip they unzip and start,
+  or as one executable they run with nothing to configure.
 
 Do **not** use this skill for the client's command syntax (that is
 `connector-client`) or for installing the Node (that is `connector-node-setup`).
@@ -99,10 +100,13 @@ failure appears on their machine instead of yours.
 | `PACKAGE_SCOPES` | yes, unless `PACKAGE_SCOPES_FILE` is set | One or more `name=path` entries, space separated |
 | `PACKAGE_SCOPES_FILE` | no | A file of `name=path` lines, for paths containing spaces or a long list |
 | `PACKAGE_TUNNEL_TOKEN` | no | The `tunnel_token` to embed. Without it the user must supply `CONNECTOR_NODE_TUNNEL_TOKEN` |
+| `PACKAGE_ALLOW_FILESYSTEM_ROOT` | no | `1` lets a scope be a volume root. Unset means off. Any other value fails the build |
+| `PACKAGE_EMBED_CONFIG` | no | `1` builds one executable with the configuration compiled in, instead of a zip |
 | `PACKAGE_NAME` | no | Bundle name. Default `connector-node-<goos>-<goarch>` |
 | `PACKAGE_GOOS`, `PACKAGE_GOARCH` | no | Target platform. Default this host |
 
-The output is `bin/<PACKAGE_NAME>.zip`.
+The output is `bin/<PACKAGE_NAME>.zip`, or `bin/<PACKAGE_NAME>` when
+`PACKAGE_EMBED_CONFIG=1`.
 
 ### What the zip contains
 
@@ -177,14 +181,62 @@ because the bundle keeps its credentials inside its own folder, which is exactly
 layout that check exists to refuse. Both sides of that comparison are resolved
 physically, so a bundle reached through a symlink or a junction is still refused.
 
-A bundle cannot express the policy's `allow_filesystem_root` opt-in. The start
-scripts refuse a volume root and generate a policy without the key, so a bundle
-always exposes named folders rather than a whole drive. That is the safer default
-for a bundle, because the recipient did not write the policy and should not be able
-to widen the blast radius by editing one line of `scopes.txt`. An operator who
-genuinely needs a whole volume writes the policy by hand and runs the Node directly
-instead of from a bundle. The gap is recorded in
-`issues/issue-bundle-cannot-express-the-filesystem-root-optin.md`.
+A bundle expresses the policy's `allow_filesystem_root` opt-in only when you ask
+for it: `PACKAGE_ALLOW_FILESYSTEM_ROOT=1`. Unset means off, and the start scripts
+then refuse a volume root and generate a policy without the key. The default is
+off because the recipient did not write the policy and should not be able to widen
+the blast radius by editing one line of `scopes.txt`; the switch is a packaging
+decision, recorded in the bundle's `allow_filesystem_root` file, so the recipient
+cannot turn it on themselves. Only `1`, `0` and an empty value are accepted, and
+any other spelling fails the build rather than guessing.
+
+### A single executable instead of a zip
+
+`make package-embedded` produces one file rather than a zip: the Server address,
+the policy and, when you supply it, the `tunnel_token` are compiled into the
+binary. The recipient copies the file and runs it. There is nothing to unzip and
+nothing to edit.
+
+```
+make package-embedded PACKAGE_SERVER_URL=... PACKAGE_SCOPES_FILE=... \
+  PACKAGE_TUNNEL_TOKEN=...
+make package-embedded-windows ...        # the same, for a Windows target
+```
+
+The inputs are the same as for a zip, plus `PACKAGE_EMBED_CONFIG=1` when you call
+`make package` directly instead of the dedicated target.
+
+Choose this shape when the recipient should not edit anything, and choose a zip
+when they need to change scopes themselves. The trade is explicit:
+
+| | Zip | Single executable |
+|---|---|---|
+| Scopes the recipient can edit | yes, `scopes.txt` | no, compiled in |
+| Policy reload on `SIGHUP` | yes | no policy file to reload |
+| `tunnel_token` in the binary | no, in `config/tunnel_token` | **yes, in plain text** |
+| Leak blast radius | that one Node | **every Node on this Server** |
+| Files to hand over | a zip | one file |
+
+The last two rows are the reason this is a separate target rather than a flag on
+the existing one. A zip leaks one Node's identity; an embedded binary leaks the
+Server-wide `tunnel_token`, which lets the holder impersonate any Node. `strings`
+recovers it, because the linker stores the value as plain text. Hand the file over
+the way you would hand over the Server's own secret, and rotate the
+`tunnel_token` if it leaks.
+
+The Node compensates where it can: a build that carries a token refuses to serve
+its own executable through a scope, so a caller with `read` on the install folder
+cannot download the binary and extract the token. A normal build is served
+normally, because its bytes disclose nothing.
+
+The identity is deliberately **not** embedded. It is generated on the recipient's
+machine at first start, so two copies of one binary do not share a `node-id` and
+evict each other from the Server's registry. The recipient runs
+`connector-node id` once to learn the pair, exactly as with a normal build.
+
+Scope paths are compiled in as you wrote them, not resolved on your build host. A
+path that does not exist on the recipient's machine fails at startup, which is the
+same failure a bundle's `scopes.txt` entry produces.
 
 ## Configuration
 
