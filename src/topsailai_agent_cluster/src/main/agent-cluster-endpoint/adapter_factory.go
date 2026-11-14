@@ -28,65 +28,86 @@ const (
 	genericCLIMaxRecords     = 128
 )
 
+// adapterProviderType is the one provider type this Endpoint ships an
+// implementation for.
+//
+// It is a name, not a selector. The Endpoint has exactly one adapter
+// implementation, so a configured provider type can only be checked against this
+// name; it cannot choose between implementations, because there is nothing to
+// choose between. Keeping the name here rather than in a switch is what makes that
+// structural: adding a second implementation would require a deliberate change to
+// this file instead of a new case that silently becomes reachable through
+// configuration.
+const adapterProviderType = "genericcli"
+
 // genericCLIConcurrency is the Endpoint-side concurrency ceiling for one Generic
 // CLI Adapter. It is a value rather than a constant because the type is a struct.
 var genericCLIConcurrency = providercli.ConcurrencyLimits{Total: 4, Discovery: 2, Mutation: 1, Follow: 2}
 
-// registerAdapterType installs the factory for one provider type.
+// registerAdapter installs the single adapter implementation this Endpoint ships.
+//
+// It takes no provider type. A provider type used to select the factory through a
+// switch, which meant the Endpoint held provider-specific code reachable only by
+// configuration. There is one implementation, so the factory is registered once
+// under adapterProviderType and the registry decides whether a configured name
+// refers to it. A name that does not is refused by the registry, not by a branch
+// here.
 //
 // The control action catalog is deliberately not a parameter: the operator's
 // adapter document is the only source of ctl. capabilities, and the provider that
 // implements an action declares what the action is. The factory therefore only
 // builds the adapter from the document it is handed, so there is exactly one place
 // with the authority to publish a ctl. capability.
-//
-// genericcli is the only provider type an Endpoint can be configured with. The
-// in-process TopsailAI adapter and the legacy command adapter were removed, so a
-// configuration that still names either of them is refused here instead of being
-// accepted and then failing on the first operation. Refusing loudly is the point:
-// a silent fallback to genericcli would run a provider CLI against a command line
-// that was written for a different adapter, and the operator would see a provider
-// error rather than a configuration error.
-func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store) error {
+func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}
-	var factory adapter.Factory
-	switch providerType {
-	case "genericcli":
-		factory = func(ctx context.Context, local adapter.Config) (adapter.Adapter, error) {
-			// A display name is required by the adapter and is not part of the
-			// operator-facing adapter document, so the adapter ID is the fallback.
-			// It is descriptive only and never an identity.
-			displayName := local.DisplayName
-			if displayName == "" {
-				displayName = local.AdapterID
-			}
-			// The declared capabilities are the operator's allowlist. The adapter
-			// intersects them with what the provider actually advertises, so an
-			// operation the provider does not offer is unreachable even when it was
-			// configured. The revision is carried through unchanged, which is what
-			// makes a published effective revision meaningful.
-			var capabilities protocol.CapabilityDescriptor
-			if local.Capabilities != nil {
-				capabilities = *local.Capabilities
-			}
-			return genericcli.New(ctx, genericcli.Config{
-				AdapterID: local.AdapterID, DisplayName: displayName,
-				Executable: local.Command, Args: local.Args,
-				Timeout:        time.Duration(local.TimeoutMS) * time.Millisecond,
-				MaxStdinBytes:  genericCLIMaxStdinBytes,
-				MaxStdoutBytes: genericCLIMaxStdoutBytes,
-				MaxStderrBytes: genericCLIMaxStderrBytes,
-				MaxRecords:     genericCLIMaxRecords,
-				EndpointLimits: genericCLIConcurrency,
-				AdapterLimits:  genericCLIConcurrency,
-				Capabilities:   capabilities,
-				Mapper:         store,
-			})
+	factory := func(ctx context.Context, local adapter.Config) (adapter.Adapter, error) {
+		// A display name is required by the adapter and is not part of the
+		// operator-facing adapter document, so the adapter ID is the fallback.
+		// It is descriptive only and never an identity.
+		displayName := local.DisplayName
+		if displayName == "" {
+			displayName = local.AdapterID
 		}
-	default:
-		return fmt.Errorf("unknown adapter provider type %q", providerType)
+		// The declared capabilities are the operator's allowlist. The adapter
+		// intersects them with what the provider actually advertises, so an
+		// operation the provider does not offer is unreachable even when it was
+		// configured. The revision is carried through unchanged, which is what
+		// makes a published effective revision meaningful.
+		var capabilities protocol.CapabilityDescriptor
+		if local.Capabilities != nil {
+			capabilities = *local.Capabilities
+		}
+		return genericcli.New(ctx, genericcli.Config{
+			AdapterID: local.AdapterID, DisplayName: displayName,
+			Executable: local.Command, Args: local.Args,
+			Timeout:        time.Duration(local.TimeoutMS) * time.Millisecond,
+			MaxStdinBytes:  genericCLIMaxStdinBytes,
+			MaxStdoutBytes: genericCLIMaxStdoutBytes,
+			MaxStderrBytes: genericCLIMaxStderrBytes,
+			MaxRecords:     genericCLIMaxRecords,
+			EndpointLimits: genericCLIConcurrency,
+			AdapterLimits:  genericCLIConcurrency,
+			Capabilities:   capabilities,
+			Mapper:         store,
+		})
 	}
-	return registry.RegisterType(providerType, factory)
+	return registry.RegisterType(adapterProviderType, factory)
+}
+
+// validateProviderType reports whether a configured provider type names the
+// implementation this Endpoint registered.
+//
+// The check is a name comparison, not a dispatch. It exists so a configuration
+// that still names a removed adapter fails at startup with a message that says
+// what this node implements, instead of failing later on the first operation with
+// a provider error that looks like a provider defect. The registry would refuse the
+// same name on Configure; validating here only moves the failure earlier and makes
+// the message actionable.
+func validateProviderType(providerType string) error {
+	if providerType == adapterProviderType {
+		return nil
+	}
+	return fmt.Errorf("provider type %q is not registered; this Endpoint implements %q", providerType, adapterProviderType)
 }

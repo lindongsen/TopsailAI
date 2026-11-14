@@ -128,19 +128,23 @@ func main() {
 	// document decides which actions this node serves. An adapter document that
 	// names no ctl. capability therefore advertises none, which is the fail-closed
 	// default and keeps the action surface a deployment decision.
-	registered := make(map[string]bool)
+	// The Endpoint ships exactly one adapter implementation, so it is registered
+	// once and never selected by configuration. A configured provider type is
+	// validated against that one name below; it cannot choose an implementation
+	// because there is nothing to choose between.
+	if err := registerAdapter(registry, store); err != nil {
+		logger.Error("register adapter", "error", err)
+		_ = client.Close()
+		_ = store.Close()
+		os.Exit(1)
+	}
 	for _, item := range cfg.Adapters {
-		if registered[item.ProviderType] {
-			continue
-		}
-		providerType := item.ProviderType
-		if err := registerAdapterType(registry, providerType, store); err != nil {
-			logger.Error("register adapter provider", "provider_type", providerType, "error", err)
+		if err := validateProviderType(item.ProviderType); err != nil {
+			logger.Error("validate adapter provider type", "adapter_id", item.AdapterID, "provider_type", item.ProviderType, "error", err)
 			_ = client.Close()
 			_ = store.Close()
 			os.Exit(1)
 		}
-		registered[providerType] = true
 	}
 	bindings := make([]endpointservice.Binding, 0, len(cfg.Adapters))
 	for _, item := range cfg.Adapters {
