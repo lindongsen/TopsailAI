@@ -183,6 +183,100 @@ func TestControlActionReferenceStatesTheCatalogCounts(t *testing.T) {
 	}
 }
 
+// shortcutTableHeader matches a Markdown table header whose first column names a
+// permission and whose second column lists shortcuts.
+//
+// The catalog reference used to carry exactly this header, which read as "the
+// catalog groups its entries by permission". It does not: the field table in the
+// same document says the permission is declared on the Endpoint's ADAPTERS
+// capability entry, and TestShippedCatalogDeclaresNoPermission proves the shipped
+// catalog carries no permission field at all. A header that names a permission
+// therefore contradicts both, and a reader plans against a field that is not there.
+var shortcutTableHeader = regexp.MustCompile(`(?m)^\|\s*` + "`?" + `[Pp]ermission` + "`?" + `\s*\|[^\n]*[Ss]hortcuts[^\n]*\|\s*$`)
+
+// effectTableHeader matches the header the document uses instead: the shortcuts
+// grouped by what they do to the agent.
+var effectTableHeader = regexp.MustCompile(`(?m)^\|\s*` + "`?" + `[Ee]ffect` + "`?" + `\s*\|[^\n]*[Ss]hortcuts[^\n]*\|\s*$`)
+
+// markdownTableRow splits one Markdown table row into its trimmed cells.
+//
+// A row that is not a table row returns nil, which lets the caller stop at the
+// first line that ends the table.
+func markdownTableRow(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "|") || !strings.HasSuffix(trimmed, "|") {
+		return nil
+	}
+	parts := strings.Split(strings.Trim(trimmed, "|"), "|")
+	cells := make([]string, 0, len(parts))
+	for _, part := range parts {
+		cells = append(cells, strings.TrimSpace(part))
+	}
+	return cells
+}
+
+// TestControlActionReferenceGroupsShortcutsByEffect fails when the catalog
+// reference groups its shortcut table by permission, or lists a mutating shortcut
+// in the read-only group.
+//
+// The document said `agent.models` sits in the `read_output` group while the same
+// document's own instruction table says it lists or selects a model, and the
+// provider applies the selection. A reader who trusted the group would hand a
+// read-only credential an operation that changes the live model. The grouping is
+// now by effect, and this guard keeps it that way.
+func TestControlActionReferenceGroupsShortcutsByEffect(t *testing.T) {
+	root := repoRoot(t)
+	text := readRepoFile(t, root, controlActionReferenceFile)
+	if strings.TrimSpace(text) == "" {
+		t.Fatalf("%s is empty, so this guard checked nothing", controlActionReferenceFile)
+	}
+
+	if match := shortcutTableHeader.FindStringIndex(text); match != nil {
+		t.Errorf("%s:%d groups the shortcuts under a permission column, but the catalog declares no permission and the operator scope lives on the Endpoint's ADAPTERS capability entry, so a reader plans against a field that is not there", controlActionReferenceFile, lineAt(text, match[0]))
+	}
+
+	header := effectTableHeader.FindStringIndex(text)
+	if header == nil {
+		t.Fatalf("%s has no shortcut table grouped by effect, so this guard checked nothing", controlActionReferenceFile)
+	}
+
+	lines := strings.Split(text, "\n")
+	startLine := lineAt(text, header[0])
+	rows := 0
+	readOnlyRows := 0
+	for index := startLine; index < len(lines); index++ {
+		cells := markdownTableRow(lines[index])
+		if cells == nil {
+			break
+		}
+		if len(cells) < 2 {
+			continue
+		}
+		group := strings.ToLower(cells[0])
+		if strings.Trim(group, "-: ") == "" {
+			// The separator row between the header and the body.
+			continue
+		}
+		if group == "effect" {
+			continue
+		}
+		rows++
+		if !strings.Contains(group, "read") {
+			continue
+		}
+		readOnlyRows++
+		if strings.Contains(cells[1], "agent.models") {
+			t.Errorf("%s:%d lists agent.models in the %s group, but the provider applies a model selection when the instruction carries an argument, so a reader treats a mutating shortcut as read-only", controlActionReferenceFile, index+1, cells[0])
+		}
+	}
+	if rows == 0 {
+		t.Fatalf("%s has a shortcut table header but no rows, so this guard checked nothing", controlActionReferenceFile)
+	}
+	if readOnlyRows == 0 {
+		t.Fatalf("%s has no read-only shortcut group, so the agent.models placement was never checked", controlActionReferenceFile)
+	}
+}
+
 // parseControlActionCatalog reads the shipped catalog and counts what the
 // reference states about it.
 //

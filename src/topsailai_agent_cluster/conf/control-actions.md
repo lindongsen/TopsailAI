@@ -320,10 +320,14 @@ The shipped catalog defines 48 actions. Of those, 28 are instruction shortcuts:
 entries that reuse the `call_instruction` argv and pin the instruction with
 `payload_constants`, split by what they do.
 
-| Permission | Shortcuts |
+| Effect | Shortcuts |
 |---|---|
-| `read_output` | `git.status`, `git.log`, `git.diff`, `git.show`, `git.branch`, `git.tag`, `git.remote`, `ctx.history`, `ctx.search`, `agent.tokens`, `agent.messages`, `agent.llm`, `agent.tools`, `agent.models`, `skill.show`, `skill.hooks`, `skill_repo.list`, `stat.tool_call`, `stat.tool_call_errors`, `stat.tool_call_log` |
-| `control` | `ctx.clear`, `ctx.del_msg`, `ctx.summarize`, `env.set`, `session.rename`, `skill.load`, `skill.unload`, `stat.tool_call_reset` |
+| read-only | `git.status`, `git.log`, `git.diff`, `git.show`, `git.branch`, `git.tag`, `git.remote`, `ctx.history`, `ctx.search`, `agent.tokens`, `agent.messages`, `agent.llm`, `agent.tools`, `skill.show`, `skill.hooks`, `skill_repo.list`, `stat.tool_call`, `stat.tool_call_errors`, `stat.tool_call_log` |
+| mutating | `ctx.clear`, `ctx.del_msg`, `ctx.summarize`, `env.set`, `session.rename`, `skill.load`, `skill.unload`, `stat.tool_call_reset`, `agent.models` (mutating when it carries an argument) |
+
+This table groups the shortcuts by what they do to the agent, not by who may run them.
+No permission is declared here: the operator scope lives on the Endpoint's `ADAPTERS`
+capability entry for the same operation name, as the field table above states.
 
 The git shortcuts are spelled `git.status` rather than `git.git_status`, because
 the doubled prefix is the provider's module naming and not something an operator
