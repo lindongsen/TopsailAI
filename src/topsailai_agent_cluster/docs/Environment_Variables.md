@@ -285,6 +285,34 @@ TopsailAI Provider CLI reads `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS` at its ow
 process boundary, so the action surface stays an operational decision without the
 Endpoint parsing a provider argv template.
 
+## Provider package
+
+The Provider CLI package is optional and independent of every role package. Its
+maintainer script bounds how many superseded versions stay on disk, so an upgrade
+does not fill the node and a rollback still has a version to select. These two
+settings are read by `scripts/deb/postinst.provider` at install time, not by the
+Endpoint process, so they are not part of the Endpoint table above.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AGENT_CLUSTER_PROVIDER_RETENTION_COUNT` | `2` | Total versions kept on disk, including the installed one; the default keeps the installed version plus one previous version for a rollback |
+| `AGENT_CLUSTER_PROVIDER_RETENTION_DAYS` | `30` | Age in days at which a superseded version is removed even when the count limit still has room |
+
+Both are overridable at install time, because a site that rolls back often needs
+more history and a small disk needs less. A value that is not a positive integer
+warns and falls back to the default rather than deleting anything, so a typo cannot
+turn into an unbounded delete.
+
+The version the package just installed is never removed: removing it would leave the
+package installed with no payload. Superseded versions are visited newest-first, so
+the count limit keeps the most recent ones, and each removal is logged with the
+version name, its age and how many newer versions were kept.
+
+Installing a Provider CLI is not the same as activating it. The script never selects
+a version for an Adapter: activation is a per-adapter decision made through
+`agent-clusterctl replace`, described in `docs/agent-cluster-adapters.md` under
+Adapter implementations.
+
 ## Client
 
 The operator CLI reads these variables at its own process boundary. They are not
