@@ -278,7 +278,13 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		mode = options.Faults.FixtureMode
 	}
 	discoveryCount := filepath.Join(root, "discovery-count")
-	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": append([]string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, providerFaultArgs(options.Faults)...), "timeout_ms": 5000}}
+	// The session directory is the cluster root, which exists for the lifetime of
+	// the cluster. command.exec runs on the Endpoint, so the Endpoint needs a
+	// provider-reported working directory before it will start a process; without
+	// one it refuses with session_directory_unavailable rather than falling back to
+	// its own directory. The value travels as argv because the adapter sets a
+	// child's environment to exactly the configured Environment, which is empty.
+	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": append([]string{"--mode", mode, "--session-dir", root, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, providerFaultArgs(options.Faults)...), "timeout_ms": 5000}}
 	if options.Faults.TwoAdapters {
 		adapterArgs = []map[string]any{{"adapter_id": "adapter-a", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-a"}, "timeout_ms": 5000}, {"adapter_id": "adapter-b", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--always-fail", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-b"}, "timeout_ms": 5000}}
 	}

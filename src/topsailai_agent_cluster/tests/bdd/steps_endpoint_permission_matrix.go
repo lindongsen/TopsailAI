@@ -49,6 +49,7 @@ func registerEndpointPermissionMatrixSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the agent model select command is submitted with that credential$`, submitModelSelect)
 	ctx.Step(`^the command exec operation is submitted with an allowlisted argv and that credential$`, submitCommandExec)
 	ctx.Step(`^the command is accepted and the provider is invoked once$`, assertAcceptedAndInvokedOnce)
+	ctx.Step(`^the command is accepted and the endpoint ran it without the provider$`, assertAcceptedAndRanOnEndpoint)
 	ctx.Step(`^the command is refused with policy denied and the provider is not invoked$`, assertRefusedWithoutInvocation)
 }
 
@@ -83,7 +84,11 @@ var permissionMatrixOperations = map[string]permissionMatrixOperation{
 	// must be allowlisted: the allowlist runs inside the same policy hook, so a
 	// non-allowlisted argv would be reported as policy_denied and the negative
 	// scenario would pass for the wrong reason.
-	protocol.OperationCommandExec: {Permission: protocol.OperationCommandExec, Target: "fixture-session", Payload: `{"argv":["fixture-tool","status"]}`, OperationVersion: protocol.CommandExecPayloadVersion, PayloadSchemaVersion: protocol.CommandExecPayloadVersion},
+	// command.exec runs on the Endpoint, so the argv must name a real executable
+	// on PATH. The removed fixture's "fixture-tool" was answered by the provider and
+	// never executed; now that the Endpoint starts the process itself, that argv
+	// would be refused with command_not_found before the allowlist was consulted.
+	protocol.OperationCommandExec: {Permission: protocol.OperationCommandExec, Target: "fixture-session", Payload: `{"argv":["pwd"]}`, OperationVersion: protocol.CommandExecPayloadVersion, PayloadSchemaVersion: protocol.CommandExecPayloadVersion},
 }
 
 // permissionMatrixOperation describes one row of the command matrix.
@@ -121,7 +126,7 @@ var permissionMatrixGranted string
 // command.exec. It is deliberately the same argv the positive and negative
 // command.exec rows submit, so the allowlist can never be the reason a negative
 // row was refused.
-var permissionMatrixAllowlist = []string{"fixture-tool", "status"}
+var permissionMatrixAllowlist = []string{"pwd"}
 
 // startPermissionMatrixCluster starts one real cluster that publishes both a live
 // and a stopped session, advertises every operation under test, accepts the
@@ -331,6 +336,39 @@ func assertAcceptedAndInvokedOnce() error {
 	}
 	if after != permissionMatrixInvocationsBefore+1 {
 		return fmt.Errorf("provider invocations before=%d after=%d, want exactly one more", permissionMatrixInvocationsBefore, after)
+	}
+	return nil
+}
+
+// assertAcceptedAndRanOnEndpoint proves the allowed command.exec row ran on the
+// Endpoint and did not reach the provider.
+//
+// The provider invocation count is asserted unchanged rather than incremented,
+// because command.exec is Endpoint-native: the Endpoint keeps the allowlist, the
+// working directory, the confinement, the minimal environment, the timeout and the
+// exact-process cleanup, and it does not start the provider CLI for this operation.
+// Asserting an increment here would demand the behaviour the contract forbids.
+func assertAcceptedAndRanOnEndpoint() error {
+	status, err := activeScenario.world.PollRealCommand(permissionMatrixCommandID, 20*time.Second)
+	if err != nil {
+		return err
+	}
+	if code, _ := status["error_code"].(string); code != "" {
+		return fmt.Errorf("allowed command ended with error_code=%q status=%v", code, status)
+	}
+	// Exit confirmation is the evidence that a process really ran and its exit
+	// status was observed. A receipt without it would be indistinguishable from a
+	// request that was merely accepted.
+	confirmed, _ := status["exit_confirmed"].(bool)
+	if !confirmed {
+		return fmt.Errorf("allowed command was not exit-confirmed, so no process was observed: %v", status)
+	}
+	after, err := activeScenario.world.ProviderInvocationCount()
+	if err != nil {
+		return err
+	}
+	if after != permissionMatrixInvocationsBefore {
+		return fmt.Errorf("provider invocations before=%d after=%d, want unchanged because command.exec is endpoint-native", permissionMatrixInvocationsBefore, after)
 	}
 	return nil
 }

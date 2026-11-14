@@ -32,10 +32,16 @@ func registerMessagesSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the command is refused and asks for one bound$`, assertMessagesDisagreementRefused)
 }
 
-// messagesFixtureSession is the provider session key the fixture records. The
-// command takes the provider session identifier, not the opaque cluster resource
-// identifier, because the Server forwards it verbatim as the provider selector.
-const messagesFixtureSession = "fixture-session"
+// messagesFixtureSession is the provider session key the mock provider records.
+// The command takes the provider session identifier, not the opaque cluster
+// resource identifier, because the Server forwards it verbatim as the provider
+// selector.
+//
+// The value is the mock's own key rather than the removed fixture's literal. The
+// mock knows session:stable and session:stopped and answers any other key with the
+// provider's missing-session code, so the old literal made every messages scenario
+// fail with a 404 before the renderer was reached.
+const messagesFixtureSession = "session:stable"
 
 // messagesStepRecord is a real provider step record, not prose.
 //

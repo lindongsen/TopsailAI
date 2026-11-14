@@ -191,7 +191,7 @@ func performQueryRead(operation, credential string) error {
 		outcome.payloadSize = len(result.Rows)
 		outcome.observedAtMS = result.ObservedAtMS
 	case queryMessages:
-		result, err := api.GetMessages(ctx, scopedEndpointID, "fixture-session", 0, 0)
+		result, err := api.GetMessages(ctx, scopedEndpointID, messagesFixtureSession, 0, 0)
 		outcome.err = err
 		outcome.errorCode = result.ErrorCode
 		outcome.payloadSize = len(result.Messages)
@@ -293,7 +293,7 @@ func assertQueryAllowed(operation string) error {
 			return fmt.Errorf("allowed history read carried no observation time, so the adapter did not answer")
 		}
 	case queryMessages:
-		if outcome.content != "fixture-session" {
+		if outcome.content != messagesFixtureSession {
 			return fmt.Errorf("allowed messages read answered for %q, want the requested session", outcome.content)
 		}
 		if outcome.observedAtMS == 0 {

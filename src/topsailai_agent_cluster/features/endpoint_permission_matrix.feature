@@ -133,11 +133,16 @@ Feature: endpoint command authorization
     When the agent model select command is submitted with that credential
     Then the command is refused with policy denied and the provider is not invoked
 
-  Scenario: an allowed command execution reaches the provider once
+  # command.exec is Endpoint-native by contract: the Endpoint keeps the allowlist,
+  # the working directory, the confinement, the minimal environment, the timeout
+  # and the exact-process cleanup, and it does not start the provider CLI for this
+  # operation. So the positive row asserts that the Endpoint ran the command and
+  # that the provider was not consulted, which is the opposite of every other row.
+  Scenario: an allowed command execution runs on the endpoint
     Given a real cluster that publishes a live and a stopped session
     And a credential permitted to execute a command
     When the command exec operation is submitted with an allowlisted argv and that credential
-    Then the command is accepted and the provider is invoked once
+    Then the command is accepted and the endpoint ran it without the provider
 
   Scenario: a command execution without the control permission is refused before the allowlist
     Given a real cluster that publishes a live and a stopped session
