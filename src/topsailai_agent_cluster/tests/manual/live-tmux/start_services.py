@@ -66,6 +66,56 @@ def resolve_config(runtime: Path, role: str) -> dict[str, object]:
     return json.loads(config_path.read_text(encoding="utf-8"))
 
 
+def api_port_accepts(port: int) -> bool:
+    """Report whether the API port currently accepts a TCP connection."""
+    with socket.socket() as probe:
+        probe.settimeout(0.5)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def log_tail(runtime: Path, name: str, limit: int = 20) -> str:
+    """Return the last lines of one child log so a startup failure is diagnosable."""
+    path = runtime / f"{name}.log"
+    if not path.is_file():
+        return f"{name} log: missing"
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return f"{name} log tail:\n" + "\n".join(lines[-limit:])
+
+
+def wait_until_ready(children, planned, api_port: int, runtime: Path, timeout_seconds: float) -> None:
+    """Wait until the API port accepts a connection and every child is alive.
+
+    Readiness is the observable fact that the API port answers, not a fixed
+    sleep: a slow start is waited for, and a fast failure is reported with the
+    child log instead of being mistaken for readiness.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        for name, child in zip((name for name, _, _ in planned), children):
+            if child.poll() is not None:
+                raise RuntimeError(f"{name} exited during startup with {child.returncode}\n{log_tail(runtime, name)}")
+        if api_port_accepts(api_port):
+            return
+        time.sleep(0.1)
+    tails = "\n".join(log_tail(runtime, name) for name, _, _ in planned)
+    raise RuntimeError(f"services did not become ready within {timeout_seconds}s\n{tails}")
+
+
+def wait_for_exit_or_timeout(children, timeout_seconds: float) -> bool:
+    """Wait until a child exits or the bounded run time elapses.
+
+    Returns True when a child exited, False when the timeout elapsed. A zero
+    timeout keeps the original behaviour of waiting until interrupted.
+    """
+    deadline = None if timeout_seconds <= 0 else time.monotonic() + timeout_seconds
+    while all(child.poll() is None for child in children):
+        if deadline is not None and time.monotonic() >= deadline:
+            print(f"timeout reached after {timeout_seconds}s", flush=True)
+            return False
+        time.sleep(0.2)
+    return True
+
+
 def main() -> int:
     """Run exact owned service children until interrupted or one child exits."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -76,6 +126,8 @@ def main() -> int:
     parser.add_argument("--provider", required=True, type=Path)
     parser.add_argument("--role", choices=("both", "server", "endpoint"), default="both")
     parser.add_argument("--allowlist", type=Path, help="optional command allowlist file for the endpoint")
+    parser.add_argument("--startup-timeout-seconds", type=float, default=30.0, help="how long to wait for the API port to accept a connection")
+    parser.add_argument("--timeout-seconds", type=float, default=0.0, help="stop after this many seconds; zero waits until interrupted")
     args = parser.parse_args()
     for value in (args.runtime, args.bin_dir, args.provider_home, args.project, args.provider):
         if not value.is_absolute():
@@ -116,7 +168,7 @@ def main() -> int:
         "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "endpoint.db"),
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "client.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "client.key"),
-        "AGENT_CLUSTER_ENDPOINT_ADAPTERS": json.dumps([{"adapter_id": "topsailai-live", "provider_type": "topsailai", "command": str(args.provider), "timeout_ms": 60000}]),
+        "AGENT_CLUSTER_ENDPOINT_ADAPTERS": json.dumps([{"adapter_id": "topsailai-live", "provider_type": "genericcli", "command": str(args.provider), "timeout_ms": 60000}]),
     }
     # An allowlist is optional so the same harness can prove the fail-closed path
     # when the endpoint is started without one.
@@ -152,18 +204,16 @@ def main() -> int:
             log.close()
             children.append(child)
             print(f"{name} pid {child.pid}", flush=True)
-            time.sleep(1)
-            if child.poll() is not None:
-                raise RuntimeError(f"{name} exited during startup with {child.returncode}")
+        wait_until_ready(children, planned, api_port, args.runtime, args.startup_timeout_seconds)
         (args.runtime / f"pids-{args.role}.json").write_text(json.dumps([child.pid for child in children]), encoding="utf-8")
         print(f"READY role={args.role} endpoint=live-tmux-endpoint api_port={api_port}", flush=True)
         print(f"CLI {launch}", flush=True)
-        while all(child.poll() is None for child in children):
-            time.sleep(0.2)
-        for name, child in zip((name for name, _, _ in planned), children):
-            if child.poll() is not None:
-                print(f"exited {name} pid {child.pid} code {child.returncode}", flush=True)
-        return 1
+        if wait_for_exit_or_timeout(children, args.timeout_seconds):
+            for name, child in zip((name for name, _, _ in planned), children):
+                if child.poll() is not None:
+                    print(f"exited {name} pid {child.pid} code {child.returncode}", flush=True)
+            return 1
+        return 0
     except KeyboardInterrupt:
         return 0
     finally:

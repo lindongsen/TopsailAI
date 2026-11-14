@@ -144,7 +144,7 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
         test test-all test-unit test-unit-common test-unit-server \
         test-unit-endpoint test-unit-cli test-provider-schema test-conformance \
         test-provider-topsailai test-provider-topsailai-conformance \
-        test-bdd test-integration test-packaging test-harness \
+        test-bdd test-integration test-packaging test-harness test-live-smoke \
         bdd integration \
         deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint deb-provider \
         deb-inspect deb-clean \
@@ -176,6 +176,8 @@ help:
 	@echo "  test-integration  run the integration suite with test hooks"
 	@echo "  test-packaging    run the Debian packaging tests"
 	@echo "  test-harness      run the test-harness self-tests"
+	@echo "  test-live-smoke   run the bounded live smoke: real Server, Endpoint and"
+	@echo "                    Provider CLI, one asserted CLI answer, exact-PID stop"
 	@echo ""
 	@echo "  Test by component (unit tests)"
 	@echo "  test-unit-common  run the shared packages: protocol, provider CLI, config,"
@@ -325,6 +327,13 @@ test-integration:
 # discovers them. This target runs them alone while iterating on the packager.
 test-packaging:
 	go test -count=1 ./tests/packaging
+
+# The bounded live smoke starts the real binaries and asserts one real CLI
+# answer. It is bounded by an explicit startup deadline, run deadline and stop
+# deadline, and it stops every child by its exact PID, so a hung provider can
+# never leave an orphan behind. Artifacts live under .tmp/unit8/live-smoke.
+test-live-smoke:
+	bash tests/manual/live-tmux/bounded_smoke.sh $(abspath .tmp/unit8/live-smoke)
 
 # tests/harness is test support rather than a component: its tests start real
 # Server, Endpoint and fixture processes, so it is verified on its own instead of
