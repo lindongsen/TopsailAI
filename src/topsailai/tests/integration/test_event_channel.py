@@ -9,13 +9,18 @@ Purpose: Verify subscribe, push, heartbeat, unsubscribe, disconnect, reconnect
 import json
 import os
 import socket
+import tempfile
 import threading
 import time
 
 import pytest
 
 from topsailai.events.models import Event
-from topsailai.events.subscribers import fan_out, set_subscription_registry
+from topsailai.events.subscribers import (
+    SubscriptionRegistry,
+    fan_out,
+    set_subscription_registry,
+)
 from topsailai.workspace.event_channel import EventChannelConfig, EventChannelServer
 
 
@@ -72,34 +77,38 @@ class Client:
 
 
 @pytest.fixture
-def channel(tmp_path):
-    """Start a real event channel server on a temporary socket path."""
-    socket_path = str(tmp_path / "events.sock")
-    registry = None
-    from topsailai.events.subscribers import SubscriptionRegistry
+def channel():
+    """Start a real event channel server on a short temporary socket path.
 
-    registry = SubscriptionRegistry(max_subscribers=4, queue_size=100)
-    set_subscription_registry(registry)
-    config = EventChannelConfig(
-        enabled=True,
-        max_subscribers=4,
-        queue_size=100,
-        heartbeat_interval=0.2,
-        heartbeat_timeout=1.0,
-    )
-    server = EventChannelServer(
-        socket_path=socket_path,
-        config=config,
-        registry=registry,
-        read_timeout=0.2,
-        reaper_interval=0.2,
-    )
-    server.start()
-    try:
-        yield server, socket_path, registry
-    finally:
-        server.stop()
-        set_subscription_registry(None)
+    A directory created directly under the system temp root is used instead of
+    ``tmp_path`` because a nested base temp directory can push the socket path
+    past the 108-byte ``AF_UNIX`` limit, which makes ``bind`` fail with
+    ``OSError: AF_UNIX path too long``.
+    """
+    with tempfile.TemporaryDirectory(prefix="ec-") as tmpdir:
+        socket_path = os.path.join(tmpdir, "events.sock")
+        registry = SubscriptionRegistry(max_subscribers=4, queue_size=100)
+        set_subscription_registry(registry)
+        config = EventChannelConfig(
+            enabled=True,
+            max_subscribers=4,
+            queue_size=100,
+            heartbeat_interval=0.2,
+            heartbeat_timeout=1.0,
+        )
+        server = EventChannelServer(
+            socket_path=socket_path,
+            config=config,
+            registry=registry,
+            read_timeout=0.2,
+            reaper_interval=0.2,
+        )
+        server.start()
+        try:
+            yield server, socket_path, registry
+        finally:
+            server.stop()
+            set_subscription_registry(None)
 
 
 def _wait_for(predicate, timeout=5.0, interval=0.02):
