@@ -154,6 +154,13 @@ func (r CommandRunner) Show(ctx context.Context, out io.Writer, id string, jsonM
 	}
 	endpoint, report, session, err := FindSession(id, endpoints, reports)
 	if err != nil {
+		// FindSession can only match an endpoint that has a committed document,
+		// and a degraded endpoint has none, so a degraded target would otherwise
+		// be reported as absent. The record still exists and carries the deletion
+		// date, so the accurate answer is the degraded state itself.
+		if degraded, ok := degradedEndpointByID(endpoints, id); ok {
+			return requireQueryableEndpoint(degraded)
+		}
 		return err
 	}
 	capabilities, capabilityErr := r.API.GetCapabilities(ctx, endpoint.EndpointID)

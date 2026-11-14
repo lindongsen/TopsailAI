@@ -98,6 +98,13 @@ type reportLoad struct {
 	// a row that was never observed. The count is what the summary line prints, so
 	// the identifiers never become per-endpoint noise.
 	skippedOffline map[string]bool
+	// degraded holds the endpoints the loader refused to query because they are
+	// degraded. They are recorded apart from skippedOffline because the two
+	// decisions differ in what the operator sees: a skipped endpoint is dropped
+	// from the table and counted once, while a degraded endpoint keeps its row
+	// with no observation and is never counted. The set exists so an explicit
+	// filter can answer "degraded" instead of the misleading "not found".
+	degraded map[string]bool
 }
 
 type interactiveState struct {
@@ -880,6 +887,29 @@ func endpointOnline(endpoint protocol.Endpoint) bool {
 	return endpoint.ConnectionState == "" || endpoint.ConnectionState == "online"
 }
 
+// degradedRefusal returns the refusal for a named endpoint the loader skipped
+// because it is degraded, or nil when the endpoint was not skipped for that
+// reason. It exists because a refused request leaves no report and no error, so
+// without it a caller would describe a degraded endpoint as absent.
+func degradedRefusal(loaded reportLoad, endpointID string) error {
+	if !loaded.degraded[endpointID] {
+		return nil
+	}
+	endpoint, ok := endpointByID(loaded, endpointID)
+	if !ok {
+		return nil
+	}
+	return requireQueryableEndpoint(endpoint)
+}
+
+// endpointDegraded reports whether an endpoint was offline past the expiry
+// window and is now waiting for its record to be deleted. A degraded endpoint is
+// never queried: its inventory is already gone, so every request can only fail,
+// and the failure would describe the endpoint's own state rather than a defect.
+func endpointDegraded(endpoint protocol.Endpoint) bool {
+	return endpoint.ConnectionState == "degraded"
+}
+
 // loadListReports loads the inventory a list render needs. It differs from
 // loadReports in one decision: an endpoint that is not online is not queried at
 // all, because the request can only fail and the failure describes the endpoint's
@@ -908,12 +938,20 @@ func loadListReports(ctx context.Context, api InteractiveAPI, endpointFilter str
 		reports:        make(map[string]protocol.InventoryReport),
 		errors:         make(map[string]error),
 		skippedOffline: make(map[string]bool),
+		degraded:       make(map[string]bool),
 	}
 	for _, endpoint := range endpoints {
 		if endpointFilter != "" && endpoint.EndpointID != endpointFilter {
 			continue
 		}
 		explicit := endpointFilter != "" && endpoint.EndpointID == endpointFilter
+		// A degraded Endpoint is never queried, not even when the operator names
+		// it or passes --all. Its record still exists, so the row stays visible
+		// with no observation; only the request is refused.
+		if endpointDegraded(endpoint) {
+			loaded.degraded[endpoint.EndpointID] = true
+			continue
+		}
 		if !all && !explicit && !endpointOnline(endpoint) {
 			loaded.skippedOffline[endpoint.EndpointID] = true
 			continue
@@ -1190,6 +1228,10 @@ func interactiveRefreshWithArguments(parent context.Context, api InteractiveAPI,
 	// operator's answer; workspace scope reports per-Endpoint failures as
 	// diagnostics while still rendering the healthy Endpoints.
 	if state.Scope.Kind != ScopeWorkspace {
+		if refusal := degradedRefusal(loaded, state.Scope.EndpointID); refusal != nil {
+			state.Rows = nil
+			return refusal
+		}
 		if refreshErr, failed := loaded.errors[state.Scope.EndpointID]; failed {
 			state.Rows = nil
 			return refreshErr

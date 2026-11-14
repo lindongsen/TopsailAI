@@ -658,6 +658,16 @@ func requireQueryableEndpointByID(ctx context.Context, api InteractiveAPI, endpo
 	return requireQueryableEndpoint(endpoint)
 }
 
+// degradedEndpointByID resolves one degraded endpoint record by identifier.
+func degradedEndpointByID(endpoints []protocol.Endpoint, endpointID string) (protocol.Endpoint, bool) {
+	for _, endpoint := range endpoints {
+		if endpoint.EndpointID == endpointID && endpointDegraded(endpoint) {
+			return endpoint, true
+		}
+	}
+	return protocol.Endpoint{}, false
+}
+
 // endpointByID returns the endpoint with the exact identifier.
 func endpointByID(loaded reportLoad, endpointID string) (protocol.Endpoint, bool) {
 	for _, endpoint := range loaded.endpoints {

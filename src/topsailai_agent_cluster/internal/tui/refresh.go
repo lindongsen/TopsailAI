@@ -46,6 +46,9 @@ func (r CommandRunner) RefreshWithProgress(ctx context.Context, out, errors io.W
 		return err
 	}
 	if filter != "" {
+		if refusal := degradedRefusal(loaded, filter); refusal != nil {
+			return refusal
+		}
 		if refreshErr, failed := loaded.errors[filter]; failed {
 			return refreshErr
 		}
@@ -178,6 +181,7 @@ func forceCollectionSelected(ctx context.Context, api InteractiveAPI, filter str
 		reports:        make(map[string]protocol.InventoryReport),
 		errors:         make(map[string]error),
 		skippedOffline: make(map[string]bool),
+		degraded:       make(map[string]bool),
 	}
 	scoped := make([]protocol.Endpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {
@@ -185,6 +189,13 @@ func forceCollectionSelected(ctx context.Context, api InteractiveAPI, filter str
 			continue
 		}
 		explicit := filter != "" && endpoint.EndpointID == filter
+		// A degraded Endpoint is never collected, not even when the operator names
+		// it or passes --all. A forced collection is a request to the machine, and
+		// the machine is gone.
+		if endpointDegraded(endpoint) {
+			loaded.degraded[endpoint.EndpointID] = true
+			continue
+		}
 		if !all && !explicit && !endpointOnline(endpoint) {
 			loaded.skippedOffline[endpoint.EndpointID] = true
 			continue
