@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 author: DawsonLin
-status: open
+status: resolved
 ---
 
 # Issue: Interactive mode must not exit on IO or database errors
@@ -69,39 +69,57 @@ cleanup path is authorized to remove.
 
 ## Resolution
 
-Resolved by commit `87791479` ("fix: keep session artifacts and survive database io
-failures"). The planned change in this issue was **not** implemented as written, because
-it placed the decision in the wrong layer and would have converted a hard exit into an
-uncaught traceback rather than a return to the prompt.
+Resolved. The interactive contract and the non-interactive fallback are both
+implemented, and the fallback is now restored after an earlier revision removed
+it entirely.
 
-What was implemented instead:
+The earlier revision removed the exit path from the write-failure handler and
+never terminated the process. That satisfied the interactive requirement but
+broke the non-interactive one: a run whose committed write failed printed a
+failure answer and returned normally, so the entry point exited with code `0`
+and a lost write looked like success to a script, a CI job or the launcher. The
+fallback is required precisely because a non-interactive caller has no human to
+recover the turn.
 
-- The process is never terminated on a database I/O failure. The exit path was removed
-  from the write-failure handler entirely.
-- Writes are classified. A committed write (a conversation record) reports the failure to
-  its caller, which abandons the turn, keeps the answer that was already produced, and
-  continues the session. A non-committed write (token counters, session metrics, access
-  metadata, session renames) is logged and skipped.
-- The recovery decision lives in the agent loop, which already resolves interactivity
-  once per run, and is additionally guarded so a worker thread never waits for input.
-  A non-interactive run or a worker thread ends with an explicit failure answer instead
-  of an uncaught error.
-- Session metadata, standard output and event records are retained on every exit path,
-  including an abnormal one, and are reclaimed only together with the metadata that
-  authorizes their removal.
+Implemented behavior:
+
+- `utils/db_io_tool.py` never terminates the process. `handle_write_failure`
+  logs at `critical` and re-raises, so the decision belongs to the caller.
+- `workspace/agent/agent_shell_base.py` resolves the database I/O failure from
+  the exception chain and branches on interactivity and thread ownership.
+- `DB_IO_FALLBACK_EXIT_CODE = 1` and `_exit_after_db_io_failure` provide the
+  last-resort exit for the non-interactive main-thread path.
+
+Behavior matrix:
+
+| Caller | Behavior |
+|---|---|
+| Interactive, main thread | Warn, print the already-produced answer, return to the input prompt, restore the turn budget |
+| Non-interactive, main thread | Print an explicit failure answer, write `error` metadata, flush both streams, `os._exit(1)` |
+| Worker thread, any mode | Abandon only this turn, never finalize the metadata, never terminate the process |
+
+Why the fallback settles state before exiting: `os._exit` skips `atexit`, and
+`workspace/session_meta.py` registers `_finalize_on_exit` through `atexit`. An
+unguarded `os._exit` leaves the metadata at `running` forever, which is exactly
+how the stale `running` records in this incident were produced. The fallback
+therefore writes the metadata through `_atomic_write`, which performs `flush`,
+`os.fsync` and `os.replace`, and flushes `sys.stdout` and `sys.stderr` so the
+`TeeOutput` artifact keeps the failure evidence up to the exit instant. Both
+settling steps are wrapped so a failure to settle cannot block the non-zero
+exit. Neither artifact is ever removed.
 
 Corrections to this issue's original text:
 
-- The end-of-turn prompt is at `workspace/agent/agent_shell_base.py:782-784`, not at
-  `:495` and `:497-499`. Line 495 is the loop header and 497-499 is the hard-interrupt
-  branch.
-- The crash table conflated session identifiers with process identifiers. The 05:52:48
-  crash belonged to process `3552162`, not `1030280`.
-- All three crashes originated from a token-counter write, not from a conversation
-  message write. Treating every write as equally fatal is what made a lost counter kill
-  a usable session.
-- The stdout-retention claim could not be verified for the recorded incident, because
-  that session directory contained no stdout file.
+- The end-of-turn prompt is at `workspace/agent/agent_shell_base.py:782-784`, not
+  at `:495` and `:497-499`. Line 495 is the loop header and 497-499 is the
+  hard-interrupt branch.
+- The crash table conflated session identifiers with process identifiers. The
+  05:52:48 crash belonged to process `3552162`, not `1030280`.
+- All three crashes originated from a token-counter write, not from a
+  conversation message write. Treating every write as equally fatal is what made
+  a lost counter kill a usable session.
+- The stdout-retention claim could not be verified for the recorded incident,
+  because that session directory contained no stdout file.
 
 ## Verification
 
@@ -109,17 +127,29 @@ Completed:
 
 - An interactive session survives an injected database I/O failure and returns to the
   input prompt, with the already-produced answer printed.
-- A non-interactive run and a worker thread end with an explicit failure answer instead
-  of an uncaught exception.
+- A non-interactive run exits with code `1` after writing `error` metadata and flushing
+  both streams, so a lost write never looks like success.
+- A worker thread abandons only its own turn, never finalizes the metadata of the live
+  session, and never terminates the process.
 - A failure while persisting the answer keeps the answer and continues the session.
-- A last-resort net converts any remaining database I/O failure into a logged
-  termination instead of a traceback.
+- A failure to finalize the metadata does not block the non-zero exit.
 - Session metadata, stdout and event records are retained on normal exit, on SIGTERM,
   and on a failed write.
-- The full unit suite was compared against pristine `HEAD` in an isolated worktree: the
-  41 failing files are identical in both trees, so this change introduces no regression.
+- `tests/unit/test_topsailai_workspace_agent_agent_shell_base_db_io.py` and
+  `tests/unit/test_db_write_io_policy.py` pass, 62 tests, including assertions on the
+  exit code, the metadata write, the flush order, and metadata-finalize tolerance.
+- BDD coverage exists in `tests/bdd/features/db_io_failure_interactive_survival.feature`
+  with four scenarios, all passing.
+- Mutation check, interactive guard removed: both interactive scenarios fail, proving the
+  scenarios reach the guarded branch.
+- Mutation check, fallback exit removed: the non-interactive scenario fails on the exit
+  code, proving the fallback is genuinely asserted.
+- `make core-bdd-test` reports 42 failed and 746 passed against a pre-change baseline of
+  44 failed and 737 passed, so this change introduces no regression.
 
 Not verified:
 
 - The stdout-retention check for the original incident cannot be reproduced, because
   that session produced no stdout file.
+- The stdout-retention assertion in the BDD scenario observes the flush call rather than
+  a real session stdout file, because the scenario runs in-process.

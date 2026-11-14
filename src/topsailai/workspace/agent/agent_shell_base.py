@@ -795,10 +795,9 @@ class AgentChat(AgentChatBase):
                     type(db_error).__name__, db_error,
                 )
                 self.call_hooks_post_fail_run(e)
-                if not interactive_enabled:
-                    # A non-interactive caller cannot wait for a human, so the
-                    # run ends with an explicit failure answer instead of an
-                    # uncaught traceback.
+                if not interactive_enabled or not thread_tool.is_main_thread():
+                    # A caller that cannot wait for a human ends the run with an
+                    # explicit failure answer instead of an uncaught traceback.
                     self._terminal_failure = True
                     answer = (
                         "Task terminated: a database write failed and this turn "
@@ -806,30 +805,18 @@ class AgentChat(AgentChatBase):
                     )
                     self.last_message = answer
                     print(answer)
-                    if thread_tool.is_main_thread():
+                    if not interactive_enabled and thread_tool.is_main_thread():
                         # Last-resort fallback: a lost write must never look
-                        # like success, so the process exits non-zero. The
-                        # metadata and the artifacts are settled first because
-                        # ``os._exit`` skips ``atexit``.
+                        # like success to a script, a CI job or the launcher, so
+                        # the process exits non-zero. The metadata and the
+                        # artifacts are settled first because ``os._exit`` skips
+                        # ``atexit``. A worker thread never reaches this call:
+                        # it must not terminate the interpreter that owns a
+                        # possibly usable interactive session.
                         _exit_after_db_io_failure(
                             getattr(self.ctx_runtime_data, "session_id", None),
                             db_error,
                         )
-                    # A worker thread must not terminate the interpreter: the
-                    # interactive session that owns this process may still be
-                    # usable, so only this turn is abandoned.
-                    break
-                if not thread_tool.is_main_thread():
-                    # A worker thread cannot wait for a human either, but it
-                    # must not kill the process that owns the interactive
-                    # session, so only this turn is abandoned.
-                    self._terminal_failure = True
-                    answer = (
-                        "Task terminated: a database write failed and this turn "
-                        f"could not be persisted: [{type(db_error).__name__}] {db_error}"
-                    )
-                    self.last_message = answer
-                    print(answer)
                     break
                 print_warning(
                     "Database write failed; this turn was not persisted: "

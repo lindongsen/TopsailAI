@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 author: DawsonLin
-status: open
+status: resolved
 ---
 
 # Issue: Add BDD coverage for interactive fault tolerance
@@ -62,22 +62,66 @@ without any test failing.
 
 ## Resolution
 
-Open. The behavior this issue asks to cover is now implemented and committed as
-`87791479`, but the BDD coverage itself has not been written. The remaining work
-is a feature file plus step definitions under the project BDD test location,
-following the existing Gherkin conventions, with one scenario per path listed
-above.
+Resolved. The BDD coverage now exists and runs green.
 
-The scenarios must drive the real agent loop rather than a private helper, so the
-turn boundary after a fault is observed from the outside. The fault must be
-injected at the database boundary, and the assertion must be the reappearance of
-the prompt, not an internal call count.
+Delivered artifacts:
+
+- `tests/bdd/features/db_io_failure_interactive_survival.feature` holds four
+  scenarios, one per required path.
+- `tests/bdd/steps/db_io_failure_interactive_survival_steps.py` drives the real
+  `AgentChat._run` loop against a real `OperationalError` carrying a real SQLite
+  primary result code, so the fault is injected at the database boundary rather
+  than through a private helper.
+- `tests/bdd/test_db_io_failure_interactive_survival.py` registers the scenarios
+  following the existing `test_*.py` convention.
+
+Scenario mapping:
+
+| Required path | Scenario |
+|---|---|
+| Normal | An interactive session keeps waiting for the next message |
+| Exception | An interactive session keeps waiting for the next message |
+| Boundary | An interactive session survives consecutive write failures |
+| Contrast | A non-interactive run exits non-zero instead of reporting success |
+| Worker thread | A worker thread abandons only its own turn |
+
+The non-interactive contrast scenario also asserts the last-resort fallback: the
+run reports an explicit failure answer, the process exits with code `1`, the
+metadata records `error`, and both output streams are flushed before the exit.
+That fallback exists because a non-interactive caller cannot wait for a human,
+and a lost write must never look like success to a script, a CI job or the
+launcher.
+
+Two design corrections were needed while making the scenarios pass:
+
+- The consecutive-failure step had to use the numeric form `3 consecutive turns`
+  because the `{count:d}` converter cannot match an English word.
+- The retained-metadata assertion originally required a metadata write on every
+  non-worker path. That contradicted the interactive contract: a session that
+  keeps running must not be finalized as `error`, otherwise a live session is
+  declared dead. The assertion now rejects any `error` finalization on a path
+  that keeps the session alive, and the non-interactive path asserts its own
+  `error` write through a dedicated step.
 
 ## Verification
 
-Pending. Planned checks:
+Completed:
 
-- The new feature file runs green.
-- Removing the recovery branch makes the exception-path scenario fail.
-- The non-interactive contrast scenario still passes.
-- The retained-artifact assertions hold for the meta, stdout and event files.
+- `pytest tests/bdd/test_db_io_failure_interactive_survival.py` passes all four
+  scenarios.
+- Mutation check, interactive guard removed: both interactive scenarios fail with
+  `an interactive session must not exit`, proving the scenarios reach the guarded
+  branch.
+- Mutation check, fallback exit removed: the non-interactive scenario fails on
+  the exit-code assertion, proving the exit code is genuinely asserted.
+- `pytest tests/unit/test_topsailai_workspace_agent_agent_shell_base_db_io.py`
+  and `tests/unit/test_db_write_io_policy.py` pass, 62 tests.
+- `make core-bdd-test` reports 42 failed and 746 passed, against a pre-change
+  baseline of 44 failed and 737 passed. The new file contributes no failure, and
+  every remaining failure is in a hook-related file unrelated to this change.
+
+Not verified:
+
+- The stdout-retention assertion observes the flush call rather than a real
+  session stdout file, because the scenario runs in-process. A real-file check
+  would need a subprocess scenario.

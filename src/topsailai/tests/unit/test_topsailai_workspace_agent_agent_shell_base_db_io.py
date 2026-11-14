@@ -245,18 +245,29 @@ def test_interactive_io_failure_does_not_terminate_the_process(agent_chat):
 # --------------------------------------------------------------------------
 
 def test_non_interactive_io_failure_returns_failure_answer(agent_chat):
-    """A non-interactive caller must not receive an uncaught traceback."""
+    """A non-interactive caller must not receive an uncaught traceback.
+
+    A non-interactive caller cannot wait for a human, so the run ends with an
+    explicit failure answer and the process exits non-zero: a lost write must
+    never look like success to a script, a CI job or the launcher.
+    """
     io_error = _sqlite_error(13, "database or disk is full")
     agent_chat.ai_agent.run.side_effect = io_error
     patches = _run_patches(runtime_input=None, input_messages=())
 
-    result, input_mock = _run_with_patches(
-        agent_chat,
-        patches,
-        message="failed request",
-        times=1,
-        need_interactive=False,
-    )
+    with (
+        patch("os._exit") as exit_mock,
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.update_session_meta_status",
+        ) as meta_status,
+    ):
+        result, input_mock = _run_with_patches(
+            agent_chat,
+            patches,
+            message="failed request",
+            times=1,
+            need_interactive=False,
+        )
 
     assert "Task terminated" in result
     assert "database or disk is full" in result
@@ -265,6 +276,60 @@ def test_non_interactive_io_failure_returns_failure_answer(agent_chat):
     input_mock.assert_not_called()
     agent_chat.call_hooks_post_fail_run.assert_called_once_with(io_error)
     agent_chat.call_hooks_post_succ_run.assert_not_called()
+    # The fallback must exit non-zero, and it must settle the metadata first
+    # because ``os._exit`` skips the ``atexit`` finalizer.
+    exit_mock.assert_called_once_with(1)
+    meta_status.assert_any_call("error", "db-io-session")
+
+
+def test_non_interactive_fallback_flushes_output_before_exit(agent_chat):
+    """The fallback must flush both streams so the stdout artifact keeps evidence."""
+    io_error = _sqlite_error(13, "database or disk is full")
+    agent_chat.ai_agent.run.side_effect = io_error
+    patches = _run_patches(runtime_input=None, input_messages=())
+
+    with (
+        patch("os._exit"),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.update_session_meta_status",
+        ),
+        patch("sys.stdout.flush") as stdout_flush,
+        patch("sys.stderr.flush") as stderr_flush,
+    ):
+        _run_with_patches(
+            agent_chat,
+            patches,
+            message="failed request",
+            times=1,
+            need_interactive=False,
+        )
+
+    stdout_flush.assert_called()
+    stderr_flush.assert_called()
+
+
+def test_non_interactive_fallback_survives_metadata_finalize_failure(agent_chat):
+    """A failing metadata write must not prevent the non-zero exit."""
+    io_error = _sqlite_error(13, "database or disk is full")
+    agent_chat.ai_agent.run.side_effect = io_error
+    patches = _run_patches(runtime_input=None, input_messages=())
+
+    with (
+        patch("os._exit") as exit_mock,
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.update_session_meta_status",
+            side_effect=RuntimeError("metadata unavailable"),
+        ),
+    ):
+        _run_with_patches(
+            agent_chat,
+            patches,
+            message="failed request",
+            times=1,
+            need_interactive=False,
+        )
+
+    exit_mock.assert_called_once_with(1)
 
 
 def test_worker_thread_io_failure_returns_failure_answer(agent_chat):
