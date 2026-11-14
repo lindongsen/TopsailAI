@@ -418,6 +418,16 @@ must never be able to harm the process it observes.
   count is observable through `Subscriber.dropped`.
 - **Subscriber isolation.** Every subscriber has its own queue and writer
   thread, so one slow or dead subscriber cannot delay the producer or its peers.
+- **Contended locks drop instead of waiting.** The fan-out path runs on the
+  producer thread, so it never waits for a lock. When a registry mutation holds
+  the registry lock, the producer skips that event for every subscriber rather
+  than waiting; when a writer holds one subscriber's queue lock, the producer
+  skips that event for that subscriber only. Both cases are counted in the
+  process-wide `dropped_total`, so an operator still sees the loss.
+- **Per-subscriber drop counts may undercount.** A contended skip cannot
+  increment `Subscriber.dropped`, because incrementing it requires the very lock
+  that is busy. The process-wide counter remains accurate; only the
+  per-subscriber figure can be lower than the true number of skipped events.
 
 ### Lifecycle
 

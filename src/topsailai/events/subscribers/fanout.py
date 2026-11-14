@@ -153,7 +153,10 @@ def fan_out(event: Event) -> int:
         event: Event to distribute.
 
     Returns:
-        Number of subscribers that accepted the event.
+        Number of matching subscribers the event was offered to. A subscriber
+        whose queue lock was busy is counted here even though the event was
+        skipped for it, because the producer cannot distinguish the two cases
+        without waiting on that lock.
     """
     registry = _registry
     if registry is None:
@@ -169,8 +172,8 @@ def fan_out(event: Event) -> int:
             if dropped:
                 dropped_any = True
                 logger.warning(
-                    "event channel dropped oldest event for subscriber %s "
-                    "(queue full at %s)",
+                    "event channel skipped an event for subscriber %s "
+                    "(queue full at %s, or the queue lock was busy)",
                     subscriber.subscriber_id,
                     subscriber.queue_size,
                 )
