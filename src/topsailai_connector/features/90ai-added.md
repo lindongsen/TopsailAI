@@ -53,3 +53,44 @@ resolves to it. Measured on the live Windows deployment: reading
 `config\identity`, `config\tunnel_token` and `config\policy.yaml` through the
 volume scope all return `denied`, listing the config directory returns `denied`,
 and the directory does not appear in its parent's listing.
+
+## A packaging mode that embeds the configuration in the binary
+
+`make package-embedded` builds one executable that starts and connects with no
+configuration file and no environment variable. The Server URL, the policy
+document and the `tunnel_token` are compiled in with `-ldflags -X`, so the
+recipient runs the binary and the Node is reachable.
+
+The identity pair is deliberately not embedded. It is generated on first start,
+polled every second and rewritten by `regenerate`, so an embedded pair would have
+no file to watch or rewrite; and two machines running the same binary would share
+one `node-id`, which the Server's `node_id -> connection` registry would resolve by
+evicting the first. The binary therefore still creates its own pair on first start
+and prints it once.
+
+Environment variables win over embedded values field by field, so an operator can
+repoint the same binary without a rebuild. The policy is the exception: a build
+that embedded a policy refuses `CONNECTOR_NODE_POLICY_FILE`, because an embedded
+policy is a whole document and a file path would silently replace every scope and
+grant.
+
+Embedding the `tunnel_token` makes the binary a Server-wide credential, so a build
+that carries it adds its own executable to the deny list. Without that entry a
+scope containing the binary would serve it: the live Windows deployment maps one
+scope to `C:\`, which contains the install directory, so a remote caller could read
+the token out of the file. The entry uses `os.Executable()` rather than
+`os.Args[0]`, because the deny list compares by file identity and the latter is
+whatever the launcher typed. It is conditional on the token being present, so a
+normal build still serves its own install directory.
+
+The embedded policy is decoded by `policy.ParseBytes`, the same strict decoder the
+file path uses, and the scope-opening rules live in one function shared by both
+paths, so the fence cannot be configured differently depending on how the policy
+arrived. Scope paths are written exactly as the packaging step received them and
+are never resolved on the build host, because the binary runs on another machine.
+
+`-X` stores the value as plain text, so `strings` recovers the token. That is
+documented rather than encoded away: base64, compression and obfuscation all decode
+with the same command, and encryption would need a key the binary must also carry.
+The protection that matters is the deny list, which stops a remote caller; a local
+user holding the file already has the secret.

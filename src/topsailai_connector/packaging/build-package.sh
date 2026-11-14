@@ -40,6 +40,7 @@ PACKAGE_SCOPES=${PACKAGE_SCOPES:-}
 PACKAGE_SCOPES_FILE=${PACKAGE_SCOPES_FILE:-}
 PACKAGE_TUNNEL_TOKEN=${PACKAGE_TUNNEL_TOKEN:-}
 PACKAGE_ALLOW_FILESYSTEM_ROOT=${PACKAGE_ALLOW_FILESYSTEM_ROOT:-}
+PACKAGE_EMBED_CONFIG=${PACKAGE_EMBED_CONFIG:-}
 BIN_DIR=${BIN_DIR:-bin}
 TMP_DIR=${TMP_DIR:-.tmp}
 
@@ -154,6 +155,19 @@ case "$PACKAGE_ALLOW_FILESYSTEM_ROOT" in
 	;;
 esac
 
+# PACKAGE_EMBED_CONFIG chooses the packaging mode, so it accepts exactly the same
+# two spellings as the opt-in above and refuses everything else. A value such as
+# `true` that was silently treated as "off" would produce a bundle the operator
+# did not ask for, and the difference between the two modes is large: one is a zip
+# with a start script, the other is a single executable.
+case "$PACKAGE_EMBED_CONFIG" in
+'' | 0) EMBED_CONFIG=0 ;;
+1) EMBED_CONFIG=1 ;;
+*)
+	fail "PACKAGE_EMBED_CONFIG '$PACKAGE_EMBED_CONFIG' is not recognised; use 1 to embed the configuration in the binary, or leave it unset"
+	;;
+esac
+
 CHANNEL_URL=$(normalize_channel_url "$PACKAGE_SERVER_URL")
 HTTP_BASE=$(http_base_from_channel "$CHANNEL_URL")
 
@@ -161,8 +175,15 @@ HTTP_BASE=$(http_base_from_channel "$CHANNEL_URL")
 # cross-compiled for another platform cannot run here. The identity file format
 # is platform independent, so a pair generated on this host is valid on the
 # target: it is two random strings and a newline.
+#
+# The embedded mode does not generate an identity, because the identity is
+# deliberately not embedded: it is created on the target machine by the first
+# run. Requiring a host binary there would fail a packaging run for a file it
+# never reads.
 HOST_NODE="$BIN_PATH/connector-node"
-[ -x "$HOST_NODE" ] || fail "$HOST_NODE is missing; run make build-node first"
+if [ "$EMBED_CONFIG" != "1" ]; then
+	[ -x "$HOST_NODE" ] || fail "$HOST_NODE is missing; run make build-node first"
+fi
 
 STAGE_PARENT="$TMP_PATH/package"
 STAGE="$STAGE_PARENT/$PACKAGE_NAME"
@@ -176,30 +197,22 @@ if [ -e "$STAGE" ]; then
 	echo "package: removing the previous stage directory $STAGE" >&2
 	rm -rf "$STAGE"
 fi
-mkdir -p "$STAGE/config" "$BIN_PATH"
-
-echo "package: building connector-node for $PACKAGE_GOOS/$PACKAGE_GOARCH" >&2
-NODE_BINARY=connector-node
-if [ "$PACKAGE_GOOS" = "windows" ]; then
-	NODE_BINARY=connector-node.exe
-fi
-(
-	cd "$ROOT"
-	GOOS="$PACKAGE_GOOS" GOARCH="$PACKAGE_GOARCH" go build -o "$STAGE/$NODE_BINARY" ./cmd/connector-node
-)
-
-# The pair is generated with the Node's own command rather than by a second
-# implementation here. A second implementation would be a second definition of
-# the pair format, and the two would eventually disagree.
-echo "package: generating the node identity" >&2
-PAIR=$(CONNECTOR_NODE_CONFIG_DIR="$STAGE/config" "$HOST_NODE" id)
-[ -n "$PAIR" ] || fail "the Node printed no identity"
-[ -f "$STAGE/config/identity" ] || fail "the Node did not write $STAGE/config/identity"
-
 # scopes.txt is the bundle's editable surface. It is written from the command
 # line when the operator knows the target paths, and from a file when the paths
 # contain spaces or when the list is long.
-SCOPES_OUT="$STAGE/scopes.txt"
+#
+# It is written before the binary is built, because the embedded mode turns it
+# into the policy that is compiled in. Building first and reading the scopes
+# afterwards would mean the embedded policy and the validated list could differ.
+mkdir -p "$BIN_PATH"
+if [ "$EMBED_CONFIG" = "1" ]; then
+	mkdir -p "$TMP_PATH/embed"
+	SCOPES_OUT="$TMP_PATH/embed/scopes.txt"
+else
+	mkdir -p "$STAGE/config"
+	SCOPES_OUT="$STAGE/scopes.txt"
+fi
+
 if [ -n "$PACKAGE_SCOPES_FILE" ]; then
 	[ -f "$PACKAGE_SCOPES_FILE" ] || fail "PACKAGE_SCOPES_FILE '$PACKAGE_SCOPES_FILE' does not exist"
 	cp "$PACKAGE_SCOPES_FILE" "$SCOPES_OUT"
@@ -243,40 +256,159 @@ while IFS= read -r line || [ -n "$line" ]; do
 done <"$SCOPES_OUT"
 [ "$SCOPE_COUNT" -gt 0 ] || fail "scopes.txt defines no scope; a bundle that exposes nothing serves nothing"
 
-# server_url is a file rather than a value baked into the start script, so the
-# user can point the bundle at a different Server without editing a script.
-printf '%s\n' "$CHANNEL_URL" >"$STAGE/server_url"
-
-# The opt-in is recorded in the bundle as a file rather than baked into the start
-# script, for the same reason server_url is: the start script is a copy of a
-# repository file, and a value baked into it would be lost the next time the
-# script is updated. The file always exists and always holds 0 or 1, so "the
-# operator did not enable it" is a recorded decision rather than a missing file
-# that a later reader has to interpret.
-printf '%s\n' "$ALLOW_FILESYSTEM_ROOT" >"$STAGE/allow_filesystem_root"
-
-if [ -n "$PACKAGE_TUNNEL_TOKEN" ]; then
-	printf '%s\n' "$PACKAGE_TUNNEL_TOKEN" >"$STAGE/config/tunnel_token"
-	chmod 600 "$STAGE/config/tunnel_token"
-else
-	echo "package: no PACKAGE_TUNNEL_TOKEN given; the bundle will require CONNECTOR_NODE_TUNNEL_TOKEN in the environment" >&2
+NODE_BINARY=connector-node
+if [ "$PACKAGE_GOOS" = "windows" ]; then
+	NODE_BINARY=connector-node.exe
 fi
 
-cp "$ROOT/packaging/start.sh" "$STAGE/start.sh"
-cp "$ROOT/packaging/start.ps1" "$STAGE/start.ps1"
-cp "$ROOT/packaging/bundle-README.md" "$STAGE/README.md"
-chmod +x "$STAGE/start.sh"
+if [ "$EMBED_CONFIG" = "1" ]; then
+	# The policy is built here from the same validated list the bundle would
+	# write at start time, so the two packaging modes cannot disagree about what
+	# a scope means.
+	#
+	# The paths are written exactly as they were given, not resolved on this
+	# build host. A bundle resolves them when it starts, because it runs on the
+	# target; an embedded policy is fixed at build time, so resolving here would
+	# bake this host's filesystem into a binary meant for another machine.
+	POLICY_FILE="$TMP_PATH/embed/policy.yaml"
+	{
+		echo "version: 1"
+		if [ "$ALLOW_FILESYSTEM_ROOT" = "1" ]; then
+			echo "allow_filesystem_root: true"
+		fi
+		echo "scopes:"
+	} >"$POLICY_FILE"
+	GRANTS=""
+	while IFS= read -r line || [ -n "$line" ]; do
+		trimmed=$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+		case "$trimmed" in
+		''|'#'*) continue ;;
+		esac
+		name=${trimmed%%=*}
+		path=${trimmed#*=}
+		# The path is a double-quoted YAML scalar for the same reason the start
+		# script uses one: a plain scalar breaks on a path containing ' #' or
+		# ': ', and a policy that fails to parse is a binary that refuses to
+		# start on the user's machine.
+		escaped=${path//\\/\\\\}
+		escaped=${escaped//\"/\\\"}
+		printf '  %s:\n    path: "%s"\n' "$name" "$escaped" >>"$POLICY_FILE"
+		GRANTS="$GRANTS  - scope: $name
+    permissions: [read, list, stat]
+"
+	done <"$SCOPES_OUT"
+	printf 'grants:\n%s' "$GRANTS" >>"$POLICY_FILE"
 
-echo "package: writing $ZIP_PATH" >&2
-rm -f "$ZIP_PATH"
-(
-	cd "$STAGE_PARENT"
-	zip -r -q "$ZIP_PATH" "$PACKAGE_NAME"
-)
+	# The policy is base64 encoded because a YAML document does not survive a
+	# linker flag: it contains newlines, quotes and spaces, and the linker splits
+	# its argument on whitespace. This is a quoting decision, not a secrecy one.
+	# The value is stored as plain text in the binary's data section, so
+	# `strings` recovers it. The package comment in internal/node/embedded says
+	# the same thing, so a reader of either file learns it.
+	POLICY_B64=$(base64 -w0 <"$POLICY_FILE")
 
+	OUTPUT_PATH="$BIN_PATH/$PACKAGE_NAME"
+	if [ "$PACKAGE_GOOS" = "windows" ]; then
+		OUTPUT_PATH="$OUTPUT_PATH.exe"
+	fi
+
+	echo "package: building connector-node for $PACKAGE_GOOS/$PACKAGE_GOARCH with the configuration embedded" >&2
+	LDFLAGS="-X topsailai_connector/internal/node/embedded.ServerURL=$CHANNEL_URL"
+	LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.PolicyBase64=$POLICY_B64"
+	if [ -n "$PACKAGE_TUNNEL_TOKEN" ]; then
+		LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.TunnelToken=$PACKAGE_TUNNEL_TOKEN"
+	else
+		echo "package: no PACKAGE_TUNNEL_TOKEN given; the binary will require CONNECTOR_NODE_TUNNEL_TOKEN in the environment" >&2
+	fi
+	(
+		cd "$ROOT"
+		GOOS="$PACKAGE_GOOS" GOARCH="$PACKAGE_GOARCH" go build -ldflags "$LDFLAGS" -o "$OUTPUT_PATH" ./cmd/connector-node
+	)
+	[ -x "$OUTPUT_PATH" ] || fail "the embedded build produced no $OUTPUT_PATH"
+else
+	echo "package: building connector-node for $PACKAGE_GOOS/$PACKAGE_GOARCH" >&2
+	(
+		cd "$ROOT"
+		GOOS="$PACKAGE_GOOS" GOARCH="$PACKAGE_GOARCH" go build -o "$STAGE/$NODE_BINARY" ./cmd/connector-node
+	)
+
+	# The pair is generated with the Node's own command rather than by a second
+	# implementation here. A second implementation would be a second definition of
+	# the pair format, and the two would eventually disagree.
+	echo "package: generating the node identity" >&2
+	PAIR=$(CONNECTOR_NODE_CONFIG_DIR="$STAGE/config" "$HOST_NODE" id)
+	[ -n "$PAIR" ] || fail "the Node printed no identity"
+	[ -f "$STAGE/config/identity" ] || fail "the Node did not write $STAGE/config/identity"
+
+	# server_url is a file rather than a value baked into the start script, so the
+	# user can point the bundle at a different Server without editing a script.
+	printf '%s\n' "$CHANNEL_URL" >"$STAGE/server_url"
+
+	# The opt-in is recorded in the bundle as a file rather than baked into the start
+	# script, for the same reason server_url is: the start script is a copy of a
+	# repository file, and a value baked into it would be lost the next time the
+	# script is updated. The file always exists and always holds 0 or 1, so "the
+	# operator did not enable it" is a recorded decision rather than a missing file
+	# that a later reader has to interpret.
+	printf '%s\n' "$ALLOW_FILESYSTEM_ROOT" >"$STAGE/allow_filesystem_root"
+
+	if [ -n "$PACKAGE_TUNNEL_TOKEN" ]; then
+		printf '%s\n' "$PACKAGE_TUNNEL_TOKEN" >"$STAGE/config/tunnel_token"
+		chmod 600 "$STAGE/config/tunnel_token"
+	else
+		echo "package: no PACKAGE_TUNNEL_TOKEN given; the bundle will require CONNECTOR_NODE_TUNNEL_TOKEN in the environment" >&2
+	fi
+
+	cp "$ROOT/packaging/start.sh" "$STAGE/start.sh"
+	cp "$ROOT/packaging/start.ps1" "$STAGE/start.ps1"
+	cp "$ROOT/packaging/bundle-README.md" "$STAGE/README.md"
+	chmod +x "$STAGE/start.sh"
+
+	echo "package: writing $ZIP_PATH" >&2
+	rm -f "$ZIP_PATH"
+	(
+		cd "$STAGE_PARENT"
+		zip -r -q "$ZIP_PATH" "$PACKAGE_NAME"
+	)
+fi
 FIRST_SCOPE=$(sed -n 's/^[[:space:]]*\([A-Za-z0-9][A-Za-z0-9_-]*\)=.*/\1/p' "$SCOPES_OUT" | head -1)
 
-cat <<SUMMARY
+if [ "$EMBED_CONFIG" = "1" ]; then
+	cat <<SUMMARY
+
+package: wrote $OUTPUT_PATH
+package: platform $PACKAGE_GOOS/$PACKAGE_GOARCH, scopes $SCOPE_COUNT, channel $CHANNEL_URL
+package: filesystem root opt-in $ALLOW_FILESYSTEM_ROOT (0 means a volume root is refused)
+package: configuration embedded; the binary needs no file and no environment variable
+
+The binary carries a credential. Hand it over the way you would hand over a
+password, and rebuild it if it leaks. The tunnel token is inside the file, so
+anyone who can read the file can open a channel to the Server.
+
+The scope paths were written into the policy exactly as they were given, not
+resolved on this build host, because the paths belong to the machine that will
+run the binary. A path that does not exist there is refused when the binary
+starts, not here.
+
+The identity is not embedded. Run the binary once on the target machine to
+create it:
+
+  $OUTPUT_PATH id
+
+That prints the node-id.node-token pair and exits. Copy the whole pair into the
+CLI, then start the binary with no arguments.
+
+CLI example, runnable as soon as the binary has printed its pair. The flags come
+before the operation because the CLI stops parsing flags at the first positional
+argument, so the operation must be last:
+
+  CONNECTOR_CLI_SERVER_URL=$HTTP_BASE \\
+  CONNECTOR_CLI_CLIENT_TOKEN=<client_token> \\
+    connector-server cli --node '<node-id.node-token>' --scope $FIRST_SCOPE --path '' file.list
+
+SUMMARY
+else
+	cat <<SUMMARY
 
 package: wrote $ZIP_PATH
 package: platform $PACKAGE_GOOS/$PACKAGE_GOARCH, scopes $SCOPE_COUNT, channel $CHANNEL_URL
@@ -297,3 +429,4 @@ argument, so the operation must be last:
     connector-server cli --node '$PAIR' --scope $FIRST_SCOPE --path '' file.list
 
 SUMMARY
+fi

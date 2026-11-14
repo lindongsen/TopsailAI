@@ -290,3 +290,63 @@ AI reflection archive, not here.
 - Before trusting a security test, ask which layer would have to be broken for it
   to fail. If the answer is "a layer below the one I changed", the test is not
   covering the change.
+
+## A secret compiled into a binary needs a deny entry, not a better encoding
+
+- Embedding a secret with `-ldflags -X` stores it as plain text in the data
+  section. `strings` recovers it. Base64, compression and obfuscation all decode
+  with the same command, and encryption needs a key the binary must also carry, so
+  no encoding makes an embedded secret safe from someone holding the file.
+- The threat that can be answered is the **remote** one. A scope that contains the
+  binary serves it, so a caller with a valid `node-token` reads the secret out of
+  the file. Adding the running executable to the deny list closes that path, and it
+  is the only protection that changes the outcome.
+- The deny entry must be conditional on the secret actually being present. A
+  normal build discloses nothing by being read, and refusing it would break a
+  legitimate use such as serving the install directory. The condition belongs on
+  "does this build carry a secret", not on "is this build embedded": a build with
+  only a Server URL and a policy carries none.
+- Use `os.Executable()`, not `os.Args[0]`. The latter is whatever the launcher
+  typed — a relative path, a symlink, or a bare name resolved through `PATH` — and
+  a deny list that compares by file identity will not match a name that does not
+  resolve to the running file.
+- State the limitation where the value is defined, not only in a design document.
+  A reader of the packaging script and a reader of the package comment must both
+  learn that the binary is a credential.
+
+## A second configuration source needs a stated precedence and one refusal
+
+- Two sources for one value is a question about which wins. Answer it field by
+  field and write the answer down, or the answer becomes whatever the code happened
+  to do first.
+- Environment over embedded is the useful order: an operator can repoint one binary
+  without a rebuild, and a rebuild is the expensive path a self-contained build is
+  most likely to create.
+- A whole document cannot be overridden safely. An embedded policy plus a policy
+  file path is two complete policies, and nothing says which is in force. Refuse the
+  second source rather than merging, preferring or ignoring it: a refusal is
+  visible, a silent replacement is not.
+- A second entry point beats a nil-path special case when the failure modes differ.
+  "The file is missing" and "the document is malformed" are different errors, and a
+  single function taking an empty path has to guess which one the caller meant.
+- Share the tail, not the head. Both entry points must reach the same validation and
+  the same scope-opening code, so the fence cannot be configured differently
+  depending on how the policy arrived.
+
+## A new packaging branch must be tested with the inputs it will actually have
+
+- Two defects in the new branch were invisible to reading and obvious to running:
+  the output directory was never created, and a host binary was required that the
+  branch never uses. Both were masked in normal use only because the Makefile target
+  happened to build the host binary first.
+- A packaging mode is a program with inputs, so test it with the inputs the mode
+  actually needs: an empty output directory, no host binary, and a scope list that
+  must be validated before the build rather than after.
+- The order of operations is part of the contract. The scope list is validated
+  before the binary is built because the embedded mode compiles it in; building
+  first and reading the list afterwards would let the compiled policy and the
+  validated list differ.
+- Never resolve a path on the build host when the artifact runs elsewhere. A zip
+  bundle resolves at start time on the target; an embedded policy is fixed at build
+  time, so resolving would bake this host's filesystem into a binary meant for
+  another machine.

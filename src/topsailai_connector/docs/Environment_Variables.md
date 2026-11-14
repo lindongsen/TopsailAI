@@ -26,13 +26,22 @@ later change has a name to argue against instead of inventing a second one.
 Configuration is resolved in one place, at startup, in this order:
 
 1. Environment variable.
-2. Built-in default.
+2. Value compiled into the binary, when the binary was built with
+   `PACKAGE_EMBED_CONFIG=1`.
+3. Built-in default.
 
 There is no command-line flag for a configuration value and no configuration
 file, because a second source of the same value is a second place for the two to
 disagree. The flags that exist select a subcommand; they do not override a
 variable. A value that has no default is required, and an absent required value
 fails startup instead of falling back.
+
+The embedded values sit below the environment on purpose: an operator who has to
+repoint one binary at another Server can do it without a rebuild, and a rebuild is
+the only way to change the policy because a policy is a whole document rather than
+a single value. A binary that embedded a policy therefore **refuses**
+`CONNECTOR_NODE_POLICY_FILE` instead of letting a file path silently replace every
+scope and every grant.
 
 A value is read once at the boundary and converted into a typed field, then passed
 downward as a parameter. No package below the entry point reads the environment,
@@ -171,6 +180,40 @@ process launched it.
 
 The Node's config directory is created with `0700` on POSIX. A scope whose root is
 inside this directory, or which contains it, is refused at startup.
+
+#### Embedded configuration
+
+A binary built with `make package-embedded` carries its configuration, so it needs
+no environment variable and no file. Three values are compiled in:
+
+| Value | Source | Overridable at runtime |
+|---|---|---|
+| Server channel address | `PACKAGE_SERVER_URL` | Yes, `CONNECTOR_NODE_SERVER_URL` |
+| Policy document | `PACKAGE_SCOPES` or `PACKAGE_SCOPES_FILE` | **No.** `CONNECTOR_NODE_POLICY_FILE` is refused |
+| `tunnel_token` | `PACKAGE_TUNNEL_TOKEN`, when set | Yes, `CONNECTOR_NODE_TUNNEL_TOKEN` |
+
+The identity is **not** embedded. It is generated on first start, polled every
+second and rewritten by `regenerate`; two copies of one binary would share a
+`node-id`, and the Server's `node_id -> connection` registry would evict the first.
+The recipient therefore runs the binary once with `id` to create the pair, exactly
+as with a zip bundle.
+
+The policy is stored base64 encoded. That is a **quoting** decision, not a secrecy
+one: a YAML document contains newlines, quotes and spaces, and the linker splits
+its argument on whitespace. The values are stored as plain text in the binary's
+data section, so `strings` recovers them. A binary built this way is a credential.
+
+Because the binary is a credential, a build that carries the `tunnel_token` adds
+its own executable to the deny list. A scope that contains the binary cannot serve
+it: `file.read` and `file.stat` return `denied`, and `file.list` omits it. The
+entry is conditional on the token being present, so a normal build is unaffected
+and an install directory stays readable.
+
+The scope paths are written into the embedded policy exactly as they were given,
+not resolved on the build host. A zip bundle resolves them when it starts, because
+it runs on the target; an embedded policy is fixed at build time, so resolving
+would bake the build host's filesystem into a binary meant for another machine. A
+path that does not exist on the target is refused when the binary starts.
 
 #### Windows file protection
 

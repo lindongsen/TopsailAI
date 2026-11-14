@@ -3,7 +3,9 @@ package node
 import (
 	"fmt"
 	"log/slog"
+	"os"
 
+	"topsailai_connector/internal/node/embedded"
 	"topsailai_connector/internal/security"
 )
 
@@ -59,7 +61,32 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 	// protection, refusing the directory itself and everything inside it.
 	denyPaths := []string{identityPath, config.PolicyPath, config.ConfigDir}
 
-	authority, err := LoadAuthority(config.PolicyPath, denyPaths, config.ConfigDir)
+	// A build that compiled the tunnel token in carries a Server-wide secret in
+	// its own executable, so the executable joins the deny list. Without this
+	// entry a scope that contains the binary serves it, and a caller who reads it
+	// recovers a secret that opens a channel to the Server as any Node, not just
+	// this one. The entry is added only when the binary actually carries a secret:
+	// a normal build discloses nothing by being read, and refusing it would break
+	// a legitimate use such as serving the directory the Node was installed in.
+	//
+	// The path comes from os.Executable rather than from os.Args[0], because
+	// os.Args[0] is whatever the launcher typed: a relative path, a symlink or a
+	// bare name found on PATH. The deny list compares by file identity, so the
+	// resolved path is what makes the comparison correct.
+	if embedded.CarriesSecret() {
+		executable, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("locate the running executable, which carries the tunnel token: %w", err)
+		}
+		denyPaths = append(denyPaths, executable)
+	}
+
+	var authority *Authority
+	if config.PolicyBytes != nil {
+		authority, err = LoadAuthorityBytes(config.PolicyBytes, denyPaths, config.ConfigDir)
+	} else {
+		authority, err = LoadAuthority(config.PolicyPath, denyPaths, config.ConfigDir)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load authority: %w", err)
 	}

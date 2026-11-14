@@ -80,6 +80,20 @@ COVERAGE_HTML := $(TMP_DIR)/coverage.html
 # stays unreadable through such a scope: the Node denies it by resolved path and
 # omits it from a listing.
 #
+# PACKAGE_EMBED_CONFIG selects the second packaging mode. When it is set to 1,
+# `make package` produces one executable instead of a zip: the Server URL, the
+# policy and, when PACKAGE_TUNNEL_TOKEN is set, the tunnel token are compiled
+# into the binary, so the recipient runs it and the Node connects with no
+# configuration file and no environment variable.
+#
+# The identity is deliberately not embedded. It is generated on first start,
+# polled every second and rewritten by `regenerate`, and two copies of one binary
+# would share a node-id, which makes the Server's registry evict the first.
+#
+# A binary built this way carries a credential, so the Node adds its own
+# executable to the deny list: a scope that contains the binary cannot serve it.
+# The values are stored as plain text in the binary, so `strings` recovers them.
+#
 # PACKAGE_GOOS and PACKAGE_GOARCH default to this host, so a bundle for the
 # operator's own machine needs no platform argument. `make package-windows`
 # sets them to windows/amd64.
@@ -91,6 +105,7 @@ PACKAGE_SCOPES ?=
 PACKAGE_SCOPES_FILE ?=
 PACKAGE_TUNNEL_TOKEN ?=
 PACKAGE_ALLOW_FILESYSTEM_ROOT ?=
+PACKAGE_EMBED_CONFIG ?=
 
 # The unit suite is what `go test ./...` runs. Integration and BDD suites are
 # behind build tags so a plain unit run stays fast and needs no built binary.
@@ -138,6 +153,11 @@ help:
 	@echo "                      volume (C:\\ or /). Off by default. The Node still"
 	@echo "                      denies the bundle's own config directory"
 	@echo "  PACKAGE_TUNNEL_TOKEN Optional tunnel_token to embed in the bundle"
+	@echo "  PACKAGE_EMBED_CONFIG  Set to 1 to produce one executable with the"
+	@echo "                      configuration compiled in, instead of a zip. The"
+	@echo "                      binary then needs no file and no environment"
+	@echo "                      variable. It carries the tunnel token, so treat"
+	@echo "                      the file as a credential"
 	@echo "  PACKAGE_NAME        Bundle name. Default connector-node-<goos>-<goarch>"
 	@echo "  PACKAGE_GOOS        Target OS. Default this host"
 	@echo "  PACKAGE_GOARCH      Target architecture. Default this host"
@@ -285,6 +305,7 @@ package: build-node
 	PACKAGE_SCOPES_FILE='$(PACKAGE_SCOPES_FILE)' \
 	PACKAGE_TUNNEL_TOKEN='$(PACKAGE_TUNNEL_TOKEN)' \
 	PACKAGE_ALLOW_FILESYSTEM_ROOT='$(PACKAGE_ALLOW_FILESYSTEM_ROOT)' \
+	PACKAGE_EMBED_CONFIG='$(PACKAGE_EMBED_CONFIG)' \
 	BIN_DIR='$(BIN_DIR)' \
 	TMP_DIR='$(TMP_DIR)' \
 	bash packaging/build-package.sh
@@ -296,6 +317,21 @@ package: build-node
 # their machine rather than here.
 package-windows:
 	@$(MAKE) --no-print-directory package PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
+
+# package-embedded is the second packaging mode: one executable with the Server
+# URL, the policy and, when PACKAGE_TUNNEL_TOKEN is set, the tunnel token
+# compiled in. It is a separate target rather than a variable for the same reason
+# package-windows is: the two modes produce different artifacts, and a caller who
+# forgot the variable would get a zip and not notice.
+#
+# The identity is not embedded, so the recipient runs the binary once with `id`
+# to create it. That is stated in the summary the script prints.
+package-embedded:
+	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=1
+
+# package-embedded-windows is package-embedded for windows/amd64.
+package-embedded-windows:
+	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=1 PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
 
 check: vet test-unit coverage integration bdd e2e build-windows test-windows-compile
 

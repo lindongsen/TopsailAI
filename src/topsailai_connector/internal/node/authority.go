@@ -47,7 +47,37 @@ func LoadAuthority(policyPath string, denyPaths []string, configDir string) (*Au
 	if err != nil {
 		return nil, err
 	}
+	return buildAuthority(loaded, denyPaths, configDir)
+}
 
+// LoadAuthorityBytes builds an Authority from a policy document already in
+// memory, which is how a build that compiled its policy in starts.
+//
+// It exists as a separate entry point rather than as a nil-path special case in
+// LoadAuthority, because the two have different failure modes and a caller should
+// not have to know which one it is using. LoadAuthority reports a missing file;
+// this one reports a malformed document. A single function taking an empty path
+// would have to guess which error the caller meant.
+//
+// The decoding is the same strict decoding the file path uses, because an
+// embedded policy is not a more trusted policy: it was written by the same person
+// and is subject to the same mistakes. A second, looser parser for the embedded
+// case would be a second definition of a valid policy.
+func LoadAuthorityBytes(policyBytes []byte, denyPaths []string, configDir string) (*Authority, error) {
+	loaded, err := policy.ParseBytes(policyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("embedded policy: %w", err)
+	}
+	return buildAuthority(loaded, denyPaths, configDir)
+}
+
+// buildAuthority opens every scope a validated policy defines.
+//
+// It is the shared tail of both entry points, so the scope-opening rules exist
+// once. A second copy would be a second place for the fence to be configured
+// differently, which is exactly the divergence the shared package exists to
+// prevent.
+func buildAuthority(loaded *policy.Policy, denyPaths []string, configDir string) (*Authority, error) {
 	names := loaded.ScopeNames()
 	scopes := make(map[security.Scope]*Scope, len(names))
 	for _, name := range names {

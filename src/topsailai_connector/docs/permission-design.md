@@ -944,6 +944,109 @@ been admitted. There is no second source of authority to reconcile, so there is 
 "which one wins" question: a request for an operation the policy does not grant is
 refused, regardless of which secret the caller holds.
 
+## Embedded configuration
+
+A second packaging mode compiles the configuration into the Node binary, so the
+recipient runs one executable and the Node is reachable with no configuration file
+and no environment variable. The zip bundle and the embedded binary are two
+deliveries of the same Node; the permission model does not change between them.
+
+### What is compiled in
+
+| Piece | Embedded | Reason |
+|---|---|---|
+| Server URL | Yes | Static, no secret |
+| Policy document | Yes, base64 | A YAML document does not survive a shell, Makefile or linker flag; base64 is a quoting decision, not a secrecy one |
+| `tunnel_token` | Yes, by operator decision | The Node cannot dial without it, so "start it and it works" is unmet otherwise |
+| `node-id.node-token` pair | **No** | Generated on first start, polled every second, rewritten by `regenerate` |
+
+The identity pair is excluded for two reasons, and both are refusals rather than
+limitations to work around:
+
+- **Regeneration has no file to rewrite.** `connector-node regenerate` writes the
+  identity file and the running Node adopts it by polling. An embedded pair has no
+  file, so regeneration would either be unavailable or would silently disagree with
+  the value in memory.
+- **Two copies would share one `node-id`.** The Server keeps an in-memory registry
+  `node_id -> connection`, so a second machine running the same binary would evict
+  the first. An identity that is not unique per machine is not an identity.
+
+The binary therefore still generates its own pair on first start and prints it
+once, exactly as a normal build does. "Start it and it works" holds: the Node
+connects without configuration, and the operator runs `<binary> id` once to learn
+the pair the CLI must present.
+
+### Precedence
+
+Environment wins over embedded, field by field, so an operator can repoint the same
+binary without a rebuild.
+
+The policy is the deliberate exception. A build that embedded a policy **refuses**
+`CONNECTOR_NODE_POLICY_FILE`, because an embedded policy is a whole document: a
+file path would silently replace every scope and every grant, and the operator
+would be looking at a policy file that is not the one in force. A refusal is
+visible; a silent replacement is not.
+
+### The binary becomes a credential
+
+Embedding the `tunnel_token` makes the executable a Server-wide credential. The
+residual-risk table already states the consequence: a leaked `tunnel_token` lets
+anyone open a channel and impersonate a Node, with every Node in the blast radius.
+Embedding it moves that secret from a file the operator controls to a file the
+recipient can copy.
+
+Two rules follow, and the first is not optional:
+
+1. **A build that carries the `tunnel_token` adds its own executable to the deny
+   list.** Without this, a scope that contains the binary serves it: a whole-volume
+   scope such as `C:\` contains the install directory, so `file.read` on the binary
+   would return the token to a remote caller. The deny entry is what keeps the
+   embedded secret from becoming a remotely extractable one.
+2. **The deny entry is conditional on the token being present.** A normal build
+   discloses nothing by being read, and refusing it would break serving the install
+   directory for no gain. The condition is `embedded.CarriesSecret()`, not "the
+   build is embedded", because a build with only a Server URL and a policy carries
+   no secret.
+
+The deny entry uses `os.Executable()`, not `os.Args[0]`. The latter is whatever the
+launcher typed — a relative path, a symlink, or a bare name resolved through
+`PATH` — and the deny list compares by file identity, so a name that does not
+resolve to the running file would not match.
+
+### What embedding does not protect
+
+`-X` stores the value as plain text in the binary's data section, so
+`strings connector-node` recovers it. This is stated rather than implied, and it is
+not a defect to fix by encoding: base64, compression or obfuscation all decode with
+the same command, and encryption would need a key that the binary must also carry.
+A secret compiled into a binary is readable by anyone who holds the binary. The
+protection that matters is the deny list, which stops a *remote* caller from
+reading it; a local user with the file already has the secret.
+
+### Scope paths are fixed at build time
+
+The zip bundle resolves scope paths when it starts, because it runs on the target
+machine. An embedded policy is fixed when the binary is built, so the paths are
+written exactly as the packaging step received them and are never resolved on the
+build host. Resolving them would bake the build host's filesystem into a binary
+meant for another machine, which fails on the recipient's host with a path that
+never existed there.
+
+The consequence is stated in the packaging summary: an embedded build suits a fixed
+path such as `C:\` or `/srv/data`, and a build whose scope paths differ per machine
+should use the zip bundle.
+
+### Same validation on both paths
+
+An embedded policy is decoded by `policy.ParseBytes`, the same strict decoder the
+file path uses: unknown keys refused, an empty document refused, a grant naming an
+undefined scope refused, the 1 MiB cap applied. A second, looser parser for the
+embedded path was rejected, because two parsers that disagree about a security
+configuration is the defect the strict decoder exists to prevent.
+
+The scope-opening rules live in one function shared by both paths, so the fence
+cannot be configured differently depending on how the policy arrived.
+
 ## First version scope
 
 The first version is read-only. This is a deliberate risk decision, not a
@@ -1123,3 +1226,15 @@ request path.
       distinguishable from an attack in the log.
 - [ ] A policy reload is all-or-nothing, and a failed reload keeps the previous
       policy in force.
+- [ ] A build that carries the `tunnel_token` adds its own executable to the deny
+      list, so a scope that contains the binary cannot serve it. The entry uses
+      `os.Executable()`, not `os.Args[0]`, because the deny list compares by file
+      identity.
+- [ ] The executable deny entry is conditional on the token being present, so a
+      normal build still serves its own install directory.
+- [ ] An embedded policy is decoded by the same strict decoder as the policy file,
+      and a build that embedded a policy refuses `CONNECTOR_NODE_POLICY_FILE`
+      instead of letting a file silently replace every scope and grant.
+- [ ] An embedded policy writes scope paths exactly as the packaging step received
+      them, never resolved on the build host, because the binary runs on another
+      machine.
