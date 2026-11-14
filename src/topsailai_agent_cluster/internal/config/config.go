@@ -39,9 +39,6 @@ type Config struct {
 	// EndpointExpiry is the Server-owned retention window for offline Endpoint records.
 	EndpointExpiry       time.Duration
 	CommandAllowlistFile string
-	// ControlActionFile is the Endpoint-local file that selects which ctl. actions
-	// this Endpoint serves. An empty value keeps the reviewed default set in force.
-	ControlActionFile string
 	// EndpointAccessPolicyDir is the Endpoint-local directory holding one access
 	// policy file per caller token. An empty value, or a directory that holds no
 	// policy file, permits every caller, which keeps existing deployments
@@ -136,9 +133,6 @@ func Load(args []string, role string) (Config, error) {
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE"); value != "" {
 			cfg.CommandAllowlistFile = value
 		}
-		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE"); value != "" {
-			cfg.ControlActionFile = value
-		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"); value != "" {
 			cfg.EndpointAccessPolicyDir = value
 		}
@@ -227,7 +221,6 @@ func Load(args []string, role string) (Config, error) {
 	}
 	if endpointRole || genericRole {
 		flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
-		flags.StringVar(&cfg.ControlActionFile, "control-action-file", cfg.ControlActionFile, "Endpoint-local file selecting which ctl. actions are served")
 		flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
 		flags.StringVar(&cfg.ReplaceRequestFile, "replace-request-file", cfg.ReplaceRequestFile, "Endpoint-local request document that activates one Provider CLI version for one adapter")
 		flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Server WSS address the Endpoint dials")

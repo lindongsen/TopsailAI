@@ -115,7 +115,6 @@ func TestEndpointEnvironmentNamesConfigure(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_ENDPOINT_INSTANCE_ID", "new-instance")
 	t.Setenv("AGENT_CLUSTER_ENDPOINT_ADAPTERS", newAdapters)
 	t.Setenv("AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE", "/new/allowlist")
-	t.Setenv("AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE", "/new/catalog")
 	cfg, err := Load(nil, "agent-cluster-endpoint")
 	if err != nil {
 		t.Fatalf("load Endpoint configuration: %v", err)
@@ -123,7 +122,7 @@ func TestEndpointEnvironmentNamesConfigure(t *testing.T) {
 	if cfg.ChannelAddress != "wss://new" || cfg.InstanceID != "new-instance" || len(cfg.Adapters) != 1 || cfg.Adapters[0].AdapterID != "new" {
 		t.Fatalf("Endpoint names did not configure the channel: %+v", cfg)
 	}
-	if cfg.CommandAllowlistFile != "/new/allowlist" || cfg.ControlActionFile != "/new/catalog" {
+	if cfg.CommandAllowlistFile != "/new/allowlist" {
 		t.Fatalf("Endpoint names did not configure the files: %+v", cfg)
 	}
 }
@@ -135,7 +134,6 @@ func TestEndpointDeprecatedEnvironmentNamesAreIgnored(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_INSTANCE_ID", "old-instance")
 	t.Setenv("AGENT_CLUSTER_ADAPTERS", `[ {"adapter_id":"old","provider_type":"fixture","command":"/bin/echo","timeout_ms":1} ]`)
 	t.Setenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE", "/old/allowlist")
-	t.Setenv("AGENT_CLUSTER_CONTROL_ACTION_FILE", "/old/catalog")
 	cfg, err := Load(nil, "agent-cluster-endpoint")
 	if err != nil {
 		t.Fatalf("load Endpoint configuration: %v", err)
@@ -144,7 +142,7 @@ func TestEndpointDeprecatedEnvironmentNamesAreIgnored(t *testing.T) {
 	if cfg.ChannelAddress != defaults.ChannelAddress || cfg.InstanceID != defaults.InstanceID || len(cfg.Adapters) != 0 {
 		t.Fatalf("deprecated Endpoint names configured the channel: %+v", cfg)
 	}
-	if cfg.CommandAllowlistFile != defaults.CommandAllowlistFile || cfg.ControlActionFile != defaults.ControlActionFile {
+	if cfg.CommandAllowlistFile != defaults.CommandAllowlistFile {
 		t.Fatalf("deprecated Endpoint names configured the files: %+v", cfg)
 	}
 }

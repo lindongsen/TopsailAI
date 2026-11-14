@@ -30,7 +30,6 @@ Examples:
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `127.0.0.1:53944` | Endpoint channel listener |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | `[{"adapter_id":"default","provider_type":"genericcli","command":"/opt/agent-cluster/providers/topsailai/1.0.0/agent-cluster-provider-topsailai","timeout_ms":120000}]` | adapter configuration |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `/tmp/allowlist.conf` | command allowlist path |
-| `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | `/tmp/actions.json` | control action catalog path |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `/tmp/policies` | access policy directory |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | `250` | post-start collection delay |
 
@@ -52,7 +51,6 @@ Examples:
 | `AGENT_CLUSTER_CHANNEL_ADDRESS` | `wss://127.0.0.1:53943` |
 | `AGENT_CLUSTER_ADAPTERS` | `[{"adapter_id":"default","provider_type":"genericcli","command":"/opt/agent-cluster/providers/topsailai/1.0.0/agent-cluster-provider-topsailai","timeout_ms":120000}]` |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `/tmp/allowlist.conf` |
-| `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `/tmp/actions.json` |
 | `AGENT_CLUSTER_COLLECTION_DELAY_MS` | `250` |
 
 Automation: Endpoint removed-name table test.
@@ -89,7 +87,7 @@ Automation: launcher packaging test with captured Endpoint argv and environment.
 
 ## Scenario: Endpoint launcher preserves the conffile vocabulary
 
-Given an existing Endpoint `node.conf` uses `INSTANCE_ID`, `CHANNEL_ADDRESS`, `ADAPTERS`, `COMMAND_ALLOWLIST_FILE` and `CONTROL_ACTION_FILE`
+Given an existing Endpoint `node.conf` uses `INSTANCE_ID`, `CHANNEL_ADDRESS`, `ADAPTERS` and `COMMAND_ALLOWLIST_FILE`
 When `agent-clusterctl` starts the Endpoint
 Then it translates those keys to the primary Endpoint process settings
 And the deployed conffile does not need simultaneous key renaming

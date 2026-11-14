@@ -54,25 +54,6 @@ type execCommandView struct {
 // before the policy hook can decide anything.
 const commandExecCapabilities = `{"revision":"mock-cli-r1","capabilities":[{"name":"command.exec","version":"1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"},{"name":"agent.model.select","version":"1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"},{"name":"ctl.heartbeat","version":"v1","target_kinds":["session"],"safety_class":"mutating","required_permission":"control"},{"name":"ctl.get_session_messages","version":"v1","target_kinds":["session"],"safety_class":"mutating","required_permission":"read_output"}]}`
 
-// controlActionCatalog is the Endpoint-local ctl. catalog the fixture node uses.
-//
-// The catalog is the only source of ctl. actions, so a fixture Endpoint without
-// one advertises no action and refuses every ctl. operation. The two entries
-// below are the ones the control tests exercise, and their permissions differ on
-// purpose: heartbeat requires control while get_session_messages requires
-// read_output, so a scope test can prove a refusal is specific to the missing
-// scope instead of a blanket denial.
-const controlActionCatalog = `{"actions": [
-  {"name": "heartbeat", "permission": "control",
-   "payload_schema": {"type": "object", "properties": {}},
-   "command": ["runtime", "control", "heartbeat", "-s", "{session}", "-a", "{payload}", "--json"]},
-  {"name": "get_session_messages", "permission": "read_output",
-   "payload_schema": {"type": "object", "properties": {}},
-   "payload_session_field": "session_id",
-   "command": ["runtime", "control", "get_session_messages", "-s", "{session}", "-a", "{payload}", "--json"]}
-]}
-`
-
 // TestCommandExecRunsInSessionDirectory proves an allowlisted argv array executes
 // in the session working directory and reports a confirmed exit.
 func TestCommandExecRunsInSessionDirectory(t *testing.T) {
@@ -167,15 +148,6 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 			t.Fatal(err)
 		}
 	}
-	// The ctl. catalog is written for every cluster, not only for the control
-	// tests, because the Endpoint advertises its capabilities once at startup and
-	// the inventory the tests wait for is the same document. A catalog that
-	// appeared only for some tests would make the advertised capability list
-	// depend on which test ran first.
-	c.controlActions = filepath.Join(root, "control-actions.conf")
-	if err := os.WriteFile(c.controlActions, []byte(controlActionCatalog), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	channel := free(t)
 	c.server = exec.Command(serverBinary)
 	c.server.Dir = moduleRoot(t)
@@ -227,11 +199,6 @@ func startExecClusterWithPolicy(t *testing.T, allowlist, endpointToken, policy s
 		}
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR="+policyDir)
 	}
-	// The catalog path is passed explicitly so the Endpoint advertises the ctl.
-	// actions the control tests address. Without it the Endpoint fails closed and
-	// every ctl. operation is refused, which would make the control tests assert
-	// the fail-closed default instead of the control channel.
-	endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE="+c.controlActions)
 	c.endpoint = exec.Command(endpointBinary)
 	c.endpoint.Dir = moduleRoot(t)
 	c.endpoint.Env = endpointEnv

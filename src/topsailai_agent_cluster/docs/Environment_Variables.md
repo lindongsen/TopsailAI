@@ -43,11 +43,10 @@ silently.
 The launcher forwards a fixed set of keys, so a key present in `node.conf` but absent from that set is
 silently ignored rather than passed to the process. `CONTROL_ACTION_FILE` was such a key until it was
 added to the set: the template shipped it and the binary accepted it, but the launcher never read it,
-so a packaged node advertised no `ctl.` action. The launcher now resolves it, prints it in `doctor` and
-passes `--control-action-file`, and `TestLauncherForwardsTheControlActionCatalog` guards all three
-sites. See `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` below and
-`issues/agent-clusterctl-drops-control-action-file.md`. A key that must reach the process regardless of
-the launcher can be exported directly, because the binary reads the environment as well.
+so a packaged node advertised no `ctl.` action. That key has since been removed entirely, because the
+`ctl.` family is now advertised from the adapter document instead of an Endpoint-local catalog, so the
+launcher no longer resolves or forwards it. A key that must reach the process regardless of the
+launcher can be exported directly, because the binary reads the environment as well.
 
 A container image carries no `conf/` directory at all. `internal/config/config.go` reads only the
 process environment, so a `node.conf` placed in the image would be inert, and the image fixes the
@@ -126,7 +125,6 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
-| `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `--endpoint-access-policy-dir` | empty | Endpoint-local directory holding one access policy file per caller token; empty means every caller is permitted |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | none | `5000` | Positive post-collection delay in milliseconds; launcher value is `COLLECTION_DELAY_MS` |
 | `AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY` | none | `10m` | Positive duration retaining each Adapter's last successful source snapshot; older source cache is deleted before collection, while resource mappings and command evidence are preserved; launcher value is `SOURCE_CACHE_EXPIRY` |
@@ -171,7 +169,6 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_CHANNEL_ADDRESS` | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` |
 | `AGENT_CLUSTER_ADAPTERS` | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` |
-| `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` |
 | `AGENT_CLUSTER_COLLECTION_DELAY_MS` | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` |
 
 ### `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE`
@@ -236,63 +233,26 @@ the active set, so a malformed edit keeps the previous entries in force and is
 logged. A reload that would remove every entry is refused unless the file contains
 the explicit empty directive. Each successful reload logs the entry count.
 
-### `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`
+### Control actions
 
-Defines the `ctl.<action>` surface. This file is the only source of control
-actions: the action name, its permission, its payload schema and the provider
-command each action runs all come from here, so changing the action surface never
-requires a code change.
+The `ctl.<action>` family is advertised from the adapter document, not from an
+Endpoint-local catalog. Each `ctl.` capability listed in `ADAPTERS` is one action
+this node serves, and the Provider CLI that implements it owns the argv, the
+payload schema and the safety class. The Endpoint keeps the operator decision: the
+`required_permission` in the adapter document is what a caller must hold, and a
+provider-declared permission is ignored rather than trusted.
 
-This is the current implemented catalog. It is not the target Provider CLI contract: the approved
-replacement moves provider argv construction into the Provider project and leaves Endpoint-local
-configuration with action approval and permission only. The command-template fields remain documented
-here until the replacement unit removes them from the running code and deployment configuration.
+An adapter document that names no `ctl.` capability advertises none and refuses
+every `ctl.` operation. That is the fail-closed default, not an error: an Endpoint
+cannot be talked into running an action nobody configured.
 
-The launcher forwards this key. `scripts/agent-clusterctl` resolves
-`CONTROL_ACTION_FILE`, prints it in `doctor` and passes `--control-action-file`, so a
-node started through the launcher loads the catalog its `node.conf` names. It
-previously forwarded only `COMMAND_ALLOWLIST_FILE`, so a packaged node advertised no
-`ctl.` action even when `node.conf` named one; that gap is recorded in
-`issues/agent-clusterctl-drops-control-action-file.md` and is guarded by
-`TestLauncherForwardsTheControlActionCatalog`. A direct launch can still supply the
-path with `--control-action-file` or `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`.
-
-The file is one JSON document. Whole-line `#` comments are ignored, so the shipped
-example can explain itself; trailing comments are not supported. Each entry carries:
-
-| Field | Meaning |
-|---|---|
-| `name` | Action name after the `ctl.` prefix. Required, no whitespace, must not repeat the prefix. A dotted name stays one action. |
-| `permission` | Scope required to invoke it. Must be one of `view`, `read_output`, `send_message`, `control`, `endpoint_admin`. |
-| `payload_schema` | JSON Schema object describing the payload. Descriptive only: the Server stores and returns it verbatim and never interprets it. |
-| `command` | Provider argv template. Required, no empty tokens. |
-| `payload_session_field` | Optional payload field filled from the revalidated target, so the operator is not asked for a selector the Endpoint already holds. Requires a `{payload}` placeholder. |
-
-The `command` array is executed directly, never through a shell. Two placeholders
-are substituted per token, so a placeholder never splits into several arguments:
-`{session}` becomes the provider session key and `{payload}` becomes the JSON
-payload. Each may appear at most once, and an unknown or unterminated placeholder
-is rejected when the file is loaded.
-
-An unset value advertises no `ctl.` action at all and refuses every `ctl.`
-operation. That is the fail-closed default, not an error: an Endpoint without a
-catalog cannot be talked into running an action nobody configured.
-
-Both deployment paths install the shipped catalog, so a fresh node keeps the
-feature. The bundle installs `conf/control-actions.conf.example` as
-`conf/control-actions.conf`; the Debian package installs it as
-`/opt/agent-cluster/conf/control-actions.conf` and registers it as a conffile, so an
-upgrade does not replace the operator's action surface.
-
-The file is reloaded on `SIGHUP`. A reload parses the whole document before
-replacing the active set, so a malformed edit keeps the previous actions in force
-and is logged. An empty `actions` list is accepted and disables the whole family.
-Each successful reload logs the action count.
-
-Because the catalog decides which provider command runs, it is an authorization
-surface and must not be remotely writable. The Endpoint validates the configured
-capability list before its policy hook runs, so an action absent from the catalog is
-rejected before any allowlist or policy check.
+The former key `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` and its flag
+`--control-action-file` are no longer read. A `node.conf` that still carries
+`CONTROL_ACTION_FILE` is harmless rather than an error, and the shipped template no
+longer sets it. The catalog file itself is now Provider-side configuration: the
+TopsailAI Provider CLI reads `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS` at its own
+process boundary, so the action surface stays an operational decision without the
+Endpoint parsing a provider argv template.
 
 ## Client
 
@@ -402,7 +362,7 @@ File format constraints:
 | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | The known development token is accepted |
 | `AGENT_CLUSTER_CLI_SERVER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
-| `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` | No `ctl.` action is advertised and every `ctl.` operation is refused |
+| `AGENT_CLUSTER_ENDPOINT_ADAPTERS` with no `ctl.` capability | No `ctl.` action is advertised and every `ctl.` operation is refused |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | Every caller is permitted, so the Endpoint has no authorization boundary |
 | `AGENT_CLUSTER_TLS_*` | Remote listeners cannot verify peers |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | The Endpoint has no provider to collect from |

@@ -130,27 +130,27 @@ type FaultInjection struct {
 	// command.exec fails closed with a configuration error rather than reaching
 	// the policy hook's positive path.
 	CommandAllowlist [][]string
-	// ControlActions makes the Endpoint advertise the given ctl. actions. An
-	// empty value leaves the catalog unconfigured, so no ctl. action is
-	// advertised and every ctl. operation is refused as unsupported before the
-	// policy hook runs.
+	// ControlActions makes the Endpoint advertise the given ctl. actions. Each
+	// entry becomes one ctl. capability in the adapter document, which is the only
+	// source of ctl. capabilities: the Endpoint no longer reads a catalog file, so
+	// an empty value advertises no ctl. action and every ctl. operation is refused
+	// as unsupported before the policy hook runs.
 	ControlActions []ControlAction
 }
 
-// ControlAction describes one ctl. action the harness writes into the
-// Endpoint-local catalog.
+// ControlAction describes one ctl. action the harness declares in the adapter
+// document.
 //
-// The catalog is the only source of ctl. actions, so a scenario that proves the
-// positive authorization path needs a real entry: advertising an action the
-// catalog does not define would end as unsupported, which proves nothing about
-// authorization.
+// The adapter document is the only source of ctl. capabilities, so a scenario that
+// proves the positive authorization path needs a real entry: declaring an action
+// the provider does not offer would end as unsupported, which proves nothing about
+// authorization. The provider owns the argv, so no command template is declared
+// here.
 type ControlAction struct {
 	// Name is the action name after the ctl. prefix.
 	Name string
 	// Permission is the operator scope required to invoke the action.
 	Permission string
-	// Command is the provider argv template.
-	Command []string
 }
 
 // advertisedCapabilityRevision returns the descriptor revision the fixture
@@ -385,26 +385,19 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR=127.0.0.1:"+endpointChannelPort)
 	}
 	endpointEnv = appendFaultEnvironment(endpointEnv, options.Faults)
-	// The command allowlist and the control action catalog are Endpoint-local
-	// administrative configuration, so they are written into the scenario
-	// directory and exported to the Endpoint process only. A scenario that
-	// proves the positive authorization path for command.exec or ctl. needs them:
-	// without the allowlist command.exec fails closed with a configuration error,
-	// and without the catalog no ctl. action is advertised at all, so both would
-	// end before the policy hook and prove nothing about authorization.
+	// The command allowlist is Endpoint-local administrative configuration, so it
+	// is written into the scenario directory and exported to the Endpoint process
+	// only. A scenario that proves the positive authorization path for command.exec
+	// needs it: without the allowlist command.exec fails closed with a configuration
+	// error and ends before the policy hook. The ctl. family needs no file, because
+	// each configured action is declared as a capability in the adapter document
+	// above.
 	if len(options.Faults.CommandAllowlist) > 0 {
 		allowlistPath, writeErr := writeCommandAllowlist(root, options.Faults.CommandAllowlist)
 		if writeErr != nil {
 			return nil, writeErr
 		}
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE="+allowlistPath)
-	}
-	if len(options.Faults.ControlActions) > 0 {
-		catalogPath, writeErr := writeControlActionCatalog(root, options.Faults.ControlActions)
-		if writeErr != nil {
-			return nil, writeErr
-		}
-		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE="+catalogPath)
 	}
 	endpointEnv = append(endpointEnv, sortedEnvironment(options.EndpointEnvironment)...)
 	cluster.EndpointPath = endpointBin
@@ -460,38 +453,6 @@ func writeCommandAllowlist(root string, entries [][]string) (string, error) {
 	path := filepath.Join(root, "command-allowlist.conf")
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("write command allowlist: %w", err)
-	}
-	return path, nil
-}
-
-// writeControlActionCatalog writes the Endpoint-local ctl. action catalog and
-// returns its path.
-//
-// The catalog is the only source of ctl. actions, so a scenario that proves the
-// positive authorization path needs a real entry here. The document is JSON with
-// one object per action, matching the shape the Endpoint validates at load time.
-func writeControlActionCatalog(root string, actions []ControlAction) (string, error) {
-	type entry struct {
-		Name       string   `json:"name"`
-		Permission string   `json:"permission"`
-		Command    []string `json:"command"`
-	}
-	document := struct {
-		Actions []entry `json:"actions"`
-	}{Actions: make([]entry, 0, len(actions))}
-	for _, action := range actions {
-		if action.Name == "" || action.Permission == "" || len(action.Command) == 0 {
-			return "", fmt.Errorf("control action %q requires a name, a permission and a command", action.Name)
-		}
-		document.Actions = append(document.Actions, entry{Name: action.Name, Permission: action.Permission, Command: action.Command})
-	}
-	data, err := json.Marshal(document)
-	if err != nil {
-		return "", fmt.Errorf("marshal control action catalog: %w", err)
-	}
-	path := filepath.Join(root, "control-actions.json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", fmt.Errorf("write control action catalog: %w", err)
 	}
 	return path, nil
 }

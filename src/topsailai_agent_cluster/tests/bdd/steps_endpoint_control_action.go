@@ -38,16 +38,16 @@ const controlActionName = "fixture_probe"
 // so the scenario cannot drift from the contract.
 var controlActionOperation = security.ProviderControlPrefix + controlActionName
 
-// controlActionCatalog is the one real catalog entry the cluster loads.
+// controlActionCatalog is the one real action the cluster declares.
 //
-// The command is a provider argv template, so the positive scenario proves the
-// whole path from the advertised capability through the policy hook to a real
-// provider invocation. The permission is the control scope, which is what the
-// shipped catalog uses for mutating actions.
+// The entry becomes a ctl. capability in the adapter document, so the positive
+// scenario proves the whole path from the advertised capability through the policy
+// hook to a real provider invocation. The permission is the control scope, which is
+// what the shipped catalog uses for mutating actions. The provider owns the argv,
+// so no command template is declared here.
 var controlActionCatalog = []harness.ControlAction{{
 	Name:       controlActionName,
 	Permission: security.ScopeControl,
-	Command:    []string{"runtime", "control", controlActionName, "-s", "{session}", "--json"},
 }}
 
 // controlActionToken and controlActionViewToken are the two credentials the

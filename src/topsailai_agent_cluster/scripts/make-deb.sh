@@ -451,18 +451,6 @@ function write_role_config() {
             } >>"${PKG_ROOT}${config}" ||
                 die "cannot append the allowlist path"
         fi
-        # The control action catalog is the only source of ctl. actions. Without the
-        # key the Endpoint advertises no ctl. action, so the packaged configuration
-        # must reference the shipped catalog or the feature is silently absent.
-        if ! grep -qE '^[[:space:]]*CONTROL_ACTION_FILE=' \
-            "${PKG_ROOT}${config}"; then
-            {
-                echo ""
-                echo "# The package ships this conffile beside the controller."
-                echo "CONTROL_ACTION_FILE=control-actions.conf"
-            } >>"${PKG_ROOT}${config}" ||
-                die "cannot append the control action catalog path"
-        fi
     fi
 
     # An adapter override is appended because the last assignment wins and the
@@ -487,10 +475,6 @@ function write_role_config() {
     if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         echo "${OPT_DIR}/conf/${EFFECTIVE_ROLE}/command-allowlist.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
             die "cannot register the allowlist conffile"
-        # The catalog is a conffile for the same reason: an operator edits the
-        # action surface in place, so an upgrade must not replace it.
-        echo "${OPT_DIR}/conf/${EFFECTIVE_ROLE}/control-actions.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
-            die "cannot register the control action catalog conffile"
     fi
     # The TLS material is a conffile for the same reason, and the consequence of
     # omitting it is worse. A site replaces the shipped development certificate
@@ -618,11 +602,6 @@ function build_config_package() {
     if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         add_file "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
             "${OPT_DIR}/conf/${EFFECTIVE_ROLE}/command-allowlist.conf" 0640
-        # The control action catalog is the only source of ctl. actions. A missing
-        # file fails closed by advertising no ctl. action, so the package ships the
-        # reviewed catalog to keep the feature available on a fresh install.
-        add_file "${PROJECT_DIR}/conf/control-actions.conf.example" \
-            "${OPT_DIR}/conf/${EFFECTIVE_ROLE}/control-actions.conf" 0640
         # The CLI env file is written from node.conf, so the hook belongs to the
         # package that installs node.conf rather than to the binary package.
         add_file "${SCRIPT_DIR}/deb/postinst.endpoint" "/DEBIAN/postinst" 0755

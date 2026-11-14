@@ -7,7 +7,6 @@ import (
 
 	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/adapter/genericcli"
-	"topsailai_agent_cluster/internal/controlaction"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/providercli"
 	endpointstorage "topsailai_agent_cluster/internal/storage/endpoint"
@@ -33,41 +32,13 @@ const (
 // CLI Adapter. It is a value rather than a constant because the type is a struct.
 var genericCLIConcurrency = providercli.ConcurrencyLimits{Total: 4, Discovery: 2, Mutation: 1, Follow: 2}
 
-// withControlActions merges the Endpoint-local control action catalog into the
-// configured capability descriptor.
-//
-// The catalog is the only source of ctl. actions, and it is Endpoint-local
-// administrative configuration rather than part of the operator-facing adapter
-// document. Without this merge the catalog never reached the effective
-// descriptor: the adapter intersected the configured list with what the provider
-// advertised, the catalog was not in that list, so no ctl. capability was
-// published and every control command was refused as unsupported before the
-// policy hook could authorize it. A configured catalog therefore had no effect.
-//
-// The revision is preserved because it is the operator's declared value and the
-// adapter carries it through unchanged. A nil catalog leaves the descriptor
-// untouched, which is the fail-closed default: no catalog, no ctl. capability.
-func withControlActions(configured *protocol.CapabilityDescriptor, set *controlaction.ControlActionSet) *protocol.CapabilityDescriptor {
-	actions := controlaction.Capabilities(set)
-	if len(actions) == 0 {
-		return configured
-	}
-	merged := protocol.CapabilityDescriptor{Capabilities: actions}
-	if configured != nil {
-		merged.Revision = configured.Revision
-		merged.Capabilities = append(append([]protocol.Capability(nil), configured.Capabilities...), actions...)
-	}
-	return &merged
-}
-
 // registerAdapterType installs the factory for one provider type.
 //
-// The control action catalog is deliberately not a parameter: the catalog is
-// merged into the configured capability descriptor before the adapter is
-// configured (see withControlActions), so the factory only has to build the
-// adapter from the document it is handed. Passing the catalog here as well
-// would give two places the authority to publish a ctl. capability, and the
-// second one would be the one nobody reads.
+// The control action catalog is deliberately not a parameter: the operator's
+// adapter document is the only source of ctl. capabilities, and the provider that
+// implements an action declares what the action is. The factory therefore only
+// builds the adapter from the document it is handed, so there is exactly one place
+// with the authority to publish a ctl. capability.
 //
 // genericcli is the only provider type an Endpoint can be configured with. The
 // in-process TopsailAI adapter and the legacy command adapter were removed, so a

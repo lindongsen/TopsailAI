@@ -61,15 +61,13 @@ SOURCE_CACHE_EXPIRY=10m
 # to disable command execution entirely.
 COMMAND_ALLOWLIST_FILE=command-allowlist.conf
 
-# Control action catalog for the `ctl` operator command under the current
-# implementation. This file currently supplies action names, permissions, payload
-# schemas and provider commands. The target Provider CLI contract moves provider
-# command construction into the Provider project and keeps only local action
-# approval and permission here; that replacement lands with the code change.
-# Paths are relative to the bundle root. The deployment scripts install
-# conf/control-actions.conf.example under this name. Unset this value to advertise
-# no ctl. action at all, which refuses every ctl. operation fail-closed.
-CONTROL_ACTION_FILE=control-actions.conf
+# There is no Endpoint-local control action catalog. The `ctl` family is
+# advertised from the ADAPTERS document above: each ctl. capability listed there
+# is one action this node serves, and the Provider CLI that implements it owns the
+# argv. A node whose adapter document names no ctl. capability advertises none and
+# refuses every ctl. operation, which is the fail-closed default. The key
+# CONTROL_ACTION_FILE is no longer read, so a node.conf that still carries it is
+# harmless rather than an error.
 
 # Access policy directory for the `endpoint-token` authorization boundary. Each
 # file in this directory describes exactly one caller token: the endpoints that

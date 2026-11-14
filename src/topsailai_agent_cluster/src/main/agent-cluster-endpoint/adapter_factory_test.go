@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"topsailai_agent_cluster/internal/adapter"
-	"topsailai_agent_cluster/internal/controlaction"
-	"topsailai_agent_cluster/internal/protocol"
 	endpointstorage "topsailai_agent_cluster/internal/storage/endpoint"
 )
 
@@ -64,69 +62,6 @@ func TestRegisterAdapterTypeRejectsUnknownProviderType(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-// TestWithControlActionsMergesTheCatalogIntoTheDescriptor proves a configured
-// control action reaches the effective capability descriptor.
-//
-// The catalog is Endpoint-local configuration and is not part of the
-// operator-facing adapter document, so without this merge the adapter intersected
-// the configured list with what the provider advertised, the catalog was not in
-// that list, and no ctl. capability was published. Every control command was then
-// refused as unsupported before the policy hook could authorize it, so a
-// configured catalog had no effect at all.
-func TestWithControlActionsMergesTheCatalogIntoTheDescriptor(t *testing.T) {
-	set, err := controlaction.ParseControlActionSet([]byte(`{"actions":[{"name":"fixture_probe","permission":"control","command":["runtime","control","fixture_probe"]}]}`))
-	if err != nil {
-		t.Fatalf("parse control action set: %v", err)
-	}
-	configured := &protocol.CapabilityDescriptor{
-		Revision:     "rev-1",
-		Capabilities: []protocol.Capability{{Name: "message.send", Version: "v1", TargetKinds: []string{"session"}}},
-	}
-	merged := withControlActions(configured, set)
-	if merged == nil {
-		t.Fatal("merged descriptor is nil, want the catalog merged in")
-	}
-	if merged.Revision != "rev-1" {
-		t.Fatalf("merged revision = %q, want the configured revision", merged.Revision)
-	}
-	names := make([]string, 0, len(merged.Capabilities))
-	for _, capability := range merged.Capabilities {
-		names = append(names, capability.Name)
-	}
-	if len(names) != 2 {
-		t.Fatalf("merged capabilities = %v, want the operation and the control action", names)
-	}
-	if names[1] != "ctl.fixture_probe" {
-		t.Fatalf("merged capabilities = %v, want the catalog action appended", names)
-	}
-	if merged.Capabilities[1].RequiredPermission != "control" {
-		t.Fatalf("control action permission = %q, want the catalog permission", merged.Capabilities[1].RequiredPermission)
-	}
-	if merged.Capabilities[1].SafetyClass != protocol.SafetyClassMutating {
-		t.Fatalf("control action safety class = %q, want mutating", merged.Capabilities[1].SafetyClass)
-	}
-}
-
-// TestWithControlActionsLeavesTheDescriptorUntouchedWithoutACatalog is the
-// fail-closed default.
-//
-// An Endpoint with no catalog must advertise no ctl. capability, because it cannot
-// serve an action it was never told about. Without this case, merging an empty
-// catalog could silently publish a control surface that has no backing action.
-func TestWithControlActionsLeavesTheDescriptorUntouchedWithoutACatalog(t *testing.T) {
-	configured := &protocol.CapabilityDescriptor{
-		Revision:     "rev-1",
-		Capabilities: []protocol.Capability{{Name: "message.send", Version: "v1", TargetKinds: []string{"session"}}},
-	}
-	merged := withControlActions(configured, nil)
-	if merged != configured {
-		t.Fatal("descriptor was replaced, want it untouched when no catalog is configured")
-	}
-	if len(merged.Capabilities) != 1 {
-		t.Fatalf("capabilities = %v, want only the configured operation", merged.Capabilities)
 	}
 }
 

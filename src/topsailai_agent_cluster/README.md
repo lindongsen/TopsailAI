@@ -20,7 +20,7 @@ packages provide the shared controller, role binaries, and role-specific site co
 | `agent-cluster-server` | `agent-cluster-server` | Server daemon binary |
 | `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` and `topsailai2` (symlinks) | Endpoint daemon and operator CLI binaries |
 | `agent-cluster-config-server-<site>` | `conf/server/node.conf`, `certs/server/ca.pem`, `certs/server/node.pem`, `certs/server/node-key.pem` | Server site configuration and TLS identity |
-| `agent-cluster-config-endpoint-<site>` | `conf/endpoint/node.conf`, `certs/endpoint/*`, `conf/endpoint/command-allowlist.conf` and `conf/endpoint/control-actions.conf` | Endpoint site configuration and TLS identity |
+| `agent-cluster-config-endpoint-<site>` | `conf/endpoint/node.conf`, `certs/endpoint/*`, `conf/endpoint/command-allowlist.conf` | Endpoint site configuration and TLS identity |
 
 The split exists because a site replaces the shipped certificate with its own identity, and a
 certificate that lives in the binary package is overwritten on every upgrade. Keeping the identity

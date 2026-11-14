@@ -13,7 +13,6 @@ import (
 	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/config"
-	"topsailai_agent_cluster/internal/controlaction"
 	endpointservice "topsailai_agent_cluster/internal/endpoint"
 	"topsailai_agent_cluster/internal/logging"
 	"topsailai_agent_cluster/internal/protocol"
@@ -123,24 +122,12 @@ func main() {
 		logger.Info("endpoint has no configured adapter; no resource is advertised and every command is refused")
 	}
 	registry := adapter.NewRegistry()
-	// The control action file is Endpoint-local administrative configuration and
-	// the only source of ctl. actions. It is loaded before any adapter is
-	// configured so a broken file fails startup rather than silently leaving a
-	// different action surface in force. An Endpoint without the file advertises
-	// no ctl. action at all, which is the fail-closed default.
-	var controlActions *controlaction.ControlActionSet
-	if cfg.ControlActionFile != "" {
-		controlActions, err = controlaction.LoadControlActionSet(cfg.ControlActionFile)
-		if err != nil {
-			logger.Error("load control action file", "path", cfg.ControlActionFile, "error", err)
-			_ = client.Close()
-			_ = store.Close()
-			os.Exit(1)
-		}
-		logger.Info("loaded control action file", "path", cfg.ControlActionFile, "actions", controlActions.Len(), "names", controlActions.Names())
-	} else {
-		logger.Info("control action file is not configured; no ctl. action is advertised and every ctl. operation is refused")
-	}
+	// The adapter document is the only source of ctl. capabilities. The Endpoint
+	// no longer reads an Endpoint-local catalog: the provider that implements a
+	// control action declares what the action is, and the operator's adapter
+	// document decides which actions this node serves. An adapter document that
+	// names no ctl. capability therefore advertises none, which is the fail-closed
+	// default and keeps the action surface a deployment decision.
 	registered := make(map[string]bool)
 	for _, item := range cfg.Adapters {
 		if registered[item.ProviderType] {
@@ -157,7 +144,7 @@ func main() {
 	}
 	bindings := make([]endpointservice.Binding, 0, len(cfg.Adapters))
 	for _, item := range cfg.Adapters {
-		instance, err := registry.Configure(ctx, adapter.Config{AdapterID: item.AdapterID, ProviderType: item.ProviderType, Command: item.Command, Args: item.Args, TimeoutMS: item.TimeoutMS, Capabilities: withControlActions(item.Capabilities, controlActions)})
+		instance, err := registry.Configure(ctx, adapter.Config{AdapterID: item.AdapterID, ProviderType: item.ProviderType, Command: item.Command, Args: item.Args, TimeoutMS: item.TimeoutMS, Capabilities: item.Capabilities})
 		if err != nil {
 			logger.Error("configure adapter", "adapter_id", item.AdapterID, "error", err)
 			_ = client.Close()
@@ -299,26 +286,6 @@ func main() {
 		_ = client.Close()
 		_ = store.Close()
 		os.Exit(1)
-	}
-	if controlActions != nil {
-		stopControlReload, watchErr := controlActions.WatchReload(ctx, func(reloadErr error) {
-			if reloadErr != nil {
-				logger.Error("reload control action file", "error", reloadErr)
-				return
-			}
-			if refreshErr := service.RefreshDescriptors(ctx, "topsailai"); refreshErr != nil {
-				logger.Error("publish reloaded control action capabilities", "actions", controlActions.Len(), "names", controlActions.Names(), "error", refreshErr)
-				return
-			}
-			logger.Info("reloaded control action file and scheduled capability inventory", "actions", controlActions.Len(), "names", controlActions.Names())
-		})
-		if watchErr != nil {
-			logger.Error("watch control action file", "error", watchErr)
-			_ = client.Close()
-			_ = store.Close()
-			os.Exit(1)
-		}
-		defer stopControlReload()
 	}
 	// The replace request file is Endpoint-local administrative configuration and
 	// the only way to activate a different Provider CLI version for one adapter.
