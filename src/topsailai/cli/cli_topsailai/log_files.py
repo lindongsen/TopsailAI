@@ -298,7 +298,11 @@ def discover_log_files(
         else:
             item["session_pid"] = item["pid"]
 
-    log_files.sort(key=lambda x: x["ctime"])
+    # Creation time is the primary order. Files created within the same
+    # timestamp tick share a ctime, so the filename is the deterministic
+    # tiebreaker; without it the result would follow os.listdir order and
+    # change between runs.
+    log_files.sort(key=lambda x: (x["ctime"], x["filename"]))
     return log_files
 
 

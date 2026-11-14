@@ -22,8 +22,10 @@ PACKAGED_TEST_TMP := $(PROJECT_ROOT)/.tmp/packaged-bdd
 # because cli/ai_team.py would otherwise shadow the ai_team package.
 CORE_PYTHONPATH := $(PROJECT_ROOT):$(SRC_ROOT):$(CLI_ROOT)
 # CLI tests use pytest_plugins with the top-level name "tests", which must
-# resolve to cli/tests. Adding the project root here would shadow it.
-CLI_PYTHONPATH := $(CLI_ROOT)
+# resolve to cli/tests. Adding the project root here would shadow it. The
+# source root is still required because cli_topsailai imports the topsailai
+# package, which lives one level above the project root.
+CLI_PYTHONPATH := $(CLI_ROOT):$(SRC_ROOT)
 
 PYTEST_FLAGS := -q --color=no --tb=line --disable-warnings
 

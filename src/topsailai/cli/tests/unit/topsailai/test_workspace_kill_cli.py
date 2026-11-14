@@ -138,9 +138,11 @@ def test_multiple_verified_live_instances_are_rejected(tmp_path, rows):
 def test_signal_bound_revalidates_identity_after_pidfd_open(monkeypatch):
     """An identity change between selection and signaling sends no signal."""
     sent = Mock()
-    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", lambda pid: 9)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", lambda pid: 9,
+                        raising=False)
     monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.close", Mock())
-    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal", sent)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal", sent,
+                        raising=False)
     monkeypatch.setattr("cli_topsailai.workspace_kill_cli._process_identity",
                         lambda pid: (pid, 78))
     with pytest.raises(WorkspaceKillError, match="target_changed"):
@@ -152,9 +154,11 @@ def test_signal_bound_uses_pidfd(monkeypatch):
     """The successful signal is bound to the opened immutable process handle."""
     sent = Mock()
     closed = Mock()
-    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", lambda pid: 9)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", lambda pid: 9,
+                        raising=False)
     monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.close", closed)
-    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal", sent)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal", sent,
+                        raising=False)
     monkeypatch.setattr("cli_topsailai.workspace_kill_cli._process_identity",
                         lambda pid: (pid, 77))
     _signal_bound(KillTarget(1234, 77, (1234, 77)), 15)
