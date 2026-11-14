@@ -230,3 +230,71 @@ def test_no_subprocess_is_used(monkeypatch):
     _fake_session(monkeypatch, "/persisted/ws")
 
     assert project_workspace.resolve_project_workspace(session_id="s-noproc") == "/persisted/ws"
+
+
+def test_cache_returns_the_first_value_after_the_record_changes(monkeypatch):
+    """A cached hit is not refreshed, so a later record change is not observed.
+
+    This documents the deliberate trade-off: the cache is keyed only by session
+    identity and lives for the whole process, so a workspace that is renamed or
+    moved while the process runs keeps returning the value seen on the first
+    successful lookup. The test pins that behaviour so a future change to the
+    invalidation policy is a conscious decision rather than an accident.
+    """
+    from topsailai.context import ctx_manager
+
+    state = {"workspace": "/persisted/first"}
+
+    class FakeManager:
+        """Session manager whose record can change between lookups."""
+
+        def get_session(self, session_id):
+            """Return the current record state."""
+            return SimpleNamespace(project_workspace=state["workspace"])
+
+    monkeypatch.setattr(ctx_manager, "get_session_manager", lambda: FakeManager())
+
+    assert project_workspace.resolve_project_workspace(session_id="s-stale") == "/persisted/first"
+    state["workspace"] = "/persisted/second"
+    assert project_workspace.resolve_project_workspace(session_id="s-stale") == "/persisted/first"
+
+
+def test_no_process_spawning_api_is_used(monkeypatch):
+    """No process-spawning entry point is reachable from the resolver.
+
+    The layering rule forbids this layer from running commands, so every
+    spawning API is guarded, not only ``subprocess.Popen`` and ``subprocess.run``.
+    """
+    import asyncio
+    import os
+    import subprocess
+
+    def explode(*args, **kwargs):
+        """Fail the test if any process is spawned."""
+        raise AssertionError("no process may be spawned")
+
+    monkeypatch.setattr(subprocess, "Popen", explode)
+    monkeypatch.setattr(subprocess, "run", explode)
+    monkeypatch.setattr(subprocess, "call", explode)
+    monkeypatch.setattr(subprocess, "check_output", explode)
+    monkeypatch.setattr(os, "system", explode)
+    monkeypatch.setattr(os, "popen", explode)
+    if hasattr(os, "posix_spawn"):
+        monkeypatch.setattr(os, "posix_spawn", explode)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", explode)
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", explode)
+    _fake_session(monkeypatch, "/persisted/ws")
+
+    assert project_workspace.resolve_project_workspace(session_id="s-noproc-all") == "/persisted/ws"
+
+
+def test_resolver_does_not_import_a_command_module(monkeypatch):
+    """The resolver module holds no command-execution import at all.
+
+    A behavioural guard alone cannot prove the layering rule, because a future
+    edit could add an import and only call it on a path the tests never reach.
+    Inspecting the module namespace catches that directly.
+    """
+    forbidden = {"subprocess", "shutil", "signal", "json", "asyncio"}
+
+    assert forbidden.isdisjoint(vars(project_workspace))

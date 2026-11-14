@@ -134,3 +134,32 @@ def test_lock_tool_acquires_the_persisted_workspace_lock(monkeypatch, tmp_path):
         assert os.path.exists(workspace / ".topsailai" / "project_workspace.lock")
 
     assert not os.path.exists(workspace / ".topsailai" / "project_workspace.lock")
+
+
+def test_session_meta_uses_the_explicit_session_id_when_environment_is_absent(monkeypatch):
+    """The metadata record resolves the workspace for the session it is writing.
+
+    ``create_session_meta`` receives the session identity as an argument, so it
+    must not depend on ``SESSION_ID`` being exported. Without this, a caller that
+    passes an identity explicitly would record an empty workspace.
+    """
+    _persist(monkeypatch, "/persisted/ws")
+
+    path = session_meta.create_session_meta("s-meta-explicit-id")
+
+    assert _read_meta(path)["project_workspace"] == "/persisted/ws"
+
+
+def test_session_meta_and_lock_tool_agree_on_the_same_session(monkeypatch):
+    """Both consumers resolve the same workspace for one session identity.
+
+    The metadata record and the project lock must describe the same directory,
+    otherwise a resumed session locks one folder while reporting another.
+    """
+    _persist(monkeypatch, "/persisted/shared")
+    monkeypatch.setenv("SESSION_ID", "s-agree")
+
+    path = session_meta.create_session_meta("s-agree")
+
+    assert _read_meta(path)["project_workspace"] == "/persisted/shared"
+    assert lock_tool._resolve_project_workspace() == "/persisted/shared"
