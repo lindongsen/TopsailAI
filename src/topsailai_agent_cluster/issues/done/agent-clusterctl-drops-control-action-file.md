@@ -105,3 +105,21 @@ Fixed in `scripts/agent-clusterctl`, guarded by
 previous launcher, so they keep advertising no `ctl.` action until the package is
 reinstalled. Reinstalling is an install, not a container restart: the endpoint process is
 replaced by the package's own start path, and no Agent is killed by that.
+
+## Resolution
+
+Resolved by removal rather than by forwarding. `0391ba56` deleted the Endpoint-side
+catalog plumbing (`--control-action-file`, the `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`
+read, `withControlActions`, the SIGHUP reload) and `2b58a0a2` deleted
+`internal/controlaction` entirely. The `ctl.` family is now advertised from the
+operator's `ADAPTERS` capability entry, so there is no catalog path for the launcher
+to forward and the class of defect described above cannot recur.
+
+The shipped catalog `conf/control-actions.conf.example` is now read by the Provider CLI
+through `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS`, which is Provider-side configuration
+and outside the launcher's responsibility.
+
+Verified: `grep -rn 'control-actions.conf' scripts/` returns no match,
+`grep -rn 'internal/controlaction' --include=*.go` returns no match,
+`go build ./...` exit 0, `make test-unit-endpoint` exit 0, full integration exit 0
+(134.390s), full BDD exit 0 (482.509s).
