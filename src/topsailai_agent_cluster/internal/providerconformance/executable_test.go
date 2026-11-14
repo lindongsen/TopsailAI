@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,6 +17,10 @@ import (
 const (
 	mockExecutableEnvironment = "AGENT_CLUSTER_MOCK_EXECUTABLE"
 	mockFaultEnvironment      = "AGENT_CLUSTER_MOCK_FAULT"
+	// mockMutationEnvironment names the file the Mock Provider appends one line
+	// to per applied mutation, so a test can observe that a rejected execution
+	// left no record.
+	mockMutationEnvironment = "AGENT_CLUSTER_MOCK_MUTATION_FILE"
 	// providerExecutableEnvironment selects any Provider CLI executable. When it
 	// is unset the mock executable is used, so the mock target keeps its meaning.
 	providerExecutableEnvironment = "AGENT_CLUSTER_PROVIDER_EXECUTABLE"
@@ -209,7 +214,12 @@ func TestMockProviderFalseCapabilityIsDetected(t *testing.T) {
 
 func TestMockProviderGenerationRaceRejectsMutation(t *testing.T) {
 	requireMock(t)
-	runner := providerRunner(t, "generation-race")
+	// The marker file is the only observable proof that no mutation was applied.
+	// The error code and the effect certainty are both the provider's own claim,
+	// so a provider that reported not_applied after writing would pass a check
+	// that read only those two fields.
+	mutationFile := filepath.Join(t.TempDir(), "mutations.log")
+	runner := providerRunnerWithMutationFile(t, "generation-race", mutationFile)
 	response, _, err := runner.Invoke(context.Background(), requestForTarget(providercli.FunctionExecute, discoveredTarget(t, runner)))
 	if err != nil {
 		t.Fatal(err)
@@ -217,6 +227,24 @@ func TestMockProviderGenerationRaceRejectsMutation(t *testing.T) {
 	if response.OK || response.Error == nil || response.Error.Code != "generation_mismatch" ||
 		response.Error.EffectCertainty != providercli.EffectNotApplied {
 		t.Fatalf("execute response=%#v", response)
+	}
+	if data, readErr := os.ReadFile(mutationFile); readErr == nil && len(data) > 0 {
+		t.Fatalf("a rejected execution recorded a mutation: %q", data)
+	}
+
+	// The control proves the marker is written when a mutation is applied. Without
+	// it the absence assertion above would also pass on a mock that never writes.
+	control := providerRunnerWithMutationFile(t, "", mutationFile)
+	controlResponse, _, controlErr := control.Invoke(context.Background(), requestForTarget(providercli.FunctionExecute, discoveredTarget(t, control)))
+	if controlErr != nil {
+		t.Fatal(controlErr)
+	}
+	if !controlResponse.OK {
+		t.Fatalf("the control execution did not succeed: %#v", controlResponse)
+	}
+	data, readErr := os.ReadFile(mutationFile)
+	if readErr != nil || len(data) == 0 {
+		t.Fatalf("the control execution recorded no mutation: err=%v data=%q", readErr, data)
 	}
 }
 
@@ -330,6 +358,16 @@ func providerRunner(t *testing.T, fault string) *Runner {
 		t.Fatal(err)
 	}
 	return runner
+}
+
+// providerRunnerWithMutationFile builds a runner that also tells the Mock
+// Provider where to record applied mutations. The path travels through the
+// forwarded environment because Config carries no argv.
+func providerRunnerWithMutationFile(t *testing.T, fault string, mutationFile string) *Runner {
+	t.Helper()
+	t.Setenv(mockMutationEnvironment, mutationFile)
+	t.Setenv(providerEnvironmentNames, mockMutationEnvironment)
+	return providerRunner(t, fault)
 }
 
 // providerExecutable resolves the executable under test.

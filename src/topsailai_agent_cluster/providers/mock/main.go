@@ -17,7 +17,13 @@ import (
 const (
 	faultEnvironment  = "AGENT_CLUSTER_MOCK_FAULT"
 	helperEnvironment = "AGENT_CLUSTER_MOCK_HELPER"
-	fixtureTimeMS     = int64(1700000000000)
+	// mutationEnvironment names the file that records one line per applied
+	// mutation. A rejected execution must leave it untouched, so a conformance
+	// test can observe the absence of an effect instead of trusting the
+	// provider's own effect claim. It is an environment variable because the
+	// conformance runner configures no argv.
+	mutationEnvironment = "AGENT_CLUSTER_MOCK_MUTATION_FILE"
+	fixtureTimeMS       = int64(1700000000000)
 )
 
 // mockOptions are the argv-driven knobs the test harness needs.
@@ -29,9 +35,12 @@ const (
 // here as a flag. The environment fault variable is still honoured for the
 // conformance suite, which launches the mock directly.
 type mockOptions struct {
-	mode               string
-	fault              string
-	recordFile         string
+	mode       string
+	fault      string
+	recordFile string
+	// mutationFile records one line per applied mutation. Only the success
+	// path writes it, so a rejected execution leaves the file absent or empty.
+	mutationFile       string
 	discoveryCountFile string
 	delayMS            int
 	followHoldMS       int
@@ -65,6 +74,7 @@ func parseOptions() mockOptions {
 	flag.StringVar(&options.mode, "mode", "one", "discovery document mode: one, mixed, empty or fail")
 	flag.StringVar(&options.fault, "fault", "", "deterministic fault to inject, overriding the environment")
 	flag.StringVar(&options.recordFile, "record-file", "", "append one JSON record per provider invocation")
+	flag.StringVar(&options.mutationFile, "mutation-file", "", "append one line per applied mutation")
 	flag.StringVar(&options.discoveryCountFile, "discovery-count-file", "", "durable discovery invocation counter")
 	flag.IntVar(&options.delayMS, "delay-ms", 0, "delay execution for evidence tests")
 	// followHoldMS keeps a follow stream alive after its last record. A stream
@@ -80,6 +90,11 @@ func parseOptions() mockOptions {
 	flag.StringVar(&options.messagesBody, "messages-body", "", "first message body reported by a session messages read")
 	flag.IntVar(&options.messagesCount, "messages-count", 2, "number of messages reported by a session messages read")
 	flag.Parse()
+	// The conformance runner configures no argv, so the marker path has to be
+	// readable from the environment as well. argv still wins when both are set.
+	if options.mutationFile == "" {
+		options.mutationFile = os.Getenv(mutationEnvironment)
+	}
 	return options
 }
 
@@ -257,7 +272,7 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			writeDiagnostic("mock execution failure")
 			return failureResponse(request.RequestID, "provider_error", "mock execution failure", "not_applied")
 		}
-		return executeResponse(request, fault)
+		return executeResponse(request, fault, options.mutationFile)
 	case functionQuery:
 		if request.Query == nil || request.Query.Version != "v1" || fault == "false-capability" {
 			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
@@ -486,8 +501,24 @@ func sessionMessagesResult(sessionKey string, options mockOptions) json.RawMessa
 	return json.RawMessage(encoded)
 }
 
+// appendMutationRecord appends one line naming the request whose mutation was
+// applied. A write failure is reported on stderr rather than swallowed, because
+// a marker that silently fails would make the absence assertion pass for the
+// wrong reason.
+func appendMutationRecord(path string, requestID string) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		writeDiagnostic("append mutation record: %v", err)
+		return
+	}
+	defer func() { _ = file.Close() }()
+	if _, err := fmt.Fprintf(file, "%s\n", requestID); err != nil {
+		writeDiagnostic("write mutation record: %v", err)
+	}
+}
+
 // executeResponse revalidates generation inside the mutation path.
-func executeResponse(request request, fault string) response {
+func executeResponse(request request, fault string, mutationFile string) response {
 	if request.Operation == nil {
 		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
 	}
@@ -541,6 +572,13 @@ func executeResponse(request request, fault string) response {
 	}
 	if fault == "generation-race" {
 		return failureResponse(request.RequestID, "generation_mismatch", "provider generation changed", "not_applied")
+	}
+	// The marker is written here, after every rejection and immediately before
+	// the success answer, so a rejected execution cannot leave a record. A
+	// conformance test observes the file to prove no mutation was applied
+	// instead of trusting the effect certainty the provider reports.
+	if mutationFile != "" {
+		appendMutationRecord(mutationFile, request.RequestID)
 	}
 	return response{
 		version:   currentVersion(),
