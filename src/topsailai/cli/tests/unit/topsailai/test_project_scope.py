@@ -904,38 +904,43 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
             check=False,
         )
 
-    @patch("cli_topsailai.project_scope._build_dtach_socket_path")
     @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
     @patch("cli_topsailai.project_scope.shutil.which")
-    def test_unsupported_tmux_falls_back_to_dtach(
-        self, mock_which, mock_supports_environment_option, mock_build_socket
-    ):
-        mock_which.side_effect = ["/usr/bin/tmux", "/usr/bin/dtach"]
-        mock_supports_environment_option.return_value = False
-        mock_build_socket.return_value = "/tmp/agent.dtach"
-
-        result = project_scope._wrap_command_for_agent_mode(
-            "topsailai_launch_agent", "tmux"
-        )
-
-        self.assertEqual(result, "dtach -A /tmp/agent.dtach topsailai_launch_agent")
-        mock_supports_environment_option.assert_called_once_with("/usr/bin/tmux")
-        self.assertEqual(mock_which.call_args_list[0].args, ("tmux",))
-        self.assertEqual(mock_which.call_args_list[1].args, ("dtach",))
-
-    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
-    @patch("cli_topsailai.project_scope.shutil.which")
-    def test_unsupported_tmux_falls_back_to_raw_without_dtach(
+    def test_old_tmux_forwards_environment_through_env(
         self, mock_which, mock_supports_environment_option
     ):
-        mock_which.side_effect = ["/usr/bin/tmux", None]
+        """An older tmux keeps tmux mode and forwards the environment via env."""
+        mock_which.return_value = "/usr/bin/tmux"
         mock_supports_environment_option.return_value = False
 
         result = project_scope._wrap_command_for_agent_mode(
             "topsailai_launch_agent", "tmux"
         )
 
-        self.assertEqual(result, "topsailai_launch_agent")
+        self.assertTrue(result.startswith("tmux new-session -s "))
+        self.assertIn(" env ", result)
+        self.assertNotIn("-e ", result)
+        self.assertIn("topsailai_launch_agent", result)
+        mock_supports_environment_option.assert_called_once_with("/usr/bin/tmux")
+
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_old_tmux_without_forwarded_environment_omits_env(
+        self, mock_which, mock_supports_environment_option
+    ):
+        """No forwarded pair means no env prefix, so the command stays direct."""
+        mock_which.return_value = "/usr/bin/tmux"
+        mock_supports_environment_option.return_value = False
+        isolated_os = SimpleNamespace(environ={}, path=os.path)
+
+        with patch("cli_topsailai.project_scope.os", isolated_os):
+            result = project_scope._wrap_command_for_agent_mode(
+                "topsailai_launch_agent", "tmux"
+            )
+
+        self.assertTrue(result.startswith("tmux new-session -s "))
+        self.assertNotIn(" env ", result)
+        self.assertTrue(result.endswith(" topsailai_launch_agent"))
 
     def test_unsupported_mode_raises_value_error(self):
         with self.assertRaises(ValueError) as ctx:

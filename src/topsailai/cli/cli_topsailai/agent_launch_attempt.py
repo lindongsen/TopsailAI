@@ -75,13 +75,9 @@ def resolve_mechanism(mechanism: str) -> str:
             f"{mechanism} is not installed or not found in PATH; "
             f"install {mechanism} or select --agent-mode raw"
         )
-    if mechanism == "tmux":
-        from cli_topsailai.project_scope import _tmux_supports_environment_option
-
-        if not _tmux_supports_environment_option(binary):
-            raise TerminalUnavailable(
-                "tmux does not support new-session -e; select --agent-mode raw or dtach"
-            )
+    # A tmux older than 3.2 has no ``new-session -e``, but it can still forward
+    # the environment through the ``env`` command that tmux execs, so an old
+    # tmux is usable instead of being rejected outright.
     return mechanism
 
 def _attempt_root() -> Path:
@@ -199,9 +195,37 @@ def write_recovery_record(path: Path) -> None:
     finally:
         os.close(fd)
 
+def _tmux_accepts_environment_option() -> bool:
+    """Return whether the installed tmux supports ``new-session -e``.
+
+    A tmux older than 3.2 rejects ``-e``, so the caller must forward the
+    environment through the ``env`` command instead.  An unresolvable tmux is
+    reported as unsupported so the portable form is chosen.
+    """
+    from cli_topsailai.project_scope import _tmux_supports_environment_option
+
+    binary = shutil.which("tmux")
+    if binary is None:
+        return False
+    return _tmux_supports_environment_option(binary)
+
+
 def build_command(attempt: TerminalAttempt, entrypoint: list[str], folder: str,
                   environment: Optional[Mapping[str, str]]) -> list[str]:
-    """Build the detached terminal command that runs the internal supervisor."""
+    """Build the detached terminal command that runs the internal supervisor.
+
+    ``new-session -e`` exists only in tmux 3.2 and later.  Older tmux versions
+    still forward the environment because tmux execs the command directly, so
+    the same ``KEY=value`` pairs are passed as arguments to ``env`` instead.
+
+    Tmux re-parses its whole command line, so a pair whose value ends with
+    ``;`` is read as a command separator and the session never starts.  Only
+    that terminating semicolon is escaped: an interior ``;`` is already part of
+    the same token and stays literal, so escaping every semicolon would corrupt
+    list-shaped values such as ``agent_tool;story_tool;``.
+    """
+    from cli_topsailai.project_scope import _tmux_safe_env_argument
+
     supervisor = list(entrypoint) + [
         "--internal-workspace-agent-supervisor",
         str(attempt.request_path),
@@ -210,13 +234,21 @@ def build_command(attempt: TerminalAttempt, entrypoint: list[str], folder: str,
     if attempt.mechanism == "tmux":
         command = ["tmux", "-L", str(attempt.tmux_socket), "new-session", "-d",
                    "-s", str(attempt.session_name), "-c", folder]
-        for key in _ENV_KEYS:
-            value = (environment or {}).get(key)
-            if value is not None:
-                command.extend(["-e", f"{key}={value}"])
+        pairs = [
+            f"{key}={(environment or {})[key]}"
+            for key in _ENV_KEYS
+            if (environment or {}).get(key) is not None
+        ]
+        if _tmux_accepts_environment_option():
+            for pair in pairs:
+                command.extend(["-e", pair])
+        elif pairs:
+            command.append("env")
+            command.extend(_tmux_safe_env_argument(pair) for pair in pairs)
         command.extend(supervisor)
         return command
     return ["dtach", "-n", str(attempt.dtach_path), *supervisor]
+
 
 def open_listener(attempt: TerminalAttempt) -> socket.socket:
     """Bind and listen on the private control socket before the container starts."""
