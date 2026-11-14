@@ -146,6 +146,48 @@ def _resolve_db_io_failure(error):
     return None
 
 
+# Exit code used when a non-interactive run cannot persist its result. A
+# non-zero code is required because a lost write must never look like success
+# to a script, a CI job or the launcher that started this process.
+DB_IO_FALLBACK_EXIT_CODE = 1
+
+
+def _exit_after_db_io_failure(session_id, error) -> None:
+    """Terminate a non-interactive run after a database I/O failure.
+
+    This is the last-resort fallback for a caller that cannot wait for a human.
+    ``os._exit`` skips ``atexit``, so the session metadata and the diagnostic
+    artifacts are settled explicitly first: the metadata records ``error``
+    instead of staying ``running``, and both output streams are flushed so the
+    stdout artifact keeps the failure evidence. The artifacts themselves are
+    never removed.
+
+    Args:
+        session_id: Session identity whose metadata must be finalized.
+        error: The database I/O failure that ended the run.
+    """
+    try:
+        update_session_meta_status("error", session_id)
+    except Exception:
+        logger.critical(
+            "Failed to finalize session metadata before fallback exit: [%s] %s",
+            type(error).__name__, error, exc_info=True,
+        )
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        logger.critical(
+            "Failed to flush output before fallback exit: [%s] %s",
+            type(error).__name__, error, exc_info=True,
+        )
+    logger.critical(
+        "Non-interactive run terminated after a database I/O failure: [%s] %s",
+        type(error).__name__, error,
+    )
+    os._exit(DB_IO_FALLBACK_EXIT_CODE)
+
+
 def _get_session_token_totals(session_id: str, ai_agent) -> tuple[int, int]:
     """
     Resolve total token counts for the end-of-run summary.
@@ -280,6 +322,18 @@ class AgentChat(AgentChatBase):
             result = self._run(*args, **kwargs)
             completed = True
             return result
+        except SystemExit:
+            # A deliberate exit command (`q`, `exit`, `quit`) raises
+            # SystemExit, which is a BaseException and therefore never reaches
+            # the `except Exception` handler below. Without this branch the
+            # completion write in `finally` is skipped, the metadata keeps
+            # `running`, and the atexit fallback rewrites it to `interrupted`,
+            # misreporting a normal end of session as an abnormal termination.
+            # Mark the session complete and re-raise so the requested exit code
+            # still propagates. KeyboardInterrupt is deliberately not handled
+            # here: an interrupted run must keep reporting `interrupted`.
+            completed = True
+            raise
         except Exception as e:
             db_error = _resolve_db_io_failure(e)
             update_session_meta_status(
@@ -741,10 +795,34 @@ class AgentChat(AgentChatBase):
                     type(db_error).__name__, db_error,
                 )
                 self.call_hooks_post_fail_run(e)
-                if not interactive_enabled or not thread_tool.is_main_thread():
-                    # Non-interactive callers and worker threads cannot wait for
-                    # a human, so the run ends with an explicit failure answer
-                    # instead of an uncaught traceback.
+                if not interactive_enabled:
+                    # A non-interactive caller cannot wait for a human, so the
+                    # run ends with an explicit failure answer instead of an
+                    # uncaught traceback.
+                    self._terminal_failure = True
+                    answer = (
+                        "Task terminated: a database write failed and this turn "
+                        f"could not be persisted: [{type(db_error).__name__}] {db_error}"
+                    )
+                    self.last_message = answer
+                    print(answer)
+                    if thread_tool.is_main_thread():
+                        # Last-resort fallback: a lost write must never look
+                        # like success, so the process exits non-zero. The
+                        # metadata and the artifacts are settled first because
+                        # ``os._exit`` skips ``atexit``.
+                        _exit_after_db_io_failure(
+                            getattr(self.ctx_runtime_data, "session_id", None),
+                            db_error,
+                        )
+                    # A worker thread must not terminate the interpreter: the
+                    # interactive session that owns this process may still be
+                    # usable, so only this turn is abandoned.
+                    break
+                if not thread_tool.is_main_thread():
+                    # A worker thread cannot wait for a human either, but it
+                    # must not kill the process that owns the interactive
+                    # session, so only this turn is abandoned.
                     self._terminal_failure = True
                     answer = (
                         "Task terminated: a database write failed and this turn "
