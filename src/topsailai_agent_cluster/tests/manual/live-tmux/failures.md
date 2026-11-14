@@ -26,8 +26,9 @@ author: DawsonLin
 
 BLOCKED. The only live adapter on this host advertises all eight capabilities, so an honest
 capability-disabled endpoint cannot be constructed without fabricating provider state. Automated
-coverage of the refusal path lives in `internal/tui/` capability tests and
-`internal/protocol/capabilities_test.go`. BLOCKED is not PASS.
+coverage of the refusal path lives in `internal/tui/interactive_ctl_test.go`,
+`internal/tui/interactive_ctl_dotted_test.go`, `internal/tui/interactive_matrix_test.go` and
+`internal/tui/capability_version_test.go`. BLOCKED is not PASS.
 
 ## ERR-08 disposition
 
@@ -39,7 +40,7 @@ BLOCKED for the live CLI path, with the reason below, and replaced by automated 
 - A live session always has a readable stdout file, so a genuine empty stdout cannot be produced
   without fabricating provider state. `/root/.topsailai/workspace/task/*.session.stdout` holds
   seven files and none of them is 0 bytes, so no honest empty-stdout fixture exists on this host.
-- Automated coverage: `internal/adapter/topsailai/output_envelope_test.go` exercises twelve
+- Automated coverage: `providers/topsailai/output_test.go` exercises twelve
   envelope classes — body present, empty array, Chinese text, truncated, scan limit, flat legacy
   shape, missing `lines`, `null` lines, `ok:false` with `error_code`, wrong `error_code` type,
   malformed JSON, and a failed subprocess.

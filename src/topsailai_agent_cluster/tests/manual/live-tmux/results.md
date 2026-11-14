@@ -33,7 +33,7 @@ A module is not complete while required cases are failed or blocked. Fixes must 
 | ERR-05 | BLOCKED | no honest capability-disabled live adapter; automated capability tests cover the refusal |
 | ERR-06 | PASS | generation swap during confirmation failed closed, zero forbidden markers |
 | ERR-07 | PASS | `.tmp/live-tmux-audit/err-07/` (8 files) |
-| ERR-08 | BLOCKED | CLI path unreachable; `internal/adapter/topsailai/output_envelope_test.go` covers 12 envelope classes |
+| ERR-08 | BLOCKED | CLI path unreachable; `providers/topsailai/output_test.go` covers 12 envelope classes |
 | ERR-09 | PASS | `.tmp/live-tmux-audit/err-09/evidence/err-09-summary.md` |
 | ERR-10 | PASS | `quit`/`q`/`exit`/Ctrl-D restored canonical mode |
 | ERR-11 | PASS | `.tmp/live-tmux-audit/err-11/evidence/` |
@@ -71,17 +71,19 @@ document it returned; no case is recorded from expectation.
 
 | Case | Outcome | Evidence |
 | --- | --- | --- |
-| CTLSHORT-01 disagreeing constant | PASS | `ctl.git.status` with `{"instruction":"ctx.history"}` returned `Status: rejected`, `ErrorCode: control_payload_conflict`, `EffectCertainty: not_applied`, `DeliveryBoundary: not_started`; the provider was never invoked |
+| CTLSHORT-01 disagreeing constant | PASS | `ctl.git.status` with `{"instruction":"ctx.history"}` returned `Status: rejected`, `ErrorCode: invalid_request`, `EffectCertainty: not_applied`, `DeliveryBoundary: not_started`; the provider was never invoked |
 | CTLSHORT-02 empty payload | PASS | `ctl.git.status` with `{}` returned `Status: finished`, `ErrorCode: ""`, and genuine `git status` output (`On branch staging ... nothing to commit, working tree clean`); the decoded `intent_json` still carries `"payload":{}`, so the constant is injected at dispatch and not by the client |
 | CTLSHORT-03 `ctl.ctx.history` | PASS | `Status: finished`, `ErrorCode: ""`, provider `result` begins with the conversation-history separator line |
 | CTLSHORT-04 `ctl.agent.tokens` | PASS | `Status: finished`, `ErrorCode: ""`, provider `result` begins `Model: DeepSeek-V4-Flash-Preview` then `Agent2LLM:` |
 | CTLSHORT-05 `ctl.git.branch` | PASS | `Status: finished`, `ErrorCode: ""`, provider `result` is `  main\n* staging\n` |
 
-CTLSHORT-01 is the case that distinguishes the two failure classes. Before the fix it reported
-`control_action_unconfigured`, which sends the operator looking for a missing catalog entry when
-the entry exists and the payload is wrong. It now reports `control_payload_conflict` with
-`not_applied` effect certainty, so the operator knows nothing was sent and the payload is what
-must change.
+CTLSHORT-01 is the case that distinguishes the two failure classes. An action nobody configured
+is rejected as `unsupported`, which sends the operator looking for a missing catalog entry. A
+configured action reached with a payload that disagrees with the constant it fixes is rejected
+as `invalid_request` with `not_applied` effect certainty, so the operator knows nothing was sent
+and the payload is what must change. The two codes are distinct because the provider classifies
+them at different points: the catalog lookup fails before any argv exists, and the constant check
+fails after the entry was found.
 
 CTLSHORT-02 is the case that proves the mechanism. The client submitted an empty payload, and the
 provider still received `git.git_status`, so the catalog entry supplied the instruction. The
