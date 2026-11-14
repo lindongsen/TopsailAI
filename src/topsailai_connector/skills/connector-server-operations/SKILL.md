@@ -72,14 +72,16 @@ supports Windows.
 ## Packaging a Node for someone else
 
 Handing a Node to a user who does not build software is a distribution problem, not
-an installation problem. `make package` produces one zip that the user unzips and
-starts, and that you can address with the CLI as soon as it connects. The user needs
-no Go, no compiler and no configuration file.
+an installation problem. `make package` produces one executable with the
+configuration compiled in: the user runs it and the Node connects, and you can
+address it with the CLI as soon as it does. The user needs no Go, no compiler, no
+configuration file and no environment variable.
 
 ```
 make package \
   PACKAGE_SERVER_URL=wss://cloud.example:8443/channel \
-  PACKAGE_SCOPES='project=/home/me/project notes=/home/me/Documents/notes'
+  PACKAGE_SCOPES='project=/home/me/project notes=/home/me/Documents/notes' \
+  PACKAGE_TUNNEL_TOKEN=<tunnel_token>
 ```
 
 For a Windows user, the same inputs through a separate target:
@@ -89,8 +91,14 @@ make package-windows PACKAGE_SERVER_URL=... PACKAGE_SCOPES='...'
 ```
 
 `package-windows` is a target rather than a variable you must remember, because
-forgetting it produces a Linux binary in a zip a Windows user cannot run, and that
-failure appears on their machine instead of yours.
+forgetting it produces a Linux binary a Windows user cannot run, and that failure
+appears on their machine instead of yours.
+
+The executable carries the `tunnel_token`, so it is a credential: a leaked binary
+opens a channel to the Server for every Node on it. If the recipient must edit the
+scopes themselves, or the policy must be reloadable on `SIGHUP`, build the zip
+instead with `make package-zip`. The zip carries the identity pair rather than the
+Server-wide token, so a leak exposes one Node.
 
 ### Inputs
 
@@ -101,12 +109,12 @@ failure appears on their machine instead of yours.
 | `PACKAGE_SCOPES_FILE` | no | A file of `name=path` lines, for paths containing spaces or a long list |
 | `PACKAGE_TUNNEL_TOKEN` | no | The `tunnel_token` to embed. Without it the user must supply `CONNECTOR_NODE_TUNNEL_TOKEN` |
 | `PACKAGE_ALLOW_FILESYSTEM_ROOT` | no | `1` lets a scope be a volume root. Unset means off. Any other value fails the build |
-| `PACKAGE_EMBED_CONFIG` | no | `1` builds one executable with the configuration compiled in, instead of a zip |
+| `PACKAGE_EMBED_CONFIG` | no | Packaging mode. Default `1`: one executable with the configuration compiled in. `0` builds a zip instead |
 | `PACKAGE_NAME` | no | Bundle name. Default `connector-node-<goos>-<goarch>` |
 | `PACKAGE_GOOS`, `PACKAGE_GOARCH` | no | Target platform. Default this host |
 
-The output is `bin/<PACKAGE_NAME>.zip`, or `bin/<PACKAGE_NAME>` when
-`PACKAGE_EMBED_CONFIG=1`.
+The output is `bin/<PACKAGE_NAME>`, or `bin/<PACKAGE_NAME>.zip` when
+`PACKAGE_EMBED_CONFIG=0`.
 
 ### What the zip contains
 
@@ -197,39 +205,38 @@ decision, recorded in the bundle's `allow_filesystem_root` file, so the recipien
 cannot turn it on themselves. Only `1`, `0` and an empty value are accepted, and
 any other spelling fails the build rather than guessing.
 
-### A single executable instead of a zip
+### The single executable, which is the default
 
-`make package-embedded` produces one file rather than a zip: the Server address,
-the policy and, when you supply it, the `tunnel_token` are compiled into the
-binary. The recipient copies the file and runs it. There is nothing to unzip and
-nothing to edit.
+`make package` produces one file rather than a zip: the Server address, the policy
+and, when you supply it, the `tunnel_token` are compiled into the binary. The
+recipient copies the file and runs it. There is nothing to unzip and nothing to
+edit.
 
 ```
-make package-embedded PACKAGE_SERVER_URL=... PACKAGE_SCOPES_FILE=... \
+make package PACKAGE_SERVER_URL=... PACKAGE_SCOPES_FILE=... \
   PACKAGE_TUNNEL_TOKEN=...
-make package-embedded-windows ...        # the same, for a Windows target
+make package-windows ...        # the same, for a Windows target
 ```
 
-The inputs are the same as for a zip, plus `PACKAGE_EMBED_CONFIG=1` when you call
-`make package` directly instead of the dedicated target.
+`make package-embedded` and `make package-embedded-windows` still work and now only
+restate the default, so an older script keeps producing what it used to.
 
-Choose this shape when the recipient should not edit anything, and choose a zip
-when they need to change scopes themselves. The trade is explicit:
+Choose a zip instead with `make package-zip` when the recipient must change scopes
+themselves or the policy must be reloadable. The trade is explicit:
 
 | | Zip | Single executable |
 |---|---|---|
 | Scopes the recipient can edit | yes, `scopes.txt` | no, compiled in |
 | Policy reload on `SIGHUP` | yes | no policy file to reload |
-| `tunnel_token` in the binary | no, in `config/tunnel_token` | **yes, in plain text** |
+| `tunnel_token` in the artifact | no, in `config/tunnel_token` | **yes, in plain text** |
 | Leak blast radius | that one Node | **every Node on this Server** |
 | Files to hand over | a zip | one file |
 
-The last two rows are the reason this is a separate target rather than a flag on
-the existing one. A zip leaks one Node's identity; an embedded binary leaks the
-Server-wide `tunnel_token`, which lets the holder impersonate any Node. `strings`
-recovers it, because the linker stores the value as plain text. Hand the file over
-the way you would hand over the Server's own secret, and rotate the
-`tunnel_token` if it leaks.
+The last two rows are why the zip stays reachable rather than being removed. A zip
+leaks one Node's identity; an embedded binary leaks the Server-wide
+`tunnel_token`, which lets the holder impersonate any Node. `strings` recovers it,
+because the linker stores the value as plain text. Hand the file over the way you
+would hand over the Server's own secret, and rotate the `tunnel_token` if it leaks.
 
 The Node compensates where it can: a build that carries a token refuses to serve
 its own executable through a scope, so a caller with `read` on the install folder

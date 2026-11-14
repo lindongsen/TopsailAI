@@ -26,8 +26,8 @@ later change has a name to argue against instead of inventing a second one.
 Configuration is resolved in one place, at startup, in this order:
 
 1. Environment variable.
-2. Value compiled into the binary, when the binary was built with
-   `PACKAGE_EMBED_CONFIG=1`.
+2. Value compiled into the binary, when the binary was built with the
+   configuration embedded, which is the default for `make package`.
 3. Built-in default.
 
 There is no command-line flag for a configuration value and no configuration
@@ -183,8 +183,9 @@ inside this directory, or which contains it, is refused at startup.
 
 #### Embedded configuration
 
-A binary built with `make package-embedded` carries its configuration, so it needs
-no environment variable and no file. Three values are compiled in:
+This is the default packaging mode: `make package` builds a binary that carries
+its configuration, so it needs no environment variable and no file. Three values
+are compiled in:
 
 | Value | Source | Overridable at runtime |
 |---|---|---|

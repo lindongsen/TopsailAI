@@ -56,10 +56,11 @@ and the directory does not appear in its parent's listing.
 
 ## A packaging mode that embeds the configuration in the binary
 
-`make package-embedded` builds one executable that starts and connects with no
+`make package` builds one executable that starts and connects with no
 configuration file and no environment variable. The Server URL, the policy
 document and the `tunnel_token` are compiled in with `-ldflags -X`, so the
-recipient runs the binary and the Node is reachable.
+recipient runs the binary and the Node is reachable. This is the default
+packaging mode; `make package-zip` produces the older zip instead.
 
 The identity pair is deliberately not embedded. It is generated on first start,
 polled every second and rewritten by `regenerate`, so an embedded pair would have

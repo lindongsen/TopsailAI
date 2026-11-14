@@ -250,10 +250,10 @@ a password.
 
 ## Running from a single executable you were given
 
-A second delivery shape exists: one executable with the Server address, the policy
-and the `tunnel_token` compiled into it. There is no zip, no `scopes.txt`, no
-`policy.yaml` and no environment variable to set. Copy the file, run it, and the
-Node connects.
+This is the default delivery shape: one executable with the Server address, the
+policy and, when the operator supplied one, the `tunnel_token` compiled into it.
+There is no zip, no `scopes.txt`, no `policy.yaml` and no environment variable to
+set. Copy the file, run it, and the Node connects.
 
 ```
 ./connector-node                                    # Linux or macOS
@@ -468,13 +468,31 @@ A graceful shutdown closes the channel. Send `SIGINT` or `SIGTERM`.
 ### Windows notes
 
 - Run it from a console or as a service; there is no installer.
-- The config directory defaults to the platform configuration directory. Set
-  `CONNECTOR_NODE_CONFIG_DIR` explicitly if you want it somewhere predictable.
+- The config directory defaults to the platform configuration directory, which on
+  Windows is `%APPDATA%\topsailai-connector`, not a `config` folder beside the
+  executable. A single executable therefore keeps its identity in
+  `C:\Users\<you>\AppData\Roaming\topsailai-connector\identity`. Set
+  `CONNECTOR_NODE_CONFIG_DIR` explicitly if you want it somewhere predictable; a
+  zip bundle's start script does exactly that, which is why the two shapes put the
+  identity in different places.
+- A process started over SSH dies when the session ends. `Start-Process` returns a
+  live process that connects and then disappears silently, leaving a zero-byte log.
+  Start it through WMI instead, which detaches it from the session:
+
+  ```
+  Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
+    -Arguments @{ CommandLine = 'cmd.exe /c C:\path\to\run.cmd'; CurrentDirectory = 'C:\path\to' }
+  ```
+
+- Redirect the log inside a `.cmd` launcher (`connector-node.exe > start.out.log
+  2> start.err.log`). `Start-Process -RedirectStandardOutput` produced a zero-byte
+  file while the process ran.
 - Reserved device names (`NUL`, `CON`, `COM1`, `LPT1`), alternate data streams
   (`file.txt:stream`), trailing dots and trailing spaces are all refused as paths.
   That is defence in depth, not a limitation.
 - A junction or symlink that escapes the scope is refused by the same rule as on
-  POSIX.
+  POSIX. A junction pointing at the Node's own config directory is refused for
+  `read`, `list` and `stat`, and it does not appear in its parent's listing.
 
 ## Regenerating the pair
 

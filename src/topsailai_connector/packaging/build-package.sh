@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Author: DawsonLin
-# Purpose: Assemble a distributable Node bundle for the Makefile's `package`
-# target: one zip that a user unzips and starts, and that the operator can
-# address with the CLI immediately.
+# Purpose: Assemble a distributable Node artifact for the Makefile's `package`
+# target. The default is one executable with the configuration compiled in, so a
+# user runs it and the operator can address the Node with the CLI immediately.
+# PACKAGE_EMBED_CONFIG=0 produces a zip instead, for a recipient who must edit the
+# scopes or reload the policy.
 #
 # Three decisions shape this script, and each one exists because the obvious
 # alternative does not work:
@@ -40,7 +42,7 @@ PACKAGE_SCOPES=${PACKAGE_SCOPES:-}
 PACKAGE_SCOPES_FILE=${PACKAGE_SCOPES_FILE:-}
 PACKAGE_TUNNEL_TOKEN=${PACKAGE_TUNNEL_TOKEN:-}
 PACKAGE_ALLOW_FILESYSTEM_ROOT=${PACKAGE_ALLOW_FILESYSTEM_ROOT:-}
-PACKAGE_EMBED_CONFIG=${PACKAGE_EMBED_CONFIG:-}
+PACKAGE_EMBED_CONFIG=${PACKAGE_EMBED_CONFIG:-1}
 BIN_DIR=${BIN_DIR:-bin}
 TMP_DIR=${TMP_DIR:-.tmp}
 
@@ -157,14 +159,17 @@ esac
 
 # PACKAGE_EMBED_CONFIG chooses the packaging mode, so it accepts exactly the same
 # two spellings as the opt-in above and refuses everything else. A value such as
-# `true` that was silently treated as "off" would produce a bundle the operator
+# `true` that was silently treated as "off" would produce an artifact the operator
 # did not ask for, and the difference between the two modes is large: one is a zip
 # with a start script, the other is a single executable.
+#
+# The default is 1, so an unset value means embedded. That is the mode the project
+# deploys by default; 0 is the explicit opt-out that produces a zip.
 case "$PACKAGE_EMBED_CONFIG" in
-'' | 0) EMBED_CONFIG=0 ;;
-1) EMBED_CONFIG=1 ;;
+'' | 1) EMBED_CONFIG=1 ;;
+0) EMBED_CONFIG=0 ;;
 *)
-	fail "PACKAGE_EMBED_CONFIG '$PACKAGE_EMBED_CONFIG' is not recognised; use 1 to embed the configuration in the binary, or leave it unset"
+	fail "PACKAGE_EMBED_CONFIG '$PACKAGE_EMBED_CONFIG' is not recognised; use 1 for one executable, 0 for a zip, or leave it unset for the default"
 	;;
 esac
 

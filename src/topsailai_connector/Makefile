@@ -80,11 +80,16 @@ COVERAGE_HTML := $(TMP_DIR)/coverage.html
 # stays unreadable through such a scope: the Node denies it by resolved path and
 # omits it from a listing.
 #
-# PACKAGE_EMBED_CONFIG selects the second packaging mode. When it is set to 1,
-# `make package` produces one executable instead of a zip: the Server URL, the
-# policy and, when PACKAGE_TUNNEL_TOKEN is set, the tunnel token are compiled
-# into the binary, so the recipient runs it and the Node connects with no
-# configuration file and no environment variable.
+# PACKAGE_EMBED_CONFIG selects the packaging mode, and it defaults to 1: `make
+# package` produces one executable instead of a zip. The Server URL, the policy
+# and, when PACKAGE_TUNNEL_TOKEN is set, the tunnel token are compiled into the
+# binary, so the recipient runs it and the Node connects with no configuration
+# file and no environment variable.
+#
+# Set PACKAGE_EMBED_CONFIG=0 to get the zip instead. The zip is the mode to pick
+# when the recipient must edit the scopes themselves, when the policy must be
+# reloadable on SIGHUP, or when one artifact must not carry the Server-wide
+# tunnel token.
 #
 # The identity is deliberately not embedded. It is generated on first start,
 # polled every second and rewritten by `regenerate`, and two copies of one binary
@@ -93,6 +98,8 @@ COVERAGE_HTML := $(TMP_DIR)/coverage.html
 # A binary built this way carries a credential, so the Node adds its own
 # executable to the deny list: a scope that contains the binary cannot serve it.
 # The values are stored as plain text in the binary, so `strings` recovers them.
+# A leaked zip exposes one Node's identity; a leaked embedded binary exposes the
+# tunnel token, which gates every Node on that Server.
 #
 # PACKAGE_GOOS and PACKAGE_GOARCH default to this host, so a bundle for the
 # operator's own machine needs no platform argument. `make package-windows`
@@ -105,7 +112,7 @@ PACKAGE_SCOPES ?=
 PACKAGE_SCOPES_FILE ?=
 PACKAGE_TUNNEL_TOKEN ?=
 PACKAGE_ALLOW_FILESYSTEM_ROOT ?=
-PACKAGE_EMBED_CONFIG ?=
+PACKAGE_EMBED_CONFIG ?= 1
 
 # The unit suite is what `go test ./...` runs. Integration and BDD suites are
 # behind build tags so a plain unit run stays fast and needs no built binary.
@@ -153,11 +160,12 @@ help:
 	@echo "                      volume (C:\\ or /). Off by default. The Node still"
 	@echo "                      denies the bundle's own config directory"
 	@echo "  PACKAGE_TUNNEL_TOKEN Optional tunnel_token to embed in the bundle"
-	@echo "  PACKAGE_EMBED_CONFIG  Set to 1 to produce one executable with the"
-	@echo "                      configuration compiled in, instead of a zip. The"
-	@echo "                      binary then needs no file and no environment"
-	@echo "                      variable. It carries the tunnel token, so treat"
-	@echo "                      the file as a credential"
+	@echo "  PACKAGE_EMBED_CONFIG  Packaging mode. Default 1: one executable with"
+	@echo "                      the configuration compiled in, needing no file and"
+	@echo "                      no environment variable. Set to 0 for a zip, which"
+	@echo "                      the recipient can edit and reload. The executable"
+	@echo "                      carries the tunnel token, so treat it as a"
+	@echo "                      credential: a leak exposes every Node on the Server"
 	@echo "  PACKAGE_NAME        Bundle name. Default connector-node-<goos>-<goarch>"
 	@echo "  PACKAGE_GOOS        Target OS. Default this host"
 	@echo "  PACKAGE_GOARCH      Target architecture. Default this host"
@@ -292,10 +300,12 @@ test-windows-compile:
 # machine that will serve the files. That is what makes the same zip usable on a
 # machine whose folders this host has never seen.
 #
-# The bundle is a credential bundle: it carries the Node's identity pair and,
-# when PACKAGE_TUNNEL_TOKEN is set, the tunnel token. The script prints the pair
-# so the operator can copy it into the CLI, and says so rather than leaving it to
-# be discovered.
+# The artifact is a credential artifact either way. The default mode compiles the
+# configuration into one executable, so the file carries the tunnel token and a
+# leak exposes every Node on that Server. The zip mode carries the Node's identity
+# pair, and the tunnel token when PACKAGE_TUNNEL_TOKEN is set, so a leak exposes
+# one Node. The script prints what the artifact carries and says so rather than
+# leaving it to be discovered.
 package: build-node
 	@PACKAGE_NAME='$(PACKAGE_NAME)' \
 	PACKAGE_GOOS='$(PACKAGE_GOOS)' \
@@ -318,11 +328,10 @@ package: build-node
 package-windows:
 	@$(MAKE) --no-print-directory package PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
 
-# package-embedded is the second packaging mode: one executable with the Server
-# URL, the policy and, when PACKAGE_TUNNEL_TOKEN is set, the tunnel token
-# compiled in. It is a separate target rather than a variable for the same reason
-# package-windows is: the two modes produce different artifacts, and a caller who
-# forgot the variable would get a zip and not notice.
+# package-embedded is kept as an explicit spelling of the default mode: one
+# executable with the Server URL, the policy and, when PACKAGE_TUNNEL_TOKEN is
+# set, the tunnel token compiled in. It now only restates the default, so a
+# script that already calls it keeps working after the default changed.
 #
 # The identity is not embedded, so the recipient runs the binary once with `id`
 # to create it. That is stated in the summary the script prints.
@@ -332,6 +341,16 @@ package-embedded:
 # package-embedded-windows is package-embedded for windows/amd64.
 package-embedded-windows:
 	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=1 PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
+
+# package-zip is the opt-out: a zip with a start script, an editable scopes.txt
+# and a policy the Node reloads on SIGHUP. It exists as a named target so a
+# caller who wants the zip does not have to remember the variable.
+package-zip:
+	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=0
+
+# package-zip-windows is package-zip for windows/amd64.
+package-zip-windows:
+	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=0 PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
 
 check: vet test-unit coverage integration bdd e2e build-windows test-windows-compile
 

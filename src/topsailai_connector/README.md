@@ -163,19 +163,27 @@ ignored by git.
 
 ## Package a Node for someone else
 
-`make package` produces a zip that a user unzips and starts. The bundle carries
-the Node binary, a start script for the target platform, the scope list and a
-pre-generated identity pair, so the operator can reach the machine with the CLI
-as soon as the user runs the start script.
+`make package` produces one executable with the configuration compiled in. The
+recipient runs it and the Node connects with no configuration file and no
+environment variable; the operator can reach the machine with the CLI as soon as
+it connects.
 
 ```
 make package PACKAGE_SERVER_URL=wss://cloud.example.com:8443/channel \
-             PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool'
+             PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool' \
+             PACKAGE_TUNNEL_TOKEN=<tunnel_token>
 ```
 
-The command prints the `node-id.node-token` pair and a CLI invocation to paste.
-`make package-windows` builds the same bundle for Windows. See
-`packaging/bundle-README.md` for what the recipient does with it.
+The binary carries the `tunnel_token`, so hand it over the way you would hand over
+a password: a leaked binary opens a channel to the Server for every Node on it.
+The identity is not embedded, so run the binary once with `id` on the target
+machine to create the pair, then copy it into the CLI.
+
+`make package-windows` builds the same executable for Windows. `make package-zip`
+produces the older zip instead, for a recipient who must edit the scopes
+themselves or reload the policy; it carries the identity pair rather than the
+Server-wide token, so a leak exposes one Node. See `packaging/bundle-README.md`
+for what the recipient does with a zip.
 
 ## Author
 

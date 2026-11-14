@@ -5,6 +5,11 @@ author: DawsonLin
 
 # Ready-to-Run Node Bundle
 
+> The zip is no longer the default. `make package` now produces one executable
+> with the configuration compiled in; the zip is built with `make package-zip`.
+> This document describes the zip, which stays available for a recipient who must
+> edit the scopes themselves or reload the policy.
+
 ## What an operator sees
 
 One command produces a zip. The person receiving it unzips it, runs one start
@@ -12,8 +17,8 @@ script, and the Node is connected and reachable by the CLI. No editing, no
 second step, no reading of the design document.
 
 ```
-make package PACKAGE_SERVER_URL=wss://cloud.example.com:8443/channel \
-             PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool'
+make package-zip PACKAGE_SERVER_URL=wss://cloud.example.com:8443/channel \
+                 PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool'
 ```
 
 The command prints the `node-id.node-token` pair and a ready-to-paste CLI
