@@ -137,7 +137,6 @@ func startQueryMatrixCluster() error {
 		return err
 	}
 	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{
-		ProviderType:        "topsailai",
 		EndpointEnvironment: map[string]string{"AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR": policyDir},
 		Faults:              harness.FaultInjection{ProviderInvocationLog: queryMatrixInvocationLog},
 	})

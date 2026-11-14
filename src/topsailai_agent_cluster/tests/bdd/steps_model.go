@@ -87,8 +87,7 @@ func startModelClusterWithScopes(scopes []string) error {
 	}
 	modelInvocationLog = filepath.Join(activeTest.TempDir(), "model-invocations.jsonl")
 	options := harness.ClusterOptions{
-		ProviderType: "topsailai",
-		Faults:       harness.FaultInjection{ProviderInvocationLog: modelInvocationLog},
+		Faults: harness.FaultInjection{ProviderInvocationLog: modelInvocationLog},
 	}
 	if len(scopes) > 0 {
 		// The restriction is written on the Endpoint, because the Endpoint is the

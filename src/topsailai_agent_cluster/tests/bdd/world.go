@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	topsailai "topsailai_agent_cluster/internal/adapter/topsailai"
 	"topsailai_agent_cluster/internal/protocol"
 	serverapi "topsailai_agent_cluster/internal/server"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
@@ -26,9 +25,6 @@ type Scenario struct {
 	world             *World
 	lastStatus        int
 	lastBody          []byte
-	capabilityAdapter *topsailai.Adapter
-	capabilityErr     error
-	capabilityCalls   int
 	realCluster       *harness.Cluster
 	realCommandID     string
 	realCommandStatus map[string]any

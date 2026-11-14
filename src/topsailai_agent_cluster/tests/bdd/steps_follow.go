@@ -43,8 +43,9 @@ var followScript = []string{"cd 1\n", "cd 1\n", "logs -f\n", "quit\n"}
 // enter. It proves the stop is not tied to a particular character.
 var followEnterScript = []string{"cd 1\n", "cd 1\n", "logs -f\n", "\n"}
 
-// startFollowCluster starts a real cluster whose adapter can stream. The generic
-// fixture adapter cannot, so the TopsailAI adapter is selected explicitly.
+// startFollowCluster starts a real cluster whose adapter can stream. The mock
+// provider answers a follow with real stream frames, so the default adapter is
+// enough; no provider-specific adapter has to be selected.
 func startFollowCluster() error {
 	if activeTest == nil {
 		return fmt.Errorf("active BDD test is not initialized")
@@ -52,7 +53,7 @@ func startFollowCluster() error {
 	if activeScenario.world == nil {
 		activeScenario.world = &World{}
 	}
-	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{})
 	if err != nil {
 		return err
 	}

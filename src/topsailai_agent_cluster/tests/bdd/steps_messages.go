@@ -69,7 +69,6 @@ func startMessagesCluster() error {
 		activeScenario.world = &World{}
 	}
 	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{
-		ProviderType: "topsailai",
 		Faults: harness.FaultInjection{
 			MessagesBody:  messagesStepRecord,
 			MessagesCount: 2,
