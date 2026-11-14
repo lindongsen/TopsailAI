@@ -57,7 +57,7 @@ func randomResourceID() (string, error) {
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", fmt.Errorf("generate resource ID: %w", err)
 	}
-	return "res_" + hex.EncodeToString(raw[:]), nil
+	return protocol.ClusterResourceIDPrefix + hex.EncodeToString(raw[:]), nil
 }
 
 // LookupResourceID returns the durable source mapping for an opaque resource ID.

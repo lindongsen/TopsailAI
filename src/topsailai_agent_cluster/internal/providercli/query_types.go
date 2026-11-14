@@ -315,7 +315,7 @@ func validateTypedProviderKey(actualKind, requiredKind, key string) error {
 	if actualKind != requiredKind {
 		return fmt.Errorf("resource_kind must be %q, got %q", requiredKind, actualKind)
 	}
-	return validateIdentifier("provider_resource_key", key, true)
+	return validateProviderResourceKey("provider_resource_key", key, true)
 }
 
 func isNullJSON(data json.RawMessage) bool {

@@ -28,7 +28,7 @@ func DecodeModelSelectPayload(data []byte) (ModelSelectPayload, error) {
 
 // Validate rejects a missing or malformed Provider-private model key.
 func (p ModelSelectPayload) Validate() error {
-	if err := validateIdentifier("model provider_resource_key", p.ProviderResourceKey, true); err != nil {
+	if err := validateProviderResourceKey("model provider_resource_key", p.ProviderResourceKey, true); err != nil {
 		return err
 	}
 	return nil

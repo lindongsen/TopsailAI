@@ -379,7 +379,7 @@ func (t Target) validate(requireGeneration bool) error {
 	if !isResourceKind(t.ResourceKind) {
 		return fmt.Errorf("invalid resource_kind %q", t.ResourceKind)
 	}
-	if err := validateIdentifier("provider_resource_key", t.ProviderResourceKey, true); err != nil {
+	if err := validateProviderResourceKey("provider_resource_key", t.ProviderResourceKey, true); err != nil {
 		return err
 	}
 	return validateIdentifier("expected_generation", t.ExpectedGeneration, requireGeneration)
@@ -413,7 +413,7 @@ func (n NamedContract) validate(label string) error {
 }
 
 func (o ProviderObservation) validate() error {
-	if err := validateIdentifier("provider_resource_key", o.ProviderResourceKey, true); err != nil {
+	if err := validateProviderResourceKey("provider_resource_key", o.ProviderResourceKey, true); err != nil {
 		return err
 	}
 	if err := validateIdentifier("provider_generation", o.ProviderGeneration, false); err != nil {
@@ -613,6 +613,24 @@ func validateIdentifier(name, value string, required bool) error {
 	}
 	if len(value) > MaxIdentifierBytes {
 		return fmt.Errorf("%s exceeds %d bytes", name, MaxIdentifierBytes)
+	}
+	return nil
+}
+
+// validateProviderResourceKey rejects a Cluster resource ID where a
+// provider-private key belongs.
+//
+// The contract states that Cluster resource IDs never cross into provider
+// authority, and the Endpoint alone maps a provider key to a Cluster ID. A
+// provider that received a Cluster ID would be addressing a resource by an
+// identity it cannot resolve, so the value must be refused at the seam rather
+// than forwarded and failing later as an unexplained not-found.
+func validateProviderResourceKey(name, value string, required bool) error {
+	if err := validateIdentifier(name, value, required); err != nil {
+		return err
+	}
+	if protocol.IsClusterResourceID(value) {
+		return fmt.Errorf("%s must be a provider-private key, not a Cluster resource ID %q", name, value)
 	}
 	return nil
 }
