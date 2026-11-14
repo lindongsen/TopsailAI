@@ -312,3 +312,37 @@ Trigger: the reaper refused every session deletion with `unverified recorded hom
 Action: treat the folder constants as the single authority for the home spelling and normalize every comparison site with the same function (`os.path.abspath(os.path.expanduser(...))`), never `Path.resolve()`. Note that `Path.absolute()` is not equivalent either: it keeps `..` segments that `os.path.abspath` collapses.
 
 Why this prevents recurrence: the first regression test I wrote exercised `SessionActivityProbe` directly with a symlinked root and a symlinked recorded home, and it **passed on the pristine tree**. Both sides used `Path.absolute()`, so they agreed with each other and the bug was invisible. The defect lived one layer up, in the reaper that produced the child's `TOPSAILAI_HOME`. Only a test at that boundary — asserting the value passed to `--home`, to the probe root, and to `_configure_child_logging` — failed on pristine and passed after the fix. A comparison helper can be perfectly consistent internally while every caller feeds it two different spellings, so the test must observe the value where it is produced. The negative control is mandatory: run the new test on a pristine worktree and confirm it fails there, otherwise a green suite proves nothing.
+
+## A `BaseException` exit command bypasses the `except Exception` handler that owns the completion write
+
+Trigger: typing `q` to end an interactive session left the session metadata at `status: interrupted` instead of `completed`. `q` is in `DESCRIPTION_EXIT_SET` in `utils/instruction_tool.py`, and that path calls `sys.exit(0)`, which raises `SystemExit`. `AgentChat.run()` in `workspace/agent/agent_shell_base.py` sets `completed = True` only after `self._run(...)` returns, and its handler is `except Exception`, which never sees a `BaseException`. The `finally` block then skips `update_session_meta_status` because `if completed:` is still false, so the metadata keeps `running` and the `atexit` handler `_finalize_on_exit` rewrites it to `interrupted`.
+
+Action: when a completion or finalization write is gated by a flag set on the normal return path, enumerate every way the guarded call can be skipped, including `BaseException` subclasses such as `SystemExit` and `KeyboardInterrupt`. Treat a deliberate exit command as a normal end of the session: set the completion flag and re-raise so the requested exit code still propagates, and keep `error` and `interrupted` reserved for genuine failures.
+
+Why this prevents recurrence: the `atexit` fallback is not the defect, it is the messenger. It cannot distinguish a deliberate exit from a crash because the only signal it receives is "the status is still `running`". Fixing the fallback would corrupt the crash case, so the fix must land where the completion write is skipped. The probes also show why reading the code alone is not enough: `except Exception` looks like it covers the run, and `if completed:` looks like a correct guard, yet the two together silently convert a normal exit into an abnormal one. The negative control matters here too — the same probe without the `SystemExit` leaves `completed`, which proves the exit path is the only difference.
+
+## A pathspec commit takes the working tree, so it silently discards hunk-level staging
+
+Trigger: `agent_shell_base.py` contained my 12-line `SystemExit` branch plus another
+agent's uncommitted db-io work in two separate hunks. I staged only my hunk with
+`git apply --cached --unidiff-zero`, verified the index held exactly those 12 lines and
+that the two foreign hunks were still unstaged, then ran
+`git commit -m "..." -- <three paths>`. The commit `b389d3ee` came out as
+`335 insertions(+), 4 deletions(-)` and contained all three hunks, including the foreign
+db-io code. The working tree was left clean, so the foreign work had been absorbed.
+
+Action: `git commit -- <pathspec>` does not commit the index for those paths; it commits
+the working-tree content of those paths, so any hunk-level staging is bypassed. When a
+file contains both my change and foreign uncommitted work, a pathspec commit cannot
+isolate my hunk. Either commit the index without a pathspec after proving the index holds
+only my files, or isolate the change in a separate file or worktree. Verify with
+`git show --name-only --format="" HEAD` **and** `git show HEAD -- <file> | grep '^@@'`,
+because the file list alone cannot reveal that extra hunks were swept in.
+
+Why this prevents recurrence: the two safeguards I relied on each looked sufficient and
+were not. The pathspec form protects against foreign *files* already in the index, and
+hunk-level staging protects against foreign *hunks* in the same file, but the pathspec
+form re-reads the working tree and therefore cancels the hunk-level staging. The
+insertion count was the only visible signal, and it appeared after the commit had already
+landed. Checking the hunk list of the committed diff is the only reliable proof, since a
+contaminated commit and a clean one both succeed silently with the same message.
