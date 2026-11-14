@@ -53,6 +53,36 @@ The shipped example must name only actions the provider serves, and a shortcut's
 
 After the fix, `cd providers/topsailai && go test ./... -count=1` must pass with no failures, and `git diff -- conf/control-actions.conf.example` must show only the placeholder or entry change.
 
+## Root cause
+
+This was not a catalog design defect. `833513df refactor: shape the shipped catalog for the provider cli`
+ran a destructive probe that renamed the `heartbeat` entry's argv action to `not_a_provider_action` to
+prove `TestShippedCatalogNamesOnlyProviderActions` fails, and the probe was never restored. The parent
+commit `833513df^` carries the original argv:
+
+```text
+"command": ["runtime", "control", "heartbeat", "-s", "{session}", "-a", "{payload}", "--json"]
+```
+
+The probe record in `.task/status_20261114T180000_provider-cli-unit8-4c.md` lists
+`Name an action the provider does not serve` as a destructive probe, which confirms the placeholder was
+probe input rather than intended content. The other two probes from the same commit (`permission`,
+`alias_of`) left no residue: `grep -n '"permission"\|alias_of' conf/control-actions.conf.example` returns
+nothing.
+
+`heartbeat` is a real provider action: `cli_topsailai/runtime_cli.py` lists it in
+`_FALLBACK_CONTROL_ACTIONS`, and `workspace/control_handlers/heartbeat.py` declares `action = "heartbeat"`.
+The `session.heartbeat` shortcut's argv was always `heartbeat`, so restoring the target entry's argv makes
+both failing guards pass together.
+
+## Resolution
+
+`conf/control-actions.conf.example:159` restored from `not_a_provider_action` to `heartbeat`. The
+`heartbeat` entry and the `session.heartbeat` shortcut were kept, because both are valid configuration;
+deleting them would have hidden the probe residue by removing a feature. No guard was added or weakened:
+`TestShippedCatalogNamesOnlyProviderActions` and `TestShippedCatalogKeepsShortcutCopiesIdentical` already
+cover this defect and are the tests that caught it.
+
 ## Status
 
-Open. Recorded during the Unit 9 documentation-consistency work; not fixed there because the change is a catalog content decision rather than a documentation correction.
+Done. `cd providers/topsailai && go test ./... -count=1` passes with no failures.
