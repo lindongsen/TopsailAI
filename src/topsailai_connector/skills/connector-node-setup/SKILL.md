@@ -92,6 +92,44 @@ two take turns being reachable. Ask the operator for a second bundle instead.
 A single executable has no identity inside it, so every copy generates its own and
 copies do not collide.
 
+### Where the config directory is
+
+The identity lives in `<config>/identity`, and `<config>` is **not** the same place
+in the two delivery shapes. This is the difference that wastes the most time,
+because both shapes look like "one executable plus a folder".
+
+| Shape | `<config>` | Why |
+|---|---|---|
+| A zip bundle | `<bundle>/config` | `start.sh` and `start.ps1` export `CONNECTOR_NODE_CONFIG_DIR="$HERE/config"` |
+| A single executable | the platform config directory | there is no start script, so the Node falls back to `os.UserConfigDir()` |
+
+The platform config directory is:
+
+| Platform | Path |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/topsailai-connector`, or `~/.config/topsailai-connector` |
+| macOS | `~/Library/Application Support/topsailai-connector` |
+| Windows | `%APPDATA%\topsailai-connector`, for example `C:\Users\<you>\AppData\Roaming\topsailai-connector` |
+
+Two consequences, and both bite in practice:
+
+- **Looking for `config/identity` beside a single executable finds nothing.** The
+  file is in the platform config directory. `connector-node id` prints the pair
+  without you needing to know the path, which is the reliable way to read it.
+- **A deny rule must name the directory that actually holds the credentials.** On a
+  bundle, denying `<bundle>/config` covers it. On a single executable the
+  credentials are in the platform config directory, so a scope that covers the
+  user's profile exposes them unless that directory is denied. The Node denies its
+  own config directory by resolved path, so the protection follows the real
+  location rather than a guessed one.
+
+The directory is created with mode `0700` and the identity file with `0600`. An
+existing directory is not re-permissioned, because changing the mode of a directory
+the operator created is a surprise; the identity file has its own check.
+
+Set `CONNECTOR_NODE_CONFIG_DIR` to an absolute path when you want the location to be
+predictable. A relative path is refused, because it resolves differently per launch.
+
 ### Supplying one yourself
 
 The identity is not in the environment table below, so there is nothing to export.
@@ -181,6 +219,11 @@ its identity, the Server address and a scope list. Unzip it and start it:
 ./start.sh                                        # Linux or macOS
 powershell -ExecutionPolicy Bypass -File start.ps1   # Windows
 ```
+
+The bundle keeps its credentials in `<bundle>/config`, because the start script
+exports `CONNECTOR_NODE_CONFIG_DIR` pointing there. A single executable has no start
+script and uses the platform config directory instead; see "Where the config
+directory is" above.
 
 There is nothing to install and nothing to configure before the first start. The
 bundle's own `README.md` describes the folder.
@@ -468,13 +511,9 @@ A graceful shutdown closes the channel. Send `SIGINT` or `SIGTERM`.
 ### Windows notes
 
 - Run it from a console or as a service; there is no installer.
-- The config directory defaults to the platform configuration directory, which on
-  Windows is `%APPDATA%\topsailai-connector`, not a `config` folder beside the
-  executable. A single executable therefore keeps its identity in
-  `C:\Users\<you>\AppData\Roaming\topsailai-connector\identity`. Set
-  `CONNECTOR_NODE_CONFIG_DIR` explicitly if you want it somewhere predictable; a
-  zip bundle's start script does exactly that, which is why the two shapes put the
-  identity in different places.
+- The config directory is the platform configuration directory, not a `config`
+  folder beside the executable. See "Where the config directory is" above for the
+  path on each platform and for why a bundle differs.
 - A process started over SSH dies when the session ends. `Start-Process` returns a
   live process that connects and then disappears silently, leaving a zero-byte log.
   Start it through WMI instead, which detaches it from the session:

@@ -248,6 +248,15 @@ machine at first start, so two copies of one binary do not share a `node-id` and
 evict each other from the Server's registry. The recipient runs
 `connector-node id` once to learn the pair, exactly as with a normal build.
 
+That identity does **not** land beside the executable. A zip's start script exports
+`CONNECTOR_NODE_CONFIG_DIR="$HERE/config"`, so a bundle keeps its credentials in
+`<bundle>/config`. A single executable has no start script, so the Node falls back to
+the platform config directory: `%APPDATA%\topsailai-connector` on Windows,
+`~/.config/topsailai-connector` on Linux, `~/Library/Application Support/topsailai-connector`
+on macOS. Tell the recipient this, because they will look for `config\identity` next
+to the file and find nothing. The same difference decides which directory a deny rule
+has to name when a scope covers the user's profile.
+
 Scope paths are compiled in as you wrote them, not resolved on your build host. A
 path that does not exist on the recipient's machine fails at startup, which is the
 same failure a bundle's `scopes.txt` entry produces.
