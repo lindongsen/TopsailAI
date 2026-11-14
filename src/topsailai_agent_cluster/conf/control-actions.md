@@ -7,6 +7,8 @@ author: DawsonLin
 
 This document is the reference for the catalog in `conf/control-actions.conf.example`. It records what the TopsailAI provider actually serves, so an operator can decide which entries to enable without reading provider source.
 
+The catalog is read by the TopsailAI Provider CLI at its own process boundary, through `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS`. The Endpoint does not parse it: the Endpoint advertises the `ctl.` capabilities named in its `ADAPTERS` document and refuses anything else, so the two documents are the two halves of one decision. The catalog says what an action runs; the adapter document says who may run it.
+
 Everything below was read from the installed provider: `topsailai docs read usage/topsailai_send_control.md`, `topsailai runtime control --help`, and the handler and instruction modules under `workspace/`. It describes the provider as it exists today, not a proposal.
 
 ## Three layers
@@ -220,13 +222,13 @@ Each catalog entry declares four things, and all four come from the file.
 | Field | Meaning for these actions |
 |---|---|
 | `name` | The public `ctl.<name>` operation. It is not the provider action name, although the shipped catalog uses the same spelling |
-| `permission` | The operator scope required. One entry carries one scope, so every instruction reachable through `call_instruction` shares that scope |
+| `permission` | Not declared here. The operator scope is declared on the Endpoint's `ADAPTERS` capability entry for the same operation name, because the Endpoint is the component that enforces it |
 | `payload_schema` | What the guided prompt asks. An enum becomes a numbered menu, so an unsupported value cannot be typed |
 | `command` | The provider argv template, with `{session}` and `{payload}` placeholders |
 
 Two consequences are worth stating plainly.
 
-- **One entry means one permission.** `call_instruction` reaches read-only instructions such as `ctx.history` and mutating ones such as `ctx.clear` under a single scope. A site that needs to separate them declares several catalog entries that share the same `command` but carry different `permission` values and pin the instruction with `payload_constants`. The shipped example does exactly that; see the instruction shortcuts below.
+- **One entry means one permission.** `call_instruction` reaches read-only instructions such as `ctx.history` and mutating ones such as `ctx.clear` under a single scope. A site that needs to separate them declares several catalog entries that share the same `command` but pin the instruction with `payload_constants`, and declares a different `required_permission` for each of those operation names in the Endpoint's `ADAPTERS` document. The shipped example does exactly that; see the instruction shortcuts below.
 - **The enum is a prompt, not a gate.** The provider validates the instruction name against its live registry. A name absent from the enum can still be submitted by a caller that builds the payload itself, so the enum must not be mistaken for an allowlist. The same holds for a pinned constant: it narrows what the menu offers, not what a hand-built payload can reach, because the Endpoint does not validate a payload against the advertised schema.
 
 ## Shortcuts
@@ -236,35 +238,32 @@ exists so a frequent action can be typed quickly: with the shipped entries an
 operator types `ctl.session.messages` instead of `ctl.get_session_messages`, and
 the dotted spelling skips the action menu entirely.
 
-A shortcut declares only two fields.
+The Provider has no alias concept, so a shortcut is written out as a full copy of
+the action it names: same `command`, same `payload_schema`, same
+`payload_session_field`, same `payload_constants`.
 
 ```json
-{"name": "session.messages", "alias_of": "get_session_messages"}
+{
+  "name": "session.messages",
+  "payload_schema": {"type": "object", "properties": {}},
+  "payload_session_field": "session_id",
+  "command": ["runtime", "control", "get_session_messages", "-s", "{session}", "-a", "{payload}", "--json"]
+}
 ```
 
-Everything else is inherited from the action it names: the permission, the payload
-schema, the payload selector field and the provider argv. A shortcut therefore
-cannot widen what an operator may do, cannot advertise a different schema, and
-cannot run a different command.
+A copy cannot widen what an operator may do and cannot run a different command,
+because it is the same document. The cost is that the two entries are independent:
+retiring the target does not retire its copies, so remove both when you retire an
+action. `TestShippedCatalogKeepsShortcutCopiesIdentical` fails if a copy drifts from
+its target, and `TestShippedCatalogDeclaresNoAlias` fails if an `alias_of` entry is
+ever added back in the Endpoint-only shape.
 
 Rules enforced at load time:
 
-- `alias_of` must name a real action declared anywhere in the file, so a forward
-  reference is allowed and file order does not matter.
-- A shortcut may not name itself.
-- A shortcut may not name another shortcut. One indirection is enough for a typing
-  shortcut, and a chain would make the effective permission depend on resolution
-  order.
-- A shortcut may not declare `permission`, `command`, `payload_schema`,
-  `payload_session_field` or `payload_constants`. Declaring one is an error rather
-  than a silent no-op, because an operator who wrote it would otherwise believe it
-  took effect.
-- A name may appear only once, whether it is a real action or a shortcut.
-
-A shortcut is resolved into a full copy at load time, so execution never follows a
-second lookup and a reload cannot leave a shortcut pointing at a stale definition.
-Retiring the target retires the shortcut with it, because the file is validated as
-a whole.
+- Every entry is a real action, so it must declare `command`.
+- A name may appear only once.
+- An unknown field is refused rather than ignored, so a leftover `alias_of` or
+  `permission` fails at startup instead of being silently dropped.
 The shipped catalog carries ten shortcuts: `session.messages`,
 `session.runtime_messages`, `session.heartbeat`, `session.pause`,
 `session.unpause`, `session.interrupt`, `session.soft_interrupt`,
@@ -273,11 +272,10 @@ starting point, not a fixed set; nothing about a shortcut is compiled in.
 
 ## Instruction shortcuts
 
-`alias_of` cannot express a shortcut for one instruction. It copies the target's
-whole payload schema, so `{"name": "ctx.history", "alias_of": "call_instruction"}`
-would still ask the operator to choose from the 46-value enum and would still carry
-the `control` scope. The layer does not match: `call_instruction` is one catalog
-entry, and the instructions are values inside it.
+A plain copy cannot express a shortcut for one instruction. It copies the target's
+whole payload schema, so a copy of `call_instruction` would still ask the operator
+to choose from the 46-value enum. The layer does not match: `call_instruction` is
+one catalog entry, and the instructions are values inside it.
 
 A per-instruction shortcut is therefore a real catalog entry that reuses the
 `call_instruction` argv and pins the instruction with `payload_constants`.
@@ -285,7 +283,6 @@ A per-instruction shortcut is therefore a real catalog entry that reuses the
 ```json
 {
   "name": "git.status",
-  "permission": "read_output",
   "payload_constants": {"instruction": "git.git_status"},
   "payload_schema": {
     "type": "object",
@@ -377,7 +374,7 @@ These are provider-side limitations. The catalog documents them rather than work
 
 ## See also
 
-- `conf/control-actions.conf.example` — the catalog this document describes
+- `conf/control-actions.conf.example` — the catalog this document describes, read by the Provider CLI through `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS`
 - `conf/command-allowlist.conf.example` — the separate allowlist for `command.exec`
 - `docs/agent-cluster-protocol.md` — the standard operation contracts
 - `docs/agent-cluster-adapters.md` — the Endpoint-private provider mapping

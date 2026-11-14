@@ -99,7 +99,7 @@ func loadControlCatalog(environment []string) (controlCatalog, error) {
 // a security default must fail closed.
 func parseControlCatalog(document []byte) (controlCatalog, error) {
 	var file controlActionFile
-	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder := json.NewDecoder(bytes.NewReader(stripCatalogComments(document)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&file); err != nil {
 		return controlCatalog{}, fmt.Errorf("decode catalog: %w", err)
@@ -124,6 +124,25 @@ func parseControlCatalog(document []byte) (controlCatalog, error) {
 		catalog.order = append(catalog.order, action.Name)
 	}
 	return catalog, nil
+}
+
+// stripCatalogComments removes whole-line '#' comments from a catalog document.
+//
+// The catalog is operator-facing configuration, so it carries an explanation of
+// every rule beside the entries that follow it. Only a line whose first non-space
+// character is '#' is removed: a trailing comment is deliberately not supported,
+// because deciding whether a '#' sits inside a JSON string would require parsing
+// the document, and a wrong guess would silently change a value.
+func stripCatalogComments(document []byte) []byte {
+	lines := bytes.Split(document, []byte("\n"))
+	kept := make([][]byte, 0, len(lines))
+	for _, line := range lines {
+		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("#")) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return bytes.Join(kept, []byte("\n"))
 }
 
 // validateControlAction validates one catalog entry.
