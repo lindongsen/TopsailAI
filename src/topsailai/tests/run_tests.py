@@ -5,6 +5,8 @@ import os
 import sys
 import time
 import argparse
+import logging
+import shutil
 import threading
 import json
 import tempfile
@@ -19,6 +21,11 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 TEST_DIR = SCRIPT_DIR / "unit"
 OUTPUT_FILE = (PROJECT_ROOT / ".tmp" / "test_results.txt").resolve()
 RUN_TEMP_ROOT = (PROJECT_ROOT / ".tmp" / "unit-runner").resolve()
+
+# Retention policy for invocation evidence directories. Each full run creates one
+# ``invocation-*`` directory, so without a bound the runner grows without limit.
+DEFAULT_KEEP_INVOCATIONS = 3
+INVOCATION_PREFIX = "invocation-"
 
 
 def resolve_src_root(start_dir=None, package_name=None):
@@ -166,6 +173,67 @@ def _output_text(value):
     return value or ""
 
 
+def prune_invocations(temp_root, keep=DEFAULT_KEEP_INVOCATIONS):
+    """Remove the oldest invocation evidence directories beyond the retention limit.
+
+    Only directories created by this runner are considered, so unrelated content
+    under the shared temp root is never touched. A non-positive ``keep`` disables
+    pruning. Removal failures are logged and never interrupt the run.
+
+    Args:
+        temp_root: Directory that holds the ``invocation-*`` evidence directories.
+        keep: Number of most recent invocation directories to retain.
+
+    Returns:
+        The list of removed directory paths.
+    """
+    if keep <= 0:
+        return []
+    root = Path(temp_root)
+    if not root.is_dir():
+        return []
+    candidates = []
+    for entry in root.iterdir():
+        if not entry.name.startswith(INVOCATION_PREFIX) or not entry.is_dir():
+            continue
+        try:
+            candidates.append((entry.stat().st_mtime, entry))
+        except OSError as error:
+            logging.warning("cannot stat invocation evidence [%s]: %s", entry, error)
+    candidates.sort(key=lambda item: item[0])
+    removed = []
+    for _mtime, entry in candidates[: max(0, len(candidates) - keep)]:
+        try:
+            shutil.rmtree(entry)
+        except OSError as error:
+            logging.warning("cannot remove invocation evidence [%s]: %s", entry, error)
+            continue
+        removed.append(entry)
+        logging.info("removed invocation evidence: [%s]", entry)
+    return removed
+
+
+def release_basetemp(basetemp):
+    """Delete one pytest basetemp tree after its evidence has been captured.
+
+    The basetemp is a scratch workspace for the child pytest process; the durable
+    evidence is the captured stdout, stderr, junit report and metadata. Removing it
+    keeps the retained invocation directory small without losing any evidence.
+
+    Args:
+        basetemp: Path of the pytest basetemp directory for one attempt.
+    """
+    path = Path(basetemp)
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        logging.warning("cannot remove pytest basetemp [%s]: %s", path, error)
+        return
+    logging.debug("removed pytest basetemp: [%s]", path)
+
+
 def run_test(test_file, timeout, retries=0, *, temp_root=None):
     """Run one file and retain complete evidence for each existing-policy attempt."""
     test_path = TEST_DIR / test_file
@@ -216,6 +284,7 @@ def run_test(test_file, timeout, retries=0, *, temp_root=None):
                         stdout=str(evidence / "stdout.txt"), stderr=str(evidence / "stderr.txt"),
                         junit=str(junit), basetemp=str(basetemp))
         (evidence / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        release_basetemp(basetemp)
         details += f"; evidence: {evidence}"
         if status == "PASS":
             return status, details, elapsed
@@ -273,6 +342,15 @@ def parse_args(argv=None):
                         help="Result report path (default: %(default)s).")
     parser.add_argument("--temp-root", type=Path, default=RUN_TEMP_ROOT,
                         help="Root for unique invocation evidence (default: %(default)s).")
+    parser.add_argument(
+        "--keep-invocations",
+        type=int,
+        default=DEFAULT_KEEP_INVOCATIONS,
+        help=(
+            "Number of most recent invocation evidence directories to retain under "
+            f"--temp-root (default: {DEFAULT_KEEP_INVOCATIONS}). 0 disables pruning."
+        ),
+    )
     args = parser.parse_args(argv)
     if args.sequential and not args.files and not args.sequential_yes_do_it:
         parser.error(
@@ -361,6 +439,8 @@ def write_result_block(f, index, total, result):
 
 def main():
     args = parse_args()
+    # Configure a minimal handler so retention messages are visible to the operator.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     # Resolve explicit paths once at the CLI boundary.
     output_file = args.output_file.resolve()
@@ -370,6 +450,9 @@ def main():
     temp_root.chmod(0o755)
     invocation_root = Path(tempfile.mkdtemp(prefix="invocation-", dir=temp_root))
     invocation_root.chmod(0o755)
+    # Prune older evidence only after the current invocation exists, so the active
+    # directory is always the newest candidate and survives any positive keep value.
+    prune_invocations(temp_root, args.keep_invocations)
 
     test_files = get_test_files(selected=args.files)
     total = len(test_files)
