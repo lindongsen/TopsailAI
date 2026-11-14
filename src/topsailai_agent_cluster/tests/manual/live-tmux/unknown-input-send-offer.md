@@ -11,7 +11,7 @@ This module verifies the session-scope behaviour where text that matches no comm
 
 Precondition: the CLI is in session scope with a fresh selected session whose adapter advertises `message.send`.
 
-Type `hello world` then Enter. Expect the message on its own row, carrying only the payload and coloured differently from the question, followed by the question row `>>> send the text above as a message? [y/N]`. Expect the cursor to wait after the answer hint on that question row, and expect no separate `answer>` prompt. Expect no `unknown command hello;` prefix on the offer. Expect no command admission before the answer, and expect the prompt to return after the answer.
+Type `hello world` then Enter. Expect the message on its own row, carrying only the payload and coloured differently from the question, followed by the question row `>>> send the text above as a message? [y/N]`. The row is a preview: a line longer than 512 bytes is cut there and ends with `...`, while the payload actually sent stays the whole line. Expect the cursor to wait after the answer hint on that question row, and expect no separate `answer>` prompt. Expect no `unknown command hello;` prefix on the offer. Expect no command admission before the answer, and expect the prompt to return after the answer.
 
 ## OFFER-02 Accepting the offer sends the literal line
 
@@ -44,6 +44,12 @@ Precondition: same as OFFER-01.
 Type `1` then Enter. Expect the same offer as OFFER-01, with the message row showing the literal text `1`, and expect no `row-number navigation is unavailable in session scope` diagnostic. Type `y` then Enter and expect exactly one admitted `message.send` whose payload text is `1`. Repeat with `01` and with `1 foo`, and expect the whole literal line to be the payload in each case, because session scope has no row table to navigate and the shorthand's surplus rule belongs to navigation.
 
 Then type `cd 1` then Enter. Expect the diagnostic `row-number navigation is unavailable in session scope; use cd .. or cd <session>` and expect no command admission, because the explicit command word still reaches the row-number rule.
+
+## OFFER-07 Payloads the send command rejects get no offer
+
+Precondition: same as OFFER-01.
+
+Type `--json` then Enter, and repeat with `{"text":"hi"} --json` then Enter. Expect the plain unknown-command diagnostic and no question in both cases, because the offer applies the same payload rule the send command applies, so it never promises a payload the command itself rejects.
 
 ## Evidence
 
