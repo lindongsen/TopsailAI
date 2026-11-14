@@ -279,3 +279,11 @@ Trigger: adding a second bundled `error_llm_chat_attempt` module made a discover
 Action: locate the expected handler by its stable identity before asserting its return value or error, while retaining separate assertions for terminal handler ordering.
 
 Why this prevents recurrence: bundled Hook resources can expand without changing the configured plugin contract, so identity-based assertions verify the intended resource and do not fail merely because another valid handler is inserted earlier.
+
+## Hoisting a statement across a conditional boundary is a behaviour change, not a refactor
+
+Trigger: while adding a post-answer persistence guard, `self.last_message = answer` was moved out of an enclosing `if answer:` block so the recovery branch could restore the answer after a failed write. The pre-existing sibling test `test_run_with_agent_end_process_exception` then failed with `'' != {'role': 'assistant', 'content': 'Last message'}`: with an empty answer the unconditional assignment overwrote the message that the `AgentEndProcess` branch had just stored.
+
+Action: treat any edit that changes a statement's enclosing condition as a behaviour change. Re-read the surrounding block before moving a line, keep the original guard when the moved statement must not run on an empty value, and re-run every sibling test file of the enclosing function, not only the new targeted test.
+
+Why this prevents recurrence: the new test could not observe the defect because it always supplied a non-empty answer, so only the pre-existing test that exercised the empty-answer path caught it. A targeted test proves the new branch works; it cannot prove the old branches still work, because it never enters them. Attributing the failure at pristine `HEAD` in an isolated worktree first was what separated a real regression from a stale expectation, and the fix was one restored `if answer:` guard rather than a rewrite.
