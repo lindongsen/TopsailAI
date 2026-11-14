@@ -136,6 +136,13 @@ back before the CLI could address the Node, which defeats the point of handing o
 a bundle. The consequence is that the pair is known to you before the user starts
 anything, and the packaging output prints it.
 
+The same consequence has a second edge: **one zip is one machine.** Every copy of
+one bundle presents the same `node-id`, and the Server keeps one entry per `node-id`
+where a new connection replaces the previous one. Two machines running the same
+bundle therefore take turns being reachable, each start evicting the other, and a
+request lands on whichever connected last. Build a separate bundle per machine; each
+build generates its own pair and prints it.
+
 **The tunnel token is written to a `0600` file** that the start script exports as
 `CONNECTOR_NODE_TUNNEL_TOKEN`. The Node still reads the documented environment
 variable; the file is your provisioning store, the same shape as a systemd
