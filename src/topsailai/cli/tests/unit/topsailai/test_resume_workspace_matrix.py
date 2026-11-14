@@ -313,7 +313,7 @@ os.setgroups([])
 os.setgid(65534)
 os.setuid(65534)
 try:
-    subprocess.Popen(["/usr/local/bin/python3", '-c', 'pass'], cwd=sys.argv[1])
+    subprocess.Popen([sys.executable, '-c', 'pass'], cwd=sys.argv[1])
 except OSError as error:
     print(error.errno)
     raise SystemExit(0 if error.errno == errno.EACCES else 2)
@@ -390,7 +390,7 @@ print(json.dumps({"uid": os.getuid(), "euid": os.geteuid(), "gid": os.getgid(),
     if cwd_eacces:
         environment["R08_CWD_EACCES"] = "1"
     return subprocess.run(
-        ["/usr/local/bin/python3", "-c", script, str(workspace), str(fixture_root)],
+        [sys.executable, "-c", script, str(workspace), str(fixture_root)],
         cwd=str(cli_root), env=environment, capture_output=True, text=True,
         check=False,
         preexec_fn=lambda: (os.setgroups([]), os.setgid(nobody.pw_gid),
