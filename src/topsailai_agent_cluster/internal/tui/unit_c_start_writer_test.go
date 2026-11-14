@@ -409,7 +409,7 @@ func runWriterFault(t *testing.T, phase, mode string) {
 	wantDelta := unitCAPICounts{}
 	wantIntents := 0
 	if phase == "output" {
-		wantDelta = unitCAPICounts{Capability: 1, Admit: 1}
+		wantDelta = unitCAPICounts{List: 1, Capability: 1, Admit: 1}
 		wantIntents = 1
 	}
 	if delta != wantDelta || len(intents) != wantIntents {
@@ -535,11 +535,11 @@ func TestUnitCStartOutputFaultPreservesAdmissionAccounting(t *testing.T) {
 		t.Fatalf("result=%v want=%v trace=%s", got, sentinel, d.trace())
 	}
 	counts, intents := d.api.snapshot()
-	wantDelta := unitCAPICounts{Capability: 1, Admit: 1}
+	wantDelta := unitCAPICounts{List: 1, Capability: 1, Admit: 1}
 	if got := unitCAPIAdd(baseline, counts); got != wantDelta || len(intents)-len(baselineIntents) != 1 {
 		t.Fatalf("delta=%+v want=%+v intents=%d trace=%s", got, wantDelta, len(intents), d.trace())
 	}
-	if counts.List != baseline.List || counts.Inventory != baseline.Inventory || counts.Command != baseline.Command || counts.ListCommands != baseline.ListCommands || counts.Output != baseline.Output {
+	if counts.List != baseline.List+1 || counts.Inventory != baseline.Inventory || counts.Command != baseline.Command || counts.ListCommands != baseline.ListCommands || counts.Output != baseline.Output {
 		t.Fatalf("unexpected nonzero API delta: before=%+v after=%+v trace=%s", baseline, counts, d.trace())
 	}
 	if got := d.out.String(); got != beforeTranscript {
@@ -652,7 +652,7 @@ func TestUnitCStartFinalResultRenderFaultPreservesCommand(t *testing.T) {
 				t.Fatalf("ack=%+v want text=%q trace=%s", ack, wantAck, d.trace())
 			}
 			counts, intents := d.api.snapshot()
-			if delta := unitCAPIAdd(baseline, counts); delta != (unitCAPICounts{Capability: 1, Admit: 1}) || len(intents)-len(baselineIntents) != 1 || counts.Command != baseline.Command {
+			if delta := unitCAPIAdd(baseline, counts); delta != (unitCAPICounts{List: 1, Capability: 1, Admit: 1}) || len(intents)-len(baselineIntents) != 1 || counts.Command != baseline.Command {
 				t.Fatalf("ack boundary delta=%+v intents=%d counts=%+v trace=%s", unitCAPIAdd(baseline, counts), len(intents)-len(baselineIntents), counts, d.trace())
 			}
 			d.outGate.arm(sentinel, tc.persist)
@@ -668,7 +668,7 @@ func TestUnitCStartFinalResultRenderFaultPreservesCommand(t *testing.T) {
 			if d.out.String() != wantBeforeReply || d.errOut.String() != "" {
 				t.Fatalf("final pre-reply transcript out=%q want=%q errOut=%q trace=%s", d.out.String(), wantBeforeReply, d.errOut.String(), d.trace())
 			}
-			if got := unitCAPIAdd(baseline, counts); got != (unitCAPICounts{Capability: 1, Command: 1, Admit: 1}) || len(intents)-len(baselineIntents) != 1 {
+			if got := unitCAPIAdd(baseline, counts); got != (unitCAPICounts{List: 1, Capability: 1, Command: 1, Admit: 1}) || len(intents)-len(baselineIntents) != 1 {
 				t.Fatalf("final pre-reply delta=%+v intents=%d trace=%s", got, len(intents)-len(baselineIntents), d.trace())
 			}
 			d.outGate.reply(final, sentinel)
@@ -676,7 +676,7 @@ func TestUnitCStartFinalResultRenderFaultPreservesCommand(t *testing.T) {
 				t.Fatalf("runner=%v want=%v trace=%s", got, sentinel, d.trace())
 			}
 			counts, intents = d.api.snapshot()
-			wantDelta := unitCAPICounts{Capability: 1, Command: 1, Admit: 1}
+			wantDelta := unitCAPICounts{List: 1, Capability: 1, Command: 1, Admit: 1}
 			if got := unitCAPIAdd(baseline, counts); got != wantDelta || len(intents)-len(baselineIntents) != 1 {
 				t.Fatalf("delta=%+v want=%+v intents=%d trace=%s", got, wantDelta, len(intents)-len(baselineIntents), d.trace())
 			}

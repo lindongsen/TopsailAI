@@ -175,7 +175,7 @@ func TestUnitCStartScaleCostContract(t *testing.T) {
 					counts, intents := api.snapshot()
 					want := unitCAPICounts{}
 					if mode == "complete" {
-						want = unitCAPICounts{Capability: 1, Admit: 1, Command: 1}
+						want = unitCAPICounts{List: 1, Capability: 1, Admit: 1, Command: 1}
 						before.commandID = "unit-c-command"
 					}
 					if exit || err != nil || counts != want || len(intents) != want.Admit || !reflect.DeepEqual(state, before) || len(state.Rows) != size.sessions {

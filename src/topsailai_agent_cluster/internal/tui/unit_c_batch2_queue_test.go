@@ -179,7 +179,7 @@ func TestUnitCBatch2CancelAllowsQueuedStart(t *testing.T) {
 					after, intents := d.api.snapshot()
 					delta := unitCAPIAdd(d.baseline, after)
 					// B2_CONTINUE_RESULT: detached continuation observation sensitivity seam.
-					if delta != (unitCAPICounts{Capability: 1, Command: 1, Admit: 1}) || len(intents) != 1 || intents[0].EndpointID != "queued-endpoint" || intents[0].LaunchProfileID != "queued-profile" || intents[0].ProfileRevision != "queued-revision" {
+					if delta != (unitCAPICounts{List: 1, Capability: 1, Command: 1, Admit: 1}) || len(intents) != 1 || intents[0].EndpointID != "queued-endpoint" || intents[0].LaunchProfileID != "queued-profile" || intents[0].ProfileRevision != "queued-revision" {
 						t.Fatalf("C19 continuation: delta=%+v intents=%+v", delta, intents)
 					}
 					expectedErrors := ""

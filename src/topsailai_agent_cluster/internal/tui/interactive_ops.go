@@ -759,6 +759,14 @@ func parseInteractiveStartTokens(args []string, allowMissing bool) (interactiveS
 func interactiveStart(parent context.Context, api InteractiveAPI, state *interactiveState, request interactiveStartRequest, out, trustedOut io.Writer, options InteractiveOptions) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
+	// The gate lives here rather than in each caller because this function is the
+	// single point every start path passes through. The launch wizard already
+	// checks the endpoint before it queries launch options, but the prompt path
+	// reaches this function directly, so a caller-side check alone would leave it
+	// able to submit a command to a degraded endpoint.
+	if gateErr := requireQueryableEndpointByID(ctx, api, request.EndpointID); gateErr != nil {
+		return gateErr
+	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
 	actionRequest := ActionRequest{
 		Operation:       protocol.OperationAgentStart,

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -219,5 +220,59 @@ func TestShowOfflineEndpointKeepsAbsenceAnswer(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "degraded") {
 		t.Fatalf("err=%q, want the offline endpoint not to be called degraded", err.Error())
+	}
+}
+
+// TestStartPromptNeverAdmitsToDegradedEndpoint proves the start prompt path
+// cannot submit a command to a degraded endpoint.
+//
+// The gate sits inside interactiveStart rather than in each caller because that
+// function is the single point every start path passes through. The launch
+// wizard checks the endpoint before it queries launch options, but the prompt
+// path reaches interactiveStart directly, so a caller-side check alone would
+// leave the prompt able to admit a command to a degraded machine. The assertion
+// is on the admit call count, not on the error text, because an implementation
+// that admitted the command and then reported the refusal would still print a
+// refusal-shaped message while having already sent the frame.
+func TestStartPromptNeverAdmitsToDegradedEndpoint(t *testing.T) {
+	api := degradedProbeFixture()
+	var out, trustedOut strings.Builder
+	request := interactiveStartRequest{EndpointID: "deg-ep", Profile: "adapter", ProfileRevision: "rev-1", Folder: "/work", Payload: json.RawMessage(`{}`)}
+	err := interactiveStart(context.Background(), api, &interactiveState{}, request, &out, &trustedOut, InteractiveOptions{})
+	for _, call := range api.calls {
+		if call == "admit" {
+			t.Fatalf("start admitted a command to a degraded endpoint: %v", api.calls)
+		}
+	}
+	if err == nil {
+		t.Fatalf("interactiveStart of a degraded endpoint returned nil")
+	}
+	if !strings.Contains(err.Error(), "degraded") {
+		t.Fatalf("err=%q, want it to name the degraded state", err.Error())
+	}
+	if !strings.Contains(err.Error(), "no request was sent") {
+		t.Fatalf("err=%q, want it to state that no request was sent", err.Error())
+	}
+	if out.String() != "" || trustedOut.String() != "" {
+		t.Fatalf("start wrote output before refusing: out=%q trusted=%q", out.String(), trustedOut.String())
+	}
+}
+
+// TestStartPromptAdmitsToOnlineEndpoint is the control for the test above: the
+// same path must still admit a command to an online endpoint, so the refusal is
+// attributable to the degraded state and not to the start path being broken.
+func TestStartPromptAdmitsToOnlineEndpoint(t *testing.T) {
+	api := degradedProbeFixture()
+	var out, trustedOut strings.Builder
+	request := interactiveStartRequest{EndpointID: "live-ep", Profile: "adapter", ProfileRevision: "rev-1", Folder: "/work", Payload: json.RawMessage(`{}`)}
+	_ = interactiveStart(context.Background(), api, &interactiveState{}, request, &out, &trustedOut, InteractiveOptions{WaitTimeoutMS: 50})
+	admitted := false
+	for _, call := range api.calls {
+		if call == "admit" {
+			admitted = true
+		}
+	}
+	if !admitted {
+		t.Fatalf("start did not admit a command to an online endpoint: %v", api.calls)
 	}
 }
