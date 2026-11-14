@@ -67,10 +67,19 @@ func renderListRows(out, errors io.Writer, loaded reportLoad, filter string, jso
 	// which endpoints the loader chose to skip, so the rows are dropped here. This
 	// is the second half of one decision: the loader avoids the request, and the
 	// renderer avoids the row that request would have produced.
-	if len(loaded.skippedOffline) > 0 {
+	//
+	// A degraded endpoint is dropped for the same reason and one more: its record
+	// still exists, but it is not usable, so a default list would offer a target
+	// that every command refuses. --all is the documented way to see it, and an
+	// explicit filter names it, so both keep the row.
+	if len(loaded.skippedOffline) > 0 || len(loaded.degraded) > 0 {
+		hideDegraded := !options.All && filter == ""
 		kept := rows[:0]
 		for _, row := range rows {
 			if loaded.skippedOffline[row.EndpointID] {
+				continue
+			}
+			if hideDegraded && loaded.degraded[row.EndpointID] {
 				continue
 			}
 			kept = append(kept, row)

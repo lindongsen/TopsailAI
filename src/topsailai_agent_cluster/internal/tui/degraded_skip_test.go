@@ -36,12 +36,13 @@ func degradedProbeFixture() *degradedProbeAPI {
 }
 
 // TestStartupNeverQueriesDegradedEndpoint proves the startup list sends no
-// request to a degraded endpoint and prints no count for it.
+// request to a degraded endpoint, drops its row, and prints no count for it.
 //
-// The count is asserted absent because a degraded endpoint keeps its row: the
-// operator can see it, so a summary line would only repeat what the table
-// already shows. The row itself must survive, because hiding a record that still
-// exists would look like proof that it was deleted.
+// The row is asserted absent because a degraded endpoint is not usable: every
+// command refuses it, so offering it as a list target would only produce a
+// refusal. The count is asserted absent too, because the count exists to explain
+// a row that was dropped for being unreachable, and a degraded endpoint is
+// dropped for being unusable. --all is the documented way to see it.
 func TestStartupNeverQueriesDegradedEndpoint(t *testing.T) {
 	api := degradedProbeFixture()
 	var out, errOut strings.Builder
@@ -56,8 +57,8 @@ func TestStartupNeverQueriesDegradedEndpoint(t *testing.T) {
 	if strings.Contains(out.String(), "offline endpoints hidden") {
 		t.Fatalf("startup printed a hidden count: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "deg-ep") {
-		t.Fatalf("startup dropped the degraded row: %q", out.String())
+	if strings.Contains(out.String(), "deg-ep") {
+		t.Fatalf("startup kept the degraded row: %q", out.String())
 	}
 	if errOut.String() != "" {
 		t.Fatalf("startup wrote a diagnostic: %q", errOut.String())
@@ -82,6 +83,46 @@ func TestListAllNeverQueriesDegradedEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "deg-ep") {
 		t.Fatalf("--all dropped the degraded row: %q", out.String())
+	}
+}
+
+// TestListVisibilityOfDegradedEndpoint proves the default list hides a degraded
+// endpoint while --all and an explicit filter still show it.
+//
+// Hiding the row is a visibility decision, not a reach decision: the loader
+// already refuses to query a degraded endpoint in every form. The row is hidden
+// only where the operator asked for the default view, because a degraded endpoint
+// cannot be a target. --all is the documented way to see the whole fleet, and an
+// explicit filter names the endpoint, so both must keep the row rather than
+// answer with an empty table that reads as "absent".
+func TestListVisibilityOfDegradedEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		filter  string
+		all     bool
+		wantRow bool
+	}{
+		{name: "default", wantRow: false},
+		{name: "all", all: true, wantRow: true},
+		{name: "explicit", filter: "deg-ep", wantRow: true},
+		{name: "explicit-all", filter: "deg-ep", all: true, wantRow: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := degradedProbeFixture()
+			var out, diagnostics strings.Builder
+			if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, &diagnostics, tc.filter, false, TableOptions{All: tc.all}); err != nil {
+				t.Fatalf("ListWithOptions: %v", err)
+			}
+			gotRow := strings.Contains(out.String(), "deg-ep")
+			if gotRow != tc.wantRow {
+				t.Fatalf("degraded row present=%v, want %v: %q", gotRow, tc.wantRow, out.String())
+			}
+			for _, call := range api.calls {
+				if call == "inventory:deg-ep" {
+					t.Fatalf("list queried a degraded endpoint: %v", api.calls)
+				}
+			}
+		})
 	}
 }
 
@@ -140,12 +181,12 @@ func TestRefreshNamedDegradedEndpointReportsDegraded(t *testing.T) {
 }
 
 // TestListHiddenCountExcludesDegradedEndpoints proves the hidden count reports
-// only the offline endpoints.
+// only the offline endpoints while the degraded row is dropped.
 //
 // The count exists because a skipped endpoint loses its row, so the operator
 // would otherwise read an empty table as proof that the endpoint holds no
-// sessions. A degraded endpoint keeps its row, so counting it would report a
-// hidden endpoint that is not hidden.
+// sessions. A degraded endpoint is dropped for a different reason, so counting it
+// would report it as merely unreachable and invite a retry that can never work.
 func TestListHiddenCountExcludesDegradedEndpoints(t *testing.T) {
 	api := &runnerStubAPI{
 		endpoints: []protocol.Endpoint{
@@ -163,8 +204,8 @@ func TestListHiddenCountExcludesDegradedEndpoints(t *testing.T) {
 	if !strings.Contains(out.String(), "offline endpoints hidden: 1 (use --all to include)") {
 		t.Fatalf("count=%q, want exactly the one offline endpoint", out.String())
 	}
-	if !strings.Contains(out.String(), "deg-ep") {
-		t.Fatalf("degraded row missing: %q", out.String())
+	if strings.Contains(out.String(), "deg-ep") {
+		t.Fatalf("degraded row should stay hidden: %q", out.String())
 	}
 	if strings.Contains(out.String(), "off-ep") {
 		t.Fatalf("offline row should stay hidden: %q", out.String())
