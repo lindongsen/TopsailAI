@@ -140,6 +140,15 @@ ct] >>> Your input:
 
 Two distinct unbounded loops are visible, and both are confirmed in source.
 
+**Correction (2026-11-14):** the two loops named below are real, but neither was
+the actual spinner. Both funnel through `workspace/input_tool.py::input_one_line`,
+which swallowed every `EOFError` and `continue`d. With stdin at `/dev/null` the
+read raises `EOFError` immediately and forever, so the prompt re-printed without
+bound. That function is the producer of the repeated `>>> Your input:` lines, and
+it has been fixed in commit `68e5e80a`. The analysis below is retained because it
+correctly identifies the surrounding unbounded structures, but fixing only the two
+sites it names would have left the spinner intact.
+
 Loop 1, the ReAct input prompt. `ai_base/agent_types/tool.py:346` is an
 unbounded `while True`:
 
@@ -355,11 +364,11 @@ disposition below is based on fresh measurements rather than the original ones.
 - 508 events files have no matching meta file. They are reclaimed by age, not by
   the meta cleanup path, so the two cleanup mechanisms are independent.
 
-Disposition: the issue stays open. The acute disk exhaustion is resolved, but the
-structural defects remain: the two unbounded prompt loops are unchanged, the
-reaper still cannot reclaim a dead `running` owner, and the events count bound is
-still unlimited. The ghost-session count is now measured at 23 rather than the 21
-recorded earlier.
+Disposition: the issue stays open. The acute disk exhaustion is resolved, and the
+prompt-loop producer is now fixed, but the remaining structural defects are
+unchanged: the reaper still cannot reclaim a dead `running` owner, and the events
+count bound is still unlimited. The ghost-session count is now measured at 23
+rather than the 21 recorded earlier.
 
 Note on scope: the committed change `87791479` prevents new ghost sessions by
 removing the unconditional exit, and it reclaims stdout and events together with
@@ -368,26 +377,47 @@ that requires the reaper fix described in action 3, which is not implemented.
 
 ## Resolution
 
-Pending. Planned actions, in order of value:
+Partially resolved.
 
-1. Fix the two unbounded prompt loops so a `/dev/null` stdin reaches EOF and
-   exits instead of re-printing the prompt. This is the direct producer of the
-   51.75 GB.
+Action 1 is complete in commit `68e5e80a`. The actual spinner was
+`workspace/input_tool.py::input_one_line`, which swallowed every `EOFError` and
+reprompted. It now propagates the condition when pipe input is disabled, because
+a closed stdin can never answer. `input_multi_line` was converted from unbounded
+tail recursion to a bounded loop that distinguishes a closed channel from a user
+who deliberately ended an empty message. The three agent-loop prompts and the
+`agent_chats` / `llm_chats` entry points now end the conversation on `EOFError`
+instead of printing a traceback or reprompting.
+
+Measured: with stdin at `/dev/null`, the bounded implementation writes 117 bytes
+and exits 0, while a deliberate reproduction of the old behaviour wrote 1,301,180
+bytes in 5 seconds before being killed. Both `cli/agent_chats.py` and
+`cli/llm_chats.py` previously spun until a 45-second timeout at pristine HEAD and
+now exit 0.
+
+Remaining actions, in order of value:
+
 2. Make the BDD harness build into a bounded, reusable location instead of a
    per-scenario `t.TempDir()`, or register a cleanup that survives interruption.
 3. Break the reaper deadlock so a `running` owner with no live process becomes
-   cleanable, which also removes the 21 ghost sessions.
+   cleanable, which also removes the 23 ghost sessions.
 4. Set a finite `TOPSAILAI_EVENTS_FILE_MAX_COUNT` and align stdout/events
    retention with meta retention.
 5. Obtain human approval to terminate the six remaining orphan processes by exact
-   PID and to purge the 21 stale `running` metas.
+   PID and to purge the 23 stale `running` metas.
 6. Reclaim the Docker space on `/opt` (24G images, 10G volumes, 3.5G build cache)
    as a separate, non-urgent action.
 
 ## Verification
 
-Pending. Planned checks: growth measured across a scripted session lifecycle stays
-within the declared bound; the adversarial disk-full test reaches the input prompt
-instead of exiting; the repeated-output loop test measures bounded bytes written;
-a killed test run leaves no temporary build tree; the reaper reclaims a dead
-`running` meta while preserving a live one; the events count bound is enforced.
+Action 1 verified. With stdin at `/dev/null` and pipe input disabled, the bounded
+implementation writes 117 bytes and exits 0; a deliberate reproduction of the old
+swallow-and-reprompt behaviour wrote 1,301,180 bytes in 5 seconds before being
+killed. `cli/agent_chats.py` and `cli/llm_chats.py` spun until a 45-second timeout
+at pristine HEAD and now exit 0 with no traceback. The regression tests fail at
+pristine HEAD and pass with the fix.
+
+Still pending for the remaining actions: growth measured across a scripted session
+lifecycle stays within the declared bound; the adversarial disk-full test reaches
+the input prompt instead of exiting; a killed test run leaves no temporary build
+tree; the reaper reclaims a dead `running` meta while preserving a live one; the
+events count bound is enforced.
