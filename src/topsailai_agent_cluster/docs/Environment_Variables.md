@@ -126,8 +126,37 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `--endpoint-access-policy-dir` | empty | Endpoint-local directory holding one access policy file per caller token; empty means every caller is permitted |
+| `AGENT_CLUSTER_ENDPOINT_REPLACE_REQUEST_FILE` | `--replace-request-file` | empty | Endpoint-local request document that activates one Provider CLI version for one adapter; empty disables activation entirely |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | none | `5000` | Positive post-collection delay in milliseconds; launcher value is `COLLECTION_DELAY_MS` |
 | `AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY` | none | `10m` | Positive duration retaining each Adapter's last successful source snapshot; older source cache is deleted before collection, while resource mappings and command evidence are preserved; launcher value is `SOURCE_CACHE_EXPIRY` |
+
+### `AGENT_CLUSTER_ENDPOINT_REPLACE_REQUEST_FILE`
+
+Names the Endpoint-local document that asks the running Endpoint to activate one
+Provider CLI version for one `adapter_id`. An empty value is fail-closed: an
+Endpoint that names no file cannot be asked to swap the program it runs, so
+activation is unavailable rather than silently permitted.
+
+Activation is reachable only from this local file, never from a Server payload.
+A Provider CLI version is an Endpoint deployment detail, and the Cluster contract
+deliberately does not model it, so no remote request can change which executable
+an Endpoint runs.
+
+The file is watched while the Endpoint runs. A consumed request logs
+`consumed replace request`; a successful activation logs
+`activated provider cli version` with the adapter, request ID, previous and
+effective version, effective revision, in-flight count and whether the change was
+reverted; a failed activation logs `activate provider cli version` with the
+adapter, request ID and error. A file that cannot be watched stops the Endpoint at
+startup instead of leaving activation silently unavailable.
+
+On the launcher side the matching `node.conf` entry is `REPLACE_REQUEST_FILE`,
+which `agent-clusterctl` forwards as `--replace-request-file`.
+`agent-clusterctl replace --adapter <id> --executable <path>` writes the request
+and signals the Endpoint, and `agent-clusterctl doctor` prints the configured path
+or `<disabled>`. The activation and rollback procedure itself is described in
+`docs/agent-cluster-adapters.md` under Adapter implementations and is not repeated
+here.
 
 ### `AGENT_CLUSTER_ENDPOINT_ADAPTERS`
 
