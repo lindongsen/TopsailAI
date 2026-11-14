@@ -72,3 +72,11 @@ Trigger: the Human approved a general Runtime Data mechanism while requesting an
 Action: keep one lease-protected Runtime Data Store under each `AgentRuntime`; producers publish namespaced operational states, active state is settled on operation exit, and retained history has a fixed maximum count. Runtime Data must not enter `ContextRuntimeData`, User2Agent or Agent2LLM messages, session persistence, or summaries. `/runtime`, `/runtime.get`, and `/runtime.history` are inspection-only and expose public bounded fields rather than raw payloads or ownership data.
 
 Why this prevents recurrence: Agent isolation and generation leases stop one request from overwriting or clearing another, bounded retention prevents memory growth, and separating operational state from conversation data prevents observability metadata from changing prompts, persisted sessions, or summarization behavior.
+
+## Interactive-mode tests must run inside tmux
+
+Trigger: the Human stated on 2026-11-14 that any test involving interactive mode must be started through tmux and then driven through tmux.
+
+Action: never launch an interactive process directly from a tool call or a plain background shell. Create a tmux session, start the process inside it, send keys and read the pane output through tmux, and stop the exact tmux session and its process afterwards.
+
+Why this prevents recurrence: an interactive process reads from a terminal that a plain subprocess does not provide, so direct launches hang, lose prompts, or exit on EOF and produce evidence that does not reflect real interactive behavior. tmux supplies a real pseudo-terminal and a stable, inspectable pane, so the test exercises the same path a human uses and the captured output is trustworthy evidence.
