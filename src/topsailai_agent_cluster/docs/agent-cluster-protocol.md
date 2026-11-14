@@ -526,6 +526,33 @@ request ID. A normal stream has exactly one `end`; EOF without `end` is `stream_
 clean completion. Cancellation may prevent the provider from writing its terminal frame, so the
 Endpoint owns the authoritative interrupted result.
 
+### Missing, null and empty values
+
+Presence and nullability are separate checks, so an absent field, a field present as JSON `null` and a
+field present with an empty value do not share one outcome.
+
+An absent required field fails the presence check, which reads the raw object and rejects only a missing
+key. A request without `payload` fails with `provider request field payload is required`, and a record
+frame without `record` fails with `record frame field record is required`.
+
+A container that is present as `null` passes the presence check and is then rejected by the value check.
+A `null` `payload` fails with `payload must not be null`, and a `null` `record` on a record frame fails
+with `record frame must not contain null`. The optional `query_result` and observation `attributes` are
+checked only when present, and then fail with `query_result must not be null` and
+`observation attributes must not be null`. An empty object or empty array is accepted, because only
+`null` is forbidden; `payload` may therefore be `{}` but never `null`.
+
+An identifier is rejected in all three states, but not with one message. An absent `adapter_id` fails the
+presence check with `provider request field adapter_id is required`, while a `null` or empty `adapter_id`
+passes that check and fails the identifier check with `adapter_id is required`. Containers and
+identifiers therefore differ in what they accept, not in whether they are checked: a container has a
+meaningful empty form and accepts it, while an identifier has none and rejects every empty form.
+
+A field that a frame type forbids is rejected whenever it is present, including when its value is
+`null`, with `<label> must not contain <name>`. A `started` frame therefore accepts an absent `record`
+and rejects a `null` one with `started frame must not contain record`, because the forbidden-field check
+treats a present `null` as present.
+
 ### Provider observations and Cluster identity
 
 A discovery result returns `ProviderObservation` records with provider-private identity:
