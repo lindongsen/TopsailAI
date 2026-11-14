@@ -15,20 +15,29 @@ import (
 
 // expiryStoreStub records cleanup cutoffs and cancels after the requested call.
 type expiryStoreStub struct {
-	mu             sync.Mutex
-	cutoffs        []int64
-	purgeCutoffs   []int64
-	reconcileCalls []int64
-	converged      int64
-	purged         int64
-	inventoryIDs   []string
-	deletedIDs     []string
-	cancel         context.CancelFunc
-	cancelCall     int
-	expireErr      error
-	purgeErr       error
-	reconcileErr   error
-	purgeCallSeen  int
+	mu                  sync.Mutex
+	cutoffs             []int64
+	purgeCutoffs        []int64
+	reconcileCalls      []int64
+	degradeCutoffs      []int64
+	degradeNowMS        []int64
+	degradeRetentionMS  []int64
+	converged           int64
+	purged              int64
+	degradedIDs         []string
+	degradedInventoryID []string
+	inventoryIDs        []string
+	deletedIDs          []string
+	deletedCommandIDs   []string
+	cancel              context.CancelFunc
+	cancelCall          int
+	expireErr           error
+	degradeErr          error
+	purgeErr            error
+	reconcileErr        error
+	purgeCallSeen       int
+	degradeCallSeen     int
+	order               []string
 }
 
 // ReconcileExpiredCommands records one convergence invocation.
@@ -36,24 +45,41 @@ func (s *expiryStoreStub) ReconcileExpiredCommands(_ context.Context, nowMS int6
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reconcileCalls = append(s.reconcileCalls, nowMS)
+	s.order = append(s.order, "reconcile")
 	if s.reconcileErr != nil {
 		return 0, s.reconcileErr
 	}
 	return s.converged, nil
 }
 
-// ExpireOfflineEndpoints records one cleanup invocation.
-func (s *expiryStoreStub) ExpireOfflineEndpoints(_ context.Context, cutoffMS int64) (serverstorage.EndpointExpiryResult, error) {
+// DegradeOfflineEndpoints records one degradation invocation.
+func (s *expiryStoreStub) DegradeOfflineEndpoints(_ context.Context, cutoffMS, nowMS, retentionMS int64) (serverstorage.EndpointDegradeResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.degradeCutoffs = append(s.degradeCutoffs, cutoffMS)
+	s.order = append(s.order, "degrade")
+	s.degradeNowMS = append(s.degradeNowMS, nowMS)
+	s.degradeRetentionMS = append(s.degradeRetentionMS, retentionMS)
+	s.degradeCallSeen++
+	if s.degradeErr != nil {
+		return serverstorage.EndpointDegradeResult{}, s.degradeErr
+	}
+	return serverstorage.EndpointDegradeResult{DegradedEndpointIDs: s.degradedIDs, InventoryEndpointIDs: s.degradedInventoryID}, nil
+}
+
+// ExpireDegradedEndpoints records one expiry invocation.
+func (s *expiryStoreStub) ExpireDegradedEndpoints(_ context.Context, cutoffMS int64) (serverstorage.EndpointExpiryResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cutoffs = append(s.cutoffs, cutoffMS)
+	s.order = append(s.order, "expire")
 	if len(s.cutoffs) == s.cancelCall && s.cancel != nil {
 		s.cancel()
 	}
 	if s.expireErr != nil {
 		return serverstorage.EndpointExpiryResult{}, s.expireErr
 	}
-	return serverstorage.EndpointExpiryResult{InventoryEndpointIDs: s.inventoryIDs, DeletedEndpointIDs: s.deletedIDs}, nil
+	return serverstorage.EndpointExpiryResult{InventoryEndpointIDs: s.inventoryIDs, DeletedEndpointIDs: s.deletedIDs, DeletedCommandIDs: s.deletedCommandIDs}, nil
 }
 
 // PurgeExpiredCommands records one command purge invocation.
@@ -61,6 +87,7 @@ func (s *expiryStoreStub) PurgeExpiredCommands(_ context.Context, cutoffMS int64
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.purgeCutoffs = append(s.purgeCutoffs, cutoffMS)
+	s.order = append(s.order, "purge")
 	s.purgeCallSeen++
 	if s.purgeErr != nil {
 		return 0, s.purgeErr
@@ -76,7 +103,7 @@ func TestRunEndpointExpiryRunsImmediatelyAndStops(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	done := make(chan struct{})
 	go func() {
-		runEndpointExpiry(ctx, logger, stub, 5*time.Minute, time.Hour)
+		runEndpointExpiry(ctx, logger, stub, 5*time.Minute, time.Hour, 720*time.Hour)
 		close(done)
 	}()
 	select {
@@ -99,7 +126,7 @@ func TestRunEndpointExpiryRepeats(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	done := make(chan struct{})
 	go func() {
-		runEndpointExpiryAtInterval(ctx, logger, stub, 5*time.Minute, time.Hour, time.Millisecond)
+		runEndpointExpiryAtInterval(ctx, logger, stub, 5*time.Minute, time.Hour, 720*time.Hour, time.Millisecond)
 		close(done)
 	}()
 	select {
@@ -140,7 +167,7 @@ func TestExpireEndpointRecordsLogsCompletionWhenNothingDeleted(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
 	stub := &expiryStoreStub{}
-	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
 
 	logged := output.String()
 	if !strings.Contains(logged, "retention sweep complete") {
@@ -159,7 +186,7 @@ func TestExpireEndpointRecordsLogsCountsWhenRowsDeleted(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
 	stub := &expiryStoreStub{purged: 3, inventoryIDs: []string{"gone-1"}, deletedIDs: []string{"gone-1"}}
-	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
 
 	logged := output.String()
 	for _, field := range []string{"purged_commands=3", "deleted_inventory=1", "deleted_metadata=1"} {
@@ -167,7 +194,7 @@ func TestExpireEndpointRecordsLogsCountsWhenRowsDeleted(t *testing.T) {
 			t.Fatalf("field %q missing from %q", field, logged)
 		}
 	}
-	for _, line := range []string{"expired offline endpoint inventory", "expired offline endpoint metadata"} {
+	for _, line := range []string{"expired degraded endpoint inventory", "expired degraded endpoint metadata"} {
 		if !strings.Contains(logged, line) {
 			t.Fatalf("per-row line %q missing from %q", line, logged)
 		}
@@ -180,7 +207,7 @@ func TestExpireEndpointRecordsLogsCountsWhenRowsDeleted(t *testing.T) {
 func TestExpireEndpointRecordsPurgesCommandsBeforeEndpointExpiry(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &expiryStoreStub{}
-	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
 
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
@@ -204,7 +231,7 @@ func TestExpireEndpointRecordsStopsWhenPurgeFails(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
 	stub := &expiryStoreStub{purgeErr: context.DeadlineExceeded}
-	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
 
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
@@ -222,7 +249,7 @@ func TestExpireEndpointRecordsStopsWhenPurgeFails(t *testing.T) {
 func TestExpireEndpointRecordsReconcilesBeforePurge(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &expiryStoreStub{}
-	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
 
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
@@ -244,7 +271,7 @@ func TestExpireEndpointRecordsStopsWhenReconcileFails(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
 	stub := &expiryStoreStub{reconcileErr: context.DeadlineExceeded}
-	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
 
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
@@ -269,9 +296,105 @@ func TestExpireEndpointRecordsLogsConvergedCount(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
 	stub := &expiryStoreStub{converged: 2}
-	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
 
 	if !strings.Contains(output.String(), "converged_commands=2") {
 		t.Fatalf("converged count missing from %q", output.String())
+	}
+}
+
+// TestExpireEndpointRecordsDegradesBeforeExpiring verifies degradation runs
+// before expiry in the same sweep.
+//
+// Expiry only selects rows that are already degraded, so an offline row that
+// just crossed the offline window must be degraded in this sweep. If expiry ran
+// first, that row would wait one more cycle before its degraded window even
+// started, and the configured degraded retention would be silently longer than
+// the operator asked for.
+func TestExpireEndpointRecordsDegradesBeforeExpiring(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	stub := &expiryStoreStub{}
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.degradeCallSeen != 1 {
+		t.Fatalf("degrade calls = %d, want 1", stub.degradeCallSeen)
+	}
+	if len(stub.cutoffs) != 1 {
+		t.Fatalf("expiry calls = %d, want 1", len(stub.cutoffs))
+	}
+	// The degrade cutoff is the offline window, so it must be newer than the
+	// command cutoff and older than the sweep clock.
+	if stub.degradeCutoffs[0] != 10_000_000-int64(time.Hour/time.Millisecond) {
+		t.Fatalf("degrade cutoff = %d, want the offline window applied to the sweep clock", stub.degradeCutoffs[0])
+	}
+	if stub.degradeNowMS[0] != 10_000_000 {
+		t.Fatalf("degrade nowMS = %d, want the sweep clock", stub.degradeNowMS[0])
+	}
+	if stub.degradeRetentionMS[0] != int64(720*time.Hour/time.Millisecond) {
+		t.Fatalf("degrade retention = %d, want 720h in milliseconds", stub.degradeRetentionMS[0])
+	}
+	// The order is the load-bearing part: expiry only selects rows that are
+	// already degraded, so degrade must precede expire in the same sweep.
+	want := []string{"reconcile", "purge", "degrade", "expire"}
+	if len(stub.order) != len(want) {
+		t.Fatalf("call order = %v, want %v", stub.order, want)
+	}
+	for i := range want {
+		if stub.order[i] != want[i] {
+			t.Fatalf("call order = %v, want %v", stub.order, want)
+		}
+	}
+}
+
+// TestExpireEndpointRecordsStopsWhenDegradeFails verifies a failed degradation
+// does not continue into expiry.
+//
+// Continuing would delete rows while other rows were still stuck offline, and
+// the completion line would report a partial sweep as a complete one.
+func TestExpireEndpointRecordsStopsWhenDegradeFails(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	stub := &expiryStoreStub{degradeErr: context.DeadlineExceeded}
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if len(stub.cutoffs) != 0 {
+		t.Fatalf("expiry ran after a failed degrade: %v", stub.cutoffs)
+	}
+	if !strings.Contains(output.String(), "degrade offline endpoint records") {
+		t.Fatalf("degrade failure was not logged: %q", output.String())
+	}
+	if strings.Contains(output.String(), "retention sweep complete") {
+		t.Fatalf("a failed sweep reported completion: %q", output.String())
+	}
+}
+
+// TestExpireEndpointRecordsLogsDegradedAndDeletedCounts verifies the completion
+// line and the per-row lines carry the degradation and cascade counts, so an
+// operator can tell what a sweep did without reading the database.
+func TestExpireEndpointRecordsLogsDegradedAndDeletedCounts(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	stub := &expiryStoreStub{
+		degradedIDs:         []string{"stale-1"},
+		degradedInventoryID: []string{"stale-1"},
+		deletedIDs:          []string{"gone-1"},
+		deletedCommandIDs:   []string{"cmd-1", "cmd-2"},
+	}
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
+
+	logged := output.String()
+	for _, field := range []string{"degraded_endpoints=1", "deleted_degraded_inventory=1", "deleted_commands=2", "deleted_metadata=1", "degraded_retention=720h0m0s"} {
+		if !strings.Contains(logged, field) {
+			t.Fatalf("field %q missing from %q", field, logged)
+		}
+	}
+	for _, line := range []string{"degraded offline endpoint", "deleted degraded endpoint inventory", "deleted expired endpoint command", "expired degraded endpoint metadata"} {
+		if !strings.Contains(logged, line) {
+			t.Fatalf("per-row line %q missing from %q", line, logged)
+		}
 	}
 }

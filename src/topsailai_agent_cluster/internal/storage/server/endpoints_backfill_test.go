@@ -37,8 +37,16 @@ func TestBackfillOfflineSinceRepairsLegacyRows(t *testing.T) {
 		t.Fatalf("online offline_since_at_ms = %d, want 0", got)
 	}
 
-	// The repaired row must now be selectable by the real expiry predicate.
-	result, err := store.ExpireOfflineEndpoints(ctx, 200)
+	// The repaired row must now be selectable by the real degrade predicate, and
+	// the degraded row must then be selectable by the expiry predicate.
+	degraded, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(degraded.DegradedEndpointIDs) != 1 || degraded.DegradedEndpointIDs[0] != "legacy" {
+		t.Fatalf("degrade result = %+v, want legacy degraded", degraded)
+	}
+	result, err := store.ExpireDegradedEndpoints(ctx, 6000)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,11 +44,10 @@ func TestCommitBusyDoesNotPoisonConnection(t *testing.T) {
 	if rows != 1 {
 		t.Fatalf("inventory rows=%d, want 1", rows)
 	}
-
-	if _, err := store.ExpireOfflineEndpoints(ctx, 200); err == nil {
-		t.Fatal("expiry commit succeeded while an external read transaction held the database")
+	if _, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000); err == nil {
+		t.Fatal("degrade commit succeeded while an external read transaction held the database")
 	} else if !strings.Contains(strings.ToLower(err.Error()), "locked") && !strings.Contains(strings.ToLower(err.Error()), "busy") {
-		t.Fatalf("expiry error=%q, want SQLite busy/locked evidence", err)
+		t.Fatalf("degrade error=%q, want SQLite busy/locked evidence", err)
 	}
 	if err := readTx.Rollback(); err != nil {
 		t.Fatal(err)

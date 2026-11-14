@@ -93,10 +93,16 @@ func TestPurgeExpiredCommandsRejectsNonPositiveCutoff(t *testing.T) {
 	}
 }
 
-// TestPurgeThenExpireDeletesMetadataInOneSweep verifies the ordering that makes
-// the whole transition complete in a single sweep: once the blocking command is
-// purged, the metadata row that only it protected is removed immediately.
-func TestPurgeThenExpireDeletesMetadataInOneSweep(t *testing.T) {
+// TestPurgeDoesNotUnblockEndpointDeletion verifies the command purge is no
+// longer the mechanism that releases an Endpoint metadata row.
+//
+// Before the degraded lifecycle existed, expiry deleted an offline row only when
+// no command referenced it, so purging the blocking command was what let the row
+// go. That coupling is gone: an offline row is now degraded first and deleted
+// only when its own deadline passes, and the deletion removes the referencing
+// commands explicitly. This test pins the new behaviour so the old coupling
+// cannot silently return.
+func TestPurgeDoesNotUnblockEndpointDeletion(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
 	if err != nil {
@@ -107,21 +113,25 @@ func TestPurgeThenExpireDeletesMetadataInOneSweep(t *testing.T) {
 	setOfflineSince(t, store, "blocked", 100)
 	insertCommandRow(t, store, "cmd-blocking", "blocked", protocol.StatusFinished, 100)
 
-	// Before the purge the command evidence keeps the metadata row alive.
-	result, err := store.ExpireOfflineEndpoints(ctx, 200)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.DeletedEndpointIDs) != 0 {
-		t.Fatalf("metadata deleted while command evidence remained: %+v", result)
-	}
-	assertRowCount(t, store, "endpoints", "blocked", 1)
-
-	// The purge runs first in the real sweep, so the same sweep then removes it.
+	// Purging the only referencing command does not delete the endpoint row.
 	if _, err := store.PurgeExpiredCommands(ctx, 200); err != nil {
 		t.Fatal(err)
 	}
-	result, err = store.ExpireOfflineEndpoints(ctx, 200)
+	assertCommandCount(t, store, "cmd-blocking", 0)
+	assertRowCount(t, store, "endpoints", "blocked", 1)
+
+	// Degrading keeps the row and starts its own window.
+	degraded, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(degraded.DegradedEndpointIDs) != 1 || degraded.DegradedEndpointIDs[0] != "blocked" {
+		t.Fatalf("degrade result = %+v, want blocked degraded", degraded)
+	}
+	assertRowCount(t, store, "endpoints", "blocked", 1)
+
+	// Only the degraded deadline releases it.
+	result, err := store.ExpireDegradedEndpoints(ctx, 6000)
 	if err != nil {
 		t.Fatal(err)
 	}

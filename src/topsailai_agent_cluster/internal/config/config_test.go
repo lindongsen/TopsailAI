@@ -180,3 +180,35 @@ func TestEndpointIgnoresServerEndpointExpiry(t *testing.T) {
 		t.Fatalf("Endpoint parsed Server expiry: %v", err)
 	}
 }
+
+func TestServerEndpointDegradedRetentionConfiguration(t *testing.T) {
+	if got := Defaults("agent-cluster-server").EndpointDegradedRetention; got != 720*time.Hour {
+		t.Fatalf("default degraded retention = %s, want 720h", got)
+	}
+	t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_DEGRADED_RETENTION", "7m30s")
+	cfg, err := Load([]string{"--endpoint-degraded-retention", "9m"}, "agent-cluster-server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EndpointDegradedRetention != 9*time.Minute {
+		t.Fatalf("flag did not override environment: %s", cfg.EndpointDegradedRetention)
+	}
+}
+
+func TestServerEndpointDegradedRetentionRejectsInvalidValues(t *testing.T) {
+	for _, value := range []string{"invalid", "0s", "-1m"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_DEGRADED_RETENTION", value)
+			if _, err := Load(nil, "agent-cluster-server"); err == nil {
+				t.Fatalf("accepted degraded retention %q", value)
+			}
+		})
+	}
+}
+
+func TestEndpointIgnoresServerEndpointDegradedRetention(t *testing.T) {
+	t.Setenv("AGENT_CLUSTER_SERVER_ENDPOINT_DEGRADED_RETENTION", "invalid")
+	if _, err := Load(nil, "agent-cluster-endpoint"); err != nil {
+		t.Fatalf("Endpoint parsed Server degraded retention: %v", err)
+	}
+}

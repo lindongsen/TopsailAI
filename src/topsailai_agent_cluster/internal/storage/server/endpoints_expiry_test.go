@@ -8,9 +8,14 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
-// TestExpireOfflineEndpointsRemovesOnlyStaleOfflineRecords verifies cleanup
-// removes stale projections without treating online or recent data as expired.
-func TestExpireOfflineEndpointsRemovesOnlyStaleOfflineRecords(t *testing.T) {
+// TestExpireDegradedEndpointsRemovesOnlyExpiredDegradedRows verifies expiry
+// selects exactly the degraded rows whose materialized deadline has passed.
+//
+// A degraded row whose deadline is still in the future must survive, because the
+// degraded window is the period in which an operator can still see the record.
+// An offline row must survive too: it has not been degraded yet, so it has no
+// deadline and no basis for deletion.
+func TestExpireDegradedEndpointsRemovesOnlyExpiredDegradedRows(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
 	if err != nil {
@@ -18,70 +23,145 @@ func TestExpireOfflineEndpointsRemovesOnlyStaleOfflineRecords(t *testing.T) {
 	}
 	defer store.Close()
 
-	for _, item := range []struct {
-		id      string
-		state   string
-		updated int64
-		offline int64
-	}{
-		{id: "expired", state: "offline", updated: 300, offline: 100},
-		{id: "recent", state: "offline", updated: 100, offline: 300},
-		{id: "online", state: "online", updated: 100, offline: 0},
-	} {
-		putEndpointInventory(t, store, item.id, item.state, item.updated)
-		setOfflineSince(t, store, item.id, item.offline)
+	putEndpointInventory(t, store, "expired", "offline", 100)
+	setOfflineSince(t, store, "expired", 100)
+	putEndpointInventory(t, store, "still-degraded", "offline", 300)
+	setOfflineSince(t, store, "still-degraded", 300)
+	putEndpointInventory(t, store, "offline-only", "offline", 500)
+	setOfflineSince(t, store, "offline-only", 500)
+
+	// Two degradation windows so the two degraded rows carry different
+	// deadlines: "expired" is due at 6000 and "still-degraded" at 7000.
+	if _, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DegradeOfflineEndpoints(ctx, 400, 2000, 5000); err != nil {
+		t.Fatal(err)
 	}
 
-	result, err := store.ExpireOfflineEndpoints(ctx, 200)
+	result, err := store.ExpireDegradedEndpoints(ctx, 6000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.InventoryEndpointIDs) != 1 || result.InventoryEndpointIDs[0] != "expired" || len(result.DeletedEndpointIDs) != 1 || result.DeletedEndpointIDs[0] != "expired" {
-		t.Fatalf("expiry result = %+v", result)
+	if len(result.DeletedEndpointIDs) != 1 || result.DeletedEndpointIDs[0] != "expired" {
+		t.Fatalf("expiry result = %+v, want only expired deleted", result)
 	}
 	assertRowCount(t, store, "endpoints", "expired", 0)
-	assertRowCount(t, store, "endpoint_session_state", "expired", 0)
-	for _, id := range []string{"recent", "online"} {
-		assertRowCount(t, store, "endpoints", id, 1)
-		assertRowCount(t, store, "endpoint_session_state", id, 1)
-	}
+	assertRowCount(t, store, "endpoints", "still-degraded", 1)
+	assertRowCount(t, store, "endpoints", "offline-only", 1)
 }
 
-// TestExpireOfflineEndpointsPreservesCommandEvidence verifies a command keeps
-// its Endpoint identity while the stale inventory that pollutes list is removed.
-func TestExpireOfflineEndpointsPreservesCommandEvidence(t *testing.T) {
+// TestExpireDegradedEndpointsDeletesCommandEvidence verifies the explicit
+// cascade removes the commands that reference the endpoint.
+//
+// The schema declares commands.endpoint_id without ON DELETE CASCADE, so without
+// this delete the endpoint row could never be removed once any command referenced
+// it. unconfirmed is excluded from the purge allowlist because it is the only
+// evidence of an unknown effect, so the purge alone can never unblock the row.
+func TestExpireDegradedEndpointsDeletesCommandEvidence(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	putEndpointInventory(t, store, "referenced", "offline", 100)
-	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-1", EndpointID: "referenced", Operation: "message.send", OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Payload: []byte(`{"text":"hello"}`), ExecuteBeforeAtMS: 1000}
-	if err := store.AdmitCommand(ctx, intent, "hash", 110); err != nil {
+
+	putEndpointInventory(t, store, "gone", "offline", 100)
+	setOfflineSince(t, store, "gone", 100)
+	insertCommandRow(t, store, "cmd-unconfirmed", "gone", protocol.StatusUnconfirmed, 100)
+	insertCommandRow(t, store, "cmd-finished", "gone", protocol.StatusFinished, 100)
+
+	if _, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000); err != nil {
 		t.Fatal(err)
 	}
-
-	result, err := store.ExpireOfflineEndpoints(ctx, 200)
+	result, err := store.ExpireDegradedEndpoints(ctx, 6000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.InventoryEndpointIDs) != 1 || result.InventoryEndpointIDs[0] != "referenced" || len(result.DeletedEndpointIDs) != 0 {
-		t.Fatalf("expiry result = %+v", result)
+	if len(result.DeletedEndpointIDs) != 1 || result.DeletedEndpointIDs[0] != "gone" {
+		t.Fatalf("expiry result = %+v, want gone deleted", result)
 	}
-	assertRowCount(t, store, "endpoint_session_state", "referenced", 0)
-	assertRowCount(t, store, "endpoints", "referenced", 1)
-	var commands int
-	if err := store.DB().QueryRowContext(ctx, `SELECT count(*) FROM commands WHERE command_id = 'cmd-1'`).Scan(&commands); err != nil {
+	if len(result.DeletedCommandIDs) != 2 {
+		t.Fatalf("deleted command ids = %v, want both commands", result.DeletedCommandIDs)
+	}
+	assertCommandCount(t, store, "cmd-unconfirmed", 0)
+	assertCommandCount(t, store, "cmd-finished", 0)
+	assertRowCount(t, store, "endpoints", "gone", 0)
+}
+
+// TestExpireDegradedEndpointsPreservesOtherEndpointCommands verifies the cascade
+// is scoped to the endpoint being deleted. A command belonging to a live endpoint
+// must never be removed by another endpoint's expiry.
+func TestExpireDegradedEndpointsPreservesOtherEndpointCommands(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if commands != 1 {
-		t.Fatalf("command count = %d, want 1", commands)
+	defer store.Close()
+
+	putEndpointInventory(t, store, "gone", "offline", 100)
+	setOfflineSince(t, store, "gone", 100)
+	putEndpointInventory(t, store, "alive", "online", 100)
+	insertCommandRow(t, store, "cmd-gone", "gone", protocol.StatusUnconfirmed, 100)
+	insertCommandRow(t, store, "cmd-alive", "alive", protocol.StatusUnconfirmed, 100)
+
+	if _, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ExpireDegradedEndpoints(ctx, 6000); err != nil {
+		t.Fatal(err)
+	}
+	assertCommandCount(t, store, "cmd-gone", 0)
+	assertCommandCount(t, store, "cmd-alive", 1)
+	assertRowCount(t, store, "endpoints", "alive", 1)
+}
+
+// TestExpireDegradedEndpointsSkipsZeroDeadline verifies a degraded row with no
+// materialized deadline is never deleted. Zero means "no deletion date", so
+// treating it as "expired long ago" would delete a row that was never scheduled.
+func TestExpireDegradedEndpointsSkipsZeroDeadline(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	putEndpointInventory(t, store, "no-deadline", "offline", 100)
+	setOfflineSince(t, store, "no-deadline", 100)
+	if _, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `UPDATE endpoints SET expires_at_ms = 0 WHERE endpoint_id = ?`, "no-deadline"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := store.ExpireDegradedEndpoints(ctx, 6000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.DeletedEndpointIDs) != 0 {
+		t.Fatalf("expiry deleted a row without a deadline: %+v", result)
+	}
+	assertRowCount(t, store, "endpoints", "no-deadline", 1)
+}
+
+// TestExpireDegradedEndpointsRejectsInvalidCutoff verifies an invalid wall-clock
+// cutoff cannot accidentally select every degraded Endpoint.
+func TestExpireDegradedEndpointsRejectsInvalidCutoff(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.ExpireDegradedEndpoints(context.Background(), 0); err == nil {
+		t.Fatal("zero cutoff was accepted")
 	}
 }
 
 // TestMarkPersistedEndpointsOfflinePreservesAge verifies startup recovery makes
-// stale online projections eligible for expiry without granting a fresh TTL.
+// stale online projections eligible for degradation without granting a fresh TTL.
 func TestMarkPersistedEndpointsOfflinePreservesAge(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
@@ -106,12 +186,12 @@ func TestMarkPersistedEndpointsOfflinePreservesAge(t *testing.T) {
 	if state != "offline" || offlineSinceMS != 300 {
 		t.Fatalf("recovered state=%q offline_since_at_ms=%d, want offline/300", state, offlineSinceMS)
 	}
-	result, err := store.ExpireOfflineEndpoints(ctx, 200)
+	result, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.InventoryEndpointIDs) != 0 {
-		t.Fatalf("startup recovery expired inventory immediately: %+v", result)
+	if len(result.DegradedEndpointIDs) != 0 {
+		t.Fatalf("startup recovery degraded a row whose clock is newer than the cutoff: %+v", result)
 	}
 }
 
@@ -139,7 +219,7 @@ func TestMarkPersistedEndpointsOfflinePreservesExistingOfflineAge(t *testing.T) 
 }
 
 // TestUpsertEndpointOnlineClearsOfflineAge verifies reconnect starts a fresh
-// liveness period and stale cleanup cannot remove the online projection.
+// liveness period and stale cleanup cannot degrade the online projection.
 func TestUpsertEndpointOnlineClearsOfflineAge(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
@@ -160,91 +240,11 @@ func TestUpsertEndpointOnlineClearsOfflineAge(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("offline_since_at_ms=%d, want 0", got)
 	}
-	result, err := store.ExpireOfflineEndpoints(ctx, 200)
+	result, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.InventoryEndpointIDs) != 0 {
-		t.Fatalf("reconnected endpoint expired: %+v", result)
+	if len(result.DegradedEndpointIDs) != 0 {
+		t.Fatalf("reconnected endpoint degraded: %+v", result)
 	}
-}
-
-// TestExpireOfflineEndpointsRejectsInvalidCutoff verifies an invalid wall-clock
-// cutoff cannot accidentally select every persisted Endpoint.
-func TestExpireOfflineEndpointsRejectsInvalidCutoff(t *testing.T) {
-	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if _, err := store.ExpireOfflineEndpoints(context.Background(), 0); err == nil {
-		t.Fatal("zero cutoff was accepted")
-	}
-}
-
-// putEndpointInventory stores one Endpoint and one latest inventory projection.
-func putEndpointInventory(t *testing.T, store *Store, endpointID, state string, updatedAtMS int64) {
-	t.Helper()
-	ctx := context.Background()
-	endpoint := protocol.Endpoint{EndpointID: endpointID, InstanceID: "instance-" + endpointID, DisplayName: endpointID, ConnectionState: state, ObservedAtMS: updatedAtMS, CapabilityRevision: "v1"}
-	if err := store.UpsertEndpoint(ctx, endpoint, updatedAtMS); err != nil {
-		t.Fatal(err)
-	}
-	report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: "endpoint-local", SnapshotRevision: 1, ObservedAtMS: updatedAtMS, ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded}
-	if err := store.ReplaceInventory(ctx, endpointID, report, updatedAtMS); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// setOfflineSince controls the retention clock independently from metadata age.
-func setOfflineSince(t *testing.T, store *Store, endpointID string, offlineSinceMS int64) {
-	t.Helper()
-	if _, err := store.DB().ExecContext(context.Background(), `UPDATE endpoints SET offline_since_at_ms = ? WHERE endpoint_id = ?`, offlineSinceMS, endpointID); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// assertRowCount checks one Endpoint identity in a named business table.
-func assertRowCount(t *testing.T, store *Store, table, endpointID string, want int) {
-	t.Helper()
-	query := `SELECT count(*) FROM ` + table + ` WHERE endpoint_id = ?`
-	var got int
-	if err := store.DB().QueryRowContext(context.Background(), query, endpointID).Scan(&got); err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("%s count for %s = %d, want %d", table, endpointID, got, want)
-	}
-}
-
-// TestExpireOfflineEndpointsNeverSelectsOnlineRows verifies the connection-state
-// guard is load-bearing rather than redundant.
-//
-// The production write paths cannot produce an online row with a positive
-// offline_since_at_ms: UpsertEndpoint forces the clock to zero for an online
-// state, and MarkPersistedEndpointsOffline converts every online row to offline
-// before a sweep runs. The guard therefore protects against a corrupt or
-// hand-edited row, which is exactly the state this test writes directly. Without
-// the guard, a positive clock alone would make an online Endpoint eligible and
-// its live inventory would be deleted.
-func TestExpireOfflineEndpointsNeverSelectsOnlineRows(t *testing.T) {
-	ctx := context.Background()
-	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	putEndpointInventory(t, store, "corrupt-online", "online", 100)
-	setOfflineSince(t, store, "corrupt-online", 100)
-
-	result, err := store.ExpireOfflineEndpoints(ctx, 200)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.InventoryEndpointIDs) != 0 || len(result.DeletedEndpointIDs) != 0 {
-		t.Fatalf("expiry selected an online row: %+v", result)
-	}
-	assertRowCount(t, store, "endpoints", "corrupt-online", 1)
-	assertRowCount(t, store, "endpoint_session_state", "corrupt-online", 1)
 }

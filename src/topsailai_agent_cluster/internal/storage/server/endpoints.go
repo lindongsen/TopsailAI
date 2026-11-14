@@ -91,25 +91,98 @@ func (s *Store) BackfillOfflineSince(ctx context.Context) (int64, error) {
 type EndpointExpiryResult struct {
 	InventoryEndpointIDs []string
 	DeletedEndpointIDs   []string
+	DeletedCommandIDs    []string
 }
 
-// ExpireOfflineEndpoints removes stale offline inventory while preserving every
-// Endpoint row that retained command evidence still references. The state and
-// cutoff predicates are repeated for each delete inside one transaction so a
-// reconnect can never be removed by a stale selection made before the write.
-func (s *Store) ExpireOfflineEndpoints(ctx context.Context, cutoffMS int64) (EndpointExpiryResult, error) {
+// EndpointDegradeResult identifies every Endpoint moved into the degraded state.
+type EndpointDegradeResult struct {
+	DegradedEndpointIDs  []string
+	InventoryEndpointIDs []string
+}
+
+// DegradeOfflineEndpoints moves every Endpoint that has been offline past the
+// offline retention window into the degraded state, and removes the inventory
+// projection that made it look alive.
+//
+// Degrading is not deleting. The metadata row survives so an operator can still
+// see that the machine existed, when it was last seen and when it will be
+// removed, while the inventory is dropped because a stale session list is worse
+// than no session list: it invites an operator to act on a machine that is gone.
+//
+// expires_at_ms is materialized here, once, rather than derived at query time.
+// The query layer has no access to Server configuration, and a later retention
+// change must not retroactively move the deletion date of a row that is already
+// degraded. The promise made at degrade time stands, which is the same reason
+// commands.deadline_at_ms is immutable.
+//
+// The inventory delete selects by the degraded_since_at_ms value written by the
+// statement above, so it can only remove inventory belonging to rows degraded in
+// this sweep. Selecting by the cutoff instead would also match a row that
+// reconnected between the two statements.
+func (s *Store) DegradeOfflineEndpoints(ctx context.Context, cutoffMS, nowMS, retentionMS int64) (EndpointDegradeResult, error) {
+	if cutoffMS <= 0 {
+		return EndpointDegradeResult{}, fmt.Errorf("endpoint degrade cutoff must be positive")
+	}
+	if nowMS <= 0 {
+		return EndpointDegradeResult{}, fmt.Errorf("endpoint degrade timestamp must be positive")
+	}
+	if retentionMS <= 0 {
+		return EndpointDegradeResult{}, fmt.Errorf("endpoint degraded retention must be positive")
+	}
+	var degradedIDs []string
+	var inventoryIDs []string
+	err := s.withTransaction(ctx, "endpoint degrade", func(conn *sql.Conn) error {
+		var err error
+		degradedIDs, err = queryReturningIDs(ctx, conn, `UPDATE endpoints SET connection_state = 'degraded', degraded_since_at_ms = ?, expires_at_ms = ?, update_at_ms = ? WHERE connection_state = 'offline' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ? RETURNING endpoint_id`, nowMS, nowMS+retentionMS, nowMS, cutoffMS)
+		if err != nil {
+			return fmt.Errorf("degrade offline endpoints: %w", err)
+		}
+		inventoryIDs, err = queryReturningIDs(ctx, conn, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND degraded_since_at_ms = ?) RETURNING endpoint_id`, nowMS)
+		if err != nil {
+			return fmt.Errorf("delete degraded endpoint inventory: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return EndpointDegradeResult{}, err
+	}
+	sort.Strings(degradedIDs)
+	sort.Strings(inventoryIDs)
+	return EndpointDegradeResult{DegradedEndpointIDs: degradedIDs, InventoryEndpointIDs: inventoryIDs}, nil
+}
+
+// ExpireDegradedEndpoints deletes every Endpoint whose degraded deadline has
+// passed, together with the command evidence that references it.
+//
+// The command delete is an explicit cascade rather than an ON DELETE CASCADE
+// constraint. The schema declares commands.endpoint_id without a cascade, so a
+// row with retained command evidence could never be deleted, and unconfirmed is
+// deliberately excluded from the purge allowlist because it is the only evidence
+// of an unknown effect. Deleting the endpoint therefore requires deleting those
+// commands, and doing it explicitly is what lets every removed command ID be
+// returned and logged. A schema cascade would remove the same rows silently.
+//
+// The state and deadline predicates are repeated for each delete inside one
+// transaction so a reconnect can never be removed by a stale selection made
+// before the write.
+func (s *Store) ExpireDegradedEndpoints(ctx context.Context, cutoffMS int64) (EndpointExpiryResult, error) {
 	if cutoffMS <= 0 {
 		return EndpointExpiryResult{}, fmt.Errorf("endpoint expiry cutoff must be positive")
 	}
+	var commandIDs []string
 	var inventoryIDs []string
 	var endpointIDs []string
 	err := s.withTransaction(ctx, "endpoint expiry", func(conn *sql.Conn) error {
 		var err error
-		inventoryIDs, err = deleteReturningEndpointIDs(ctx, conn, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state != 'online' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ?) RETURNING endpoint_id`, cutoffMS)
+		commandIDs, err = queryReturningIDs(ctx, conn, `DELETE FROM commands WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ?) RETURNING command_id`, cutoffMS)
+		if err != nil {
+			return fmt.Errorf("delete expired endpoint commands: %w", err)
+		}
+		inventoryIDs, err = queryReturningIDs(ctx, conn, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ?) RETURNING endpoint_id`, cutoffMS)
 		if err != nil {
 			return fmt.Errorf("delete expired endpoint inventory: %w", err)
 		}
-		endpointIDs, err = deleteReturningEndpointIDs(ctx, conn, `DELETE FROM endpoints WHERE connection_state != 'online' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ? AND NOT EXISTS (SELECT 1 FROM commands WHERE commands.endpoint_id = endpoints.endpoint_id) RETURNING endpoint_id`, cutoffMS)
+		endpointIDs, err = queryReturningIDs(ctx, conn, `DELETE FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ? RETURNING endpoint_id`, cutoffMS)
 		if err != nil {
 			return fmt.Errorf("delete expired endpoint metadata: %w", err)
 		}
@@ -118,31 +191,33 @@ func (s *Store) ExpireOfflineEndpoints(ctx context.Context, cutoffMS int64) (End
 	if err != nil {
 		return EndpointExpiryResult{}, err
 	}
+	sort.Strings(commandIDs)
 	sort.Strings(inventoryIDs)
 	sort.Strings(endpointIDs)
-	return EndpointExpiryResult{InventoryEndpointIDs: inventoryIDs, DeletedEndpointIDs: endpointIDs}, nil
+	return EndpointExpiryResult{InventoryEndpointIDs: inventoryIDs, DeletedEndpointIDs: endpointIDs, DeletedCommandIDs: commandIDs}, nil
 }
 
-// deleteReturningEndpointIDs executes one expiry delete and collects its exact
-// identities so the caller can emit an audit log for every removed record.
-func deleteReturningEndpointIDs(ctx context.Context, tx interface {
+// queryReturningIDs executes one statement that returns a single identity column
+// and collects every value, so the caller can emit an audit log for each removed
+// or transitioned record.
+func queryReturningIDs(ctx context.Context, tx interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, query string, cutoffMS int64) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, query, cutoffMS)
+}, query string, args ...any) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var endpointIDs []string
+	var ids []string
 	for rows.Next() {
-		var endpointID string
-		if err := rows.Scan(&endpointID); err != nil {
+		var id string
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		endpointIDs = append(endpointIDs, endpointID)
+		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return endpointIDs, nil
+	return ids, nil
 }

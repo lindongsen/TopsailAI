@@ -10,6 +10,11 @@ type Endpoint struct {
 	ConnectionState    string `json:"connection_state"`
 	ObservedAtMS       int64  `json:"observed_at_ms"`
 	CapabilityRevision string `json:"capability_revision"`
+	// ExpiresAtMS is the immutable moment a degraded Endpoint will be deleted.
+	// It is zero for every other state, because only a degraded Endpoint has a
+	// deletion date to report. A caller must treat zero as "no deletion date"
+	// rather than as "expires immediately".
+	ExpiresAtMS int64 `json:"expires_at_ms,omitempty"`
 }
 
 // Session identifies a provider session without exposing provider routing details.
