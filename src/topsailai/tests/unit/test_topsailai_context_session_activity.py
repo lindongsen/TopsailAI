@@ -7,7 +7,12 @@ from unittest.mock import Mock
 import psutil
 import pytest
 
-from topsailai.context.session_activity import ActivityState as State, SessionActivityProbe, observe_process
+from topsailai.context.session_activity import (
+    ActivityState as State,
+    SessionActivityProbe,
+    normalize_home_path,
+    observe_process,
+)
 
 
 def record(root, sid="a.b[1]", pid=123, suffix="meta", hostname=None):
@@ -358,3 +363,55 @@ def test_observe_many_preserves_independent_session_states(tmp_path):
     assert observations["stopped"].state == State.STOPPED
     assert observations["running"].state == State.RUNNING
     assert observations["unknown"].state == State.UNKNOWN
+
+
+def test_symlinked_home_authorizes_cleanup_with_the_folder_constants_spelling(tmp_path):
+    """A symlinked home must authorize cleanup when both sides share one spelling.
+
+    The folder constants normalize the home with ``os.path.abspath``, which keeps
+    symbolic links unresolved, and that exact value is what the database records.
+    A probe that resolved its roots would compare a resolved root against an
+    unresolved recorded home and refuse every deletion.
+    """
+    real = tmp_path / "real_home"
+    (real / "workspace" / "task").mkdir(parents=True)
+    link = tmp_path / "link_home"
+    link.symlink_to(real, target_is_directory=True)
+    record(link / "workspace" / "task")
+
+    probe = SessionActivityProbe((link / "workspace" / "task",), lambda pid: State.STOPPED)
+
+    observation = probe.observe("a.b[1]", home=str(link))
+
+    assert observation.state == State.STOPPED
+    assert probe.can_clean("a.b[1]", home=str(link))
+
+
+def test_resolved_home_spelling_is_still_refused(tmp_path):
+    """A home that is not an admitted root stays fail-closed after normalization."""
+    real = tmp_path / "real_home"
+    (real / "workspace" / "task").mkdir(parents=True)
+    link = tmp_path / "link_home"
+    link.symlink_to(real, target_is_directory=True)
+    record(link / "workspace" / "task")
+
+    probe = SessionActivityProbe((link / "workspace" / "task",), lambda pid: State.STOPPED)
+
+    observation = probe.observe("a.b[1]", home=str(real))
+
+    assert observation.state == State.UNKNOWN
+    assert observation.reason == "unverified recorded home"
+    assert not probe.can_clean("a.b[1]", home=str(real))
+
+
+def test_normalize_home_path_keeps_symlinks_and_collapses_parent_segments(tmp_path):
+    """Normalization matches the folder constants: absolute, no symlink following."""
+    real = tmp_path / "real_home"
+    real.mkdir()
+    link = tmp_path / "link_home"
+    link.symlink_to(real, target_is_directory=True)
+
+    assert normalize_home_path(str(link)) == str(link)
+    assert normalize_home_path(str(link)) != str(real)
+    assert normalize_home_path(f"{link}/../link_home") == str(link)
+    assert normalize_home_path("") == ""

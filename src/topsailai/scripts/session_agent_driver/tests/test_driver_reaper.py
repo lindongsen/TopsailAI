@@ -317,7 +317,7 @@ class TestRelativeHomeResolution:
         command = popen.call_args.args[0]
         passed_home = command[command.index("--home") + 1]
         assert Path(passed_home).is_absolute()
-        assert Path(passed_home) == (tmp_path / "relhome").resolve()
+        assert Path(passed_home) == Path(os.path.abspath(tmp_path / "relhome"))
         environment = popen.call_args.kwargs["env"]
         assert Path(environment["TOPSAILAI_HOME"]).is_absolute()
 
@@ -342,7 +342,67 @@ class TestRelativeHomeResolution:
         # value, otherwise a second resolution would point at the wrong tree.
         probed_dir = probe.call_args.args[0][0]
         assert Path(probed_dir).is_absolute()
-        assert Path(probed_dir) == task_dir.resolve()
+        assert Path(probed_dir) == Path(os.path.abspath(task_dir))
+
+
+class TestSymlinkedHomeSpelling:
+    """The child home must keep the folder-constants spelling, not resolve links.
+
+    The parent records ``topsailai_home`` with the folder-constants value, which
+    keeps symbolic links unresolved. The reaper child builds its probe root from
+    ``TOPSAILAI_HOME`` and the cleanup manager compares that root against the
+    recorded home. Resolving the link in the child makes the two spellings differ
+    forever, so every deletion is refused with "unverified recorded home".
+    """
+
+    def test_spawn_passes_the_unresolved_home_to_the_child(self, tmp_path, monkeypatch):
+        real = tmp_path / "real_home"
+        real.mkdir()
+        link = tmp_path / "link_home"
+        link.symlink_to(real, target_is_directory=True)
+        monkeypatch.setenv("TOPSAILAI_HOME", str(link))
+        reaper.track_session("sad-abc123")
+        with mock.patch.object(reaper.subprocess, "Popen") as popen:
+            popen.return_value = mock.Mock(pid=999)
+            reaper._spawn_reaper()
+        command = popen.call_args.args[0]
+        passed_home = command[command.index("--home") + 1]
+        assert Path(passed_home) == link
+        assert Path(passed_home) != real
+        assert Path(popen.call_args.kwargs["env"]["TOPSAILAI_HOME"]) == link
+
+    def test_reap_keeps_the_unresolved_home_for_the_probe(self, tmp_path):
+        real = tmp_path / "real_home"
+        task_dir = real / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        link = tmp_path / "link_home"
+        link.symlink_to(real, target_is_directory=True)
+        manager = mock.Mock()
+        manager.exists_session.return_value = True
+        manager.delete_session.return_value = True
+        with mock.patch("topsailai.context.ctx_manager.get_session_manager",
+                        return_value=manager), \
+                mock.patch("topsailai.context.session_activity.SessionActivityProbe") as probe:
+            probe.return_value.can_clean.return_value = True
+            reaper.reap_sessions(1, ["sad-abc"], str(link), 1, 0.01,
+                                 observer=lambda _: False)
+        probed_dir = probe.call_args.args[0][0]
+        assert Path(probed_dir) == link / "workspace" / "task"
+        assert Path(probed_dir) != task_dir.resolve()
+
+    def test_main_keeps_the_unresolved_home(self, tmp_path):
+        real = tmp_path / "real_home"
+        real.mkdir()
+        link = tmp_path / "link_home"
+        link.symlink_to(real, target_is_directory=True)
+        with mock.patch.object(reaper, "_configure_child_logging") as configure, \
+                mock.patch.object(reaper, "_ensure_project_paths"), \
+                mock.patch.object(reaper, "reap_sessions", return_value=[]) as reap:
+            code = reaper.main(["--parent-pid", "1", "--home", str(link),
+                                "--sessions", '["sad-abc"]'])
+        assert code == 0
+        assert Path(configure.call_args.args[0]) == link
+        assert Path(reap.call_args.args[2]) == link
 
 
 class TestParseSessionIds:

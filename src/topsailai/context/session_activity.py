@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import socket
 import stat
@@ -97,13 +98,31 @@ def local_hostname():
         return ""
 
 
+def normalize_home_path(value):
+    """Normalize a home path exactly as the folder constants define it.
+
+    The folder constants are the single authority for the home spelling and
+    they use ``os.path.abspath``, which collapses ``..`` but deliberately keeps
+    symbolic links unresolved. Cleanup authorization compares a recorded home
+    against an admitted root, so both sides must use this one spelling:
+    ``Path.resolve`` would follow a symlinked home and never match the recorded
+    value, which silently refuses every deletion.
+
+    Returns:
+        str: The normalized path, or ``""`` when the value is empty.
+    """
+    if not value:
+        return ""
+    return os.path.abspath(os.path.expanduser(str(value)))
+
+
 class SessionActivityProbe:
     """Authorize cleanup only from strict, host-local ownership evidence."""
 
     def __init__(self, task_dirs=(), process_observer=observe_process,
                  endpoint_observer=observe_control_endpoint, hostname=None):
         """Accept boundary-resolved roots and injectable liveness authorities."""
-        self.task_dirs = tuple(Path(p).absolute() for p in task_dirs)
+        self.task_dirs = tuple(Path(normalize_home_path(p)) for p in task_dirs)
         self.process_observer = process_observer
         self.endpoint_observer = endpoint_observer
         self.hostname = local_hostname() if hostname is None else hostname
@@ -131,8 +150,9 @@ class SessionActivityProbe:
             return results
         roots = self.task_dirs
         if home is not None:
-            recorded = Path(home).absolute() / "workspace" / "task"
-            if not home or recorded not in roots:
+            normalized = normalize_home_path(home)
+            recorded = Path(normalized) / "workspace" / "task" if normalized else None
+            if recorded is None or recorded not in roots:
                 results.update(
                     (sid, ActivityObservation(ActivityState.UNKNOWN, "unverified recorded home"))
                     for sid in valid
