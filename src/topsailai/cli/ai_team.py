@@ -65,6 +65,8 @@ from topsailai.ai_team.common import (
     get_session_head_tail_offset,
 )
 
+from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
+
 
 def hook_build_message(message:str, curr_count:int, **_) -> str:
     """
@@ -117,6 +119,7 @@ def main():
     """
     # agent name
     manager_name = get_manager_name()
+    start_event_channel_for_process(session_id=get_session_id())
 
     # prompt
     sys_prompt_content = generate_system_prompt()

@@ -38,6 +38,7 @@ from topsailai.utils import env_tool
 from topsailai.workspace.agent_shell import get_agent_chat
 
 from cli_topsailai.colors import print_info
+from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
 
 # Environment aliases that carry the session identity. Both are published
 # together so the agent library, the session record, the session stdout
@@ -124,6 +125,9 @@ def main():
     """ main entry """
     session_id, generated = _resolve_session_id()
     _publish_session_id(session_id)
+    # The channel belongs to the process, so it starts once here and stays up
+    # across every turn of this chat.
+    start_event_channel_for_process(session_id=session_id)
     if generated and not _library_prints_session():
         # The library prints the session line itself only in interactive,
         # non-debug runs. Announce the generated identity in the remaining

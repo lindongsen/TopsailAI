@@ -46,6 +46,8 @@ from topsailai.utils.print_tool import (
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.workspace.agent_shell import get_agent_chat
 
+from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
+
 
 # define global variables
 g_flag_interactive = True
@@ -254,6 +256,7 @@ def main():
         >>> Final Answer:
         ['file1.txt', 'file2.txt', ...]
     """
+    start_event_channel_for_process()
     params = get_params()
 
     # continue a task

@@ -34,6 +34,8 @@ from topsailai.utils import (
 )
 from topsailai.workspace.llm_shell import get_llm_chat
 
+from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
+
 
 def format_messages(messages):
     """
@@ -90,6 +92,7 @@ def main():
     Raises:
         Exception: Any exceptions from chat processing are handled internally
     """
+    start_event_channel_for_process()
     # team
     team_member_name = get_member_name()
 

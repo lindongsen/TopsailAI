@@ -31,6 +31,8 @@ import _import_topsailai
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 from topsailai.workspace.agent_shell import get_agent_chat
 
+from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
+
 
 def main():
     """
@@ -53,6 +55,7 @@ def main():
         - The agent_tool is disabled to prevent nested agent calls
         - Session history can be maintained via SESSION_ID environment variable
     """
+    start_event_channel_for_process()
     get_agent_chat(disabled_tools=["agent_tool"]).run(times=1)
 
 if __name__ == "__main__":

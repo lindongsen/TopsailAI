@@ -21,6 +21,8 @@ os.environ.setdefault("TOPSAILAI_INTERACTIVE_MODE", "0")
 
 from topsailai.workspace.agent_shell import get_agent_chat
 
+from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
+
 
 def get_params():
     ''' return dict for parameters '''
@@ -75,6 +77,7 @@ def main():
         - Session history can be maintained via SESSION_ID environment variable
     """
     params = get_params()
+    start_event_channel_for_process(session_id=params["session_id"])
     get_agent_chat(
         session_id=params["session_id"],
         need_input_message=False,

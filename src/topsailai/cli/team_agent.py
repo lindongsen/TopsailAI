@@ -51,6 +51,8 @@ from topsailai.ai_team.common import (
     get_session_head_tail_offset,
 )
 
+from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
+
 
 def hook_build_message(message:str, **kwargs) -> str:
     """
@@ -108,6 +110,7 @@ def main():
         Processing task...
         Answer: Task completed successfully.
     """
+    start_event_channel_for_process()
     # agent name
     agent_name = get_member_name()
 

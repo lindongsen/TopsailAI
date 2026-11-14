@@ -437,6 +437,41 @@ Its suffix must stay registered in `context/session_activity.py`; an
 unregistered `*.session.*` suffix makes session cleanup report an unknown owner
 and blocks cleanup permanently.
 
+### Production wiring
+
+The channel belongs to the process, not to one agent run. A subscriber attaches
+to the process, so it must be able to connect before the first turn starts and
+must keep receiving events across every turn, subagent, and retry inside that
+process. Binding the socket inside `AgentChat._run()` would expose the endpoint
+only for the duration of one `run()` call, so a subscriber that attaches between
+turns would find no endpoint at all.
+
+Every CLI entry point that runs an agent or an LLM chat therefore calls
+`cli/cli_topsailai/event_channel_bootstrap.py` once at startup. That wrapper
+delegates to `workspace/event_channel/process_bootstrap.py`, which starts the
+server through `workspace/event_channel/lifecycle.py` and registers an `atexit`
+handler that releases it on interpreter exit. The channel stays disabled unless
+`TOPSAILAI_EVENT_CHANNEL_ENABLED` is truthy, so an unset or false value creates
+no socket and leaves existing behavior unchanged.
+
+The bootstrap is idempotent: the first caller starts the server, later callers
+receive the same instance, and one stop releases it. It never raises, because
+observability must not break the process it observes; a startup failure is
+logged at warning level and the CLI continues without a channel.
+
+One server is shared per `(session_id, pid)` inside a process. Sharing is
+mandatory rather than an optimization: binding the same socket path twice raises
+`OSError`, and a second server would install a second subscription registry, so
+the fan-out layer would only ever see one of them.
+
+The subscription registry must be installed before `server.start()`. `fan_out()`
+returns zero without logging when no registry is registered, so a server started
+first would accept subscribers and deliver nothing while reporting no error. The
+lifecycle module installs the registry first and rolls it back if startup fails.
+
+`enabled` is read once per process, so changing the variable affects the next
+process rather than a running one.
+
 ### Configuration
 
 | Variable | Default | Description |

@@ -34,6 +34,8 @@ from topsailai.workspace.llm_shell import get_llm_chat
 from topsailai.workspace.input_tool import input_message
 from topsailai.utils import env_tool
 
+from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
+
 
 def main():
     """
@@ -63,6 +65,7 @@ def main():
         - Session history can be maintained via SESSION_ID environment variable
         - User can exit by pressing Ctrl+C
     """
+    start_event_channel_for_process()
     need_tips = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CLI_NEED_TIPS", default=True)
     if not env_tool.is_debug_mode():
         need_tips = False
