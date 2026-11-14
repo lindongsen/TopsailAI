@@ -51,8 +51,12 @@ type target struct {
 
 // namedContract identifies one versioned operation or query.
 type namedContract struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Name               string   `json:"name"`
+	Version            string   `json:"version"`
+	TargetKinds        []string `json:"target_kinds,omitempty"`
+	PayloadSchema      string   `json:"payload_schema,omitempty"`
+	SafetyClass        string   `json:"safety_class,omitempty"`
+	RequiredPermission string   `json:"required_permission,omitempty"`
 }
 
 // request is the public request envelope consumed from stdin.

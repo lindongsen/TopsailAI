@@ -425,7 +425,10 @@ func (a *Adapter) typedQuery(ctx context.Context, name string, target *providerc
 
 func (a *Adapter) supportsQuery(query providercli.NamedContract) bool {
 	for _, candidate := range a.descriptor.Queries {
-		if candidate == query {
+		// Compare the identity fields rather than the whole struct: a contract
+		// also carries optional capability metadata, and a provider that
+		// declared any of it would stop matching a query it does serve.
+		if candidate.Name == query.Name && candidate.Version == query.Version {
 			return true
 		}
 	}
@@ -651,16 +654,53 @@ func intersectCapabilities(configured protocol.CapabilityDescriptor, offered []p
 	for _, item := range offered {
 		allowed[item.Name+"\x00"+item.Version] = struct{}{}
 	}
+	// A control action also describes the capability it becomes, so the provider
+	// that implements it is the source of what it is. The configured descriptor
+	// still decides which actions are allowed, because the catalog is the
+	// operator's allowlist; the provider decides what an allowed action means.
+	declared := make(map[string]providercli.NamedContract, len(controlActions))
 	for _, item := range controlActions {
 		allowed[item.Name+"\x00"+item.Version] = struct{}{}
+		declared[item.Name+"\x00"+item.Version] = item
 	}
 	result := protocol.CapabilityDescriptor{Revision: configured.Revision}
 	for _, capability := range configured.Capabilities {
-		if _, ok := allowed[capability.Name+"\x00"+capability.Version]; ok {
-			result.Capabilities = append(result.Capabilities, capability)
+		key := capability.Name + "\x00" + capability.Version
+		if _, ok := allowed[key]; !ok {
+			continue
 		}
+		if contract, isControl := declared[key]; isControl {
+			capability = capabilityFromContract(capability, contract)
+		}
+		result.Capabilities = append(result.Capabilities, capability)
 	}
 	return result
+}
+
+// capabilityFromContract merges the provider-declared capability metadata into
+// the configured capability.
+//
+// A field the provider leaves empty keeps the configured value, so a provider
+// that declares only a name and a version cannot silently strip a target kind or
+// a safety class and leave the Endpoint advertising a capability it cannot
+// describe.
+//
+// RequiredPermission is deliberately not merged. Who may invoke a control action
+// is an operator decision, and a provider that could declare its own permission
+// could downgrade a mutating action to a read scope and hand it to a caller the
+// operator never authorized. The configured value therefore always wins, and a
+// provider-declared permission is ignored rather than trusted.
+func capabilityFromContract(configured protocol.Capability, contract providercli.NamedContract) protocol.Capability {
+	if len(contract.TargetKinds) > 0 {
+		configured.TargetKinds = append([]string(nil), contract.TargetKinds...)
+	}
+	if contract.PayloadSchema != "" {
+		configured.PayloadSchema = contract.PayloadSchema
+	}
+	if contract.SafetyClass != "" {
+		configured.SafetyClass = contract.SafetyClass
+	}
+	return configured
 }
 
 func receiptFromOperation(result providercli.OperationResult) protocol.ExecutionReceipt {

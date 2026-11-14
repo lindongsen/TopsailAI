@@ -564,6 +564,101 @@ func TestIntersectCapabilitiesDropsAnUnadvertisedControlAction(t *testing.T) {
 	}
 }
 
+// TestIntersectCapabilitiesTakesTheActionMetadataFromTheProvider proves the
+// provider is the source of what an allowed control action is.
+//
+// The catalog decides which actions are allowed, because it is the operator's
+// allowlist. It cannot decide what an action addresses or whether it changes
+// state: only the provider that implements the action knows that. Reading the
+// metadata from the configured side instead would let an operator's stale copy
+// describe an action the provider has since changed.
+func TestIntersectCapabilitiesTakesTheActionMetadataFromTheProvider(t *testing.T) {
+	configured := protocol.CapabilityDescriptor{
+		Revision: "rev-1",
+		Capabilities: []protocol.Capability{
+			{Name: "ctl.heartbeat", Version: "v1", TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
+		},
+	}
+	controlActions := []providercli.NamedContract{{
+		Name:          "ctl.heartbeat",
+		Version:       "v1",
+		TargetKinds:   []string{"session"},
+		PayloadSchema: `{"type":"object"}`,
+		SafetyClass:   protocol.SafetyClassReadOnly,
+	}}
+
+	effective := intersectCapabilities(configured, nil, controlActions)
+	if len(effective.Capabilities) != 1 {
+		t.Fatalf("effective capabilities = %v, want the configured action", effective.Capabilities)
+	}
+	got := effective.Capabilities[0]
+	if got.PayloadSchema != `{"type":"object"}` {
+		t.Fatalf("payload schema = %q, want the provider-declared schema", got.PayloadSchema)
+	}
+	if got.SafetyClass != protocol.SafetyClassReadOnly {
+		t.Fatalf("safety class = %q, want the provider-declared class", got.SafetyClass)
+	}
+}
+
+// TestIntersectCapabilitiesKeepsTheConfiguredPermission is the security case.
+//
+// Who may invoke a control action is an operator decision. A provider that could
+// declare its own permission could downgrade a mutating action to a read scope
+// and hand it to a caller the operator never authorized, so the configured value
+// must always win even when the provider disagrees.
+func TestIntersectCapabilitiesKeepsTheConfiguredPermission(t *testing.T) {
+	configured := protocol.CapabilityDescriptor{
+		Revision: "rev-1",
+		Capabilities: []protocol.Capability{
+			{Name: "ctl.heartbeat", Version: "v1", TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
+		},
+	}
+	controlActions := []providercli.NamedContract{{
+		Name:               "ctl.heartbeat",
+		Version:            "v1",
+		TargetKinds:        []string{"session"},
+		SafetyClass:        protocol.SafetyClassMutating,
+		RequiredPermission: "view",
+	}}
+
+	effective := intersectCapabilities(configured, nil, controlActions)
+	if len(effective.Capabilities) != 1 {
+		t.Fatalf("effective capabilities = %v, want the configured action", effective.Capabilities)
+	}
+	if got := effective.Capabilities[0].RequiredPermission; got != "control" {
+		t.Fatalf("required permission = %q, want the configured scope, because a provider must not widen its own access", got)
+	}
+}
+
+// TestIntersectCapabilitiesKeepsConfiguredMetadataWhenTheProviderOmitsIt proves
+// an older provider cannot strip a capability description.
+//
+// A provider that declares only a name and a version is still a valid provider.
+// Treating its silence as "no target kinds, no safety class" would advertise a
+// capability the Endpoint cannot describe, so an omitted field keeps the
+// configured value.
+func TestIntersectCapabilitiesKeepsConfiguredMetadataWhenTheProviderOmitsIt(t *testing.T) {
+	configured := protocol.CapabilityDescriptor{
+		Revision: "rev-1",
+		Capabilities: []protocol.Capability{
+			{Name: "ctl.heartbeat", Version: "v1", TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
+		},
+	}
+	controlActions := []providercli.NamedContract{{Name: "ctl.heartbeat", Version: "v1"}}
+
+	effective := intersectCapabilities(configured, nil, controlActions)
+	if len(effective.Capabilities) != 1 {
+		t.Fatalf("effective capabilities = %v, want the configured action", effective.Capabilities)
+	}
+	got := effective.Capabilities[0]
+	if len(got.TargetKinds) != 1 || got.TargetKinds[0] != "session" {
+		t.Fatalf("target kinds = %v, want the configured kinds", got.TargetKinds)
+	}
+	if got.SafetyClass != protocol.SafetyClassMutating {
+		t.Fatalf("safety class = %q, want the configured class", got.SafetyClass)
+	}
+}
+
 func TestReceiptFromProviderErrorCarriesTheProviderDiagnostic(t *testing.T) {
 	t.Run("structured document", func(t *testing.T) {
 		receipt := receiptFromProviderError(&providercli.ProviderError{

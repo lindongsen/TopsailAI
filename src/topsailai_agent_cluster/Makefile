@@ -282,7 +282,9 @@ test-provider-schema:
 test-conformance:
 	mkdir -p $(CONFORMANCE_DIR)/bin $(CONFORMANCE_DIR)/go-cache $(CONFORMANCE_DIR)/go-tmp
 	cd providers/mock && GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) .
-	AGENT_CLUSTER_MOCK_EXECUTABLE=$(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go test -count=1 ./internal/providerconformance
+	AGENT_CLUSTER_MOCK_EXECUTABLE=$(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) \
+	AGENT_CLUSTER_PROVIDER_SESSION_ID=session:stable \
+	GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go test -count=1 ./internal/providerconformance
 
 # The independent TopsailAI Provider module is tested outside the root Go module.
 # Its compiler cache and temporary files remain under .tmp/.

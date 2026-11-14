@@ -618,7 +618,12 @@ func mockControlActions() []namedContract {
 	names := []string{"ctl.fixture_probe", "ctl.get_session_messages", "ctl.heartbeat"}
 	actions := make([]namedContract, 0, len(names))
 	for _, name := range names {
-		actions = append(actions, namedContract{Name: name, Version: "v1"})
+		actions = append(actions, namedContract{
+			Name:        name,
+			Version:     "v1",
+			TargetKinds: []string{"session"},
+			SafetyClass: "mutating",
+		})
 	}
 	return actions
 }

@@ -389,7 +389,27 @@ func (n NamedContract) validate(label string) error {
 	if err := validateIdentifier(label+" name", n.Name, true); err != nil {
 		return err
 	}
-	return validateIdentifier(label+" version", n.Version, true)
+	if err := validateIdentifier(label+" version", n.Version, true); err != nil {
+		return err
+	}
+	// The capability metadata is optional, because an operation or a query
+	// declares none. When a provider does declare it, it must be well formed:
+	// an unknown target kind or safety class would be advertised verbatim and
+	// the Endpoint would publish a capability nobody can interpret.
+	for _, kind := range n.TargetKinds {
+		if !isResourceKind(kind) {
+			return fmt.Errorf("%s %q declares invalid target kind %q", label, n.Name, kind)
+		}
+	}
+	if n.SafetyClass != "" {
+		if err := protocol.ValidateSafetyClass(n.SafetyClass); err != nil {
+			return fmt.Errorf("%s %q: %w", label, n.Name, err)
+		}
+	}
+	if n.PayloadSchema != "" && !json.Valid([]byte(n.PayloadSchema)) {
+		return fmt.Errorf("%s %q payload schema must be valid JSON", label, n.Name)
+	}
+	return validateIdentifier(label+" required permission", n.RequiredPermission, false)
 }
 
 func (o ProviderObservation) validate() error {

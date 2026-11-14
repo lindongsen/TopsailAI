@@ -193,7 +193,12 @@ func validateControlPlaceholders(token string) error {
 func (c controlCatalog) contracts() []namedContract {
 	contracts := make([]namedContract, 0, len(c.order))
 	for _, name := range c.order {
-		contracts = append(contracts, namedContract{Name: controlOperationPrefix + name, Version: operationVersion})
+		contracts = append(contracts, namedContract{
+			Name:        controlOperationPrefix + name,
+			Version:     operationVersion,
+			TargetKinds: []string{"session"},
+			SafetyClass: "mutating",
+		})
 	}
 	return contracts
 }

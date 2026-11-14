@@ -57,7 +57,15 @@ func TestControlCatalogExpandsConfiguredTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog: %v", err)
 	}
-	if got := catalog.contracts(); !reflect.DeepEqual(got, []namedContract{{Name: "ctl.heartbeat", Version: operationVersion}}) {
+	// The contract also declares what the action is, because the provider that
+	// implements it is the source of its target kinds and safety class.
+	wantContract := namedContract{
+		Name:        "ctl.heartbeat",
+		Version:     operationVersion,
+		TargetKinds: []string{"session"},
+		SafetyClass: "mutating",
+	}
+	if got := catalog.contracts(); !reflect.DeepEqual(got, []namedContract{wantContract}) {
 		t.Fatalf("contracts=%v", got)
 	}
 	session := liveSessionTarget(t, "7")
@@ -231,7 +239,10 @@ func TestControlCatalogAdvertisesOnlyConfiguredActions(t *testing.T) {
 		t.Fatalf("load catalog: %v", err)
 	}
 	got := topsailaiDescriptor(catalog)
-	want := []namedContract{{Name: "ctl.heartbeat", Version: operationVersion}, {Name: "ctl.models", Version: operationVersion}}
+	want := []namedContract{
+		{Name: "ctl.heartbeat", Version: operationVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating"},
+		{Name: "ctl.models", Version: operationVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating"},
+	}
 	if !reflect.DeepEqual(got.ControlActions, want) {
 		t.Fatalf("control actions=%v want %v", got.ControlActions, want)
 	}

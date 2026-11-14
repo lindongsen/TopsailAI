@@ -129,10 +129,32 @@ type Target struct {
 	ExpectedGeneration  string `json:"expected_generation,omitempty"`
 }
 
-// NamedContract identifies one versioned standard operation or query.
+// NamedContract identifies one versioned standard operation, query or control
+// action.
+//
+// A control action also describes the capability it becomes, so the provider that
+// implements the action is the source of what the action is: which resource kinds
+// it addresses, the JSON Schema of its payload, and whether it changes provider
+// state. Those three fields are empty for an operation or a query, because an
+// operation's capability metadata is an Endpoint decision rather than a provider
+// one.
+//
+// RequiredPermission is carried so the wire contract is complete, but the
+// Endpoint never adopts it for a control action: who may invoke an action is an
+// operator decision, and a provider that could declare its own permission could
+// downgrade a control action to a read scope. See capabilityFromContract.
 type NamedContract struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	// TargetKinds are the resource kinds the action addresses.
+	TargetKinds []string `json:"target_kinds,omitempty"`
+	// PayloadSchema is the JSON Schema document of the action payload.
+	PayloadSchema string `json:"payload_schema,omitempty"`
+	// SafetyClass is read_only or mutating.
+	SafetyClass string `json:"safety_class,omitempty"`
+	// RequiredPermission is the operator scope the action needs. The Endpoint
+	// keeps its own configured value and ignores a provider-declared one.
+	RequiredPermission string `json:"required_permission,omitempty"`
 }
 
 // Request is one non-authoritative request sent to a Provider CLI.

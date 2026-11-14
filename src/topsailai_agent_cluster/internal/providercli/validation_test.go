@@ -58,6 +58,54 @@ func validDescriptor() Descriptor {
 	}
 }
 
+// TestDescriptorValidatesControlActionMetadata proves a provider cannot publish
+// a control action the Endpoint cannot interpret.
+//
+// The metadata is optional, because an operation or a query declares none. When a
+// provider does declare it, an unknown target kind or safety class would be
+// advertised verbatim, so the descriptor is rejected at decode time instead of
+// reaching an operator as a capability nobody can act on.
+func TestDescriptorValidatesControlActionMetadata(t *testing.T) {
+	t.Run("accepts declared metadata", func(t *testing.T) {
+		descriptor := validDescriptor()
+		descriptor.ControlActions = []NamedContract{{
+			Name:               "ctl.heartbeat",
+			Version:            "v1",
+			TargetKinds:        []string{ResourceSession},
+			PayloadSchema:      `{"type":"object"}`,
+			SafetyClass:        protocol.SafetyClassMutating,
+			RequiredPermission: "control",
+		}}
+		if err := descriptor.validate(); err != nil {
+			t.Fatalf("validate descriptor: %v", err)
+		}
+	})
+
+	t.Run("rejects an unknown target kind", func(t *testing.T) {
+		descriptor := validDescriptor()
+		descriptor.ControlActions = []NamedContract{{Name: "ctl.heartbeat", Version: "v1", TargetKinds: []string{"galaxy"}}}
+		if err := descriptor.validate(); err == nil {
+			t.Fatal("validate descriptor accepted an unknown target kind")
+		}
+	})
+
+	t.Run("rejects an unknown safety class", func(t *testing.T) {
+		descriptor := validDescriptor()
+		descriptor.ControlActions = []NamedContract{{Name: "ctl.heartbeat", Version: "v1", SafetyClass: "harmless"}}
+		if err := descriptor.validate(); err == nil {
+			t.Fatal("validate descriptor accepted an unknown safety class")
+		}
+	})
+
+	t.Run("rejects a payload schema that is not JSON", func(t *testing.T) {
+		descriptor := validDescriptor()
+		descriptor.ControlActions = []NamedContract{{Name: "ctl.heartbeat", Version: "v1", PayloadSchema: "not json"}}
+		if err := descriptor.validate(); err == nil {
+			t.Fatal("validate descriptor accepted a payload schema that is not JSON")
+		}
+	})
+}
+
 func TestDecodeRequestStrictContract(t *testing.T) {
 	request := validRequest(FunctionDescribe)
 	encoded, err := json.Marshal(request)
