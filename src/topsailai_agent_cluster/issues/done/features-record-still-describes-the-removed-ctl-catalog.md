@@ -60,3 +60,26 @@ After the edit, a guard should pin that the feature record names no removed pack
 path and no removed key as current configuration. The existing guards in
 `src/main/agent-cluster-endpoint/` already pin the removed key in the template and the
 reference document, so this record needs its own check rather than a duplicate.
+
+## Resolution
+
+The section was labelled as history rather than deleted, because the design reasoning
+is still worth reading: why the surface was made configuration-driven, why the argv
+template substitutes per token instead of through a shell, and why a nil catalog
+refuses everything. A new opening paragraph states that `0391ba56` deleted the
+Endpoint-local catalog in full, that `internal/adapter/topsailai/ctl_config.go` is gone
+and that `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` is read by nothing. The three
+paragraphs that follow were rewritten in the past tense and each ends by saying what
+was deleted with the catalog. The paragraph that already described the current
+mechanism was left untouched.
+
+The guard is `TestFeaturesRecordBannerLabelsTheDeletedCatalogAsHistory`,
+`TestFeaturesRecordNamesTheDeletedCatalogOnlyAsHistory` and
+`TestFeaturesRecordStatesTheCurrentCatalogMechanism` in
+`src/main/agent-cluster-endpoint/features_record_ctl_catalog_guard_test.go`. It pins
+that the section opens with a history marker naming `0391ba56`, that every paragraph
+naming the deleted package or the dead key also says it is gone, and that the section
+names `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS` and `ADAPTERS` as the current
+mechanism. Two probes were run: rewriting the history paragraphs in the present tense
+failed at `features/90ai-added.md:142`, and replacing the current key with the dead key
+failed at `:166` and `:141`.

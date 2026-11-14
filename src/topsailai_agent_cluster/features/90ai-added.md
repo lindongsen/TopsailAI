@@ -139,29 +139,33 @@ nothing.
 
 ## Config-file-driven ctl catalog
 
-`internal/adapter/topsailai/ctl_config.go` makes the `ctl.<action>` surface entirely
-configuration-driven. The catalog file named by `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`
-is the only source of control actions: each entry defines the action name, the
-permission scope, the payload schema and the provider argv template, so adding,
-changing or removing an action requires no adapter rebuild and no Server change.
-`ctl_actions.go` no longer carries a compiled-in action list, permission map or
-schema map; `controlActionCapabilities` iterates the catalog and
-`controlActionArgs` builds argv from the configured template.
+History: this section records a mechanism that no longer exists. `0391ba56` deleted the
+Endpoint-local catalog in full, so `internal/adapter/topsailai/ctl_config.go` is gone,
+`AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` is read by nothing, and the paragraphs below describe what
+was built and why, not what the Endpoint does today. The mechanism that replaced it is described at the
+end of this section.
 
-The template is an argv array executed directly, never a shell string. Two
-placeholders are substituted per token so a placeholder never splits into several
-arguments: `{session}` becomes the provider session key and `{payload}` becomes the
-JSON payload. Each may appear at most once, and an unknown or unterminated
-placeholder is rejected at load time. `payload_session_field` replaces the previous
-hardcoded `get_session_messages` special case, so the Endpoint fills the provider
-session key from the revalidated target instead of asking the operator for a
-selector it already holds.
+`internal/adapter/topsailai/ctl_config.go` made the `ctl.<action>` surface entirely
+configuration-driven. The catalog file named by `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` was the
+only source of control actions: each entry defined the action name, the permission scope, the payload
+schema and the provider argv template, so adding, changing or removing an action required no adapter
+rebuild and no Server change. `ctl_actions.go` carried no compiled-in action list, permission map or
+schema map; `controlActionCapabilities` iterated the catalog and `controlActionArgs` built argv from the
+configured template. That design was deleted with the rest of the Endpoint-local catalog.
 
-A nil or empty catalog advertises no action and refuses every `ctl.` operation,
-which reverses the earlier "nil means reviewed default set" behaviour: an Endpoint
-cannot be talked into running an action nobody configured. The catalog is reloaded
-on `SIGHUP`; a malformed document keeps the previous actions in force and is logged.
-Whole-line `#` comments are accepted so the shipped example can explain itself.
+The template was an argv array executed directly, never a shell string. Two placeholders were
+substituted per token so a placeholder never split into several arguments: `{session}` became the
+provider session key and `{payload}` became the JSON payload. Each could appear at most once, and an
+unknown or unterminated placeholder was rejected at load time. `payload_session_field` replaced the
+earlier hardcoded `get_session_messages` special case, so the Endpoint filled the provider session key
+from the revalidated target instead of asking the operator for a selector it already held. Those
+substitution rules were deleted along with the catalog.
+
+A nil or empty catalog advertised no action and refused every `ctl.` operation, which reversed the
+earlier "nil means reviewed default set" behaviour: an Endpoint could not be talked into running an
+action nobody configured. The catalog was reloaded on `SIGHUP`; a malformed document kept the previous
+actions in force and was logged. Whole-line `#` comments were accepted so the shipped example could
+explain itself. The reload path was deleted with the catalog.
 
 Because the catalog decides which provider command runs, it is an authorization
 surface. The Endpoint validates the configured capability list before its policy
