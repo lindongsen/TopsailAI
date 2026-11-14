@@ -43,6 +43,15 @@ var followScript = []string{"cd 1\n", "cd 1\n", "logs -f\n", "quit\n"}
 // enter. It proves the stop is not tied to a particular character.
 var followEnterScript = []string{"cd 1\n", "cd 1\n", "logs -f\n", "\n"}
 
+// followHoldMS keeps the provider stream open after its last record so the stop
+// path has something to stop. It must exceed followPause, because the stopping
+// keypress is delivered one pause after the stream is armed; a shorter hold
+// would let the stream finish first and the scenario would assert on a clean end
+// while appearing to prove a stop. It must stay below the adapter timeout of
+// 5000 ms, because a hold longer than the timeout turns the stream into a
+// timeout instead of a stop.
+const followHoldMS = 3000
+
 // startFollowCluster starts a real cluster whose adapter can stream. The mock
 // provider answers a follow with real stream frames, so the default adapter is
 // enough; no provider-specific adapter has to be selected.
@@ -53,7 +62,9 @@ func startFollowCluster() error {
 	if activeScenario.world == nil {
 		activeScenario.world = &World{}
 	}
-	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{})
+	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{
+		Faults: harness.FaultInjection{FollowHoldMS: followHoldMS},
+	})
 	if err != nil {
 		return err
 	}

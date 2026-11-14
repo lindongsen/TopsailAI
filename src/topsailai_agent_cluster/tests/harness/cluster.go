@@ -85,9 +85,16 @@ type FaultInjection struct {
 	NoSessions                  bool
 	OutputUnsupported           bool
 	OutputSize                  int
-	HoldPhase                   string
-	HoldDir                     string
-	UnsupportedCapability       string
+	// FollowHoldMS keeps a follow stream open this long after its last record.
+	// A stream that ends on its own can never be mistaken for a stream the
+	// operator stopped, so a scenario that proves the stop path needs the
+	// provider to outlive its records. The value must stay below the adapter
+	// timeout, because a hold longer than the timeout turns the stream into a
+	// timeout instead of a stop.
+	FollowHoldMS          int
+	HoldPhase             string
+	HoldDir               string
+	UnsupportedCapability string
 	// AdvertisedCapabilities replaces the default capability list the harness
 	// declares for the mock provider. A scenario that needs an operation the
 	// default omits, such as context.inject, declares the list here instead of
@@ -731,6 +738,9 @@ func providerFaultArgs(faults FaultInjection) []string {
 	}
 	if faults.ProviderFailAfterN > 0 {
 		args = append(args, "--fail-after-n", fmt.Sprint(faults.ProviderFailAfterN))
+	}
+	if faults.FollowHoldMS > 0 {
+		args = append(args, "--follow-hold-ms", fmt.Sprint(faults.FollowHoldMS))
 	}
 	return args
 }

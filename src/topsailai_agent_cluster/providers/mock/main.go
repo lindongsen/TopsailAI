@@ -34,6 +34,7 @@ type mockOptions struct {
 	recordFile         string
 	discoveryCountFile string
 	delayMS            int
+	followHoldMS       int
 	outputSize         int
 	failAfterN         int
 	alwaysFail         bool
@@ -49,6 +50,12 @@ func parseOptions() mockOptions {
 	flag.StringVar(&options.recordFile, "record-file", "", "append one JSON record per provider invocation")
 	flag.StringVar(&options.discoveryCountFile, "discovery-count-file", "", "durable discovery invocation counter")
 	flag.IntVar(&options.delayMS, "delay-ms", 0, "delay execution for evidence tests")
+	// followHoldMS keeps a follow stream alive after its last record. A stream
+	// that ends on its own can never be mistaken for a stream the operator
+	// stopped, so a scenario that proves the stop path needs the process to
+	// outlive the records. The default stays zero because the conformance suite
+	// requires a terminal frame and must not wait for a hold.
+	flag.IntVar(&options.followHoldMS, "follow-hold-ms", 0, "keep a follow stream open this long after its last record")
 	flag.IntVar(&options.outputSize, "output-size", 0, "pad the output snapshot to this many bytes")
 	flag.IntVar(&options.failAfterN, "fail-after-n", -1, "fail discovery after N successful calls; zero fails immediately")
 	flag.BoolVar(&options.alwaysFail, "always-fail", false, "fail every discovery call")
@@ -105,7 +112,7 @@ func main() {
 		}
 	}
 	if request.Function == functionFollowOutput {
-		if err := writeStream(request, fault); err != nil {
+		if err := writeStream(request, fault, options.followHoldMS); err != nil {
 			writeDiagnostic("write stream: %v", err)
 			os.Exit(2)
 		}
@@ -703,7 +710,14 @@ func failureResponse(requestID, code, message, certainty string) response {
 }
 
 // writeStream emits deterministic JSONL frames and selected lifecycle faults.
-func writeStream(request request, fault string) error {
+//
+// holdMS keeps the process alive after the terminal frame. The deleted argv
+// fixture did the same on purpose: it wrote its records 150 ms apart and then
+// slept, so a stream that ended by itself could never be mistaken for a stream
+// the operator stopped. Without the hold the mock answers started, one record
+// and end in a single burst, the CLI reports a clean end, and a scenario that
+// presses a key to stop the stream has nothing left to stop.
+func writeStream(request request, fault string, holdMS int) error {
 	streamRequestID := request.RequestID
 	if fault == "stream-correlation" {
 		streamRequestID = "wrong-request-id"
@@ -750,9 +764,26 @@ func writeStream(request request, fault string) error {
 			Record:       json.RawMessage(`{"lines":["late"]}`),
 		})
 	}
+	// The hold sits between the last record and the terminal frame, not after
+	// it. A terminal frame tells the CLI the stream finished, so holding after
+	// it would only delay the process exit while the CLI had already reported a
+	// clean end. Holding before it keeps the stream open, which is the state a
+	// keypress or an interrupt is supposed to end.
+	body, terminal := frames, streamFrame{}
+	if len(frames) > 0 && frames[len(frames)-1].Type == "end" {
+		body, terminal = frames[:len(frames)-1], frames[len(frames)-1]
+	}
 	encoder := json.NewEncoder(os.Stdout)
-	for _, frame := range frames {
+	for _, frame := range body {
 		if err := encoder.Encode(frame); err != nil {
+			return err
+		}
+	}
+	if holdMS > 0 {
+		time.Sleep(time.Duration(holdMS) * time.Millisecond)
+	}
+	if terminal.Type == "end" {
+		if err := encoder.Encode(terminal); err != nil {
 			return err
 		}
 	}
