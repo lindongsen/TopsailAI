@@ -1,12 +1,7 @@
 package bdd
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/cucumber/godog"
@@ -63,10 +58,6 @@ const (
 	controlActionViewToken = "bdd-control-action-view-token"
 )
 
-// controlActionInvocationLog is the per-scenario path the TopsailAI fixture
-// appends its argv records to.
-var controlActionInvocationLog string
-
 // controlActionGranted is the token the current scenario presents.
 var controlActionGranted string
 
@@ -91,7 +82,6 @@ func startControlActionCluster() error {
 	}
 	controlActionGranted = ""
 	controlActionCommandID = ""
-	controlActionInvocationLog = filepath.Join(activeTest.TempDir(), "control-action-invocations.jsonl")
 	policyDir, err := writeAccessPolicyGrants([]accessPolicyGrant{
 		// The positive credential holds the exact configured operation. It is a
 		// permission rather than the control scope because the control scope
@@ -109,8 +99,7 @@ func startControlActionCluster() error {
 	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{
 		EndpointEnvironment: map[string]string{"AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR": policyDir},
 		Faults: harness.FaultInjection{
-			ControlActions:        controlActionCatalog,
-			ProviderInvocationLog: controlActionInvocationLog,
+			ControlActions: controlActionCatalog,
 		},
 	})
 	if err != nil {
@@ -211,44 +200,31 @@ func assertControlActionRefused() error {
 	return nil
 }
 
-// controlActionInvocations returns the recorded argv arrays that carry the
+// controlActionInvocations returns the provider invocation records that carry the
 // configured action.
 //
-// The filter is required because the TopsailAI fixture records every invocation
-// it answers, including a model catalog read, and its record carries only the
-// argv. Counting all records would let an unrelated read satisfy "exactly one
-// invocation" and would let an unrelated read break "no invocation".
-func controlActionInvocations() ([][]string, error) {
-	if controlActionInvocationLog == "" {
-		return nil, fmt.Errorf("the control action invocation log path was never assigned")
+// The records come from the cluster's own record file rather than from a
+// fixture-only argv log, because the record file is the channel the harness
+// actually controls: the Generic CLI Adapter starts the provider with exactly the
+// environment its configuration names, so a variable set on the Endpoint never
+// reaches the provider child.
+//
+// The filter is the recorded operation name. Counting every record would let an
+// unrelated read satisfy "exactly one invocation" and would let an unrelated read
+// break "no invocation".
+func controlActionInvocations() ([]map[string]any, error) {
+	if activeScenario.realCluster == nil {
+		return nil, fmt.Errorf("real cluster is not running")
 	}
-	file, err := os.Open(controlActionInvocationLog)
+	records, err := activeScenario.realCluster.ProviderInvocationsE()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("open control action invocation log: %w", err)
+		return nil, err
 	}
-	defer func() { _ = file.Close() }()
-	var matched [][]string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	matched := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		if operation, _ := record["operation"].(string); operation == controlActionOperation {
+			matched = append(matched, record)
 		}
-		var record struct {
-			Argv []string `json:"argv"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			return nil, fmt.Errorf("decode control action invocation record %q: %w", line, err)
-		}
-		if containsArg(record.Argv, controlActionName) {
-			matched = append(matched, record.Argv)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read control action invocation log: %w", err)
 	}
 	return matched, nil
 }

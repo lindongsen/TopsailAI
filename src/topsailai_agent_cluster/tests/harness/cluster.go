@@ -85,13 +85,11 @@ type FaultInjection struct {
 	NoSessions                  bool
 	OutputUnsupported           bool
 	OutputSize                  int
-	ProviderInvocationLog       string
 	HoldPhase                   string
 	HoldDir                     string
 	UnsupportedCapability       string
-	// AdvertisedCapabilities replaces the generic fixture adapter's default
-	// capability list. The default list is a production value asserted by
-	// internal/adapter/command_test.go, so a scenario that needs an operation the
+	// AdvertisedCapabilities replaces the default capability list the harness
+	// declares for the mock provider. A scenario that needs an operation the
 	// default omits, such as context.inject, declares the list here instead of
 	// changing what every deployment advertises.
 	AdvertisedCapabilities []string
@@ -767,9 +765,6 @@ func appendFaultEnvironment(env []string, faults FaultInjection) []string {
 	}
 	if faults.OutputUnsupported {
 		env = append(env, "AGENT_CLUSTER_TEST_OUTPUT_UNSUPPORTED=1")
-	}
-	if faults.ProviderInvocationLog != "" {
-		env = append(env, "AGENT_CLUSTER_TEST_PROVIDER_INVOCATION_LOG="+faults.ProviderInvocationLog)
 	}
 	if faults.MessagesBody != "" {
 		env = append(env, "AGENT_CLUSTER_TEST_MESSAGES_BODY="+faults.MessagesBody)

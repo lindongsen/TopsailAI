@@ -1,11 +1,8 @@
 package bdd
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -30,14 +27,6 @@ func registerModelSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the provider receives the first profile name$`, assertProviderReceivedFirstProfileName)
 	ctx.Step(`^the model change is refused for lack of control permission$`, assertModelSelectRefusedForScope)
 }
-
-// modelInvocationLog is the path the fixture appends its argv records to. It is
-// assigned by the start step of every scenario, so it never leaks between them.
-//
-// The path is allocated from the test's own temporary directory rather than from
-// the cluster root, because the cluster root only exists after StartCluster has
-// returned and the fixture needs the path before it is launched.
-var modelInvocationLog string
 
 // modelListScript navigates to the sole session and lists the catalog. Two
 // navigations are required: model reads the endpoint and the session from the
@@ -71,13 +60,13 @@ func startViewModelCluster() error {
 	return startModelClusterWithScopes([]string{"view"})
 }
 
-// startModelClusterWithScopes starts one real cluster and points the fixture at a
-// per-scenario invocation log.
+// startModelClusterWithScopes starts one real cluster.
 //
-// The invocation log travels through Faults rather than Environment because
-// Environment is applied to the Server, while the provider child is spawned by the
-// Endpoint. Setting it on the wrong process would leave the log empty and make a
-// "no invocation recorded" assertion pass for the wrong reason.
+// The invocation evidence is read from the cluster's own provider record file,
+// which the harness passes to the mock as --record-file. A fixture-only argv log
+// would never be written: the Generic CLI Adapter starts the provider with exactly
+// the environment its configuration names, so a variable set on the Endpoint never
+// reaches the provider child.
 func startModelClusterWithScopes(scopes []string) error {
 	if activeTest == nil {
 		return fmt.Errorf("active BDD test is not initialized")
@@ -85,10 +74,7 @@ func startModelClusterWithScopes(scopes []string) error {
 	if activeScenario.world == nil {
 		activeScenario.world = &World{}
 	}
-	modelInvocationLog = filepath.Join(activeTest.TempDir(), "model-invocations.jsonl")
-	options := harness.ClusterOptions{
-		Faults: harness.FaultInjection{ProviderInvocationLog: modelInvocationLog},
-	}
+	options := harness.ClusterOptions{}
 	if len(scopes) > 0 {
 		// The restriction is written on the Endpoint, because the Endpoint is the
 		// only component that decides whether a caller may exercise an operation.
@@ -178,34 +164,28 @@ func assertModelCatalogRendered() error {
 	return nil
 }
 
-// modelSelectPayloadArgs returns the args array of the -a payload the adapter sent
+// modelSelectPayloadKey returns the provider-private model key the adapter sent
 // with a model select.
 //
-// The profile name is not a top-level argv element: the adapter passes the session
-// key to -s and the model instruction to -a, so the name lives inside that JSON
-// document. Reading the payload is therefore the only way to prove which profile
-// reached the provider, and it is also where a leaked row number would appear.
-func modelSelectPayloadArgs(argv []string) ([]string, error) {
-	for index := 0; index < len(argv); index++ {
-		if argv[index] != "-a" {
-			continue
-		}
-		if index+1 >= len(argv) {
-			return nil, fmt.Errorf("the -a flag carries no payload; argv=%v", argv)
-		}
-		var payload struct {
-			Instruction string   `json:"instruction"`
-			Args        []string `json:"args"`
-		}
-		if err := json.Unmarshal([]byte(argv[index+1]), &payload); err != nil {
-			return nil, fmt.Errorf("decode the -a payload %q: %w", argv[index+1], err)
-		}
-		if payload.Instruction != "agent.models" {
-			return nil, fmt.Errorf("the -a payload carries instruction %q, not agent.models; argv=%v", payload.Instruction, argv)
-		}
-		return payload.Args, nil
+// The key is not a top-level argv element: the Generic CLI Adapter sends the typed
+// payload on stdin, and the mock records that payload verbatim. Reading the
+// recorded payload is therefore the only way to prove which profile reached the
+// provider, and it is also where a leaked row number would appear.
+func modelSelectPayloadKey(record map[string]any) (string, error) {
+	raw, _ := record["payload"].(string)
+	if raw == "" {
+		return "", fmt.Errorf("the invocation record carries no payload; record=%v", record)
 	}
-	return nil, fmt.Errorf("the invocation carries no -a payload; argv=%v", argv)
+	var payload struct {
+		ProviderResourceKey string `json:"provider_resource_key"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return "", fmt.Errorf("decode the model select payload %q: %w", raw, err)
+	}
+	if payload.ProviderResourceKey == "" {
+		return "", fmt.Errorf("the model select payload carries no provider_resource_key; payload=%q", raw)
+	}
+	return payload.ProviderResourceKey, nil
 }
 
 // assertProviderReceivedSecondProfileName proves the resolved profile name reached
@@ -236,18 +216,15 @@ func assertProviderReceivedProfileName(expected, ordinal string) error {
 		return fmt.Errorf("the provider received no model select invocation; recorded=%v", records)
 	}
 	last := selects[len(selects)-1]
-	args, err := modelSelectPayloadArgs(last)
+	key, err := modelSelectPayloadKey(last)
 	if err != nil {
 		return err
 	}
-	if len(args) == 0 {
-		return fmt.Errorf("the -a payload carries no model argument; argv=%v", last)
+	if key != expected {
+		return fmt.Errorf("the provider did not receive the %s profile name %q; payload key=%q record=%v", ordinal, expected, key, last)
 	}
-	if args[0] != expected {
-		return fmt.Errorf("the provider did not receive the %s profile name %q; payload args=%v argv=%v", ordinal, expected, args, last)
-	}
-	if _, err := strconv.Atoi(args[0]); err == nil {
-		return fmt.Errorf("the row number travelled to the provider instead of being resolved in the client; payload args=%v", args)
+	if _, err := strconv.Atoi(key); err == nil {
+		return fmt.Errorf("the row number travelled to the provider instead of being resolved in the client; payload key=%q", key)
 	}
 	return nil
 }
@@ -277,60 +254,32 @@ func assertModelSelectRefusedForScope() error {
 	return nil
 }
 
-// readModelInvocations reads the argv records the fixture appended.
-func readModelInvocations() ([][]string, error) {
-	if modelInvocationLog == "" {
-		return nil, fmt.Errorf("the model invocation log path was never assigned")
+// readModelInvocations reads the provider invocation records the mock appended.
+//
+// The records come from the cluster's own record file rather than from a
+// fixture-only argv log, because the record file is the channel the harness
+// actually controls: the Generic CLI Adapter starts the provider with exactly the
+// environment its configuration names, so a variable set on the Endpoint never
+// reaches the provider child.
+func readModelInvocations() ([]map[string]any, error) {
+	if activeScenario.realCluster == nil {
+		return nil, fmt.Errorf("real cluster is not running")
 	}
-	file, err := os.Open(modelInvocationLog)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("open model invocation log: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-	var records [][]string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var record struct {
-			Argv []string `json:"argv"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			return nil, fmt.Errorf("decode model invocation record %q: %w", line, err)
-		}
-		records = append(records, record.Argv)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read model invocation log: %w", err)
-	}
-	return records, nil
+	return activeScenario.realCluster.ProviderInvocationsE()
 }
 
-// selectInvocations keeps only the argv records that carry a model select.
-func selectInvocations(records [][]string) [][]string {
-	selects := make([][]string, 0, len(records))
-	for _, argv := range records {
-		if containsArg(argv, "call_instruction") {
-			selects = append(selects, argv)
+// selectInvocations keeps only the records that carry a model select.
+//
+// The filter is the recorded operation name, because the mock writes it for every
+// invocation. Counting every record would let an unrelated read satisfy "the
+// provider received a select" and would let an unrelated read break "no select
+// reached the provider".
+func selectInvocations(records []map[string]any) []map[string]any {
+	selects := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		if operation, _ := record["operation"].(string); operation == protocol.OperationAgentModelSelect {
+			selects = append(selects, record)
 		}
 	}
 	return selects
-}
-
-// containsArg reports whether one argv element equals the value exactly. An exact
-// match is required: a substring match would accept "fixture-model-b" when looking
-// for "2" only if the value appeared inside another argument, which is not what a
-// leaked row number looks like.
-func containsArg(argv []string, value string) bool {
-	for _, arg := range argv {
-		if arg == value {
-			return true
-		}
-	}
-	return false
 }

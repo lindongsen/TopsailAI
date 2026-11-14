@@ -2,10 +2,7 @@ package bdd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,6 +27,13 @@ func registerEndpointQueryPermissionSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the (model catalog|launch options|history|messages|output snapshot|output follow) read is allowed and reaches the provider$`, assertQueryAllowed)
 	ctx.Step(`^the (model catalog|launch options|history|messages|output snapshot|output follow) read is refused with policy denied and exposes nothing$`, assertQueryRefused)
 }
+
+// queryModelCatalogOperation is the provider operation name the mock records for
+// a catalog read. It is deliberately separate from the feature-file display name
+// below: the display name is what a scenario says, while this is what the provider
+// writes into its invocation record, and conflating the two made the count read
+// zero while the provider had in fact been invoked.
+const queryModelCatalogOperation = "model.catalog"
 
 // The six read operations under test, named as the feature file names them.
 const (
@@ -96,10 +100,6 @@ type queryReadOutcome struct {
 	elapsed time.Duration
 }
 
-// queryMatrixInvocationLog is the per-scenario path the TopsailAI fixture appends
-// its argv records to.
-var queryMatrixInvocationLog string
-
 // queryMatrixResourceID and queryMatrixGeneration address the live fixture
 // session. They are resolved from the committed inventory, because the cluster
 // mints the opaque ID and the generation is provider evidence.
@@ -126,7 +126,6 @@ func startQueryMatrixCluster() error {
 		activeScenario.world = &World{}
 	}
 	queryMatrixResult = queryReadOutcome{}
-	queryMatrixInvocationLog = filepath.Join(activeTest.TempDir(), "query-matrix-invocations.jsonl")
 	policyDir, err := writeAccessPolicyGrants([]accessPolicyGrant{
 		// The view scope covers the four read-only queries and nothing else.
 		{Token: queryMatrixViewToken, Scopes: []string{security.ScopeView}},
@@ -138,7 +137,6 @@ func startQueryMatrixCluster() error {
 	}
 	cluster, err := harness.StartCluster(activeTest, harness.ClusterOptions{
 		EndpointEnvironment: map[string]string{"AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR": policyDir},
-		Faults:              harness.FaultInjection{ProviderInvocationLog: queryMatrixInvocationLog},
 	})
 	if err != nil {
 		return err
@@ -277,7 +275,7 @@ func assertQueryAllowed(operation string) error {
 		if outcome.observedAtMS == 0 {
 			return fmt.Errorf("allowed model catalog read carried no observation time, so the adapter did not answer")
 		}
-		count, err := queryMatrixInvocations("models")
+		count, err := queryMatrixInvocations(queryModelCatalogOperation)
 		if err != nil {
 			return err
 		}
@@ -364,26 +362,17 @@ func assertQueryRefused(operation string) error {
 // The fixture records only the argv, so the command name is the only way to tell
 // a model catalog read from a control action. Counting every record would let an
 // unrelated invocation satisfy the assertion.
-func queryMatrixInvocations(command string) (int, error) {
-	data, err := os.ReadFile(queryMatrixInvocationLog)
+func queryMatrixInvocations(operation string) (int, error) {
+	if activeScenario.realCluster == nil {
+		return 0, fmt.Errorf("real cluster is not running")
+	}
+	records, err := activeScenario.realCluster.ProviderInvocationsE()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("read provider invocation log: %w", err)
+		return 0, err
 	}
 	count := 0
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line == "" {
-			continue
-		}
-		var record struct {
-			Argv []string `json:"argv"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			return 0, fmt.Errorf("decode provider invocation record: %w", err)
-		}
-		if len(record.Argv) > 0 && record.Argv[0] == command {
+	for _, record := range records {
+		if recorded, _ := record["operation"].(string); recorded == operation {
 			count++
 		}
 	}

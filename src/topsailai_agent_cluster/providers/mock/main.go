@@ -600,6 +600,13 @@ func stoppedObservation() providerObservation {
 	}
 }
 
+// invocationPayloadLimit bounds the payload copied into an invocation record.
+//
+// The record is evidence, not a transport, so a payload larger than this is
+// reported as truncated rather than written whole. An unbounded copy would let a
+// large mutation payload grow the record file without limit.
+const invocationPayloadLimit = 4096
+
 // recordInvocation appends one JSON record per provider invocation.
 //
 // The record is the only evidence that a provider was actually reached, so a
@@ -636,6 +643,17 @@ func recordInvocationInterval(options mockOptions, request request, kind string,
 	if request.Target != nil {
 		record["target_resource_key"] = request.Target.ProviderResourceKey
 		record["target_generation"] = request.Target.ExpectedGeneration
+	}
+	// The payload is recorded because a scenario proves which provider-private
+	// key the Cluster resolved and forwarded. Without it the record shows that
+	// the provider was called but not what it was asked, so a leaked row number
+	// and a resolved profile name would look identical in the evidence.
+	if len(request.Payload) > 0 {
+		if len(request.Payload) <= invocationPayloadLimit {
+			record["payload"] = string(request.Payload)
+		} else {
+			record["payload_truncated"] = true
+		}
 	}
 	if startNS != 0 && endNS != 0 {
 		record["timestamp_ns"] = endNS
