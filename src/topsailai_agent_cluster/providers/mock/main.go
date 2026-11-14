@@ -241,9 +241,37 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		case queryHistoryMessages:
 			base.QueryResult = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"session:stable","provider_session_id":"session-1","resumable":true}],"observed_at_ms":1700000000000,"truncated":false}`)
 		case queryModelCatalog:
-			base.QueryResult = json.RawMessage(`{"profiles":[{"resource_kind":"model_profile","provider_resource_key":"model:mock","provider_display_name":"Mock","current_state":"yes","available":true}],"current_provider_resource_key":"model:mock","observed_at_ms":1700000000000,"truncated":false}`)
+			// The read is recorded because a scenario proves the provider was
+			// reached exactly once, and a read that answers without leaving a
+			// record is indistinguishable from a read the Cluster answered from
+			// its own cache. The kind is the query name, which is what the
+			// structured record carries for a function call.
+			recordInvocation(options, request, queryModelCatalog)
+			// Two profiles are returned because the catalog scenarios select the
+			// first and the second row and assert which name reached the provider.
+			// A single-profile answer could not distinguish "row 2 resolved to
+			// profile 2" from "row 2 resolved to the only profile there is", so the
+			// row-number-leak assertion would pass while proving nothing.
+			base.QueryResult = json.RawMessage(`{"profiles":[{"resource_kind":"model_profile","provider_resource_key":"fixture-model-a","provider_display_name":"fixture-model-a","current_state":"yes","available":true},{"resource_kind":"model_profile","provider_resource_key":"fixture-model-b","provider_display_name":"fixture-model-b","current_state":"no","available":true}],"current_provider_resource_key":"fixture-model-a","observed_at_ms":1700000000000,"truncated":false}`)
 		case querySessionMessages:
-			base.QueryResult = json.RawMessage(`{"provider_session_id":"session-1","messages":[{"role":"user","content":"hello"}],"message_count":1,"observed_at_ms":1700000000000,"truncated":false}`)
+			// The provider echoes the session key it was asked about, because the
+			// Cluster forwards the caller's selector verbatim and a hardcoded
+			// answer made a scoped read look like it had answered for a different
+			// session. Two messages are returned because the block-rendering
+			// scenario asserts two headers, and a single-message answer could not
+			// distinguish "blocks" from "one block".
+			//
+			// The body is already unwrapped. Unwrapping a provider step record is
+			// provider behaviour, not Cluster behaviour: the shipped provider does
+			// it in providers/topsailai/query.go and its unit test asserts the
+			// exact result. The mock stands in for a provider, so it answers in the
+			// same unwrapped form instead of teaching the Cluster a record format
+			// it deliberately does not know.
+			sessionKey := "session:stable"
+			if request.Target != nil && request.Target.ProviderResourceKey != "" {
+				sessionKey = request.Target.ProviderResourceKey
+			}
+			base.QueryResult = json.RawMessage(fmt.Sprintf(`{"provider_session_id":%q,"messages":[{"role":"user","content":"topsailai.task\nthe operator wrote this","word_count":5,"token_count":6},{"role":"assistant","content":"the operator wrote this","word_count":4,"token_count":5}],"message_count":2,"observed_at_ms":1700000000000,"truncated":false}`, sessionKey))
 		default:
 			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
 		}
@@ -632,14 +660,21 @@ func writeStream(request request, fault string) error {
 			Type:         "record",
 			Sequence:     2,
 			ObservedAtMS: fixtureTimeMS,
-			Record:       json.RawMessage(`{"text":"mock output"}`),
+			// The record shape is the Cluster contract, not a provider choice:
+			// the Generic CLI Adapter decodes a record strictly as
+			// {"lines":[...]} and rejects any other field, so a record carrying
+			// "text" made every follow scenario fail with "decode output record:
+			// json: unknown field". The text keeps the "fixture follow" marker the
+			// follow scenarios assert, because that marker is what proves a record
+			// reached the terminal rather than the stream merely being armed.
+			Record: json.RawMessage(`{"lines":["fixture follow record 1"]}`),
 		},
 	}
 	if fault == "record-overflow" {
 		for sequence := int64(3); sequence <= 20; sequence++ {
 			frames = append(frames, streamFrame{
 				version: currentVersion(), RequestID: streamRequestID, Type: "record", Sequence: sequence,
-				ObservedAtMS: fixtureTimeMS + sequence, Record: json.RawMessage(`{"text":"overflow"}`),
+				ObservedAtMS: fixtureTimeMS + sequence, Record: json.RawMessage(`{"lines":["overflow"]}`),
 			})
 		}
 		frames = append(frames, streamFrame{version: currentVersion(), RequestID: streamRequestID, Type: "end", Sequence: 21})
@@ -656,7 +691,7 @@ func writeStream(request request, fault string) error {
 			Type:         "record",
 			Sequence:     4,
 			ObservedAtMS: fixtureTimeMS + 1,
-			Record:       json.RawMessage(`{"text":"late"}`),
+			Record:       json.RawMessage(`{"lines":["late"]}`),
 		})
 	}
 	encoder := json.NewEncoder(os.Stdout)
