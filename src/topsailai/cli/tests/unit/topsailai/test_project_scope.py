@@ -1174,6 +1174,51 @@ class TestLaunchAgentDriver(unittest.TestCase):
 
     @patch("cli_topsailai.project_scope._apply_selected_model_environment",
            return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_resume_exports_project_workspace_to_child(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """A resumed child must observe the workspace it was resumed for.
+
+        The normal launch boundary exports this variable, so a resume that
+        omits it makes the child record an empty workspace and silently skip
+        the project workspace lock.
+        """
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="raw",
+        )
+        child_env = mock_popen.call_args.kwargs["env"]
+        self.assertEqual(child_env["TOPSAILAI_PROJECT_WORKSPACE"], "/work/project-a")
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_resume_restores_project_workspace_after_launch(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """The resume must not leak its workspace into the caller's process."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        original = os.environ.get("TOPSAILAI_PROJECT_WORKSPACE")
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="raw",
+        )
+        self.assertEqual(os.environ.get("TOPSAILAI_PROJECT_WORKSPACE"), original)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
     @patch("cli_topsailai.project_scope._build_dtach_socket_path")
     @patch("cli_topsailai.project_scope.subprocess.Popen")
     @patch("cli_topsailai.project_scope.shutil.which")

@@ -69,8 +69,16 @@ _RESUME_DRIVER_OPTIONS = [
 # session through either alias.
 _IDENTITY_ENV_KEYS = ("TOPSAILAI_SESSION_ID", "SESSION_ID")
 
+# The project workspace the resumed worker must observe. The normal launch
+# boundary already exports this variable, so a resume must export the same
+# value or the child records an empty workspace and silently skips the
+# project workspace lock.
+_PROJECT_WORKSPACE_ENV_KEY = "TOPSAILAI_PROJECT_WORKSPACE"
+
 # Environment keys mutated for one launch and restored immediately afterward.
-_LAUNCH_ENV_KEYS = ("TOPSAILAI_PWD", "PWD") + _IDENTITY_ENV_KEYS
+_LAUNCH_ENV_KEYS = (
+    "TOPSAILAI_PWD", "PWD", _PROJECT_WORKSPACE_ENV_KEY
+) + _IDENTITY_ENV_KEYS
 
 # Bounds for the single authoritative session lookup: the capture must never
 # grow without limit and a hung query must not block the resume forever.
@@ -933,6 +941,7 @@ def launch_agent_driver(
             os.chdir(target_folder)
             os.environ["TOPSAILAI_PWD"] = target_folder
             os.environ["PWD"] = target_folder
+            os.environ[_PROJECT_WORKSPACE_ENV_KEY] = target_folder
             os.environ["TOPSAILAI_SESSION_ID"] = session_id
             os.environ["SESSION_ID"] = session_id
             model_environment = _apply_selected_model_environment(target_folder)

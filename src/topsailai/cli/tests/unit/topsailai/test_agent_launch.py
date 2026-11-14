@@ -337,6 +337,53 @@ def test_model_preparation_values_reach_child_and_parent_is_restored(tmp_path):
             os.environ["MODEL_TEST_FORWARDED"] = original
 
 
+def test_foreground_child_observes_project_workspace(tmp_path):
+    """A foreground launch must export the workspace the child runs for."""
+    child = FakeChild(returncode=0)
+    captured = []
+    original = os.environ.get("TOPSAILAI_PROJECT_WORKSPACE")
+    try:
+        with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+                   return_value=({}, set())):
+            result = launch_configured_agent(
+                str(tmp_path), mode="raw",
+                spawn=lambda argv, **kwargs: (captured.append((argv, kwargs)) or child),
+            )
+        assert result == 0
+        assert captured[0][1]["env"]["TOPSAILAI_PROJECT_WORKSPACE"] == str(tmp_path)
+        assert os.environ.get("TOPSAILAI_PROJECT_WORKSPACE") == original
+    finally:
+        if original is None:
+            os.environ.pop("TOPSAILAI_PROJECT_WORKSPACE", None)
+        else:
+            os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = original
+
+
+def test_background_submission_observes_project_workspace(tmp_path):
+    """A background launch must export the workspace the child runs for."""
+    captured = []
+    original = os.environ.get("TOPSAILAI_PROJECT_WORKSPACE")
+
+    def submit(folder, session_id, **kwargs):
+        captured.append(kwargs)
+        return {"launcher_pid": 1234, "log_path": str(tmp_path / "x.log")}
+
+    try:
+        with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
+             patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+                   return_value=({}, set())), \
+             patch("cli_topsailai.agent_launch_background.launch_background",
+                   side_effect=submit):
+            launch_configured_agent(str(tmp_path), mode="raw", background=True)
+        assert captured[0]["environment"]["TOPSAILAI_PROJECT_WORKSPACE"] == str(tmp_path)
+        assert os.environ.get("TOPSAILAI_PROJECT_WORKSPACE") == original
+    finally:
+        if original is None:
+            os.environ.pop("TOPSAILAI_PROJECT_WORKSPACE", None)
+        else:
+            os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = original
+
+
 def test_background_mode_delegates_without_foreground_spawn(tmp_path, capsys):
     """Background mode delegates to the detached supervisor boundary."""
     with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
