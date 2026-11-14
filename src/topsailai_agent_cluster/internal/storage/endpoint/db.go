@@ -27,7 +27,11 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	store := &Store{db: db}
-	for _, pragma := range []string{"PRAGMA journal_mode=DELETE", "PRAGMA synchronous=FULL", "PRAGMA busy_timeout=5000"} {
+	// busy_timeout must be set before any statement that can contend for the write
+	// lock, because journal_mode and synchronous both take it. Setting it last
+	// leaves the first two statements to fail immediately with SQLITE_BUSY when
+	// another process opens the same database at the same moment.
+	for _, pragma := range []string{"PRAGMA busy_timeout=5000", "PRAGMA journal_mode=DELETE", "PRAGMA synchronous=FULL"} {
 		if _, err := db.ExecContext(ctx, pragma); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("configure endpoint sqlite: %w", err)
@@ -67,6 +71,15 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, string(migration)); err != nil {
 		_, _ = s.db.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		// Another process may have applied the same migration between the column
+		// inspection above and this attempt. The rollback restores whatever shape
+		// the transaction started from, so re-inspecting distinguishes "another
+		// process already converted this database" from "this migration cannot
+		// run". Without this check a concurrent startup fails with a schema error
+		// even though the database is already in the target shape.
+		if raced, inspectErr := s.resourceMappingColumns(ctx); inspectErr == nil && raced["provider_resource_key"] && raced["resource_kind"] {
+			return nil
+		}
 		return fmt.Errorf("migrate resource mapping identity: %w", err)
 	}
 	return nil
