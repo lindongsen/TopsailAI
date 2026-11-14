@@ -15,17 +15,31 @@ import (
 
 // expiryStoreStub records cleanup cutoffs and cancels after the requested call.
 type expiryStoreStub struct {
-	mu            sync.Mutex
-	cutoffs       []int64
-	purgeCutoffs  []int64
-	purged        int64
-	inventoryIDs  []string
-	deletedIDs    []string
-	cancel        context.CancelFunc
-	cancelCall    int
-	expireErr     error
-	purgeErr      error
-	purgeCallSeen int
+	mu             sync.Mutex
+	cutoffs        []int64
+	purgeCutoffs   []int64
+	reconcileCalls []int64
+	converged      int64
+	purged         int64
+	inventoryIDs   []string
+	deletedIDs     []string
+	cancel         context.CancelFunc
+	cancelCall     int
+	expireErr      error
+	purgeErr       error
+	reconcileErr   error
+	purgeCallSeen  int
+}
+
+// ReconcileExpiredCommands records one convergence invocation.
+func (s *expiryStoreStub) ReconcileExpiredCommands(_ context.Context, nowMS int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconcileCalls = append(s.reconcileCalls, nowMS)
+	if s.reconcileErr != nil {
+		return 0, s.reconcileErr
+	}
+	return s.converged, nil
 }
 
 // ExpireOfflineEndpoints records one cleanup invocation.
@@ -199,5 +213,65 @@ func TestExpireEndpointRecordsStopsWhenPurgeFails(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "purge expired command records") {
 		t.Fatalf("purge failure was not logged: %q", output.String())
+	}
+}
+
+// TestExpireEndpointRecordsReconcilesBeforePurge verifies convergence runs first. A command that
+// is still non-terminal is not purgeable, so purging before converging would leave the converged
+// row waiting one extra cycle before it could be deleted.
+func TestExpireEndpointRecordsReconcilesBeforePurge(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	stub := &expiryStoreStub{}
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if len(stub.reconcileCalls) != 1 {
+		t.Fatalf("reconcile calls = %d, want 1", len(stub.reconcileCalls))
+	}
+	if stub.reconcileCalls[0] != 10_000_000 {
+		t.Fatalf("reconcile nowMS = %d, want the sweep clock 10000000", stub.reconcileCalls[0])
+	}
+	if stub.purgeCallSeen != 1 {
+		t.Fatalf("purge calls = %d, want 1", stub.purgeCallSeen)
+	}
+}
+
+// TestExpireEndpointRecordsStopsWhenReconcileFails verifies a failed convergence does not
+// continue into purge or endpoint expiry. Continuing would report a partial sweep as complete
+// and would delete command rows while other rows were still stuck non-terminal.
+func TestExpireEndpointRecordsStopsWhenReconcileFails(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	stub := &expiryStoreStub{reconcileErr: context.DeadlineExceeded}
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.purgeCallSeen != 0 {
+		t.Fatalf("purge ran after a failed reconcile: %d calls", stub.purgeCallSeen)
+	}
+	if len(stub.cutoffs) != 0 {
+		t.Fatalf("endpoint expiry ran after a failed reconcile: %v", stub.cutoffs)
+	}
+	if !strings.Contains(output.String(), "reconcile expired command records") {
+		t.Fatalf("reconcile failure was not logged: %q", output.String())
+	}
+	if strings.Contains(output.String(), "retention sweep complete") {
+		t.Fatalf("a failed sweep reported completion: %q", output.String())
+	}
+}
+
+// TestExpireEndpointRecordsLogsConvergedCount verifies the completion line carries the
+// convergence count, so an operator can tell a sweep that converged nothing from one that
+// converged rows without reading the database.
+func TestExpireEndpointRecordsLogsConvergedCount(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	stub := &expiryStoreStub{converged: 2}
+	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, time.UnixMilli(10_000_000))
+
+	if !strings.Contains(output.String(), "converged_commands=2") {
+		t.Fatalf("converged count missing from %q", output.String())
 	}
 }

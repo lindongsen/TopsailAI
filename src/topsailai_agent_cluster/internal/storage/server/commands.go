@@ -97,14 +97,28 @@ func (s *Store) ExpireCommand(ctx context.Context, commandID string, nowMS int64
 	return affected == 1, err
 }
 
-// ReconcileExpiredCommands converges commands that are still executing past their
-// immutable deadline into the terminal unconfirmed state. Delivery already happened
-// for these rows, so the effect certainty becomes unknown instead of not_applied: the
-// operator must not be told that a signal which was sent had no effect. The update is
-// conditional and idempotent, so repeated reconciliation cannot overwrite a later
-// authoritative receipt that already reached finished, rejected or failed.
+// ReconcileExpiredCommands converges every non-terminal command whose immutable
+// deadline has passed into a terminal state, so no row can stay in flight forever.
+//
+// The target state depends on whether delivery could have happened:
+//
+//   - admitted: the command was durably recorded but never claimed for dispatch, so
+//     no signal was sent and the effect is certainly not applied. It becomes expired.
+//     Converging it also closes a dispatch hole: DispatchCommand only requires
+//     status = admitted, so a stale admitted row past its deadline would otherwise
+//     remain dispatchable indefinitely.
+//   - dispatched, endpoint_admitted, executing: the command was claimed for dispatch,
+//     so a signal may have reached the Endpoint. The effect is unknown, never
+//     not_applied, because telling an operator that a possibly-sent signal had no
+//     effect is a false statement. These become unconfirmed.
+//
+// A single statement keeps the whole convergence atomic and idempotent: once a row
+// reaches a terminal status it no longer matches the WHERE clause, so repeated
+// reconciliation cannot overwrite a later authoritative receipt that already reached
+// finished, rejected or failed. Rows with no deadline are left alone because there is
+// no moment at which they can be declared overdue.
 func (s *Store) ReconcileExpiredCommands(ctx context.Context, nowMS int64) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE commands SET status = ?, effect_certainty = ?, update_at_ms = ? WHERE status = ? AND deadline_at_ms > 0 AND deadline_at_ms <= ?`, protocol.StatusUnconfirmed, protocol.EffectUnknown, nowMS, protocol.StatusExecuting, nowMS)
+	result, err := s.db.ExecContext(ctx, `UPDATE commands SET status = CASE WHEN status = ? THEN ? ELSE ? END, effect_certainty = CASE WHEN status = ? THEN ? ELSE ? END, update_at_ms = ? WHERE status IN (?, ?, ?, ?) AND deadline_at_ms > 0 AND deadline_at_ms <= ?`, protocol.StatusAdmitted, protocol.StatusExpired, protocol.StatusUnconfirmed, protocol.StatusAdmitted, protocol.EffectNotApplied, protocol.EffectUnknown, nowMS, protocol.StatusAdmitted, protocol.StatusDispatched, protocol.StatusEndpointAdmitted, protocol.StatusExecuting, nowMS)
 	if err != nil {
 		return 0, err
 	}

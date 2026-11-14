@@ -10,6 +10,7 @@ import (
 
 // endpointExpiryStore is the Server storage seam used by the retention loop.
 type endpointExpiryStore interface {
+	ReconcileExpiredCommands(context.Context, int64) (int64, error)
 	ExpireOfflineEndpoints(context.Context, int64) (serverstorage.EndpointExpiryResult, error)
 	PurgeExpiredCommands(context.Context, int64) (int64, error)
 }
@@ -50,9 +51,14 @@ func endpointExpiryInterval(retention time.Duration) time.Duration {
 
 // expireEndpointRecords executes one sweep and logs every removed durable row.
 //
-// The command purge runs before endpoint expiry so a metadata row blocked only
-// by a now-purgeable command is removed in the same sweep instead of surviving
-// one extra cycle.
+// Convergence runs first, then the command purge, then endpoint expiry. The order
+// matters twice:
+//
+//   - Convergence before purge: a command that is still non-terminal is not
+//     purgeable, so purging first would leave a converged row waiting one extra
+//     cycle before it could be deleted.
+//   - Purge before endpoint expiry: a metadata row blocked only by a now-purgeable
+//     command is removed in the same sweep instead of surviving one extra cycle.
 //
 // The completion line is emitted at Info even when nothing was deleted. Without
 // it a sweep that selects zero rows is indistinguishable from a sweep that never
@@ -62,6 +68,13 @@ func endpointExpiryInterval(retention time.Duration) time.Duration {
 func expireEndpointRecords(ctx context.Context, logger *slog.Logger, store endpointExpiryStore, retention, commandRetention time.Duration, now time.Time) {
 	cutoff := now.Add(-retention)
 	commandCutoff := now.Add(-commandRetention)
+	convergedCommands, err := store.ReconcileExpiredCommands(ctx, now.UnixMilli())
+	if err != nil {
+		if ctx.Err() == nil {
+			logger.Error("reconcile expired command records", "error", err)
+		}
+		return
+	}
 	purgedCommands, err := store.PurgeExpiredCommands(ctx, commandCutoff.UnixMilli())
 	if err != nil {
 		if ctx.Err() == nil {
@@ -82,5 +95,5 @@ func expireEndpointRecords(ctx context.Context, logger *slog.Logger, store endpo
 	for _, endpointID := range result.DeletedEndpointIDs {
 		logger.Info("expired offline endpoint metadata", "endpoint_id", endpointID, "retention", retention.String(), "cutoff_at_ms", cutoff.UnixMilli())
 	}
-	logger.Info("retention sweep complete", "retention", retention.String(), "cutoff_at_ms", cutoff.UnixMilli(), "command_retention", commandRetention.String(), "command_cutoff_at_ms", commandCutoff.UnixMilli(), "purged_commands", purgedCommands, "deleted_inventory", len(result.InventoryEndpointIDs), "deleted_metadata", len(result.DeletedEndpointIDs))
+	logger.Info("retention sweep complete", "retention", retention.String(), "cutoff_at_ms", cutoff.UnixMilli(), "command_retention", commandRetention.String(), "command_cutoff_at_ms", commandCutoff.UnixMilli(), "converged_commands", convergedCommands, "purged_commands", purgedCommands, "deleted_inventory", len(result.InventoryEndpointIDs), "deleted_metadata", len(result.DeletedEndpointIDs))
 }
