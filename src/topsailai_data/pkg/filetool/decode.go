@@ -57,20 +57,44 @@ func lookupEncoding(name string) encoding.Encoding {
 	return enc
 }
 
+// isAsciiOnly reports whether every byte in the sample is ASCII.
+//
+// An ASCII-only sample is compatible with every ASCII-superset encoding, so it
+// carries no evidence about which one applies. Detection over such a sample
+// returns several candidates at equal confidence and the winner is arbitrary.
+func isAsciiOnly(sample []byte) bool {
+	for _, value := range sample {
+		if value >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
 // decodeBytes converts raw file bytes to text.
 //
-// The leading bytes are sampled to detect the encoding; the detected decoder is
-// applied to the whole buffer. Undecodable bytes are replaced so a partially
-// corrupted file still yields readable text, matching the source tool's
-// UTF-8-with-replacement fallback.
+// Valid UTF-8 is returned unchanged before detection runs, because detection
+// samples only the leading bytes and a pure-ASCII prefix says nothing about
+// later content. When the sample is ASCII-only the detected charset would be
+// arbitrary, so the buffer is decoded as UTF-8 with replacement instead: valid
+// runs survive and only genuinely invalid bytes become U+FFFD. A sample that
+// carries real non-ASCII evidence still reaches the detected decoder.
 func decodeBytes(data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
 
+	if utf8.Valid(data) {
+		return string(data)
+	}
+
 	sample := data
 	if len(sample) > encodingSampleSize {
 		sample = sample[:encodingSampleSize]
+	}
+
+	if isAsciiOnly(sample) {
+		return strings.ToValidUTF8(string(data), "\uFFFD")
 	}
 
 	if enc := lookupEncoding(detectEncoding(sample)); enc != nil {
@@ -80,8 +104,5 @@ func decodeBytes(data []byte) string {
 		}
 	}
 
-	if utf8.Valid(data) {
-		return string(data)
-	}
 	return strings.ToValidUTF8(string(data), "\uFFFD")
 }
