@@ -10,10 +10,12 @@ package main
 // operator would set a path, the Endpoint would ignore it, and every ctl.
 // operation would still be refused with no hint that the setting did nothing.
 //
-// The second way is the reference document. A sentence that says the key is no
-// longer read is correct, but the same key name in a paragraph that presents it as
-// current configuration would send an operator looking for a setting that has no
-// effect.
+// The second way is a document that describes the key. A sentence that says the key
+// is no longer read is correct, but the same key name in a paragraph that presents
+// it as current configuration would send an operator looking for a setting that has
+// no effect. Two documents describe it: the environment reference and the manual
+// harness procedure, and the procedure is the one an operator follows while running
+// a live node by hand.
 //
 // Neither failure produces a runtime error, because nothing reads either document.
 // The guard therefore reads both files as text and compares them against the fact
@@ -30,8 +32,14 @@ import (
 // removedKeyTemplate is the shipped configuration template.
 const removedKeyTemplate = "conf/node.endpoint.conf.example"
 
-// removedKeyDocument is the environment variable reference.
-const removedKeyDocument = "docs/Environment_Variables.md"
+// removedKeyDocuments are the documents that describe the key to an operator. The
+// reference document explains the environment, and the manual harness procedure
+// explains how to run a live node by hand. Both mention the dead key, and both must
+// mention it only as a removal notice.
+var removedKeyDocuments = []string{
+	"docs/Environment_Variables.md",
+	"tests/manual/live-tmux/control-and-exec.md",
+}
 
 // removedKeys are the two spellings of the dead key. The Endpoint-side name is
 // what a node.conf carries; the prefixed name is what the process environment
@@ -95,47 +103,53 @@ func TestShippedTemplateAssignsNoRemovedControlActionKey(t *testing.T) {
 }
 
 // TestDocumentMentionsTheRemovedKeyOnlyAsRemoval pins the structural fact that
-// every mention of the dead key in the reference document sits in a paragraph that
-// says the key is gone.
+// every mention of the dead key in every document that describes it sits in a
+// paragraph that says the key is gone.
 func TestDocumentMentionsTheRemovedKeyOnlyAsRemoval(t *testing.T) {
 	root := repoRoot(t)
-	path := filepath.Join(root, removedKeyDocument)
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
 
-	text := string(content)
-	paragraphs := strings.Split(text, "\n\n")
-	mentions := 0
-	for _, paragraph := range paragraphs {
-		lowered := strings.ToLower(paragraph)
-		named := false
-		for _, key := range removedKeys {
-			if strings.Contains(paragraph, key) {
-				named = true
-				break
+	for _, relative := range removedKeyDocuments {
+		path := filepath.Join(root, relative)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+
+		text := string(content)
+		paragraphs := strings.Split(text, "\n\n")
+		mentions := 0
+		for _, paragraph := range paragraphs {
+			lowered := strings.ToLower(paragraph)
+			named := false
+			for _, key := range removedKeys {
+				if strings.Contains(paragraph, key) {
+					named = true
+					break
+				}
 			}
-		}
-		if !named {
-			continue
-		}
-		mentions++
-		explained := false
-		for _, phrase := range removalWording {
-			if strings.Contains(lowered, phrase) {
-				explained = true
-				break
+			if !named {
+				continue
 			}
+			mentions++
+			explained := false
+			for _, phrase := range removalWording {
+				if strings.Contains(lowered, phrase) {
+					explained = true
+					break
+				}
+			}
+			if explained {
+				continue
+			}
+			line := lineOfParagraph(text, paragraph)
+			t.Errorf("%s:%d mentions a removed control action key without saying it is gone, so an operator reads it as current configuration", relative, line)
 		}
-		if explained {
-			continue
+		// Each document needs its own "checked something" signal. A shared counter
+		// would let one document cover for another, so a renamed or rewritten file
+		// would shrink the scan silently.
+		if mentions == 0 {
+			t.Fatalf("%s mentions no removed control action key, so this guard checked nothing", relative)
 		}
-		line := lineOfParagraph(text, paragraph)
-		t.Errorf("%s:%d mentions a removed control action key without saying it is gone, so an operator reads it as current configuration", removedKeyDocument, line)
-	}
-	if mentions == 0 {
-		t.Fatalf("%s mentions no removed control action key, so this guard checked nothing", removedKeyDocument)
 	}
 }
 
