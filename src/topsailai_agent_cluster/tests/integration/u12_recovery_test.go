@@ -421,10 +421,10 @@ func startU12Cluster(t *testing.T, env map[string]string, second bool) *u12Clust
 func startU12ClusterAt(t *testing.T, root string, extra map[string]string, second bool) *u12Cluster {
 	t.Helper()
 	certs := makeIntegrationCerts(t, root)
-	sb, eb, fb := filepath.Join(root, "server"), filepath.Join(root, "endpoint"), filepath.Join(root, "fixture")
+	sb, eb, mb := filepath.Join(root, "server"), filepath.Join(root, "endpoint"), filepath.Join(root, "mock")
 	build(t, sb, "./src/main/agent-cluster-server")
 	build(t, eb, "./src/main/agent-cluster-endpoint")
-	build(t, fb, "./tests/fixtures/provider")
+	buildProviderModule(t, mb, filepath.Join(moduleRoot(t), "providers", "mock"))
 	c := &u12Cluster{root: root, api: free(t), serverDB: filepath.Join(root, "server.db"), endpointDB: filepath.Join(root, "endpoint.db"), record: filepath.Join(root, "records.jsonl"), record2: filepath.Join(root, "records-2.jsonl")}
 	channel := free(t)
 	senv := append(os.Environ(), "AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=127.0.0.1:"+c.api, "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel, "AGENT_CLUSTER_DATABASE_PATH="+c.serverDB, "AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey)
@@ -441,7 +441,7 @@ func startU12ClusterAt(t *testing.T, root string, extra map[string]string, secon
 	waitHTTP(t, c.url("/healthz"), "", http.StatusOK, 15*time.Second)
 	c.endpoint = exec.Command(eb)
 	c.endpoint.Dir = moduleRoot(t)
-	c.endpoint.Env = append(os.Environ(), "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH="+c.endpointDB, "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey, fmt.Sprintf(`AGENT_CLUSTER_ENDPOINT_ADAPTERS=[{"adapter_id":"fixture-main","provider_type":"fixture","command":%q,"args":["--mode","one","--record-file",%q,"--delay-ms","100"],"timeout_ms":5000}]`, fb, c.record))
+	c.endpoint.Env = append(os.Environ(), "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH="+c.endpointDB, "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey, fmt.Sprintf(`AGENT_CLUSTER_ENDPOINT_ADAPTERS=[{"adapter_id":"fixture-main","provider_type":"genericcli","command":%q,"args":["--mode","one","--record-file",%q,"--delay-ms","100"],"timeout_ms":5000,"capabilities":%s}]`, mb, c.record, replaceCapabilities))
 	c.endpoint.Stdout, c.endpoint.Stderr = os.Stdout, os.Stderr
 	if err := c.endpoint.Start(); err != nil {
 		t.Fatal(err)
@@ -451,7 +451,7 @@ func startU12ClusterAt(t *testing.T, root string, extra map[string]string, secon
 		c.endpoint2 = exec.Command(eb)
 		c.endpoint2.Dir = moduleRoot(t)
 		endpointDB2 := filepath.Join(root, "endpoint-2.db")
-		c.endpoint2.Env = append(os.Environ(), "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-2", "AGENT_CLUSTER_DATABASE_PATH="+endpointDB2, "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert2, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey2, fmt.Sprintf(`AGENT_CLUSTER_ENDPOINT_ADAPTERS=[{"adapter_id":"fixture-main","provider_type":"fixture","command":%q,"args":["--mode","one","--record-file",%q,"--delay-ms","100"],"timeout_ms":5000}]`, fb, c.record2))
+		c.endpoint2.Env = append(os.Environ(), "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-2", "AGENT_CLUSTER_DATABASE_PATH="+endpointDB2, "AGENT_CLUSTER_TLS_CA_FILE="+certs.ca, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert2, "AGENT_CLUSTER_TLS_KEY_FILE="+certs.clientKey2, fmt.Sprintf(`AGENT_CLUSTER_ENDPOINT_ADAPTERS=[{"adapter_id":"fixture-main","provider_type":"genericcli","command":%q,"args":["--mode","one","--record-file",%q,"--delay-ms","100"],"timeout_ms":5000,"capabilities":%s}]`, mb, c.record2, replaceCapabilities))
 		c.endpoint2.Stdout, c.endpoint2.Stderr = os.Stdout, os.Stderr
 		if err := c.endpoint2.Start(); err != nil {
 			t.Fatal(err)

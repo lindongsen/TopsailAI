@@ -212,10 +212,16 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		}
 		base.Inspection = &inspectionResult{Found: true, Live: true, Observation: &observation}
 	case functionExecute:
+		// The interval is measured around the work, not around the record write,
+		// because the record is the evidence a caller uses to prove two commands
+		// for one target did not overlap. A record written with no interval left
+		// every entry at zero, so an overlap assertion compared zero with zero and
+		// passed while proving nothing.
+		startNS := time.Now().UnixNano()
 		if options.delayMS > 0 {
 			time.Sleep(time.Duration(options.delayMS) * time.Millisecond)
 		}
-		recordInvocation(options, request, "execute")
+		recordInvocationInterval(options, request, "execute", startNS, time.Now().UnixNano())
 		// The diagnostic goes to stderr and the answer is a failure document, so
 		// the Cluster keeps the provider's own words as evidence instead of
 		// flattening the failure into a generic error. The invocation is recorded
@@ -534,6 +540,14 @@ func stoppedObservation() providerObservation {
 // scenario asserting "the provider was not called" reads this file rather than
 // inferring absence from a Cluster response.
 func recordInvocation(options mockOptions, request request, kind string) {
+	recordInvocationInterval(options, request, kind, 0, 0)
+}
+
+// recordInvocationInterval records one invocation together with the interval it
+// occupied. A zero interval is omitted rather than written as zero, so a caller
+// can tell "this invocation reported no interval" from "this invocation took no
+// time".
+func recordInvocationInterval(options mockOptions, request request, kind string, startNS, endNS int64) {
 	if options.recordFile == "" {
 		return
 	}
@@ -556,6 +570,11 @@ func recordInvocation(options mockOptions, request request, kind string) {
 	if request.Target != nil {
 		record["target_resource_key"] = request.Target.ProviderResourceKey
 		record["target_generation"] = request.Target.ExpectedGeneration
+	}
+	if startNS != 0 && endNS != 0 {
+		record["timestamp_ns"] = endNS
+		record["start_ns"] = startNS
+		record["end_ns"] = endNS
 	}
 	file, err := os.OpenFile(options.recordFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
