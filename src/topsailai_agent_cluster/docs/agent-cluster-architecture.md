@@ -485,12 +485,16 @@ conformance checks helper cleanup, while provider live tests check the independe
 
 ### Replacement constraint
 
-The current `internal/adapter/topsailai` and command-based Adapter paths describe the implementation
-being replaced; they are not supported legacy, fallback, parity or rollback paths. The replacement is
-accepted against the Cluster contract, protocol conformance, provider-neutral fixtures, BDD,
-integration checks and bounded live smoke evidence. The reviewed replacement unit removes the old
-`CommandAdapter`, its argv protocol, the compiled-in TopsailAI factory and provider-command templates
-instead of carrying two provider seams forward.
+The in-process TopsailAI adapter and the command-based Adapter paths have been removed; they are not
+supported legacy, fallback, parity or rollback paths. The replacement was accepted against the Cluster
+contract, protocol conformance, provider-neutral fixtures, BDD, integration checks and bounded live
+smoke evidence. The reviewed replacement unit removed the old `CommandAdapter`, its argv protocol, the
+compiled-in TopsailAI factory and the provider-command templates instead of carrying two provider seams
+forward.
+
+The only Adapter implementation is the Generic CLI Adapter. The only Provider CLIs are
+`providers/topsailai` (production, packaged separately) and `providers/mock` (test-only, never
+packaged). An Endpoint configured with a removed provider type refuses to start.
 
 The first production replacement is a one-way removal of the old seams; it does not roll back to old
 Adapter code. After one Provider CLI version has passed production acceptance, later rollback applies

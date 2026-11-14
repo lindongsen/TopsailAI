@@ -144,10 +144,11 @@ supply an executable, base argv, working directory, config path, environment ove
 
 ### Standard functions, queries and streams
 
-The Endpoint calls the in-process Adapter functions `describe`, `discover`, `inspect`, `execute`,
-`query`, `query_command`, `read_output`, `follow_output` and optional `watch`. The generic CLI Adapter
-translates those calls to the process protocol. Provider CLIs implement the process protocol, not the
-Endpoint's Go interface.
+The Endpoint calls the Adapter interface functions `describe`, `discover`, `inspect`, `execute`,
+`query`, `query_command`, `read_output`, `follow_output` and optional `watch`. That interface is an
+in-process Go contract, but the only implementation behind it is the Generic CLI Adapter, which
+translates every call into one Provider CLI process invocation. Provider CLIs implement the process
+protocol, not the Endpoint's Go interface.
 
 `query` is one read-only framing function. Query names and their request/result schemas are a closed
 Cluster registry. A provider may support `launch.options`, `history.messages`, `model.catalog` or
@@ -195,24 +196,28 @@ The current Endpoint control-action catalog with `command` templates is implemen
 not a compatibility seam. The target policy keeps only action approval and permission; provider-native
 command construction belongs to `providers/topsailai`.
 
-### TopsailAI replacement
+### Adapter implementations
 
-The current Go implementation under `internal/adapter/topsailai` and the old `CommandAdapter` are the
-code being replaced, not supported legacy implementations, parity oracles, fallbacks or rollback
-targets. Their command construction, JSON decoding, state translation, model/history/drive mapping and
-output handling move to `providers/topsailai`.
+Exactly one Adapter implementation ships: the Generic CLI Adapter. It is provider-neutral and contains
+no TopsailAI-specific command construction, JSON decoding, state translation, model/history/drive
+mapping or output handling. All of that lives in the provider project.
 
-Replacement is contract-driven:
+Two Provider CLIs exist:
 
-- Freeze the Provider CLI DTOs and schemas, then make conformance executable with `providers/mock`.
-- Implement the Generic CLI Adapter without TopsailAI-specific behavior.
-- Implement `providers/topsailai` against the installed TopsailAI business CLI.
-- Validate the replacement against the Cluster contract, provider-neutral fixtures, BDD, integration
-  checks and bounded live smoke evidence.
-- In the reviewed replacement unit, remove the old `CommandAdapter`, its argv protocol, the compiled-in
-  TopsailAI factory path and provider-command templates. Do not ship two Provider seams.
-- Rollback selects a previously verified immutable Provider CLI version for the same `adapter_id`; it
-  never restores the command-based or compiled-in Adapter.
+- `providers/topsailai` is the production provider. It is a separate Go module, is packaged
+  independently, and drives the installed TopsailAI business CLI.
+- `providers/mock` is a test-only provider. It is never packaged and never deployed. It exists so
+  protocol conformance, BDD and integration checks can exercise the Generic CLI Adapter without a real
+  TopsailAI installation.
+
+The in-process TopsailAI adapter and the legacy `CommandAdapter` were removed rather than kept as
+fallbacks, parity oracles or rollback targets. A configuration that still names either of them is
+refused at Endpoint startup, because a silent fallback would run a provider CLI against a command line
+written for a different adapter and the operator would see a provider error instead of a configuration
+error.
+
+Rollback selects a previously verified immutable Provider CLI version for the same `adapter_id`; it
+never restores the command-based or compiled-in Adapter.
 
 Endpoint accepts zero configured Adapters and remains connected while waiting for local configuration.
 A local `agent-clusterctl` action drives an Endpoint per-adapter replace operation, so activation or
