@@ -166,9 +166,11 @@ Whole-line `#` comments are accepted so the shipped example can explain itself.
 Because the catalog decides which provider command runs, it is an authorization
 surface. The Endpoint validates the configured capability list before its policy
 hook runs, so an action absent from the catalog is rejected before any allowlist or
-policy check. Both deployment paths install `conf/control-actions.conf.example` as
-`control-actions.conf` and register it as a conffile, and
-`conf/node.endpoint.conf.example` names it, so a fresh node keeps the feature.
+policy check. Neither deployment path installs a catalog: the catalog is Provider-side
+configuration read through `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS`, and
+`conf/control-actions.conf.example` is a repository reference an operator copies by
+hand. `conf/node.endpoint.conf.example` names no catalog at all, because the Endpoint
+advertises only the `ctl.` capabilities its `ADAPTERS` document lists.
 
 The interactive surface renders guided prompts from the advertised
 `payload_schema` (`internal/tui/interactive_ctl_schema.go`): fields are asked one at
