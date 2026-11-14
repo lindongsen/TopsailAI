@@ -9,12 +9,11 @@
 
 import json
 import os
+import subprocess
 from collections import OrderedDict
 
 import pytest
 
-from topsailai.context.session_manager.__base import SessionData
-from topsailai.context.session_manager.sql import SessionSQLAlchemy
 from topsailai.workspace import folder_constants, lock_tool, session_meta
 
 
@@ -36,12 +35,25 @@ def _isolated_home(monkeypatch, tmp_path):
     yield
 
 
-def _persist(tmp_path, session_id, workspace):
-    """Persist one session row with the given project workspace."""
-    storage = SessionSQLAlchemy(f"sqlite:///{tmp_path / 'memory.db'}")
-    storage.create_session(SessionData(
-        session_id=session_id, task="task", project_workspace=workspace,
-    ))
+def _persist(monkeypatch, workspace):
+    """Make the session-info command report *workspace* for any session.
+
+    The consumers are tested through the same command boundary the resolver
+    uses, so no test opens the session database.
+    """
+    monkeypatch.setattr(
+        "topsailai.workspace.project_workspace._resolve_lookup_command",
+        lambda: "/fake/session_info",
+    )
+
+    def fake_run(cmd):
+        """Return a canned session-info document."""
+        payload = {"session_id": cmd[-1], "project_workspace": workspace}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(
+        "topsailai.workspace.project_workspace._run_lookup_command", fake_run,
+    )
 
 
 def _read_meta(path):
@@ -50,18 +62,18 @@ def _read_meta(path):
         return json.load(stream)
 
 
-def test_session_meta_uses_persisted_workspace_when_environment_is_absent(tmp_path):
+def test_session_meta_uses_persisted_workspace_when_environment_is_absent(monkeypatch):
     """A resumed session records the persisted workspace, not an empty string."""
-    _persist(tmp_path, "s-meta-db", "/persisted/ws")
+    _persist(monkeypatch, "/persisted/ws")
 
     path = session_meta.create_session_meta("s-meta-db")
 
     assert _read_meta(path)["project_workspace"] == "/persisted/ws"
 
 
-def test_session_meta_prefers_environment_over_persisted_workspace(monkeypatch, tmp_path):
+def test_session_meta_prefers_environment_over_persisted_workspace(monkeypatch):
     """An exported environment value still wins over the persisted record."""
-    _persist(tmp_path, "s-meta-env", "/persisted/ws")
+    _persist(monkeypatch, "/persisted/ws")
     monkeypatch.setenv("TOPSAILAI_PROJECT_WORKSPACE", "/env/wins")
 
     path = session_meta.create_session_meta("s-meta-env")
@@ -69,41 +81,51 @@ def test_session_meta_prefers_environment_over_persisted_workspace(monkeypatch, 
     assert _read_meta(path)["project_workspace"] == "/env/wins"
 
 
-def test_session_meta_records_empty_when_nothing_is_available(tmp_path):
+def test_session_meta_records_empty_when_nothing_is_available(monkeypatch):
     """With no environment and no persisted row the field stays empty."""
+    monkeypatch.setattr(
+        "topsailai.workspace.project_workspace._resolve_lookup_command",
+        lambda: None,
+    )
+
     path = session_meta.create_session_meta("s-meta-none")
 
     assert _read_meta(path)["project_workspace"] == ""
 
 
-def test_lock_tool_uses_persisted_workspace_when_environment_is_absent(monkeypatch, tmp_path):
+def test_lock_tool_uses_persisted_workspace_when_environment_is_absent(monkeypatch):
     """The project lock resolves the persisted workspace for a resumed session."""
-    _persist(tmp_path, "s-lock-db", "/persisted/ws")
+    _persist(monkeypatch, "/persisted/ws")
     monkeypatch.setenv("SESSION_ID", "s-lock-db")
 
     assert lock_tool._resolve_project_workspace() == "/persisted/ws"
 
 
-def test_lock_tool_prefers_environment_over_persisted_workspace(monkeypatch, tmp_path):
+def test_lock_tool_prefers_environment_over_persisted_workspace(monkeypatch):
     """An exported environment value still wins for the lock target."""
-    _persist(tmp_path, "s-lock-env", "/persisted/ws")
+    _persist(monkeypatch, "/persisted/ws")
     monkeypatch.setenv("SESSION_ID", "s-lock-env")
     monkeypatch.setenv("TOPSAILAI_PROJECT_WORKSPACE", "/env/wins")
 
     assert lock_tool._resolve_project_workspace() == "/env/wins"
 
 
-def test_lock_tool_explicit_argument_wins(monkeypatch, tmp_path):
+def test_lock_tool_explicit_argument_wins(monkeypatch):
     """An explicit argument is returned unchanged."""
-    _persist(tmp_path, "s-lock-explicit", "/persisted/ws")
+    _persist(monkeypatch, "/persisted/ws")
     monkeypatch.setenv("SESSION_ID", "s-lock-explicit")
     monkeypatch.setenv("TOPSAILAI_PROJECT_WORKSPACE", "/env/wins")
 
     assert lock_tool._resolve_project_workspace("/explicit") == "/explicit"
 
 
-def test_lock_tool_returns_none_when_nothing_is_available(tmp_path):
+def test_lock_tool_returns_none_when_nothing_is_available(monkeypatch):
     """With no environment and no persisted row the lock target is None."""
+    monkeypatch.setattr(
+        "topsailai.workspace.project_workspace._resolve_lookup_command",
+        lambda: None,
+    )
+
     assert lock_tool._resolve_project_workspace() is None
 
 
@@ -111,7 +133,7 @@ def test_lock_tool_acquires_the_persisted_workspace_lock(monkeypatch, tmp_path):
     """The lock is actually taken on the persisted workspace directory."""
     workspace = tmp_path / "project"
     workspace.mkdir()
-    _persist(tmp_path, "s-lock-real", str(workspace))
+    _persist(monkeypatch, str(workspace))
     monkeypatch.setenv("SESSION_ID", "s-lock-real")
 
     with lock_tool.ctxm_project_workspace_lock() as has_lock:
