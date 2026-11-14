@@ -51,10 +51,10 @@ type ClusterOptions struct {
 	// certificate no longer proves which Endpoint is connecting.
 	SharedCertificate bool
 	// ProviderType selects the adapter implementation. An empty value keeps the
-	// generic "fixture" adapter, so existing scenarios are unchanged. Selecting
-	// "topsailai" wires the real TopsailAI adapter, which is the only adapter that
-	// implements streaming output follow; the generic fixture adapter answers a
-	// follow with "unsupported" because it cannot stream.
+	// Provider CLI adapter driven by the mock provider, so existing scenarios are
+	// unchanged. Selecting "topsailai" wires the real TopsailAI adapter, which is
+	// the only adapter that implements streaming output follow; the mock provider
+	// answers a follow with "unsupported" because it cannot stream.
 	ProviderType string
 }
 
