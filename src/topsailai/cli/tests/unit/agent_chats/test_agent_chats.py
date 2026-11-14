@@ -138,14 +138,53 @@ def test_topsailai_session_id_wins_over_legacy_alias() -> None:
 
 
 @pytest.mark.parametrize("blank", ["", "   "])
-def test_blank_session_id_is_treated_as_unset(blank: str) -> None:
-    """A blank alias value must not suppress generation."""
+def test_blank_session_id_means_no_session(blank: str) -> None:
+    """A present but blank alias opts out of session persistence."""
     os.environ["TOPSAILAI_SESSION_ID"] = blank
     os.environ["SESSION_ID"] = blank
     mock_get_chat = _run_main()
 
     _, kwargs = mock_get_chat.call_args
-    assert re.fullmatch(GENERATED_SESSION_ID_PATTERN, kwargs["session_id"])
+    assert kwargs["session_id"] == ""
+
+
+def test_blank_session_id_is_not_generated() -> None:
+    """An explicit blank value must never be replaced by a generated identity."""
+    os.environ["TOPSAILAI_SESSION_ID"] = ""
+    with mock.patch.object(agent_chats, "_generate_session_id") as mock_generate:
+        _run_main()
+
+    mock_generate.assert_not_called()
+
+
+def test_absent_topsailai_session_id_falls_through_to_legacy_alias() -> None:
+    """An absent alias must not stop the search for a configured one."""
+    os.environ.pop("TOPSAILAI_SESSION_ID", None)
+    os.environ["SESSION_ID"] = "legacy-only"
+    mock_get_chat = _run_main()
+
+    _, kwargs = mock_get_chat.call_args
+    assert kwargs["session_id"] == "legacy-only"
+
+
+def test_blank_topsailai_session_id_does_not_fall_through_to_legacy_alias() -> None:
+    """A present blank alias decides, so the legacy alias is not consulted."""
+    os.environ["TOPSAILAI_SESSION_ID"] = ""
+    os.environ["SESSION_ID"] = "legacy"
+    mock_get_chat = _run_main()
+
+    _, kwargs = mock_get_chat.call_args
+    assert kwargs["session_id"] == ""
+
+
+def test_no_session_identity_is_published_as_empty() -> None:
+    """Opting out publishes an empty identity instead of leaving a stale one."""
+    os.environ["TOPSAILAI_SESSION_ID"] = ""
+    os.environ["SESSION_ID"] = ""
+    _run_main()
+
+    assert os.environ["TOPSAILAI_SESSION_ID"] == ""
+    assert os.environ["SESSION_ID"] == ""
 
 
 def test_generated_session_id_is_announced_when_library_is_silent() -> None:

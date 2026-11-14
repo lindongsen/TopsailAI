@@ -60,10 +60,16 @@ def _resolve_session_id(
 ) -> Tuple[str, bool]:
     """Resolve the effective session identity for this chat process.
 
-    An explicitly configured identity always wins and is preserved verbatim.
-    A new identity is generated only when neither supported alias carries a
-    non-blank value, which mirrors the launcher's precedence so a chat started
-    from a launched session keeps that session's identity.
+    Presence decides, not content. An alias that is absent from the
+    environment means "not configured", so a new identity is generated. An
+    alias that is present is used verbatim, and a present value that carries no
+    identity (empty or whitespace-only) means "run without a session", which is
+    how a caller opts out of session persistence.
+
+    The aliases are consulted in ``SESSION_ID_ENV_KEYS`` order, so a chat
+    started from a launched session keeps that session's identity. An absent
+    alias never stops the search, and a present alias never falls through to
+    the next one, so the first configured alias always decides.
 
     Args:
         environ: Environment mapping to read. Defaults to ``os.environ``.
@@ -74,9 +80,12 @@ def _resolve_session_id(
     """
     env = os.environ if environ is None else environ
     for key in SESSION_ID_ENV_KEYS:
-        value = env.get(key) or ""
+        if key not in env:
+            continue
+        value = env[key]
         if value.strip():
             return value, False
+        return "", False
     return _generate_session_id(), True
 
 
