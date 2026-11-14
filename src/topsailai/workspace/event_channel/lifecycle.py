@@ -25,7 +25,10 @@ import threading
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-from topsailai.events.subscribers.fanout import set_subscription_registry
+from topsailai.events.subscribers.fanout import (
+    get_subscription_registry_or_none,
+    set_subscription_registry,
+)
 from topsailai.events.subscribers.registry import SubscriptionRegistry
 from topsailai.workspace.event_channel.config import EventChannelConfig
 from topsailai.workspace.event_channel.server import EventChannelServer
@@ -130,11 +133,15 @@ def get_or_start_event_channel_server(
             config=effective,
             registry=registry,
         )
+        previous_registry = get_subscription_registry_or_none()
         set_subscription_registry(registry)
         try:
             server.start()
         except Exception:
-            set_subscription_registry(None)
+            # Restore whatever was installed before this attempt. Detaching the
+            # registry outright would silently stop fan-out for a server that is
+            # still running for another session in the same process.
+            set_subscription_registry(previous_registry)
             raise
         _event_channel_servers[key] = _ChannelEntry(server=server, registry=registry)
         logger.info(
@@ -191,17 +198,21 @@ def release_event_channel_server(
         if entry.ref_count > 0:
             return
 
-        try:
-            entry.server.stop()
-        except Exception as e:
-            logger.warning("failed to stop shared event channel server: %s", e)
+        # Detach the entry under the lock, then stop the server outside it.
+        # Stopping joins threads, and holding the process-wide lock across a
+        # join would make shutdown a blocking point for every other thread.
         _event_channel_servers.pop(key, None)
-        set_subscription_registry(None)
-        logger.info(
-            "stopped shared event channel server for session=%s pid=%s",
-            session_id,
-            pid,
-        )
+
+    try:
+        entry.server.stop()
+    except Exception as e:
+        logger.warning("failed to stop shared event channel server: %s", e)
+    set_subscription_registry(None)
+    logger.info(
+        "stopped shared event channel server for session=%s pid=%s",
+        session_id,
+        pid,
+    )
 
 
 def reset_event_channel_lifecycle() -> None:

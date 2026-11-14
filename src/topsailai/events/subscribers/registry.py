@@ -105,6 +105,26 @@ class SubscriptionRegistry:
         with self._lock:
             return list(self._subscribers.values())
 
+    def snapshot_nonblocking(self) -> List[Subscriber]:
+        """Return the registered subscribers without ever waiting for the lock.
+
+        The fan-out path runs on the producer thread, which must never become a
+        blocking point. A registry mutation holds this lock only for an O(1)
+        dictionary operation, so contention is rare; when it does happen the
+        producer skips this event instead of waiting, because losing one event
+        for one subscriber is strictly better than delaying the caller that
+        produced it.
+
+        Returns:
+            The registered subscribers, or an empty list when the lock is busy.
+        """
+        if not self._lock.acquire(blocking=False):
+            return []
+        try:
+            return list(self._subscribers.values())
+        finally:
+            self._lock.release()
+
     def stale_subscribers(self, timeout_seconds: float) -> List[Subscriber]:
         """Return subscribers whose last liveness signal exceeded the timeout."""
         if timeout_seconds <= 0:

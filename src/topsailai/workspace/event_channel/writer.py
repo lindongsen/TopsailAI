@@ -57,7 +57,24 @@ class EventWriter(threading.Thread):
         self._stop_event.set()
 
     def run(self) -> None:
-        """Push queued events until stopped or the link fails."""
+        """Push queued events until stopped or the link fails.
+
+        The thread is a daemon owned by one subscriber, so an unexpected failure
+        must end only this writer. It is logged instead of escaping, because an
+        unhandled exception in a thread would otherwise be reported as a process
+        level error even though the channel is designed to tolerate loss.
+        """
+        try:
+            self._drain_loop()
+        except Exception:
+            logger.warning(
+                "event channel writer failed for subscriber %s",
+                self.subscriber.subscriber_id,
+                exc_info=True,
+            )
+
+    def _drain_loop(self) -> None:
+        """Drain the subscriber queue and push frames until stopped."""
         while not self._stop_event.is_set():
             events = self.subscriber.drain(self.batch_size)
             if not events:

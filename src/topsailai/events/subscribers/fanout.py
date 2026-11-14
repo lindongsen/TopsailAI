@@ -23,6 +23,16 @@ _registry_lock = threading.Lock()
 _stats = EventChannelStats()
 _drop_observer: Optional[Callable[[EventChannelStats], None]] = None
 
+# Drop notification runs on its own daemon thread instead of the producer
+# thread. The observer mirrors cumulative totals into Agent Runtime Data, which
+# takes a store lock; running it inline made the producer wait for that lock,
+# which violates the "never a blocking point" invariant. A single pending flag
+# coalesces bursts because the observer publishes cumulative totals, so the
+# newest totals supersede any skipped notification.
+_drop_pending = threading.Event()
+_drop_notifier: Optional[threading.Thread] = None
+_drop_notifier_lock = threading.Lock()
+
 
 def get_subscription_registry() -> SubscriptionRegistry:
     """Return the process-wide subscription registry, creating it on first use."""
@@ -30,6 +40,17 @@ def get_subscription_registry() -> SubscriptionRegistry:
     with _registry_lock:
         if _registry is None:
             _registry = SubscriptionRegistry()
+        return _registry
+
+
+def get_subscription_registry_or_none() -> Optional[SubscriptionRegistry]:
+    """Return the installed registry without creating one.
+
+    Callers that must restore a previous registry need to distinguish "no
+    registry installed" from "an empty registry", so this accessor never
+    creates an instance as a side effect.
+    """
+    with _registry_lock:
         return _registry
 
 
@@ -74,14 +95,51 @@ def set_drop_observer(
 
 
 def _notify_drop() -> None:
-    """Notify the registered drop observer without affecting the producer."""
-    observer = _drop_observer
-    if observer is None:
+    """Signal the drop notifier without ever waiting on the producer thread.
+
+    The producer only sets an event flag, which is a lock-free operation, so a
+    slow observer can never delay event recording. The observer itself runs on
+    the notifier thread started by ``_ensure_drop_notifier``.
+    """
+    if _drop_observer is None:
+        return
+    _ensure_drop_notifier()
+    _drop_pending.set()
+
+
+def _ensure_drop_notifier() -> None:
+    """Start the drop notifier thread once, tolerating a failure to start it."""
+    global _drop_notifier
+    if _drop_notifier is not None and _drop_notifier.is_alive():
+        return
+    if not _drop_notifier_lock.acquire(blocking=False):
         return
     try:
-        observer(_stats)
+        if _drop_notifier is not None and _drop_notifier.is_alive():
+            return
+        thread = threading.Thread(
+            target=_drop_notifier_loop, name="EventChannelDropNotifier", daemon=True
+        )
+        thread.start()
+        _drop_notifier = thread
     except Exception:
-        logger.exception("event channel drop observer failed")
+        logger.warning("event channel drop notifier could not start", exc_info=True)
+    finally:
+        _drop_notifier_lock.release()
+
+
+def _drop_notifier_loop() -> None:
+    """Publish drop totals off the producer thread until the process exits."""
+    while True:
+        _drop_pending.wait()
+        _drop_pending.clear()
+        observer = _drop_observer
+        if observer is None:
+            continue
+        try:
+            observer(_stats)
+        except Exception:
+            logger.exception("event channel drop observer failed")
 
 
 def fan_out(event: Event) -> int:
@@ -103,10 +161,10 @@ def fan_out(event: Event) -> int:
     delivered = 0
     dropped_any = False
     try:
-        for subscriber in registry.snapshot():
+        for subscriber in registry.snapshot_nonblocking():
             if not subscriber.matches(event):
                 continue
-            dropped = subscriber.enqueue(event)
+            dropped = subscriber.enqueue_nonblocking(event)
             _stats.record_delivery(dropped)
             if dropped:
                 dropped_any = True

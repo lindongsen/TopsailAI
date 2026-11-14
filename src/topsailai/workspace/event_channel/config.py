@@ -24,8 +24,9 @@ class EventChannelConfig:
     """Configuration for the event channel.
 
     Attributes:
-        enabled: Master switch; disabled by default so existing behavior is
-            unchanged.
+        enabled: Master switch; enabled by default so an operator gets
+            observability without opting in. The channel is hardened so that
+            enabling it can never block or terminate the process.
         max_subscribers: Maximum number of concurrent subscribers.
         queue_size: Per-subscriber queue capacity.
         heartbeat_interval: Client heartbeat interval in seconds.
@@ -33,7 +34,7 @@ class EventChannelConfig:
         max_frame_bytes: Maximum accepted single frame size.
     """
 
-    enabled: bool = False
+    enabled: bool = True
     max_subscribers: int = DEFAULT_MAX_SUBSCRIBERS
     queue_size: int = DEFAULT_QUEUE_SIZE
     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL
@@ -45,7 +46,7 @@ class EventChannelConfig:
         """Build a configuration from environment variables."""
         reader = env_tool.EnvReaderInstance
 
-        enabled = reader.check_bool("TOPSAILAI_EVENT_CHANNEL_ENABLED", default=False)
+        enabled = reader.check_bool("TOPSAILAI_EVENT_CHANNEL_ENABLED", default=True)
         max_subscribers = reader.get(
             "TOPSAILAI_EVENT_CHANNEL_MAX_SUBSCRIBERS",
             default=DEFAULT_MAX_SUBSCRIBERS,

@@ -34,9 +34,9 @@ def start_event_channel_for_process(
     """Start the process-wide event channel for this CLI process.
 
     The call is idempotent and never raises: a channel that cannot start must
-    not prevent the CLI from running. The channel stays disabled unless
-    ``TOPSAILAI_EVENT_CHANNEL_ENABLED`` is set, so an ordinary run creates no
-    socket and behaves exactly as before.
+    not prevent the CLI from running. The channel is enabled by default, so an
+    ordinary run creates a socket; setting ``TOPSAILAI_EVENT_CHANNEL_ENABLED``
+    to a false value disables it.
 
     Args:
         session_id: Optional explicit session identity. Pass the identity the

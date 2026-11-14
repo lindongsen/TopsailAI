@@ -177,11 +177,13 @@ def test_atexit_is_registered_once(monkeypatch, socket_dir, clean_state):
     )
 
     # The server registers its own stop handler too, so count only the
-    # process-level handler this module owns.
+    # process-level handler this module owns. That handler is the guarded
+    # wrapper, not ``stop_process_event_channel`` directly, because an atexit
+    # handler that raises would change the process exit status.
     process_registrations = [
         call
         for call in register.call_args_list
-        if call.args[0] is process_bootstrap.stop_process_event_channel
+        if call.args[0] is process_bootstrap._atexit_stop
     ]
     assert len(process_registrations) == 1
 

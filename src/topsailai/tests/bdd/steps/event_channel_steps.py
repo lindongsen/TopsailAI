@@ -376,17 +376,39 @@ def record_events(channel_state, count):
         fan_out(event)
 
 
+def _wait_for_runtime_text(predicate, timeout=5.0):
+    """Poll the runtime view until the predicate holds or the bound expires.
+
+    Drop publication runs on the notifier thread so the producer never waits on
+    the Runtime Data store. The operator-visible view is therefore eventually
+    consistent rather than synchronous, and the assertion waits for that state
+    instead of reading it once.
+    """
+    deadline = time.monotonic() + timeout
+    text = runtime_instruction.show_runtime()
+    while time.monotonic() < deadline:
+        if predicate(text):
+            return text
+        time.sleep(0.02)
+        text = runtime_instruction.show_runtime()
+    return text
+
+
 @then(parsers.parse("the runtime view reports {count:d} dropped events"))
 def runtime_reports_drops(channel_state, count):
     """Assert the operator-visible runtime view reports the drop count."""
-    text = runtime_instruction.show_runtime()
-    assert f"Dropped total: {count}" in text, text
+    expected = f"Dropped total: {count}"
+    text = _wait_for_runtime_text(lambda view: expected in view)
+    assert expected in text, text
     assert runtime_state.RUNTIME_STATE_KEY in text
 
 
 @then("the runtime view reports no dropped events")
 def runtime_reports_no_drops(channel_state):
     """Assert a healthy channel publishes no drop state at all."""
+    # A healthy channel never signals the notifier, so a short settle window is
+    # enough to prove no publication is in flight.
+    time.sleep(0.1)
     text = runtime_instruction.show_runtime()
     assert "Dropped total" not in text
 

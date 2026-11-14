@@ -7,6 +7,7 @@ Purpose: Verify cumulative counters, fan-out accounting, and observer isolation
 """
 
 import threading
+import time
 
 import pytest
 
@@ -143,6 +144,16 @@ def test_drop_observer_is_not_called_for_ordinary_delivery():
     assert calls == []
 
 
+def _wait_for_calls(calls, expected, timeout=2.0):
+    """Wait until the notifier thread has published the expected totals."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if calls and calls[-1] == expected:
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def test_drop_observer_receives_cumulative_totals_on_drop():
     registry = SubscriptionRegistry(max_subscribers=4, queue_size=1)
     registry.register("a", ())
@@ -153,7 +164,9 @@ def test_drop_observer_receives_cumulative_totals_on_drop():
     fan_out(_event("tool_call.start"))
     fan_out(_event("tool_call.end"))
 
-    assert calls == [(2, 1)]
+    # Notification is asynchronous so the producer never waits on the observer.
+    assert _wait_for_calls(calls, (2, 1)), calls
+    assert calls[-1] == (2, 1)
 
 
 def test_drop_observer_failure_does_not_break_fan_out():
@@ -183,6 +196,7 @@ def test_detaching_observer_stops_notifications():
 
     fan_out(_event("tool_call.start"))
     fan_out(_event("tool_call.end"))
+    time.sleep(0.1)
 
     assert calls == []
 

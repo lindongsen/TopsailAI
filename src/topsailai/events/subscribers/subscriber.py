@@ -112,6 +112,37 @@ class Subscriber:
             self._queue.append(event)
             return dropped
 
+    def enqueue_nonblocking(self, event: Event) -> bool:
+        """Append an event without ever waiting for the queue lock.
+
+        The fan-out path runs on the producer thread, which must never become a
+        blocking point. The writer thread holds this lock only while draining a
+        bounded batch, so contention is short; when it does happen the producer
+        drops this event for this subscriber instead of waiting.
+
+        The per-subscriber ``dropped`` counter is not incremented on a contended
+        skip, because incrementing it would require the very lock that is busy.
+        The process-wide counter still records the loss, so an operator sees the
+        drop even though this subscriber's own counter undercounts.
+
+        Args:
+            event: Event to enqueue.
+
+        Returns:
+            True when the event was not queued, either because the queue was
+            full or because the lock was busy.
+        """
+        if not self._lock.acquire(blocking=False):
+            return True
+        try:
+            dropped = len(self._queue) >= self.queue_size
+            if dropped:
+                self._dropped += 1
+            self._queue.append(event)
+            return dropped
+        finally:
+            self._lock.release()
+
     def drain(self, count: Optional[int] = None) -> List[Event]:
         """Remove and return queued events in insertion order.
 

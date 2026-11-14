@@ -525,7 +525,7 @@ These variables control the optional channel that pushes recorded events to exte
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_EVENT_CHANNEL_ENABLED` | `0` | Master switch. `1` enables the channel, `0` disables it. When disabled, no socket is created and no events are pushed. |
+| `TOPSAILAI_EVENT_CHANNEL_ENABLED` | `1` | Master switch. `1` enables the channel, `0` disables it. Enabled by default; the channel is hardened so that enabling it can never block or terminate the process. When disabled, no socket is created and no events are pushed. |
 | `TOPSAILAI_EVENT_CHANNEL_MAX_SUBSCRIBERS` | `8` | Maximum number of concurrent subscribers. A subscribe request beyond this limit is rejected. Positive integer; invalid or non-positive values fall back to `8`. |
 | `TOPSAILAI_EVENT_CHANNEL_QUEUE_SIZE` | `1000` | Maximum number of pending events held for one subscriber. When full, the oldest event is dropped and the drop count increases. Positive integer; invalid or non-positive values fall back to `1000`. |
 | `TOPSAILAI_EVENT_CHANNEL_HEARTBEAT_INTERVAL` | `10` | Interval in seconds at which a subscriber sends a heartbeat. Positive number; invalid or non-positive values fall back to `10`. |

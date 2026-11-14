@@ -379,6 +379,34 @@ domain socket. It is deliberately independent of the control channel: the
 control channel is request/response and must never be delayed by a slow
 subscriber, while this channel is server-push and tolerates loss.
 
+### Hard invariants (bottom line)
+
+These invariants are non-negotiable and take precedence over every other
+requirement in this document. The channel is an observability facility, so it
+must never be able to harm the process it observes.
+
+- **Never a blocking point.** No code path on the producer thread may wait for a
+  subscriber, a socket, a lock held by a subscriber, or a thread join. A full
+  subscriber queue drops its oldest event instead of waiting, and a slow or dead
+  subscriber can only delay its own writer thread.
+- **Never an abnormal exit point.** No failure inside the channel may raise out
+  of a CLI entry point, terminate the interpreter, or change the process exit
+  code. Startup, delivery, and shutdown failures are logged and degrade to "no
+  channel".
+- **Startup failure is survivable.** When the socket cannot be created, bound, or
+  permissioned, the channel reports the failure to its caller, leaves no partial
+  state behind, and the process continues without a channel.
+- **Runtime failure is survivable.** An exception in the accept loop, the reaper,
+  a writer thread, the fan-out path, or the Runtime Data mirror is logged and
+  contained. The affected subscriber or thread degrades; the process does not.
+- **Shutdown failure is survivable.** Shutdown runs from `atexit`, so every step
+  is isolated and the whole routine never raises. A thread that refuses to stop
+  is logged and abandoned rather than waited on indefinitely.
+- **Enabled by default.** The channel is on unless
+  `TOPSAILAI_EVENT_CHANNEL_ENABLED` is explicitly false, so an operator gets
+  observability without opting in. The invariants above are what make that
+  default safe.
+
 ### Delivery semantics
 
 - **Fire and forget.** The producer never waits for an acknowledgement, never
@@ -450,9 +478,11 @@ Every CLI entry point that runs an agent or an LLM chat therefore calls
 `cli/cli_topsailai/event_channel_bootstrap.py` once at startup. That wrapper
 delegates to `workspace/event_channel/process_bootstrap.py`, which starts the
 server through `workspace/event_channel/lifecycle.py` and registers an `atexit`
-handler that releases it on interpreter exit. The channel stays disabled unless
-`TOPSAILAI_EVENT_CHANNEL_ENABLED` is truthy, so an unset or false value creates
-no socket and leaves existing behavior unchanged.
+handler that releases it on interpreter exit. The channel is enabled by default,
+so an operator gets observability without opting in; setting
+`TOPSAILAI_EVENT_CHANNEL_ENABLED` to a false value creates no socket. Enabling it
+by default is only safe because of the hard invariants above: no startup,
+delivery, or shutdown failure can block the process or change its exit code.
 
 The bootstrap is idempotent: the first caller starts the server, later callers
 receive the same instance, and one stop releases it. It never raises, because
@@ -476,7 +506,7 @@ process rather than a running one.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_EVENT_CHANNEL_ENABLED` | `0` | Master switch; disabled by default so existing behavior is unchanged |
+| `TOPSAILAI_EVENT_CHANNEL_ENABLED` | `1` | Master switch; enabled by default, and hardened so enabling it can never block or terminate the process |
 | `TOPSAILAI_EVENT_CHANNEL_MAX_SUBSCRIBERS` | `8` | Maximum concurrent subscribers |
 | `TOPSAILAI_EVENT_CHANNEL_QUEUE_SIZE` | `1000` | Per-subscriber queue capacity |
 | `TOPSAILAI_EVENT_CHANNEL_HEARTBEAT_INTERVAL` | `10` | Client heartbeat interval in seconds |
