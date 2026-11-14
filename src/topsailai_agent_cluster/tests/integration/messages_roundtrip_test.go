@@ -14,6 +14,14 @@ import (
 	"topsailai_agent_cluster/tests/harness"
 )
 
+// messagesFirstBody is the first message body the mock provider answers.
+//
+// It is a provider step record in its unwrapped form: the provider unwraps the
+// record before answering, so the Cluster forwards this text unchanged. The
+// literal is stated once because three assertions depend on it, and a body that
+// drifted in one place would make the other two pass against a different answer.
+const messagesFirstBody = "topsailai.task\nthe operator wrote this"
+
 // messagesEnvelope mirrors the Server response envelope for one messages read.
 type messagesEnvelope struct {
 	Code    any    `json:"code"`
@@ -37,13 +45,13 @@ type messagesEnvelope struct {
 // command: a stopped session has no cluster resource ID and no live generation, so
 // every other read surface refuses it.
 func TestMessagesRoundTripStoppedSession(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
 	defer cluster.Stop(t)
 
-	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=endpoint-1&session_id=stopped-session", nil)
+	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=endpoint-1&session_id=session:stopped", nil)
 	if err != nil {
 		t.Fatalf("request messages: %v", err)
 	}
@@ -54,7 +62,7 @@ func TestMessagesRoundTripStoppedSession(t *testing.T) {
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("decode messages envelope: %v body %s", err, body)
 	}
-	if envelope.Data.ProviderSessionID != "stopped-session" {
+	if envelope.Data.ProviderSessionID != "session:stopped" {
 		t.Fatalf("provider session id %q", envelope.Data.ProviderSessionID)
 	}
 	if envelope.Data.MessageCount != 2 || len(envelope.Data.Messages) != 2 {
@@ -63,7 +71,11 @@ func TestMessagesRoundTripStoppedSession(t *testing.T) {
 	if envelope.Data.Messages[0].Role != "user" || envelope.Data.Messages[1].Role != "assistant" {
 		t.Fatalf("roles %q %q", envelope.Data.Messages[0].Role, envelope.Data.Messages[1].Role)
 	}
-	if envelope.Data.Messages[0].Content != "fixture message body" {
+	// The first body is a provider step record in its unwrapped form, which is
+	// what the provider answers and what the Cluster forwards unchanged. Asserting
+	// the whole body proves the record survived the trip instead of being reduced
+	// to its text.
+	if envelope.Data.Messages[0].Content != messagesFirstBody {
 		t.Fatalf("content %q", envelope.Data.Messages[0].Content)
 	}
 }
@@ -75,7 +87,7 @@ func TestMessagesRoundTripStoppedSession(t *testing.T) {
 // so without the existence pre-check this request would return 200 with zero
 // messages and the operator would read "this session recorded nothing".
 func TestMessagesRoundTripMissingSession(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
@@ -103,13 +115,13 @@ func TestMessagesRoundTripMissingSession(t *testing.T) {
 // content is decoded. The Server API therefore returns the whole readable body so
 // structured provider records are never cut into invalid fragments in transit.
 func TestMessagesRoundTripMaxChars(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
 	defer cluster.Stop(t)
 
-	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=endpoint-1&session_id=stopped-session&max_chars=5", nil)
+	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=endpoint-1&session_id=session:stopped&max_chars=5", nil)
 	if err != nil {
 		t.Fatalf("request messages: %v", err)
 	}
@@ -123,7 +135,7 @@ func TestMessagesRoundTripMaxChars(t *testing.T) {
 	if len(envelope.Data.Messages) == 0 {
 		t.Fatal("no messages returned")
 	}
-	if got := envelope.Data.Messages[0].Content; got != "fixture message body" {
+	if got := envelope.Data.Messages[0].Content; got != messagesFirstBody {
 		t.Fatalf("complete content %q", got)
 	}
 }
@@ -139,7 +151,6 @@ func TestMessagesRoundTripRequiresView(t *testing.T) {
 		t.Fatalf("write access policy: %v", err)
 	}
 	cluster, err := harness.StartCluster(t, harness.ClusterOptions{
-		ProviderType:        "topsailai",
 		EndpointEnvironment: map[string]string{"AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR": policyDir},
 	})
 	if err != nil {
@@ -147,7 +158,7 @@ func TestMessagesRoundTripRequiresView(t *testing.T) {
 	}
 	defer cluster.Stop(t)
 
-	req, err := http.NewRequest(http.MethodGet, cluster.URL("/api/v1/messages?endpoint_id=endpoint-1&session_id=stopped-session"), nil)
+	req, err := http.NewRequest(http.MethodGet, cluster.URL("/api/v1/messages?endpoint_id=endpoint-1&session_id=session:stopped"), nil)
 	if err != nil {
 		t.Fatalf("create messages request: %v", err)
 	}
@@ -177,13 +188,13 @@ func TestMessagesRoundTripRequiresView(t *testing.T) {
 // TestMessagesRoundTripWithDefaultPolicy proves the same request succeeds when
 // the Endpoint has no configured access-policy directory.
 func TestMessagesRoundTripWithDefaultPolicy(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
 	defer cluster.Stop(t)
 
-	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=endpoint-1&session_id=stopped-session", nil)
+	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=endpoint-1&session_id=session:stopped", nil)
 	if err != nil {
 		t.Fatalf("request messages: %v", err)
 	}
@@ -195,13 +206,13 @@ func TestMessagesRoundTripWithDefaultPolicy(t *testing.T) {
 // TestMessagesRoundTripUnknownEndpoint proves a typo is reported as an unknown
 // endpoint rather than as an outage.
 func TestMessagesRoundTripUnknownEndpoint(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
 	defer cluster.Stop(t)
 
-	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=no-such-endpoint&session_id=stopped-session", nil)
+	status, body, err := cluster.RequestE(http.MethodGet, "/api/v1/messages?endpoint_id=no-such-endpoint&session_id=session:stopped", nil)
 	if err != nil {
 		t.Fatalf("request messages: %v", err)
 	}
@@ -223,7 +234,7 @@ func TestMessagesRoundTripUnknownEndpoint(t *testing.T) {
 // The standalone surface is the automation contract, so it is exercised through the
 // real binary rather than through the client package.
 func TestMessagesRoundTripStandaloneCLI(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
@@ -232,14 +243,14 @@ func TestMessagesRoundTripStandaloneCLI(t *testing.T) {
 		t.Fatalf("build CLI: %v", err)
 	}
 
-	stdout, stderr, code, err := cluster.RunTUI("messages", "endpoint-1", "stopped-session")
+	stdout, stderr, code, err := cluster.RunTUI("messages", "endpoint-1", "session:stopped")
 	if err != nil && code == 0 {
 		t.Fatalf("run messages: %v stderr=%s", err, stderr)
 	}
 	if code != 0 {
 		t.Fatalf("messages exit code %d stderr=%s stdout=%s", code, stderr, stdout)
 	}
-	if !containsAll(stdout, "fixture message body", "Role: USER", "Role: ASSISTANT") {
+	if !containsAll(stdout, "the operator wrote this", "Role: USER", "Role: ASSISTANT") {
 		t.Fatalf("rendered conversation missing content: %s", stdout)
 	}
 }
@@ -247,7 +258,7 @@ func TestMessagesRoundTripStandaloneCLI(t *testing.T) {
 // TestMessagesRoundTripStandaloneJSON proves the machine-readable form carries the
 // conversation without terminal decoration.
 func TestMessagesRoundTripStandaloneJSON(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
@@ -256,7 +267,7 @@ func TestMessagesRoundTripStandaloneJSON(t *testing.T) {
 		t.Fatalf("build CLI: %v", err)
 	}
 
-	stdout, stderr, code, err := cluster.RunTUI("messages", "endpoint-1", "stopped-session", "--json")
+	stdout, stderr, code, err := cluster.RunTUI("messages", "endpoint-1", "session:stopped", "--json")
 	if err != nil && code == 0 {
 		t.Fatalf("run messages: %v stderr=%s", err, stderr)
 	}
@@ -274,10 +285,10 @@ func TestMessagesRoundTripStandaloneJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
 		t.Fatalf("decode standalone json: %v stdout=%s", err, stdout)
 	}
-	if document.ProviderSessionID != "stopped-session" || document.MessageCount != 2 {
+	if document.ProviderSessionID != "session:stopped" || document.MessageCount != 2 {
 		t.Fatalf("standalone document %+v", document)
 	}
-	if len(document.Messages) != 2 || document.Messages[0].Content != "fixture message body" {
+	if len(document.Messages) != 2 || document.Messages[0].Content != messagesFirstBody {
 		t.Fatalf("standalone messages %+v", document.Messages)
 	}
 }
@@ -285,7 +296,7 @@ func TestMessagesRoundTripStandaloneJSON(t *testing.T) {
 // TestMessagesRoundTripMissingSessionCLI proves the standalone command reports a
 // missing session as a failure instead of printing an empty conversation.
 func TestMessagesRoundTripMissingSessionCLI(t *testing.T) {
-	cluster, err := harness.StartCluster(t, harness.ClusterOptions{ProviderType: "topsailai"})
+	cluster, err := harness.StartCluster(t, harness.ClusterOptions{})
 	if err != nil {
 		t.Fatalf("start cluster: %v", err)
 	}
