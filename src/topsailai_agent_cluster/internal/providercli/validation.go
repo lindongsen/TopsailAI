@@ -576,6 +576,9 @@ func (r OperationResult) validate() error {
 	if r.FinishedAtMS > 0 && r.StartedAtMS > r.FinishedAtMS {
 		return errors.New("operation result finishes before it starts")
 	}
+	if r.ExitConfirmed && r.DeliveryBoundary == DeliveryNotStarted {
+		return fmt.Errorf("operation result confirms an exit at delivery boundary %q, where no process was started", r.DeliveryBoundary)
+	}
 	return nil
 }
 
