@@ -278,6 +278,15 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			if request.Target != nil && request.Target.ProviderResourceKey != "" {
 				sessionKey = request.Target.ProviderResourceKey
 			}
+			// A session the mock does not know is answered with the provider's own
+			// missing-session code instead of two invented messages. Answering
+			// every key made "this session does not exist" indistinguishable from
+			// "this session recorded nothing", so the Cluster could never be shown
+			// to report a missing session and the assertion that it does would
+			// have passed against a provider that never said so.
+			if !mockKnownSession(sessionKey) {
+				return failureResponse(request.RequestID, mockSessionNotFoundCode, "provider session does not exist", "not_applied")
+			}
 			base.QueryResult = json.RawMessage(fmt.Sprintf(`{"provider_session_id":%q,"messages":[{"role":"user","content":"topsailai.task\nthe operator wrote this","word_count":5,"token_count":6},{"role":"assistant","content":"the operator wrote this","word_count":4,"token_count":5}],"message_count":2,"observed_at_ms":1700000000000,"truncated":false}`, sessionKey))
 		default:
 			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
@@ -695,6 +704,18 @@ func fixtureObservation() providerObservation {
 }
 
 // failureResponse builds one standard Provider CLI rejection.
+// mockSessionNotFoundCode is the provider's own code for a session it does not
+// know. It is a provider protocol value, not a Cluster error code.
+const mockSessionNotFoundCode = "session_not_found"
+
+// mockKnownSession reports whether the mock has a session under this key.
+//
+// The two keys are the ones the mock's own observations publish, so a read for a
+// key it never advertised is answered as missing rather than invented.
+func mockKnownSession(key string) bool {
+	return key == "session:stable" || key == "session:stopped"
+}
+
 func failureResponse(requestID, code, message, certainty string) response {
 	return response{
 		version:   currentVersion(),

@@ -343,6 +343,15 @@ func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (p
 	payload, _ := json.Marshal(providercli.SessionMessagesPayload{MaxChars: query.MaxChars, MaxTokens: query.MaxTokens})
 	value, err := a.typedQuery(ctx, providercli.QuerySessionMessages, target, payload)
 	if err != nil {
+		// A provider that does not know the session is reported as a missing
+		// session, not as a provider failure. The distinction is the whole point
+		// of the read: "this session recorded nothing" and "this session does not
+		// exist" send the operator to different places, and the Server maps the
+		// two to different HTTP statuses.
+		var coded interface{ ErrorCode() string }
+		if errors.As(err, &coded) && coded.ErrorCode() == providerSessionNotFoundCode {
+			return protocol.MessagesResult{ErrorCode: protocol.MessagesSessionNotFound, ProviderSessionID: query.ProviderSessionID}, err
+		}
 		return protocol.MessagesResult{}, err
 	}
 	providerResult := value.(providercli.SessionMessagesResult)
@@ -701,11 +710,39 @@ func outputError(response providercli.Response, err error) error {
 // capability. It is a provider protocol value, not a Cluster error code.
 const providerUnsupportedCode = "unsupported"
 
+// providerSessionNotFoundCode is the provider's own code for a session it does
+// not know. It is a provider protocol value, not a Cluster error code, so it is
+// declared here beside the other provider codes rather than in the protocol.
+const providerSessionNotFoundCode = "session_not_found"
+
+// providerError preserves the provider's own error code.
+//
+// The code is kept as a field rather than flattened into the message because a
+// caller has to act on it: a provider that cannot find a session and a provider
+// that failed to read one are different outcomes for the operator, and a single
+// formatted string makes them indistinguishable once the error leaves this
+// package. The message keeps the original wording so existing logs still read the
+// same.
+type providerError struct {
+	Code    string
+	Message string
+}
+
+// Error renders the provider code and message in the historical format.
+func (e *providerError) Error() string {
+	return fmt.Sprintf("provider %s: %s", e.Code, e.Message)
+}
+
+// ErrorCode reports the provider's own code so a caller can classify the failure.
+func (e *providerError) ErrorCode() string {
+	return e.Code
+}
+
 func responseError(response providercli.Response) error {
 	if response.Error == nil {
 		return nil
 	}
-	return fmt.Errorf("provider %s: %s", response.Error.Code, response.Error.Message)
+	return &providerError{Code: response.Error.Code, Message: response.Error.Message}
 }
 
 func randomID() (string, error) {

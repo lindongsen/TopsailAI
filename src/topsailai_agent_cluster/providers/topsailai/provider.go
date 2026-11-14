@@ -81,6 +81,27 @@ var (
 	errInvalidRequest = errors.New("invalid request")
 )
 
+// codedError carries a provider error code that the Cluster has to act on.
+//
+// A plain error is reported as "provider_error", which tells the operator that
+// the provider failed but not what happened. A session the provider does not know
+// is a normal outcome of a read, not a fault, and the Cluster maps it to a
+// different HTTP status, so the code has to survive the trip.
+type codedError struct {
+	code    string
+	message string
+}
+
+// Error renders the provider message.
+func (e codedError) Error() string { return e.message }
+
+// ErrorCode reports the provider code so errorCode can classify the failure.
+func (e codedError) ErrorCode() string { return e.code }
+
+// providerSessionNotFoundCode is the provider's own code for a session it does
+// not know. It is a provider protocol value, not a Cluster error code.
+const providerSessionNotFoundCode = "session_not_found"
+
 func decodeStrict(document []byte, value any) error {
 	if bytes.Equal(bytes.TrimSpace(document), []byte("null")) {
 		return errors.New("null JSON document")

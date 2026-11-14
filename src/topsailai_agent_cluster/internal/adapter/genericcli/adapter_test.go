@@ -406,6 +406,70 @@ func TestReadOutputKeepsOtherProviderErrorsAsFailures(t *testing.T) {
 	}
 }
 
+// TestMessagesMapsProviderMissingSessionToClusterMissingSession proves a
+// provider that does not know the session is reported as a missing session.
+//
+// The two outcomes are different claims: "this session does not exist" and "the
+// provider failed to read this session" send the operator to different places,
+// and the Server maps them to different HTTP statuses. Flattening the provider
+// code into a message made the distinction unrecoverable, so this test asserts
+// the code survives the trip.
+func TestMessagesMapsProviderMissingSessionToClusterMissingSession(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			response.Descriptor.Queries = []providercli.NamedContract{{Name: providercli.QuerySessionMessages, Version: "v1"}}
+			return response, nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: false,
+			Error: &providercli.ProviderError{Code: "session_not_found", Message: "provider session does not exist", EffectCertainty: providercli.EffectNotApplied},
+		}, nil
+	}
+	binding := mustAdapter(t, provider)
+	result, err := binding.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "never-recorded"})
+	if err == nil {
+		t.Fatal("messages error = nil, want a missing-session failure")
+	}
+	if result.ErrorCode != protocol.MessagesSessionNotFound {
+		t.Fatalf("messages error code = %q, want %q", result.ErrorCode, protocol.MessagesSessionNotFound)
+	}
+	if result.ProviderSessionID != "never-recorded" {
+		t.Fatalf("messages provider session id = %q, want the requested session", result.ProviderSessionID)
+	}
+}
+
+// TestMessagesKeepsOtherProviderErrorsAsProviderFailures proves the mapping is
+// narrow.
+//
+// Only the provider's own missing-session code is a missing session. Any other
+// provider failure must stay a provider failure, otherwise a broken provider
+// would be reported as a deleted session and the operator would stop looking for
+// data that still exists.
+func TestMessagesKeepsOtherProviderErrorsAsProviderFailures(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			response.Descriptor.Queries = []providercli.NamedContract{{Name: providercli.QuerySessionMessages, Version: "v1"}}
+			return response, nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: false,
+			Error: &providercli.ProviderError{Code: "provider_error", Message: "history read failed", EffectCertainty: providercli.EffectNotApplied},
+		}, nil
+	}
+	binding := mustAdapter(t, provider)
+	result, err := binding.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "session-1"})
+	if err == nil {
+		t.Fatal("messages error = nil, want a provider failure")
+	}
+	if result.ErrorCode == protocol.MessagesSessionNotFound {
+		t.Fatalf("messages error code = %q, want a provider failure", result.ErrorCode)
+	}
+}
+
 // TestReceiptFromOperationCarriesExitConfirmation proves the provider's exit
 // observation reaches the Cluster receipt.
 //

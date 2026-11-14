@@ -270,7 +270,10 @@ func (p *provider) messages(ctx context.Context, requested *target, raw json.Raw
 		return messagesResult{}, err
 	}
 	if info.ErrorCode != "" {
-		return messagesResult{}, errorsNew("provider session does not exist")
+		// A session the provider does not know is reported with its own code so
+		// the Cluster can answer "this session does not exist" instead of "the
+		// provider failed". The two send the operator to different places.
+		return messagesResult{}, codedError{code: providerSessionNotFoundCode, message: "provider session does not exist"}
 	}
 	var envelope messagesEnvelope
 	if err := runJSON(ctx, p.runner, []string{"session", "history", sessionID, "--json"}, maxMessagesBytes, &envelope); err != nil {
