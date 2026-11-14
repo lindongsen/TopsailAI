@@ -26,6 +26,16 @@ import (
 // and the two production declarations must agree with it.
 const endpointTokenHeader = "X-Endpoint-Token"
 
+// providerControlPrefix marks the provider control operation family.
+//
+// It is declared here rather than imported from internal/security because the
+// harness deliberately depends on no production package: it drives the real
+// binaries over their wire contracts, so a production import would let a harness
+// compile against a contract the binaries do not actually speak. The value is the
+// wire contract, so it is stated once and the production declaration must agree
+// with it.
+const providerControlPrefix = "ctl."
+
 // ClusterOptions controls the real Server, Endpoint, and fixture process wiring.
 type ClusterOptions struct {
 	// Environment is applied to the Server process only. The Endpoint is a
@@ -328,6 +338,21 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		{"name": "workspace.clean", "version": "v1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
 		{"name": "command.exec", "version": "1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
 		{"name": "agent.model.select", "version": "1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
+	}
+	// A configured control action is advertised as a ctl. capability, because the
+	// catalog is the only source of ctl. actions and the adapter intersects the
+	// configured list with what the provider offers. Without this entry the
+	// catalog reached the Endpoint but never the descriptor, so every control
+	// command was refused as unsupported before the policy hook and the positive
+	// authorization scenario proved nothing.
+	for _, action := range options.Faults.ControlActions {
+		declared = append(declared, map[string]any{
+			"name":                providerControlPrefix + action.Name,
+			"version":             "v1",
+			"target_kinds":        []string{"session"},
+			"safety_class":        "mutating",
+			"required_permission": action.Permission,
+		})
 	}
 	if len(options.Faults.AdvertisedCapabilities) > 0 {
 		declared = make([]map[string]any, 0, len(options.Faults.AdvertisedCapabilities))

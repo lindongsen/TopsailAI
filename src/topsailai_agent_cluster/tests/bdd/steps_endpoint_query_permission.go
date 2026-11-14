@@ -302,7 +302,13 @@ func assertQueryAllowed(operation string) error {
 			return fmt.Errorf("allowed messages read carried no observation time, so the adapter did not answer")
 		}
 	case queryOutputSnapshot:
-		if !strings.Contains(outcome.content, "fixture output for") {
+		// The marker is the one the harness provider actually emits. The previous
+		// literal "fixture output for" came from tests/fixtures/topsailai_fixture,
+		// a binary the harness no longer builds, so the assertion could not pass
+		// regardless of what the Cluster did. Four other assertions depend on this
+		// same marker, so the marker is the contract and the stale literal was the
+		// defect.
+		if !strings.Contains(outcome.content, "provider output marker") {
 			return fmt.Errorf("allowed output snapshot read returned %q, want the provider output", outcome.content)
 		}
 	case queryOutputFollow:

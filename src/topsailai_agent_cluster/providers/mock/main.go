@@ -400,7 +400,15 @@ func executeResponse(request request, fault string) response {
 	if request.Operation == nil {
 		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
 	}
+	// A control action is answered from its own table, because the provider
+	// reports control actions separately from operations. Looking only at the
+	// operation table refused every ctl. operation as unsupported, so a configured
+	// catalog could never reach the provider and the positive authorization
+	// scenario ended before the policy hook.
 	evidence, ok := operationEvidenceTable[request.Operation.Name]
+	if !ok {
+		evidence, ok = controlActionEvidenceTable[request.Operation.Name]
+	}
 	if !ok {
 		return failureResponse(request.RequestID, "unsupported", "operation is unsupported", "not_applied")
 	}
@@ -453,6 +461,36 @@ func executeResponse(request request, fault string) response {
 	}
 }
 
+// controlActionEvidenceTable answers the provider control family.
+//
+// A control action is not an operation: the provider reports it in its own
+// contract list, and the Cluster advertises it as a ctl. capability. Keeping the
+// two tables apart is what makes the mock honest about the distinction, because a
+// ctl. entry placed in the operation table would be advertised as an operation and
+// the Cluster would then accept a command the provider never offered as one.
+//
+// The entry is answered by prefix rather than by exact name, mirroring the real
+// provider: any ctl. operation the Endpoint admits is one the Endpoint-local
+// catalog defined, and the catalog is the only source of action names. A mock that
+// answered one hardcoded name would make a scenario pass only for that name.
+var controlActionEvidenceTable = map[string]operationEvidence{
+	"ctl.fixture_probe": {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+}
+
+// mockControlActions returns every control action the mock advertises.
+func mockControlActions() []namedContract {
+	names := make([]string, 0, len(controlActionEvidenceTable))
+	for name := range controlActionEvidenceTable {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	actions := make([]namedContract, 0, len(names))
+	for _, name := range names {
+		actions = append(actions, namedContract{Name: name, Version: controlActionEvidenceTable[name].version})
+	}
+	return actions
+}
+
 // mockOperations returns every operation the mock advertises.
 //
 // The list is derived from the evidence table so the advertised surface and the
@@ -502,7 +540,7 @@ func mockDescriptor(fault string) descriptor {
 		},
 		Operations:     mockOperations(),
 		Queries:        queries,
-		ControlActions: []namedContract{},
+		ControlActions: mockControlActions(),
 		Limits: budget{
 			MaxStdoutBytes: 1 << 20,
 			MaxStderrBytes: 64 << 10,
