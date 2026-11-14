@@ -638,3 +638,38 @@ hardcoded tuple in a parser branch is a second source of truth that the
 completer cannot see. Also check every input surface, not just the one that is
 easiest to test: the readline path already handled bare spellings, which is
 exactly why the raw TTY and curses gaps went unnoticed.
+
+## A wrapper that exports an empty value erases "not passed"
+
+### Trigger
+
+`agent_chats.py` was changed so an absent `TOPSAILAI_SESSION_ID`/`SESSION_ID`
+generates an identity while a present empty value opts out of session
+persistence. The unit tests passed, but the shipped command still never
+generated an identity: `bin/agent_chats` (and its `topsailai_agent_chats`
+symlink) ran `[ -n "${SESSION_ID}" ] || SESSION_ID="${TOPSAILAI_SESSION_ID}"; export SESSION_ID`,
+which assigns and exports `SESSION_ID=""` when neither alias is set. The child
+therefore always saw a present empty value, so "not passed" and "passed empty"
+were indistinguishable and generation was suppressed.
+
+### Action taken
+
+Changed the wrapper to export `SESSION_ID` only when an alias is actually
+present (`[ -z "${SESSION_ID+x}" ]` plus `[ -n "${TOPSAILAI_SESSION_ID+x}" ]`),
+so an explicit empty value still reaches the CLI as the opt-out signal. Verified
+the real wrapper file (not a copy of its logic) across five cases — neither set,
+`SESSION_ID=`, `TOPSAILAI_SESSION_ID=abc`, `TOPSAILAI_SESSION_ID=`, and both set
+— and added `tests/unit/agent_chats/test_agent_chats_wrapper.py`, which copies
+the shipped script and replaces only its launch line with a probe. A negative
+control rebuilt the old logic and showed both "neither" and "empty" collapsing
+to `present=True value=''`.
+
+### Why this prevents recurrence
+
+A presence-based contract is only as good as the last process that touches the
+environment. Any wrapper that normalizes an unset variable into an empty one
+silently converts "not configured" into "explicitly disabled", so the semantic
+change must be traced through every launcher, not only the module under test.
+Test the shipped script rather than a reimplementation of its logic, and keep a
+negative control that reproduces the old behavior, because a passing test proves
+nothing if it would also pass against the bug.
