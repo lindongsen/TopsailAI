@@ -417,3 +417,65 @@ the operations that create files, so "created at different times" does not imply
 "different ctime". A single-key sort looks correct and is correct whenever the
 timestamps differ, which is why the failure appears only under fast execution and
 reads as flakiness rather than a defect.
+
+## A capability probe that gates a feature needs a working degraded form, not a fallback to another mechanism
+
+Trigger: the CLI rejected tmux older than 3.2 because `new-session -e` does not
+exist there, and `_wrap_command_for_agent_mode` silently fell back to dtach/raw.
+The host runs tmux 3.0a, so `--agent-mode tmux` could never be used even though
+old tmux can forward the environment perfectly well.
+
+Action: branch on the capability probe and keep the same mechanism. Old tmux
+still execs the command directly, so the same `KEY=value` pairs are passed as
+arguments to `env` instead of through `-e`. A probe that only decides "reject or
+downgrade" is a missing implementation, not a compatibility check.
+
+Why this prevents recurrence: the probe was correct and the fallback was
+documented, so the code looked deliberate. The defect was that the degraded form
+was never implemented, and a silent downgrade hides it: the user asks for tmux
+and gets dtach with only a warning. Verify the degraded form on the real old
+binary, because the capability probe cannot tell you whether the substitute
+works.
+
+## Tmux re-parses its whole command line, so a trailing `;` in any argument breaks the launch
+
+Trigger: forwarding `TOPSAILAI_DISABLED_TOOLS=agent_tool;story_tool;` through
+`env` made tmux fail with `unknown command: TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE=`
+and the session never started. The same failure occurs on the argv path, so
+"one argv element per pair" does not protect the value.
+
+Action: escape only a **terminating** `;` (`pair[:-1] + r"\;")` before handing the
+pair to tmux, in both the `-e` and the `env` positions. Do not escape every
+semicolon: measured on tmux 3.0a, escaping all of them makes the launch succeed
+but corrupts the value to `agent_tool\;story_tool;`, because an interior `;` is
+already part of the same token and stays literal.
+
+Why this prevents recurrence: the failure is silent in the worst way — the
+session simply never appears, and the error names a different variable than the
+one that was malformed. Both plausible fixes look reasonable: escaping nothing
+fails loudly, escaping everything fails quietly by corrupting data. Only a
+readback of the value the child actually received distinguishes them, so the
+test must assert the received value, not the command string.
+
+## A probe harness must reproduce the production invocation shape
+
+Trigger: three successive tmux probes reported "no output" and I nearly
+concluded the `env` forwarding was broken. The wrapper emits a command without
+`-d`, so it needs a real terminal; my harness ran it under `bash -lc` and got
+`open terminal failed: not a terminal`. Later probes put pipes and quotes inside
+the inner command, which tmux's own parser split, and one probe passed a key that
+`_ENV_KEYS` filters out, so the value observed came from the inherited
+environment instead of the forwarded pair.
+
+Action: before trusting a probe result, confirm it matches production on every
+axis that matters: the same flags (`-d` when no TTY is available), an inner
+command free of characters tmux itself parses (`;`, `|`, quotes), a key that the
+production filter actually forwards, and a persistent server so one run's
+teardown does not invalidate the next. Read back the value the child received
+rather than the command string.
+
+Why this prevents recurrence: a probe that fails for harness reasons is
+indistinguishable from a probe that fails for product reasons, and the natural
+reaction is to "fix" working code. Three of my four failures were harness
+defects. The one real defect (the argv path) was found only after the harness was
+corrected, and it would have shipped had I trusted the earlier noise.
