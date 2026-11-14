@@ -21,6 +21,7 @@ from topsailai.utils import (
 )
 
 from . import folder_constants
+from .project_workspace import resolve_project_workspace
 
 
 logger = logging.getLogger(__name__)
@@ -146,10 +147,13 @@ def ctxm_try_session_lock(session_id:str=None, timeout:int=None, to_delete_lock_
 
 
 def _resolve_project_workspace(project_workspace: str | None = None) -> str | None:
-    """Resolve the project workspace path from argument or environment."""
-    if project_workspace:
-        return project_workspace
-    return os.getenv("TOPSAILAI_PROJECT_WORKSPACE") or os.getenv("TOPSAILAI_PROJECT_FOLDER") or None
+    """Resolve the project workspace path from argument, environment or storage.
+
+    The environment is preferred; the persisted session record is consulted only
+    when no environment value is present, so a correctly exported environment
+    never pays for a database lookup.
+    """
+    return resolve_project_workspace(project_workspace)
 
 
 def _get_project_workspace_lock_enabled() -> bool:

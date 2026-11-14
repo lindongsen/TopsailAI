@@ -21,6 +21,7 @@ from datetime import datetime
 from topsailai.utils import env_tool
 from topsailai.utils.qos_tool import log_if_slow_decorator
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.workspace.project_workspace import resolve_project_workspace
 from topsailai.context.session_activity import ActivityState, SessionActivityProbe
 from topsailai.context.session_category import resolve_session_category
 
@@ -216,7 +217,7 @@ def create_session_meta(
     meta_basename = os.path.basename(path)
 
     resolved_session_id = session_id or env_tool.get_session_id() or ""
-    project_workspace = os.getenv("TOPSAILAI_PROJECT_WORKSPACE") or ""
+    project_workspace = resolve_project_workspace(session_id=resolved_session_id) or ""
     pwd = os.getenv("TOPSAILAI_PWD") or ""
     task_id = os.getenv("TOPSAILAI_TASK_ID") or ""
 
