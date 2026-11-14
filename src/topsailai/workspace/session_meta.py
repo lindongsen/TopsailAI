@@ -35,6 +35,11 @@ STATUS_ERROR = "error"
 STATUS_INTERRUPTED = "interrupted"
 SESSION_META_CLEANUP_SLOW_SECONDS = 5
 
+# Diagnostic artifacts that share a session metadata basename. They are retained
+# on every exit path, so they are reclaimed only together with the metadata that
+# authorizes their removal.
+ARTIFACT_SUFFIXES = ("stdout", "events")
+
 _META_LOCK = threading.RLock()
 
 
@@ -386,6 +391,33 @@ def _capture_cleanup_candidates(paths):
     return candidates
 
 
+def _remove_session_artifacts(meta_path):
+    """Remove the diagnostic artifacts that belong to one removed metadata file.
+
+    Session artifacts are retained on every exit path, including abnormal ones,
+    so they must be reclaimed together with the metadata that authorizes their
+    removal. Only regular files sharing the metadata basename are touched, and a
+    symlink or a directory is left alone.
+    """
+    base = meta_path[: -len(f".{META_EXTENSION}")]
+    removed = []
+    for suffix in ARTIFACT_SUFFIXES:
+        path = f"{base}.{suffix}"
+        try:
+            current = _lstat(path)
+        except OSError:
+            continue
+        if not stat.S_ISREG(current.st_mode):
+            continue
+        try:
+            os.remove(path)
+            removed.append(path)
+            logger.debug("Removed session artifact: %s", path)
+        except OSError:
+            continue
+    return removed
+
+
 def _remove_cleanable_meta(paths, candidates, decisions, message):
     """Delete authorized metadata only when its captured identity is unchanged."""
     removed = set()
@@ -402,6 +434,7 @@ def _remove_cleanable_meta(paths, candidates, decisions, message):
             logger.debug(message, path)
         except OSError:
             continue
+        _remove_session_artifacts(path)
     return removed
 
 

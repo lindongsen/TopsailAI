@@ -200,16 +200,18 @@ These variables control how a database **write** reacts to an I/O failure. Reads
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_DB_WRITE_MAX_BLOCK_SECONDS` | `0` | Maximum number of seconds one database write may block while waiting for a competing writer or a pooled connection. `0`, negative, empty, or invalid values block indefinitely. A positive value bounds the wait; when the budget is exhausted the process exits with code `1`. |
+| `TOPSAILAI_DB_WRITE_MAX_BLOCK_SECONDS` | `0` | Maximum number of seconds one database write may block while waiting for a competing writer or a pooled connection. `0`, negative, empty, or invalid values block indefinitely. A positive value bounds the wait; when the budget is exhausted the failure is reported to the caller. |
 
 ### Behavior
 
 - **Scope is writes only.** Reads keep the driver default, so a stuck write can never make a read hang.
 - **Transient failures block.** Lock contention and an exhausted connection pool wait instead of failing fast. The widened wait applies only to the write connection and is restored afterwards, so it never leaks onto a later read.
-- **Unrecoverable failures exit immediately.** Read-only, I/O error, corrupt, disk-full, cannot-open, protocol, and not-a-database conditions never resolve by waiting, so the process exits at once instead of turning a recoverable failure into a permanently hung agent.
-- **Exit is process-wide.** Log handlers and standard streams are flushed before the process terminates, so a background thread cannot leave the process half-alive.
-- **A business result is not an I/O failure.** A missing session is a normal result, and a non-I/O exception keeps its original contract, so a programming defect stays testable instead of terminating the process.
-- **Callers never downgrade an I/O failure.** A failed write is re-raised instead of being logged as a warning, so a lost write cannot look like success.
+- **Unrecoverable failures are reported at once.** Read-only, I/O error, corrupt, disk-full, cannot-open, protocol, and not-a-database conditions never resolve by waiting, so the failure is reported immediately instead of turning a recoverable failure into a permanently hung agent.
+- **A database I/O failure never terminates the process.** The failure is logged with its operation, transient classification, block budget and identifying context, then handled according to the kind of write that failed.
+- **Committed writes are reported to the caller.** A conversation record that could not be stored is never presented as success. The caller abandons the affected turn, keeps the answer that was already produced, and continues the session; in a non-interactive run or a worker thread the run ends with an explicit failure answer instead of an uncaught error.
+- **Non-committed writes are logged and skipped.** Token counters, session metrics, access metadata and session renames are statistics or presentation data rather than conversation content, so a failed write is logged and the operation reports that it did not apply, without interrupting the session.
+- **A business result is not an I/O failure.** A missing session is a normal result, and a non-I/O exception keeps its original contract, so a programming defect stays testable instead of being treated as a storage failure.
+- **Session artifacts survive every exit path.** Session metadata, standard output and event records are retained whether the process ends normally, is interrupted, or fails. They are reclaimed only by the session metadata retention rules, and only for a session whose recorded state authorizes removal.
 
 ## Agent2LLM Summary Session-Message Tuning
 

@@ -495,3 +495,109 @@ def test_category_survives_name_and_end_updates():
     session_meta.update_session_meta_status("completed", "s-category-updates")
     result = _read_meta(path)
     assert result["category"] == "agent"
+
+
+def _write_artifact(meta_path, suffix, content="artifact"):
+    """Create one diagnostic artifact next to a session metadata file."""
+    base = meta_path[: -len(f".{session_meta.META_EXTENSION}")]
+    path = f"{base}.{suffix}"
+    with open(path, "w", encoding="utf-8") as fd:
+        fd.write(content)
+    return path
+
+
+def test_cleanup_removes_artifacts_with_authorized_metadata(monkeypatch):
+    """An authorized removal reclaims the metadata and its diagnostic artifacts."""
+    path = session_meta.create_session_meta("artifact-owner")
+    stdout_path = _write_artifact(path, "stdout")
+    events_path = _write_artifact(path, "events")
+    old_time = time.time() - 10 * 86400
+    for target in (path, stdout_path, events_path):
+        os.utime(target, (old_time, old_time))
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(
+        activity_probe=MagicMock(can_clean=MagicMock(return_value=True))
+    )
+
+    assert not os.path.exists(path)
+    assert not os.path.exists(stdout_path)
+    assert not os.path.exists(events_path)
+
+
+def test_cleanup_retains_artifacts_of_running_session(monkeypatch):
+    """A session that is still running keeps its metadata and artifacts."""
+    path = session_meta.create_session_meta("artifact-running")
+    stdout_path = _write_artifact(path, "stdout")
+    events_path = _write_artifact(path, "events")
+    old_time = time.time() - 10 * 86400
+    for target in (path, stdout_path, events_path):
+        os.utime(target, (old_time, old_time))
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(
+        activity_probe=MagicMock(can_clean=MagicMock(return_value=False))
+    )
+
+    assert os.path.exists(path)
+    assert os.path.exists(stdout_path)
+    assert os.path.exists(events_path)
+
+
+def test_cleanup_retains_artifacts_when_metadata_identity_changed(monkeypatch):
+    """A replaced metadata file must not authorize artifact removal."""
+    path = session_meta.create_session_meta("artifact-replaced")
+    stdout_path = _write_artifact(path, "stdout")
+    old_time = time.time() - 10 * 86400
+    for target in (path, stdout_path):
+        os.utime(target, (old_time, old_time))
+    probe = MagicMock(can_clean=MagicMock(return_value=True))
+    original = session_meta._cleanable_sessions
+
+    def replace_after_observation(paths, activity_probe):
+        """Replace the authorized target before deletion revalidation."""
+        decisions = original(paths, activity_probe)
+        replacement = path + ".replacement"
+        with open(replacement, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps({"session_id": "artifact-replaced", "pid": os.getpid()}))
+        os.replace(replacement, path)
+        return decisions
+
+    monkeypatch.setattr(session_meta, "_cleanable_sessions", replace_after_observation)
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(activity_probe=probe)
+
+    assert os.path.exists(path)
+    assert os.path.exists(stdout_path)
+
+
+def test_remove_session_artifacts_skips_symlink_and_directory(tmp_path):
+    """Only regular files are reclaimed; a symlink or directory is left alone."""
+    path = session_meta.create_session_meta("artifact-shapes")
+    base = path[: -len(f".{session_meta.META_EXTENSION}")]
+    target = tmp_path / "outside.txt"
+    target.write_text("outside", encoding="utf-8")
+    link_path = f"{base}.stdout"
+    os.symlink(str(target), link_path)
+    dir_path = f"{base}.events"
+    os.mkdir(dir_path)
+
+    removed = session_meta._remove_session_artifacts(path)
+
+    assert removed == []
+    assert os.path.islink(link_path)
+    assert target.read_text(encoding="utf-8") == "outside"
+    assert os.path.isdir(dir_path)
+
+
+def test_remove_session_artifacts_is_idempotent_for_missing_files():
+    """A missing artifact is not an error and nothing is reported as removed."""
+    path = session_meta.create_session_meta("artifact-missing")
+
+    assert session_meta._remove_session_artifacts(path) == []
