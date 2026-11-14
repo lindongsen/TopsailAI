@@ -346,3 +346,74 @@ form re-reads the working tree and therefore cancels the hunk-level staging. The
 insertion count was the only visible signal, and it appeared after the commit had already
 landed. Checking the hunk list of the committed diff is the only reliable proof, since a
 contaminated commit and a clean one both succeed silently with the same message.
+
+## A test-only import path that omits a package the production code imports is a latent failure
+
+Trigger: `make cli-unit-test` reported 9 failures. Five of them were
+`ModuleNotFoundError: No module named 'topsailai'` raised inside subprocess-based
+tests. `Makefile` set `CLI_PYTHONPATH := $(CLI_ROOT)` only, but
+`cli_topsailai/colors.py` imports `topsailai.utils.ansi_color`, and the
+`topsailai` package lives at `/TopsailAI/src/topsailai` — one level above
+`SRC_ROOT=/TopsailAI/src`. In-process tests never noticed because the editable
+install already provided `topsailai`; only tests that spawn a child with an
+explicit `PYTHONPATH` inherited the truncated path.
+
+Action: when a test harness sets `PYTHONPATH` explicitly, derive it from the
+imports the code under test actually performs, not from the directory layout of
+the test tree. Add `$(SRC_ROOT)` and verify no shadowing is introduced: check
+that no `$(SRC_ROOT)/tests` and no `$(SRC_ROOT)/cli_topsailai` exist, because
+either would silently take precedence over the intended `cli/tests` and
+`cli/cli_topsailai`.
+
+Why this prevents recurrence: an editable install masks a truncated
+`PYTHONPATH` for every in-process test, so the defect is invisible until a test
+spawns a subprocess. The failure then looks like a product bug in an unrelated
+area rather than a harness configuration error. The shadowing check is the part
+that cannot be skipped: widening a `PYTHONPATH` is only safe after proving the
+new entry does not contain a same-named top-level package, and here the comment
+that justified the narrow path was itself correct about the project root while
+silently omitting the source root.
+
+## A capability probe that depends on the host must be pinned by the test that does not test it
+
+Trigger: `test_r11_agent_launch_background_dispatches_selected_mechanism` failed
+with `assert 4 == 0` and stderr `tmux does not support new-session -e`. The test
+monkeypatched `submit_terminal` and `_prepare_environment` but not the capability
+probe, so `resolve_mechanism()` called the real
+`_tmux_supports_environment_option()`, which requires tmux >= 3.2 while this host
+runs 3.0a. The test's own docstring says it proves "a background terminal
+mechanism reaches the terminal submit path" — dispatch, not version support.
+
+Action: identify every host-dependent probe on the path under test and pin it,
+even when the test is not about that probe. Here the probe is imported inside the
+function body (`from cli_topsailai.project_scope import
+_tmux_supports_environment_option`), so the patch target is the defining module
+attribute, not the importing module. Keep a separate test for the probe's own
+version parsing so pinning it does not remove coverage.
+
+Why this prevents recurrence: a test that asserts a dispatch outcome while
+silently depending on an installed binary version passes on the developer's host
+and fails on any host with an older tool, which reads as a product regression
+rather than an environment difference. Pinning the probe makes the assertion
+match the stated intent, and the negative control is direct: the same test failed
+before the patch and passed after it, with the rest of the file unchanged at 159
+passed.
+
+## A sort key on a coarse timestamp needs a deterministic tiebreaker
+
+Trigger: `test_workspace_hostname.py::test_temporary_session_and_task` failed
+intermittently. `discover_log_files()` sorted only by `x["ctime"]`, and two files
+created within the same clock tick shared an identical `ctime`
+(`1794675567.345807552` for both), so the final order followed `os.listdir`
+order and changed between runs.
+
+Action: when a sort key can collide, add a stable secondary key derived from the
+data itself (here the filename) rather than relying on input order. Verify the
+collision exists before changing the key, so the fix targets a real tie instead
+of a suspected one.
+
+Why this prevents recurrence: filesystem timestamp granularity is coarser than
+the operations that create files, so "created at different times" does not imply
+"different ctime". A single-key sort looks correct and is correct whenever the
+timestamps differ, which is why the failure appears only under fast execution and
+reads as flakiness rather than a defect.
