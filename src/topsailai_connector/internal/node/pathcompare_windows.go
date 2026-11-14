@@ -15,3 +15,15 @@ import "strings"
 func pathEqual(left string, right string) bool {
 	return strings.EqualFold(left, right)
 }
+
+// pathHasPrefix reports whether path begins with prefix, using the Windows
+// filesystem's case rule.
+//
+// The deny list is compared against the path the caller wrote, before the open,
+// so a case-sensitive comparison would let a caller reach a file inside a denied
+// directory by changing the spelling: `CONFIG` and `config` are the same
+// directory on Windows, and the identity comparison cannot refuse a file inside
+// the directory because that file is a different inode from the directory itself.
+func pathHasPrefix(path string, prefix string) bool {
+	return len(path) >= len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+}

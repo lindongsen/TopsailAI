@@ -208,8 +208,22 @@ if cli --scope project --path escape/identity file.read 2>&1; then
 fi
 echo "verify: escaping symlink refused by the fence, as expected"
 
-echo "--- file.stat reports the escaping symlink without following it ---"
-cli --scope project --path escape file.stat || fail "file.stat on a symlink failed"
+echo "--- refusal: file.stat on an alias to the config directory is refused ---"
+# The deny list answers by identity, so an alias that resolves to the config
+# directory is refused by every operation. Reporting the link with its target
+# withheld was the earlier behaviour and it disclosed the layout anyway: a
+# symlink's reported size is the length of its target.
+if cli --scope project --path escape file.stat 2>&1; then
+	fail "file.stat reported an alias to the config directory"
+fi
+echo "verify: alias to the config directory refused by file.stat, as expected"
+
+echo "--- file.stat reports an escaping symlink without following it ---"
+# This link points outside the scope at a directory that is not one of the
+# Node's own, so it must be reported as a link rather than refused. It is the
+# documented file.stat contract, and the reason Lstat is used rather than Stat.
+ln -sfn "$WORK" "$SHARED/outside"
+cli --scope project --path outside file.stat || fail "file.stat on an escaping symlink failed"
 
 echo "--- refusal: a bundle reached through a symlink still refuses a scope that contains config ---"
 # The start script compares the scope path with the bundle's config directory. Both

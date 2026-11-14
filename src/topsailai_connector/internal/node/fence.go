@@ -92,6 +92,13 @@ type Scope struct {
 	// denied directory deny everything beneath it, which is the property the
 	// config directory needs once a scope may contain it.
 	deniedPrefixes []string
+	// deniedDirs are the deny-listed directories by identity. They are what
+	// makes the deny list survive an alias: a symlink inside the scope that
+	// points at a denied directory is a different written path, so the prefix
+	// rule cannot see it, and a file reached through that link is a different
+	// inode, so the file comparison cannot see it either. Comparing the identity
+	// of every symlinked ancestor is the rule that closes both gaps at once.
+	deniedDirs []os.FileInfo
 }
 
 // Name returns the scope name the policy uses.
@@ -159,6 +166,11 @@ func openScope(name string, path string, denyPaths []string, configDir string, a
 		return nil, fmt.Errorf("scope %q: %w", name, err)
 	}
 
+	deniedDirs, err := collectDeniedDirs(denyPaths)
+	if err != nil {
+		return nil, fmt.Errorf("scope %q: %w", name, err)
+	}
+
 	deniedPrefixes, err := collectDeniedPrefixes(denyPaths, resolved)
 	if err != nil {
 		return nil, fmt.Errorf("scope %q: %w", name, err)
@@ -175,6 +187,7 @@ func openScope(name string, path string, denyPaths []string, configDir string, a
 		resolved:       resolved,
 		denied:         denied,
 		deniedPrefixes: deniedPrefixes,
+		deniedDirs:     deniedDirs,
 	}, nil
 }
 
@@ -225,6 +238,11 @@ func collectDeniedPrefixes(denyPaths []string, scopeRoot string) ([]string, erro
 // sibling whose name merely starts with the denied directory's name is not
 // refused. The path is compared as the caller wrote it, before any open, so a
 // denied directory is refused even when the entry inside it does not exist yet.
+//
+// The case rule is the platform's, through pathHasPrefix and pathEqual, because
+// the deny list protects a directory the filesystem treats as one directory. A
+// byte-for-byte comparison on Windows would let `CONFIG` reach `config`, which is
+// the same bypass the fence refuses elsewhere.
 func (s *Scope) isDeniedPath(path string) bool {
 	if len(s.deniedPrefixes) == 0 {
 		return false
@@ -234,10 +252,10 @@ func (s *Scope) isDeniedPath(path string) bool {
 		return false
 	}
 	for _, prefix := range s.deniedPrefixes {
-		if cleaned == prefix {
+		if pathEqual(cleaned, prefix) {
 			return true
 		}
-		if strings.HasPrefix(cleaned, prefix+"/") {
+		if pathHasPrefix(cleaned, prefix+"/") {
 			return true
 		}
 	}
@@ -402,6 +420,107 @@ func collectDenied(paths []string) ([]os.FileInfo, error) {
 	return denied, nil
 }
 
+// collectDeniedDirs records the identity of the deny-listed directories. A path
+// that is not a directory, or that does not exist, is skipped for the same
+// reason collectDenied skips it: a file is already covered by the file
+// comparison, and a Node that has not written its config yet must still start.
+func collectDeniedDirs(paths []string) ([]os.FileInfo, error) {
+	dirs := make([]os.FileInfo, 0, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("stat deny path %q: %w", path, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		dirs = append(dirs, info)
+	}
+	return dirs, nil
+}
+
+// isDeniedDir reports whether an object is one of the deny-listed directories.
+func (s *Scope) isDeniedDir(info os.FileInfo) bool {
+	for _, dir := range s.deniedDirs {
+		if os.SameFile(dir, info) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeniedAncestor reports whether any directory on the way to path is one of
+// the deny-listed directories.
+//
+// The written-path rule cannot see an alias, because an alias is a different
+// written path, and the file rule cannot see a file that is not itself listed.
+// Resolving each ancestor and comparing its identity closes both gaps at once: a
+// symlink that points at a denied directory resolves to that directory, so every
+// path reached through it is refused.
+//
+// A failure to resolve an ancestor ends the walk rather than being ignored. The
+// open that follows resolves the same components, so an ancestor that cannot be
+// resolved here cannot be traversed there either, and the open reports the
+// refusal.
+func (s *Scope) isDeniedAncestor(path string) bool {
+	if len(s.deniedDirs) == 0 {
+		return false
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(path))
+	if cleaned == "." || cleaned == "" {
+		return false
+	}
+	parts := strings.Split(cleaned, "/")
+	for i := 1; i <= len(parts); i++ {
+		info, err := s.root.Stat(strings.Join(parts[:i], "/"))
+		if err != nil {
+			return false
+		}
+		if s.isDeniedDir(info) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolvesToDeniedDir reports whether a symlink resolves to a deny-listed
+// directory. It is used when listing and when stating one path, where the
+// ancestors of the path have already been checked and only the entry itself can
+// still be an alias.
+//
+// The target is resolved outside the scope handle rather than through it. A
+// relative target that leaves the root cannot be resolved through the handle,
+// because os.Root refuses it, and that refusal is exactly the case this function
+// has to answer: an alias pointing at the Node's own directory from inside a
+// scope that does not contain it. Resolving it here is a stat, never an open, so
+// it answers "is this one of my own directories" without reading anything.
+func (s *Scope) resolvesToDeniedDir(path string) bool {
+	if len(s.deniedDirs) == 0 {
+		return false
+	}
+	if info, err := s.root.Stat(path); err == nil {
+		return s.isDeniedDir(info)
+	}
+	target, err := s.root.Readlink(path)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(filepath.Join(s.resolved, path)), target)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return false
+	}
+	return s.isDeniedDir(info)
+}
+
 // isDenied reports whether an opened object is one of the Node's own files. The
 // comparison is by identity, so a symlink, a hard link, a different spelling and
 // a case difference all resolve to the same answer.
@@ -428,6 +547,9 @@ func (s *Scope) openValidated(path string, allowRoot bool) (*os.File, os.FileInf
 	}
 	if s.isDeniedPath(path) {
 		return nil, nil, newError(protocol.CodeDenied, "path %q is inside one of the Node's own directories", path)
+	}
+	if s.isDeniedAncestor(path) {
+		return nil, nil, newError(protocol.CodeDenied, "path %q reaches one of the Node's own directories through an alias", path)
 	}
 
 	name := path
@@ -572,6 +694,9 @@ func (s *Scope) statEntry(parent string, name string) (Entry, error) {
 	if s.isDeniedPath(joined) {
 		return Entry{Name: name, Type: deniedEntryType}, nil
 	}
+	if s.isDeniedAncestor(joined) || s.resolvesToDeniedDir(joined) {
+		return Entry{Name: name, Type: deniedEntryType}, nil
+	}
 
 	info, err := s.root.Lstat(joined)
 	if err != nil {
@@ -589,12 +714,32 @@ func (s *Scope) statEntry(parent string, name string) (Entry, error) {
 // an escaping link is exactly the operation the fence refuses. A symlink must be
 // reportable as a link, and reporting it must not reveal whether its target
 // exists, because that would be an existence oracle for the whole filesystem.
+//
+// A link that resolves to one of the Node's own directories is refused rather
+// than reported. The deny list answers by identity, so the same directory must
+// get the same answer whichever name reaches it: `config` is refused, therefore
+// an alias that resolves to `config` is refused too.
+//
+// Reporting the link with its target withheld was the earlier behaviour, and it
+// was wrong twice over. It answered differently depending on whether the alias
+// escaped the scope root, because an escaping alias cannot be resolved through
+// the handle, so the same alias was refused under a whole-volume scope and
+// reported under a subdirectory scope. And it disclosed the layout anyway: a
+// symlink's reported size is the length of its target, so withholding the target
+// while reporting its length answered the question the withholding was meant to
+// refuse.
 func (s *Scope) Stat(path string) (Entry, error) {
 	if err := ValidateRelativePath(path, false); err != nil {
 		return Entry{}, newError(protocol.CodeInvalidArgument, "%v", err)
 	}
 	if s.isDeniedPath(path) {
 		return Entry{}, newError(protocol.CodeDenied, "path %q is inside one of the Node's own directories", path)
+	}
+	if s.isDeniedAncestor(path) {
+		return Entry{}, newError(protocol.CodeDenied, "path %q reaches one of the Node's own directories through an alias", path)
+	}
+	if s.resolvesToDeniedDir(path) {
+		return Entry{}, newError(protocol.CodeDenied, "path %q is an alias to one of the Node's own directories", path)
 	}
 
 	info, err := s.root.Lstat(path)

@@ -237,3 +237,56 @@ AI reflection archive, not here.
   contained evidence that had never been produced by the standard suite. Running
   the script by hand proves the assertions are correct; only the wiring proves
   they keep being correct.
+
+## A security rule that answers differently under two configurations is not a rule
+
+- The deny list was extended to refuse a symlink alias pointing at the Node's
+  config directory. The first version refused the alias under a whole-volume scope
+  and reported it under a subdirectory scope, because an alias that escapes the
+  scope root cannot be resolved through the `os.Root` handle, so the ancestor walk
+  returned false and the code fell through to the "report the link" branch.
+- The same alias, the same target, two answers, decided by an unrelated
+  configuration detail. That is not a policy, it is an accident of which code path
+  could resolve the path. A reviewer reading either branch alone would have
+  approved it.
+- The fix was to resolve the link target outside the handle for exactly the case
+  the handle cannot answer. A `stat` outside the handle is not an open, so it
+  answers "is this one of my own directories" without reading anything.
+- Check a new refusal under both scope shapes before believing it. A rule tested
+  only under the shape where the handle can resolve the path is a rule whose
+  other half is untested, and the untested half is the one that leaks.
+
+## Withholding a field is not the same as refusing the request
+
+- The first version of the alias fix refused to report a symlink's target but
+  still reported the link. The reasoning was that the link is a real directory
+  entry the operator created, so hiding it hides their file.
+- It leaked anyway. A symlink's reported size is the length of its target, so
+  `size 14` next to `link_target` withheld answered the question the withholding
+  was meant to refuse. Measured: `Lstat` on `alias -> ../node/config` reports
+  `size = 14`, and `len("../node/config") == 14`.
+- A partial disclosure is a disclosure. When a field is withheld because it names
+  something secret, check every other field of the same record for a derived
+  value: a length, a hash prefix, a count, a modification time. The derived value
+  is often enough to answer the question.
+- The correct answer was to refuse the request, because the deny list answers by
+  identity: `config` is refused, so an alias resolving to `config` is refused too.
+  Consistency with the rule beat a plausible-sounding argument about the
+  operator's convenience.
+
+## A test that measures the wrong layer passes for the wrong reason
+
+- The alias tests were first written with **absolute** symlink targets. `os.Root`
+  refuses any absolute target unconditionally, so every one of those tests was
+  measuring `os.Root` rather than the deny list. They would have passed with the
+  deny-list code deleted.
+- Switching to **relative** targets made the tests measure the rule under test,
+  and the first run then failed — which is the evidence that the earlier version
+  had been proving nothing.
+- The same trap appeared a second time in the same file: a subdirectory scope whose
+  alias points outside the root is refused by `os.Root` before the deny list runs.
+  Only the whole-volume case, where the config directory is inside the scope,
+  genuinely exercises the ancestor rule.
+- Before trusting a security test, ask which layer would have to be broken for it
+  to fail. If the answer is "a layer below the one I changed", the test is not
+  covering the change.

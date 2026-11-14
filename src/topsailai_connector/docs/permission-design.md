@@ -605,6 +605,79 @@ therefore readable through the fence. The mitigation is the startup check that
 refuses a scope root which is a mount point, plus the regular-file rule, which
 refuses `/proc` entries that are not regular files.
 
+### The deny list answers by identity, not by name
+
+The deny list protects the Node's own config directory, its policy file and its
+identity file. It has to answer one question: is this path one of those objects?
+The answer must not depend on how the caller spelled the path, because a caller
+controls the spelling.
+
+Three rules are needed, and each one covers a gap the others leave open.
+
+| Rule | Question it answers | Gap it closes |
+|---|---|---|
+| Written-path prefix | Does the path the caller wrote start with a denied directory? | Refuses `config/identity` before any open, so a denied directory is refused even when the entry inside it does not exist yet |
+| File identity | Is the opened object the same inode as a denied file? | Refuses a hard link, a different spelling and a case difference, which the written path cannot see |
+| Ancestor identity | Is any directory on the way to the path the same inode as a denied directory? | Refuses a symlink alias, which is a different written path and resolves to a different inode for the file inside |
+
+The third rule exists because the first two each cover half of one case. A symlink
+inside the scope pointing at the config directory is a different written path, so
+the prefix rule cannot see it. A file reached through that link is a different
+inode from the directory, so the file rule cannot see it either. Only resolving
+each ancestor and comparing its identity closes both gaps at once.
+
+This was measured, not reasoned about. Before the ancestor rule existed, a relative
+symlink `alias -> ../node/config` inside the scope returned the real
+`tunnel_token`:
+
+```
+file.read  alias/identity      -> denied
+file.read  alias/policy.yaml   -> denied
+file.read  alias/tunnel_token  -> success, the real secret
+```
+
+`identity` and `policy.yaml` were refused because they are named in the deny list.
+`tunnel_token` lives in the same directory but is not named, so the file rule had
+nothing to compare it against. Adding `tunnel_token` to the list would have closed
+this one route and left the next unlisted file in that directory exposed; comparing
+the identity of every ancestor closes the route itself.
+
+Two consequences follow, and both are deliberate:
+
+- **A directory that merely looks like the config directory stays readable.** The
+  rule answers by identity, so a `config` directory at another path, a sibling
+  named `config-backup`, and a look-alike nested inside a look-alike are all
+  readable. A name-based rule would make a whole-volume scope useless, because
+  every directory called `config` would become unreachable.
+- **A look-alike nested inside the real config directory is refused**, because its
+  ancestor is the real directory. That is the correct answer: the path reaches the
+  Node's own directory, whatever the entry inside it is called.
+
+A symlink that resolves to a denied directory is refused by every operation, not
+reported. `file.read` refuses it, `file.list` omits it, and `file.stat` refuses it.
+The rule is the identity rule applied to the link itself: `config` is refused, so an
+alias that resolves to `config` is refused too, whichever name reaches it.
+
+Reporting the link with its target withheld was the earlier behaviour, and it was
+wrong twice over:
+
+- **It answered differently depending on the scope shape.** An alias that escapes
+  the scope root cannot be resolved through the handle, so the same alias was
+  refused under a whole-volume scope and reported under a subdirectory scope. The
+  answer depended on an unrelated configuration detail.
+- **It disclosed the layout anyway.** A symlink's reported size is the length of
+  its target, so withholding the target while reporting its length answered the
+  question the withholding was meant to refuse.
+
+An escaping symlink that does **not** resolve to a denied directory is still
+reported as a link without being followed, which is the documented `file.stat`
+behaviour and the reason `Lstat` is used rather than `Stat`.
+
+The deny-list comparison uses the platform's case rule through `pathEqual` and
+`pathHasPrefix`, because the deny list protects a directory the filesystem treats
+as one directory. A byte-for-byte comparison on Windows would let `CONFIG` reach
+`config`, which is the same bypass the fence refuses elsewhere.
+
 ### Path grammar accepted on the wire
 
 The Node rejects a path before it reaches the filesystem, so the accepted grammar
@@ -974,6 +1047,20 @@ request path.
       is not a directory is refused for `list`.
 - [ ] The Node's own config, secret and policy files are denied by resolved path,
       not by file name.
+- [ ] The deny list answers by identity, not by name: a symlink inside the scope
+      that points at the config directory is refused for every file inside it,
+      including a file the deny list does not name, because every ancestor is
+      compared by identity.
+- [ ] A directory that merely looks like the config directory stays readable, and
+      a sibling whose name shares the prefix (`config-backup`) stays readable, so
+      the rule does not over-refuse.
+- [ ] A symlink that resolves to a denied directory is refused by every operation:
+      `file.read` refuses it, `file.list` omits it, and `file.stat` refuses it, so
+      the answer does not depend on the scope shape and the link's target length
+      does not disclose the layout.
+- [ ] An escaping symlink that does not resolve to a denied directory is still
+      reported as a link without being followed, so `file.stat` keeps its
+      documented behaviour.
 - [ ] A scope whose resolved path equals, contains or sits inside the Node's
       config directory is refused at startup, so the names and sizes of the
       credential files are not listable even though their contents are denied.
