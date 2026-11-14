@@ -141,10 +141,23 @@ adapter IDs, a relative command path and a non-positive timeout.
 Adapters are supplied through the environment because no flag exists for them. The
 launcher exports this variable from the `ADAPTERS` configuration entry.
 
-This is the current implemented configuration contract. The approved independent Provider CLI
-replacement keeps `adapter_id` but replaces provider-specific command configuration with a verified
-versioned Provider executable and per-adapter activation. The implementation and this reference must
-change together; the target fields are not documented here as available before the code supports them.
+`provider_type` must name a registered Adapter implementation. Exactly one is registered:
+`genericcli`, the Generic CLI Adapter. Any other value, including the removed `topsailai`, `fixture`
+and `command` names, is refused at Endpoint startup rather than falling back to a removed adapter.
+
+`command` is the installed Provider CLI payload, not a business CLI. The provider package installs one
+immutable directory per version under `/opt/agent-cluster/providers/<provider-type>/<package-version>/`,
+so the path carries the version and cannot be derived from this document. List the installed versions
+on the node and use the newest:
+
+```text
+ls -1dt /opt/agent-cluster/providers/topsailai/*/
+```
+
+The Endpoint package neither depends on nor recommends any Provider package, so a node may run with
+zero Adapters and a Provider may be installed, upgraded or removed without touching the Endpoint. A
+Provider is activated or rolled back per `adapter_id` through `agent-clusterctl replace`, which selects
+a previously verified immutable version without restarting the Endpoint.
 
 ### Removed Endpoint environment names
 

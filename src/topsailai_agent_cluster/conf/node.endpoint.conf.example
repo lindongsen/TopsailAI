@@ -20,13 +20,24 @@ AUTH_TOKEN=replace-with-a-real-token
 # reachable at from this node; it is written into the per-user CLI env file.
 SERVER_API_URL=http://127.0.0.1:53680
 
-# Provider adapters under the current implemented configuration contract. ADAPTERS
-# must stay single-quoted: the shell strips unquoted double quotes while sourcing,
-# which would corrupt the JSON payload. The command must be an absolute path that
-# exists on this node. The approved Provider CLI replacement keeps adapter_id but
-# will replace this provider-specific command configuration only when the code and
-# deployment contract change together.
-ADAPTERS='[{"adapter_id":"topsailai-local","provider_type":"topsailai","command":"/TopsailAI/src/topsailai/bin/topsailai","timeout_ms":120000}]'
+# Provider adapters. ADAPTERS must stay single-quoted: the shell strips unquoted
+# double quotes while sourcing, which would corrupt the JSON payload. The command
+# must be an absolute path that exists on this node, and provider_type must name a
+# registered Adapter implementation; "genericcli" is the only one, so any other
+# value is refused at Endpoint startup instead of falling back to a removed
+# adapter.
+#
+# The command is the installed Provider CLI payload, not a business CLI. The
+# provider package installs one immutable directory per version, so the path
+# carries the version and cannot be guessed from the template. List the installed
+# versions on this node and use the newest:
+#
+#     ls -1dt /opt/agent-cluster/providers/topsailai/*/
+#
+# Replace <package-version> below with that directory name. agent-clusterctl
+# doctor refuses to start while the command is not executable, so an unfilled
+# placeholder fails loudly at startup rather than silently at the first command.
+ADAPTERS='[{"adapter_id":"topsailai-local","provider_type":"genericcli","command":"/opt/agent-cluster/providers/topsailai/<package-version>/agent-cluster-provider-topsailai","timeout_ms":120000}]'
 
 # Pause after a completed inventory collection before the next cycle starts, in
 # milliseconds. This is a delay, not a period: the effective cycle time is this
