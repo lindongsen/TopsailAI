@@ -45,6 +45,16 @@ type mockOptions struct {
 	// than an environment variable because the adapter sets a child's environment
 	// to exactly the configured Environment, which is empty.
 	sessionDir string
+	// messagesBody overrides the first message body the mock reports. The manual
+	// display-bound launcher needs to choose the body under test, and the removed
+	// fixture read it from AGENT_CLUSTER_TEST_MESSAGES_BODY. That channel no longer
+	// works: the adapter sets a child's environment to exactly the configured
+	// Environment, which is empty, so the body has to arrive through argv.
+	messagesBody string
+	// messagesCount is how many messages the mock reports. A display-bound case
+	// needs a known count so a shortened body cannot be confused with a dropped
+	// message.
+	messagesCount int
 }
 
 // parseOptions reads the argv knobs. Unknown flags are rejected by flag.Parse,
@@ -67,6 +77,8 @@ func parseOptions() mockOptions {
 	flag.IntVar(&options.failAfterN, "fail-after-n", -1, "fail discovery after N successful calls; zero fails immediately")
 	flag.BoolVar(&options.alwaysFail, "always-fail", false, "fail every discovery call")
 	flag.StringVar(&options.sessionDir, "session-dir", "", "working directory reported for every published session")
+	flag.StringVar(&options.messagesBody, "messages-body", "", "first message body reported by a session messages read")
+	flag.IntVar(&options.messagesCount, "messages-count", 2, "number of messages reported by a session messages read")
 	flag.Parse()
 	return options
 }
@@ -295,7 +307,7 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			if !mockKnownSession(sessionKey) {
 				return failureResponse(request.RequestID, mockSessionNotFoundCode, "provider session does not exist", "not_applied")
 			}
-			base.QueryResult = json.RawMessage(fmt.Sprintf(`{"provider_session_id":%q,"messages":[{"role":"user","content":"topsailai.task\nthe operator wrote this","word_count":5,"token_count":6},{"role":"assistant","content":"the operator wrote this","word_count":4,"token_count":5}],"message_count":2,"observed_at_ms":1700000000000,"truncated":false}`, sessionKey))
+			base.QueryResult = sessionMessagesResult(sessionKey, options)
 		default:
 			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
 		}
@@ -417,6 +429,61 @@ var nonLiveOperations = map[string]struct{}{
 	"agent.resume":     {},
 	"agent.drive.stop": {},
 	"workspace.clean":  {},
+}
+
+// sessionMessagesResult builds the session messages answer.
+//
+// The body and the count are argv knobs because the manual display-bound launcher
+// has to choose the body under test, and the removed fixture read it from
+// AGENT_CLUSTER_TEST_MESSAGES_BODY. That channel cannot work any more: the adapter
+// sets a child's environment to exactly the configured Environment, which is
+// empty, so the body has to arrive through argv.
+//
+// The word and token counts are derived from the body rather than hardcoded,
+// because a display-bound case asserts that shortening a body does not change the
+// counts. A hardcoded count would make that assertion compare a constant with
+// itself and pass while proving nothing.
+func sessionMessagesResult(sessionKey string, options mockOptions) json.RawMessage {
+	body := options.messagesBody
+	if body == "" {
+		body = "topsailai.task\nthe operator wrote this"
+	}
+	count := options.messagesCount
+	if count < 1 {
+		count = 1
+	}
+	messages := make([]map[string]any, 0, count)
+	for index := 0; index < count; index++ {
+		role := "user"
+		content := body
+		if index > 0 {
+			role = "assistant"
+			content = "the operator wrote this"
+		}
+		words := len(strings.Fields(content))
+		messages = append(messages, map[string]any{
+			"role":        role,
+			"content":     content,
+			"word_count":  words,
+			"token_count": words + 1,
+		})
+	}
+	document := map[string]any{
+		"provider_session_id": sessionKey,
+		"messages":            messages,
+		"message_count":       len(messages),
+		"observed_at_ms":      fixtureTimeMS,
+		"truncated":           false,
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		// The document is built from strings and integers only, so a marshal
+		// failure would be a programming defect. Returning an empty result keeps
+		// the signature simple while making the defect visible as a decode error
+		// on the Cluster side instead of a panic inside the mock.
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(encoded)
 }
 
 // executeResponse revalidates generation inside the mutation path.

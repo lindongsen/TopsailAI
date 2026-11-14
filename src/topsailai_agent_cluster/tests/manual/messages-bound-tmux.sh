@@ -35,7 +35,11 @@ AUTH_TOKEN=msgbound-token
 # issues the client certificate with the DNS SAN endpoint-1, so any other value
 # fails the handshake and the command reports an offline Endpoint.
 ENDPOINT_ID=endpoint-1
-SESSION_ID=fixture-session
+# The provider session key, not a display name. The mock Provider CLI knows
+# session:stable and session:stopped and answers any other key with the provider's
+# own missing-session code, so the removed fixture's "fixture-session" literal would
+# make every case fail with a 404 before the renderer was reached.
+SESSION_ID=session:stable
 TMUX_SESSION=msgbound
 
 DICT_BODY='{"alpha":"first value","beta":{"nested":"inner value"},"gamma":["one","two"]}'

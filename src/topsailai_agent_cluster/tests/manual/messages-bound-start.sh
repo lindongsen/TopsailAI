@@ -13,8 +13,11 @@
 # It never stops anything: teardown is a separate script so a startup failure is
 # reported as a startup failure rather than as a failed assertion.
 #
-# The fixture body is supplied by the caller through AGENT_CLUSTER_TEST_MESSAGES_BODY,
-# which the fixture reads as a child of the Endpoint process.
+# The message body is supplied by the caller through AGENT_CLUSTER_TEST_MESSAGES_BODY
+# and forwarded to the provider as an argv flag. It cannot travel as an environment
+# variable: the Generic CLI Adapter sets a child's environment to exactly the
+# configured Environment, which is empty, so an exported variable never reaches the
+# provider process.
 
 set -uo pipefail
 
@@ -22,7 +25,7 @@ PROJECT_DIR=/TopsailAI/src/topsailai_agent_cluster
 RUN_DIR="${PROJECT_DIR}/.tmp/msgbound"
 CERT_DIR="${RUN_DIR}/certs"
 PROVIDER_DIR="${RUN_DIR}/provider"
-FIXTURE_BIN="${PROVIDER_DIR}/topsailai"
+PROVIDER_BIN="${PROVIDER_DIR}/agent-cluster-provider-mock"
 SERVER_BIN="${PROJECT_DIR}/bin/agent-cluster-server"
 ENDPOINT_BIN="${PROJECT_DIR}/bin/agent-cluster-endpoint"
 
@@ -45,26 +48,24 @@ function require_file() {
     [ -f "$1" ] || die "missing required file: $1"
 }
 
-# The adapter resolves topsailai_session_info as a sibling of the configured
-# executable and never through PATH, so both provider entry points must be built
-# into one directory. Building only the main fixture would make every messages read
-# fail with "provider session inspection executable is unavailable", which looks
-# like a provider defect rather than a missing build artifact.
+# The provider is the mock Provider CLI, which is a separate Go module. It is built
+# from its own directory because a module cannot be built from the repository root,
+# and the build runs from the project directory so the caller's working directory
+# never decides what gets built.
 #
-# The build runs from the project directory because the package paths are relative
-# to it, so the caller's working directory must not decide what gets built.
+# The mock answers inspection, discovery, messages and command execution from one
+# executable, so there is no second sibling binary to build. The removed fixture
+# needed one because it resolved topsailai_session_info as a sibling; that
+# resolution no longer exists.
 cd "${PROJECT_DIR}" || die "cannot enter ${PROJECT_DIR}"
 mkdir -p "${PROVIDER_DIR}"
-if ! go build -o "${PROVIDER_DIR}/topsailai" ./tests/fixtures/topsailai_fixture; then
-    die "failed to build the provider fixture"
-fi
-if ! go build -o "${PROVIDER_DIR}/topsailai_session_info" ./tests/fixtures/topsailai_session_info_fixture; then
-    die "failed to build the session info fixture"
+if ! (cd "${PROJECT_DIR}/providers/mock" && go build -o "${PROVIDER_BIN}" .); then
+    die "failed to build the mock provider cli"
 fi
 
 require_file "${SERVER_BIN}"
 require_file "${ENDPOINT_BIN}"
-require_file "${FIXTURE_BIN}"
+require_file "${PROVIDER_BIN}"
 
 mkdir -p "${RUN_DIR}/logs" "${RUN_DIR}/data" "${RUN_DIR}/pids"
 
@@ -112,7 +113,38 @@ if [ -z "${AGENT_CLUSTER_TEST_MESSAGES_BODY:-}" ]; then
     die "AGENT_CLUSTER_TEST_MESSAGES_BODY must be set to the body under test"
 fi
 
-ADAPTERS_JSON=$(printf '[{"adapter_id":"topsailai","provider_type":"topsailai","command":"%s","timeout_ms":10000}]' "${FIXTURE_BIN}")
+# The adapter is a Generic CLI Adapter pointed at the mock Provider CLI. The
+# provider type must be genericcli: the factory refuses any other value at startup,
+# so a stale "topsailai" here would make the Endpoint exit instead of serving.
+#
+# --session-dir is required because the Cluster resolves an operator command's
+# working directory from provider evidence and refuses the command when the
+# provider reports none.
+#
+# --messages-body carries the display body under test. It is argv rather than an
+# environment variable because the adapter sets a child's environment to exactly
+# the configured Environment, which is empty.
+#
+# The document is built by a JSON encoder rather than by printf, because the body
+# under test is arbitrary text: a body containing a double quote or a backslash
+# would produce an unparseable document and the Endpoint would exit with
+# "invalid character ... after array element" instead of starting. printf cannot
+# escape, so it must not be used to assemble JSON.
+ADAPTERS_JSON=$(python3 -c '
+import json, sys
+document = [{
+    "adapter_id": "mock-main",
+    "provider_type": "genericcli",
+    "command": sys.argv[1],
+    "args": [
+        "--session-dir", sys.argv[2],
+        "--messages-body", sys.argv[3],
+        "--messages-count", sys.argv[4],
+    ],
+    "timeout_ms": 10000,
+}]
+sys.stdout.write(json.dumps(document))
+' "${PROVIDER_BIN}" "${RUN_DIR}/data" "${AGENT_CLUSTER_TEST_MESSAGES_BODY}" "${AGENT_CLUSTER_TEST_MESSAGES_COUNT:-1}")
 
 # The Server owns the API and the channel listener. Its certificate is the one the
 # Endpoint verifies, and the CA is the one both sides trust.
@@ -154,8 +186,6 @@ AGENT_CLUSTER_TLS_KEY_FILE="${CERT_DIR}/client-key.pem" \
 AGENT_CLUSTER_DATABASE_PATH="${RUN_DIR}/data/endpoint.sqlite" \
 AGENT_CLUSTER_ENDPOINT_ADAPTERS="${ADAPTERS_JSON}" \
 AGENT_CLUSTER_LOG_OUTPUT=stderr \
-AGENT_CLUSTER_TEST_MESSAGES_BODY="${AGENT_CLUSTER_TEST_MESSAGES_BODY}" \
-AGENT_CLUSTER_TEST_MESSAGES_COUNT="${AGENT_CLUSTER_TEST_MESSAGES_COUNT:-1}" \
     "${ENDPOINT_BIN}" >"${RUN_DIR}/logs/endpoint.log" 2>&1 &
 endpoint_pid=$!
 echo "${endpoint_pid}" >"${RUN_DIR}/pids/endpoint.pid"
