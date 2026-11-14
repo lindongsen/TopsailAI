@@ -1039,3 +1039,42 @@ does not fail is to assume the guard is redundant and delete it, which removes t
 against a corrupt row. The other tempting response is to leave the green scenario alone, which keeps
 a false claim in the suite. Tracing the write paths answers the question with evidence, and moving the
 proof to the layer that can create the state keeps the guard tested without pretending BDD covers it.
+
+## A gate on the action does not guard the menu that offers the action
+
+Trigger: `start` and `cd` printed every registered endpoint as a numbered choice, including offline
+and degraded ones, while the request that followed was correctly refused. The operator was offered a
+row, chose it, and was refused afterwards. Auditing all 11 `ListEndpoints` call sites showed the
+asymmetry: 13 sites refused a *named* unusable endpoint before sending, but only 2 sites printed a
+list and neither filtered it.
+
+Action: treat "what may be offered" and "what may be executed" as two separate decisions with two
+separate proofs. A selection list is a third kind of access beside a store read and a machine
+access: it may read every record, but it must not offer a row the operator cannot use. Give the
+filter one shared helper (`selectableEndpoints`) instead of letting each list invent its own rule,
+and prove it by removing it and watching the list assertion fail. Then prove the resolution sites
+separately, because a list assertion only proves the row was not printed, never that the identifier
+could not be typed.
+
+Why this prevents recurrence: a refusal gate makes the command safe, so the defect is invisible to
+every test that asserts the refusal. The operator still wastes a choice and reads a failure that
+looks like a fault. The two decisions also drift apart silently: three different state predicates
+existed (`validateEndpointOnline`, `endpointOnline`, `endpointDegraded`) and most lists used none of
+them. One shared helper plus one proof per decision keeps the menu and the gate from diverging.
+
+## A numbered list and the answer that selects from it must share one filtered slice
+
+Trigger: filtering the `start` wizard's printed list was not enough, because `start 1` resolved the
+bare number against every registered endpoint. The wizard printed `1. online-b` while `start 1`
+selected an offline endpoint that was never shown, so the same number meant two different machines.
+
+Action: when a prompt prints a numbered list and later resolves a bare number, both must be computed
+from the same slice, in the same order. Filter once, print that slice, and resolve against that
+slice. Preserve the order, because reordering silently changes which endpoint a number means. A
+named identifier is different: resolve it against every record so a machine that is not offered
+reports its real state instead of being described as absent.
+
+Why this prevents recurrence: the printed list and the resolver are two functions, so filtering one
+leaves the other addressing rows the operator never saw. The failure is silent because the number is
+valid, just for a different machine. Sharing the slice makes the two views structurally identical,
+and the order requirement is the part that a later refactor is most likely to break.
