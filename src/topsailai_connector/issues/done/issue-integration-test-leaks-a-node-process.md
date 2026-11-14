@@ -199,7 +199,7 @@ passing suite.
 
 | File | Change |
 |---|---|
-| `tests/integration/node_process_test.go` | `context` import, `runOnceTimeout = 30s`, `runOnce` bounded by `exec.CommandContext`, new `TestNodeRejectsAnArgumentAfterRun` |
+| `tests/integration/node_process_test.go` | `context` import, `runOnceTimeout = 30s`, `runOnce` bounded by `exec.CommandContext`, new `TestNodeRejectsAnArgumentAfterRun`, `defer stop(t, first)` in `TestNodeDoesNotPrintThePairOnASecondStart` |
 | `cmd/connector-node/main.go` | `rejectStrayArguments` helper, applied in `run`, `id` and `regenerate` |
 
 `runOnce` now fails explicitly when the deadline expires, so a hung child is a
@@ -245,10 +245,56 @@ fails the test in 30 seconds and leaves nothing behind.
 | Integration suite | 20/20 PASS, no orphan afterwards |
 | `make check` | RC=0, zero FAIL, Windows cross-compile included |
 
+### A second leak found while verifying
+
+Verifying the fix exposed a second, independent leak in the same file.
+`TestNodeDoesNotPrintThePairOnASecondStart` called `stop(t, first)` directly
+rather than through `defer`:
+
+```go
+first, firstOutput := start(t, env.vars(), "run")
+waitForOutput(t, firstOutput, "connector-node ready", 20*time.Second)
+stop(t, first)          // unreachable if waitForOutput calls t.Fatalf
+```
+
+`waitForOutput` calls `t.Fatalf` when the marker never appears, so `stop` was
+skipped and the child was left running. Reproduced by changing the marker to one
+that never appears: the test failed in 2.01s and the child was reparented to PID 1.
+
+The leak was real but self-limiting, and the reason matters. The child writes to a
+pipe whose read end the test binary owns, so when the test binary exits the child
+receives `SIGPIPE` on its next write and dies. Measured with a probe that closes
+the read end after three seconds: the child exited with `rc=-13` (`SIGPIPE`)
+within three seconds. That is why it never produced a four-day orphan, and it is
+also why "no orphan after the run" would not have proven the code correct.
+
+The fix is one word, `defer stop(t, first)`, but it changes semantics: `first` now
+runs concurrently with `second` instead of being stopped before `second` starts.
+The test was therefore re-verified rather than assumed still valid.
+
+| Check | Result |
+|---|---|
+| Three consecutive runs | PASS each time |
+| Mutation: print the pair on every start | `--- FAIL`, `second start printed the pair again` |
+| Full integration suite | 20/20 PASS, no orphan |
+
+The mutation row is the one that matters: the test still catches the regression it
+was written for, so `defer` did not weaken it.
+
 ### Remaining
 
-- `start()` is still unbounded. It is paired with `stop()` in every caller, so it
-  does not leak today, but the same class of defect is reachable if a future test
-  forgets the `defer stop`.
-- The 14 leaked servers from `topsailai_agent_cluster` belong to that project and
-  must be reported there, not fixed here.
+Two items remain open. Neither is reachable today, and neither belongs to the
+defect this issue records.
+
+#### `stop()` waits without a deadline
+
+`stop` sends `SIGTERM`, then calls `command.Wait()` with no bound. A child that
+ignores `SIGTERM` would block the test forever. Measured today, the Node exits
+3 ms after `SIGTERM`, so this is latent rather than reachable. It is recorded
+because the same reasoning that made `runOnce` need a deadline applies here.
+
+#### The `topsailai_agent_cluster` leaks
+
+The 14 leaked servers found during the orphan sweep belong to that project's BDD
+harness, not to this one. Per the cross-project rule they must be reported there
+rather than fixed here.

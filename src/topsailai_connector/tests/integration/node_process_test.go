@@ -237,8 +237,8 @@ func TestNodePrintsTheGeneratedPairOnce(t *testing.T) {
 func TestNodeDoesNotPrintThePairOnASecondStart(t *testing.T) {
 	env := newEnvironment(t)
 	first, firstOutput := start(t, env.vars(), "run")
+	defer stop(t, first)
 	waitForOutput(t, firstOutput, "connector-node ready", 20*time.Second)
-	stop(t, first)
 
 	second, secondOutput := start(t, env.vars(), "run")
 	defer stop(t, second)
