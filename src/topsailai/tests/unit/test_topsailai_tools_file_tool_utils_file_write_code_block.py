@@ -833,6 +833,55 @@ class TestNonStringContent:
         assert result["status"] == "invalid_request"
         assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
 
+    def test_content_replaces_the_range_instead_of_appending(self, tmp_path):
+        """The docstring warns that repeating the anchor line duplicates it.
+
+        ``content`` replaces the range, so copying the line being replaced into
+        the replacement leaves two copies. This test pins the documented
+        behaviour so the warning cannot drift away from the implementation.
+        """
+        target = tmp_path / "lines.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        overwrite_code_block(str(target), 2, 2, "b\nB\n")
+
+        assert target.read_text(encoding="utf-8") == "a\nb\nB\nc\n"
+
+    def test_content_without_the_anchor_line_does_not_duplicate(self, tmp_path):
+        """The documented correct form replaces the line without repeating it."""
+        target = tmp_path / "lines.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        overwrite_code_block(str(target), 2, 2, "B\n")
+
+        assert target.read_text(encoding="utf-8") == "a\nB\nc\n"
+
+    def test_docstring_documents_the_duplicate_anchor_pitfall(self):
+        """The pitfall must stay documented where the LLM reads it."""
+        doc = overwrite_code_block.__doc__
+
+        assert "REPLACES the range" in doc
+        assert "Never repeat the anchor line" in doc
+        assert "overwrite_lines_in_file(file_path=" in doc
+
+    def test_docstring_examples_match_real_behaviour(self, tmp_path):
+        """Every documented example must produce the documented result."""
+        cases = [
+            ("a\nb\nc\n", 2, 2, "b\nB\n", "a\nb\nB\nc\n"),
+            ("a\nb\nc\n", 2, 2, "B\n", "a\nB\nc\n"),
+            ("a\nb\nc\nd\n", 3, -1, "Z\n", "a\nb\nZ\n"),
+            ("a\nb\nc\nd\n", 2, 3, "", "a\nd\n"),
+            ("a\nb\nc\n", 2, 2, "B", "a\nB\nc\n"),
+            ("a\nb\nc\n", 2, 0, '"B\\n"', "a\nB\nc\n"),
+        ]
+        for index, (text, start, end, content, expected) in enumerate(cases):
+            target = tmp_path / f"case_{index}.txt"
+            target.write_text(text, encoding="utf-8")
+
+            overwrite_code_block(str(target), start, end, content)
+
+            assert target.read_text(encoding="utf-8") == expected, index
+
     def test_empty_string_content_still_deletes_lines(self, tmp_path):
         """An explicit empty string remains the documented way to delete lines."""
         target = tmp_path / "lines.txt"

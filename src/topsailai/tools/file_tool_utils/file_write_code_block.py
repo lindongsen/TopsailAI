@@ -17,8 +17,12 @@ from . import file_diff
 
 def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, content: str = None, **_) -> str:
     """
-    Replace lines from start_num to end_num (1-based, inclusive) with the provided content.
-    The content can be a single line or multi-line block.
+    Replace a contiguous line range with new content. This is the only tool that
+    edits existing lines; use `insert_content_to_file` to add lines without
+    replacing any.
+
+    The replaced range is `start_num`..`end_num` inclusive, 1-based. Everything
+    outside that range is preserved byte for byte, including line endings.
 
     IMPORTANT LOGIC:
     To ensure code integrity and indentation, do not replace lines individually
@@ -28,9 +32,11 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
     > You CANNOT call continuously due to the line number will change after each call.
 
     Args:
-        file_path (str): Path to the file to modify
+        file_path (str): Path to the file to modify.
         start_num (int): The 1-based starting line number to begin replacement -> **include this line to replace**.
                          MUST be >= 1; a smaller value is rejected and the file is left untouched.
+                         Numeric strings such as "12" and floats such as 12.9 are
+                         coerced to an integer.
         end_num (int): The 1-based ending line number (inclusive) to end replacement.
                        Omitted, ``0``, ``None``, or blank text means no end line,
                        so ONLY ``start_num`` is replaced. ``0`` never means "to the
@@ -49,23 +55,58 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
                        ``invalid_request`` and the file is left untouched.
                        Pass an empty string to delete lines.
 
+    CRITICAL: content REPLACES the range, it does not append to it.
+        The lines in the range are removed first, then ``content`` is inserted.
+        Never repeat the anchor line inside ``content``. Copying the line you are
+        replacing into the replacement duplicates it in the file.
+
+        Wrong - line 2 is replaced by "b" then "B", so "b" appears twice:
+            overwrite_lines_in_file(file_path="a.py", start_num=2, end_num=2,
+                                    content="b\\nB\\n")
+            before: a b c        after: a b B c
+
+        Right - replace line 2 with only the new line:
+            overwrite_lines_in_file(file_path="a.py", start_num=2, end_num=2,
+                                    content="B\\n")
+            before: a b c        after: a B c
+
+    Line endings:
+        A ``content`` that does not end with a newline still gets one when more
+        lines follow, so the following line is never glued onto your last line.
+
+    JSON string content:
+        A ``content`` that parses as a JSON string is unwrapped before use, so a
+        quoted "B\\n" writes B plus a newline. A JSON object or array is written
+        literally as text.
+
     Returns:
-        str: diff content on success, error message on failure
+        str: a reminder plus the diff on success, or an ``invalid_request`` dict
+        when a parameter is rejected. Out-of-range line numbers raise an
+        ``Exception`` instead of returning, so confirm the line numbers first.
 
     Example:
-        Replace lines 5-10 with new code block
+        Replace lines 5-10 with a new function
         ```
-        args=("example.py", 5, 10, "def new_function():\\n    pass\\n")
+        overwrite_lines_in_file(file_path="example.py", start_num=5, end_num=10,
+                                content="def new_function():\\n    pass\\n")
         ```
 
         Replace only line 5
         ```
-        args=("example.py", 5, 0, "def new_function():\\n    pass\\n")
+        overwrite_lines_in_file(file_path="example.py", start_num=5, end_num=0,
+                                content="def new_function():\\n    pass\\n")
         ```
 
         Replace line 5 through the end of the file
         ```
-        args=("example.py", 5, -1, "def new_function():\\n    pass\\n")
+        overwrite_lines_in_file(file_path="example.py", start_num=5, end_num=-1,
+                                content="def new_function():\\n    pass\\n")
+        ```
+
+        Delete lines 5-10
+        ```
+        overwrite_lines_in_file(file_path="example.py", start_num=5, end_num=10,
+                                content="")
         ```
     """
     start_num, error = resolve_finite_int(start_num, "start_num")
