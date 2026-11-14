@@ -62,6 +62,13 @@ func withControlActions(configured *protocol.CapabilityDescriptor, set *controla
 
 // registerAdapterType installs the factory for one provider type.
 //
+// The control action catalog is deliberately not a parameter: the catalog is
+// merged into the configured capability descriptor before the adapter is
+// configured (see withControlActions), so the factory only has to build the
+// adapter from the document it is handed. Passing the catalog here as well
+// would give two places the authority to publish a ctl. capability, and the
+// second one would be the one nobody reads.
+//
 // genericcli is the only provider type an Endpoint can be configured with. The
 // in-process TopsailAI adapter and the legacy command adapter were removed, so a
 // configuration that still names either of them is refused here instead of being
@@ -69,7 +76,7 @@ func withControlActions(configured *protocol.CapabilityDescriptor, set *controla
 // a silent fallback to genericcli would run a provider CLI against a command line
 // that was written for a different adapter, and the operator would see a provider
 // error rather than a configuration error.
-func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store, controlActions *controlaction.ControlActionSet) error {
+func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}

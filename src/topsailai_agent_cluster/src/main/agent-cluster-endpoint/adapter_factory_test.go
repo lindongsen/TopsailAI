@@ -39,7 +39,7 @@ func TestRegisterAdapterTypeAcceptsEverySupportedProviderType(t *testing.T) {
 	for _, providerType := range []string{"genericcli"} {
 		t.Run(providerType, func(t *testing.T) {
 			registry := adapter.NewRegistry()
-			if err := registerAdapterType(registry, providerType, newFactoryStore(t), nil); err != nil {
+			if err := registerAdapterType(registry, providerType, newFactoryStore(t)); err != nil {
 				t.Fatalf("register %q: %v", providerType, err)
 			}
 		})
@@ -56,7 +56,7 @@ func TestRegisterAdapterTypeRejectsUnknownProviderType(t *testing.T) {
 	for _, providerType := range []string{"not-a-provider", "topsailai", "fixture", "command"} {
 		t.Run(providerType, func(t *testing.T) {
 			registry := adapter.NewRegistry()
-			err := registerAdapterType(registry, providerType, newFactoryStore(t), nil)
+			err := registerAdapterType(registry, providerType, newFactoryStore(t))
 			if err == nil {
 				t.Fatalf("provider type %q was accepted", providerType)
 			}
@@ -134,10 +134,10 @@ func TestWithControlActionsLeavesTheDescriptorUntouchedWithoutACatalog(t *testin
 // register into a nil registry or with a nil store, because both are used by every
 // factory it installs.
 func TestRegisterAdapterTypeRequiresRegistryAndStore(t *testing.T) {
-	if err := registerAdapterType(nil, "genericcli", newFactoryStore(t), nil); err == nil {
+	if err := registerAdapterType(nil, "genericcli", newFactoryStore(t)); err == nil {
 		t.Fatal("nil registry was accepted")
 	}
-	if err := registerAdapterType(adapter.NewRegistry(), "genericcli", nil, nil); err == nil {
+	if err := registerAdapterType(adapter.NewRegistry(), "genericcli", nil); err == nil {
 		t.Fatal("nil store was accepted")
 	}
 }

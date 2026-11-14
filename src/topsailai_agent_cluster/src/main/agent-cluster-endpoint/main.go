@@ -147,7 +147,7 @@ func main() {
 			continue
 		}
 		providerType := item.ProviderType
-		if err := registerAdapterType(registry, providerType, store, controlActions); err != nil {
+		if err := registerAdapterType(registry, providerType, store); err != nil {
 			logger.Error("register adapter provider", "provider_type", providerType, "error", err)
 			_ = client.Close()
 			_ = store.Close()
