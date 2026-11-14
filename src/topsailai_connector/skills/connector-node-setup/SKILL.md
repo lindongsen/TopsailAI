@@ -53,7 +53,7 @@ The order is fixed and getting it wrong produces a confusing error:
 1. Server operator: start the Server with its two secrets set
 
 2. Node operator:   connector-node id
-                    -> node_7f3a...9c1e.kQ2v...4d7a     copy this whole pair
+                    -> node_7f3a...9c1e.kq2v...4d7a     copy this whole pair
 
 3. Node operator:   give the Node the tunnel_token, then start it
                     connector-node run

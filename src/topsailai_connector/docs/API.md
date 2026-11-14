@@ -269,7 +269,7 @@ environment because a flag is the more explicit statement of intent.
 
 ```
 connector-server cli --server https://cloud.example:8443 \
-    --client-token <client_token> --node node_7f3a.kQ2v... --scope project \
+    --client-token <client_token> --node node_7f3a.kq2v... --scope project \
     --path notes.md file.read
 ```
 

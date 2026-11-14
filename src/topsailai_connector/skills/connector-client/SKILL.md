@@ -53,7 +53,7 @@ You need three values. Ask the user for whichever is missing; never invent one.
 |---|---|---|
 | Server URL | `https://cloud.example:8443` | The Server operator |
 | `client_token` | an opaque string, at least 16 bytes | The Server operator |
-| `node-id.node-token` pair | `node_7f3a...9c1e.kQ2v...4d7a` | The Node operator, from `connector-node id` |
+| `node-id.node-token` pair | `node_7f3a...9c1e.kq2v...4d7a` | The Node operator, from `connector-node id` |
 
 The pair is **one string with one dot in it**. The part before the dot is the
 `node-id`, which is public and is an address. The part after the dot is the
