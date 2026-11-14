@@ -1442,11 +1442,21 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
     # key is always present and stays null for an ordinary session row, so the
     # item schema never changes shape between row kinds.
     is_task = bool(file_info.get("is_task", False))
+    # The display layer rewrites the reserved ``topsailai`` prefix into the
+    # ``(temp)`` label, but a machine consumer needs the absent identity rather
+    # than a human escape. An empty string matches the existing convention used
+    # by ``topsailai_session_info``, the JSON ``hostname`` field and a temporary
+    # session's stored metadata record.
+    from cli_topsailai.constants import TEMP_SESSION_MARKER
+
+    json_session_id = file_info.get("session_id")
+    if json_session_id == TEMP_SESSION_MARKER:
+        json_session_id = ""
     return {
         "no": index,
         "filename": file_info.get("filename", ""),
         "session_name": file_info.get("session_name"),
-        "session_id": file_info.get("session_id"),
+        "session_id": json_session_id,
         "is_task": is_task,
         "session_qualifier": "task" if is_task else None,
         "pid": pid,
