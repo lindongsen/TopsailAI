@@ -326,8 +326,15 @@ characters and the socket appeared. Any future live run must keep the provider h
 
 ### Harness requirement for the catalog
 
-`start_services.py` gained an optional `--control-actions` argument mirroring `--allowlist`:
-it validates an absolute path and an existing file, then sets
-`AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE`. Without it the Endpoint advertises no `ctl.*` action and
-every `ctl.*` fails closed, so the catalog could not be exercised at all. The option stays
-optional so the same harness can still prove the fail-closed path.
+The `ctl` family is advertised from the `ADAPTERS` document, not from a catalog file: each
+`ctl.` capability listed in that document's `capabilities` field is one action the node
+serves, and the Provider CLI that implements it owns the argv. `start_services.py` builds
+its `ADAPTERS` value with no `capabilities` field, so the harness as shipped advertises no
+`ctl.*` action and every `ctl.*` fails closed. That is the fail-closed default, and it is
+what the harness proves by default.
+
+To exercise the catalog, add a `capabilities` entry to the `ADAPTERS` value the harness
+builds, naming the actions the provider serves. The harness declares no flag for this
+today, so the edit is manual and must be reverted before a fail-closed run. The removed
+key `AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` is no longer read, so setting it has no
+effect.
