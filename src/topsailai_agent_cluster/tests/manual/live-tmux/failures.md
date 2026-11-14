@@ -7,7 +7,7 @@ author: DawsonLin
 
 | Case | Procedure | Expected result | Outcome |
 | --- | --- | --- | --- |
-| ERR-01 | workspace/endpoint send, resume, stop, inject, interrupt | unavailable-in-scope error before mutation; available command list accurate | PASS |
+| ERR-01 | workspace/endpoint send, btw, interrupt, ctl | unavailable-in-scope error before mutation; available command list accurate | PASS |
 | ERR-02 | session start | scope rejection; no new agent | PASS |
 | ERR-03 | malformed JSON/quotes, unsupported option, unknown command | useful error, usage and next help guidance where supported; CLI continues | PASS |
 | ERR-04 | `logs --json`, `list --json`, action --json in REPL | explicit non-interactive-only/rejected-option message, no mutation | PASS |
