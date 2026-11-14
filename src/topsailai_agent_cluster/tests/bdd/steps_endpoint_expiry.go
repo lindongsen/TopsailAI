@@ -14,14 +14,21 @@ import (
 )
 
 // sweepSentinelID is an endpoint that every expiry scenario seeds and that no
-// scenario asserts about. It is always old enough to expire, so its absence from
-// the endpoint list proves that at least one sweep completed.
+// scenario asserts about. It is always degraded with a deadline that has already
+// passed, so its absence from the endpoint list proves that at least one sweep
+// completed and reached its final delete step.
 //
 // The marker exists because the Server's own log lines are not observable from a
 // BDD scenario: the harness wires child stdout and stderr to the test process's
 // streams, so a scenario cannot read them. Without a marker, "the sweep never
 // ran" and "the sweep ran and deleted nothing" would be indistinguishable, which
 // is exactly the ambiguity that hid the original defect.
+//
+// The sentinel is seeded already degraded rather than offline on purpose. An
+// offline sentinel would only disappear after being degraded and then expired,
+// so every scenario would depend on both transitions and a regression in either
+// one would fail scenarios that have nothing to do with it. Seeding the final
+// state keeps each scenario attributable to its own boundary.
 const sweepSentinelID = "sweep-sentinel"
 
 // sweepWait bounds how long a scenario waits for one completed sweep. The Server
@@ -33,13 +40,17 @@ const sweepWait = 20 * time.Second
 // opens its database.
 //
 // The rows are written directly rather than through the production write paths,
-// because the state under test is one the production code can no longer produce:
-// a legacy offline row whose retention clock was never populated. A row created
-// through UpsertEndpoint would carry a populated clock and would therefore never
-// exercise the repair.
+// because several states under test are ones the production code cannot produce
+// on demand: a legacy offline row whose retention clock was never populated, and
+// a degraded row whose deadline is already in the past. A row created through
+// UpsertEndpoint would carry a populated clock, and a row degraded by the sweep
+// would carry a deadline one full retention window in the future.
 type expirySeed struct {
 	endpointID        string
+	connectionState   string
 	offlineSinceMS    int64
+	degradedSinceMS   int64
+	expiresAtMS       int64
 	updateAtMS        int64
 	withInventory     bool
 	commandID         string
@@ -47,7 +58,8 @@ type expirySeed struct {
 	commandUpdateAtMS int64
 }
 
-// registerEndpointExpirySteps registers the offline endpoint expiry lifecycle.
+// registerEndpointExpirySteps registers the offline endpoint degradation and
+// expiry lifecycle.
 func registerEndpointExpirySteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a real cluster whose server database holds a legacy offline endpoint "([^"]*)" and an endpoint retention of "([^"]*)"$`, func(endpointID, retention string) error {
 		return startExpiryCluster(retention, "", []expirySeed{legacySeed(endpointID, true, "", "")})
@@ -58,6 +70,15 @@ func registerEndpointExpirySteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a real cluster whose server database holds a recent offline endpoint "([^"]*)" and an endpoint retention of "([^"]*)"$`, func(endpointID, retention string) error {
 		return startExpiryCluster(retention, "", []expirySeed{recentSeed(endpointID)})
 	})
+	ctx.Step(`^a real cluster whose server database holds a degraded endpoint "([^"]*)" with a future deletion deadline and an endpoint retention of "([^"]*)"$`, func(endpointID, retention string) error {
+		return startExpiryCluster(retention, "", []expirySeed{degradedSeed(endpointID, time.Hour, true, "", "")})
+	})
+	ctx.Step(`^a real cluster whose server database holds a degraded endpoint "([^"]*)" with a past deletion deadline and an endpoint retention of "([^"]*)"$`, func(endpointID, retention string) error {
+		return startExpiryCluster(retention, "", []expirySeed{degradedSeed(endpointID, -time.Hour, true, "", "")})
+	})
+	ctx.Step(`^a real cluster whose server database holds a degraded endpoint "([^"]*)" with an unconfirmed command and a past deletion deadline and an endpoint retention of "([^"]*)"$`, func(endpointID, retention string) error {
+		return startExpiryCluster(retention, "", []expirySeed{degradedSeed(endpointID, -time.Hour, true, "cmd-"+endpointID, protocol.StatusUnconfirmed)})
+	})
 	ctx.Step(`^a real cluster whose server database holds a legacy offline endpoint "([^"]*)" with a terminal command and endpoint retention "([^"]*)" and command retention "([^"]*)"$`, func(endpointID, retention, commandRetention string) error {
 		return startExpiryCluster(retention, commandRetention, []expirySeed{legacySeed(endpointID, true, "cmd-"+endpointID, protocol.StatusFinished)})
 	})
@@ -66,7 +87,7 @@ func registerEndpointExpirySteps(ctx *godog.ScenarioContext) {
 	})
 	ctx.Step(`^the server completes at least one expiry sweep$`, waitForCompletedSweep)
 	ctx.Step(`^endpoint "([^"]*)" is absent from the endpoint list$`, func(endpointID string) error {
-		present, err := endpointListed(endpointID)
+		_, present, err := endpointRecord(endpointID)
 		if err != nil {
 			return err
 		}
@@ -76,12 +97,51 @@ func registerEndpointExpirySteps(ctx *godog.ScenarioContext) {
 		return nil
 	})
 	ctx.Step(`^endpoint "([^"]*)" is present in the endpoint list$`, func(endpointID string) error {
-		present, err := endpointListed(endpointID)
+		_, present, err := endpointRecord(endpointID)
 		if err != nil {
 			return err
 		}
 		if !present {
 			return fmt.Errorf("endpoint %q is not listed, want it retained", endpointID)
+		}
+		return nil
+	})
+	ctx.Step(`^endpoint "([^"]*)" is (online|offline|degraded) in the endpoint list$`, func(endpointID, wantState string) error {
+		record, present, err := endpointRecord(endpointID)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return fmt.Errorf("endpoint %q is not listed, want connection_state=%q", endpointID, wantState)
+		}
+		if record.ConnectionState != wantState {
+			return fmt.Errorf("endpoint %q connection_state=%q, want %q", endpointID, record.ConnectionState, wantState)
+		}
+		return nil
+	})
+	ctx.Step(`^endpoint "([^"]*)" is listed with a deletion date$`, func(endpointID string) error {
+		record, present, err := endpointRecord(endpointID)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return fmt.Errorf("endpoint %q is not listed, want a deletion date", endpointID)
+		}
+		if record.ExpiresAtMS <= 0 {
+			return fmt.Errorf("endpoint %q expires_at_ms=%d, want a positive deletion date", endpointID, record.ExpiresAtMS)
+		}
+		return nil
+	})
+	ctx.Step(`^endpoint "([^"]*)" is not listed with a deletion date$`, func(endpointID string) error {
+		record, present, err := endpointRecord(endpointID)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return fmt.Errorf("endpoint %q is not listed, want it listed without a deletion date", endpointID)
+		}
+		if record.ExpiresAtMS != 0 {
+			return fmt.Errorf("endpoint %q expires_at_ms=%d, want no deletion date", endpointID, record.ExpiresAtMS)
 		}
 		return nil
 	})
@@ -128,10 +188,10 @@ func registerEndpointExpirySteps(ctx *godog.ScenarioContext) {
 }
 
 // legacySeed builds an offline row whose retention clock was never populated,
-// which is the state the startup repair must make expirable.
+// which is the state the startup repair must make degradable.
 func legacySeed(endpointID string, withInventory bool, commandID string, status protocol.CommandStatus) expirySeed {
 	now := time.Now().UnixMilli()
-	seed := expirySeed{endpointID: endpointID, offlineSinceMS: 0, updateAtMS: now - int64(2*time.Hour/time.Millisecond), withInventory: withInventory}
+	seed := expirySeed{endpointID: endpointID, connectionState: "offline", offlineSinceMS: 0, updateAtMS: now - int64(2*time.Hour/time.Millisecond), withInventory: withInventory}
 	if commandID != "" {
 		seed.commandID = commandID
 		seed.commandStatus = status
@@ -152,7 +212,35 @@ func legacySeed(endpointID string, withInventory bool, commandID string, status 
 // a retention window that has not elapsed.
 func recentSeed(endpointID string) expirySeed {
 	now := time.Now().UnixMilli()
-	return expirySeed{endpointID: endpointID, offlineSinceMS: 0, updateAtMS: now, withInventory: true}
+	return expirySeed{endpointID: endpointID, connectionState: "offline", offlineSinceMS: 0, updateAtMS: now, withInventory: true}
+}
+
+// degradedSeed builds a row that the sweep has already degraded, with a deletion
+// deadline offset from now. A negative offset puts the deadline in the past, so
+// the next sweep must delete the row; a positive offset keeps it listed.
+//
+// The deadline is seeded directly rather than derived from a retention window,
+// because the property under test is the deadline comparison itself. Deriving it
+// would make the scenario depend on the degrade step as well, and a regression in
+// that step would fail a scenario about expiry.
+func degradedSeed(endpointID string, deadlineOffset time.Duration, withInventory bool, commandID string, status protocol.CommandStatus) expirySeed {
+	now := time.Now().UnixMilli()
+	degradedSince := now - int64(2*time.Hour/time.Millisecond)
+	seed := expirySeed{
+		endpointID:      endpointID,
+		connectionState: "degraded",
+		offlineSinceMS:  degradedSince,
+		degradedSinceMS: degradedSince,
+		expiresAtMS:     now + int64(deadlineOffset/time.Millisecond),
+		updateAtMS:      degradedSince,
+		withInventory:   withInventory,
+	}
+	if commandID != "" {
+		seed.commandID = commandID
+		seed.commandStatus = status
+		seed.commandUpdateAtMS = degradedSince
+	}
+	return seed
 }
 
 // startExpiryCluster starts a real cluster whose Server database already holds
@@ -183,23 +271,29 @@ func startExpiryCluster(retention, commandRetention string, seeds []expirySeed) 
 
 // sentinelSeed builds the always-expirable marker row.
 //
-// The sentinel carries a positive offline_since_at_ms on purpose. A sentinel
-// with a zero clock would only become expirable through the startup backfill,
-// so every scenario that waits for it would depend on the backfill and a
-// backfill regression would fail scenarios that have nothing to do with it.
-// Keeping the sentinel independently expirable is what lets each scenario
-// attribute a failure to its own boundary.
+// The sentinel is degraded with a deadline in the past, so the sweep's final
+// delete step removes it. Its absence therefore proves the sweep ran to
+// completion, and no scenario has to wait for the degrade transition to observe
+// that.
 func sentinelSeed() expirySeed {
 	now := time.Now().UnixMilli()
-	offlineSince := now - int64(2*time.Hour/time.Millisecond)
-	return expirySeed{endpointID: sweepSentinelID, offlineSinceMS: offlineSince, updateAtMS: offlineSince}
+	degradedSince := now - int64(2*time.Hour/time.Millisecond)
+	return expirySeed{
+		endpointID:      sweepSentinelID,
+		connectionState: "degraded",
+		offlineSinceMS:  degradedSince,
+		degradedSinceMS: degradedSince,
+		expiresAtMS:     now - int64(time.Hour/time.Millisecond),
+		updateAtMS:      degradedSince,
+	}
 }
 
 // seedExpiryDatabase writes the seeded rows before the Server opens the file.
 //
 // It opens the database through the production storage layer so the schema comes
 // from the real migration rather than a copy, then writes the rows directly
-// because the production write paths cannot produce a legacy row.
+// because the production write paths cannot produce a legacy row or a degraded
+// row whose deadline has already passed.
 func seedExpiryDatabase(path string, seeds []expirySeed) error {
 	ctx := context.Background()
 	store, err := serverstorage.Open(ctx, path)
@@ -208,7 +302,7 @@ func seedExpiryDatabase(path string, seeds []expirySeed) error {
 	}
 	defer func() { _ = store.Close() }()
 	for _, seed := range seeds {
-		if _, err := store.DB().ExecContext(ctx, `INSERT INTO endpoints(endpoint_id, instance_id, display_name, hostname, connection_state, offline_since_at_ms, observed_at_ms, capability_revision, create_at_ms, update_at_ms) VALUES(?, ?, ?, '', 'offline', ?, ?, 'c1', ?, ?)`, seed.endpointID, seed.endpointID+"-instance", seed.endpointID, seed.offlineSinceMS, seed.updateAtMS, seed.updateAtMS, seed.updateAtMS); err != nil {
+		if _, err := store.DB().ExecContext(ctx, `INSERT INTO endpoints(endpoint_id, instance_id, display_name, hostname, connection_state, offline_since_at_ms, degraded_since_at_ms, expires_at_ms, observed_at_ms, capability_revision, create_at_ms, update_at_ms) VALUES(?, ?, ?, '', ?, ?, ?, ?, ?, 'c1', ?, ?)`, seed.endpointID, seed.endpointID+"-instance", seed.endpointID, seed.connectionState, seed.offlineSinceMS, seed.degradedSinceMS, seed.expiresAtMS, seed.updateAtMS, seed.updateAtMS, seed.updateAtMS); err != nil {
 			return fmt.Errorf("seed endpoint %q: %w", seed.endpointID, err)
 		}
 		if seed.withInventory {
@@ -235,7 +329,7 @@ func waitForCompletedSweep() error {
 	deadline := time.Now().Add(sweepWait)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		present, err := endpointListed(sweepSentinelID)
+		_, present, err := endpointRecord(sweepSentinelID)
 		if err != nil {
 			lastErr = err
 		} else if !present {
@@ -249,26 +343,26 @@ func waitForCompletedSweep() error {
 	return fmt.Errorf("no expiry sweep completed within %s: sentinel endpoint %q is still listed", sweepWait, sweepSentinelID)
 }
 
-// endpointListed reports whether one endpoint appears in the Server's endpoint
-// projection.
-func endpointListed(endpointID string) (bool, error) {
+// endpointRecord returns one endpoint from the Server's endpoint projection and
+// reports whether it was present.
+func endpointRecord(endpointID string) (protocol.Endpoint, bool, error) {
 	status, body, err := activeScenario.realCluster.RequestE(http.MethodGet, "/api/v1/endpoints", nil)
 	if err != nil {
-		return false, err
+		return protocol.Endpoint{}, false, err
 	}
 	if status != http.StatusOK {
-		return false, fmt.Errorf("list endpoints status=%d body=%s", status, body)
+		return protocol.Endpoint{}, false, fmt.Errorf("list endpoints status=%d body=%s", status, body)
 	}
 	var envelope struct {
 		Data []protocol.Endpoint `json:"data"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return false, fmt.Errorf("decode endpoint list: %w", err)
+		return protocol.Endpoint{}, false, fmt.Errorf("decode endpoint list: %w", err)
 	}
 	for _, item := range envelope.Data {
 		if item.EndpointID == endpointID {
-			return true, nil
+			return item, true, nil
 		}
 	}
-	return false, nil
+	return protocol.Endpoint{}, false, nil
 }

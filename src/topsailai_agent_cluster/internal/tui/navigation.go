@@ -613,6 +613,51 @@ func validateEndpointOnline(endpoint protocol.Endpoint) error {
 	return nil
 }
 
+// requireQueryableEndpoint rejects an endpoint that must not be contacted,
+// before any request that would reach the machine is sent.
+//
+// A degraded endpoint is reported distinctly from a merely offline one, because
+// the two need different operator actions: an offline endpoint may come back, so
+// the operator waits or restarts it, while a degraded endpoint has already passed
+// the expiry window and its record is scheduled for deletion, so waiting is
+// pointless and the machine must be re-registered. Reporting both as "not online"
+// would hide the deletion date, which is the only fact that tells the operator
+// which of the two situations they are in.
+//
+// Reading the endpoint record itself is never refused. The record is what carries
+// the state this check reads, so refusing the read would make the check
+// impossible; only requests that send a frame to the machine are refused.
+func requireQueryableEndpoint(endpoint protocol.Endpoint) error {
+	if endpoint.ConnectionState == "degraded" {
+		return fmt.Errorf("endpoint %q is degraded: it was offline past the expiry window and its record will be deleted at %s, so no request was sent; re-register the endpoint to use it again", endpoint.EndpointID, formatDateTime(endpoint.ExpiresAtMS, nil))
+	}
+	return validateEndpointOnline(endpoint)
+}
+
+// requireQueryableEndpointByID resolves one endpoint record and applies the
+// queryable check to it.
+//
+// A failed inventory read does not fail the command. The gate is a pre-check, so
+// when the record cannot be read the state is unknown and the request that
+// follows reports the real problem with a precise diagnostic; replacing that with
+// the gate's own read error would describe the inventory as the fault when the
+// fault may be the endpoint itself. This matches the existing fallback that keeps
+// an identifier usable when the inventory is unavailable.
+//
+// An endpoint absent from the list is likewise not rejected here, because the
+// request that follows reports the absence itself.
+func requireQueryableEndpointByID(ctx context.Context, api InteractiveAPI, endpointID string) error {
+	endpoints, err := api.ListEndpoints(ctx)
+	if err != nil {
+		return nil
+	}
+	endpoint, ok := endpointByID(reportLoad{endpoints: endpoints}, endpointID)
+	if !ok {
+		return nil
+	}
+	return requireQueryableEndpoint(endpoint)
+}
+
 // endpointByID returns the endpoint with the exact identifier.
 func endpointByID(loaded reportLoad, endpointID string) (protocol.Endpoint, bool) {
 	for _, endpoint := range loaded.endpoints {

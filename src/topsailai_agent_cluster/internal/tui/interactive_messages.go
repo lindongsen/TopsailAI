@@ -34,6 +34,14 @@ func interactiveMessages(parent context.Context, api InteractiveAPI, state *inte
 	if err != nil {
 		return err
 	}
+	// The gate runs before the conversation read, because that read sends a frame
+	// to the machine. It is applied here rather than inside messagesTarget so every
+	// selector is covered by one check: a row number, a literal session ID and the
+	// endpoint scope all converge on this point, and a selector added later cannot
+	// bypass it.
+	if gateErr := requireQueryableEndpointByID(ctx, api, endpointID); gateErr != nil {
+		return gateErr
+	}
 	result, err := querier.GetMessages(ctx, endpointID, sessionID, maxChars, maxTokens)
 	if err != nil {
 		return err

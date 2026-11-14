@@ -257,6 +257,13 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if err != nil || endpointID == "" {
 		return err
 	}
+	// The gate runs before the launch-options query, because that query sends a
+	// frame to the machine. It sits after endpoint resolution so an endpoint chosen
+	// by hostname or by a printed row number is gated exactly like one named
+	// directly, and before the query so a degraded endpoint is never contacted.
+	if gateErr := requireQueryableEndpointByID(ctx, api, endpointID); gateErr != nil {
+		return gateErr
+	}
 	queryCtx, cancel := commandContext(ctx)
 	catalog, err := query.GetLaunchOptions(queryCtx, endpointID, "")
 	cancel()

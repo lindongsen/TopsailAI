@@ -51,6 +51,14 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return err
 	}
+	// The gate runs before the snapshot or the stream is requested, because both
+	// send a frame to the machine. Reading the endpoint record above is allowed:
+	// it is a store read, and it is what supplies the state this gate reads.
+	if endpoint, ok := endpointByID(loaded, endpointID); ok {
+		if gateErr := requireQueryableEndpoint(endpoint); gateErr != nil {
+			return gateErr
+		}
+	}
 	_, _, session, err := findSessionInEndpoint(loaded, endpointID, resourceID)
 	if err != nil {
 		return numericTokenHint(strings.TrimSpace(rest), err)

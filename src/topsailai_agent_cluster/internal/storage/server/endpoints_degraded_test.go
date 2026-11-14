@@ -235,3 +235,85 @@ func assertRowCount(t *testing.T, store *Store, table, endpointID string, want i
 		t.Fatalf("%s count for %s = %d, want %d", table, endpointID, got, want)
 	}
 }
+
+// TestUpsertEndpointClearsDegradedDeadlineOnReconnect verifies a recovered
+// Endpoint stops advertising a deletion date.
+//
+// A degraded row carries a materialized deadline. If a reconnect left it in
+// place, two things would go wrong: the endpoint list would show a deletion date
+// for a machine that is currently connected, and a later sweep would delete a
+// recovered row because the deadline had already passed. The deadline is
+// therefore cleared on the same write that restores the online state.
+func TestUpsertEndpointClearsDegradedDeadlineOnReconnect(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	putEndpointInventory(t, store, "recovered", "offline", 100)
+	setOfflineSince(t, store, "recovered", 100)
+	if _, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000); err != nil {
+		t.Fatal(err)
+	}
+	state, degradedSince, expiresAt := endpointLifecycleOf(t, store, "recovered")
+	if state != "degraded" || degradedSince != 1000 || expiresAt != 6000 {
+		t.Fatalf("precondition state=%q degraded_since=%d expires_at=%d, want degraded/1000/6000", state, degradedSince, expiresAt)
+	}
+
+	// The Endpoint reconnects and reports itself online.
+	reconnected := protocol.Endpoint{EndpointID: "recovered", InstanceID: "instance-recovered", DisplayName: "recovered", ConnectionState: "online", ObservedAtMS: 2000, CapabilityRevision: "v1"}
+	if err := store.UpsertEndpoint(ctx, reconnected, 2000); err != nil {
+		t.Fatal(err)
+	}
+
+	state, degradedSince, expiresAt = endpointLifecycleOf(t, store, "recovered")
+	if state != "online" {
+		t.Fatalf("state after reconnect = %q, want online", state)
+	}
+	if degradedSince != 0 || expiresAt != 0 {
+		t.Fatalf("reconnect left degraded_since=%d expires_at=%d, want both cleared", degradedSince, expiresAt)
+	}
+
+	// The cleared deadline must also make the row ineligible for deletion.
+	result, err := store.ExpireDegradedEndpoints(ctx, 999999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.DeletedEndpointIDs) != 0 {
+		t.Fatalf("expiry deleted a recovered endpoint: %v", result.DeletedEndpointIDs)
+	}
+	assertRowCount(t, store, "endpoints", "recovered", 1)
+}
+
+// TestUpsertEndpointKeepsDegradedDeadlineWhileStillOffline verifies the clearing
+// is conditional on the online state.
+//
+// An offline report from an already degraded Endpoint must not reset its
+// deadline, otherwise a machine that keeps flapping would postpone its own
+// deletion indefinitely and the degraded retention window would never elapse.
+func TestUpsertEndpointKeepsDegradedDeadlineWhileStillOffline(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	putEndpointInventory(t, store, "flapping", "offline", 100)
+	setOfflineSince(t, store, "flapping", 100)
+	if _, err := store.DegradeOfflineEndpoints(ctx, 200, 1000, 5000); err != nil {
+		t.Fatal(err)
+	}
+
+	stillOffline := protocol.Endpoint{EndpointID: "flapping", InstanceID: "instance-flapping", DisplayName: "flapping", ConnectionState: "offline", ObservedAtMS: 2000, CapabilityRevision: "v1"}
+	if err := store.UpsertEndpoint(ctx, stillOffline, 2000); err != nil {
+		t.Fatal(err)
+	}
+
+	state, degradedSince, expiresAt := endpointLifecycleOf(t, store, "flapping")
+	if state != "degraded" || degradedSince != 1000 || expiresAt != 6000 {
+		t.Fatalf("offline upsert changed the deadline: state=%q degraded_since=%d expires_at=%d, want degraded/1000/6000", state, degradedSince, expiresAt)
+	}
+}

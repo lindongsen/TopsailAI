@@ -10,6 +10,20 @@ import (
 )
 
 // UpsertEndpoint stores the latest endpoint metadata transactionally.
+//
+// A reconnect clears the degraded clock and the deletion deadline, because a
+// machine that is online again is not scheduled for deletion. Leaving either
+// value behind would keep a stale deadline on a live row: the endpoint list
+// would advertise a deletion date for an online machine, and a later sweep would
+// delete a row that had already recovered. The clear is conditional on the
+// incoming state being online, so a non-online report cannot erase the deadline
+// of a row that is already degraded.
+//
+// A non-online report also preserves the degraded state. Degradation is decided
+// by the sweep, not by the Endpoint, so an offline report from a degraded
+// Endpoint must not silently restore it to offline: that would drop it out of
+// the expiry predicate and the row would never be deleted. Only an online report
+// leaves the degraded state.
 func (s *Store) UpsertEndpoint(ctx context.Context, endpoint protocol.Endpoint, nowMS int64) error {
 	if endpoint.EndpointID == "" || endpoint.InstanceID == "" {
 		return fmt.Errorf("endpoint identity is required")
@@ -18,7 +32,7 @@ func (s *Store) UpsertEndpoint(ctx context.Context, endpoint protocol.Endpoint, 
 	if endpoint.ConnectionState != "online" {
 		offlineSinceMS = nowMS
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO endpoints(endpoint_id, instance_id, display_name, hostname, connection_state, offline_since_at_ms, observed_at_ms, capability_revision, create_at_ms, update_at_ms) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(endpoint_id) DO UPDATE SET instance_id=excluded.instance_id, display_name=excluded.display_name, hostname=excluded.hostname, connection_state=excluded.connection_state, offline_since_at_ms=CASE WHEN excluded.connection_state = 'online' THEN 0 WHEN endpoints.offline_since_at_ms > 0 THEN endpoints.offline_since_at_ms ELSE excluded.offline_since_at_ms END, observed_at_ms=excluded.observed_at_ms, capability_revision=excluded.capability_revision, update_at_ms=excluded.update_at_ms`, endpoint.EndpointID, endpoint.InstanceID, endpoint.DisplayName, endpoint.Hostname, endpoint.ConnectionState, offlineSinceMS, endpoint.ObservedAtMS, endpoint.CapabilityRevision, nowMS, nowMS)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO endpoints(endpoint_id, instance_id, display_name, hostname, connection_state, offline_since_at_ms, observed_at_ms, capability_revision, create_at_ms, update_at_ms) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(endpoint_id) DO UPDATE SET instance_id=excluded.instance_id, display_name=excluded.display_name, hostname=excluded.hostname, connection_state=CASE WHEN endpoints.connection_state = 'degraded' AND excluded.connection_state != 'online' THEN 'degraded' ELSE excluded.connection_state END, offline_since_at_ms=CASE WHEN excluded.connection_state = 'online' THEN 0 WHEN endpoints.offline_since_at_ms > 0 THEN endpoints.offline_since_at_ms ELSE excluded.offline_since_at_ms END, degraded_since_at_ms=CASE WHEN excluded.connection_state = 'online' THEN 0 ELSE endpoints.degraded_since_at_ms END, expires_at_ms=CASE WHEN excluded.connection_state = 'online' THEN 0 ELSE endpoints.expires_at_ms END, observed_at_ms=excluded.observed_at_ms, capability_revision=excluded.capability_revision, update_at_ms=excluded.update_at_ms`, endpoint.EndpointID, endpoint.InstanceID, endpoint.DisplayName, endpoint.Hostname, endpoint.ConnectionState, offlineSinceMS, endpoint.ObservedAtMS, endpoint.CapabilityRevision, nowMS, nowMS)
 	return err
 }
 
