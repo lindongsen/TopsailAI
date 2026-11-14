@@ -230,6 +230,64 @@ func TestControlCatalogConstantsAreEnforced(t *testing.T) {
 	}
 }
 
+// TestControlCatalogPublishesTheConfiguredPayloadSchema proves the advertised
+// contract carries the schema the interactive prompt follows.
+//
+// The prompt walks the advertised payload_schema to ask for named fields. A catalog
+// that accepted a schema but never published it would leave every action on the
+// generic parameter prompt, so the field has to survive the whole path from the
+// document to the descriptor.
+func TestControlCatalogPublishesTheConfiguredPayloadSchema(t *testing.T) {
+	path := writeCatalog(t, `{"actions":[{"name":"models","command":["runtime","control","models","-s","{session}","--json"],"payload_schema":{"type":"object","properties":{"instruction":{"type":"string"}}}}]}`)
+	catalog, err := loadControlCatalog([]string{controlActionsEnvironment + "=" + path})
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	got := catalog.contracts()
+	if len(got) != 1 {
+		t.Fatalf("contracts=%v", got)
+	}
+	want := `{"properties":{"instruction":{"type":"string"}},"type":"object"}`
+	if got[0].PayloadSchema != want {
+		t.Fatalf("payload schema=%q want %q", got[0].PayloadSchema, want)
+	}
+}
+
+// TestControlCatalogRejectsANonObjectPayloadSchema proves a schema the prompt cannot
+// walk is refused at load time.
+//
+// The prompt asks for named fields, so a scalar or array document describes nothing
+// it can render. Accepting one would advertise a capability whose guided prompt is
+// silently empty, which looks like an action with no parameters.
+func TestControlCatalogRejectsANonObjectPayloadSchema(t *testing.T) {
+	for _, document := range []string{
+		`{"actions":[{"name":"models","command":["runtime","control","models"],"payload_schema":["type","object"]}]}`,
+		`{"actions":[{"name":"models","command":["runtime","control","models"],"payload_schema":"object"}]}`,
+	} {
+		path := writeCatalog(t, document)
+		if _, err := loadControlCatalog([]string{controlActionsEnvironment + "=" + path}); err == nil {
+			t.Fatalf("load catalog accepted a non-object payload schema: %s", document)
+		}
+	}
+}
+
+// TestControlCatalogAllowsAnAbsentPayloadSchema proves a minimal catalog still works.
+//
+// An action that takes no documented parameters must not be forced to invent a
+// schema, because an empty schema and an absent one both fall back to the generic
+// parameter prompt.
+func TestControlCatalogAllowsAnAbsentPayloadSchema(t *testing.T) {
+	path := writeCatalog(t, `{"actions":[{"name":"heartbeat","command":["runtime","control","heartbeat","-s","{session}","--json"]}]}`)
+	catalog, err := loadControlCatalog([]string{controlActionsEnvironment + "=" + path})
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	got := catalog.contracts()
+	if len(got) != 1 || got[0].PayloadSchema != "" {
+		t.Fatalf("contracts=%v", got)
+	}
+}
+
 // TestControlCatalogAdvertisesOnlyConfiguredActions proves the descriptor reports the
 // catalog rather than a compiled-in list.
 func TestControlCatalogAdvertisesOnlyConfiguredActions(t *testing.T) {

@@ -39,6 +39,11 @@ type controlAction struct {
 	PayloadSessionField string
 	// PayloadConstants are payload fields this action fixes itself.
 	PayloadConstants map[string]string
+	// PayloadSchema is the JSON Schema document describing the action payload,
+	// or an empty string when the action takes no documented parameters. It is
+	// forwarded verbatim into the advertised capability, so the interactive
+	// prompt follows the same document the Provider validates against.
+	PayloadSchema string
 }
 
 // controlCatalog is the Provider-local set of enabled ctl. actions.
@@ -62,6 +67,7 @@ type controlActionEntry struct {
 	Command             []string          `json:"command"`
 	PayloadSessionField string            `json:"payload_session_field"`
 	PayloadConstants    map[string]string `json:"payload_constants"`
+	PayloadSchema       json.RawMessage   `json:"payload_schema"`
 }
 
 // loadControlCatalog reads the catalog named by the process environment.
@@ -138,12 +144,43 @@ func validateControlAction(entry controlActionEntry) (controlAction, error) {
 	if entry.PayloadSessionField != "" && strings.ContainsAny(entry.PayloadSessionField, " \t\r\n") {
 		return controlAction{}, fmt.Errorf("control action %q payload_session_field must not contain whitespace", name)
 	}
+	schema, err := normalizeControlPayloadSchema(entry.PayloadSchema)
+	if err != nil {
+		return controlAction{}, fmt.Errorf("control action %q: %w", name, err)
+	}
 	return controlAction{
 		Name:                name,
 		Command:             append([]string(nil), entry.Command...),
 		PayloadSessionField: entry.PayloadSessionField,
 		PayloadConstants:    entry.PayloadConstants,
+		PayloadSchema:       schema,
 	}, nil
+}
+
+// normalizeControlPayloadSchema validates a payload schema and returns it as a
+// compact JSON string.
+//
+// An absent schema is allowed and yields an empty string, so a minimal catalog
+// still works and the interactive surface falls back to its generic parameter
+// prompt. A present schema must be a JSON object, because the prompt walks named
+// fields and a scalar or array document would describe nothing it can ask for.
+func normalizeControlPayloadSchema(raw json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return "", nil
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &document); err != nil {
+		return "", fmt.Errorf("payload_schema must be a JSON object: %w", err)
+	}
+	if document == nil {
+		return "", fmt.Errorf("payload_schema must be a JSON object")
+	}
+	compact, err := json.Marshal(document)
+	if err != nil {
+		return "", fmt.Errorf("encode payload_schema: %w", err)
+	}
+	return string(compact), nil
 }
 
 // validateControlCommand rejects a template that cannot be expanded safely.
@@ -194,10 +231,11 @@ func (c controlCatalog) contracts() []namedContract {
 	contracts := make([]namedContract, 0, len(c.order))
 	for _, name := range c.order {
 		contracts = append(contracts, namedContract{
-			Name:        controlOperationPrefix + name,
-			Version:     operationVersion,
-			TargetKinds: []string{"session"},
-			SafetyClass: "mutating",
+			Name:          controlOperationPrefix + name,
+			Version:       operationVersion,
+			TargetKinds:   []string{"session"},
+			SafetyClass:   "mutating",
+			PayloadSchema: c.actions[name].PayloadSchema,
 		})
 	}
 	return contracts
