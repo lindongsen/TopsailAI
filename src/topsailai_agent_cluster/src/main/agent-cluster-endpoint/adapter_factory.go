@@ -8,6 +8,7 @@ import (
 	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/adapter/genericcli"
 	topsailaiadapter "topsailai_agent_cluster/internal/adapter/topsailai"
+	"topsailai_agent_cluster/internal/controlaction"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/providercli"
 	endpointstorage "topsailai_agent_cluster/internal/storage/endpoint"
@@ -42,7 +43,7 @@ var genericCLIConcurrency = providercli.ConcurrencyLimits{Total: 4, Discovery: 2
 // could ever be exercised against one. The legacy command adapter has since been
 // removed, so every configured adapter is now either the in-process TopsailAI
 // adapter or a standalone Provider CLI.
-func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store, controlActions *topsailaiadapter.ControlActionSet) error {
+func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store, controlActions *controlaction.ControlActionSet) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}

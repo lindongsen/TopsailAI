@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"topsailai_agent_cluster/internal/adapter"
-	topsailaiadapter "topsailai_agent_cluster/internal/adapter/topsailai"
 	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/config"
+	"topsailai_agent_cluster/internal/controlaction"
 	endpointservice "topsailai_agent_cluster/internal/endpoint"
 	"topsailai_agent_cluster/internal/logging"
 	"topsailai_agent_cluster/internal/protocol"
@@ -128,9 +128,9 @@ func main() {
 	// configured so a broken file fails startup rather than silently leaving a
 	// different action surface in force. An Endpoint without the file advertises
 	// no ctl. action at all, which is the fail-closed default.
-	var controlActions *topsailaiadapter.ControlActionSet
+	var controlActions *controlaction.ControlActionSet
 	if cfg.ControlActionFile != "" {
-		controlActions, err = topsailaiadapter.LoadControlActionSet(cfg.ControlActionFile)
+		controlActions, err = controlaction.LoadControlActionSet(cfg.ControlActionFile)
 		if err != nil {
 			logger.Error("load control action file", "path", cfg.ControlActionFile, "error", err)
 			_ = client.Close()

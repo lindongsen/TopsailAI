@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/adapter"
+	"topsailai_agent_cluster/internal/controlaction"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 )
@@ -34,7 +35,7 @@ type Config struct {
 	// advertises no action and refuses every ctl. operation, because the catalog
 	// is the only source of actions and an Endpoint cannot serve an action it was
 	// never told about.
-	ControlActions *ControlActionSet
+	ControlActions *controlaction.ControlActionSet
 }
 
 // PlatformCapabilities describes host support required by agent.stop.
@@ -134,7 +135,7 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 	// scope it requires instead of inheriting one blanket permission. A configured
 	// control action file narrows this list; an omitted action becomes unreachable
 	// because the Endpoint rejects an operation it does not advertise.
-	controlCapabilities := controlActionCapabilities(a.config.ControlActions)
+	controlCapabilities := controlaction.Capabilities(a.config.ControlActions)
 	descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, controlCapabilities...)
 	if len(controlCapabilities) > 0 {
 		encoded, err := json.Marshal(controlCapabilities)
@@ -557,14 +558,14 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		if !strings.HasPrefix(operation, security.ProviderControlPrefix) {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unsupported")}, adapter.ErrUnsupported
 		}
-		controlArgs, controlErr := controlActionArgs(a.config.ControlActions, operation, providerKey, intent.Payload)
+		controlArgs, controlErr := controlaction.Args(a.config.ControlActions, operation, providerKey, intent.Payload)
 		if controlErr != nil {
 			// A payload that disagrees with a value the catalog entry fixes itself
 			// is a different failure from an action the Endpoint does not serve.
 			// Reporting "unconfigured" would send the operator looking for a
 			// missing catalog entry when the entry exists and the payload is wrong.
 			code := "control_action_unconfigured"
-			if errors.Is(controlErr, errControlPayloadConflict) {
+			if errors.Is(controlErr, controlaction.ErrPayloadConflict) {
 				code = "control_payload_conflict"
 			}
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, code)}, controlErr

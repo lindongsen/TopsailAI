@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"topsailai_agent_cluster/internal/controlaction"
 	"topsailai_agent_cluster/internal/protocol"
 )
 
@@ -265,11 +266,11 @@ func TestDescribeDeclaresModelListAsReadOnlyView(t *testing.T) {
 // TestControlActionsUseTheSafetyClassVocabulary proves the control family no
 // longer hardcodes a bare string.
 func TestControlActionsUseTheSafetyClassVocabulary(t *testing.T) {
-	set, err := ParseControlActionSet([]byte(`{"actions":[{"name":"demo","permission":"control","command":["runtime","control","demo","-s","{session}","--json"]}]}`))
+	set, err := controlaction.ParseControlActionSet([]byte(`{"actions":[{"name":"demo","permission":"control","command":["runtime","control","demo","-s","{session}","--json"]}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	capabilities := controlActionCapabilities(set)
+	capabilities := controlaction.Capabilities(set)
 	if len(capabilities) != 1 {
 		t.Fatalf("expected 1 capability, got %d", len(capabilities))
 	}
