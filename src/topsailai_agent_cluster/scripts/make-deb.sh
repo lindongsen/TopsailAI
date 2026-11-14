@@ -213,6 +213,12 @@ case "${ROLE}" in
         case "${PROVIDER_TYPE}" in
             *[!a-z0-9-]* | "") die "--provider-type must be lowercase letters, digits and hyphens, got '${PROVIDER_TYPE}'" ;;
         esac
+        # The Mock Provider exists only to prove the protocol in tests, so it must
+        # never reach a deployment. Rejecting the type here is the only place that
+        # can stop it: the module directory exists, so the build would otherwise
+        # succeed and produce an installable package.
+        [ "${PROVIDER_TYPE}" != "mock" ] ||
+            die "--provider-type mock is refused: the Mock Provider is a test artifact and is never packaged"
         ;;
     *) die "--role must be node, server, endpoint, config or provider" ;;
 esac
