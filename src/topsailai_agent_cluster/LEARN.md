@@ -224,6 +224,15 @@ resolves `COMMAND_ALLOWLIST_FILE` and passes it as a flag, but it never reads `C
 so every packaged node started with no catalog and advertised zero `ctl.` actions while `node.conf`
 named the file and the file existed with 48 entries.
 
+That defect was resolved by removal, not by adding the missing forwarding step. `0391ba56` deleted the
+Endpoint-side catalog in full, including the `--control-action-file` flag, the
+`AGENT_CLUSTER_ENDPOINT_CONTROL_ACTION_FILE` read, the capability intersection and the SIGHUP reload, and
+`2b58a0a2` deleted `internal/controlaction`. The key is no longer read by any component, so its absence
+from `scripts/agent-clusterctl` is correct and adding an `args+=` line for it would forward a value
+nothing consumes. The `ctl.` family now comes from the `ADAPTERS` capability entries an operator
+declares, and the catalog is Provider-side configuration read through
+`AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS`.
+
 Action: when a document says a component forwards, resolves or exports a value, verify that claim in
 the component's source before trusting it, exactly as a defect claim is verified against its producer.
 Search the launcher for the key name, not for the feature name: the feature was documented and the
