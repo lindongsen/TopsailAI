@@ -200,30 +200,36 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create certificates: %w", err)
 	}
-	serverBin, endpointBin, fixtureBin := filepath.Join(root, "server"), filepath.Join(root, "endpoint"), filepath.Join(root, "fixture")
-	if err := Build(serverBin, "./src/main/agent-cluster-server"); err != nil {
+	// The three binaries are identical for every scenario, so they are built once
+	// per test process instead of once per scenario. Building them into root would
+	// cost 43 MB per real-cluster scenario and hold it until the top-level test
+	// returned; see sharedbuild.go.
+	serverBin, err := SharedBinary("agent-cluster-server", "./src/main/agent-cluster-server")
+	if err != nil {
 		return nil, err
 	}
-	if err := Build(endpointBin, "./src/main/agent-cluster-endpoint"); err != nil {
+	endpointBin, err := SharedBinary("agent-cluster-endpoint", "./src/main/agent-cluster-endpoint")
+	if err != nil {
 		return nil, err
 	}
-	if err := Build(fixtureBin, "./tests/fixtures/provider"); err != nil {
+	fixtureBin, err := SharedBinary("provider-fixture", "./tests/fixtures/provider")
+	if err != nil {
 		return nil, err
 	}
 	// The TopsailAI adapter resolves topsailai_session_info as a sibling of the
-	// configured executable and never through PATH, so both entry points are built
-	// into one provider directory when that adapter is selected.
-	providerDir := filepath.Join(root, "provider")
+	// configured executable and never through PATH, so both entry points share one
+	// directory. The shared build directory already provides that, so the two
+	// fixtures are named apart rather than placed in a scenario-local provider dir.
+	providerDir := ""
 	if options.ProviderType == "topsailai" {
-		if err := os.MkdirAll(providerDir, 0o755); err != nil {
-			return nil, fmt.Errorf("create provider directory: %w", err)
-		}
-		if err := Build(filepath.Join(providerDir, "topsailai"), "./tests/fixtures/topsailai_fixture"); err != nil {
+		if _, err := SharedBinary("topsailai", "./tests/fixtures/topsailai_fixture"); err != nil {
 			return nil, err
 		}
-		if err := Build(filepath.Join(providerDir, "topsailai_session_info"), "./tests/fixtures/topsailai_session_info_fixture"); err != nil {
+		sessionInfo, err := SharedBinary("topsailai_session_info", "./tests/fixtures/topsailai_session_info_fixture")
+		if err != nil {
 			return nil, err
 		}
+		providerDir = filepath.Dir(sessionInfo)
 	}
 	apiPort, err := FreePortE()
 	if err != nil {
@@ -728,8 +734,10 @@ func (c *Cluster) BuildTUI(tb testing.TB) (string, error) {
 	if c.TUIPath != "" {
 		return c.TUIPath, nil
 	}
-	path := filepath.Join(c.Root, "agent-cluster-cli")
-	if err := Build(path, "./src/main/agent-cluster-cli"); err != nil {
+	// The CLI is identical for every scenario, so it comes from the shared build
+	// cache instead of a scenario-local copy.
+	path, err := SharedBinary("agent-cluster-cli", "./src/main/agent-cluster-cli")
+	if err != nil {
 		return "", err
 	}
 	c.TUIPath = path
