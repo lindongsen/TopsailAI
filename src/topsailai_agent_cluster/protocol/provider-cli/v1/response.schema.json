@@ -96,6 +96,30 @@
         },
         "version": {
           "$ref": "#/$defs/identifier"
+        },
+        "target_kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "agent",
+              "session",
+              "task",
+              "launch_profile",
+              "model_profile"
+            ]
+          }
+        },
+        "payload_schema": {
+          "type": "string"
+        },
+        "safety_class": {
+          "enum": [
+            "read_only",
+            "mutating"
+          ]
+        },
+        "required_permission": {
+          "$ref": "#/$defs/identifier"
         }
       }
     },
@@ -375,6 +399,9 @@
         "finished_at_ms": {
           "type": "integer",
           "minimum": 1
+        },
+        "exit_confirmed": {
+          "type": "boolean"
         }
       }
     },
