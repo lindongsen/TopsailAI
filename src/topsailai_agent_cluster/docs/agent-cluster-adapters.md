@@ -192,9 +192,9 @@ local policy approves the exposed subset and required permissions. Effective adv
 the intersection. Provider-native argv construction belongs inside the provider project; the target
 configuration contains no provider command template.
 
-The current Endpoint control-action catalog with `command` templates is implementation to remove,
-not a compatibility seam. The target policy keeps only action approval and permission; provider-native
-command construction belongs to `providers/topsailai`.
+The Endpoint control-action catalog with `command` templates was removed by `2b58a0a2`, so it is
+history rather than a compatibility seam. The policy keeps only action approval and permission;
+provider-native command construction belongs to `providers/topsailai`.
 
 ### Adapter implementations
 

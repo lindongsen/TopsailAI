@@ -196,18 +196,18 @@ The target Endpoint configuration contains no provider argv template and no plac
 A remote request supplies only the advertised `ctl.<action>` name and its validated standard payload.
 The provider CLI decides how that action reaches provider business logic.
 
-### Current control catalog replacement
+### Removed control catalog
 
-The current Endpoint-local control-action catalog contains `command` and `payload_session_field`, and
-the Endpoint substitutes `{session}` and `{payload}` into provider argv templates. This is current
-implementation evidence only; it is not a compatibility contract or a supported legacy path.
+The Endpoint-local control-action catalog held `command` and `payload_session_field`, and the Endpoint
+substituted `{session}` and `{payload}` into provider argv templates. `2b58a0a2` deleted it, so this is
+history rather than a compatibility contract or a supported legacy path.
 
-The Provider CLI replacement moves provider-native argv construction into `providers/topsailai` and
-changes Endpoint-local policy to approve action names and permissions only. The replacement unit
-removes the command templates and placeholder substitution after the new descriptor and policy
-intersection is executable. There is no dual-path action parity phase and no fallback to the old
-catalog. Existing fail-closed behavior, standard action names, payload validation and permissions are
-acceptance requirements derived from the Cluster contract and tests.
+The Provider CLI replacement moved provider-native argv construction into `providers/topsailai` and
+changed Endpoint-local policy to approve action names and permissions only. The command templates and
+placeholder substitution were removed once the new descriptor and policy intersection became
+executable. There is no dual-path action parity phase and no fallback to the old catalog. Existing
+fail-closed behavior, standard action names, payload validation and permissions are acceptance
+requirements derived from the Cluster contract and tests.
 
 ## Allowlisted command execution
 
