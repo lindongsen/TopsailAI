@@ -1,6 +1,8 @@
 # Independent plugin tests; author: DawsonLin.
 UV ?= uv
-PYTHON ?= $(UV) run python
+# `:=` (not `?=`) so an exported PYTHON in the caller shell cannot silently
+# replace uv with a bare interpreter. A command-line override still wins.
+PYTHON := $(UV) run python
 WORKSPACE := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 CORE_ROOT := $(abspath $(WORKSPACE)/..)
 TEMP_ROOT := $(CORE_ROOT)/.tmp/plugins-workspace
