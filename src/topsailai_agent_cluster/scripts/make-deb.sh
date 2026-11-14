@@ -26,8 +26,9 @@
 #                                  symlinks to the payload above
 #
 # The config package carries conf/<role>/node.conf, certs/ca.pem, certs/node.pem and
-# certs/node-key.pem, plus the endpoint allowlist and control action catalog. It is
-# built per site and is not interchangeable between machines.
+# certs/node-key.pem, plus the endpoint allowlist. It ships no catalog: the catalog is
+# Provider-side configuration an operator installs by hand. It is built per site and is
+# not interchangeable between machines.
 #
 # Configuration, TLS material, state, logs and pid files are real directories
 # inside /opt/agent-cluster, not symlinks into /etc, /var/lib, /var/log and /run.
@@ -577,7 +578,8 @@ function build_role_package() {
 }
 
 # Builds the configuration package for one role: the conffile, the TLS material
-# and, for the endpoint role, the allowlist and the control action catalog.
+# and, for the endpoint role, the allowlist. It ships no catalog, because the catalog
+# is Provider-side configuration an operator installs by hand.
 #
 # This package carries site data, so it is built per site and is not
 # interchangeable between machines. Keeping it separate is what lets the binary

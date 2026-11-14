@@ -5,7 +5,7 @@ author: DawsonLin
 
 # Provider control actions and instructions
 
-This document is the reference for the catalog in `conf/control-actions.conf.example`. It records what the TopsailAI provider actually serves, so an operator can decide which entries to enable without reading provider source.
+This document is the reference for the catalog in `conf/control-actions.conf.example`. That file is a repository reference, not an installed file: no deployment path ships it, so an operator copies it by hand to the path the Provider reads and points `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS` at that copy. It records what the TopsailAI provider actually serves, so an operator can decide which entries to enable without reading provider source.
 
 The catalog is read by the TopsailAI Provider CLI at its own process boundary, through `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS`. The Endpoint does not parse it: the Endpoint advertises the `ctl.` capabilities named in its `ADAPTERS` document and refuses anything else, so the two documents are the two halves of one decision. The catalog says what an action runs; the adapter document says who may run it.
 
