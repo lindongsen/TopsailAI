@@ -162,8 +162,10 @@ here.
 
 A JSON array. Each element carries `adapter_id`, `provider_type`, `command`,
 optional `args`, `timeout_ms` and optional `capabilities`. The `command` must be an
-absolute path that exists on the node. Parsing rejects an empty array, duplicate
-adapter IDs, a relative command path and a non-positive timeout.
+absolute path that exists on the node. An empty array is accepted: it configures the
+Endpoint with no Adapter, which is the state a fresh install and a Provider CLI
+rollout both pass through. Parsing rejects duplicate adapter IDs, a relative command
+path and a non-positive timeout.
 
 Adapters are supplied through the environment because no flag exists for them. The
 launcher exports this variable from the `ADAPTERS` configuration entry.
