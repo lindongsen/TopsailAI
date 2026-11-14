@@ -391,10 +391,16 @@ func cdSingle(ctx context.Context, state *interactiveState, loaded reportLoad, t
 // cdPair resolves hostname/endpoint-id or endpoint-id/session targets.
 func cdPair(state *interactiveState, loaded reportLoad, first, second string) error {
 	if endpoint, ok := endpointByHostnameAndID(loaded, first, second); ok {
+		if err := refuseDegradedEndpoint(endpoint); err != nil {
+			return err
+		}
 		state.enterEndpoint(endpoint)
 		return nil
 	}
 	if endpoint, ok := endpointByID(loaded, first); ok {
+		if err := refuseDegradedEndpoint(endpoint); err != nil {
+			return err
+		}
 		outcome, err := resolveSessionInEndpoint(state, loaded, endpoint.EndpointID, second)
 		if outcome == outcomeResolved || err != nil {
 			return err
@@ -410,6 +416,9 @@ func cdTriple(state *interactiveState, loaded reportLoad, hostname, endpointID, 
 	if !ok {
 		return fmt.Errorf("endpoint %q was not found", hostname+"/"+endpointID)
 	}
+	if err := refuseDegradedEndpoint(endpoint); err != nil {
+		return err
+	}
 	outcome, err := resolveSessionInEndpoint(state, loaded, endpoint.EndpointID, sessionID)
 	if outcome == outcomeResolved || err != nil {
 		return err
@@ -420,6 +429,13 @@ func cdTriple(state *interactiveState, loaded reportLoad, hostname, endpointID, 
 // resolveEndpoint enters an endpoint by exact ID or by unique hostname.
 func resolveEndpoint(ctx context.Context, state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (resolveOutcome, error) {
 	if endpoint, ok := endpointByID(loaded, target); ok {
+		// A degraded endpoint is refused by name, because its inventory is already
+		// deleted and every command inside the scope would be refused. An offline
+		// endpoint stays enterable: navigation sends no frame, and its retained
+		// inventory is still readable.
+		if err := refuseDegradedEndpoint(endpoint); err != nil {
+			return outcomeCancelled, err
+		}
 		state.enterEndpoint(endpoint)
 		return outcomeResolved, nil
 	}
@@ -429,15 +445,28 @@ func resolveEndpoint(ctx context.Context, state *interactiveState, loaded report
 			matches = append(matches, endpoint)
 		}
 	}
-	switch len(matches) {
+	// A degraded endpoint is dropped from the candidates before the count is
+	// decided, so a hostname shared by one online and one degraded endpoint
+	// resolves to the online one instead of asking the operator to choose between
+	// a usable row and an unusable one.
+	enterable := make([]protocol.Endpoint, 0, len(matches))
+	for _, endpoint := range matches {
+		if !endpointDegraded(endpoint) {
+			enterable = append(enterable, endpoint)
+		}
+	}
+	switch len(enterable) {
 	case 0:
+		if len(matches) > 0 {
+			return outcomeCancelled, requireQueryableEndpoint(matches[0])
+		}
 		return outcomeNotFound, nil
 	case 1:
-		state.enterEndpoint(matches[0])
+		state.enterEndpoint(enterable[0])
 		return outcomeResolved, nil
 	default:
-		sort.Slice(matches, func(i, j int) bool { return matches[i].EndpointID < matches[j].EndpointID })
-		return chooseEndpoint(ctx, state, matches, target, lineSource, out, trustedOut, color)
+		sort.Slice(enterable, func(i, j int) bool { return enterable[i].EndpointID < enterable[j].EndpointID })
+		return chooseEndpoint(ctx, state, enterable, target, lineSource, out, trustedOut, color)
 	}
 }
 

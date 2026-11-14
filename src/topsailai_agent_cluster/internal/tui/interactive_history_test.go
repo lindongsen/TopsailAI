@@ -125,20 +125,77 @@ func TestInteractiveHistoryEndpointScopeRejectsDifferentEndpoint(t *testing.T) {
 	}
 }
 
-// TestInteractiveHistoryWorkspaceScopeRequiresEndpoint proves workspace scope has
-// no current endpoint, so the argument is mandatory.
-func TestInteractiveHistoryWorkspaceScopeRequiresEndpoint(t *testing.T) {
+// TestInteractiveHistoryWorkspaceScopePromptsForEndpoint proves workspace scope
+// has no current endpoint, so a bare history prints the numbered online endpoints
+// and reads one answer instead of failing with a usage line.
+//
+// The list is asserted because the prompt exists to be chosen from: a prompt that
+// printed nothing would leave the operator guessing which number means which
+// machine.
+func TestInteractiveHistoryWorkspaceScopePromptsForEndpoint(t *testing.T) {
 	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past"}}, historyReport())
 
-	_, diagnostics := runScope(t, stub, "history\nexit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, "error: invalid arguments") {
-		t.Fatalf("diagnostics=%q", diagnostics)
+	output, diagnostics := runScope(t, stub, "history\n1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(diagnostics, "usage: history <endpoint-id-or-hostname>") {
-		t.Fatalf("diagnostics=%q", diagnostics)
+	if !strings.Contains(output, "1. host-one / endpoint-1 / endpoint-1") {
+		t.Fatalf("history did not print the numbered endpoint list: %q", output)
+	}
+	if !strings.Contains(output, "Choose an endpoint number or enter an endpoint ID") {
+		t.Fatalf("history did not prompt for an endpoint: %q", output)
+	}
+	if len(stub.historyCalls) != 1 || stub.historyCalls[0] != "endpoint-1" {
+		t.Fatalf("history calls=%v, want [endpoint-1]", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryWorkspaceScopeCancelLeavesNoQuery proves an empty answer
+// cancels the prompt without querying anything and without reporting an error,
+// because cancelling a prompt is a decision rather than a failure.
+func TestInteractiveHistoryWorkspaceScopeCancelLeavesNoQuery(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past"}}, historyReport())
+
+	_, diagnostics := runScope(t, stub, "history\n\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("cancelled history reported an error: %q", diagnostics)
 	}
 	if len(stub.historyCalls) != 0 {
-		t.Fatalf("argument-less history reached the API: %v", stub.historyCalls)
+		t.Fatalf("cancelled history reached the API: %v", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryWorkspaceScopeOffersOnlyOnlineEndpoints proves the prompt
+// never offers a machine the query cannot reach.
+//
+// A degraded endpoint is excluded because its record is scheduled for deletion and
+// its inventory is already gone; an offline endpoint is excluded because a history
+// query is a live provider read that can only fail. Both are still refused by name
+// through the shared connectivity check, so excluding them from the list narrows
+// what is offered without widening what is reachable.
+func TestInteractiveHistoryWorkspaceScopeOffersOnlyOnlineEndpoints(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past"}}, historyReport())
+	stub.endpoints = []protocol.Endpoint{
+		{EndpointID: "endpoint-1", Hostname: "host-one", ConnectionState: "online"},
+		{EndpointID: "off-ep", Hostname: "host-off", ConnectionState: "offline"},
+		{EndpointID: "deg-ep", Hostname: "host-deg", ConnectionState: "degraded", ExpiresAtMS: 1797000000000},
+	}
+
+	output, diagnostics := runScope(t, stub, "history\n1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if strings.Contains(output, "off-ep") {
+		t.Fatalf("history offered an offline endpoint: %q", output)
+	}
+	if strings.Contains(output, "deg-ep") {
+		t.Fatalf("history offered a degraded endpoint: %q", output)
+	}
+	if !strings.Contains(output, "1. host-one / endpoint-1 / endpoint-1") {
+		t.Fatalf("history did not offer the online endpoint: %q", output)
+	}
+	if len(stub.historyCalls) != 1 || stub.historyCalls[0] != "endpoint-1" {
+		t.Fatalf("history calls=%v, want [endpoint-1]", stub.historyCalls)
 	}
 }
 

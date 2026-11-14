@@ -590,7 +590,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "history":
 		// The history table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and endpoints.
-		return false, interactiveHistory(ctx, api, state, rest, trustedOut, errOut, options.Color)
+		return false, interactiveHistory(ctx, api, state, rest, lineResults, trustedOut, trustedOut, errOut, options.Color)
 	case "model":
 		// The model catalog table is trusted application styling over sanitized
 		// cells, so it renders through the trusted writer like list and history.
@@ -908,6 +908,48 @@ func degradedRefusal(loaded reportLoad, endpointID string) error {
 // and the failure would describe the endpoint's own state rather than a defect.
 func endpointDegraded(endpoint protocol.Endpoint) bool {
 	return endpoint.ConnectionState == "degraded"
+}
+
+// selectableEndpoints returns the endpoints an interactive selection may offer.
+//
+// A selection list is a client-side rendering of the endpoint records, so reading
+// every record is allowed; offering a row the operator cannot use is not. Only an
+// online endpoint is offered, because every command that follows a selection sends
+// a frame to the machine, and a disconnected machine can only fail.
+//
+// The order is preserved, because the numbered list and the answer that selects a
+// row are computed from this same slice: reordering here would silently change
+// which endpoint a number means.
+//
+// An explicitly named endpoint is not filtered by this function. The operator may
+// name a machine that is not offered, and the caller must then report its real
+// state instead of describing it as absent.
+func selectableEndpoints(endpoints []protocol.Endpoint) []protocol.Endpoint {
+	selectable := make([]protocol.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpointOnline(endpoint) {
+			selectable = append(selectable, endpoint)
+		}
+	}
+	return selectable
+}
+
+// refuseDegradedEndpoint rejects only a degraded endpoint, leaving an offline one
+// enterable.
+//
+// Navigation sends no frame to the machine, so entering an offline endpoint is
+// allowed: its retained inventory is still readable and is often exactly what the
+// operator wants to inspect. A degraded endpoint is different, because its
+// inventory has already been deleted, so every command inside the scope would be
+// refused and the scope itself would be a dead end.
+//
+// The message is the shared degraded refusal, so the deletion date is reported
+// here exactly as it is by refresh, show and start.
+func refuseDegradedEndpoint(endpoint protocol.Endpoint) error {
+	if !endpointDegraded(endpoint) {
+		return nil
+	}
+	return requireQueryableEndpoint(endpoint)
 }
 
 // loadListReports loads the inventory a list render needs. It differs from

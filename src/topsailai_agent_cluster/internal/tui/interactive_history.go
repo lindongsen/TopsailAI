@@ -31,7 +31,7 @@ type historyNamespace struct {
 // requires the endpoint argument, because a history query is endpoint-scoped and
 // fanning out would multiply provider calls and mix rows whose provider session
 // identifiers may collide.
-func interactiveHistory(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out, diagnostics io.Writer, color ColorPolicy) error {
+func interactiveHistory(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lines <-chan lineReadResult, out, trustedOut, diagnostics io.Writer, color ColorPolicy) error {
 	if err := rejectInteractiveOption("history", rest); err != nil {
 		return err
 	}
@@ -41,9 +41,14 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	endpointID, err := historyEndpointID(ctx, api, state, strings.TrimSpace(rest))
+	endpointID, err := historyEndpointID(ctx, api, state, strings.TrimSpace(rest), lines, out, trustedOut, color)
 	if err != nil {
 		return err
+	}
+	// An empty identifier means the operator cancelled the endpoint prompt, so
+	// there is nothing to query and no diagnostic to print.
+	if endpointID == "" {
+		return nil
 	}
 	// The interactive surface always reads the whole provider window, because a
 	// REPL operator selects a row from what is rendered and cannot pass a limit.
@@ -98,18 +103,78 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 // mandatory. Both scopes resolve through the same resolver the standalone command
 // uses, so connectivity is validated on both paths: an endpoint that was online
 // when it was entered can disconnect before the query is dispatched.
-func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interactiveState, target string) (string, error) {
+func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interactiveState, target string, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
 	if state.Scope.Kind == ScopeEndpoint {
 		if target != "" && target != state.Scope.EndpointID {
 			return "", fmt.Errorf("history %q does not match the current endpoint %q; run cd .. to query another endpoint", target, state.Scope.EndpointID)
 		}
 		target = state.Scope.EndpointID
 	}
+	// Workspace scope has no current endpoint, so a bare history asks for one
+	// instead of failing with a usage line. The prompt offers only online
+	// endpoints, because a history query is a live provider read forwarded through
+	// the endpoint channel and a disconnected machine can only fail.
+	if target == "" && state.Scope.Kind == ScopeWorkspace {
+		chosen, err := promptHistoryEndpoint(ctx, api, lines, out, trustedOut, color)
+		if err != nil {
+			return "", err
+		}
+		if chosen == "" {
+			return "", nil
+		}
+		target = chosen
+	}
 	endpoint, err := resolveHistoryEndpoint(ctx, api, target)
 	if err != nil {
 		return "", err
 	}
 	return endpoint.EndpointID, nil
+}
+
+// promptHistoryEndpoint prints the numbered online endpoints and reads one answer.
+//
+// The list is the same shape the start wizard prints, so an operator who has used
+// one already knows the other. The answer is resolved against the same slice that
+// was printed, so a number can never address a row that was not shown.
+//
+// An empty answer cancels and returns an empty identifier, which the caller treats
+// as "nothing to do" rather than as an error: cancelling a prompt is a decision,
+// not a failure. A failed inventory read is reported as an error, because without
+// the records there is nothing to choose from and the operator must be told why.
+func promptHistoryEndpoint(ctx context.Context, api InteractiveAPI, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
+	queryCtx, cancel := commandContext(ctx)
+	reported, err := api.ListEndpoints(queryCtx)
+	cancel()
+	if err != nil {
+		return "", err
+	}
+	endpoints := selectableEndpoints(reported)
+	if len(endpoints) == 0 {
+		if len(reported) == 0 {
+			return "", fmt.Errorf("no endpoint is registered; register an endpoint before reading history")
+		}
+		return "", fmt.Errorf("no endpoint is online; %d registered endpoint(s) are offline or degraded, so history cannot be read", len(reported))
+	}
+	for index, endpoint := range endpoints {
+		if _, err := fmt.Fprintf(out, "%d. %s\n", index+1, launchEndpointRowLabel(endpoint)); err != nil {
+			return "", err
+		}
+	}
+	if _, err := fmt.Fprintln(out, "Choose an endpoint number or enter an endpoint ID; empty/cancel cancels."); err != nil {
+		return "", err
+	}
+	echo := func(answer string) string {
+		return RenderAnswerEcho(launchEndpointEchoLabel(endpoints, answer), color)
+	}
+	answer, ok := nextPromptLineWithEcho(ctx, lines, trustedOut, echo)
+	if !ok || answer.overflow || answer.err != nil {
+		return "", nil
+	}
+	choice := strings.TrimSpace(answer.line)
+	if choice == "" || strings.EqualFold(choice, "cancel") {
+		return "", nil
+	}
+	return resolveLaunchEndpointValue(endpoints, choice)
 }
 
 // cdHistoryRowNumber enters one live history row and rejects a non-live row with

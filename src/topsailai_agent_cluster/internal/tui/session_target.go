@@ -88,7 +88,16 @@ func resolveSessionTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI
 	}
 	matches := make([]sessionTarget, 0, 1)
 	unavailable := make([]string, 0, 1)
+	degraded := make([]string, 0, 1)
 	for _, endpoint := range loaded.endpoints {
+		// A degraded endpoint has a known state and a known deletion date, so it is
+		// reported as degraded rather than as an inventory that failed to answer.
+		// Its inventory is gone by design, which would otherwise be indistinguishable
+		// from a transient read failure.
+		if endpointDegraded(endpoint) {
+			degraded = append(degraded, endpoint.EndpointID)
+			continue
+		}
 		report, ok := loaded.reports[endpoint.EndpointID]
 		if !ok || !report.ReportComplete {
 			// An incomplete enumeration cannot prove absence, so remember it and fail
@@ -104,6 +113,9 @@ func resolveSessionTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI
 	case 1:
 		return validateSessionTarget(ctx, api, matches[0].endpointID, matches[0].sessionID, matches[0].generation)
 	case 0:
+		if len(degraded) > 0 {
+			return sessionTarget{}, numericTokenHint(token, degradedEndpointError(degraded))
+		}
 		if len(unavailable) > 0 {
 			return sessionTarget{}, numericTokenHint(token, unavailableInventoryError(unavailable))
 		}
@@ -111,6 +123,15 @@ func resolveSessionTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI
 	default:
 		return sessionTarget{}, fmt.Errorf("multiple sessions match %q; use %s <number> with a row from list", token, command)
 	}
+}
+
+// degradedEndpointError names the endpoints that are degraded, so a known state is
+// never reported as an inventory that failed to answer.
+func degradedEndpointError(endpointIDs []string) error {
+	if len(endpointIDs) == 1 {
+		return fmt.Errorf("endpoint %q is degraded, so its sessions cannot be listed; re-register the endpoint to use it again", endpointIDs[0])
+	}
+	return fmt.Errorf("endpoints are degraded, so their sessions cannot be listed: %s; re-register them to use them again", strings.Join(endpointIDs, ", "))
 }
 
 // unavailableInventoryError names the endpoints whose inventory could not prove

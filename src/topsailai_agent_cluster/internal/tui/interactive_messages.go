@@ -196,6 +196,13 @@ func messagesSessionID(ctx context.Context, api InteractiveAPI, state *interacti
 		// endpoint when the fleet has exactly one, and otherwise the operator must
 		// state which machine to ask.
 		if len(loaded.endpoints) == 1 {
+			// The sole endpoint is still refused when it is degraded, because a
+			// conversation read sends a frame to that machine. Falling back to it
+			// would accept the command and refuse it later, which reports the
+			// wrong reason.
+			if err := refuseDegradedEndpoint(loaded.endpoints[0]); err != nil {
+				return "", "", err
+			}
 			return loaded.endpoints[0].EndpointID, token, nil
 		}
 		return "", "", fmt.Errorf("session %q is not in the current inventory; pass the endpoint first with cd <endpoint>", token)
