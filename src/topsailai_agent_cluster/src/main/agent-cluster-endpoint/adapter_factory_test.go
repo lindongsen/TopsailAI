@@ -30,11 +30,11 @@ func newFactoryStore(t *testing.T) *endpointstorage.Store {
 // default that returns an error only when a node is configured that way, which is
 // exactly the configuration a Provider CLI deployment uses.
 //
-// The legacy "fixture" and "command" types are deliberately absent: their factory
-// branch and the in-process command adapter behind it were removed, so configuring
-// either type must now fail loudly instead of silently registering nothing.
+// genericcli is the only accepted type. The in-process "topsailai" adapter and the
+// legacy "fixture" and "command" adapters were removed, so configuring any of them
+// must now fail loudly instead of silently registering nothing.
 func TestRegisterAdapterTypeAcceptsEverySupportedProviderType(t *testing.T) {
-	for _, providerType := range []string{"topsailai", "genericcli"} {
+	for _, providerType := range []string{"genericcli"} {
 		t.Run(providerType, func(t *testing.T) {
 			registry := adapter.NewRegistry()
 			if err := registerAdapterType(registry, providerType, newFactoryStore(t), nil); err != nil {
@@ -47,11 +47,11 @@ func TestRegisterAdapterTypeAcceptsEverySupportedProviderType(t *testing.T) {
 // TestRegisterAdapterTypeRejectsUnknownProviderType proves an unconfigured
 // provider type fails loudly instead of silently registering nothing.
 //
-// The removed legacy types are included here on purpose: a configuration that
-// still names "fixture" or "command" must be refused at startup rather than
+// The removed types are included here on purpose: a configuration that still names
+// "topsailai", "fixture" or "command" must be refused at startup rather than
 // accepted and then fail on the first operation.
 func TestRegisterAdapterTypeRejectsUnknownProviderType(t *testing.T) {
-	for _, providerType := range []string{"not-a-provider", "fixture", "command"} {
+	for _, providerType := range []string{"not-a-provider", "topsailai", "fixture", "command"} {
 		t.Run(providerType, func(t *testing.T) {
 			registry := adapter.NewRegistry()
 			err := registerAdapterType(registry, providerType, newFactoryStore(t), nil)

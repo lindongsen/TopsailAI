@@ -7,7 +7,6 @@ import (
 
 	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/adapter/genericcli"
-	topsailaiadapter "topsailai_agent_cluster/internal/adapter/topsailai"
 	"topsailai_agent_cluster/internal/controlaction"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/providercli"
@@ -36,31 +35,19 @@ var genericCLIConcurrency = providercli.ConcurrencyLimits{Total: 4, Discovery: 2
 
 // registerAdapterType installs the factory for one provider type.
 //
-// The genericcli case exists so the Provider CLI adapter is reachable from
-// Endpoint configuration at all. Without it the only adapters an Endpoint could
-// build were the in-process TopsailAI adapter and the legacy command adapter,
-// so no deployment could select a standalone Provider CLI and no activation
-// could ever be exercised against one. The legacy command adapter has since been
-// removed, so every configured adapter is now either the in-process TopsailAI
-// adapter or a standalone Provider CLI.
+// genericcli is the only provider type an Endpoint can be configured with. The
+// in-process TopsailAI adapter and the legacy command adapter were removed, so a
+// configuration that still names either of them is refused here instead of being
+// accepted and then failing on the first operation. Refusing loudly is the point:
+// a silent fallback to genericcli would run a provider CLI against a command line
+// that was written for a different adapter, and the operator would see a provider
+// error rather than a configuration error.
 func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store, controlActions *controlaction.ControlActionSet) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}
 	var factory adapter.Factory
 	switch providerType {
-	case "topsailai":
-		factory = func(_ context.Context, local adapter.Config) (adapter.Adapter, error) {
-			return topsailaiadapter.New(topsailaiadapter.Config{
-				AdapterID: local.AdapterID, Executable: local.Command,
-				Timeout:        time.Duration(local.TimeoutMS) * time.Millisecond,
-				ResourceMapper: store,
-				// The Endpoint-global control action set is passed explicitly rather
-				// than read from the environment inside Describe, so the adapter has
-				// no hidden configuration dependency and a test can supply its own.
-				ControlActions: controlActions,
-			})
-		}
 	case "genericcli":
 		factory = func(ctx context.Context, local adapter.Config) (adapter.Adapter, error) {
 			// A display name is required by the adapter and is not part of the

@@ -86,7 +86,7 @@ SERVER_TEST_PKGS := ./internal/server ./internal/storage/server \
                     ./src/main/agent-cluster-server
 # endpoint: the Endpoint service, its adapters, its storage and its entry point.
 ENDPOINT_TEST_PKGS := ./internal/adapter ./internal/adapter/genericcli \
-                      ./internal/adapter/topsailai ./internal/controlaction \
+                      ./internal/controlaction \
                       ./internal/endpoint ./internal/storage/endpoint \
                       ./src/main/agent-cluster-endpoint
 # cli: the operator client, the TUI and the CLI entry point.
