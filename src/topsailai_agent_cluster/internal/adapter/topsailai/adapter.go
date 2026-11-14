@@ -428,6 +428,14 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	if err := json.Unmarshal(output, &response); err != nil {
 		return adapter.InspectResult{}, fmt.Errorf("decode workspace list JSON: %w", err)
 	}
+	// Every matching row is examined instead of returning on the first one. A
+	// session-scoped target matches every row of that session, and one provider
+	// session identifier can appear in several rows, so returning on the first
+	// non-live row would hide a live sibling and let resume target a session that
+	// is still running. The first live row wins because Live is the only fact the
+	// resume gate reads; otherwise the first found row supplies the reported
+	// generation and state.
+	var found *adapter.InspectResult
 	for _, item := range response.Items {
 		if !target.matchesWorkspaceItem(item) {
 			continue
@@ -446,7 +454,16 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 		// Resume authorizes on the absence of a live target, so it must read Live
 		// rather than Found: reading Found would refuse to resume exactly the
 		// sessions whose process is gone, which is the only case resume exists for.
-		return adapter.InspectResult{Found: true, Live: generation != "", ProviderGeneration: generation, State: state}, nil
+		result := adapter.InspectResult{Found: true, Live: generation != "", ProviderGeneration: generation, State: state}
+		if result.Live {
+			return result, nil
+		}
+		if found == nil {
+			found = &result
+		}
+	}
+	if found != nil {
+		return *found, nil
 	}
 	// An empty targeted result is a legitimate absence, not a malformed report.
 	return adapter.InspectResult{Found: false}, nil

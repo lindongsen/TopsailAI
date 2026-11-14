@@ -105,6 +105,26 @@ type OutputFollower interface {
 	FollowOutput(context.Context, protocol.OutputFollowRequest, func(protocol.OutputChunk) error) error
 }
 
+// HandleResolver is an optional adapter capability that turns a provider session
+// handle into a durable resource mapping.
+//
+// It exists for the case where an operator names a session by the provider's own
+// identifier before the Endpoint has ever discovered it, so no mapping exists
+// yet. The Endpoint selects the single configured adapter that implements this
+// interface and asks it to mint the mapping; an adapter that does not implement
+// it cannot address a handle and is never asked. Minting is local bookkeeping and
+// must not query the provider, because the operator already named the target and
+// the Endpoint must not decide whether that session exists. The provider remains
+// the only party that answers existence, when the operation reaches it.
+//
+// The adapter mints the mapping through the same durable mapper it uses for
+// discovery, so the resolved resource ID is stable and identical to the one a
+// later discovery would produce. Provider-specific spelling never leaves the
+// adapter: the Endpoint only passes the handle through and receives a mapping.
+type HandleResolver interface {
+	ResolveProviderSessionHandle(context.Context, string) (ResourceMapping, error)
+}
+
 // CommandQuery requests provider-side status for an opaque request reference.
 type CommandQuery struct {
 	ProviderRequestRef string

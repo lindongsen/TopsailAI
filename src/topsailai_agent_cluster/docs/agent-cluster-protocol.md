@@ -752,6 +752,44 @@ Enrollment, credential rotation and revocation are administrative operations spe
 
 A command request contains client-generated command_id, endpoint_id, target kind/ID/generation (or launch_profile_id/profile_revision for start), operation/version, capability_revision, typed payload, expiry, the caller's `endpoint_token` and optional expected_resource_revision. The Server derives the caller identity from the `server-token`, never from client-provided authority claims, and it forwards the `endpoint_token` without interpreting it. HTTP 202 means Server admission only, which is reachability rather than permission: the Endpoint may still refuse the operation. A repeated ID with identical canonical intent returns its prior state; changed intent returns conflict. Owner checks precede duplicate-result disclosure.
 
+## Implemented resume by provider session handle
+
+`CommandTarget` carries exactly one of two target identities: `resource_id`, the opaque Cluster
+resource ID minted by `adapter.ResourceMapper`, or `provider_session_handle`, the provider's own
+session identifier. Supplying both is `target_ambiguous`, because two identities for one target would
+force the Endpoint to choose which one wins.
+
+The handle exists because an operator can name a session the Endpoint has never discovered. Requiring
+a pre-existing mapping would make the client judge whether the session exists, which is exactly the
+judgement the operator's explicit target makes unnecessary. The Endpoint therefore resolves the handle
+locally: it selects the sole configured adapter that implements the optional `HandleResolver`
+interface and asks that adapter to mint the durable mapping. No provider call happens during
+resolution, so resolution never becomes an existence check.
+
+Resolution outcomes are explicit and fail closed:
+
+| Condition | Code |
+|---|---|
+| No configured adapter implements `HandleResolver` | `target_not_found` |
+| More than one adapter implements `HandleResolver` | `target_ambiguous` |
+| Both `resource_id` and `provider_session_handle` are set | `target_ambiguous` |
+
+Resolution runs before the Endpoint acquires its per-target lock, because the lock key is the resolved
+resource ID. Resolving inside the lock would key the lock on an empty ID and let two commands for one
+session run concurrently. After resolution the target is rewritten to the resolved `resource_id` and
+the handle is cleared, so every later stage sees one identity and the existing `Inspect` gate still
+runs: a resolved target that the provider reports as live is rejected with `target_still_active`.
+
+A handle-minted mapping has no provider row key, PID or task flag, because the operator named a
+session rather than a row. The adapter therefore treats it as session-scoped: `Inspect` scans every
+provider row matching that session and reports `Live` when any row is live. Without that scan the
+mapping would match no row, `Inspect` would report `Found=false, Live=false`, and the
+`target_still_active` gate would silently disappear for exactly the targets this path creates.
+
+Whether the session exists is answered by the provider when the operation reaches it, not by the
+Endpoint during resolution. A provider that refuses an unknown session returns its own error, which
+the Endpoint preserves as provider evidence rather than rewriting into a Cluster-level absence claim.
+
 SSE uses resource changes, command updates and freshness events. MVP does not periodically refresh stdout snapshots. Explicit snapshot requests are one-shot reads.
 
 Output follow is implemented as a real stream over the existing authenticated WebSocket, not as a timer-driven snapshot. One `output_follow_request` frame starts a stream; the Endpoint answers with repeated `output_chunk` frames and exactly one terminal `output_end` frame, all correlated by the same request ID. The Server exposes it as `GET /api/v1/output/follow`, which writes newline-delimited JSON: chunk records followed by exactly one end record. A transport that cannot stream returns `503 unsupported` rather than degrading into a snapshot, because a snapshot presented as a stream would look complete while silently missing everything written after it.

@@ -76,7 +76,20 @@ func (a *Adapter) History(ctx context.Context, query protocol.HistoryQuery) (pro
 		// adapter. A mapping failure fails the whole read instead of publishing
 		// an unaddressable row, because such a row would look selectable and
 		// then fail at dispatch.
-		resourceID, err := a.resourceID(ctx, entry.SessionID)
+		//
+		// The key is session-scoped, not the bare provider session identifier.
+		// A history row reports no row key, PID or task flag, so it cannot claim
+		// to be one particular workspace row, and a bare identifier is not a
+		// TopsailAI session selector at all: decodeProviderSessionKey rejects it,
+		// which made every history-only resume fail with "resource mapping is not
+		// a TopsailAI session row". Minting the same session-scoped key the
+		// handle path uses keeps one session on one identity, so a history row and
+		// an operator-typed handle resolve to the same resource ID.
+		providerKey, err := providerSessionHandleKey(entry.SessionID)
+		if err != nil {
+			return protocol.HistoryResult{}, fmt.Errorf("map history resource: %w", err)
+		}
+		resourceID, err := a.resourceID(ctx, providerKey)
 		if err != nil {
 			return protocol.HistoryResult{}, fmt.Errorf("map history resource: %w", err)
 		}

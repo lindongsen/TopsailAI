@@ -1135,7 +1135,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 // step its own bounded budget.
 func submitInteractiveAction(ctx, parent context.Context, api InteractiveAPI, state *interactiveState, op, name string, target confirmationTarget, generation string, payload json.RawMessage, out io.Writer, options InteractiveOptions, postSubmit func(context.Context, map[string]any) error) error {
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.ClusterSessionID, ProviderGeneration: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: target.ProviderDisplayName, ProviderSessionID: target.ProviderSessionID}
+	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.ClusterSessionID, ProviderGeneration: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: target.ProviderDisplayName, ProviderSessionID: target.ProviderSessionID, ProviderSessionHandle: target.ProviderSessionHandle}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)
 	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {

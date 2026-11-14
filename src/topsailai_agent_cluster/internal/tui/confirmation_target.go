@@ -17,6 +17,11 @@ type confirmationTarget struct {
 	ProviderDisplayName string
 	ProviderSessionID   string
 	ClusterSessionID    string
+	// ProviderSessionHandle is the provider session identifier the operator named
+	// with -s, forwarded so the Endpoint can mint the durable mapping. It is set
+	// only when no cluster resource ID is known, because the two are alternative
+	// ways to name one target.
+	ProviderSessionHandle string
 }
 
 // label renders one confirmation label as the canonical session identity

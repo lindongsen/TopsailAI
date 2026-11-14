@@ -31,6 +31,12 @@ type ActionRequest struct {
 	// describe the target in progress output. Like DisplayName it is presentation
 	// data and never participates in routing or the immutable intent.
 	ProviderSessionID string
+	// ProviderSessionHandle names a target the operator identified by the
+	// provider's own session identifier instead of a cluster resource ID. It is
+	// forwarded into the immutable intent so the Endpoint can mint the durable
+	// mapping; the client never looks the session up and never decides whether it
+	// exists.
+	ProviderSessionHandle string
 }
 
 // ActionResult contains the durable result and command identifier.
@@ -75,7 +81,12 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 	}
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: id, IssuerID: "operator", Scope: "operator", EndpointID: request.EndpointID, Operation: request.Operation, OperationVersion: operationVersion, CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Folder: request.Folder, Payload: request.Payload, Budget: protocol.Budget{WaitTimeoutMS: request.WaitTimeoutMS}, ExecuteBeforeAtMS: now.UnixMilli() + 5*60*1000}
 	if request.Operation != "agent.start" {
-		intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}
+		// A target named by a provider session handle carries no resource ID: the
+		// Endpoint mints the mapping when the command arrives, so the client must
+		// not look the session up first. Exactly one of the two is set, because
+		// carrying both would leave the Endpoint choosing between two names for a
+		// target that could be different sessions.
+		intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration, ProviderSessionHandle: request.ProviderSessionHandle}
 	}
 	if request.Operation == "agent.start" {
 		if request.Profile == "" || request.ProfileRevision == "" {

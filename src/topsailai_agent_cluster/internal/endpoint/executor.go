@@ -54,6 +54,24 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 	if entry.Phase == protocol.PhaseInvocationStarted || entry.Phase == protocol.PhaseEndpointAdmitted {
 		return unknownReceipt(intent, requestHash, "invocation_recovery_unknown"), nil
 	}
+	// A target named by its provider session handle has no durable mapping yet,
+	// so it must be resolved before the lock is chosen: the lock key is the
+	// resolved resource, and locking on an empty resource ID would let two
+	// commands for the same session run concurrently. Resolution rewrites the
+	// intent's target to the resolved opaque resource ID, so every later step
+	// sees exactly the target a discovery would have produced and the liveness
+	// gate below still runs.
+	resolvedIntent, resolveErr := e.resolveProviderSessionHandle(ctx, intent)
+	if resolveErr != nil {
+		var coded *resolutionError
+		if errors.As(resolveErr, &coded) {
+			receipt := rejectedReceipt(intent, requestHash, coded.code)
+			receipt.ErrorMessage = coded.message
+			return e.recordEarlyRejection(ctx, intent, receipt)
+		}
+		return protocol.ExecutionReceipt{}, resolveErr
+	}
+	intent = resolvedIntent
 	lock := e.lockFor(targetKey(intent))
 	lock.Lock()
 	defer lock.Unlock()
@@ -320,6 +338,66 @@ func (e *Executor) revalidateGeneration(ctx context.Context, instance adapter.Ad
 		return fmt.Errorf("resource generation does not match")
 	}
 	return nil
+}
+
+// resolveProviderSessionHandle rewrites a handle-named target into the opaque
+// resource ID the rest of the command path requires.
+//
+// The operator may name a session by the provider's own identifier before the
+// Endpoint has ever discovered it, so no durable mapping exists and the ordinary
+// resource-ID lookup would reject the command as target_not_found. That rejection
+// is exactly what this path removes: the operator named the target, so the
+// Endpoint must not decide whether the session exists. Minting the mapping is a
+// local bookkeeping step and never asks the provider, so no existence judgement
+// happens here. Whether the session really exists is decided by the provider when
+// the operation reaches it, which is the only party that can answer.
+//
+// The mapping is minted by the single configured adapter that can address a
+// provider session handle. Zero such adapters means no configured provider can
+// accept a handle, and more than one means the handle cannot be attributed to a
+// provider without guessing, so both are rejected instead of picking one. A target
+// that carries both a resource ID and a handle is rejected rather than silently
+// preferring one, because the two could name different sessions.
+//
+// A target without a handle is returned unchanged, so every existing command path
+// keeps its current behaviour and pays no extra work.
+func (e *Executor) resolveProviderSessionHandle(ctx context.Context, intent protocol.ImmutableIntent) (protocol.ImmutableIntent, error) {
+	if intent.Target == nil || intent.Target.ProviderSessionHandle == "" {
+		return intent, nil
+	}
+	if intent.Target.ResourceID != "" {
+		return protocol.ImmutableIntent{}, resolutionFailure("target_ambiguous", fmt.Errorf("target carries both resource_id %q and provider_session_handle %q", intent.Target.ResourceID, intent.Target.ProviderSessionHandle))
+	}
+	handle := intent.Target.ProviderSessionHandle
+	var owner adapter.HandleResolver
+	owners := 0
+	for _, instance := range e.registry.All() {
+		resolver, ok := instance.(adapter.HandleResolver)
+		if !ok {
+			continue
+		}
+		owner = resolver
+		owners++
+	}
+	switch owners {
+	case 0:
+		return protocol.ImmutableIntent{}, resolutionFailure("target_not_found", fmt.Errorf("no configured adapter accepts a provider session handle, so %q cannot be addressed", handle))
+	case 1:
+	default:
+		return protocol.ImmutableIntent{}, resolutionFailure("target_ambiguous", fmt.Errorf("%d configured adapters accept a provider session handle, so %q cannot be attributed", owners, handle))
+	}
+	mapping, err := owner.ResolveProviderSessionHandle(ctx, handle)
+	if err != nil {
+		return protocol.ImmutableIntent{}, fmt.Errorf("resolve provider session handle %q: %w", handle, err)
+	}
+	// The resolved mapping is authoritative from here on: the handle is cleared so
+	// a later step cannot resolve it a second time, and the resource ID is the same
+	// opaque value a discovery would have minted for this session.
+	target := *intent.Target
+	target.ResourceID = mapping.ResourceID
+	target.ProviderSessionHandle = ""
+	intent.Target = &target
+	return intent, nil
 }
 
 // adapterForIntent resolves the adapter instance that owns the intent target and

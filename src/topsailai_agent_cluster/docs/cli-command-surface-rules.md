@@ -290,7 +290,7 @@ was dispatched rather than rejected as unknown.
 | `ctl.<action>` | `ctl` | `ctl`, `control`, `ctl.<action>` | yes |
 | `command.exec` | `exec` | `!<argv...>` | yes |
 | `agent.start` | `start` | `start` | yes |
-| `agent.resume` | `resume` | not applicable | yes (standalone only: session scope requires a live generation while resume authorizes on a proven absence, so the interactive spelling was removed) |
+| `agent.resume` | `resume <endpoint> <resource> [text] [generation]` | `resume [-s <session_id>] [row\|session]` | yes (interactive `resume` selects a row from the most recently rendered table, or names a session in endpoint scope; `-s`/`--session` names a provider session identifier directly and the client performs no existence check, because the operator named the exact target and the endpoint mints the mapping when the command arrives; the endpoint still inspects the provider, so a live target is rejected with `target_still_active`) |
 | `agent.stop` | `stop` | `stop` | yes |
 | `workspace.clean` | `--yes clean <endpoint> <resource> [generation]` | `clean <row|session>` in workspace and endpoint scopes | yes (destructive confirmation is mandatory; session scope does not offer cleanup; row numbers and literal IDs resolve against the current persisted inventory before exact Endpoint-side inspection) |
 | `agent.drive.start` | `drive start` | `drive start [session]` | yes |

@@ -20,6 +20,13 @@ type providerSessionTarget struct {
 	ProviderRowKey string `json:"provider_row_key,omitempty"`
 	PID            int64  `json:"pid,omitempty"`
 	IsTask         bool   `json:"is_task,omitempty"`
+	// SessionScoped marks a mapping that names the session and nothing else.
+	// It is declared rather than inferred from empty fields, because an empty
+	// row key is also what a provider row legitimately reports when it has no
+	// filename, and inferring would silently change how an existing row mapping
+	// is matched. A session-scoped mapping is minted when an operator names a
+	// session by the provider's own identifier, before any row is known.
+	SessionScoped bool `json:"session_scoped,omitempty"`
 }
 
 // providerSessionKey encodes one provider row into the durable adapter mapping
@@ -80,7 +87,17 @@ func (a *Adapter) providerTarget(ctx context.Context, target *protocol.CommandTa
 
 // matchesWorkspaceItem reports whether a fresh provider row is the exact row
 // represented by a durable mapping.
+//
+// A session-scoped mapping names the session and nothing else, so it matches any
+// row of that session. That is the correct reading for a target the operator
+// named by session identifier: the operator did not choose a row, and one
+// provider session identifier can appear in several rows. Matching only the
+// session is also what keeps the liveness gate honest, because Inspect scans
+// every row of the session and reports Live when any of them is live.
 func (target providerSessionTarget) matchesWorkspaceItem(item workspaceItem) bool {
+	if target.SessionScoped {
+		return item.SessionID == target.SessionID
+	}
 	return item.SessionID == target.SessionID && item.ProviderRowKey == target.ProviderRowKey && item.PID == target.PID && item.IsTask == target.IsTask
 }
 

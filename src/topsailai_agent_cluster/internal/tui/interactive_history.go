@@ -179,6 +179,11 @@ const (
 	resumeSourceHistory   = "history"
 	resumeSourceList      = "list"
 	resumeSourceSessionID = "session ID"
+	// resumeSourceHandle names the -s form. It is separate from
+	// resumeSourceSessionID because that form resolves the name against the
+	// inventory, while this form forwards the name untouched and lets the
+	// Endpoint mint the mapping.
+	resumeSourceHandle = "session handle"
 )
 
 // resumeSelection is one resolved resume target.
@@ -193,6 +198,11 @@ type resumeSelection struct {
 	ProviderSessionID   string
 	ResourceID          string
 	ProviderDisplayName string
+	// Handle is the provider session identifier the operator named with -s. It is
+	// set only by the handle form, where no resource ID is known yet: the Endpoint
+	// mints the mapping when the command arrives, so the client never looks the
+	// session up and never decides whether it exists.
+	Handle string
 	// Source names the table the row number came from, so the stale-number
 	// notice names the command that refreshes those numbers.
 	Source string
@@ -226,11 +236,12 @@ type resumeSelection struct {
 // authority it does not have; it only stops pre-empting a target the operator
 // named explicitly.
 func interactiveResume(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
-	if err := rejectInteractiveOption("resume", rest); err != nil {
+	args, err := parseResumeArgs(rest)
+	if err != nil {
 		return err
 	}
 	ctx, cancel := commandContext(parent)
-	selection, err := resolveResumeSelection(ctx, api, state, strings.TrimSpace(rest))
+	selection, err := resolveResumeArgs(ctx, api, state, args)
 	cancel()
 	if err != nil {
 		return err
@@ -247,8 +258,11 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 	// A named session skips the absence recheck, so the callback must still be
 	// non-nil: a nil revalidate falls back to findSelected, which requires a
 	// generation and would reject exactly the stopped session resume addresses.
+	// The handle form skips it for the same reason and one more: the client has no
+	// inventory entry to recheck, because the operator named a target the Endpoint
+	// may not have discovered yet.
 	revalidate := func(context.Context) error { return nil }
-	if selection.Source != resumeSourceSessionID {
+	if resumeNeedsAbsenceRecheck(selection.Source) {
 		revalidate = func(revalidateCtx context.Context) error {
 			return validateResumeAbsence(revalidateCtx, api, selection.EndpointID, selection.ProviderSessionID)
 		}
@@ -257,8 +271,39 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 		state.commandID = pinned.commandID
 		return invalidateResumeRowBindings(state, selection.Source, out)
 	}
-	target := confirmationTarget{ProviderDisplayName: selection.ProviderDisplayName, ProviderSessionID: selection.ProviderSessionID, ClusterSessionID: selection.ResourceID}
+	target := confirmationTarget{ProviderDisplayName: selection.ProviderDisplayName, ProviderSessionID: selection.ProviderSessionID, ClusterSessionID: selection.ResourceID, ProviderSessionHandle: selection.Handle}
 	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentResume, "resume", target, "", json.RawMessage(`{}`), lines, out, trustedOut, options, revalidate, postSubmit)
+}
+
+// resolveResumeArgs maps one parsed resume argument to one resume target.
+//
+// The handle form is resolved without any client-side lookup. The operator named
+// the exact target, so the client must not decide whether that session exists:
+// doing so would reject a session the Endpoint has not discovered yet, which is
+// precisely the case the form exists for. The Endpoint mints the durable mapping
+// when the command arrives and the provider answers existence when the operation
+// reaches it.
+func resolveResumeArgs(ctx context.Context, api InteractiveAPI, state *interactiveState, args resumeArgs) (resumeSelection, error) {
+	if args.Handle == "" {
+		return resolveResumeSelection(ctx, api, state, args.Token)
+	}
+	if state.Scope.Kind != ScopeEndpoint {
+		return resumeSelection{}, fmt.Errorf("resume -s requires endpoint scope; run cd <endpoint> first")
+	}
+	return resumeSelection{EndpointID: state.Scope.EndpointID, ProviderSessionID: args.Handle, Handle: args.Handle, Source: resumeSourceHandle}, nil
+}
+
+// resumeNeedsAbsenceRecheck reports whether a resume selection must recheck that
+// the target is still absent before submitting.
+//
+// A row-number selection must, because the row it came from may have started
+// running since the table was rendered. A named session must not: the operator
+// named the exact target, and the recheck reads the inventory, which has no entry
+// for a session the Endpoint never discovered. Running it there would reject
+// precisely the target the operator asked for, so the two named forms skip it and
+// the Endpoint's own liveness gate remains the only authority.
+func resumeNeedsAbsenceRecheck(source string) bool {
+	return source != resumeSourceSessionID && source != resumeSourceHandle
 }
 
 // resolveResumeSelection maps the resume argument to one resume target.
