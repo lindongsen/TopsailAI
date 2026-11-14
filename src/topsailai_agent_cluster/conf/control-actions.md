@@ -264,7 +264,7 @@ Rules enforced at load time:
 - A name may appear only once.
 - An unknown field is refused rather than ignored, so a leftover `alias_of` or
   `permission` fails at startup instead of being silently dropped.
-The shipped catalog carries ten shortcuts: `session.messages`,
+The shipped catalog carries 10 shortcut entries: `session.messages`,
 `session.runtime_messages`, `session.heartbeat`, `session.pause`,
 `session.unpause`, `session.interrupt`, `session.soft_interrupt`,
 `session.clear_interrupt`, `session.instruction` and `session.llm`. The list is a
@@ -308,13 +308,17 @@ enforced when the file loads:
 - A supplied value that disagrees with the constant is rejected rather than
   overwritten. The catalog is the authorization surface, so a caller must not reach
   a different instruction through an entry that advertises one. The rejection is
-  reported as `control_payload_conflict` with `not_applied` effect certainty, which
-  is distinct from `control_action_unconfigured`: the entry exists and the payload
-  is wrong, so the operator must not go looking for a missing catalog entry.
+  reported as `invalid_request` with `not_applied` effect certainty, because the
+  entry exists and only the payload disagrees. An action the catalog does not list
+  is a different case: it is reported as `unsupported` before any argv exists, so
+  the operator must not go looking for a missing catalog entry when the entry is
+  present and only the payload is wrong.
 
 A shortcut inherits its target's constants and may not declare its own.
 
-The shipped catalog pins 28 instructions, split by what they do.
+The shipped catalog defines 48 actions. Of those, 28 are instruction shortcuts:
+entries that reuse the `call_instruction` argv and pin the instruction with
+`payload_constants`, split by what they do.
 
 | Permission | Shortcuts |
 |---|---|

@@ -176,11 +176,11 @@ func assertControlActionAccepted() error {
 // and never reached the provider.
 //
 // The assertion names the code rather than accepting any refusal, because the
-// Endpoint reports several different refusals for this operation: an action
-// absent from the catalog is control_action_unconfigured, an unadvertised
-// capability is unsupported, and an unknown target is target_not_found. All of
-// them also reach the provider zero times, so only the code distinguishes a
-// policy decision from a configuration accident.
+// Endpoint reports several different refusals for this operation: an action it
+// does not advertise is unsupported, whether the catalog lacks the entry or the
+// ADAPTERS document lacks the capability, and an unknown target is
+// target_not_found. Both also reach the provider zero times, so only the code
+// distinguishes a policy decision from a configuration accident.
 func assertControlActionRefused() error {
 	status, err := activeScenario.world.PollRealCommand(controlActionCommandID, 20*time.Second)
 	if err != nil {
