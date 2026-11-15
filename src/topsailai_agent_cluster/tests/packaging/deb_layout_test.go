@@ -883,6 +883,42 @@ func hasLineContaining(text string, substrings ...string) bool {
 	return false
 }
 
+// postinstSedExpression extracts the sed substitution expression a maintainer
+// script uses to read one manifest field.
+//
+// The expression is taken from the script rather than rebuilt here, because the
+// defect this guards against is a reader that disagrees with the writer. A
+// rebuilt expression would test the test instead of the script.
+//
+// Only the line that reads MANIFEST is considered. The same field is also read
+// from the describe response, which is compact JSON with no space after the
+// colon, so a reader for that document is correct without whitespace tolerance
+// and must not be mistaken for the manifest reader.
+func postinstSedExpression(t *testing.T, postinst, field string) string {
+	t.Helper()
+
+	for _, line := range strings.Split(postinst, "\n") {
+		if !strings.Contains(line, `"`+field+`"`) || !strings.Contains(line, "sed -n") {
+			continue
+		}
+		if !strings.Contains(line, "${MANIFEST}") {
+			continue
+		}
+		start := strings.Index(line, "'s/")
+		if start < 0 {
+			continue
+		}
+		rest := line[start+1:]
+		end := strings.Index(rest, "/p'")
+		if end < 0 {
+			continue
+		}
+		return rest[:end+2]
+	}
+	t.Fatalf("the postinst has no sed expression reading %q from MANIFEST, so the identity check cannot run", field)
+	return ""
+}
+
 // TestDebLauncherPreservesLegacyBundlePathBase proves an existing bundle with
 // conf/node.conf still resolves certs/, data/, logs/ and run/ from the bundle
 // root. Role-scoped package configurations resolve from conf/<role>/ instead.

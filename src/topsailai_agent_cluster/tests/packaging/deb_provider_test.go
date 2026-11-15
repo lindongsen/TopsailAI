@@ -205,6 +205,31 @@ func TestDebProviderPostinstVerifiesIdentityAndBoundsRetention(t *testing.T) {
 		t.Fatal("the postinst never runs describe against the installed binary")
 	}
 
+	// The manifest reader must accept the spacing the builder actually writes.
+	// The builder emits `"sha256": "<digest>"` with a space after the colon, so a
+	// pattern that requires `"sha256":"<digest>"` matches nothing and the
+	// postinst aborts every install with "the manifest carries no sha256".
+	//
+	// This runs the postinst's own sed expression against the manifest the
+	// builder produced, because a pattern assertion cannot distinguish the two
+	// forms: `[[:space:]]*` matches zero spaces, so a regexp check passes on the
+	// broken pattern as well. Only executing the expression proves the reader
+	// and the writer agree.
+	manifest := readPackagedFile(t, pkg, debProviderManifest)
+	for _, field := range []string{"sha256", "provider_version"} {
+		expression := postinstSedExpression(t, postinst, field)
+		command := exec.Command("sed", "-n", expression)
+		command.Stdin = strings.NewReader(manifest)
+		output, err := command.Output()
+		if err != nil {
+			t.Fatalf("cannot run the postinst sed expression for %q: %v", field, err)
+		}
+		if strings.TrimSpace(string(output)) == "" {
+			t.Fatalf("the postinst reads %q with an expression that matches nothing in the manifest it ships beside;\n"+
+				"the builder writes `\"%s\": \"...\"` with a space after the colon, so every install aborts", field, field)
+		}
+	}
+
 	// Retention must be bounded by default and configurable.
 	if !hasLineContaining(postinst, "AGENT_CLUSTER_PROVIDER_RETENTION_COUNT:-2") {
 		t.Fatal("the postinst does not default the retention count to 2")

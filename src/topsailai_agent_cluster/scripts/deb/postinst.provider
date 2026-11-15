@@ -59,7 +59,7 @@ esac
 
 # The digest proves the installed bytes are the verified bytes. A mismatch means
 # the package payload and its manifest disagree, which no later check can repair.
-expected_digest=$(sed -n 's/.*"sha256":"\([0-9a-f]*\)".*/\1/p' "${MANIFEST}")
+expected_digest=$(sed -n 's/.*"sha256":[[:space:]]*"\([0-9a-f]*\)".*/\1/p' "${MANIFEST}")
 [ -n "${expected_digest}" ] || fail "the manifest carries no sha256"
 actual_digest=$(sha256sum "${BINARY}" | cut -d' ' -f1)
 [ "${expected_digest}" = "${actual_digest}" ] ||
@@ -72,7 +72,7 @@ describe_response=$(printf '%s' "${describe_request}" | "${BINARY}") ||
     fail "${BINARY} did not answer describe"
 reported_type=$(printf '%s' "${describe_response}" | sed -n 's/.*"provider_type":"\([^"]*\)".*/\1/p')
 reported_version=$(printf '%s' "${describe_response}" | sed -n 's/.*"provider_version":"\([^"]*\)".*/\1/p')
-manifest_version=$(sed -n 's/.*"provider_version":"\([^"]*\)".*/\1/p' "${MANIFEST}")
+manifest_version=$(sed -n 's/.*"provider_version":[[:space:]]*"\([^"]*\)".*/\1/p' "${MANIFEST}")
 [ "${reported_type}" = "${PROVIDER_TYPE}" ] ||
     fail "${BINARY} reports provider_type ${reported_type}, expected ${PROVIDER_TYPE}"
 [ -n "${manifest_version}" ] || fail "the manifest carries no provider_version"
