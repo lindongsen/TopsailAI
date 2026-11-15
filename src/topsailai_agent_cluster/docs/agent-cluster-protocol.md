@@ -645,10 +645,11 @@ descriptor with the Cluster registry, Endpoint-supported behavior, Adapter confi
 local policy. It hashes the normalized result into the effective capability revision advertised to the
 Server. The provider descriptor revision is input evidence, not the public capability revision.
 
-The Endpoint refreshes an Adapter descriptor on Endpoint startup, Adapter add/change, provider
-executable-version switch, provider startup-configuration change, Endpoint policy reload and control
-action approval reload. Periodic discovery uses the accepted cached descriptor and does not invoke
-`describe` every cycle. A failed refresh never converts the provider surface to an apparently healthy
+The Endpoint refreshes an Adapter descriptor on Endpoint startup, Adapter add/change and provider
+executable-version switch. Periodic discovery uses the accepted cached descriptor and does not invoke
+`describe` every cycle. A control action approval reload is not a refresh trigger: the control action
+catalog is Provider-side configuration read by the Provider CLI at its own process boundary, so an
+approval changes what the next Provider CLI invocation reads rather than what the Endpoint has cached. A failed refresh never converts the provider surface to an apparently healthy
 empty capability set and never leaves the old descriptor advertised as current: the Adapter instance becomes
 `degraded` or `unavailable`, its last valid inventory remains explicitly stale, and new mutating
 operations are refused until a compatible descriptor is accepted. Recovery computes and publishes a
@@ -969,7 +970,7 @@ Proposed periodic report interval is 10 seconds with jitter, independently confi
 
 Endpoint independently invokes each configured Adapter CLI and assembles a complete report of successes, failures and unknown sources; one failed source does not block successful sources. Server may display/filter the reported adapter summaries, but does not independently discover adapters, interpret provider health semantics or decide collection completeness from private adapter logic. Both periodic push and active pull validate completeness, schema, configured byte/count/depth limits and authenticated Endpoint identity and standard resource ownership before an atomic conditional replacement of `endpoint_session_state.sessions_json`. Validate/reassemble any bounded transport chunks in memory under one snapshot ID; no partial database publication. Malformed/truncated/oversized report documents fail visibly and preserve the previous database field. Individual source collection failures instead produce a valid degraded report with stale last-known sections; report completeness is not all-source freshness. This captures a completed provider scan, not a transactional provider-wide instant.
 
-Implemented capability reload publication is event-driven. A successful control-action `SIGHUP` reload re-describes only the affected adapter bindings, atomically replaces their cached descriptors, composes a new inventory revision from the existing source snapshots, and immediately publishes it. This path does not run provider discovery and preserves every Session and source freshness timestamp, so a capability change is never presented as a fresh Session observation. Normal periodic collection and forced refresh use the cached descriptor rather than calling `Describe` on every cycle.
+Implemented capability reload publication is event-driven, and the only event that triggers it is a successful Adapter replace. `internal/endpoint/replace.go` calls `RefreshDescriptors` for the replaced binding after the swap commits, which re-describes only that binding, atomically replaces its cached descriptor, composes a new inventory revision from the existing source snapshots, and immediately publishes it. This path does not run provider discovery and preserves every Session and source freshness timestamp, so a capability change is never presented as a fresh Session observation. Normal periodic collection and forced refresh use the cached descriptor rather than calling `Describe` on every cycle. A control-action `SIGHUP` reload is not a trigger: the control action catalog is Provider-side configuration read by the Provider CLI at its own process boundary, so there is no Endpoint-side catalog to reload.
 
 Every inventory publication remains pending at the Endpoint until the Server returns `inventory_ack` with a represented `snapshot_revision`. The Server sends that frame only after durable storage contains the submitted revision or a newer accepted revision. A missing acknowledgement causes the Endpoint to retry the same immutable latest report after a bounded delay and after reconnect; a newer report supersedes an older pending report, and an older acknowledgement cannot clear it. The retry state is in memory: after an Endpoint process restart, the first normal collection creates and publishes a new report instead of replaying the pre-restart revision.
 
