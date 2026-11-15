@@ -6,6 +6,12 @@ package main
 // capability cannot be advertised without a handler and a handler cannot exist
 // without being advertised. The control actions come from the Provider-local
 // catalog, so an unconfigured deployment advertises none.
+//
+// The advertised function list is narrower than the dispatch switch on purpose:
+// resolve has a handler but is not advertised yet, because the frozen request
+// schema does not carry the name. Advertising a function the wire contract rejects
+// would make the descriptor claim a capability no caller can reach, so the name is
+// added here only together with the schema enum that admits it.
 func topsailaiDescriptor(control controlCatalog) descriptor {
 	return descriptor{
 		ProviderType:       "topsailai",

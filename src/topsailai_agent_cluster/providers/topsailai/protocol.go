@@ -18,6 +18,10 @@ const (
 	functionReadOutput   = "read_output"
 	functionFollowOutput = "follow_output"
 	functionWatch        = "watch"
+	// functionResolve mints the provider-private mapping key for a session the
+	// operator named by the provider's own identifier. It is a local bookkeeping
+	// step and never invokes the provider CLI.
+	functionResolve = "resolve"
 )
 
 const (
@@ -143,6 +147,7 @@ type response struct {
 	Descriptor  *descriptor       `json:"descriptor,omitempty"`
 	Discovery   *discoveryResult  `json:"discovery,omitempty"`
 	Inspection  *inspectionResult `json:"inspection,omitempty"`
+	Resolution  *resolutionResult `json:"resolution,omitempty"`
 	Result      *operationResult  `json:"result,omitempty"`
 	QueryResult json.RawMessage   `json:"query_result,omitempty"`
 	Output      *outputSnapshot   `json:"output,omitempty"`
@@ -182,6 +187,16 @@ type inspectionResult struct {
 	Found       bool                 `json:"found"`
 	Live        bool                 `json:"live"`
 	Observation *providerObservation `json:"observation,omitempty"`
+}
+
+// resolutionResult carries the provider-private key for one named session.
+//
+// It reports the key and the resource kind only. It deliberately reports no
+// existence, liveness or generation, because resolving a handle is local
+// bookkeeping: the provider CLI answers existence when the operation reaches it.
+type resolutionResult struct {
+	ProviderResourceKey string `json:"provider_resource_key"`
+	ResourceKind        string `json:"resource_kind"`
 }
 
 // operationResult carries Provider evidence for one mutation.

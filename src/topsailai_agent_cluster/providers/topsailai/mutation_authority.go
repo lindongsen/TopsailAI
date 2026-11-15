@@ -51,17 +51,20 @@ func (p *provider) workspaceAuthority(ctx context.Context, requested *target) (p
 	if document.Items == nil {
 		return providerSessionTarget{}, "", errors.New("workspace response has no items")
 	}
+	scoped := sessionScopedKey(key)
 	var resolved *providerSessionTarget
+	var live *providerSessionTarget
 	generation := ""
+	liveGeneration := ""
 	for _, item := range document.Items {
-		candidate, keyErr := providerSessionKey(item)
-		if keyErr != nil {
-			return providerSessionTarget{}, "", keyErr
+		matched, matchErr := matchesSessionKey(key, item)
+		if matchErr != nil {
+			return providerSessionTarget{}, "", matchErr
 		}
-		if candidate != key {
+		if !matched {
 			continue
 		}
-		if resolved != nil {
+		if resolved != nil && !scoped {
 			return providerSessionTarget{}, "", fmt.Errorf("%w: provider resource key matches duplicate workspace rows", errInvalidRequest)
 		}
 		rowGeneration, generationErr := workspaceGeneration(item.ProcessGeneration)
@@ -69,8 +72,19 @@ func (p *provider) workspaceAuthority(ctx context.Context, requested *target) (p
 			return providerSessionTarget{}, "", generationErr
 		}
 		value := providerSessionTarget{SessionID: item.SessionID, ProviderRowKey: item.ProviderRowKey, PID: item.PID, IsTask: item.IsTask}
-		resolved = &value
-		generation = rowGeneration
+		if resolved == nil {
+			resolved = &value
+			generation = rowGeneration
+		}
+		// A session-scoped target names the session, so the live row is the one
+		// the operation must address: a non-live sibling must not hide it.
+		if rowGeneration != "" && live == nil {
+			live = &value
+			liveGeneration = rowGeneration
+		}
+	}
+	if live != nil {
+		return *live, liveGeneration, nil
 	}
 	if resolved == nil {
 		return providerSessionTarget{}, "", fmt.Errorf("%w: provider session row was not found", errInvalidRequest)

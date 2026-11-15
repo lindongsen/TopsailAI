@@ -13,6 +13,7 @@ import (
 
 const (
 	sessionRowProviderKeyPrefix = "session-row:v1:"
+	sessionProviderKeyPrefix    = "session:v1:"
 	historyProviderKeyPrefix    = "session-history:v1:"
 	maxProviderKeyLength        = 256
 )
@@ -110,28 +111,41 @@ func (p *provider) inspect(ctx context.Context, requested *target) (*inspectionR
 	if document.Items == nil {
 		return nil, errors.New("workspace response has no items")
 	}
+	scoped := sessionScopedKey(key)
 	var found *providerObservation
+	var live *providerObservation
 	for _, item := range document.Items {
-		candidate, keyErr := providerSessionKey(item)
-		if keyErr != nil {
-			return nil, keyErr
+		matched, matchErr := matchesSessionKey(key, item)
+		if matchErr != nil {
+			return nil, matchErr
 		}
-		if candidate != key {
+		if !matched {
 			continue
-		}
-		if found != nil {
-			return nil, errors.New("provider resource key matches duplicate workspace rows")
 		}
 		observation, observationErr := p.observation(item)
 		if observationErr != nil {
 			return nil, observationErr
 		}
-		found = &observation
+		if found != nil && !scoped {
+			return nil, errors.New("provider resource key matches duplicate workspace rows")
+		}
+		if found == nil {
+			found = &observation
+		}
+		// A live row decides liveness, so the scan must not stop at the first
+		// non-live row: returning early would hide a live sibling and let resume
+		// target a session that is still running.
+		if observation.ProviderGeneration != "" && live == nil {
+			live = &observation
+		}
 	}
-	if found == nil {
-		return &inspectionResult{Found: false, Live: false}, nil
+	if live != nil {
+		return &inspectionResult{Found: true, Live: true, Observation: live}, nil
 	}
-	return &inspectionResult{Found: true, Live: found.ProviderGeneration != "", Observation: found}, nil
+	if found != nil {
+		return &inspectionResult{Found: true, Live: false, Observation: found}, nil
+	}
+	return &inspectionResult{Found: false, Live: false}, nil
 }
 
 func (p *provider) observation(item workspaceItem) (providerObservation, error) {
@@ -199,14 +213,66 @@ func stableProviderKey(prefix string, identity any) (string, error) {
 	return key, nil
 }
 
+// validateSessionTarget accepts both session selectors this Provider mints.
+//
+// A row key names one workspace row and a session key names the session itself.
+// Both are TopsailAI session selectors, so both are valid targets; the difference
+// is carried by the prefix and decided by sessionScopedKey, because the keys are
+// digests and cannot be decoded back into a flag.
 func validateSessionTarget(value *target) (string, error) {
 	if value == nil || value.ResourceKind != resourceSession || value.ProviderResourceKey == "" {
 		return "", fmt.Errorf("%w: session target is required", errInvalidRequest)
 	}
-	if len(value.ProviderResourceKey) > maxProviderKeyLength || !strings.HasPrefix(value.ProviderResourceKey, sessionRowProviderKeyPrefix) {
+	if len(value.ProviderResourceKey) > maxProviderKeyLength {
+		return "", fmt.Errorf("%w: invalid TopsailAI session key", errInvalidRequest)
+	}
+	if !strings.HasPrefix(value.ProviderResourceKey, sessionRowProviderKeyPrefix) &&
+		!strings.HasPrefix(value.ProviderResourceKey, sessionProviderKeyPrefix) {
 		return "", fmt.Errorf("%w: invalid TopsailAI session key", errInvalidRequest)
 	}
 	return value.ProviderResourceKey, nil
+}
+
+// sessionProviderKey encodes a session-scoped mapping key from a provider session
+// identifier alone.
+//
+// It is deliberately distinct from providerSessionKey, which encodes one workspace
+// row. One provider session identifier can appear in several independently
+// selectable rows, so a handle that names the session must not claim to be one
+// particular row. The prefix is separate rather than a flag inside the document,
+// because both keys are digests and a decoder cannot read a flag it cannot reach.
+func sessionProviderKey(sessionID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", errors.New("provider session handle is empty")
+	}
+	return stableProviderKey(sessionProviderKeyPrefix, struct {
+		SessionID string `json:"session_id"`
+	}{sessionID})
+}
+
+// sessionScopedKey reports whether one mapping key names a session rather than a row.
+func sessionScopedKey(key string) bool {
+	return strings.HasPrefix(key, sessionProviderKeyPrefix)
+}
+
+// matchesSessionKey reports whether one workspace row belongs to the target key.
+//
+// A session-scoped key matches every row of its session, which is the correct
+// reading for a target the operator named by session identifier: the operator did
+// not choose a row. A row-scoped key still matches exactly one row.
+func matchesSessionKey(key string, item workspaceItem) (bool, error) {
+	if sessionScopedKey(key) {
+		candidate, err := sessionProviderKey(item.SessionID)
+		if err != nil {
+			return false, err
+		}
+		return candidate == key, nil
+	}
+	candidate, err := providerSessionKey(item)
+	if err != nil {
+		return false, err
+	}
+	return candidate == key, nil
 }
 
 func (p *provider) resolveWorkspaceTarget(ctx context.Context, value *target) (providerSessionTarget, error) {
@@ -221,29 +287,65 @@ func (p *provider) resolveWorkspaceTarget(ctx context.Context, value *target) (p
 	if document.Items == nil {
 		return providerSessionTarget{}, errors.New("workspace response has no items")
 	}
-	var matched *providerSessionTarget
+	scoped := sessionScopedKey(key)
+	var found *providerSessionTarget
+	var live *providerSessionTarget
 	for _, item := range document.Items {
-		candidate, keyErr := providerSessionKey(item)
-		if keyErr != nil {
-			return providerSessionTarget{}, keyErr
+		matched, matchErr := matchesSessionKey(key, item)
+		if matchErr != nil {
+			return providerSessionTarget{}, matchErr
 		}
-		if candidate != key {
+		if !matched {
 			continue
 		}
-		if matched != nil {
+		if found != nil && !scoped {
 			return providerSessionTarget{}, errors.New("provider resource key matches duplicate workspace rows")
 		}
 		resolved := providerSessionTarget{SessionID: item.SessionID, ProviderRowKey: item.ProviderRowKey, PID: item.PID, IsTask: item.IsTask}
-		matched = &resolved
+		if found == nil {
+			found = &resolved
+		}
+		generation, generationErr := workspaceGeneration(item.ProcessGeneration)
+		if generationErr != nil {
+			return providerSessionTarget{}, generationErr
+		}
+		// A row-addressed read follows the live row when the target names a
+		// session, because that is the row producing output.
+		if generation != "" && live == nil {
+			live = &resolved
+		}
 	}
-	if matched == nil {
+	if live != nil {
+		return *live, nil
+	}
+	if found == nil {
 		return providerSessionTarget{}, errors.New("provider session row was not found")
 	}
-	return *matched, nil
+	return *found, nil
 }
 
-func (t providerSessionTarget) matches(item workspaceItem) bool {
-	return item.SessionID == t.SessionID && item.ProviderRowKey == t.ProviderRowKey && item.PID == t.PID && item.IsTask == t.IsTask
+// resolvePayload is the frozen resolve payload: one provider session identifier.
+type resolvePayload struct {
+	Handle string `json:"handle"`
+}
+
+// resolveSessionHandle mints the session-scoped mapping key for a handle.
+//
+// It never asks the provider CLI whether the session exists. The operator named the
+// target, so deciding existence here would reject exactly the case this function
+// exists for: a session the Endpoint has not discovered yet. Minting is local
+// bookkeeping, and the provider CLI remains the only party that answers existence
+// when the operation actually reaches it.
+func (p *provider) resolveSessionHandle(raw json.RawMessage) (*resolutionResult, error) {
+	var payload resolvePayload
+	if err := decodeStrict(raw, &payload); err != nil {
+		return nil, fmt.Errorf("%w: decode resolve payload: %v", errInvalidRequest, err)
+	}
+	key, err := sessionProviderKey(payload.Handle)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errInvalidRequest, err)
+	}
+	return &resolutionResult{ProviderResourceKey: key, ResourceKind: resourceSession}, nil
 }
 
 func workspaceGeneration(raw json.RawMessage) (string, error) {
