@@ -479,3 +479,41 @@ indistinguishable from a probe that fails for product reasons, and the natural
 reaction is to "fix" working code. Three of my four failures were harness
 defects. The one real defect (the argv path) was found only after the harness was
 corrected, and it would have shipped had I trusted the earlier noise.
+
+## A counting helper that returns 0 on failure makes every threshold comparison silently true
+
+Trigger: session `wa-fc746aa24c8c` stopped summarizing. `count_tokens()` called
+`encoding.encode(text)` without `disallowed_special`, so a tool result containing
+the literal string `<|endoftext|>` (from a `strings` dump of a Go binary) raised
+`ValueError`, and the blanket `except Exception` returned `0`. The caller then
+compared `estimated_after_tokens(87914) >= current_tokens(0)`, which is always
+true, so summarization was skipped 276 times while the context grew from 22 to
+742 messages and 327k tokens.
+
+Action: count literal special-token text as ordinary text with
+`encoding.encode(text, disallowed_special=())`, and never let a counting failure
+masquerade as a real zero. A helper whose failure value is a valid measurement
+cannot be distinguished from a genuine measurement by any caller.
+
+Why this prevents recurrence: `0` is a legal token count, so every downstream
+comparison treats the failure as "the context is empty". The same zero also made
+`_check_dynamic_summary_feasibility()` compute `safe_input_tokens = 0 * 1.05 = 0`
+and pass the model-capacity guard vacuously, disabling the very guard that should
+have stopped an oversized request. The failure is silent in the worst way: the
+quantity trigger still logs "threshold exceeded", so the session looks like it is
+summarizing while it grows without bound. Two further traps made this hard to
+attribute: the operator's report pointed at a missing environment variable, and
+the earlier runtime override era had already raised the ceiling to `1000000`
+(`summary_safe_limit=961808`), yet all 118 skips in that window still reported
+`estimated_summary_not_smaller`, which proves no configuration value could fix
+it. Verify a suspected configuration cause by checking whether the symptom
+survives a period when the configuration was already generous.
+
+A second lesson: fixing the counter does not rescue a session that is already
+oversized. With `MODEL_MAX_CONTEXT_DEFAULT=256000`, `MAX_COMPLETION_TOKENS=30000`
+and an `8192` margin, `summary_safe_limit=217808`, while the real prompt was
+303018 tokens, so the corrected count now blocks with
+`summary_input_exceeds_safe_limit` instead of skipping. The fix restores correct
+diagnosis and prevents recurrence in new sessions; an already-overflowed session
+needs a restart or a genuinely larger model capacity, and that distinction must be
+stated rather than presented as a complete repair.

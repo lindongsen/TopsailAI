@@ -120,7 +120,11 @@ def count_tokens(text, encoding_name="cl100k_base"):
         encoding = tiktoken.get_encoding(encoding_name)
 
         # Encode the text into tokens and count the length
-        tokens = encoding.encode(text)
+        # Count literal special-token strings (e.g. "<|endoftext|>" appearing in
+        # tool output) as ordinary text. Without disallowed_special=() tiktoken
+        # raises ValueError, and the handler below would return 0, which callers
+        # cannot distinguish from an empty context.
+        tokens = encoding.encode(text, disallowed_special=())
         return len(tokens)
 
     except Exception as e:
@@ -159,7 +163,10 @@ def count_tokens_for_model(text, model_name="gpt-4"):
         encoding = tiktoken.encoding_for_model(model_name)
 
         # Encode the text and count the resulting tokens
-        tokens = encoding.encode(text)
+        # Count literal special-token strings as ordinary text, matching
+        # count_tokens(), so a tool result containing such a string does not
+        # collapse the count to 0.
+        tokens = encoding.encode(text, disallowed_special=())
         return len(tokens)
 
     except Exception as e:

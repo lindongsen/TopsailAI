@@ -73,6 +73,25 @@ class TestCountTokens(unittest.TestCase):
         self.assertIsInstance(result, int)
         self.assertGreater(result, 5)
 
+    def test_count_tokens_literal_special_token_is_counted(self):
+        """A literal special-token string must be counted, not collapsed to 0.
+
+        Regression: tool output can contain "<|endoftext|>" verbatim (for
+        example a `strings` dump of a Go binary). tiktoken rejects it unless
+        disallowed_special=() is passed, and the old handler returned 0, which
+        made summarization believe the context was empty and skip forever.
+        """
+        text = "go stdlib dump <|endoftext|> crypto/subtle"
+        result = count_tokens(text)
+        self.assertIsInstance(result, int)
+        self.assertGreater(result, 0)
+
+    def test_count_tokens_literal_special_token_matches_plain_text(self):
+        """The special-token string must be counted as ordinary text."""
+        with_token = count_tokens("hello <|endoftext|> world")
+        without_token = count_tokens("hello  world")
+        self.assertGreater(with_token, without_token)
+
 
 class TestCountTokensForModel(unittest.TestCase):
     """Test cases for count_tokens_for_model function."""
@@ -104,6 +123,12 @@ class TestCountTokensForModel(unittest.TestCase):
         """Test counting tokens with invalid model returns 0."""
         result = count_tokens_for_model("test", "invalid-model")
         self.assertEqual(result, 0)
+
+    def test_count_tokens_for_model_literal_special_token_is_counted(self):
+        """A literal special-token string must be counted for a model encoding."""
+        result = count_tokens_for_model("hello <|endoftext|> world", "gpt-4")
+        self.assertIsInstance(result, int)
+        self.assertGreater(result, 0)
 
 
 class TestTokenStat(unittest.TestCase):
