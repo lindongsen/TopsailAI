@@ -564,6 +564,70 @@ func TestIntersectCapabilitiesDropsAnUnadvertisedControlAction(t *testing.T) {
 	}
 }
 
+// TestIntersectCapabilitiesKeepsCommandExecWithoutAProviderOffer proves the one
+// configured capability that is not intersected stays reachable.
+//
+// command.exec is Endpoint-native: the Endpoint owns the allowlist, the working
+// directory, the confinement decision, the environment, the timeout and the
+// process cleanup, and Execute returns before any provider call. A provider that
+// reports only what it implements therefore cannot advertise it, and requiring an
+// offer made the operator's own allowlisted command unreachable on every such
+// provider. The configured entry is the operator's allowlist, so it is kept even
+// though nothing offered it.
+func TestIntersectCapabilitiesKeepsCommandExecWithoutAProviderOffer(t *testing.T) {
+	configured := protocol.CapabilityDescriptor{
+		Revision: "rev-1",
+		Capabilities: []protocol.Capability{
+			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
+			{Name: "message.send", Version: "v1", TargetKinds: []string{"session"}},
+		},
+	}
+	// The provider offers one unrelated operation and nothing else, which is the
+	// shape a provider that reports only its own handlers produces.
+	offered := []providercli.NamedContract{{Name: "message.send", Version: "v1"}}
+
+	effective := intersectCapabilities(configured, offered, nil)
+	if len(effective.Capabilities) != 2 {
+		t.Fatalf("effective capabilities = %v, want command.exec kept beside the offered operation", effective.Capabilities)
+	}
+	var found bool
+	for _, capability := range effective.Capabilities {
+		if capability.Name != protocol.OperationCommandExec {
+			continue
+		}
+		found = true
+		if capability.Version != protocol.CommandExecPayloadVersion {
+			t.Fatalf("command.exec version = %q, want %q", capability.Version, protocol.CommandExecPayloadVersion)
+		}
+		if capability.RequiredPermission != "control" {
+			t.Fatalf("command.exec permission = %q, want the configured control permission", capability.RequiredPermission)
+		}
+	}
+	if !found {
+		t.Fatalf("effective capabilities = %v, want command.exec present", effective.Capabilities)
+	}
+}
+
+// TestIntersectCapabilitiesStillDropsAnUnadvertisedOperation is the reverse case
+// for the command.exec exemption.
+//
+// The exemption must be exactly one operation. If it widened into "keep every
+// configured capability", an operation the provider cannot serve would be
+// advertised and the operator would see a provider error instead of a capability
+// gap, which is the defect the intersection exists to prevent.
+func TestIntersectCapabilitiesStillDropsAnUnadvertisedOperation(t *testing.T) {
+	configured := protocol.CapabilityDescriptor{
+		Revision: "rev-1",
+		Capabilities: []protocol.Capability{
+			{Name: "agent.stop", Version: "v1", TargetKinds: []string{"session"}},
+		},
+	}
+	effective := intersectCapabilities(configured, nil, nil)
+	if len(effective.Capabilities) != 0 {
+		t.Fatalf("effective capabilities = %v, want none because the provider does not offer agent.stop", effective.Capabilities)
+	}
+}
+
 // TestIntersectCapabilitiesTakesTheActionMetadataFromTheProvider proves the
 // provider is the source of what an allowed control action is.
 //

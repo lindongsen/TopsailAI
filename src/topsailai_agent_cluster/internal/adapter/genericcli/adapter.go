@@ -647,6 +647,15 @@ type sessionAttributes struct {
 // unsupported before the policy hook could authorize it, so a configured catalog
 // had no effect.
 //
+// command.exec is the one configured capability that is not intersected. It is
+// Endpoint-native by contract: the Endpoint owns the allowlist, the
+// working-directory resolution, the confinement decision, the minimal
+// environment, the timeout, the output bounds and the exact-process cleanup, and
+// Execute returns before any provider call. A provider therefore has no handler
+// for it and cannot honestly advertise it, so requiring an offer would make the
+// operation unreachable on every provider that reports only what it implements.
+// The configured entry is the operator's allowlist and is kept unchanged.
+//
 // The revision is carried through unchanged, which is what makes a published
 // effective revision meaningful.
 func intersectCapabilities(configured protocol.CapabilityDescriptor, offered []providercli.NamedContract, controlActions []providercli.NamedContract) protocol.CapabilityDescriptor {
@@ -665,6 +674,13 @@ func intersectCapabilities(configured protocol.CapabilityDescriptor, offered []p
 	}
 	result := protocol.CapabilityDescriptor{Revision: configured.Revision}
 	for _, capability := range configured.Capabilities {
+		// command.exec is executed by the Endpoint, so the provider cannot offer
+		// it. Keeping the configured entry is what makes the operator's own
+		// allowlisted command reachable at all.
+		if capability.Name == protocol.OperationCommandExec {
+			result.Capabilities = append(result.Capabilities, capability)
+			continue
+		}
 		key := capability.Name + "\x00" + capability.Version
 		if _, ok := allowed[key]; !ok {
 			continue
