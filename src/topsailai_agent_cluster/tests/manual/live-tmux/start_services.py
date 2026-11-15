@@ -66,6 +66,33 @@ def resolve_config(runtime: Path, role: str) -> dict[str, object]:
     return json.loads(config_path.read_text(encoding="utf-8"))
 
 
+def adapter_document(provider: Path, capabilities: Path | None, provider_args: list[str]) -> dict[str, object]:
+    """Return the one adapter document the Endpoint is configured with.
+
+    The capability descriptor is embedded here rather than passed through a
+    separate variable because the Endpoint reads capabilities from the adapter
+    document only. A descriptor supplied as a file is parsed and re-encoded, so a
+    malformed file fails at startup with the parser's own message instead of
+    reaching the Endpoint as an opaque string.
+
+    Provider arguments are a separate list rather than words appended to the
+    command, because the Endpoint executes the command as one executable path and
+    never re-splits it. A provider that needs a flag therefore needs this field,
+    and a path containing a space stays one path.
+    """
+    document: dict[str, object] = {
+        "adapter_id": "topsailai-live",
+        "provider_type": "genericcli",
+        "command": str(provider),
+        "timeout_ms": 60000,
+    }
+    if provider_args:
+        document["args"] = list(provider_args)
+    if capabilities is not None:
+        document["capabilities"] = json.loads(capabilities.read_text(encoding="utf-8"))
+    return document
+
+
 def api_port_accepts(port: int) -> bool:
     """Report whether the API port currently accepts a TCP connection."""
     with socket.socket() as probe:
@@ -124,8 +151,16 @@ def main() -> int:
     parser.add_argument("--provider-home", required=True, type=Path)
     parser.add_argument("--project", required=True, type=Path)
     parser.add_argument("--provider", required=True, type=Path)
+    parser.add_argument(
+        "--provider-arg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help="one argument passed to the provider executable; repeat for several",
+    )
     parser.add_argument("--role", choices=("both", "server", "endpoint"), default="both")
     parser.add_argument("--allowlist", type=Path, help="optional command allowlist file for the endpoint")
+    parser.add_argument("--capabilities", type=Path, help="optional capability descriptor file the endpoint declares")
     parser.add_argument("--startup-timeout-seconds", type=float, default=30.0, help="how long to wait for the API port to accept a connection")
     parser.add_argument("--timeout-seconds", type=float, default=0.0, help="stop after this many seconds; zero waits until interrupted")
     args = parser.parse_args()
@@ -168,8 +203,18 @@ def main() -> int:
         "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "endpoint.db"),
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "client.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "client.key"),
-        "AGENT_CLUSTER_ENDPOINT_ADAPTERS": json.dumps([{"adapter_id": "topsailai-live", "provider_type": "genericcli", "command": str(args.provider), "timeout_ms": 60000}]),
+        "AGENT_CLUSTER_ENDPOINT_ADAPTERS": json.dumps([adapter_document(args.provider, args.capabilities, args.provider_arg)]),
     }
+    # A capability descriptor is optional so the same harness can prove the
+    # zero-capability path, which is what an operator gets by copying the shipped
+    # example configuration. When it is supplied it is embedded in the adapter
+    # document rather than written to a second file, because the Endpoint reads
+    # capabilities from the adapter document and nowhere else.
+    if args.capabilities is not None:
+        if not args.capabilities.is_absolute():
+            parser.error("--capabilities must be an absolute path")
+        if not args.capabilities.is_file():
+            parser.error("--capabilities must name an existing file")
     # An allowlist is optional so the same harness can prove the fail-closed path
     # when the endpoint is started without one.
     if args.allowlist is not None:

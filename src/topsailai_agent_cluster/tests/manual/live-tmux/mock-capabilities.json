@@ -1,0 +1,19 @@
+{
+  "revision": "mock-live-r1",
+  "capabilities": [
+    {"name": "message.send", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "context.inject", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "execution.interrupt", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "agent.start", "version": "v1", "target_kinds": ["endpoint"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "agent.resume", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "agent.stop", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "agent.drive.start", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "agent.drive.stop", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "workspace.clean", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "command.exec", "version": "1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "agent.model.select", "version": "1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "ctl.fixture_probe", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "ctl.get_session_messages", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "read_output"},
+    {"name": "ctl.heartbeat", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"}
+  ]
+}
