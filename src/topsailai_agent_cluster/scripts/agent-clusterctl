@@ -210,6 +210,14 @@ function load_config() {
     # node.conf but never forwards it would silently ignore every activation
     # request while the controller reported one was sent.
     REPLACE_REQUEST_FILE=$(resolve_path "${REPLACE_REQUEST_FILE:-}")
+    # The provider catalog path is Provider-side configuration, so the Endpoint
+    # never reads it and no flag carries it. It is resolved here anyway, because
+    # the Provider CLI inherits this process environment and would otherwise
+    # resolve a relative value against the directory the controller happened to
+    # be invoked from. A Provider that cannot read the file it was told to use
+    # exits, and the Endpoint then refuses to start, so this is a launch
+    # requirement rather than a lost capability.
+    AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS=$(resolve_path "${AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS:-}")
 }
 
 # Reports the binary serving the configured role. The default is relative to
@@ -275,6 +283,11 @@ function doctor() {
         # Printed because an absent request file is fail-closed: activation is
         # unavailable, which an operator must be able to see before sending one.
         echo "replace    : ${REPLACE_REQUEST_FILE:-<disabled>}"
+        # Printed because an unresolved catalog path is not a lost capability but
+        # a failed launch: the Provider exits when it cannot read the file it was
+        # told to use, and the Endpoint then refuses to start. An operator has to
+        # see the resolved value before starting the node.
+        echo "catalog    : ${AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS:-<disabled>}"
     fi
 }
 
@@ -355,6 +368,15 @@ function start_node() {
         export AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS="${COLLECTION_DELAY_MS}"
         # Source-cache retention is Endpoint-owned and validated by the binary.
         export AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY="${SOURCE_CACHE_EXPIRY}"
+        # The provider catalog path is Provider-side configuration, so the
+        # Endpoint never reads it. It is exported because the Provider CLI
+        # inherits this process environment, and it is resolved above because a
+        # relative value would otherwise be resolved against whatever directory
+        # the controller was invoked from. The Provider exits when it cannot read
+        # the file it was told to use, and the Endpoint then refuses to start, so
+        # an unresolved value is a failed launch rather than a lost capability.
+        [ -n "${AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS:-}" ] &&
+            export AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS
     fi
 
     [ -n "${LOG_MAX_SIZE_MB:-}" ] && args+=(--log-max-size-mb "${LOG_MAX_SIZE_MB}")

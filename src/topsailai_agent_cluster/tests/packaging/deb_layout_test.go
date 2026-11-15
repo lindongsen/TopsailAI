@@ -788,6 +788,56 @@ func TestDebLauncherForwardsEndpointSourceCacheExpiry(t *testing.T) {
 	}
 }
 
+// TestDebLauncherResolvesTheProviderCatalogPath proves the packaged launcher
+// resolves and exports the provider catalog path instead of leaving a relative
+// value to be interpreted by whatever directory the controller was invoked from.
+//
+// This guards the fourth instance of one defect class. The launcher was extended
+// key by key, so a new setting landed in the binary, the documentation and the
+// shipped template while the launcher never learned it: first the command
+// allowlist, then the catalog, then the access policy directory, and now the
+// catalog path again. Each omission is invisible in the payload, because the
+// template looks correct and the binary reads the variable it is given.
+//
+// The failure direction here is worse than a lost capability. The Provider exits
+// when it cannot read the file it was told to use, and the Endpoint refuses to
+// start when the Provider cannot describe itself, so an unresolved relative path
+// is a node that never comes up rather than a node that serves fewer commands.
+// The Endpoint never reads this file and no flag carries it, so the process
+// environment is the only path the value can travel.
+//
+// The assertions are structural rather than a bare substring search: the
+// variable has to appear on a line that also resolves, exports or prints it,
+// which is what makes the value reach the Provider.
+func TestDebLauncherResolvesTheProviderCatalogPath(t *testing.T) {
+	packages := buildDebPackages(t)
+	launcher := readPackagedFile(t, packages["node"], debOptDir+"/agent-clusterctl")
+
+	// Resolution: without it the exported value stays relative and the Provider
+	// resolves it against the controller's working directory.
+	if !hasLineContaining(launcher, "AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS=$(resolve_path") {
+		t.Fatalf("the packaged launcher never resolves AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS;\n" +
+			"a relative catalog path would be resolved against the directory the " +
+			"controller was invoked from, and the Provider exits when it cannot read it")
+	}
+
+	// Forwarding: the Provider inherits this process environment, so an
+	// unexported value never reaches it.
+	if !hasLineContaining(launcher, "export AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS") {
+		t.Fatalf("the packaged launcher never exports AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS;\n" +
+			"the Provider CLI inherits this environment, so the catalog would never " +
+			"be read and every ctl. capability would be dropped")
+	}
+
+	// Visibility: an operator has to see the resolved value before starting the
+	// node, because a wrong value is a failed launch rather than a degraded one.
+	if !hasLineContaining(launcher, "catalog    :", "AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS") {
+		t.Fatalf("the packaged launcher doctor output never reports the provider catalog path;\n" +
+			"an unresolved value stops the node from starting, so the operator cannot " +
+			"diagnose it from the payload")
+	}
+}
+
 // TestCLIEnvWriterUsesExplicitServerTokenName prevents the generated per-user
 // configuration from collapsing the two independent credentials back into one
 // ambiguous CLI token. The writer is shared by bundle and Debian installation,
