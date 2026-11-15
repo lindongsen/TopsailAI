@@ -270,6 +270,29 @@ The shipped catalog carries 10 shortcut entries: `session.messages`,
 `session.clear_interrupt`, `session.instruction` and `session.llm`. The list is a
 starting point, not a fixed set; nothing about a shortcut is compiled in.
 
+## Migrating a catalog that used alias_of
+
+An earlier catalog shape let one entry name another with `alias_of` instead of
+repeating the target's `command`. That field is gone, because the Provider has no
+alias concept: an alias was resolved by the Endpoint, and the Endpoint no longer
+parses this file. A catalog that still carries `alias_of` now fails to load, and
+the failure is deliberate rather than a compatibility gap. An unknown field is
+refused instead of ignored, so a leftover alias cannot be silently dropped and
+leave an operator believing a shortcut exists when it does not.
+
+To migrate, replace each `alias_of` entry with a copy of its target's `command`,
+keeping the alias name. The copy is the same document, so it cannot widen what an
+operator may do and cannot run a different command. Two consequences follow, and
+both are the operator's responsibility:
+
+- The copy and its target are independent. Retiring the target does not retire the
+  copy, so remove both when you retire an action.
+- A copy that drifts from its target is a defect, not a variant. The shipped
+  catalog is checked for this, but a hand-written catalog is not.
+
+An entry that only needs to pin one instruction does not need a copy of the whole
+`call_instruction` argv; use `payload_constants` as described in the next section.
+
 ## Instruction shortcuts
 
 A plain copy cannot express a shortcut for one instruction. It copies the target's
