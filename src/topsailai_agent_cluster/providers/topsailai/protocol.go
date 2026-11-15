@@ -48,19 +48,31 @@ const (
 // A name that is not listed is not implemented, so an unknown operation fails
 // closed instead of reaching a provider command.
 const (
-	operationMessageSend      = "message.send"
-	operationContextInject    = "context.inject"
-	operationAgentStart       = "agent.start"
-	operationAgentResume      = "agent.resume"
-	operationAgentStop        = "agent.stop"
-	operationAgentDriveStart  = "agent.drive.start"
-	operationAgentDriveStop   = "agent.drive.stop"
-	operationWorkspaceClean   = "workspace.clean"
-	operationAgentModelSelect = "agent.model.select"
+	operationMessageSend        = "message.send"
+	operationContextInject      = "context.inject"
+	operationAgentStart         = "agent.start"
+	operationAgentResume        = "agent.resume"
+	operationAgentStop          = "agent.stop"
+	operationAgentDriveStart    = "agent.drive.start"
+	operationAgentDriveStop     = "agent.drive.stop"
+	operationWorkspaceClean     = "workspace.clean"
+	operationAgentModelSelect   = "agent.model.select"
+	operationExecutionInterrupt = "execution.interrupt"
 
 	// controlOperationPrefix addresses the provider control family, whose action
 	// names come from local configuration rather than from this list.
 	controlOperationPrefix = "ctl."
+)
+
+// Interrupt action names this Provider serves.
+//
+// The vocabulary is closed and defined by the Cluster contract, so an action that
+// is not listed here is rejected before any provider argv exists. The names match
+// the provider's own registered control instructions, which is why the mapping is a
+// literal rather than a translation table.
+const (
+	interruptActionSoft = "soft_interrupt"
+	interruptActionHard = "hard_interrupt"
 )
 
 const (

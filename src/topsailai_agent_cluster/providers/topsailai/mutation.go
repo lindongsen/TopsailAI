@@ -32,6 +32,7 @@ var supportedMutationOperations = [...]string{
 	operationAgentDriveStop,
 	operationWorkspaceClean,
 	operationAgentModelSelect,
+	operationExecutionInterrupt,
 }
 
 // mutationOperations returns the advertised standard operations in a stable order.

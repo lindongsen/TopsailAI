@@ -96,6 +96,8 @@ func mutationArgs(invocation mutationInvocation) ([]string, error) {
 		return agentStartArgs(invocation.Payload)
 	case operationAgentModelSelect:
 		return modelSelectArgs(invocation.ProviderKey, invocation.Payload)
+	case operationExecutionInterrupt:
+		return interruptArgs(invocation.ProviderKey, invocation.Payload)
 	default:
 		return nil, fmt.Errorf("%w: provider operation %q is not implemented", errUnsupported, invocation.Operation)
 	}
@@ -158,4 +160,57 @@ func runtimeMessage(payload json.RawMessage) (string, error) {
 		return value.Message, nil
 	}
 	return "", fmt.Errorf("%w: runtime payload requires text or message", errInvalidRequest)
+}
+
+// interruptPayload is the frozen execution.interrupt payload.
+//
+// The action names the provider instruction to invoke and the message is the
+// optional text a soft interrupt carries. Both fields are provider-neutral: the
+// Cluster contract defines the action vocabulary, so this executable maps a
+// standard action onto a provider instruction rather than inventing one.
+type interruptPayload struct {
+	Action  string `json:"action"`
+	Message string `json:"message"`
+}
+
+// interruptArgs builds the provider argv for one turn interruption.
+//
+// The provider exposes interruption as a registered control instruction, so the
+// argv invokes that instruction directly instead of going through the
+// operator-configured control action catalog. A first-class capability must not
+// depend on someone having also written a catalog entry, which is the same reason
+// model selection does not consult the catalog.
+//
+// The action is validated against the closed Cluster vocabulary before any argv
+// exists, so an unknown action fails closed instead of reaching the provider as an
+// arbitrary instruction name. The message is only accepted for a soft interrupt,
+// because a hard interrupt has no text to carry and silently dropping one would
+// report a delivery the operator did not ask for.
+func interruptArgs(providerKey string, payload json.RawMessage) ([]string, error) {
+	var value interruptPayload
+	if err := decodeStrict(payload, &value); err != nil {
+		return nil, fmt.Errorf("%w: decode execution.interrupt payload: %v", errInvalidRequest, err)
+	}
+	switch value.Action {
+	case interruptActionSoft:
+		// A soft interrupt carries an optional message. An empty message has
+		// nothing to deliver, so it produces the empty document rather than a
+		// message field with no text.
+		document := []byte("{}")
+		if value.Message != "" {
+			encoded, err := json.Marshal(map[string]string{"message": value.Message})
+			if err != nil {
+				return nil, fmt.Errorf("encode soft interrupt payload: %w", err)
+			}
+			document = encoded
+		}
+		return []string{"runtime", "control", interruptActionSoft, "-s", providerKey, "-a", string(document), "--json"}, nil
+	case interruptActionHard:
+		if value.Message != "" {
+			return nil, fmt.Errorf("%w: hard_interrupt does not accept a message", errInvalidRequest)
+		}
+		return []string{"runtime", "control", interruptActionHard, "-s", providerKey, "-a", "{}", "--json"}, nil
+	default:
+		return nil, fmt.Errorf("%w: interrupt action %q is not supported", errInvalidRequest, value.Action)
+	}
 }

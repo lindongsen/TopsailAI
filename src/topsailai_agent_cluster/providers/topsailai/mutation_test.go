@@ -145,6 +145,30 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
 			want:      []string{"runtime", "control", "call_instruction", "-s", session.ProviderResourceKey, "-a", `{"args":["fast"],"instruction":"agent.models"}`, "--json"},
 		},
+		{
+			name:      "hard interrupt",
+			operation: operationExecutionInterrupt,
+			target:    session,
+			payload:   `{"action":"hard_interrupt"}`,
+			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
+			want:      []string{"runtime", "control", "hard_interrupt", "-s", session.ProviderResourceKey, "-a", "{}", "--json"},
+		},
+		{
+			name:      "soft interrupt with message",
+			operation: operationExecutionInterrupt,
+			target:    session,
+			payload:   `{"action":"soft_interrupt","message":"wrap up"}`,
+			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
+			want:      []string{"runtime", "control", "soft_interrupt", "-s", session.ProviderResourceKey, "-a", `{"message":"wrap up"}`, "--json"},
+		},
+		{
+			name:      "soft interrupt without message",
+			operation: operationExecutionInterrupt,
+			target:    session,
+			payload:   `{"action":"soft_interrupt"}`,
+			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
+			want:      []string{"runtime", "control", "soft_interrupt", "-s", session.ProviderResourceKey, "-a", "{}", "--json"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -502,4 +526,46 @@ func containsArg(argv []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+// TestInterruptArgsRejectsAnUnsupportedAction proves the interrupt action
+// vocabulary is closed before any provider argv exists.
+//
+// The action names a provider instruction, so an unrecognized value would become an
+// arbitrary instruction name if it were passed through. Rejecting it here keeps the
+// Cluster contract the only source of accepted actions, and it means a typo is
+// reported as an invalid payload instead of as a provider failure.
+func TestInterruptArgsRejectsAnUnsupportedAction(t *testing.T) {
+	for _, payload := range []string{
+		`{"action":"clear_interrupt"}`,
+		`{"action":""}`,
+		`{}`,
+		`{"action":"hard_interrupt","message":"not allowed"}`,
+	} {
+		if _, err := interruptArgs("s-1", json.RawMessage(payload)); err == nil {
+			t.Fatalf("payload %s was accepted, want a rejection", payload)
+		}
+	}
+}
+
+// TestInterruptArgsSendsNoMessageDocumentWhenTheTextIsEmpty proves an empty soft
+// interrupt carries no message field.
+//
+// An empty string has nothing to deliver, so sending `{"message":""}` would ask the
+// provider to inject an empty message. Both an absent message and an empty one
+// therefore produce the empty document, and the CLI already omits the field when the
+// operator supplies no text.
+func TestInterruptArgsSendsNoMessageDocumentWhenTheTextIsEmpty(t *testing.T) {
+	for _, payload := range []string{
+		`{"action":"soft_interrupt"}`,
+		`{"action":"soft_interrupt","message":""}`,
+	} {
+		argv, err := interruptArgs("s-1", json.RawMessage(payload))
+		if err != nil {
+			t.Fatalf("payload %s: %v", payload, err)
+		}
+		if got := argv[len(argv)-2]; got != "{}" {
+			t.Fatalf("payload %s document = %q, want {}", payload, got)
+		}
+	}
 }
