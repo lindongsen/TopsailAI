@@ -36,7 +36,9 @@ func serve(reader io.Reader, writer io.Writer) error {
 	if err != nil {
 		return err
 	}
-	provider := newProvider(newCLIRunner(os.Environ()), control)
+	// The platform capabilities are detected once here, beside the catalog, so no
+	// later decision re-probes the host.
+	provider := newProvider(newCLIRunner(os.Environ()), control, probePlatformCapabilities())
 	if request.Function == functionFollowOutput {
 		return provider.followOutput(context.Background(), request, writer)
 	}

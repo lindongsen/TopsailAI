@@ -485,7 +485,7 @@ func TestMutationTruncatesOversizedProviderResponse(t *testing.T) {
 // TestDescriptorOperationsMatchDispatch proves the advertised surface and the
 // dispatchable surface are the same set.
 func TestDescriptorOperationsMatchDispatch(t *testing.T) {
-	contracts := mutationOperations()
+	contracts := mutationOperations(supportedPlatform)
 	if len(contracts) != len(supportedMutationOperations) {
 		t.Fatalf("contracts=%v", contracts)
 	}
@@ -493,11 +493,11 @@ func TestDescriptorOperationsMatchDispatch(t *testing.T) {
 		if contract.Version != operationVersion {
 			t.Fatalf("contract=%+v", contract)
 		}
-		if !supportedMutationOperation(contract.Name) {
+		if !supportedMutationOperation(contract.Name, supportedPlatform) {
 			t.Fatalf("%s is advertised but not dispatchable", contract.Name)
 		}
 	}
-	if supportedMutationOperation("future.operation") {
+	if supportedMutationOperation("future.operation", supportedPlatform) {
 		t.Fatal("an unimplemented operation is dispatchable")
 	}
 }

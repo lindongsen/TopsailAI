@@ -86,7 +86,7 @@ func TestServeRejectsExtraDocument(t *testing.T) {
 // The function must be one this executable genuinely does not serve. execute is
 // implemented now, so using it here would assert the opposite of the truth.
 func TestDispatchRejectsUnimplementedFunction(t *testing.T) {
-	response := newProvider(stubCommandRunner{}, controlCatalog{}).dispatch(context.Background(), validRequest(functionWatch))
+	response := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform).dispatch(context.Background(), validRequest(functionWatch))
 	if response.OK || response.Error == nil {
 		t.Fatalf("response = %+v", response)
 	}

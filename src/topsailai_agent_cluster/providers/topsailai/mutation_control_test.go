@@ -296,7 +296,7 @@ func TestControlCatalogAdvertisesOnlyConfiguredActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog: %v", err)
 	}
-	got := topsailaiDescriptor(catalog)
+	got := topsailaiDescriptor(catalog, supportedPlatform)
 	want := []namedContract{
 		{Name: "ctl.heartbeat", Version: operationVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating"},
 		{Name: "ctl.models", Version: operationVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating"},

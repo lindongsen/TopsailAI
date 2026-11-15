@@ -22,14 +22,18 @@ type provider struct {
 	// control is the Provider-local ctl. action catalog loaded at startup. An
 	// empty catalog advertises no action and refuses every ctl. operation.
 	control controlCatalog
+	// platform is the host support detected at startup. A host that cannot stop a
+	// provider process neither advertises nor serves agent.stop.
+	platform platformCapabilities
 }
 
 // newProvider builds one Provider from its immutable startup configuration.
 //
-// The catalog is a parameter rather than a process read, so the action surface is
-// decided once at the boundary and every later decision uses the same value.
-func newProvider(runner commandRunner, control controlCatalog) *provider {
-	return &provider{runner: runner, now: time.Now, control: control}
+// The catalog and the platform capabilities are parameters rather than process
+// reads, so the action surface and the operation surface are decided once at the
+// boundary and every later decision uses the same values.
+func newProvider(runner commandRunner, control controlCatalog, platform platformCapabilities) *provider {
+	return &provider{runner: runner, now: time.Now, control: control, platform: platform}
 }
 
 // dispatch handles only functions truthfully advertised by the descriptor.
@@ -38,7 +42,7 @@ func (p *provider) dispatch(ctx context.Context, request request) response {
 	var err error
 	switch request.Function {
 	case functionDescribe:
-		descriptor := topsailaiDescriptor(p.control)
+		descriptor := topsailaiDescriptor(p.control, p.platform)
 		base.OK = true
 		base.Descriptor = &descriptor
 	case functionDiscover:

@@ -7,12 +7,16 @@ package main
 // without being advertised. The control actions come from the Provider-local
 // catalog, so an unconfigured deployment advertises none.
 //
+// The advertised operation list is also narrowed by the host: agent.stop is
+// advertised only where the platform probe proved the process can be stopped
+// safely, so the descriptor never claims a capability this host cannot honour.
+//
 // The advertised function list is narrower than the dispatch switch on purpose:
 // resolve has a handler but is not advertised yet, because the frozen request
 // schema does not carry the name. Advertising a function the wire contract rejects
 // would make the descriptor claim a capability no caller can reach, so the name is
 // added here only together with the schema enum that admits it.
-func topsailaiDescriptor(control controlCatalog) descriptor {
+func topsailaiDescriptor(control controlCatalog, platform platformCapabilities) descriptor {
 	return descriptor{
 		ProviderType:       "topsailai",
 		ProviderVersion:    providerVersion,
@@ -24,7 +28,7 @@ func topsailaiDescriptor(control controlCatalog) descriptor {
 			Maximum:  protocolMinor,
 		},
 		Functions:  []string{functionDescribe, functionDiscover, functionInspect, functionResolve, functionExecute, functionQuery, functionReadOutput, functionFollowOutput},
-		Operations: mutationOperations(),
+		Operations: mutationOperations(platform),
 		Queries: []namedContract{
 			{Name: queryLaunchOptions, Version: queryVersion},
 			{Name: queryHistoryMessages, Version: queryVersion},

@@ -369,7 +369,7 @@ func TestResolveIsAdvertisedAndHasAHandler(t *testing.T) {
 		t.Fatalf("resolve has no handler: %+v", response)
 	}
 	advertised := false
-	for _, name := range topsailaiDescriptor(controlCatalog{}).Functions {
+	for _, name := range topsailaiDescriptor(controlCatalog{}, supportedPlatform).Functions {
 		if name == functionResolve {
 			advertised = true
 		}

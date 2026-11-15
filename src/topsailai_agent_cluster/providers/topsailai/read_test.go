@@ -33,8 +33,18 @@ func (r *scriptedRunner) Run(_ context.Context, args []string, _ []byte) ([]byte
 	r.answers[key] = values[1:]
 	return []byte(answer.stdout), []byte(answer.stderr), answer.err
 }
+
+// supportedPlatform is a host that can stop a provider process. It is the value
+// the startup probe reports on a Linux host with a readable process table and a
+// working pidfd, so a test that exercises agent.stop states the host it assumes
+// instead of inheriting whatever the test machine happens to be.
+var supportedPlatform = platformCapabilities{ProcAvailable: true, PidfdAvailable: true}
+
+// unsupportedPlatform is a host that cannot stop a provider process.
+var unsupportedPlatform = platformCapabilities{}
+
 func fixedProvider(r commandRunner) *provider {
-	return &provider{runner: r, now: func() time.Time { return time.UnixMilli(1700000000123) }}
+	return &provider{runner: r, now: func() time.Time { return time.UnixMilli(1700000000123) }, platform: supportedPlatform}
 }
 func answer(document string) []runnerAnswer { return []runnerAnswer{{stdout: document}} }
 func queryRequest(name string, target *target, payload string) request {

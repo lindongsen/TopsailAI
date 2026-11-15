@@ -35,19 +35,43 @@ var supportedMutationOperations = [...]string{
 	operationExecutionInterrupt,
 }
 
+// operationNeedsStopSupport reports whether one operation is served only where the
+// host can stop a provider process.
+//
+// agent.stop is the only operation with a host requirement: it terminates a
+// provider process, so it needs a readable process table and a pidfd. Every other
+// operation only reads or writes provider records.
+func operationNeedsStopSupport(operation string) bool {
+	return operation == operationAgentStop
+}
+
 // mutationOperations returns the advertised standard operations in a stable order.
-func mutationOperations() []namedContract {
+//
+// The platform is a parameter rather than a process read, so the advertised surface
+// is decided from the value the boundary detected once and every later decision uses
+// the same value.
+func mutationOperations(platform platformCapabilities) []namedContract {
 	contracts := make([]namedContract, 0, len(supportedMutationOperations))
 	for _, operation := range supportedMutationOperations {
+		if operationNeedsStopSupport(operation) && !platform.stopSupported() {
+			continue
+		}
 		contracts = append(contracts, namedContract{Name: operation, Version: operationVersion})
 	}
 	return contracts
 }
 
 // supportedMutationOperation reports whether this Provider serves one operation.
-func supportedMutationOperation(operation string) bool {
+//
+// A host that cannot stop a provider process refuses agent.stop here, before any
+// authority read and before any argv exists, so an unsupported operation can never
+// reach the provider CLI.
+func supportedMutationOperation(operation string, platform platformCapabilities) bool {
 	if strings.HasPrefix(operation, controlOperationPrefix) {
 		return true
+	}
+	if operationNeedsStopSupport(operation) && !platform.stopSupported() {
+		return false
 	}
 	for _, candidate := range supportedMutationOperations {
 		if candidate == operation {
@@ -64,7 +88,7 @@ func supportedMutationOperation(operation string) bool {
 // argv exists, so a stale, missing or ambiguous target can never reach the provider
 // CLI. A rejected request returns an error and no result, because nothing ran.
 func (p *provider) execute(ctx context.Context, request request) (*operationResult, error) {
-	operation, err := validateExecuteRequest(request)
+	operation, err := validateExecuteRequest(request, p.platform)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +105,7 @@ func (p *provider) execute(ctx context.Context, request request) (*operationResu
 // implemented here as well because this executable is an independent module that
 // cannot import the Cluster validator, and because a caller may reach dispatch
 // without passing through the request envelope decoder.
-func validateExecuteRequest(request request) (string, error) {
+func validateExecuteRequest(request request, platform platformCapabilities) (string, error) {
 	if strings.TrimSpace(request.InvocationID) == "" {
 		return "", fmt.Errorf("%w: invocation_id is required", errInvalidRequest)
 	}
@@ -101,7 +125,7 @@ func validateExecuteRequest(request request) (string, error) {
 	if request.Query != nil {
 		return "", fmt.Errorf("%w: execute request must not contain query", errInvalidRequest)
 	}
-	if !supportedMutationOperation(operation) {
+	if !supportedMutationOperation(operation, platform) {
 		return "", fmt.Errorf("%w: provider operation %q is not implemented", errUnsupported, operation)
 	}
 	if operationNeedsLiveGeneration(operation) && request.Target.ExpectedGeneration == "" {
