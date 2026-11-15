@@ -37,7 +37,78 @@ SERVER_API_URL=http://127.0.0.1:53680
 # Replace <package-version> below with that directory name. agent-clusterctl
 # doctor refuses to start while the command is not executable, so an unfilled
 # placeholder fails loudly at startup rather than silently at the first command.
-ADAPTERS='[{"adapter_id":"topsailai-local","provider_type":"genericcli","command":"/opt/agent-cluster/providers/topsailai/<package-version>/agent-cluster-provider-topsailai","timeout_ms":120000}]'
+ADAPTERS='[
+  {
+    "adapter_id": "topsailai-local",
+    "provider_type": "genericcli",
+    "command": "/opt/agent-cluster/providers/topsailai/<package-version>/agent-cluster-provider-topsailai",
+    "timeout_ms": 120000,
+    "capabilities": {
+      "revision": "topsailai-v1",
+      "capabilities": [
+        {"name": "message.send", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "send_message"},
+        {"name": "context.inject", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "send_message"},
+        {"name": "execution.interrupt", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "agent.start", "version": "v1", "target_kinds": ["endpoint"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "agent.resume", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "agent.stop", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "agent.drive.start", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "agent.drive.stop", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "workspace.clean", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "command.exec", "version": "1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "agent.model.select", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "ctl.agent.llm", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.agent.messages", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.agent.models", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.agent.tokens", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.agent.tools", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.call_instruction", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.clear_interrupt", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.clear_pause", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.ctx.clear", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.ctx.del_msg", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.ctx.history", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.ctx.search", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.ctx.summarize", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.env.set", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.get_runtime_messages", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.get_session_messages", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.git.branch", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.git.diff", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.git.log", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.git.remote", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.git.show", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.git.status", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.git.tag", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.hard_interrupt", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.heartbeat", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.llm_control", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.pause", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.clear_interrupt", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.heartbeat", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.instruction", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.interrupt", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.llm", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.messages", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.session.pause", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.rename", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.runtime_messages", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.session.soft_interrupt", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.session.unpause", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.skill.hooks", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.skill.load", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.skill.show", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.skill.unload", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.skill_repo.list", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.soft_interrupt", "version": "v1", "required_permission": "control"},
+        {"name": "ctl.stat.tool_call", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.stat.tool_call_errors", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.stat.tool_call_log", "version": "v1", "required_permission": "read_output"},
+        {"name": "ctl.stat.tool_call_reset", "version": "v1", "required_permission": "control"}
+      ]
+    }
+  }
+]'
 
 # Pause after a completed inventory collection before the next cycle starts, in
 # milliseconds. This is a delay, not a period: the effective cycle time is this
@@ -64,10 +135,22 @@ COMMAND_ALLOWLIST_FILE=command-allowlist.conf
 # There is no Endpoint-local control action catalog. The `ctl` family is
 # advertised from the ADAPTERS document above: each ctl. capability listed there
 # is one action this node serves, and the Provider CLI that implements it owns the
-# argv. A node whose adapter document names no ctl. capability advertises none and
-# refuses every ctl. operation, which is the fail-closed default. The key
-# CONTROL_ACTION_FILE is no longer read, so a node.conf that still carries it is
-# harmless rather than an error.
+# argv. The shipped example declares all 48 actions the TopsailAI catalog defines,
+# so a fresh node serves them instead of advertising none. A node whose adapter
+# document names no ctl. capability advertises none and refuses every ctl.
+# operation, which is the fail-closed default. The key CONTROL_ACTION_FILE is no
+# longer read, so a node.conf that still carries it is harmless rather than an
+# error.
+#
+# The catalog itself is Provider-side configuration, so the Provider CLI has to be
+# told where it is. The Endpoint never reads this file and never parses a provider
+# argv template; it only forwards the value through the process environment, which
+# is why the setting lives here rather than inside the ADAPTERS document. No
+# deployment path installs the catalog, so copy conf/control-actions.conf.example
+# to the path below before starting the node. An unset value leaves the Provider
+# with no catalog, and every ctl. capability above is then dropped by the
+# capability intersection even though this document declares it.
+AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS=control-actions.conf
 
 # Access policy directory for the `endpoint-token` authorization boundary. Each
 # file in this directory describes exactly one caller token: the endpoints that

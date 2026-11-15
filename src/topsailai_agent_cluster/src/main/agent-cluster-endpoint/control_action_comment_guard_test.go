@@ -16,6 +16,7 @@ package main
 // files fails the guard rather than silently invalidating the comment.
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -23,6 +24,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"topsailai_agent_cluster/internal/config"
+	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
 )
 
 // adapterDocumentCommentAnchor is the sentence the guards below assume still
@@ -113,10 +118,22 @@ func TestAdapterDocumentCarriesTheControlActionCapabilities(t *testing.T) {
 	}
 }
 
-// TestShippedAdapterExampleAdvertisesNoControlAction pins the claim that a
-// document naming no ctl. capability advertises none, which is the fail-closed
-// default the shipped template relies on.
-func TestShippedAdapterExampleAdvertisesNoControlAction(t *testing.T) {
+// TestShippedAdapterExampleAdvertisesEveryControlAction pins the claim that the
+// shipped template is a working configuration rather than a fail-closed stub.
+//
+// The fail-closed behaviour itself is proven elsewhere: a document that names no
+// ctl. capability advertises none, and
+// TestIntersectCapabilitiesStillDropsAnUnadvertisedOperation in
+// internal/adapter/genericcli proves the intersection drops what the provider
+// does not offer. This guard answers a different question, because a template
+// that declares nothing satisfies the fail-closed rule while leaving every
+// operator with a node that serves no command at all.
+//
+// The earlier version of this guard asserted the opposite: it failed when the
+// example declared capabilities. That locked the defect in place, because the
+// only shipped configuration then advertised zero capabilities, so a fresh node
+// refused every operation and the guard certified the result as intended.
+func TestShippedAdapterExampleAdvertisesEveryControlAction(t *testing.T) {
 	root := repoRoot(t)
 	content := readRepoFile(t, root, "conf/node.endpoint.conf.example")
 
@@ -124,19 +141,121 @@ func TestShippedAdapterExampleAdvertisesNoControlAction(t *testing.T) {
 		t.Fatalf("conf/node.endpoint.conf.example no longer states %q, so this guard is checking a comment that was rewritten", adapterDocumentCommentAnchor)
 	}
 
-	var adapterLine string
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "ADAPTERS=") {
-			adapterLine = line
-			break
+	// Read the assignment the way a shell does, so a multi-line document is
+	// parsed as one value instead of being truncated at its first line.
+	document := adapterDocumentFromTemplate(t, content)
+	adapters, err := config.ParseAdapters(document)
+	if err != nil {
+		t.Fatalf("conf/node.endpoint.conf.example ADAPTERS does not parse: %v", err)
+	}
+	if len(adapters) != 1 {
+		t.Fatalf("shipped ADAPTERS declares %d adapters, want 1", len(adapters))
+	}
+	descriptor := adapters[0].Capabilities
+	if descriptor == nil {
+		t.Fatalf("the shipped ADAPTERS example declares no capabilities, so a node built from this template advertises none and refuses every operation")
+	}
+	if descriptor.Revision == "" {
+		t.Fatalf("the shipped ADAPTERS example declares an empty capability revision, so every command is rejected as an invalid intent before it reaches the endpoint")
+	}
+
+	declared := make(map[string]protocol.Capability, len(descriptor.Capabilities))
+	for _, capability := range descriptor.Capabilities {
+		declared[capability.Name] = capability
+	}
+
+	// Every standard operation the cluster serves must be declared, because the
+	// endpoint refuses an operation that is absent from the effective descriptor.
+	for _, name := range []string{
+		protocol.OperationMessageSend,
+		protocol.OperationContextInject,
+		protocol.OperationExecutionInterrupt,
+		protocol.OperationAgentStart,
+		protocol.OperationAgentResume,
+		protocol.OperationAgentStop,
+		protocol.OperationAgentDriveStart,
+		protocol.OperationAgentDriveStop,
+		protocol.OperationWorkspaceClean,
+		protocol.OperationAgentModelSelect,
+		protocol.OperationCommandExec,
+	} {
+		if _, ok := declared[name]; !ok {
+			t.Errorf("the shipped ADAPTERS example does not declare %q, so a node built from this template refuses it", name)
 		}
 	}
-	if adapterLine == "" {
+
+	// The ctl. family is the operator's allowlist, so the template has to name
+	// every action the shipped catalog defines. A missing entry is not a
+	// fail-closed default here: the catalog is installed beside the template, so
+	// the operator has no reason to expect an action to be absent.
+	catalog := readRepoFile(t, root, "conf/control-actions.conf.example")
+	for _, name := range catalogActionNames(t, catalog) {
+		if _, ok := declared[security.ProviderControlPrefix+name]; !ok {
+			t.Errorf("the shipped ADAPTERS example does not declare %q, which conf/control-actions.conf.example defines", security.ProviderControlPrefix+name)
+		}
+	}
+
+	// A declared capability without a permission cannot be authorized, because
+	// the endpoint maps an operation to a scope and a capability that names no
+	// permission leaves the operator unable to grant it.
+	for _, capability := range descriptor.Capabilities {
+		if capability.RequiredPermission == "" {
+			t.Errorf("the shipped ADAPTERS example declares %q without a required_permission", capability.Name)
+		}
+		if !security.KnownScope(capability.RequiredPermission) {
+			t.Errorf("the shipped ADAPTERS example declares %q with required_permission %q, which is not a known scope", capability.Name, capability.RequiredPermission)
+		}
+	}
+}
+
+// adapterDocumentFromTemplate extracts the ADAPTERS value from the template the
+// way the shell does, so a document that spans several lines is read whole.
+func adapterDocumentFromTemplate(t *testing.T, content string) string {
+	t.Helper()
+
+	const prefix = "ADAPTERS='"
+	start := strings.Index(content, prefix)
+	if start < 0 {
 		t.Fatalf("conf/node.endpoint.conf.example has no ADAPTERS assignment, so the comment above it describes a document that is not there")
 	}
-	if strings.Contains(adapterLine, `"capabilities"`) {
-		t.Errorf("the shipped ADAPTERS example declares capabilities, but the comment above it says a document that names no ctl. capability advertises none as the fail-closed default: %s", adapterLine)
+	start += len(prefix)
+	end := strings.Index(content[start:], "'\n")
+	if end < 0 {
+		t.Fatalf("conf/node.endpoint.conf.example ADAPTERS assignment is not terminated by a closing quote")
 	}
+	return content[start : start+end]
+}
+
+// catalogActionNames reads the action names a catalog file defines, skipping the
+// comment block that precedes the JSON document.
+func catalogActionNames(t *testing.T, catalog string) []string {
+	t.Helper()
+
+	var body strings.Builder
+	for _, line := range strings.Split(catalog, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		body.WriteString(line)
+		body.WriteString("\n")
+	}
+
+	var document struct {
+		Actions []struct {
+			Name string `json:"name"`
+		} `json:"actions"`
+	}
+	if err := json.Unmarshal([]byte(body.String()), &document); err != nil {
+		t.Fatalf("conf/control-actions.conf.example does not parse: %v", err)
+	}
+	names := make([]string, 0, len(document.Actions))
+	for _, action := range document.Actions {
+		names = append(names, action.Name)
+	}
+	if len(names) == 0 {
+		t.Fatalf("conf/control-actions.conf.example defines no actions, so this guard would pass without checking anything")
+	}
+	return names
 }
 
 // TestNoSourceReadsTheRemovedControlActionFile pins the claim that the removed
