@@ -253,6 +253,25 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			break
 		}
 		base.Inspection = &inspectionResult{Found: true, Live: true, Observation: &observation}
+	case functionResolve:
+		// The mock's provider resource key IS the provider session identifier, which
+		// is what its own observations publish, so resolve answers with the handle
+		// it was given. Minting a digest here would give one session two identities
+		// and a resume by handle would address a resource discovery never reported.
+		//
+		// It deliberately does not consult mockKnownSession. Resolve translates a
+		// name the operator already chose; deciding existence here would reject the
+		// case the function exists for, a session the Endpoint has not discovered.
+		var payload struct {
+			Handle string `json:"handle"`
+		}
+		if err := json.Unmarshal(request.Payload, &payload); err != nil {
+			return failureResponse(request.RequestID, "invalid_request", "decode resolve payload: "+err.Error(), "not_applied")
+		}
+		if strings.TrimSpace(payload.Handle) == "" {
+			return failureResponse(request.RequestID, "invalid_request", "provider session handle is empty", "not_applied")
+		}
+		base.Resolution = &resolutionResult{ProviderResourceKey: payload.Handle, ResourceKind: resourceSession}
 	case functionExecute:
 		// The interval is measured around the work, not around the record write,
 		// because the record is the evidence a caller uses to prove two commands
@@ -712,6 +731,7 @@ func mockDescriptor(fault string) descriptor {
 			functionQueryCommand,
 			functionReadOutput,
 			functionFollowOutput,
+			functionResolve,
 		},
 		Operations:     mockOperations(),
 		Queries:        queries,
