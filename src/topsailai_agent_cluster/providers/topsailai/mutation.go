@@ -116,10 +116,14 @@ func validateExecuteRequest(request request) (string, error) {
 // so the decision and the invocation cannot disagree about which target they mean.
 func (p *provider) mutationArgs(ctx context.Context, request request, operation string) ([]string, error) {
 	if strings.HasPrefix(operation, controlOperationPrefix) {
-		if _, err := p.requireLiveGeneration(ctx, request.Target); err != nil {
+		resolved, err := p.requireLiveGeneration(ctx, request.Target)
+		if err != nil {
 			return nil, err
 		}
-		return p.control.args(operation, request.Target.ProviderResourceKey, request.Payload)
+		// The catalog template expands {session} into the provider session
+		// identifier, never the opaque mapping key: the provider CLI takes a
+		// session identifier, and the mapping key is a Cluster-side spelling.
+		return p.control.args(operation, resolved.SessionID, request.Payload)
 	}
 	switch operation {
 	case operationAgentStart:
@@ -134,7 +138,7 @@ func (p *provider) mutationArgs(ctx context.Context, request request, operation 
 		if err != nil {
 			return nil, err
 		}
-		return mutationArgs(mutationInvocation{Operation: operation, ProviderKey: request.Target.ProviderResourceKey, Resolved: resolved, Payload: request.Payload})
+		return mutationArgs(mutationInvocation{Operation: operation, Resolved: resolved, Payload: request.Payload})
 	case operationAgentDriveStop:
 		// Stop addresses the recorded controller, including a residual record whose
 		// process is already gone, so it must not require a live target.
@@ -142,19 +146,19 @@ func (p *provider) mutationArgs(ctx context.Context, request request, operation 
 		if err != nil {
 			return nil, err
 		}
-		return mutationArgs(mutationInvocation{Operation: operation, ProviderKey: request.Target.ProviderResourceKey, Resolved: resolved, Payload: request.Payload})
+		return mutationArgs(mutationInvocation{Operation: operation, Resolved: resolved, Payload: request.Payload})
 	case operationWorkspaceClean:
 		resolved, err := p.requireNonLiveRecord(ctx, request.Target)
 		if err != nil {
 			return nil, err
 		}
-		return mutationArgs(mutationInvocation{Operation: operation, ProviderKey: request.Target.ProviderResourceKey, Resolved: resolved, Payload: request.Payload})
+		return mutationArgs(mutationInvocation{Operation: operation, Resolved: resolved, Payload: request.Payload})
 	default:
 		resolved, err := p.requireLiveGeneration(ctx, request.Target)
 		if err != nil {
 			return nil, err
 		}
-		return mutationArgs(mutationInvocation{Operation: operation, ProviderKey: request.Target.ProviderResourceKey, Generation: request.Target.ExpectedGeneration, Resolved: resolved, Payload: request.Payload})
+		return mutationArgs(mutationInvocation{Operation: operation, Generation: request.Target.ExpectedGeneration, Resolved: resolved, Payload: request.Payload})
 	}
 }
 

@@ -69,7 +69,7 @@ func TestControlCatalogExpandsConfiguredTemplate(t *testing.T) {
 		t.Fatalf("contracts=%v", got)
 	}
 	session := liveSessionTarget(t, "7")
-	want := []string{"runtime", "control", "heartbeat", "-s", session.ProviderResourceKey, "--json"}
+	want := []string{"runtime", "control", "heartbeat", "-s", "s-1", "--json"}
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		authorityCall:              answer(liveWorkspaceDocument("7")),
 		strings.Join(want, "\x00"): answer(`{"ok":true}`),
@@ -92,7 +92,7 @@ func TestControlCatalogInjectsTargetSelector(t *testing.T) {
 		t.Fatalf("load catalog: %v", err)
 	}
 	session := liveSessionTarget(t, "7")
-	want := []string{"runtime", "control", "inspect", "-a", `{"session":"` + session.ProviderResourceKey + `"}`, "--json"}
+	want := []string{"runtime", "control", "inspect", "-a", `{"session":"s-1"}`, "--json"}
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		authorityCall:              answer(liveWorkspaceDocument("7")),
 		strings.Join(want, "\x00"): answer(`{"ok":true}`),
@@ -208,7 +208,7 @@ func TestControlCatalogConstantsAreEnforced(t *testing.T) {
 		t.Fatalf("load catalog: %v", err)
 	}
 	session := liveSessionTarget(t, "7")
-	want := []string{"runtime", "control", "call_instruction", "-s", session.ProviderResourceKey, "-a", `{"args":["fast"],"instruction":"agent.models"}`, "--json"}
+	want := []string{"runtime", "control", "call_instruction", "-s", "s-1", "-a", `{"args":["fast"],"instruction":"agent.models"}`, "--json"}
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		authorityCall:              answer(liveWorkspaceDocument("7")),
 		strings.Join(want, "\x00"): answer(`{"ok":true}`),

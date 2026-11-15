@@ -79,7 +79,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{"text":"hello"}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"runtime", "send", "-s", session.ProviderResourceKey, "-m=hello", "--json"},
+			want:      []string{"runtime", "send", "-s", "s-1", "-m=hello", "--json"},
 		},
 		{
 			name:      "context inject",
@@ -87,7 +87,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{"message":"side context"}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"runtime", "btw", "-s", session.ProviderResourceKey, "-m=side context", "--json"},
+			want:      []string{"runtime", "btw", "-s", "s-1", "-m=side context", "--json"},
 		},
 		{
 			name:      "agent stop",
@@ -95,7 +95,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"workspace", "kill", session.ProviderResourceKey, "-g", "7", "--json"},
+			want:      []string{"workspace", "kill", "s-1", "-g", "7", "--json"},
 		},
 		{
 			name:      "drive start",
@@ -103,7 +103,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"workspace", "driver", "start", "-s", session.ProviderResourceKey, "--json"},
+			want:      []string{"workspace", "driver", "start", "-s", "s-1", "--json"},
 		},
 		{
 			name:      "drive stop",
@@ -111,7 +111,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(dormantWorkspaceDocument())},
-			want:      []string{"workspace", "driver", "stop", "-s", session.ProviderResourceKey, "--json"},
+			want:      []string{"workspace", "driver", "stop", "-s", "s-1", "--json"},
 		},
 		{
 			name:      "agent resume",
@@ -119,7 +119,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(dormantWorkspaceDocument())},
-			want:      []string{"workspace", "resume", "-s", session.ProviderResourceKey, "--background", "--json"},
+			want:      []string{"workspace", "resume", "-s", "s-1", "--background", "--json"},
 		},
 		{
 			name:      "workspace clean",
@@ -143,7 +143,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{"provider_resource_key":"model:fast"}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"runtime", "control", "call_instruction", "-s", session.ProviderResourceKey, "-a", `{"args":["fast"],"instruction":"agent.models"}`, "--json"},
+			want:      []string{"runtime", "control", "call_instruction", "-s", "s-1", "-a", `{"args":["fast"],"instruction":"agent.models"}`, "--json"},
 		},
 		{
 			name:      "hard interrupt",
@@ -151,7 +151,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{"action":"hard_interrupt"}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"runtime", "control", "hard_interrupt", "-s", session.ProviderResourceKey, "-a", "{}", "--json"},
+			want:      []string{"runtime", "control", "hard_interrupt", "-s", "s-1", "-a", "{}", "--json"},
 		},
 		{
 			name:      "soft interrupt with message",
@@ -159,7 +159,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{"action":"soft_interrupt","message":"wrap up"}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"runtime", "control", "soft_interrupt", "-s", session.ProviderResourceKey, "-a", `{"message":"wrap up"}`, "--json"},
+			want:      []string{"runtime", "control", "soft_interrupt", "-s", "s-1", "-a", `{"message":"wrap up"}`, "--json"},
 		},
 		{
 			name:      "soft interrupt without message",
@@ -167,7 +167,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{"action":"soft_interrupt"}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"runtime", "control", "soft_interrupt", "-s", session.ProviderResourceKey, "-a", "{}", "--json"},
+			want:      []string{"runtime", "control", "soft_interrupt", "-s", "s-1", "-a", "{}", "--json"},
 		},
 	}
 	for _, test := range tests {
@@ -441,7 +441,7 @@ func TestMutationOutcomeEvidence(t *testing.T) {
 			}
 			runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 				authorityCall: answer(liveWorkspaceDocument("7")),
-				"runtime\x00send\x00-s\x00" + liveSessionTarget(t, "7").ProviderResourceKey + "\x00-m=hello\x00--json": {answerValue},
+				"runtime\x00send\x00-s\x00s-1\x00-m=hello\x00--json": {answerValue},
 			}}
 			got := fixedProvider(runner).dispatch(context.Background(), mutationRequest(operationMessageSend, liveSessionTarget(t, "7"), `{"text":"hello"}`))
 			if !got.OK || got.Result == nil {
@@ -463,7 +463,7 @@ func TestMutationTruncatesOversizedProviderResponse(t *testing.T) {
 	document := `{"ok":true,"padding":"` + strings.Repeat("x", maxProviderResponseBytes) + `"}`
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		authorityCall: answer(liveWorkspaceDocument("7")),
-		"runtime\x00send\x00-s\x00" + liveSessionTarget(t, "7").ProviderResourceKey + "\x00-m=hello\x00--json": answer(document),
+		"runtime\x00send\x00-s\x00s-1\x00-m=hello\x00--json": answer(document),
 	}}
 	got := fixedProvider(runner).dispatch(context.Background(), mutationRequest(operationMessageSend, liveSessionTarget(t, "7"), `{"text":"hello"}`))
 	if !got.OK || got.Result == nil {
@@ -512,8 +512,8 @@ func TestAgentStartArgvRequestsBackgroundCustody(t *testing.T) {
 		t.Fatalf("agent.start argv = %v, want --background so the launch detaches", args)
 	}
 	resume, err := mutationArgs(mutationInvocation{
-		Operation:   operationAgentResume,
-		ProviderKey: "provider-session",
+		Operation: operationAgentResume,
+		Resolved:  providerSessionTarget{SessionID: "provider-session"},
 	})
 	if err != nil {
 		t.Fatalf("mutationArgs resume: %v", err)
