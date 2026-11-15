@@ -34,6 +34,7 @@ type workspaceItem struct {
 	AgentID           string           `json:"agent_id"`
 	PID               int64            `json:"pid"`
 	ProjectWorkspace  string           `json:"project_workspace"`
+	Pwd               string           `json:"pwd"`
 	Driver            *workspaceDriver `json:"driver"`
 }
 
@@ -58,6 +59,7 @@ type sessionAttributes struct {
 	ProviderDisplayName      string        `json:"provider_display_name,omitempty"`
 	ProviderSessionQualifier string        `json:"provider_session_qualifier,omitempty"`
 	ProviderProjectWorkspace string        `json:"provider_project_workspace,omitempty"`
+	ProviderPwd              string        `json:"provider_pwd,omitempty"`
 	ProviderAgentID          string        `json:"provider_agent_id,omitempty"`
 	Drive                    *driveSummary `json:"drive,omitempty"`
 }
@@ -185,7 +187,7 @@ func (p *provider) observation(item workspaceItem) (providerObservation, error) 
 	attributes, err := json.Marshal(sessionAttributes{
 		ProviderSessionID: item.SessionID, ProviderPID: item.PID,
 		ProviderDisplayName: item.SessionName, ProviderSessionQualifier: item.SessionQualifier,
-		ProviderProjectWorkspace: item.ProjectWorkspace, ProviderAgentID: item.AgentID,
+		ProviderProjectWorkspace: item.ProjectWorkspace, ProviderPwd: item.Pwd, ProviderAgentID: item.AgentID,
 		Drive: mapDrive(item.Driver, now),
 	})
 	if err != nil {

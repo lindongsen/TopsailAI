@@ -187,6 +187,7 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 			}
 		}
 		result.ProviderProjectWorkspace = attributes.ProviderProjectWorkspace
+		result.ProviderPwd = attributes.ProviderPwd
 	}
 	return result, nil
 }
@@ -672,6 +673,7 @@ type sessionAttributes struct {
 	ProviderDisplayName      string                 `json:"provider_display_name,omitempty"`
 	ProviderSessionQualifier string                 `json:"provider_session_qualifier,omitempty"`
 	ProviderProjectWorkspace string                 `json:"provider_project_workspace,omitempty"`
+	ProviderPwd              string                 `json:"provider_pwd,omitempty"`
 	ProviderAgentID          string                 `json:"provider_agent_id,omitempty"`
 	Drive                    *protocol.DriveSummary `json:"drive,omitempty"`
 }

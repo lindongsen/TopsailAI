@@ -53,27 +53,36 @@ type Runner interface {
 
 // SessionDirectory resolves the working directory for one session.
 //
-// The provider records the project workspace the session belongs to, and that is
-// the stable location the operator means by "the session's folder". When it does
-// not resolve to an existing directory the call fails closed: falling back to the
-// Endpoint process working directory would run the command somewhere the operator
-// never selected.
-func SessionDirectory(projectWorkspace string) (string, error) {
-	trimmed := strings.TrimSpace(projectWorkspace)
-	if trimmed == "" || !filepath.IsAbs(trimmed) {
-		return "", ErrDirectoryUnresolved
+// The provider records two candidate directories. project_workspace is the project
+// the session belongs to, and pwd is the directory the session was started from;
+// the project workspace wins because it is the stable location the operator means
+// by "the session's folder". A session started from a subdirectory of its project
+// still reports the project, while a session whose project workspace is absent on
+// this host still reports the directory it was started from, so the fallback keeps
+// a command runnable instead of refusing it.
+//
+// When neither candidate resolves to an existing directory the call fails closed:
+// falling back to the Endpoint process working directory would run the command
+// somewhere the operator never selected.
+func SessionDirectory(projectWorkspace, pwd string) (string, error) {
+	for _, candidate := range []string{projectWorkspace, pwd} {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" || !filepath.IsAbs(trimmed) {
+			continue
+		}
+		// Resolve symlinks before the directory check so the confinement decision
+		// is made on the real location rather than on a link that points elsewhere.
+		resolved, err := filepath.EvalSymlinks(trimmed)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		return resolved, nil
 	}
-	// Resolve symlinks before the directory check so the confinement decision is
-	// made on the real location rather than on a link that points elsewhere.
-	resolved, err := filepath.EvalSymlinks(trimmed)
-	if err != nil {
-		return "", ErrDirectoryUnresolved
-	}
-	info, err := os.Stat(resolved)
-	if err != nil || !info.IsDir() {
-		return "", ErrDirectoryUnresolved
-	}
-	return resolved, nil
+	return "", ErrDirectoryUnresolved
 }
 
 // ConfineArguments rejects arguments that would address a location outside the

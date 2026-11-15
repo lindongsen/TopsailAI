@@ -88,6 +88,33 @@ func TestDiscoverEmitsStableProviderObservationWithoutClusterID(t *testing.T) {
 	}
 }
 
+// TestDiscoverEmitsBothDirectoryCandidates proves the provider forwards the two
+// directories the Cluster needs to resolve an operator command.
+//
+// project_workspace is the stable location and pwd is the directory the session was
+// started from. Emitting only the first one removed the fallback the Cluster used to
+// have, so a session whose project lives on another host became unrunnable. The
+// assertion names both fields, because a provider that emitted only one would still
+// satisfy a "the attributes are present" check.
+func TestDiscoverEmitsBothDirectoryCandidates(t *testing.T) {
+	doc := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7,"project_workspace":"/work/project","pwd":"/work/project/sub"}],"total":1}`
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(doc)}}
+	response := fixedProvider(r).dispatch(context.Background(), validRequest(functionDiscover))
+	if !response.OK || response.Discovery == nil || len(response.Discovery.Observations) != 1 {
+		t.Fatalf("response=%+v", response)
+	}
+	var attrs sessionAttributes
+	if err := json.Unmarshal(response.Discovery.Observations[0].Attributes, &attrs); err != nil {
+		t.Fatalf("decode attributes: %v", err)
+	}
+	if attrs.ProviderProjectWorkspace != "/work/project" {
+		t.Fatalf("project workspace = %q", attrs.ProviderProjectWorkspace)
+	}
+	if attrs.ProviderPwd != "/work/project/sub" {
+		t.Fatalf("pwd = %q", attrs.ProviderPwd)
+	}
+}
+
 func TestInspectMatchesExactProviderRow(t *testing.T) {
 	target := sessionTarget(t)
 	doc := `{"items":[{"session_id":"s-1","filename":"other","pid":42,"process_generation":8},{"session_id":"s-1","filename":"row","pid":99,"process_generation":9}],"total":2}`

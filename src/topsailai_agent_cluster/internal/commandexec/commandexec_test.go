@@ -18,7 +18,7 @@ import (
 // on the real location rather than on a link that points elsewhere.
 func TestSessionDirectoryResolvesARealDirectory(t *testing.T) {
 	directory := t.TempDir()
-	resolved, err := SessionDirectory(directory)
+	resolved, err := SessionDirectory(directory, "")
 	if err != nil {
 		t.Fatalf("resolve directory: %v", err)
 	}
@@ -49,10 +49,64 @@ func TestSessionDirectoryFailsClosed(t *testing.T) {
 	}
 	for name, workspace := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := SessionDirectory(workspace); !errors.Is(err, ErrDirectoryUnresolved) {
+			if _, err := SessionDirectory(workspace, ""); !errors.Is(err, ErrDirectoryUnresolved) {
 				t.Fatalf("error = %v, want %v", err, ErrDirectoryUnresolved)
 			}
 		})
+	}
+}
+
+// TestSessionDirectoryFallsBackToPwd proves the second candidate keeps a command
+// runnable when the project workspace does not resolve on this host.
+//
+// A session whose project lives on another machine still reports the directory it
+// was started from. Refusing the command because the project workspace is absent
+// would remove a capability the operator had before, so the fallback is required.
+func TestSessionDirectoryFallsBackToPwd(t *testing.T) {
+	pwd := t.TempDir()
+	absent := filepath.Join(t.TempDir(), "absent")
+	resolved, err := SessionDirectory(absent, pwd)
+	if err != nil {
+		t.Fatalf("resolve directory: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(pwd)
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	if resolved != want {
+		t.Fatalf("directory = %q, want %q", resolved, want)
+	}
+}
+
+// TestSessionDirectoryPrefersTheProjectWorkspace proves the fallback does not
+// change which directory wins.
+//
+// The project workspace is the stable location the operator means by "the
+// session's folder", so a session started from a subdirectory must still run in
+// the project. A resolver that tried pwd first would silently move every command.
+func TestSessionDirectoryPrefersTheProjectWorkspace(t *testing.T) {
+	project := t.TempDir()
+	pwd := t.TempDir()
+	resolved, err := SessionDirectory(project, pwd)
+	if err != nil {
+		t.Fatalf("resolve directory: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	if resolved != want {
+		t.Fatalf("directory = %q, want %q", resolved, want)
+	}
+}
+
+// TestSessionDirectoryRefusesWhenNeitherCandidateResolves proves the fallback is
+// not a licence to run somewhere arbitrary.
+func TestSessionDirectoryRefusesWhenNeitherCandidateResolves(t *testing.T) {
+	absent := filepath.Join(t.TempDir(), "absent")
+	other := filepath.Join(t.TempDir(), "also-absent")
+	if _, err := SessionDirectory(absent, other); !errors.Is(err, ErrDirectoryUnresolved) {
+		t.Fatalf("error = %v, want %v", err, ErrDirectoryUnresolved)
 	}
 }
 

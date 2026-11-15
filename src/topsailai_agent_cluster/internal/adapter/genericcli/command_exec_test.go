@@ -121,6 +121,60 @@ func TestExecuteRunsCommandExecWithoutInvokingTheProvider(t *testing.T) {
 	}
 }
 
+// TestExecuteFallsBackToTheProviderPwd proves the second directory candidate
+// reaches the command runner.
+//
+// A session whose project workspace is absent on this host still reports the
+// directory it was started from. The adapter must decode that value and let the
+// resolver fall back to it, otherwise the command is refused even though the
+// provider named a usable directory. The assertion is on the directory the runner
+// received, because a test that only checked the decoded field would pass while the
+// call site still passed one candidate.
+func TestExecuteFallsBackToTheProviderPwd(t *testing.T) {
+	provider := newFakeProvider(t)
+	commands := &recordingCommandRunner{outcome: commandexec.Outcome{Stdout: []byte("ok\n"), ExitCode: 0}}
+	binding, resourceID := commandExecAdapter(t, provider, commands)
+	pwd := t.TempDir()
+	resolvedPwd, err := filepath.EvalSymlinks(pwd)
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	absent := filepath.Join(t.TempDir(), "absent-project")
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionInspect {
+			observation := providercli.ProviderObservation{
+				ProviderResourceKey: "session:stable", ProviderGeneration: "generation-1",
+				ResourceKind: protocol.ResourceSession, State: "running", ObservedAtMS: 10,
+				Attributes: json.RawMessage(`{"provider_session_id":"session:stable","provider_project_workspace":"` + absent + `","provider_pwd":"` + resolvedPwd + `"}`),
+			}
+			return providercli.Response{Version: request.Version, RequestID: request.RequestID, OK: true,
+				Inspection: &providercli.InspectionResult{Found: true, Live: true, Observation: &observation}}, nil
+		}
+		return describeResponseWithFunctions(request, providercli.FunctionInspect), nil
+	}
+	payload, err := json.Marshal(protocol.CommandExecRequest{Argv: []string{"pwd"}})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	result, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+		CommandID: "cmd-pwd", Operation: protocol.OperationCommandExec, OperationVersion: protocol.CommandExecPayloadVersion,
+		Payload: payload, Target: &protocol.CommandTarget{ResourceID: resourceID, Kind: protocol.ResourceSession},
+		Budget: protocol.Budget{CLITimeoutMS: 5000}, ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli(),
+	}})
+	if err != nil {
+		t.Fatalf("execute command.exec: %v", err)
+	}
+	if commands.calls != 1 {
+		t.Fatalf("local command runs = %d, want 1", commands.calls)
+	}
+	if commands.dir != resolvedPwd {
+		t.Fatalf("directory = %q, want the provider pwd %q", commands.dir, resolvedPwd)
+	}
+	if result.Receipt.ExitConfirmed != true {
+		t.Fatalf("receipt = %+v", result.Receipt)
+	}
+}
+
 // TestExecuteRefusesCommandExecWithoutAProviderWorkspace proves the directory is
 // provider evidence rather than a local guess: when the provider reports no
 // workspace the command is refused instead of running in the Endpoint's own
@@ -191,17 +245,17 @@ func TestExecuteRefusesCommandExecWithAnAbsoluteArgument(t *testing.T) {
 // TestSessionDirectoryRejectsARelativeWorkspace proves the resolver fails closed
 // rather than resolving a relative path against the Endpoint's own directory.
 func TestSessionDirectoryRejectsARelativeWorkspace(t *testing.T) {
-	if _, err := commandexec.SessionDirectory("relative/path"); err == nil {
+	if _, err := commandexec.SessionDirectory("relative/path", ""); err == nil {
 		t.Fatal("a relative workspace was accepted")
 	}
-	if _, err := commandexec.SessionDirectory(""); err == nil {
+	if _, err := commandexec.SessionDirectory("", ""); err == nil {
 		t.Fatal("an empty workspace was accepted")
 	}
 	file := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	if _, err := commandexec.SessionDirectory(file); err == nil {
+	if _, err := commandexec.SessionDirectory(file, ""); err == nil {
 		t.Fatal("a regular file was accepted as a session directory")
 	}
 }

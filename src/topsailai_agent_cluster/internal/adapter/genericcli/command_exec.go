@@ -47,7 +47,7 @@ func (a *Adapter) executeCommand(ctx context.Context, intent protocol.ImmutableI
 	if err != nil {
 		return adapter.ExecuteResult{Receipt: commandexec.FailedReceipt(intent, "session_directory_unavailable")}, err
 	}
-	directory, err := commandexec.SessionDirectory(inspection.ProviderProjectWorkspace)
+	directory, err := commandexec.SessionDirectory(inspection.ProviderProjectWorkspace, inspection.ProviderPwd)
 	if err != nil {
 		return adapter.ExecuteResult{Receipt: commandexec.FailedReceipt(intent, "session_directory_unavailable")}, err
 	}

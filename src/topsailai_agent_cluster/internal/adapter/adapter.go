@@ -60,6 +60,11 @@ type InspectResult struct {
 	// back to its own working directory would run the command somewhere the
 	// operator never selected.
 	ProviderProjectWorkspace string
+	// ProviderPwd is the directory the provider reports the session was started
+	// from. It is the second candidate for an operator command, used only when the
+	// project workspace does not resolve on this host, so a session whose project
+	// lives elsewhere stays runnable instead of being refused.
+	ProviderPwd string
 }
 
 // ExecuteRequest carries a validated standard operation.
