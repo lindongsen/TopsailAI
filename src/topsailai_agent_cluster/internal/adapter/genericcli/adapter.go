@@ -191,6 +191,46 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	return result, nil
 }
 
+// ResolveProviderSessionHandle mints the durable mapping for a provider session
+// identifier the Endpoint has not discovered yet. The Provider mints the key,
+// because provider-specific spelling must never leave the Provider module; the
+// adapter only forwards the handle and records the returned key through the same
+// mapper discovery uses, so a later discovery yields the identical resource ID.
+// Minting is local bookkeeping and never asks the Provider whether the session
+// exists: the operator already named the target, and existence stays the
+// Provider's answer when the operation reaches it.
+func (a *Adapter) ResolveProviderSessionHandle(ctx context.Context, handle string) (adapter.ResourceMapping, error) {
+	if handle == "" {
+		return adapter.ResourceMapping{}, errors.New("provider session handle is required")
+	}
+	payload, err := json.Marshal(map[string]string{"handle": handle})
+	if err != nil {
+		return adapter.ResourceMapping{}, fmt.Errorf("encode resolve payload: %w", err)
+	}
+	response, err := a.call(ctx, classDiscovery, providercli.FunctionResolve, nil, nil, nil, "", payload)
+	if err != nil {
+		return adapter.ResourceMapping{}, err
+	}
+	if err := responseError(response); err != nil {
+		return adapter.ResourceMapping{}, err
+	}
+	if response.Resolution == nil {
+		return adapter.ResourceMapping{}, errors.New("provider resolution response is missing")
+	}
+	if !protocol.IsResourceKind(response.Resolution.ResourceKind) {
+		return adapter.ResourceMapping{}, fmt.Errorf("provider resolved an unknown resource kind %q", response.Resolution.ResourceKind)
+	}
+	if response.Resolution.ProviderResourceKey == "" {
+		return adapter.ResourceMapping{}, errors.New("provider resolved an empty resource key")
+	}
+	return a.config.Mapper.GetOrCreateResourceID(ctx, a.config.AdapterID, response.Resolution.ResourceKind, response.Resolution.ProviderResourceKey, a.config.Now().UnixMilli())
+}
+
+// The Endpoint asks any registered adapter that implements HandleResolver to
+// address a provider session handle. This assertion fails the build if the
+// method is ever removed, so the capability cannot silently disappear again.
+var _ adapter.HandleResolver = (*Adapter)(nil)
+
 // Execute forwards one validated standard operation and returns Provider evidence only.
 func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
 	ctx, cancel := boundedContext(ctx, request.Intent.Budget.CLITimeoutMS, request.Intent.ExecuteBeforeAtMS)
