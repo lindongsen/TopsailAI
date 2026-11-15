@@ -156,12 +156,65 @@ func TestValidateSessionTargetAcceptsBothSessionSelectors(t *testing.T) {
 	}
 }
 
+// TestInspectReadsAcrossHosts proves inspect does not pass --local.
+//
+// Resume authorizes on the absence of a live target, so a --local read would
+// report a session recorded on another host as missing and refuse the resume the
+// operator asked for. The assertion is on the recorded argv rather than on the
+// answer key, because a wrong answer key would fail as an unexpected call and
+// would not say which flag was wrong.
+func TestInspectReadsAcrossHosts(t *testing.T) {
+	document := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7}]}`
+	// Both spellings are answered so the assertion, not an unexpected-call failure,
+	// is the only thing that can reject a --local read.
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		inspectCall:   answer(document),
+		authorityCall: answer(document),
+	}}
+	value := validRequest(functionInspect)
+	value.Target = sessionTarget(t)
+	if response := fixedProvider(runner).dispatch(context.Background(), value); !response.OK {
+		t.Fatalf("response=%+v", response)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("inspect made %d calls: %v", len(runner.calls), runner.calls)
+	}
+	for _, token := range runner.calls[0].args {
+		if token == "--local" {
+			t.Fatalf("inspect passed --local, which hides another host's session: %v", runner.calls[0].args)
+		}
+	}
+}
+
+// TestDiscoverAndAuthorityStayLocal proves the cross-host read is limited to
+// inspect: discovery and the mutation authority read must keep --local, because
+// they address what this Endpoint can control.
+func TestDiscoverAndAuthorityStayLocal(t *testing.T) {
+	document := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7}]}`
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{authorityCall: answer(document)}}
+	if response := fixedProvider(runner).dispatch(context.Background(), validRequest(functionDiscover)); !response.OK {
+		t.Fatalf("response=%+v", response)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("discover made %d calls: %v", len(runner.calls), runner.calls)
+	}
+	found := false
+	for _, token := range runner.calls[0].args {
+		if token == "--local" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("discover dropped --local: %v", runner.calls[0].args)
+	}
+}
+
 // TestInspectReportsLiveWhenAnyRowOfTheSessionIsLive proves the scan does not stop
 // at the first matching row: a dormant sibling must not hide a live one, because
 // that would let resume target a session that is still running.
 func TestInspectReportsLiveWhenAnyRowOfTheSessionIsLive(t *testing.T) {
 	document := `{"items":[{"session_id":"s-1","filename":"manager.stdout","pid":42},{"session_id":"s-1","filename":"task.stdout","pid":99,"process_generation":9,"is_task":true},{"session_id":"s-2","filename":"row","pid":7,"process_generation":3}]}`
-	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{authorityCall: answer(document)}}
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{inspectCall: answer(document)}}
 	value := validRequest(functionInspect)
 	value.Target = sessionScopedTarget(t, "s-1")
 	response := fixedProvider(runner).dispatch(context.Background(), value)
@@ -183,7 +236,7 @@ func TestInspectReportsLiveWhenAnyRowOfTheSessionIsLive(t *testing.T) {
 // is reported as found and not live rather than as missing.
 func TestInspectReportsDormantSessionAsFoundNotLive(t *testing.T) {
 	document := `{"items":[{"session_id":"s-1","filename":"manager.stdout","pid":42},{"session_id":"s-1","filename":"task.stdout","pid":99,"is_task":true}]}`
-	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{authorityCall: answer(document)}}
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{inspectCall: answer(document)}}
 	value := validRequest(functionInspect)
 	value.Target = sessionScopedTarget(t, "s-1")
 	response := fixedProvider(runner).dispatch(context.Background(), value)
@@ -199,7 +252,7 @@ func TestInspectReportsDormantSessionAsFoundNotLive(t *testing.T) {
 // no row is reported as not found.
 func TestInspectReportsUnknownSessionAsMissing(t *testing.T) {
 	document := `{"items":[{"session_id":"s-2","filename":"row","pid":7,"process_generation":3}]}`
-	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{authorityCall: answer(document)}}
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{inspectCall: answer(document)}}
 	value := validRequest(functionInspect)
 	value.Target = sessionScopedTarget(t, "s-1")
 	response := fixedProvider(runner).dispatch(context.Background(), value)
@@ -215,7 +268,7 @@ func TestInspectReportsUnknownSessionAsMissing(t *testing.T) {
 // did not weaken the row selector: two rows claiming one row key stay ambiguous.
 func TestInspectStillRejectsDuplicateRowsForARowScopedKey(t *testing.T) {
 	document := `{"items":[{"session_id":"s-1","filename":"row","pid":42},{"session_id":"s-1","filename":"row","pid":42}]}`
-	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{authorityCall: answer(document)}}
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{inspectCall: answer(document)}}
 	value := validRequest(functionInspect)
 	value.Target = sessionTarget(t)
 	response := fixedProvider(runner).dispatch(context.Background(), value)

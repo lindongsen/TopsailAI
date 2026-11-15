@@ -81,7 +81,7 @@ func TestDiscoverEmitsStableProviderObservationWithoutClusterID(t *testing.T) {
 func TestInspectMatchesExactProviderRow(t *testing.T) {
 	target := sessionTarget(t)
 	doc := `{"items":[{"session_id":"s-1","filename":"other","pid":42,"process_generation":8},{"session_id":"s-1","filename":"row","pid":99,"process_generation":9}],"total":2}`
-	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(doc)}}
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json": answer(doc)}}
 	p := fixedProvider(r)
 	request := validRequest(functionInspect)
 	request.Target = target

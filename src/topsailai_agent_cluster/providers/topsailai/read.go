@@ -99,13 +99,29 @@ func (p *provider) discover(ctx context.Context) (*discoveryResult, error) {
 	return result, nil
 }
 
+// inspect revalidates one session target against the provider workspace.
+//
+// --local is deliberately NOT passed here, unlike discover and the mutation
+// authority read. The inventory lists only what this Endpoint can control, so it
+// stays local. Inspect must not, because resume authorizes on the absence of a
+// live target: a session recorded on another machine is absent from a --local
+// read, so --local would report it as not found and refuse the resume the
+// operator asked for. A task directory shared between hosts is exactly the case
+// where resuming another host's session is intended, and the provider applies no
+// host filter to resume. Such a row still reports an empty generation, because
+// this host cannot verify a process it cannot see, so it is found but not live.
+//
+// The targeted `-s <session_id>` form the old adapter used is unavailable here:
+// a mapping key is a digest of the session identity, so the identifier cannot be
+// recovered from the key. The full scan is therefore the only correct read, and
+// it costs one workspace listing per inspect instead of one targeted listing.
 func (p *provider) inspect(ctx context.Context, requested *target) (*inspectionResult, error) {
 	key, err := validateSessionTarget(requested)
 	if err != nil {
 		return nil, err
 	}
 	var document workspaceResponse
-	if err := runJSON(ctx, p.runner, []string{"workspace", "list", "--json", "--local"}, 1<<20, &document); err != nil {
+	if err := runJSON(ctx, p.runner, []string{"workspace", "list", "--json"}, 1<<20, &document); err != nil {
 		return nil, err
 	}
 	if document.Items == nil {

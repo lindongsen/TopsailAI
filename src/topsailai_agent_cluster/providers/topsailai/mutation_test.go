@@ -13,6 +13,11 @@ import (
 // authorityCall is the single workspace read every session authority check makes.
 const authorityCall = "workspace\x00list\x00--json\x00--local"
 
+// inspectCall is the workspace read inspect makes. It deliberately omits --local,
+// because resume authorizes on the absence of a live target and a --local read
+// would report another host's session as missing.
+const inspectCall = "workspace\x00list\x00--json"
+
 // mutationRequest builds one execute request for a standard operation.
 func mutationRequest(operation string, target *target, payload string) request {
 	value := validRequest(functionExecute)
