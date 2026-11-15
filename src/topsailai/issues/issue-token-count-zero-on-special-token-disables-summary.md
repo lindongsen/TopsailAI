@@ -89,20 +89,29 @@ blocked by `summary_input_exceeds_safe_limit` instead. The model registry entry
 for `DeepSeek-V4-Flash-Preview` declares no `max_context`, so the real capacity
 is unrecorded and the configured value is the only authority.
 
-## Proposed fix
+## Fix applied
 
 1. Count special-token text as ordinary text instead of failing:
    `encoding.encode(text, disallowed_special=())` in `count_tokens()` and
-   `count_tokens_for_model()`. Measured on the same input, the current path
-   returns `0` while `disallowed_special=()` returns the correct count.
-2. Stop treating a counting failure as a real zero. Return `None` on failure so
-   callers can distinguish "unknown" from "empty", and make
-   `_can_summarize_agent2llm_messages()` skip the `estimated_summary_not_smaller`
-   comparison when the count is unavailable rather than comparing against `0`.
-3. Make `_check_dynamic_summary_feasibility()` fail closed when the input count
-   is unavailable, instead of passing the capacity guard vacuously.
-4. Align `TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT` with the model's real capacity and
-   record `max_context` for the model in the registry.
+   `count_tokens_for_model()`. Measured on the same input, the old path returned
+   `0` while `disallowed_special=()` returns the correct count.
+2. Added a safety net so non-empty text can never report `0` tokens. When exact
+   counting fails or yields an empty result for non-empty text, a rough
+   length-based estimate is returned instead. The estimate reuses the existing
+   `CHARS_PER_TOKEN = 4.0` ratio already used by the streaming progress estimator,
+   so the project keeps one heuristic rather than two. Empty text still returns
+   `0`, and a warning is logged whenever the estimate is used.
+
+## Remaining follow-ups
+
+1. `_check_dynamic_summary_feasibility()` still multiplies the count by the safety
+   coefficient, so a genuinely oversized context is blocked rather than silently
+   passed. That is the correct fail-closed direction, but it means an
+   already-overflowed session cannot be rescued by the counting fix alone.
+2. Align `TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT` with the model's real capacity and
+   record `max_context` for the model in the registry. The registry entry for
+   `DeepSeek-V4-Flash-Preview` declares no `max_context`, while real requests of
+   327k tokens succeeded, so the configured `256000` is likely too small.
 
 ## Impact
 

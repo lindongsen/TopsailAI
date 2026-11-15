@@ -517,3 +517,28 @@ and an `8192` margin, `summary_safe_limit=217808`, while the real prompt was
 diagnosis and prevents recurrence in new sessions; an already-overflowed session
 needs a restart or a genuinely larger model capacity, and that distinction must be
 stated rather than presented as a complete repair.
+
+## A failure value that is also a valid measurement needs a fallback, not just a fix
+
+Trigger: after fixing `count_tokens()` to accept literal special tokens, the same
+class of defect remained reachable through any other counting failure: an unknown
+encoding, an unavailable encoder, or an encoder that returns an empty result. Each
+of those still produced `0`, which every caller reads as "the context is empty".
+
+Action: make the contract "non-empty text never reports 0 tokens". When exact
+counting fails or yields an empty result for non-empty text, return a rough
+length-based estimate and log a warning; keep `0` reserved for genuinely empty
+text. Reuse the ratio the project already has (`CHARS_PER_TOKEN = 4.0` in the
+streaming progress estimator) instead of introducing a second heuristic.
+
+Why this prevents recurrence: fixing one known trigger only closes that trigger.
+The dangerous property is not "tiktoken rejects special tokens", it is "a failure
+is encoded as a value that is indistinguishable from a legitimate measurement".
+Any future failure path re-opens the same silent skip. A fallback converts an
+unknown into a conservative estimate, so thresholds and capacity guards keep
+working in the safe direction instead of silently passing. Two details matter:
+the fallback must be defined in `context/token.py` rather than imported from
+`workspace/print_tool.py`, because that module already imports `token.py` and the
+reverse import would be circular; and the two pre-existing tests that asserted
+`0` on failure had to be updated, because they encoded the old contract and would
+otherwise have blocked the fix.
