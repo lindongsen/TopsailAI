@@ -45,6 +45,8 @@ func (p *provider) dispatch(ctx context.Context, request request) response {
 		base.Discovery, err = p.discover(ctx)
 	case functionInspect:
 		base.Inspection, err = p.inspect(ctx, request.Target)
+	case functionResolve:
+		base.Resolution, err = p.resolveSessionHandle(request.Payload)
 	case functionExecute:
 		base.Result, err = p.execute(ctx, request)
 	case functionQuery:
