@@ -208,6 +208,36 @@ func TestShippedAdapterExampleAdvertisesEveryControlAction(t *testing.T) {
 	}
 }
 
+// TestShippedAdapterExampleNamesTheProviderExecutable pins the claim that the
+// shipped template tells the Provider which business CLI to run.
+//
+// The Provider falls back to the bare name `topsailai` and resolves it from PATH.
+// PATH is a property of the shell that launched the controller, not of the node
+// configuration, so the same package set collected on one node and failed on
+// another with `exec: "topsailai": executable file not found in $PATH`. The
+// failure is silent at install time and appears only as a stale inventory, so the
+// template has to name the executable explicitly.
+func TestShippedAdapterExampleNamesTheProviderExecutable(t *testing.T) {
+	root := repoRoot(t)
+	content := readRepoFile(t, root, "conf/node.endpoint.conf.example")
+
+	var assignment string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "AGENT_CLUSTER_TOPSAILAI_EXECUTABLE=") {
+			assignment = strings.TrimPrefix(line, "AGENT_CLUSTER_TOPSAILAI_EXECUTABLE=")
+			break
+		}
+	}
+	if assignment == "" {
+		t.Fatalf("conf/node.endpoint.conf.example does not set AGENT_CLUSTER_TOPSAILAI_EXECUTABLE, so the Provider resolves the business CLI from PATH and collection depends on the launching shell")
+	}
+	// A bare name is the defect this guard exists for, so it must be rejected
+	// rather than accepted as a shorter spelling of the same setting.
+	if !strings.HasPrefix(assignment, "/") {
+		t.Fatalf("conf/node.endpoint.conf.example sets AGENT_CLUSTER_TOPSAILAI_EXECUTABLE=%q, which is not an absolute path and would still be resolved from PATH", assignment)
+	}
+}
+
 // adapterDocumentFromTemplate extracts the ADAPTERS value from the template the
 // way the shell does, so a document that spans several lines is read whole.
 func adapterDocumentFromTemplate(t *testing.T, content string) string {

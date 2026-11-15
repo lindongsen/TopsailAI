@@ -317,6 +317,17 @@ see it before starting the node. A value that names a file the Provider cannot r
 is a failed launch rather than a lost capability: the Provider exits, and the
 Endpoint refuses to start when the Provider cannot describe itself.
 
+`AGENT_CLUSTER_TOPSAILAI_EXECUTABLE` names the TopsailAI business CLI the Provider
+invokes. It must be an absolute path. The Provider falls back to the bare name
+`topsailai` and resolves it from `PATH`, and `PATH` belongs to the shell that
+launched the controller rather than to the node configuration. The same package set
+therefore collected on one node and failed on another with
+`exec: "topsailai": executable file not found in $PATH`, and the only symptom was a
+stale inventory: the Endpoint stayed online, the adapter stayed `healthy`, and the
+collection status was `failed`. The launcher does not resolve this value, because it
+is a Provider setting rather than a path inside the product root; it is exported
+from `node.conf` unchanged, so write it as an absolute path.
+
 ## Provider package
 
 The Provider CLI package is optional and independent of every role package. Its
