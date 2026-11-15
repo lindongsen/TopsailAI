@@ -230,7 +230,8 @@ func (p *provider) models(ctx context.Context, requested *target, raw json.RawMe
 	if err := decodeStrict(raw, &payload); err != nil {
 		return modelResult{}, fmt.Errorf("%w: model.catalog payload", errInvalidRequest)
 	}
-	if _, err := p.resolveWorkspaceTarget(ctx, requested); err != nil {
+	resolved, err := p.resolveWorkspaceTarget(ctx, requested)
+	if err != nil {
 		return modelResult{}, err
 	}
 	var entries []modelEntry
@@ -241,6 +242,11 @@ func (p *provider) models(ctx context.Context, requested *target, raw json.RawMe
 		return modelResult{}, errorsNew("model profile count exceeds limit")
 	}
 	entries = collapseModels(entries)
+	// The registry document names what can be selected, never what is selected, so
+	// the current model is a second read. It is deliberately non-fatal: a catalog
+	// that cannot prove the current model is still a usable menu, and failing the
+	// whole read would take the menu away because one observation was unavailable.
+	currentName := p.currentModelName(ctx, resolved.SessionID)
 	result := modelResult{Profiles: make([]modelProfileFact, 0, len(entries)), ObservedAtMS: p.now().UnixMilli()}
 	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
@@ -256,7 +262,7 @@ func (p *provider) models(ctx context.Context, requested *target, raw json.RawMe
 		}
 		seen[key] = struct{}{}
 		available, reason := modelAvailability(entry)
-		result.Profiles = append(result.Profiles, modelProfileFact{resourceModelProfile, key, boundedString(entry.Name, 256), "unknown", available, reason})
+		result.Profiles = append(result.Profiles, modelProfileFact{resourceModelProfile, key, boundedString(entry.Name, 256), modelCurrentState(entry.Name, currentName), available, reason})
 	}
 	return result, nil
 }

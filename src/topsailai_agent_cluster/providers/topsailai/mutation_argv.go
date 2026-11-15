@@ -139,14 +139,7 @@ func modelSelectArgs(sessionID string, payload json.RawMessage) ([]string, error
 	if name == "" {
 		return nil, fmt.Errorf("%w: model profile key is empty", errInvalidRequest)
 	}
-	document, err := json.Marshal(map[string]any{
-		"instruction": "agent.models",
-		"args":        []string{name},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode model select instruction: %w", err)
-	}
-	return []string{"runtime", "control", "call_instruction", "-s", sessionID, "-a", string(document), "--json"}, nil
+	return modelInstructionArgs(sessionID, "agent.models", []string{name})
 }
 
 // runtimeMessage extracts the message text from one provider-neutral payload.
