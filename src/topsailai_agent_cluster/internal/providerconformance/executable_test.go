@@ -508,6 +508,10 @@ func requestForTarget(function string, target providerTarget) providercli.Reques
 		// one the advertised-function sweep can address with a discovered key.
 		request.Query = &providercli.NamedContract{Name: providercli.QueryModelCatalog, Version: "v1"}
 		request.Target = &providercli.Target{ResourceKind: providercli.ResourceSession, ProviderResourceKey: target.key}
+	case providercli.FunctionResolve:
+		// resolve carries no target: it mints the key for a session identifier the
+		// Endpoint has not discovered, so the sweep supplies a plain identifier.
+		request.Payload = json.RawMessage(`{"handle":"conformance-session"}`)
 	}
 	return request
 }

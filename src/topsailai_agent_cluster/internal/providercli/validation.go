@@ -94,6 +94,8 @@ func (r Request) Validate() error {
 		return r.validateQuery()
 	case FunctionInspect, FunctionReadOutput, FunctionFollowOutput:
 		return r.validateTargetedRead()
+	case FunctionResolve:
+		return r.validateResolve()
 	case FunctionQueryCommand:
 		return r.validateQueryCommand()
 	case FunctionDescribe, FunctionDiscover, FunctionWatch:
@@ -217,6 +219,22 @@ func (r Request) validateUntargetedRead() error {
 	return nil
 }
 
+// validateResolve accepts a provider-private session identifier and nothing
+// else. The payload shape belongs to the Provider, so this layer only rejects
+// the Cluster authority fields a resolve request must never carry.
+func (r Request) validateResolve() error {
+	if err := r.validateNoContracts(); err != nil {
+		return err
+	}
+	if r.InvocationID != "" {
+		return errors.New("resolve request must not contain invocation_id")
+	}
+	if r.Target != nil {
+		return errors.New("resolve request must not contain target")
+	}
+	return nil
+}
+
 func (r Request) validateNoContracts() error {
 	if r.Operation != nil || r.Query != nil {
 		return fmt.Errorf("%s request must not contain operation or query", r.Function)
@@ -260,6 +278,9 @@ func (r Response) validateSuccessPayload() error {
 	if r.Inspection != nil {
 		return r.Inspection.validate()
 	}
+	if r.Resolution != nil {
+		return r.Resolution.validate()
+	}
 	if r.Result != nil {
 		return r.Result.validate()
 	}
@@ -286,6 +307,9 @@ func responsePayloadCount(response Response) int {
 		count++
 	}
 	if response.Inspection != nil {
+		count++
+	}
+	if response.Resolution != nil {
 		count++
 	}
 	if response.Result != nil {
@@ -466,6 +490,17 @@ func (i InspectionResult) validate() error {
 	}
 	if i.Observation != nil {
 		return i.Observation.validate()
+	}
+	return nil
+}
+
+// validate checks the minted key and the resource kind a resolution reports.
+func (r ResolutionResult) validate() error {
+	if err := validateIdentifier("resolution provider_resource_key", r.ProviderResourceKey, true); err != nil {
+		return err
+	}
+	if !isResourceKind(r.ResourceKind) {
+		return fmt.Errorf("unsupported resolution resource_kind %q", r.ResourceKind)
 	}
 	return nil
 }
@@ -656,7 +691,7 @@ func decodeStrict(data []byte, target any) error {
 
 func isFunction(value string) bool {
 	switch value {
-	case FunctionDescribe, FunctionDiscover, FunctionInspect, FunctionExecute, FunctionQuery,
+	case FunctionDescribe, FunctionDiscover, FunctionInspect, FunctionResolve, FunctionExecute, FunctionQuery,
 		FunctionQueryCommand, FunctionReadOutput, FunctionFollowOutput, FunctionWatch:
 		return true
 	default:

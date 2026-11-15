@@ -23,7 +23,7 @@ func topsailaiDescriptor(control controlCatalog) descriptor {
 			Minimum:  protocolMinor,
 			Maximum:  protocolMinor,
 		},
-		Functions:  []string{functionDescribe, functionDiscover, functionInspect, functionExecute, functionQuery, functionReadOutput, functionFollowOutput},
+		Functions:  []string{functionDescribe, functionDiscover, functionInspect, functionResolve, functionExecute, functionQuery, functionReadOutput, functionFollowOutput},
 		Operations: mutationOperations(),
 		Queries: []namedContract{
 			{Name: queryLaunchOptions, Version: queryVersion},

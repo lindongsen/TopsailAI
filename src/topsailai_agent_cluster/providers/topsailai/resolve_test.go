@@ -292,22 +292,26 @@ func TestResolveKeyAddressesTheSessionTheRowKeyBelongsTo(t *testing.T) {
 	}
 }
 
-// TestResolveHasAHandlerButIsNotAdvertisedYet proves the descriptor stays narrower
-// than the dispatch switch while the frozen request schema cannot carry the name.
+// TestResolveIsAdvertisedAndHasAHandler proves the descriptor and the dispatch
+// switch agree on the name.
 //
 // Advertising a function the wire contract rejects would claim a capability no
 // caller can reach, and the conformance sweep invokes every advertised function, so
 // the name must appear in the descriptor only together with the schema enum that
 // admits it. This guard fails the moment one side moves without the other.
-func TestResolveHasAHandlerButIsNotAdvertisedYet(t *testing.T) {
+func TestResolveIsAdvertisedAndHasAHandler(t *testing.T) {
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{}}
 	response := fixedProvider(runner).dispatch(context.Background(), resolveRequest("s-1"))
 	if !response.OK || response.Resolution == nil {
 		t.Fatalf("resolve has no handler: %+v", response)
 	}
-	for _, advertised := range topsailaiDescriptor(controlCatalog{}).Functions {
-		if advertised == functionResolve {
-			t.Fatal("resolve is advertised while the request schema cannot carry it")
+	advertised := false
+	for _, name := range topsailaiDescriptor(controlCatalog{}).Functions {
+		if name == functionResolve {
+			advertised = true
 		}
+	}
+	if !advertised {
+		t.Fatal("resolve has a handler but the descriptor does not advertise it")
 	}
 }

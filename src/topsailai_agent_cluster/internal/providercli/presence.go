@@ -40,6 +40,8 @@ func validateRequestPresence(data []byte) error {
 			return err
 		}
 		return forbidFields(root, function+" request", "operation", "query", "invocation_id")
+	case FunctionResolve:
+		return forbidFields(root, "resolve request", "operation", "query", "invocation_id", "target")
 	case FunctionQueryCommand:
 		if err := requireFields(root, "query_command request", "invocation_id"); err != nil {
 			return err
@@ -90,6 +92,12 @@ func validateSuccessPresence(root map[string]json.RawMessage) error {
 			return err
 		}
 		return requireFields(inspection, "inspection result", "found", "live")
+	case root["resolution"] != nil:
+		resolution, err := decodeNestedObject(root, "resolution", "resolution result")
+		if err != nil {
+			return err
+		}
+		return requireFields(resolution, "resolution result", "provider_resource_key", "resource_kind")
 	case root["result"] != nil:
 		result, err := decodeNestedObject(root, "result", "operation result")
 		if err != nil {

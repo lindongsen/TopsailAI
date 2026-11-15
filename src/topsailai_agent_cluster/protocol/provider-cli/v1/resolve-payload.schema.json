@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/resolve-payload.schema.json",
+  "title": "resolve payload",
+  "description": "Provider-private session identifier an operator named before the Endpoint discovered it. The Provider mints the mapping key from this identifier alone and never asks the business CLI whether the session exists.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "handle"
+  ],
+  "properties": {
+    "handle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    }
+  }
+}

@@ -39,6 +39,7 @@ var schemaStructBindings = []schemaStructBinding{
 	{"response.schema.json", "output", reflect.TypeOf(OutputSnapshot{})},
 	{"response.schema.json", "protocol_range", reflect.TypeOf(ProtocolRange{})},
 	{"response.schema.json", "provider_error", reflect.TypeOf(ProviderError{})},
+	{"response.schema.json", "resolution", reflect.TypeOf(ResolutionResult{})},
 	{"stream-frame.schema.json", "provider_error", reflect.TypeOf(ProviderError{})},
 }
 

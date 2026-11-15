@@ -49,7 +49,7 @@ func TestServeDescribe(t *testing.T) {
 	if !response.OK || response.Descriptor == nil {
 		t.Fatalf("response = %+v", response)
 	}
-	wantFunctions := []string{functionDescribe, functionDiscover, functionInspect, functionExecute, functionQuery, functionReadOutput, functionFollowOutput}
+	wantFunctions := []string{functionDescribe, functionDiscover, functionInspect, functionResolve, functionExecute, functionQuery, functionReadOutput, functionFollowOutput}
 	if got := response.Descriptor.Functions; !reflect.DeepEqual(got, wantFunctions) {
 		t.Fatalf("functions = %v want %v", got, wantFunctions)
 	}

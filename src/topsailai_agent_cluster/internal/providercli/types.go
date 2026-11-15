@@ -24,6 +24,10 @@ const (
 	FunctionDiscover = "discover"
 	// FunctionInspect revalidates one provider-private target.
 	FunctionInspect = "inspect"
+	// FunctionResolve mints the mapping key for a provider session identifier
+	// the Endpoint has not discovered yet. It is local bookkeeping and never
+	// invokes the business CLI, so it cannot become an existence check.
+	FunctionResolve = "resolve"
 	// FunctionExecute applies one standard mutating operation.
 	FunctionExecute = "execute"
 	// FunctionQuery executes one registered read-only query.
@@ -197,6 +201,13 @@ type InspectionResult struct {
 	Observation *ProviderObservation `json:"observation,omitempty"`
 }
 
+// ResolutionResult reports the mapping key a Provider minted for a named
+// session. It carries no existence, liveness or generation evidence.
+type ResolutionResult struct {
+	ProviderResourceKey string `json:"provider_resource_key"`
+	ResourceKind        string `json:"resource_kind"`
+}
+
 // OutputSnapshot is one bounded, non-streaming provider output observation.
 type OutputSnapshot struct {
 	ObservedAtMS int64  `json:"observed_at_ms"`
@@ -262,6 +273,7 @@ type Response struct {
 	Descriptor  *Descriptor       `json:"descriptor,omitempty"`
 	Discovery   *DiscoveryResult  `json:"discovery,omitempty"`
 	Inspection  *InspectionResult `json:"inspection,omitempty"`
+	Resolution  *ResolutionResult `json:"resolution,omitempty"`
 	Result      *OperationResult  `json:"result,omitempty"`
 	QueryResult json.RawMessage   `json:"query_result,omitempty"`
 	Output      *OutputSnapshot   `json:"output,omitempty"`

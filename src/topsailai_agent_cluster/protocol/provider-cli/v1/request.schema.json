@@ -35,6 +35,7 @@
         "describe",
         "discover",
         "inspect",
+        "resolve",
         "execute",
         "query",
         "query_command",
@@ -503,6 +504,52 @@
         "required": [
           "target"
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "function": {
+            "const": "resolve"
+          }
+        },
+        "required": [
+          "function"
+        ]
+      },
+      "then": {
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "resolve-payload.schema.json"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "operation"
+              ]
+            },
+            {
+              "required": [
+                "query"
+              ]
+            },
+            {
+              "required": [
+                "invocation_id"
+              ]
+            },
+            {
+              "required": [
+                "target"
+              ]
+            }
+          ]
+        }
       }
     }
   ],

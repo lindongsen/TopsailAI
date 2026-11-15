@@ -38,6 +38,9 @@
     "inspection": {
       "$ref": "#/$defs/inspection"
     },
+    "resolution": {
+      "$ref": "#/$defs/resolution"
+    },
     "result": {
       "$ref": "#/$defs/operation_result"
     },
@@ -354,6 +357,28 @@
         }
       }
     },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_resource_key",
+        "resource_kind"
+      ],
+      "properties": {
+        "provider_resource_key": {
+          "$ref": "#/$defs/identifier"
+        },
+        "resource_kind": {
+          "enum": [
+            "agent",
+            "session",
+            "task",
+            "launch_profile",
+            "model_profile"
+          ]
+        }
+      }
+    },
     "operation_result": {
       "type": "object",
       "additionalProperties": false,
@@ -492,6 +517,11 @@
           },
           {
             "required": [
+              "resolution"
+            ]
+          },
+          {
+            "required": [
               "result"
             ]
           },
@@ -531,6 +561,11 @@
             {
               "required": [
                 "inspection"
+              ]
+            },
+            {
+              "required": [
+                "resolution"
               ]
             },
             {

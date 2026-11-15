@@ -28,6 +28,7 @@ var requiredSchemaFiles = []string{
 	"model-catalog-result.schema.json",
 	"session-messages-request.schema.json",
 	"session-messages-result.schema.json",
+	"resolve-payload.schema.json",
 }
 
 func schemaDirectory(t *testing.T) string {
@@ -235,8 +236,8 @@ func TestSchemaCriticalBranches(t *testing.T) {
 	}
 	responseBranch := responseBranches[0].(map[string]any)
 	success := responseBranch["then"].(map[string]any)
-	if len(success["oneOf"].([]any)) != 6 {
-		t.Fatalf("success payload branch count = %d, want 6", len(success["oneOf"].([]any)))
+	if len(success["oneOf"].([]any)) != 7 {
+		t.Fatalf("success payload branch count = %d, want 7", len(success["oneOf"].([]any)))
 	}
 	failure := responseBranch["else"].(map[string]any)
 	if !reflect.DeepEqual(failure["required"], []any{"error"}) {

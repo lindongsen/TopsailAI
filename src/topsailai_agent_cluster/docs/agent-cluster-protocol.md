@@ -403,6 +403,7 @@ The generic CLI Adapter translates between them. It must not serialize a complet
 | `describe` | Return bootstrap protocol compatibility, provider descriptor revision, implemented standard operations, standard queries, control actions, concurrency limits and health prerequisites without changing provider state. |
 | `discover` | Return bounded provider observations and explicit completeness, revision and freshness evidence. |
 | `inspect` | Revalidate one provider-private resource key and generation within a budget. |
+| `resolve` | Mint the mapping key for a provider session identifier the Endpoint has not discovered yet. It is local bookkeeping: the Provider hashes the identifier and never invokes the business CLI, so it cannot become an existence check. The response carries only the minted key and the resource kind, never existence, liveness or generation. |
 | `execute` | Perform one standard mutating operation against a provider-private target after revalidating its expected generation in the execution path. |
 | `query` | Perform one read-only query whose name and request/result schemas are defined by the Cluster standard registry. |
 | `query_command` | Optionally reconcile a prior provider invocation by its stable invocation ID or provider correlation reference; unsupported is not failure. |
