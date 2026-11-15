@@ -40,7 +40,7 @@ func (a *handleResolvingAdapter) ResolveProviderSessionHandle(ctx context.Contex
 	if a.mapper == nil {
 		return adapter.ResourceMapping{}, errors.New("fixture mapper is required")
 	}
-	return a.mapper.GetOrCreateResourceID(ctx, "a1", "session-row:"+handle, time.Now().UnixMilli())
+	return a.mapper.GetOrCreateResourceID(ctx, "a1", protocol.ResourceSession, "session-row:"+handle, time.Now().UnixMilli())
 }
 
 // newHandleExecutor builds an executor whose registry holds the supplied adapter

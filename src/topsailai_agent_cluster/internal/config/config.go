@@ -37,7 +37,7 @@ type Config struct {
 	DatabasePath         string
 	AuthToken            string
 	// EndpointExpiry is the Server-owned retention window for offline Endpoint records.
-	EndpointExpiry       time.Duration
+	EndpointExpiry time.Duration
 	// CommandRetention is the Server-owned retention window for terminal command
 	// records. A command row is the duplicate-detection evidence for its ID and
 	// the Endpoint identity that retained command evidence protects, so purging

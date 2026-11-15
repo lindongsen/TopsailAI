@@ -61,15 +61,23 @@ const modelSelectScript = "cd 1\ncd 1\nmodel\n2\ny\nquit\n"
 // command failed with `session "fixture-session" was not found on any endpoint`
 // before the catalog could render. providerSessionKey is the single place that
 // maps a role onto the provider key, so the scenario keeps naming a role.
+//
+// The trailing empty line answers the guided selection question with "keep the
+// current model", so the script ends the way an operator who only wanted to look
+// would end it. Without it the next command word would be read as the answer.
 func modelWorkspaceListScript() string {
-	return "model " + providerSessionKey("fixture-session") + "\nquit\n"
+	return "model " + providerSessionKey("fixture-session") + "\n\nquit\n"
 }
 
 // modelWorkspaceSelectScript lists the catalog and applies the first row from
-// workspace scope, where the session has to be named on both commands.
+// workspace scope, where the session has to be named on the command.
+//
+// The row number answers the guided question, and the following "y" answers the
+// confirmation that every mutating operation still requires. A second `model`
+// command is not used, because the guided question already owns the next input
+// line and would read the command word as its answer.
 func modelWorkspaceSelectScript() string {
-	session := providerSessionKey("fixture-session")
-	return "model " + session + "\nmodel " + session + " 1\ny\nquit\n"
+	return "model " + providerSessionKey("fixture-session") + "\n1\ny\nquit\n"
 }
 
 // startModelCluster starts a real cluster whose adapter can answer a catalog
