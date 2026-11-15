@@ -307,6 +307,16 @@ TopsailAI Provider CLI reads `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS` at its ow
 process boundary, so the action surface stays an operational decision without the
 Endpoint parsing a provider argv template.
 
+`AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS` is resolved by the packaged launcher
+before the Endpoint starts, so a relative value in `node.conf` is read relative to
+the role configuration directory rather than to whatever directory the controller
+was invoked from. The launcher then exports the resolved value, because the Provider
+CLI inherits the Endpoint process environment and no flag carries this setting.
+`agent-clusterctl doctor` prints the resolved value as `catalog`, so an operator can
+see it before starting the node. A value that names a file the Provider cannot read
+is a failed launch rather than a lost capability: the Provider exits, and the
+Endpoint refuses to start when the Provider cannot describe itself.
+
 ## Provider package
 
 The Provider CLI package is optional and independent of every role package. Its
