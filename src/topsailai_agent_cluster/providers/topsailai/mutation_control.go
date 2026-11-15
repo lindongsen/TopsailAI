@@ -265,7 +265,11 @@ func (c controlCatalog) contracts() []namedContract {
 // The action is matched against the catalog before any argv exists, so an action
 // nobody configured never reaches the provider even if a caller submits it
 // directly instead of going through capability admission.
-func (c controlCatalog) args(operation, providerKey string, payload json.RawMessage) ([]string, error) {
+//
+// sessionID is the provider session identifier, not the opaque mapping key: the
+// provider CLI addresses a session by its own identifier, and the mapping key is a
+// Cluster-side spelling that never leaves the Endpoint.
+func (c controlCatalog) args(operation, sessionID string, payload json.RawMessage) ([]string, error) {
 	if !strings.HasPrefix(operation, controlOperationPrefix) {
 		return nil, fmt.Errorf("%w: provider control operation is required", errInvalidRequest)
 	}
@@ -282,11 +286,11 @@ func (c controlCatalog) args(operation, providerKey string, payload json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	encoded, err = controlTargetPayload(action, providerKey, encoded)
+	encoded, err = controlTargetPayload(action, sessionID, encoded)
 	if err != nil {
 		return nil, err
 	}
-	return controlCommand(action, providerKey, encoded)
+	return controlCommand(action, sessionID, encoded)
 }
 
 // controlPayload normalizes the operator payload into one JSON object.
@@ -357,11 +361,11 @@ func controlConstantPayload(action controlAction, payload []byte) ([]byte, error
 // of being overwritten, because silently replacing it would read a different
 // session than the operator named, and silently honouring it would bypass the
 // target the Provider just revalidated.
-func controlTargetPayload(action controlAction, providerKey string, payload []byte) ([]byte, error) {
+func controlTargetPayload(action controlAction, sessionID string, payload []byte) ([]byte, error) {
 	if action.PayloadSessionField == "" {
 		return payload, nil
 	}
-	if providerKey == "" {
+	if sessionID == "" {
 		return nil, fmt.Errorf("%w: %s requires a resolved provider session", errInvalidRequest, action.Name)
 	}
 	var envelope map[string]json.RawMessage
@@ -376,11 +380,11 @@ func controlTargetPayload(action controlAction, providerKey string, payload []by
 		if err := json.Unmarshal(supplied, &value); err != nil {
 			return nil, fmt.Errorf("%w: %s must be a string", errInvalidRequest, action.PayloadSessionField)
 		}
-		if value != providerKey {
+		if value != sessionID {
 			return nil, fmt.Errorf("%w: %s does not match the selected session", errInvalidRequest, action.PayloadSessionField)
 		}
 	}
-	encodedKey, err := json.Marshal(providerKey)
+	encodedKey, err := json.Marshal(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("encode %s: %w", action.PayloadSessionField, err)
 	}
@@ -396,15 +400,15 @@ func controlTargetPayload(action controlAction, providerKey string, payload []by
 //
 // Substitution is per token, so a placeholder never splits into several arguments
 // and an operator-supplied payload never becomes a token boundary.
-func controlCommand(action controlAction, providerKey string, payload []byte) ([]string, error) {
+func controlCommand(action controlAction, sessionID string, payload []byte) ([]string, error) {
 	args := make([]string, 0, len(action.Command))
 	for _, token := range action.Command {
 		expanded := token
 		if strings.Contains(expanded, controlSessionPlaceholder) {
-			if providerKey == "" {
+			if sessionID == "" {
 				return nil, fmt.Errorf("%w: %s requires a resolved provider session", errInvalidRequest, action.Name)
 			}
-			expanded = strings.ReplaceAll(expanded, controlSessionPlaceholder, providerKey)
+			expanded = strings.ReplaceAll(expanded, controlSessionPlaceholder, sessionID)
 		}
 		if strings.Contains(expanded, controlPayloadPlaceholder) {
 			expanded = strings.ReplaceAll(expanded, controlPayloadPlaceholder, string(payload))
