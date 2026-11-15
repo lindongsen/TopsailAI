@@ -18,7 +18,13 @@ const (
 	functionQueryCommand = "query_command"
 	functionReadOutput   = "read_output"
 	functionFollowOutput = "follow_output"
-	functionWatch        = "watch"
+	// functionWatch is admitted by the wire schema but deliberately not served
+	// here. The Cluster's watch command is a client-side re-render loop: it
+	// re-reads the inventory on a timer and never sends a provider request, so
+	// no provider function is involved. The constant is kept rather than deleted
+	// because the protocol does admit the name, and dropping it would erase the
+	// record that the mock is silent by choice rather than by oversight.
+	functionWatch = "watch"
 )
 
 const (
