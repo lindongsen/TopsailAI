@@ -458,3 +458,48 @@ func TestDescriptorOperationsMatchDispatch(t *testing.T) {
 		t.Fatal("an unimplemented operation is dispatchable")
 	}
 }
+
+// TestAgentStartArgvRequestsBackgroundCustody pins the half of the custody
+// contract this repository can prove. The Provider asks the business CLI to
+// detach with --background, so the handoff is a background launch rather than a
+// foreground one; whether the Agent then outlives the Provider CLI is a
+// provider-runtime property no test here can observe, which is why the live
+// custody smoke stays open.
+func TestAgentStartArgvRequestsBackgroundCustody(t *testing.T) {
+	args, err := agentStartArgs(json.RawMessage(`{"folder":"/work/demo","task":"do it"}`))
+	if err != nil {
+		t.Fatalf("agentStartArgs: %v", err)
+	}
+	if !containsArg(args, "--background") {
+		t.Fatalf("agent.start argv = %v, want --background so the launch detaches", args)
+	}
+	resume, err := mutationArgs(mutationInvocation{
+		Operation:   operationAgentResume,
+		ProviderKey: "provider-session",
+	})
+	if err != nil {
+		t.Fatalf("mutationArgs resume: %v", err)
+	}
+	if !containsArg(resume, "--background") {
+		t.Fatalf("agent.resume argv = %v, want --background so the resume detaches", resume)
+	}
+	resultType := reflect.TypeOf(operationResult{})
+	for index := 0; index < resultType.NumField(); index++ {
+		name := strings.ToLower(resultType.Field(index).Tag.Get("json"))
+		for _, marker := range []string{"surviv", "durab", "liveness", "alive", "outliv", "persist"} {
+			if strings.Contains(name, marker) {
+				t.Fatalf("operationResult declares %q, which claims a custody property the protocol cannot carry", name)
+			}
+		}
+	}
+}
+
+// containsArg reports whether argv carries the exact flag.
+func containsArg(argv []string, flag string) bool {
+	for _, value := range argv {
+		if value == flag {
+			return true
+		}
+	}
+	return false
+}

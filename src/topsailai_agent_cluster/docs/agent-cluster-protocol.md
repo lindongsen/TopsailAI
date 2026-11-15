@@ -588,6 +588,8 @@ alias, an Endpoint mapping migration, or a new Adapter identity approved as a br
 provider project must test key stability across every claimed compatible upgrade; executable
 conformance can prove repeatability for one version but cannot prove cross-version continuity.
 
+Custody survival is a provider-runtime property the protocol cannot carry: `operation_result` declares no survival, durability or liveness field, so a Provider reports only the handoff evidence it received and no executable conformance test can prove that a durable Agent outlives the Provider CLI process.
+
 Four identities remain distinct:
 
 | Identity | Owner and purpose |

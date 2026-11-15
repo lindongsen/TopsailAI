@@ -206,3 +206,60 @@ func assertSameFieldSet(t *testing.T, label string, schemaFields, structFields [
 		t.Errorf("%s declares %v, which the Go struct does not produce, so the contract advertises a field nothing emits", label, schemaOnly)
 	}
 }
+
+// survivalFieldMarkers are the substrings that would indicate a schema field
+// claiming a process outlives the Provider CLI. The protocol cannot carry such a
+// claim: custody survival is a provider-runtime property, so a field here would
+// advertise evidence no Provider can produce.
+var survivalFieldMarkers = []string{"surviv", "durab", "liveness", "alive", "outliv", "persist"}
+
+// TestOperationResultDeclaresNoSurvivalField pins the boundary that keeps the
+// live custody smoke open. operation_result is the only place a Provider could
+// report custody survival, and it must stay closed: additionalProperties false
+// plus a fixed property set means a Provider cannot smuggle a survival claim past
+// the contract, and a future field cannot be added without this guard failing.
+func TestOperationResultDeclaresNoSurvivalField(t *testing.T) {
+	schema := loadSchema(t, "response.schema.json")
+	definitions, ok := schema["$defs"].(map[string]any)
+	if !ok {
+		t.Fatal("response.schema.json has no $defs, so this guard checked nothing")
+	}
+	definition, ok := definitions["operation_result"].(map[string]any)
+	if !ok {
+		t.Fatal("response.schema.json has no $defs.operation_result, so this guard checked nothing")
+	}
+	if definition["additionalProperties"] != false {
+		t.Fatalf("operation_result additionalProperties = %v, want false, so an undeclared survival field would be accepted", definition["additionalProperties"])
+	}
+	properties, ok := definition["properties"].(map[string]any)
+	if !ok || len(properties) == 0 {
+		t.Fatal("operation_result has no properties, so this guard checked nothing")
+	}
+	want := []string{
+		"delivery_boundary",
+		"effect_certainty",
+		"exit_confirmed",
+		"finished_at_ms",
+		"provider_outcome",
+		"provider_request_ref",
+		"provider_response",
+		"provider_response_truncated",
+		"started_at_ms",
+	}
+	actual := make([]string, 0, len(properties))
+	for name := range properties {
+		actual = append(actual, name)
+	}
+	sort.Strings(actual)
+	if !reflect.DeepEqual(actual, want) {
+		t.Fatalf("operation_result properties = %v, want %v", actual, want)
+	}
+	for _, name := range actual {
+		lowered := strings.ToLower(name)
+		for _, marker := range survivalFieldMarkers {
+			if strings.Contains(lowered, marker) {
+				t.Fatalf("operation_result declares %q, which claims a custody property the protocol cannot carry", name)
+			}
+		}
+	}
+}
