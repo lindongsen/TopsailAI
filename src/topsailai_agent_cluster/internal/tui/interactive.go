@@ -1260,6 +1260,11 @@ func interactiveRefreshWithArguments(parent context.Context, api InteractiveAPI,
 		return err
 	}
 	state.Rows = nil
+	// A refresh renders the live table, so it reclaims the row numbers exactly as
+	// a list render does. Without this the history namespace survives the refresh
+	// and a number typed at the fresh table still resolves against the history
+	// rows the operator can no longer see.
+	state.history = nil
 	staged := make([]SessionRow, 0)
 	loaded, err := forceCollectionSelected(ctx, api, scoped, arguments.All, nil)
 	if err != nil {
