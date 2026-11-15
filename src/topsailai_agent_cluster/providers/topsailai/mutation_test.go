@@ -276,6 +276,20 @@ func TestMutationAuthorityRejectsBeforeRunningBusinessCommand(t *testing.T) {
 			payload:   `{"provider_resource_key":"fast"}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
 		},
+		{
+			// An interrupt addresses a live process, so it must prove which
+			// process it reaches before any argv exists. This case is what
+			// distinguishes the live-authority path from the non-live one: an
+			// explicit branch that used requireNonLiveRecord would accept a
+			// stale generation and run the provider control command against a
+			// replacement process, and every other interrupt test would stay
+			// green because they only assert the argv shape.
+			name:      "interrupt with a stale generation",
+			operation: operationExecutionInterrupt,
+			target:    liveSessionTarget(t, "7"),
+			payload:   `{"action":"hard_interrupt"}`,
+			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("8"))},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
