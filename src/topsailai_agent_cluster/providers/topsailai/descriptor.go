@@ -12,10 +12,10 @@ package main
 // safely, so the descriptor never claims a capability this host cannot honour.
 //
 // The advertised function list is narrower than the dispatch switch on purpose:
-// resolve has a handler but is not advertised yet, because the frozen request
-// schema does not carry the name. Advertising a function the wire contract rejects
-// would make the descriptor claim a capability no caller can reach, so the name is
-// added here only together with the schema enum that admits it.
+// every advertised name must also be admitted by the wire contract, because
+// advertising a function the request schema rejects would claim a capability no
+// caller can reach. resolve is advertised here only because the schema enum admits
+// it; the two sides change together or not at all.
 func topsailaiDescriptor(control controlCatalog, platform platformCapabilities) descriptor {
 	return descriptor{
 		ProviderType:       "topsailai",
