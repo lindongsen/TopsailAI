@@ -115,6 +115,47 @@ func TestDiscoverEmitsBothDirectoryCandidates(t *testing.T) {
 	}
 }
 
+// TestLaunchOptionsRejectsAnUnsafeProjectPath proves the Provider applies the same
+// folder rule the Cluster applies.
+//
+// The Cluster refuses a folder with leading or trailing whitespace and a folder
+// containing a control character. Checking only for emptiness let both through, so
+// the Provider reported a project the Cluster would never accept. Each rejected
+// shape is asserted separately, because a single "it failed" check cannot tell which
+// rule fired.
+func TestLaunchOptionsRejectsAnUnsafeProjectPath(t *testing.T) {
+	cases := map[string]string{
+		"leading whitespace":  `[{"name":"demo","path":" /work/demo"}]`,
+		"trailing whitespace": `[{"name":"demo","path":"/work/demo "}]`,
+		"control character":   `[{"name":"demo","path":"/work/de\u0007mo"}]`,
+	}
+	for name, document := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(document)}}
+			response := fixedProvider(r).dispatch(context.Background(), queryRequest(queryLaunchOptions, nil, `{"include_projects":true}`))
+			if response.OK || response.Error == nil {
+				t.Fatalf("an unsafe project path was accepted: %+v", response)
+			}
+		})
+	}
+}
+
+// TestLaunchOptionsAcceptsAnOrdinaryProjectPath proves the rule is not a blanket
+// refusal.
+//
+// Without this half, a validator that rejected every path would pass the rejection
+// test while making every project unlaunchable.
+func TestLaunchOptionsAcceptsAnOrdinaryProjectPath(t *testing.T) {
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(`[{"name":"demo","path":"/work/demo"}]`)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(queryLaunchOptions, nil, `{"include_projects":true}`))
+	if !response.OK || response.QueryResult == nil {
+		t.Fatalf("response=%+v", response)
+	}
+	if !strings.Contains(string(response.QueryResult), "/work/demo") {
+		t.Fatalf("query result = %s", response.QueryResult)
+	}
+}
+
 func TestInspectMatchesExactProviderRow(t *testing.T) {
 	target := sessionTarget(t)
 	doc := `{"items":[{"session_id":"s-1","filename":"other","pid":42,"process_generation":8},{"session_id":"s-1","filename":"row","pid":99,"process_generation":9}],"total":2}`

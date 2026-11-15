@@ -176,6 +176,13 @@ func (p *provider) launchOptions(ctx context.Context, requested *target, raw jso
 		if project.Name == "" || project.Path == "" {
 			return launchOptionsResult{}, errorsNew("project name and path are required")
 		}
+		// The path is validated with the same rule the Cluster applies, so a
+		// project this Provider reports is one the Cluster would also accept.
+		// Checking only for emptiness let a path with surrounding whitespace or a
+		// control character through, which the Cluster refuses.
+		if err := validateFolder(project.Path); err != nil {
+			return launchOptionsResult{}, fmt.Errorf("project %q path is invalid: %w", project.Name, err)
+		}
 	}
 	result.Projects = projects
 	return result, nil
