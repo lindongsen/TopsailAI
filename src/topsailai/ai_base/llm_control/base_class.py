@@ -41,6 +41,7 @@ from .exception import (
     LLMNullResponseError,
     ModelServiceError,
     LLMServiceSpecialResponseError,
+    LLMSevereRepetitionError,
 )
 from ..llm_hooks.executor import hook_execute
 from .configuration import (
@@ -126,6 +127,53 @@ class LLMModelBase(object):
         )
 
         self.content_senders = [] # instances of base class ContentSender
+
+        # Consecutive repetition verdicts inside the current request. The
+        # verdict is produced per attempt, so this counter must live on the
+        # model object to survive across attempts of the same request. It is
+        # reset when a response passes the check and at the start of each new
+        # request, so an occasional verdict cannot accumulate across unrelated
+        # requests.
+        self._consecutive_repetition_verdicts = 0
+
+    def reset_repetition_verdict_count(self):
+        """Clear the consecutive repetition verdict count for a new request."""
+        self._consecutive_repetition_verdicts = 0
+
+    def _get_repetition_verdict_limit(self):
+        """Return how many consecutive verdicts are tolerated before raising.
+
+        The limit is read at call time so an operator can tune it on a running
+        process. A value below ``1`` is treated as ``1``, because a limit of
+        zero would raise on the first verdict and remove the retry that
+        normally recovers a transient repetition.
+        """
+        limit = EnvReaderInstance.get(
+            "TOPSAILAI_SEVERE_REPETITION_MAX_CONSECUTIVE",
+            default=2,
+            formatter=int,
+        )
+        if limit is None or limit < 1:
+            return 1
+        return limit
+
+    def _record_repetition_verdict(self):
+        """Count one repetition verdict and raise once the limit is reached.
+
+        Raises:
+            LLMSevereRepetitionError: When the consecutive verdict count
+                reaches the configured limit. Retrying cannot fix a content
+                verdict, so the request must stop instead of resending the
+                identical prompt.
+        """
+        self._consecutive_repetition_verdicts += 1
+        limit = self._get_repetition_verdict_limit()
+        if self._consecutive_repetition_verdicts >= limit:
+            raise LLMSevereRepetitionError(
+                f"{LLM_KEYWORD_MISTAKE}: Severe repetition detected "
+                f"{self._consecutive_repetition_verdicts} consecutive times; "
+                f"retrying cannot change the verdict"
+            )
 
     def _get_llm_request_stat(self):
         """Return this model's request tracker, creating a local legacy fallback."""
@@ -558,7 +606,16 @@ class LLMModelBase(object):
                 if EnvReaderInstance.check_bool(
                     "TOPSAILAI_REFUSE_SEVERE_REPETITION", False
                 ):
+                    # Count the verdict before raising. A single verdict stays
+                    # retryable, because a transient repetition usually clears
+                    # on the next attempt; reaching the configured limit raises
+                    # a specialized error that the retry loop must not swallow.
+                    self._record_repetition_verdict()
                     raise ModelServiceError(error_msg, repetition_result)
+
+        # The response passed every content check, so the consecutive verdict
+        # streak is broken and must not carry into the next attempt.
+        self.reset_repetition_verdict_count()
         return
 
     def _is_special_response_for_retry(self, response):

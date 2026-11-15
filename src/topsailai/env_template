@@ -579,6 +579,10 @@ INSTRUCTIONS:
 # If has severe repetiton, raise error. 1 for enabled, 0 for disabled
 TOPSAILAI_REFUSE_SEVERE_REPETITION=1
 
+# Consecutive severe-repetition verdicts tolerated before the request stops
+# instead of retrying. Values below 1 are treated as 1.
+TOPSAILAI_SEVERE_REPETITION_MAX_CONSECUTIVE=2
+
 # Heavy Task
 TOPSAILAI_HEAVY_TASK_THRESHOLD_CONTINUOUS_SUMMARY_TIMES=5
 TOPSAILAI_HEAVY_TASK_PROMPT=""

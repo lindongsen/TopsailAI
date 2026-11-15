@@ -22,6 +22,22 @@ class LLMServiceSpecialResponseError(ModelServiceError):
     """Report a configured model response that should be retried."""
 
 
+class LLMSevereRepetitionError(ModelServiceError):
+    """Report a repetition verdict that survived the retry budget.
+
+    This is a specialized model-service error: the response is unusable for the
+    same reason a generic service error is, but retrying cannot fix it. The
+    repetition verdict is computed from the response content, and a model that
+    produced a repetitive answer once will usually produce it again, so the
+    retry loop must stop instead of resending the identical request.
+
+    It subclasses ``ModelServiceError`` so callers that already handle model
+    service failures keep working. The retry loop must therefore catch this
+    class *before* ``ModelServiceError`` and re-raise it, otherwise the generic
+    branch would treat it as retryable and the fallback would never fire.
+    """
+
+
 class LLMProviderError(Exception):
     """Base error translated from an LLM provider SDK or transport."""
 

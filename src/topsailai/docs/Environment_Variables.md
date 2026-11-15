@@ -185,6 +185,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION` | `"0"` | Summarize agent-layer messages and save the summary to the user-facing session. `1` = enabled, `0` = disabled. |
 | `TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL` | (long prompt) | Prompt embedded at the end of the response when no tool call is detected. |
 | `TOPSAILAI_REFUSE_SEVERE_REPETITION` | `1` | Raise an error on severe repetition. `1` = enabled, `0` = disabled. |
+| `TOPSAILAI_SEVERE_REPETITION_MAX_CONSECUTIVE` | `2` | Number of consecutive severe-repetition verdicts tolerated before the request stops instead of retrying. Positive integer; values below `1` are treated as `1`. |
 | `TOPSAILAI_HEAVY_TASK_THRESHOLD_CONTINUOUS_SUMMARY_TIMES` | `5` | Threshold of continuous summarizations before a heavy task alert is triggered. |
 | `TOPSAILAI_HEAVY_TASK_PROMPT` | `""` | Prompt used when a heavy task is detected. |
 
