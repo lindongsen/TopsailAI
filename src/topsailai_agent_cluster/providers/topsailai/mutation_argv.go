@@ -14,8 +14,6 @@ import (
 type mutationInvocation struct {
 	// Operation is the standard operation name being mapped.
 	Operation string
-	// ProviderKey is the provider-private session key from the revalidated target.
-	ProviderKey string
 	// Generation is the provider generation the target was validated against.
 	Generation string
 	// Resolved is the exact workspace row the authority check accepted.
@@ -66,27 +64,27 @@ func mutationArgs(invocation mutationInvocation) ([]string, error) {
 		// The provider parser classifies a separate argv element, so a message that
 		// is one dash-leading token would be consumed as an option. The assignment
 		// form keeps the value attached to its flag without adding a shell.
-		return []string{"runtime", "send", "-s", invocation.ProviderKey, "-m=" + message, "--json"}, nil
+		return []string{"runtime", "send", "-s", invocation.Resolved.SessionID, "-m=" + message, "--json"}, nil
 	case operationContextInject:
 		message, err := runtimeMessage(invocation.Payload)
 		if err != nil {
 			return nil, err
 		}
-		return []string{"runtime", "btw", "-s", invocation.ProviderKey, "-m=" + message, "--json"}, nil
+		return []string{"runtime", "btw", "-s", invocation.Resolved.SessionID, "-m=" + message, "--json"}, nil
 	case operationAgentStop:
 		if invocation.Generation == "" {
 			return nil, fmt.Errorf("%w: generation is required for stop", errInvalidRequest)
 		}
-		return []string{"workspace", "kill", invocation.ProviderKey, "-g", invocation.Generation, "--json"}, nil
+		return []string{"workspace", "kill", invocation.Resolved.SessionID, "-g", invocation.Generation, "--json"}, nil
 	case operationAgentDriveStart:
 		// The provider selects the unique live row for the session and rejects an
 		// ambiguous target itself. No PID is passed: a cluster generation is not a
 		// provider PID, and inventing one would address a different process.
-		return []string{"workspace", "driver", "start", "-s", invocation.ProviderKey, "--json"}, nil
+		return []string{"workspace", "driver", "start", "-s", invocation.Resolved.SessionID, "--json"}, nil
 	case operationAgentDriveStop:
-		return []string{"workspace", "driver", "stop", "-s", invocation.ProviderKey, "--json"}, nil
+		return []string{"workspace", "driver", "stop", "-s", invocation.Resolved.SessionID, "--json"}, nil
 	case operationAgentResume:
-		return []string{"workspace", "resume", "-s", invocation.ProviderKey, "--background", "--json"}, nil
+		return []string{"workspace", "resume", "-s", invocation.Resolved.SessionID, "--background", "--json"}, nil
 	case operationWorkspaceClean:
 		if invocation.Resolved.SessionID == "" || invocation.Resolved.PID <= 0 {
 			return nil, fmt.Errorf("%w: workspace clean requires an exact session ID and PID", errInvalidRequest)
@@ -95,7 +93,7 @@ func mutationArgs(invocation mutationInvocation) ([]string, error) {
 	case operationAgentStart:
 		return agentStartArgs(invocation.Payload)
 	case operationAgentModelSelect:
-		return modelSelectArgs(invocation.ProviderKey, invocation.Payload)
+		return modelSelectArgs(invocation.Resolved.SessionID, invocation.Payload)
 	default:
 		return nil, fmt.Errorf("%w: provider operation %q is not implemented", errUnsupported, invocation.Operation)
 	}
@@ -123,7 +121,11 @@ func agentStartArgs(payload json.RawMessage) ([]string, error) {
 // invokes that instruction directly instead of going through the operator-configured
 // control action catalog. A first-class capability must not depend on someone having
 // also written a catalog entry.
-func modelSelectArgs(providerKey string, payload json.RawMessage) ([]string, error) {
+//
+// sessionID is the provider session identifier, not the opaque mapping key: the
+// provider CLI addresses a session by its own identifier, and the mapping key is a
+// Cluster-side spelling that never leaves the Endpoint.
+func modelSelectArgs(sessionID string, payload json.RawMessage) ([]string, error) {
 	var value modelSelectPayload
 	if err := decodeStrict(payload, &value); err != nil {
 		return nil, fmt.Errorf("%w: decode agent.model.select payload: %v", errInvalidRequest, err)
@@ -142,7 +144,7 @@ func modelSelectArgs(providerKey string, payload json.RawMessage) ([]string, err
 	if err != nil {
 		return nil, fmt.Errorf("encode model select instruction: %w", err)
 	}
-	return []string{"runtime", "control", "call_instruction", "-s", providerKey, "-a", string(document), "--json"}, nil
+	return []string{"runtime", "control", "call_instruction", "-s", sessionID, "-a", string(document), "--json"}, nil
 }
 
 // runtimeMessage extracts the message text from one provider-neutral payload.
