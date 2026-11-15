@@ -24,9 +24,9 @@ const (
 	InputHistoryKindAnswer = "answer"
 )
 
-// Input history defaults mirror the provider CLI's own input-history convention
-// (cli_topsailai/history.py), so one operator learns one set of numbers instead
-// of two. They are defaults, not limits: every value is configurable at the
+// Input history defaults follow the same convention the operator already knows
+// from the provider CLI, so one operator learns one set of numbers instead of
+// two. They are defaults, not limits: every value is configurable at the
 // process boundary.
 const (
 	// DefaultInputHistoryMaxEntries bounds both the recall list and the number of
