@@ -83,7 +83,7 @@ func TestResolveProviderSessionHandleDoesNotBuildTheKeyItself(t *testing.T) {
 			continue
 		}
 		payload := string(request.Payload)
-		for _, spelling := range []string{"session:v1:", "session-row:", "session-history:"} {
+		for _, spelling := range []string{"session:v1:", "session-row:"} {
 			if strings.Contains(payload, spelling) {
 				t.Fatalf("resolve payload carries provider key spelling %q: %s", spelling, payload)
 			}

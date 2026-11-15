@@ -14,7 +14,6 @@ import (
 const (
 	sessionRowProviderKeyPrefix = "session-row:v1:"
 	sessionProviderKeyPrefix    = "session:v1:"
-	historyProviderKeyPrefix    = "session-history:v1:"
 	maxProviderKeyLength        = 256
 )
 
@@ -207,13 +206,19 @@ func providerSessionKey(item workspaceItem) (string, error) {
 	return stableProviderKey(sessionRowProviderKeyPrefix, identity)
 }
 
+// historySessionKey mints the mapping key for one history row.
+//
+// A history row reports no row key, PID or task flag, so it cannot claim to be one
+// particular workspace row. It names a session, which is exactly what the
+// session-scoped key names, so the two paths share one minter: a history row and an
+// operator-typed handle for the same session resolve to the same resource ID. Two
+// minters would give one session two identities, and a resume from history would
+// then address a different resource than a resume by handle.
 func historySessionKey(sessionID string) (string, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return "", errors.New("history row requires session_id")
 	}
-	return stableProviderKey(historyProviderKeyPrefix, struct {
-		SessionID string `json:"session_id"`
-	}{sessionID})
+	return sessionProviderKey(sessionID)
 }
 
 func stableProviderKey(prefix string, identity any) (string, error) {

@@ -48,10 +48,10 @@ func TestResolveMintsSessionScopedKeyWithoutCallingTheProvider(t *testing.T) {
 	}
 }
 
-// TestSessionProviderKeyIsStableAndDistinctFromEveryOtherSelector proves the
-// session selector is stable for one identifier and cannot collide with a row key
-// or a history key, which are different identities for the same session.
-func TestSessionProviderKeyIsStableAndDistinctFromEveryOtherSelector(t *testing.T) {
+// TestSessionProviderKeyIsStableAndDistinctFromARowKey proves the session selector
+// is stable for one identifier and cannot collide with a row key, which names one
+// workspace row rather than the session.
+func TestSessionProviderKeyIsStableAndDistinctFromARowKey(t *testing.T) {
 	first, err := sessionProviderKey("s-1")
 	if err != nil {
 		t.Fatal(err)
@@ -78,8 +78,14 @@ func TestSessionProviderKeyIsStableAndDistinctFromEveryOtherSelector(t *testing.
 	if first == other {
 		t.Fatalf("two sessions share key %q", first)
 	}
-	if first == row || first == history {
-		t.Fatalf("session key collides with another selector: %q", first)
+	if first == row {
+		t.Fatalf("session key collides with a row key: %q", first)
+	}
+	// A history row names a session, so it must share the session identity: one
+	// session on one resource ID, whether the operator typed the handle or picked
+	// the row from history.
+	if history != first {
+		t.Fatalf("history key %q is a second identity for session %q", history, first)
 	}
 	if !strings.HasPrefix(first, sessionProviderKeyPrefix) {
 		t.Fatalf("session key prefix=%q", first)
@@ -141,11 +147,15 @@ func TestValidateSessionTargetAcceptsBothSessionSelectors(t *testing.T) {
 			}
 		})
 	}
+	// A history key is the session key, so it must be accepted rather than rejected:
+	// a resume from history addresses the same resource as a resume by handle.
+	if historyKey != sessionKey {
+		t.Fatalf("history key %q is not the session key %q", historyKey, sessionKey)
+	}
 	rejected := map[string]*target{
-		"history selector": {ResourceKind: resourceSession, ProviderResourceKey: historyKey},
-		"empty key":        {ResourceKind: resourceSession},
-		"wrong kind":       {ResourceKind: resourceLaunchProfile, ProviderResourceKey: sessionKey},
-		"no target":        nil,
+		"empty key":  {ResourceKind: resourceSession},
+		"wrong kind": {ResourceKind: resourceLaunchProfile, ProviderResourceKey: sessionKey},
+		"no target":  nil,
 	}
 	for name, value := range rejected {
 		t.Run(name, func(t *testing.T) {
