@@ -89,7 +89,7 @@ func TestExecuteAnswersEveryAdvertisedOperation(t *testing.T) {
 			Target:    executeTestTarget(name),
 			Payload:   json.RawMessage(`{}`),
 		}
-		response := executeResponse(request, "")
+		response := executeResponse(request, "", "")
 		if !response.OK {
 			t.Fatalf("operation %q rejected: %#v", name, response.Error)
 		}
@@ -122,7 +122,7 @@ func TestExecutePreservesStopEvidence(t *testing.T) {
 			Target:    &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"},
 			Payload:   json.RawMessage(`{}`),
 		}
-		response := executeResponse(request, "")
+		response := executeResponse(request, "", "")
 		if !response.OK || response.Result == nil {
 			t.Fatalf("operation %q rejected: %#v", name, response.Error)
 		}
@@ -144,7 +144,7 @@ func TestExecuteRejectsLiveOperationWithoutGeneration(t *testing.T) {
 		Target:    &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable"},
 		Payload:   json.RawMessage(`{}`),
 	}
-	if response := executeResponse(live, ""); response.OK || response.Error == nil || response.Error.Code != "generation_mismatch" {
+	if response := executeResponse(live, "", ""); response.OK || response.Error == nil || response.Error.Code != "generation_mismatch" {
 		t.Fatalf("live operation without generation was not rejected: %#v", response)
 	}
 	for _, name := range []string{"agent.resume", "agent.drive.stop", "workspace.clean"} {
@@ -155,7 +155,7 @@ func TestExecuteRejectsLiveOperationWithoutGeneration(t *testing.T) {
 			Target:    &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable"},
 			Payload:   json.RawMessage(`{}`),
 		}
-		if response := executeResponse(nonLive, ""); !response.OK {
+		if response := executeResponse(nonLive, "", ""); !response.OK {
 			t.Fatalf("non-live operation %q rejected: %#v", name, response.Error)
 		}
 	}
@@ -171,7 +171,7 @@ func TestExecuteRejectsUnknownOperation(t *testing.T) {
 		Target:    &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"},
 		Payload:   json.RawMessage(`{}`),
 	}
-	response := executeResponse(request, "")
+	response := executeResponse(request, "", "")
 	if response.OK || response.Error == nil || response.Error.Code != "unsupported" {
 		t.Fatalf("unknown operation was not rejected: %#v", response)
 	}
@@ -344,7 +344,7 @@ func TestExecuteConfirmsOnlyTheInterruptExit(t *testing.T) {
 			Target:    &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"},
 			Payload:   json.RawMessage(`{}`),
 		}
-		response := executeResponse(request, "")
+		response := executeResponse(request, "", "")
 		if !response.OK || response.Result == nil {
 			t.Fatalf("operation %q rejected: %#v", name, response.Error)
 		}

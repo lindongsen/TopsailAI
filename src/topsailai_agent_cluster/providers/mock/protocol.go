@@ -12,12 +12,19 @@ const (
 	functionDescribe     = "describe"
 	functionDiscover     = "discover"
 	functionInspect      = "inspect"
+	functionResolve      = "resolve"
 	functionExecute      = "execute"
 	functionQuery        = "query"
 	functionQueryCommand = "query_command"
 	functionReadOutput   = "read_output"
 	functionFollowOutput = "follow_output"
-	functionWatch        = "watch"
+	// functionWatch is admitted by the wire schema but deliberately not served
+	// here. The Cluster's watch command is a client-side re-render loop: it
+	// re-reads the inventory on a timer and never sends a provider request, so
+	// no provider function is involved. The constant is kept rather than deleted
+	// because the protocol does admit the name, and dropping it would erase the
+	// record that the mock is silent by choice rather than by oversight.
+	functionWatch = "watch"
 )
 
 const (
@@ -90,6 +97,7 @@ type response struct {
 	Descriptor  *descriptor       `json:"descriptor,omitempty"`
 	Discovery   *discoveryResult  `json:"discovery,omitempty"`
 	Inspection  *inspectionResult `json:"inspection,omitempty"`
+	Resolution  *resolutionResult `json:"resolution,omitempty"`
 	Result      *operationResult  `json:"result,omitempty"`
 	QueryResult json.RawMessage   `json:"query_result,omitempty"`
 	Output      *outputSnapshot   `json:"output,omitempty"`
@@ -138,6 +146,15 @@ type discoveryResult struct {
 	Observations []providerObservation `json:"observations"`
 	Complete     bool                  `json:"complete"`
 	Checkpoint   string                `json:"checkpoint,omitempty"`
+}
+
+// resolutionResult is one provider-private key minted for a named handle.
+//
+// It carries no existence claim: resolve translates a name the operator already
+// chose, and the provider answers existence only when the operation reaches it.
+type resolutionResult struct {
+	ProviderResourceKey string `json:"provider_resource_key"`
+	ResourceKind        string `json:"resource_kind"`
 }
 
 type inspectionResult struct {

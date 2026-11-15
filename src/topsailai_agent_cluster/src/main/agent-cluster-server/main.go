@@ -18,6 +18,26 @@ import (
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
 )
 
+// capabilityRevisionUnknown is the revision recorded when no adapter declared one.
+const capabilityRevisionUnknown = "unknown"
+
+// inventoryCapabilityRevision returns the capability revision an endpoint
+// reported for its adapters.
+//
+// The endpoint row carries one revision, so the last adapter that declared one
+// wins. That mirrors the capability API handler, which builds the same
+// descriptor from the same report, so the endpoint table and the capability
+// endpoint never disagree about the revision an operator is looking at.
+func inventoryCapabilityRevision(report protocol.InventoryReport) string {
+	revision := capabilityRevisionUnknown
+	for _, summary := range report.Adapters {
+		if summary.Capabilities.Revision != "" {
+			revision = summary.Capabilities.Revision
+		}
+	}
+	return revision
+}
+
 func main() {
 	cfg, err := config.Load(os.Args[1:], "agent-cluster-server")
 	if err != nil {
@@ -84,10 +104,6 @@ func main() {
 		if frame.Type != channel.FrameInventory {
 			return
 		}
-		if err := store.UpsertEndpoint(context.Background(), protocol.Endpoint{EndpointID: peer.EndpointID, InstanceID: peer.InstanceID, DisplayName: peer.EndpointID, Hostname: peer.Hostname, ConnectionState: "online", ObservedAtMS: time.Now().UnixMilli(), CapabilityRevision: "unknown"}, time.Now().UnixMilli()); err != nil {
-			logger.Error("store endpoint identity", "endpoint_id", peer.EndpointID, "error", err)
-			return
-		}
 		data, marshalErr := json.Marshal(frame.Payload)
 		if marshalErr != nil {
 			logger.Error("marshal inventory frame", "error", marshalErr)
@@ -96,6 +112,18 @@ func main() {
 		var report protocol.InventoryReport
 		if unmarshalErr := json.Unmarshal(data, &report); unmarshalErr != nil {
 			logger.Error("decode inventory frame", "error", unmarshalErr)
+			// The endpoint answered, so its identity is still recorded. The
+			// revision stays unknown because no adapter declaration was decoded.
+			if err := store.UpsertEndpoint(context.Background(), protocol.Endpoint{EndpointID: peer.EndpointID, InstanceID: peer.InstanceID, DisplayName: peer.EndpointID, Hostname: peer.Hostname, ConnectionState: "online", ObservedAtMS: time.Now().UnixMilli(), CapabilityRevision: capabilityRevisionUnknown}, time.Now().UnixMilli()); err != nil {
+				logger.Error("store endpoint identity", "endpoint_id", peer.EndpointID, "error", err)
+			}
+			return
+		}
+		// The revision is read from the report rather than fixed, because the
+		// endpoint row is what the operator sees in the endpoint table and a
+		// fixed value would report "unknown" for an endpoint that declared one.
+		if err := store.UpsertEndpoint(context.Background(), protocol.Endpoint{EndpointID: peer.EndpointID, InstanceID: peer.InstanceID, DisplayName: peer.EndpointID, Hostname: peer.Hostname, ConnectionState: "online", ObservedAtMS: time.Now().UnixMilli(), CapabilityRevision: inventoryCapabilityRevision(report)}, time.Now().UnixMilli()); err != nil {
+			logger.Error("store endpoint identity", "endpoint_id", peer.EndpointID, "error", err)
 			return
 		}
 		committedRevision, changed, represented, storeErr := store.ReplaceInventoryCommitted(context.Background(), peer.EndpointID, report, time.Now().UnixMilli())

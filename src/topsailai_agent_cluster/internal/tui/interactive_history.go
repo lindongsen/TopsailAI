@@ -39,9 +39,11 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 	if !ok {
 		return fmt.Errorf("history is unavailable: this client cannot query provider history")
 	}
-	ctx, cancel := commandContext(parent)
-	defer cancel()
-	endpointID, err := historyEndpointID(ctx, api, state, strings.TrimSpace(rest), lines, out, trustedOut, color)
+	// The endpoint prompt waits for a human, so it runs on the parent context: a
+	// command budget would expire while the operator is still reading the list and
+	// would abort the REPL instead of the prompt. The bounded budget starts after
+	// the endpoint is known, because only the provider read is command work.
+	endpointID, err := historyEndpointID(parent, api, state, strings.TrimSpace(rest), lines, out, trustedOut, color)
 	if err != nil {
 		return err
 	}
@@ -50,6 +52,8 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 	if endpointID == "" {
 		return nil
 	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
 	// The interactive surface always reads the whole provider window, because a
 	// REPL operator selects a row from what is rendered and cannot pass a limit.
 	result, err := querier.GetHistory(ctx, endpointID, 0)
@@ -124,7 +128,11 @@ func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interacti
 		}
 		target = chosen
 	}
-	endpoint, err := resolveHistoryEndpoint(ctx, api, target)
+	// Only the resolver is command work, so only the resolver gets the budget. The
+	// prompt above already ran on the parent context.
+	queryCtx, cancel := commandContext(ctx)
+	endpoint, err := resolveHistoryEndpoint(queryCtx, api, target)
+	cancel()
 	if err != nil {
 		return "", err
 	}
@@ -166,6 +174,10 @@ func promptHistoryEndpoint(ctx context.Context, api InteractiveAPI, lines <-chan
 	echo := func(answer string) string {
 		return RenderAnswerEcho(launchEndpointEchoLabel(endpoints, answer), color)
 	}
+	// A failed answer cancels only this command. Without the marker the REPL
+	// classifies the failure as a wizard abort and terminates the whole session,
+	// so one slow or unusable answer would end an otherwise healthy session.
+	markRecoverablePromptFailure(ctx)
 	answer, ok := nextPromptLineWithEcho(ctx, lines, trustedOut, echo)
 	if !ok || answer.overflow || answer.err != nil {
 		return "", nil
