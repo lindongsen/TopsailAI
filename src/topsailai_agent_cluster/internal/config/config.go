@@ -38,7 +38,19 @@ type Config struct {
 	AuthToken            string
 	// EndpointExpiry is the Server-owned retention window for offline Endpoint records.
 	EndpointExpiry       time.Duration
-	CommandAllowlistFile string
+	// CommandRetention is the Server-owned retention window for terminal command
+	// records. A command row is the duplicate-detection evidence for its ID and
+	// the Endpoint identity that retained command evidence protects, so purging
+	// it is what lets an expired Endpoint metadata row be removed.
+	CommandRetention time.Duration
+	// EndpointDegradedRetention is the Server-owned window a degraded Endpoint is
+	// retained before deletion. It is separate from EndpointExpiry because the two
+	// answer different questions: EndpointExpiry decides when a disconnected
+	// machine stops being usable, and this decides when the record of that machine
+	// stops existing. Collapsing them into one window would delete the record at
+	// the moment it became degraded, leaving no trace that the machine existed.
+	EndpointDegradedRetention time.Duration
+	CommandAllowlistFile      string
 	// EndpointAccessPolicyDir is the Endpoint-local directory holding one access
 	// policy file per caller token. An empty value, or a directory that holds no
 	// policy file, permits every caller, which keeps existing deployments
@@ -87,7 +99,7 @@ func Defaults(role string) Config {
 	if role == "agent-cluster-endpoint" {
 		databasePath = ".tmp/endpoint.sqlite"
 	}
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 24 * time.Hour, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
 }
 
 // Load parses command-line flags and applies environment configuration.
@@ -113,6 +125,20 @@ func Load(args []string, role string) (Config, error) {
 				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY: %w", err)
 			}
 			cfg.EndpointExpiry = parsed
+		}
+		if value := os.Getenv("AGENT_CLUSTER_SERVER_COMMAND_RETENTION"); value != "" {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_COMMAND_RETENTION: %w", err)
+			}
+			cfg.CommandRetention = parsed
+		}
+		if value := os.Getenv("AGENT_CLUSTER_SERVER_ENDPOINT_DEGRADED_RETENTION"); value != "" {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_ENDPOINT_DEGRADED_RETENTION: %w", err)
+			}
+			cfg.EndpointDegradedRetention = parsed
 		}
 		if value := os.Getenv("AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES"); value != "" {
 			addresses, err := ParseDialAddresses(value)
@@ -209,6 +235,8 @@ func Load(args []string, role string) (Config, error) {
 		flags.StringVar(&cfg.ChannelListenAddress, "channel-listen-addr", cfg.ChannelListenAddress, "mTLS channel listen address")
 		flags.StringVar(&cfg.AuthToken, "auth-token", cfg.AuthToken, "pre-provisioned bearer token")
 		flags.DurationVar(&cfg.EndpointExpiry, "endpoint-expiry", cfg.EndpointExpiry, "retention window for offline Endpoint records")
+		flags.DurationVar(&cfg.CommandRetention, "command-retention", cfg.CommandRetention, "retention window for terminal command records")
+		flags.DurationVar(&cfg.EndpointDegradedRetention, "endpoint-degraded-retention", cfg.EndpointDegradedRetention, "retention window for degraded Endpoint records")
 		flags.Func("endpoint-dial-addresses", "comma-separated endpoint_id=wss://address pairs the Server dials", func(value string) error {
 			addresses, err := ParseDialAddresses(value)
 			if err != nil {
@@ -302,6 +330,12 @@ func (c Config) Validate() error {
 	}
 	if c.EndpointExpiry <= 0 {
 		return fmt.Errorf("endpoint expiry must be positive")
+	}
+	if c.CommandRetention <= 0 {
+		return fmt.Errorf("command retention must be positive")
+	}
+	if c.EndpointDegradedRetention <= 0 {
+		return fmt.Errorf("endpoint degraded retention must be positive")
 	}
 	switch c.ChannelDirection {
 	case DirectionEndpointInitiated, DirectionServerInitiated, DirectionBidirectional:

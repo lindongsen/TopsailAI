@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"topsailai_connector/internal/node/embedded"
 	"topsailai_connector/internal/security"
 )
 
@@ -28,8 +29,17 @@ type Config struct {
 	TunnelToken security.Secret
 	// ConfigDir holds the identity file and, by default, the policy file.
 	ConfigDir string
-	// PolicyPath is the policy file the Node loads at startup.
+	// PolicyPath is the policy file the Node loads at startup. It is empty when
+	// the policy was compiled into the binary, because an embedded policy has no
+	// file to name.
 	PolicyPath string
+	// PolicyBytes is the policy document compiled into the binary. It is nil for
+	// a normal build, and a nil value means "read PolicyPath instead".
+	//
+	// The two fields are mutually exclusive by construction: LoadConfig sets
+	// PolicyBytes only when it did not set PolicyPath. A Config carrying both
+	// would be a Config with two policies, and nothing would say which one wins.
+	PolicyBytes []byte
 }
 
 // LoadConfig builds a Config from a lookup function.
@@ -39,17 +49,40 @@ type Config struct {
 // failure is a startup failure: a Node that starts with a missing secret or a
 // missing policy is a Node whose operator believes it is serving something it is
 // not.
+//
+// # Precedence
+//
+// The environment wins over a value compiled into the binary, field by field.
+// That order is deliberate: an embedded value is a default chosen by whoever
+// packaged the binary, and the operator running it must be able to point the same
+// binary at a different Server or a different token without a rebuild. A binary
+// that ignored the environment would be a binary whose baked value could only be
+// changed by repackaging, which is the failure mode a self-contained build is
+// most likely to create.
+//
+// The policy is the exception, and it is an exception because it cannot be
+// overridden safely. An embedded policy is a whole document, so an environment
+// variable naming a file would silently replace every scope and every grant with
+// a different set. A build that embedded a policy therefore refuses
+// CONNECTOR_NODE_POLICY_FILE rather than letting the two disagree, and the
+// operator who needs a different policy uses a build that embedded none.
 func LoadConfig(lookup func(string) string) (Config, error) {
 	if lookup == nil {
 		return Config{}, fmt.Errorf("environment lookup is nil")
 	}
 
 	serverURL := lookup("CONNECTOR_NODE_SERVER_URL")
+	if serverURL == "" {
+		serverURL = embedded.ServerURL
+	}
 	if err := validateServerURL(serverURL); err != nil {
 		return Config{}, err
 	}
 
 	tunnelToken := security.Secret(lookup("CONNECTOR_NODE_TUNNEL_TOKEN"))
+	if tunnelToken == "" {
+		tunnelToken = security.Secret(embedded.TunnelToken)
+	}
 	if err := tunnelToken.Validate("CONNECTOR_NODE_TUNNEL_TOKEN"); err != nil {
 		return Config{}, err
 	}
@@ -59,7 +92,24 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
+	policyBytes, err := embedded.Policy()
+	if err != nil {
+		return Config{}, err
+	}
+
 	policyPath := lookup("CONNECTOR_NODE_POLICY_FILE")
+	if policyBytes != nil {
+		if policyPath != "" {
+			return Config{}, fmt.Errorf("CONNECTOR_NODE_POLICY_FILE is set but this build compiled its policy in; a build that carries a policy cannot also read one from a file, because the two would disagree about every scope and every grant")
+		}
+		return Config{
+			ServerURL:   serverURL,
+			TunnelToken: tunnelToken,
+			ConfigDir:   configDir,
+			PolicyBytes: policyBytes,
+		}, nil
+	}
+
 	if policyPath == "" {
 		policyPath = filepath.Join(configDir, "policy.yaml")
 	}
@@ -157,8 +207,15 @@ func resolveConfigDir(value string) (string, error) {
 // because a path is not a credential. The method exists so a caller never has to
 // decide field by field what may be printed: the decision is made once, here.
 func (c Config) Redacted() string {
+	policy := c.PolicyPath
+	if c.PolicyBytes != nil {
+		// An embedded policy has no path, so the log line says where it came
+		// from instead of printing an empty value that reads like a missing
+		// configuration.
+		policy = "embedded"
+	}
 	return fmt.Sprintf("server=%s tunnel_token=%s config_dir=%s policy=%s",
-		c.ServerURL, c.TunnelToken.Redacted(), c.ConfigDir, c.PolicyPath)
+		c.ServerURL, c.TunnelToken.Redacted(), c.ConfigDir, policy)
 }
 
 // String renders the configuration with the secret redacted, so a Config that is

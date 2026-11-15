@@ -401,6 +401,109 @@ authorised by, or fails. It does not silently switch to the new value mid-reques
 write access to the identity file is equivalent to being the Node. The mitigation is
 file permissions, which is why `0600` is a startup check rather than a suggestion.
 
+## A secret compiled into the binary
+
+A self-contained build compiles the `tunnel_token` into the executable, so the
+executable becomes a credential. These cases cover what that costs and what the
+Node does about it. The mechanism is `go build -ldflags "-X ..."`, which stores the
+value as plain text in the data section; no case below claims otherwise.
+
+### AC-SEC-45: A scope that contains the binary cannot serve it
+
+**Precondition:** A build with the `tunnel_token` embedded, placed inside a scope
+directory. The scope grants `read`, `list` and `stat`.
+
+**Action:** `file.read` the binary through that scope, by its path relative to the
+scope root.
+
+**Expected:** `denied`. Not `not_found`, not `invalid_argument`: the file exists and
+the path is well formed, so the only correct answer is that the deny list refused
+it. A build that serves its own executable hands the caller a Server-wide secret,
+which lets that caller impersonate any Node rather than only this one.
+
+### AC-SEC-46: The refusal does not disclose the token
+
+**Precondition:** As AC-SEC-45.
+
+**Action:** `file.read` the binary, then inspect the error message, the error code
+and the log line the Node wrote.
+
+**Expected:** The message names the path and the refusal, and contains no fragment
+of the `tunnel_token`. A refusal that quotes the value it protected is a leak with
+an error code attached.
+
+### AC-SEC-47: `file.stat` and `file.list` do not disclose the binary
+
+**Precondition:** As AC-SEC-45, with a neighbouring ordinary file in the same
+directory.
+
+**Action:** `file.stat` the binary, then `file.list` the directory.
+
+**Expected:** `file.stat` is `denied`. The listing omits the binary and still shows
+the neighbouring file. The second half is the control: a listing that omits
+everything has not tested the deny list, it has tested a broken listing.
+
+### AC-SEC-48: A build that carries no secret still serves its own executable
+
+**Precondition:** A normal build, with no embedded configuration, placed inside a
+scope directory.
+
+**Action:** `file.read` the binary through that scope.
+
+**Expected:** `success`. A normal binary discloses nothing by being read, because
+its bytes are the source it was compiled from. Refusing it would break the ordinary
+case of serving an install directory, so the deny entry is conditional on the build
+actually carrying a secret.
+
+### AC-SEC-49: An embedded policy cannot be replaced by a file
+
+**Precondition:** A build that compiled its policy in. `CONNECTOR_NODE_POLICY_FILE`
+is set to a valid policy file that grants a scope the embedded policy does not.
+
+**Action:** Start the Node.
+
+**Expected:** Startup fails, and the message names `CONNECTOR_NODE_POLICY_FILE`. The
+two sources must not be reconciled silently: an embedded policy is a whole document,
+so accepting a file path would replace every scope and every grant at once, and the
+operator would believe the embedded policy was still in force.
+
+### AC-SEC-50: The environment overrides an embedded value
+
+**Precondition:** A build with an embedded `tunnel_token` and Server URL.
+`CONNECTOR_NODE_TUNNEL_TOKEN` is set to a different valid value.
+
+**Action:** Start the Node, then inspect which token the Server accepted.
+
+**Expected:** The environment value is used, and the embedded value is not. The
+override is field by field, so setting only the Server URL leaves the embedded token
+in force. A binary that ignored the environment could only be repointed by
+repackaging, which is the failure mode a self-contained build is most likely to
+create.
+
+### AC-SEC-51: A malformed embedded policy fails startup rather than crashing
+
+**Precondition:** A build whose `PolicyBase64` value is not valid base64, produced by
+a packaging mistake.
+
+**Action:** Start the Node.
+
+**Expected:** Startup fails with a message naming the embedded policy, and no panic.
+A packaging mistake must surface as a startup failure on the machine that runs the
+binary, not as a stack trace on a machine the operator cannot see.
+
+### AC-SEC-52: Two copies of one binary do not share an identity
+
+**Precondition:** The same embedded binary copied to two machines, each with its own
+config directory.
+
+**Action:** Start both, then read the `node-id` each one reports.
+
+**Expected:** Two different `node-id` values. The identity is generated locally at
+first start and is deliberately not embedded, because two copies sharing one
+`node-id` would collide in the Server's `node_id -> connection` registry and evict
+each other. The embedded binary still generates, persists and regenerates its
+identity exactly as a normal build does.
+
 ## What these cases do not cover
 
 - A compromised Server host. The design states what the attacker gains (the ability

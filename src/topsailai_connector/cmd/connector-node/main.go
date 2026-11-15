@@ -66,6 +66,21 @@ func splitCommand(arguments []string) (string, []string) {
 	return arguments[0], arguments[1:]
 }
 
+// rejectStrayArguments refuses a positional argument that no flag consumed.
+//
+// flag.Parse accepts a positional argument and leaves it in Args(), so a word
+// that is not a flag is silently dropped by a caller that never checks. That is
+// how `connector-node run serve` used to start the Node: `serve` was parsed as a
+// positional argument, ignored, and the default subcommand ran. A word the
+// operator typed must either be a flag or be refused, because a silently ignored
+// word is a typo the operator never learns about.
+func rejectStrayArguments(flags *flag.FlagSet) error {
+	if flags.NArg() == 0 {
+		return nil
+	}
+	return fmt.Errorf("unexpected argument %q; want flags only", flags.Arg(0))
+}
+
 // runNode starts the Node: configuration, identity, policy, scopes, then dial.
 //
 // The order is deliberate. The runtime is opened first, because it loads the
@@ -92,6 +107,9 @@ func runNode(arguments []string) error {
 func runNodeWithSignals(arguments []string, signals <-chan os.Signal) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if err := rejectStrayArguments(flags); err != nil {
 		return err
 	}
 
@@ -190,6 +208,9 @@ func runID(arguments []string) error {
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
+	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
 
 	configDir, err := node.ResolveConfigDir(os.Getenv)
 	if err != nil {
@@ -214,6 +235,9 @@ func runRegenerate(arguments []string) error {
 	flags := flag.NewFlagSet("regenerate", flag.ContinueOnError)
 	keepID := flags.Bool("keep-id", false, "keep the node id and replace only the token")
 	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if err := rejectStrayArguments(flags); err != nil {
 		return err
 	}
 

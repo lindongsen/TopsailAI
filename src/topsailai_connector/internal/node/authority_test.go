@@ -58,7 +58,7 @@ func newAuthorityFixture(t *testing.T) *authorityFixture {
 // load opens the fixture's authority and registers its cleanup.
 func (f *authorityFixture) load(t *testing.T, denyPaths []string) *Authority {
 	t.Helper()
-	authority, err := LoadAuthority(f.policyPath, denyPaths)
+	authority, err := LoadAuthority(f.policyPath, denyPaths, "")
 	if err != nil {
 		t.Fatalf("LoadAuthority() = %v, want nil", err)
 	}
@@ -123,7 +123,7 @@ func TestLoadAuthorityRejectsMissingPolicyFile(t *testing.T) {
 	base := t.TempDir()
 	missing := filepath.Join(base, "absent.yaml")
 
-	authority, err := LoadAuthority(missing, nil)
+	authority, err := LoadAuthority(missing, nil, "")
 	if err == nil {
 		authority.Close()
 		t.Fatal("LoadAuthority() = nil error, want a failure for a missing file")
@@ -140,7 +140,7 @@ func TestLoadAuthorityRejectsInvalidYAML(t *testing.T) {
 	policyPath := filepath.Join(base, "policy.yaml")
 	writeFile(t, policyPath, "version: 1\nscopes: [this is not a mapping\n")
 
-	authority, err := LoadAuthority(policyPath, nil)
+	authority, err := LoadAuthority(policyPath, nil, "")
 	if err == nil {
 		authority.Close()
 		t.Fatal("LoadAuthority() = nil error, want a failure for malformed YAML")
@@ -158,7 +158,7 @@ func TestLoadAuthorityRejectsMissingScopeDirectory(t *testing.T) {
 		"  project:\n"+
 		"    path: "+filepath.Join(base, "absent")+"\n")
 
-	authority, err := LoadAuthority(policyPath, nil)
+	authority, err := LoadAuthority(policyPath, nil, "")
 	if err == nil {
 		authority.Close()
 		t.Fatal("LoadAuthority() = nil error, want a failure for a missing scope directory")
@@ -179,7 +179,7 @@ func TestLoadAuthorityRejectsScopePathThatIsAFile(t *testing.T) {
 		"  project:\n"+
 		"    path: "+filePath+"\n")
 
-	authority, err := LoadAuthority(policyPath, nil)
+	authority, err := LoadAuthority(policyPath, nil, "")
 	if err == nil {
 		authority.Close()
 		t.Fatal("LoadAuthority() = nil error, want a failure for a file scope root")
@@ -207,7 +207,7 @@ func TestLoadAuthorityClosesEarlierScopesOnFailure(t *testing.T) {
 		"  zzz:\n"+
 		"    path: "+filepath.Join(base, "absent")+"\n")
 
-	authority, err := LoadAuthority(policyPath, nil)
+	authority, err := LoadAuthority(policyPath, nil, "")
 	if err == nil {
 		authority.Close()
 		t.Fatal("LoadAuthority() = nil error, want a failure for the second scope")
@@ -451,7 +451,7 @@ func TestAuthorityAuthorizeOperationRejectsUnknownOperation(t *testing.T) {
 // not fail on the second call.
 func TestAuthorityCloseIsIdempotent(t *testing.T) {
 	fixture := newAuthorityFixture(t)
-	authority, err := LoadAuthority(fixture.policyPath, nil)
+	authority, err := LoadAuthority(fixture.policyPath, nil, "")
 	if err != nil {
 		t.Fatalf("LoadAuthority() = %v, want nil", err)
 	}

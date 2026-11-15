@@ -436,7 +436,10 @@ size reported before the read.
 
 **Action:** Start the Node with a scope at `/`.
 
-**Expected:** Startup fails. The blast radius is the whole machine.
+**Expected:** Startup fails. The blast radius is the whole machine. The one
+exception is a policy that states `allow_filesystem_root: true`, which is the
+operator writing that blast radius down on purpose; the case then succeeds and the
+deny list carries the protection instead. See AC-PATH-64.
 
 ### AC-PATH-49: A scope root of the home directory
 
@@ -551,6 +554,52 @@ would be bypassed by any spelling the filesystem accepts.
 
 **Expected:** `denied`. On Windows the two names are the same file, so a
 case-sensitive comparison would be bypassed by changing the case.
+
+### AC-PATH-64: A filesystem-root scope that opted in still hides the credentials
+
+**Precondition:** A policy with `allow_filesystem_root: true` and a scope rooted at
+a volume, such as `C:\` or `/`. The Node's config directory sits inside that
+volume.
+
+**Action:** `file.list` on the scope root, then `file.read`, `file.stat` and
+`file.list` on the config directory and on each of `identity`, `policy.yaml` and
+`tunnel_token` inside it.
+
+**Expected:** The listing omits the config directory entirely, so its name and
+size are not reported. Every read, stat and list of the directory or of a file
+inside it is `denied`. The opt-in relaxes the startup refusal, not the deny list:
+the deny list is what carries the protection once a scope may contain the config
+directory.
+
+**Why this case exists:** the opt-in removes the startup refusal that used to make
+this situation impossible, so the deny list becomes load-bearing rather than
+redundant. A listing that reported the config directory's name and size would leak
+metadata the refusal used to hide, and a read of `identity` would hand the caller
+the `node-token` that authorizes every operation on this Node.
+
+### AC-PATH-65: A filesystem-root scope that opted in still refuses an escape
+
+**Precondition:** The same opted-in policy, with an outside directory reachable
+from the volume root.
+
+**Action:** `file.read` on a path that climbs out of the root, and on a symlink
+inside the root that points outside it.
+
+**Expected:** `invalid_argument` for the traversal, and a fence refusal for the
+symlink. The opt-in changes which roots are allowed, not how a path is resolved, so
+`os.Root` still refuses every name whose resolution leaves the root.
+
+### AC-PATH-66: A sibling of the config directory is not denied
+
+**Precondition:** The config directory is `<volume>/config`, and
+`<volume>/config-backup` exists.
+
+**Action:** `file.read` on `config-backup/notes.txt` through the opted-in scope.
+
+**Expected:** Allowed. The deny comparison uses a separator boundary, so a sibling
+whose name merely starts with the denied directory's name is not refused. A prefix
+comparison without the boundary would deny a legitimate directory, and an
+over-broad deny list is one an operator works around by widening the scope.
 
 ## What these cases do not cover
 

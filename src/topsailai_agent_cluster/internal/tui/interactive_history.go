@@ -31,7 +31,7 @@ type historyNamespace struct {
 // requires the endpoint argument, because a history query is endpoint-scoped and
 // fanning out would multiply provider calls and mix rows whose provider session
 // identifiers may collide.
-func interactiveHistory(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out, diagnostics io.Writer, color ColorPolicy) error {
+func interactiveHistory(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lines <-chan lineReadResult, out, trustedOut, diagnostics io.Writer, color ColorPolicy) error {
 	if err := rejectInteractiveOption("history", rest); err != nil {
 		return err
 	}
@@ -41,9 +41,14 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	endpointID, err := historyEndpointID(ctx, api, state, strings.TrimSpace(rest))
+	endpointID, err := historyEndpointID(ctx, api, state, strings.TrimSpace(rest), lines, out, trustedOut, color)
 	if err != nil {
 		return err
+	}
+	// An empty identifier means the operator cancelled the endpoint prompt, so
+	// there is nothing to query and no diagnostic to print.
+	if endpointID == "" {
+		return nil
 	}
 	// The interactive surface always reads the whole provider window, because a
 	// REPL operator selects a row from what is rendered and cannot pass a limit.
@@ -98,18 +103,78 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 // mandatory. Both scopes resolve through the same resolver the standalone command
 // uses, so connectivity is validated on both paths: an endpoint that was online
 // when it was entered can disconnect before the query is dispatched.
-func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interactiveState, target string) (string, error) {
+func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interactiveState, target string, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
 	if state.Scope.Kind == ScopeEndpoint {
 		if target != "" && target != state.Scope.EndpointID {
 			return "", fmt.Errorf("history %q does not match the current endpoint %q; run cd .. to query another endpoint", target, state.Scope.EndpointID)
 		}
 		target = state.Scope.EndpointID
 	}
+	// Workspace scope has no current endpoint, so a bare history asks for one
+	// instead of failing with a usage line. The prompt offers only online
+	// endpoints, because a history query is a live provider read forwarded through
+	// the endpoint channel and a disconnected machine can only fail.
+	if target == "" && state.Scope.Kind == ScopeWorkspace {
+		chosen, err := promptHistoryEndpoint(ctx, api, lines, out, trustedOut, color)
+		if err != nil {
+			return "", err
+		}
+		if chosen == "" {
+			return "", nil
+		}
+		target = chosen
+	}
 	endpoint, err := resolveHistoryEndpoint(ctx, api, target)
 	if err != nil {
 		return "", err
 	}
 	return endpoint.EndpointID, nil
+}
+
+// promptHistoryEndpoint prints the numbered online endpoints and reads one answer.
+//
+// The list is the same shape the start wizard prints, so an operator who has used
+// one already knows the other. The answer is resolved against the same slice that
+// was printed, so a number can never address a row that was not shown.
+//
+// An empty answer cancels and returns an empty identifier, which the caller treats
+// as "nothing to do" rather than as an error: cancelling a prompt is a decision,
+// not a failure. A failed inventory read is reported as an error, because without
+// the records there is nothing to choose from and the operator must be told why.
+func promptHistoryEndpoint(ctx context.Context, api InteractiveAPI, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
+	queryCtx, cancel := commandContext(ctx)
+	reported, err := api.ListEndpoints(queryCtx)
+	cancel()
+	if err != nil {
+		return "", err
+	}
+	endpoints := selectableEndpoints(reported)
+	if len(endpoints) == 0 {
+		if len(reported) == 0 {
+			return "", fmt.Errorf("no endpoint is registered; register an endpoint before reading history")
+		}
+		return "", fmt.Errorf("no endpoint is online; %d registered endpoint(s) are offline or degraded, so history cannot be read", len(reported))
+	}
+	for index, endpoint := range endpoints {
+		if _, err := fmt.Fprintf(out, "%d. %s\n", index+1, launchEndpointRowLabel(endpoint)); err != nil {
+			return "", err
+		}
+	}
+	if _, err := fmt.Fprintln(out, "Choose an endpoint number or enter an endpoint ID; empty/cancel cancels."); err != nil {
+		return "", err
+	}
+	echo := func(answer string) string {
+		return RenderAnswerEcho(launchEndpointEchoLabel(endpoints, answer), color)
+	}
+	answer, ok := nextPromptLineWithEcho(ctx, lines, trustedOut, echo)
+	if !ok || answer.overflow || answer.err != nil {
+		return "", nil
+	}
+	choice := strings.TrimSpace(answer.line)
+	if choice == "" || strings.EqualFold(choice, "cancel") {
+		return "", nil
+	}
+	return resolveLaunchEndpointValue(endpoints, choice)
 }
 
 // cdHistoryRowNumber enters one live history row and rejects a non-live row with
@@ -179,6 +244,11 @@ const (
 	resumeSourceHistory   = "history"
 	resumeSourceList      = "list"
 	resumeSourceSessionID = "session ID"
+	// resumeSourceHandle names the -s form. It is separate from
+	// resumeSourceSessionID because that form resolves the name against the
+	// inventory, while this form forwards the name untouched and lets the
+	// Endpoint mint the mapping.
+	resumeSourceHandle = "session handle"
 )
 
 // resumeSelection is one resolved resume target.
@@ -193,6 +263,11 @@ type resumeSelection struct {
 	ProviderSessionID   string
 	ResourceID          string
 	ProviderDisplayName string
+	// Handle is the provider session identifier the operator named with -s. It is
+	// set only by the handle form, where no resource ID is known yet: the Endpoint
+	// mints the mapping when the command arrives, so the client never looks the
+	// session up and never decides whether it exists.
+	Handle string
 	// Source names the table the row number came from, so the stale-number
 	// notice names the command that refreshes those numbers.
 	Source string
@@ -226,11 +301,12 @@ type resumeSelection struct {
 // authority it does not have; it only stops pre-empting a target the operator
 // named explicitly.
 func interactiveResume(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
-	if err := rejectInteractiveOption("resume", rest); err != nil {
+	args, err := parseResumeArgs(rest)
+	if err != nil {
 		return err
 	}
 	ctx, cancel := commandContext(parent)
-	selection, err := resolveResumeSelection(ctx, api, state, strings.TrimSpace(rest))
+	selection, err := resolveResumeArgs(ctx, api, state, args)
 	cancel()
 	if err != nil {
 		return err
@@ -247,8 +323,11 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 	// A named session skips the absence recheck, so the callback must still be
 	// non-nil: a nil revalidate falls back to findSelected, which requires a
 	// generation and would reject exactly the stopped session resume addresses.
+	// The handle form skips it for the same reason and one more: the client has no
+	// inventory entry to recheck, because the operator named a target the Endpoint
+	// may not have discovered yet.
 	revalidate := func(context.Context) error { return nil }
-	if selection.Source != resumeSourceSessionID {
+	if resumeNeedsAbsenceRecheck(selection.Source) {
 		revalidate = func(revalidateCtx context.Context) error {
 			return validateResumeAbsence(revalidateCtx, api, selection.EndpointID, selection.ProviderSessionID)
 		}
@@ -257,8 +336,39 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 		state.commandID = pinned.commandID
 		return invalidateResumeRowBindings(state, selection.Source, out)
 	}
-	target := confirmationTarget{ProviderDisplayName: selection.ProviderDisplayName, ProviderSessionID: selection.ProviderSessionID, ClusterSessionID: selection.ResourceID}
+	target := confirmationTarget{ProviderDisplayName: selection.ProviderDisplayName, ProviderSessionID: selection.ProviderSessionID, ClusterSessionID: selection.ResourceID, ProviderSessionHandle: selection.Handle}
 	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentResume, "resume", target, "", json.RawMessage(`{}`), lines, out, trustedOut, options, revalidate, postSubmit)
+}
+
+// resolveResumeArgs maps one parsed resume argument to one resume target.
+//
+// The handle form is resolved without any client-side lookup. The operator named
+// the exact target, so the client must not decide whether that session exists:
+// doing so would reject a session the Endpoint has not discovered yet, which is
+// precisely the case the form exists for. The Endpoint mints the durable mapping
+// when the command arrives and the provider answers existence when the operation
+// reaches it.
+func resolveResumeArgs(ctx context.Context, api InteractiveAPI, state *interactiveState, args resumeArgs) (resumeSelection, error) {
+	if args.Handle == "" {
+		return resolveResumeSelection(ctx, api, state, args.Token)
+	}
+	if state.Scope.Kind != ScopeEndpoint {
+		return resumeSelection{}, fmt.Errorf("resume -s requires endpoint scope; run cd <endpoint> first")
+	}
+	return resumeSelection{EndpointID: state.Scope.EndpointID, ProviderSessionID: args.Handle, Handle: args.Handle, Source: resumeSourceHandle}, nil
+}
+
+// resumeNeedsAbsenceRecheck reports whether a resume selection must recheck that
+// the target is still absent before submitting.
+//
+// A row-number selection must, because the row it came from may have started
+// running since the table was rendered. A named session must not: the operator
+// named the exact target, and the recheck reads the inventory, which has no entry
+// for a session the Endpoint never discovered. Running it there would reject
+// precisely the target the operator asked for, so the two named forms skip it and
+// the Endpoint's own liveness gate remains the only authority.
+func resumeNeedsAbsenceRecheck(source string) bool {
+	return source != resumeSourceSessionID && source != resumeSourceHandle
 }
 
 // resolveResumeSelection maps the resume argument to one resume target.

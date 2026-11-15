@@ -98,6 +98,13 @@ type reportLoad struct {
 	// a row that was never observed. The count is what the summary line prints, so
 	// the identifiers never become per-endpoint noise.
 	skippedOffline map[string]bool
+	// degraded holds the endpoints the loader refused to query because they are
+	// degraded. They are recorded apart from skippedOffline because the two
+	// decisions differ in what the operator sees: a skipped endpoint is dropped
+	// from the table and counted once, while a degraded endpoint keeps its row
+	// with no observation and is never counted. The set exists so an explicit
+	// filter can answer "degraded" instead of the misleading "not found".
+	degraded map[string]bool
 }
 
 type interactiveState struct {
@@ -583,7 +590,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "history":
 		// The history table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and endpoints.
-		return false, interactiveHistory(ctx, api, state, rest, trustedOut, errOut, options.Color)
+		return false, interactiveHistory(ctx, api, state, rest, lineResults, trustedOut, trustedOut, errOut, options.Color)
 	case "model":
 		// The model catalog table is trusted application styling over sanitized
 		// cells, so it renders through the trusted writer like list and history.
@@ -880,6 +887,71 @@ func endpointOnline(endpoint protocol.Endpoint) bool {
 	return endpoint.ConnectionState == "" || endpoint.ConnectionState == "online"
 }
 
+// degradedRefusal returns the refusal for a named endpoint the loader skipped
+// because it is degraded, or nil when the endpoint was not skipped for that
+// reason. It exists because a refused request leaves no report and no error, so
+// without it a caller would describe a degraded endpoint as absent.
+func degradedRefusal(loaded reportLoad, endpointID string) error {
+	if !loaded.degraded[endpointID] {
+		return nil
+	}
+	endpoint, ok := endpointByID(loaded, endpointID)
+	if !ok {
+		return nil
+	}
+	return requireQueryableEndpoint(endpoint)
+}
+
+// endpointDegraded reports whether an endpoint was offline past the expiry
+// window and is now waiting for its record to be deleted. A degraded endpoint is
+// never queried: its inventory is already gone, so every request can only fail,
+// and the failure would describe the endpoint's own state rather than a defect.
+func endpointDegraded(endpoint protocol.Endpoint) bool {
+	return endpoint.ConnectionState == "degraded"
+}
+
+// selectableEndpoints returns the endpoints an interactive selection may offer.
+//
+// A selection list is a client-side rendering of the endpoint records, so reading
+// every record is allowed; offering a row the operator cannot use is not. Only an
+// online endpoint is offered, because every command that follows a selection sends
+// a frame to the machine, and a disconnected machine can only fail.
+//
+// The order is preserved, because the numbered list and the answer that selects a
+// row are computed from this same slice: reordering here would silently change
+// which endpoint a number means.
+//
+// An explicitly named endpoint is not filtered by this function. The operator may
+// name a machine that is not offered, and the caller must then report its real
+// state instead of describing it as absent.
+func selectableEndpoints(endpoints []protocol.Endpoint) []protocol.Endpoint {
+	selectable := make([]protocol.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpointOnline(endpoint) {
+			selectable = append(selectable, endpoint)
+		}
+	}
+	return selectable
+}
+
+// refuseDegradedEndpoint rejects only a degraded endpoint, leaving an offline one
+// enterable.
+//
+// Navigation sends no frame to the machine, so entering an offline endpoint is
+// allowed: its retained inventory is still readable and is often exactly what the
+// operator wants to inspect. A degraded endpoint is different, because its
+// inventory has already been deleted, so every command inside the scope would be
+// refused and the scope itself would be a dead end.
+//
+// The message is the shared degraded refusal, so the deletion date is reported
+// here exactly as it is by refresh, show and start.
+func refuseDegradedEndpoint(endpoint protocol.Endpoint) error {
+	if !endpointDegraded(endpoint) {
+		return nil
+	}
+	return requireQueryableEndpoint(endpoint)
+}
+
 // loadListReports loads the inventory a list render needs. It differs from
 // loadReports in one decision: an endpoint that is not online is not queried at
 // all, because the request can only fail and the failure describes the endpoint's
@@ -908,12 +980,20 @@ func loadListReports(ctx context.Context, api InteractiveAPI, endpointFilter str
 		reports:        make(map[string]protocol.InventoryReport),
 		errors:         make(map[string]error),
 		skippedOffline: make(map[string]bool),
+		degraded:       make(map[string]bool),
 	}
 	for _, endpoint := range endpoints {
 		if endpointFilter != "" && endpoint.EndpointID != endpointFilter {
 			continue
 		}
 		explicit := endpointFilter != "" && endpoint.EndpointID == endpointFilter
+		// A degraded Endpoint is never queried, not even when the operator names
+		// it or passes --all. Its record still exists, so the row stays visible
+		// with no observation; only the request is refused.
+		if endpointDegraded(endpoint) {
+			loaded.degraded[endpoint.EndpointID] = true
+			continue
+		}
 		if !all && !explicit && !endpointOnline(endpoint) {
 			loaded.skippedOffline[endpoint.EndpointID] = true
 			continue
@@ -1190,6 +1270,10 @@ func interactiveRefreshWithArguments(parent context.Context, api InteractiveAPI,
 	// operator's answer; workspace scope reports per-Endpoint failures as
 	// diagnostics while still rendering the healthy Endpoints.
 	if state.Scope.Kind != ScopeWorkspace {
+		if refusal := degradedRefusal(loaded, state.Scope.EndpointID); refusal != nil {
+			state.Rows = nil
+			return refusal
+		}
 		if refreshErr, failed := loaded.errors[state.Scope.EndpointID]; failed {
 			state.Rows = nil
 			return refreshErr

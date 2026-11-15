@@ -171,5 +171,6 @@ func registerSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^object "([^"]+)" root listing contains "([^"]+)"$`, objectRootListingContains)
 	ctx.Step(`^object "([^"]+)" root listing does not contain "([^"]+)"$`, objectRootListingDoesNotContain)
 	ctx.Step(`^exists result reports "([^"]+)" as (true|false)$`, existenceResultReports)
+	registerEncodingSteps(ctx)
 	registerLayoutStatSteps(ctx)
 }

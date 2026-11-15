@@ -31,10 +31,21 @@ type ImmutableIntent struct {
 }
 
 // CommandTarget identifies a resource and its expected provider generation.
+//
+// ProviderSessionHandle is an optional cluster-level selector for a target the
+// operator named by its provider session identifier instead of its opaque
+// cluster resource ID. It exists because the operator may know the provider's
+// own identifier while the Endpoint has never discovered that session, so no
+// durable mapping exists yet. The Endpoint resolves the handle through the
+// owning adapter before it inspects or invokes anything, and the resolved
+// mapping then supplies ResourceID for the rest of the command. Exactly one of
+// ResourceID and ProviderSessionHandle is required; a target that carries both
+// is ambiguous and is rejected rather than silently preferring one.
 type CommandTarget struct {
-	Kind               string `json:"kind"`
-	ResourceID         string `json:"resource_id"`
-	ProviderGeneration string `json:"provider_generation"`
+	Kind                  string `json:"kind"`
+	ResourceID            string `json:"resource_id"`
+	ProviderGeneration    string `json:"provider_generation"`
+	ProviderSessionHandle string `json:"provider_session_handle,omitempty"`
 }
 
 // ValidateFolder accepts an omitted folder and rejects unsafe supplied values.

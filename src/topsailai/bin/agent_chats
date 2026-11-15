@@ -52,8 +52,15 @@ if [ "$1" == "-" ]; then
 fi
 
 # fallback SESSION_ID to TOPSAILAI_SESSION_ID when not set
-[ -n "${SESSION_ID}" ] || SESSION_ID="${TOPSAILAI_SESSION_ID}"
-export SESSION_ID
+# Presence decides, not content: an explicitly empty value opts out of session
+# persistence, so SESSION_ID is exported only when one alias is actually
+# present. Exporting an empty SESSION_ID when neither alias is set would make
+# "not passed" indistinguishable from "passed empty" and suppress generation.
+if [ -z "${SESSION_ID+x}" ]; then
+  [ -n "${TOPSAILAI_SESSION_ID+x}" ] && export SESSION_ID="${TOPSAILAI_SESSION_ID}"
+else
+  export SESSION_ID
+fi
 
 # print histroy messages
 # [ -n "${SESSION_ID}" ] && {

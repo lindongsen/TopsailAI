@@ -58,7 +58,7 @@ func (w *world) writeScopeFile(name string, content string) error {
 
 // loadAuthority loads the policy and opens every scope it defines.
 func (w *world) loadAuthority() error {
-	authority, err := node.LoadAuthority(w.policyPath, nil)
+	authority, err := node.LoadAuthority(w.policyPath, nil, "")
 	if err != nil {
 		return err
 	}

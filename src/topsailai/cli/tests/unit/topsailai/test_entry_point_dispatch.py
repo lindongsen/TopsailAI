@@ -116,6 +116,7 @@ class TestEntryPointShim(unittest.TestCase):
                 expected_environment.update({
                     "TOPSAILAI_PWD": target,
                     "PWD": target,
+                    "TOPSAILAI_PROJECT_WORKSPACE": target,
                     "TOPSAILAI_SESSION_ID": "shim-session",
                     "SESSION_ID": "shim-session",
                 })

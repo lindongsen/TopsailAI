@@ -291,9 +291,11 @@ def ctxm_process_task(task:TaskUtil):
 
         stdout_file = task.task_file + ".stdout"
         register_cleanup_file(task.task_file)
-        with TeeOutput(stdout_file, need_delete_log_files=True):
+        # The task stdout is a diagnostic artifact: it must survive every exit
+        # path, including an abnormal one, so it is never registered for
+        # deletion. Retention is handled by the session meta cleanup instead.
+        with TeeOutput(stdout_file, need_delete_log_files=False):
             yield fp
-        delete_file(stdout_file)
         unregister_cleanup_file(task.task_file)
 
         task.pre_unlock(fp)

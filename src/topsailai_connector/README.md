@@ -126,19 +126,22 @@ The Node generates its own identity, so the order matters:
 ```
 1. Start the Server with its two secrets set
    CONNECTOR_SERVER_TUNNEL_TOKEN=<secret> CONNECTOR_SERVER_CLIENT_TOKEN=<secret> \
-     connector-server -listen :8443
+   CONNECTOR_SERVER_LISTEN=:8443 \
+     connector-server run
 
 2. Start the Node once to create its identity
    connector-node id
      -> node_7f3a...9c1e.9f2b...4d7a      copy this whole pair
 
 3. Give the Node the tunnel_token, then start it
-   CONNECTOR_NODE_TUNNEL_TOKEN=<secret> connector-node -server wss://host/channel
+   CONNECTOR_NODE_TUNNEL_TOKEN=<secret> \
+   CONNECTOR_NODE_SERVER_URL=wss://host/channel \
+     connector-node run
 
 4. Point the CLI at the Node
    CONNECTOR_CLI_CLIENT_TOKEN=<secret> \
    CONNECTOR_CLI_NODE=node_7f3a...9c1e.9f2b...4d7a \
-     connector-server file read --scope project --path a.txt
+     connector-server cli --server https://host --scope project --path a.txt file.read
 ```
 
 The Node must run once before anyone can address it, because the Server never
@@ -157,6 +160,30 @@ make build
 
 Binaries are written to `bin/`. Test artifacts are written to `.tmp/`, which is
 ignored by git.
+
+## Package a Node for someone else
+
+`make package` produces one executable with the configuration compiled in. The
+recipient runs it and the Node connects with no configuration file and no
+environment variable; the operator can reach the machine with the CLI as soon as
+it connects.
+
+```
+make package PACKAGE_SERVER_URL=wss://cloud.example.com:8443/channel \
+             PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool' \
+             PACKAGE_TUNNEL_TOKEN=<tunnel_token>
+```
+
+The binary carries the `tunnel_token`, so hand it over the way you would hand over
+a password: a leaked binary opens a channel to the Server for every Node on it.
+The identity is not embedded, so run the binary once with `id` on the target
+machine to create the pair, then copy it into the CLI.
+
+`make package-windows` builds the same executable for Windows. `make package-zip`
+produces the older zip instead, for a recipient who must edit the scopes
+themselves or reload the policy; it carries the identity pair rather than the
+Server-wide token, so a leak exposes one Node. See `packaging/bundle-README.md`
+for what the recipient does with a zip.
 
 ## Author
 

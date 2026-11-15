@@ -1159,6 +1159,7 @@ def test_r11_agent_launch_background_dispatches_selected_mechanism(monkeypatch, 
     """A background terminal mechanism reaches the terminal submit path."""
     from cli_topsailai import agent_launch as al
     from cli_topsailai import agent_launch_terminal as term
+    from cli_topsailai import project_scope
 
     submitted = []
 
@@ -1168,6 +1169,10 @@ def test_r11_agent_launch_background_dispatches_selected_mechanism(monkeypatch, 
                 "log_path": "/tmp/x.log", "session_id": session_id}
 
     monkeypatch.setattr(al, "_prepare_environment", lambda folder, session_id: ((), {}, {}, {}))
+    # This test proves dispatch reaches the submit path, not that the host tmux
+    # supports `new-session -e`; pin the capability probe so the assertion does
+    # not depend on the installed tmux version.
+    monkeypatch.setattr(project_scope, "_tmux_supports_environment_option", lambda path: True)
     monkeypatch.setattr(term, "submit_terminal", submit)
     monkeypatch.setattr(al, "submit_terminal", submit, raising=False)
     assert al._launch_configured_agent_impl(

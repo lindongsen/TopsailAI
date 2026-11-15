@@ -42,3 +42,15 @@ def test_input_yes_or_no_none_input_func_uses_builtin():
 def test_input_yes_or_no_eof_treated_as_no():
     input_func = mock.Mock(return_value=None)
     assert input_yes_or_no("prompt? ", input_func) is False
+
+
+def test_input_yes_or_no_raised_eof_treated_as_no():
+    """A closed input channel cannot answer, so it must not escape as a raise.
+
+    Callers invoke this from inside ``except (KeyboardInterrupt, EOFError)``
+    handlers, so a propagated ``EOFError`` would replace a clean abort with a
+    traceback.
+    """
+    input_func = mock.Mock(side_effect=EOFError())
+    assert input_yes_or_no("prompt? ", input_func) is False
+    assert input_func.call_count == 1

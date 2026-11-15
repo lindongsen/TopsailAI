@@ -73,16 +73,22 @@ func interactiveModel(parent context.Context, api InteractiveAPI, state *interac
 	if token != "" && state.Scope.Kind == ScopeSession && IsRowNumber(token) {
 		return interactiveModelSelect(parent, api, state, "", token, lines, out, trustedOut, options)
 	}
-	return interactiveModelList(parent, api, state, token, trustedOut, diagnostics, options.Color)
+	return interactiveModelList(parent, api, state, token, lines, out, trustedOut, diagnostics, options)
 }
 
-// interactiveModelList renders the model profiles one session can select.
+// interactiveModelList renders the model profiles one session can select, then
+// offers the guided selection.
 //
 // Session scope already names its target, so a bare model lists the profiles of the
 // selected session. Outside session scope the argument is required, because a catalog
 // read is session-scoped and fanning out across sessions would multiply provider calls
 // and mix profiles that belong to different runtimes.
-func interactiveModelList(parent context.Context, api InteractiveAPI, state *interactiveState, token string, out, diagnostics io.Writer, color ColorPolicy) error {
+//
+// The render is followed by one guided question, because the catalog exists to be
+// chosen from: making the operator retype "model <number>" after reading the table
+// costs a second command for one decision. The question is asked only when a table was
+// rendered, because a choice needs rows to choose between.
+func interactiveModelList(parent context.Context, api InteractiveAPI, state *interactiveState, token string, lines <-chan lineReadResult, out, trustedOut, diagnostics io.Writer, options InteractiveOptions) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	target, err := resolveSessionTarget(ctx, api, state, "model", token)
@@ -117,10 +123,10 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 		_, err := fmt.Fprintf(out, "session %s offers no selectable model profile\n", sessionIdentityLabel(target.displayName, target.providerSessionID, target.sessionID))
 		return err
 	}
-	options := TableOptionsFor(out)
-	options.Color = color
-	options.HideSessionID = true
-	if err := RenderModelCatalog(out, view, options); err != nil {
+	tableOptions := TableOptionsFor(out)
+	tableOptions.Color = options.Color
+	tableOptions.HideSessionID = true
+	if err := RenderModelCatalog(out, view, tableOptions); err != nil {
 		return err
 	}
 	state.modelCatalog = &modelCatalogNamespace{
@@ -134,7 +140,60 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 	for _, row := range view.Rows {
 		state.modelCatalog.Rows[row.No] = row
 	}
-	return nil
+	return interactiveModelGuidedSelect(parent, api, state, target, lines, out, trustedOut, options)
+}
+
+// interactiveModelGuidedSelect asks which rendered profile to apply.
+//
+// Three answers are three different outcomes and are reported as three different
+// messages, because collapsing them would hide what happened:
+//
+//	<number>  apply that profile, through the same confirmation every mutating
+//	          operation uses
+//	<empty>   configure nothing; the operator read the catalog and decided to keep
+//	          the current model
+//	anything  refused, naming the reason; it is never retried as a profile
+//	          identifier, because falling through would apply a profile the operator
+//	          never selected
+//
+// The question is written through trustedOut because it carries application styling,
+// and the read uses parent rather than the command context so operator thinking time
+// is never charged against the command deadline. The echo resolves through the same
+// row label the table printed, so the label beside the number is the profile that will
+// be applied; an empty or unusable answer echoes nothing, because no choice was made.
+func interactiveModelGuidedSelect(parent context.Context, api InteractiveAPI, state *interactiveState, target sessionTarget, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
+	question := fmt.Sprintf("select model profile [1-%d] or press Enter to keep the current model: ", len(state.modelCatalog.Rows))
+	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
+		return err
+	}
+	echo := func(answer string) string {
+		number, numeric := parseRowNumber(strings.TrimSpace(answer))
+		if !numeric {
+			return ""
+		}
+		row, ok := state.modelCatalog.Rows[number]
+		if !ok {
+			return ""
+		}
+		return RenderAnswerEcho(modelProfileLabel(row), options.Color)
+	}
+	answer, ok := nextPromptLineWithEcho(parent, lines, trustedOut, echo)
+	if !ok || answer.overflow || answer.err != nil {
+		return fmt.Errorf("model selection requires a complete line")
+	}
+	choice := strings.TrimSpace(answer.line)
+	if choice == "" {
+		// An empty answer is a decision, not a failure: the operator saw the catalog
+		// and chose to keep the current model. The rendered namespace stays in place,
+		// so "model <number>" still works afterwards.
+		_, err := fmt.Fprintln(out, "model unchanged")
+		return err
+	}
+	row, err := resolveModelProfileSelector(state.modelCatalog, target.sessionID, choice, sessionIdentityLabel(target.displayName, target.providerSessionID, target.sessionID))
+	if err != nil {
+		return err
+	}
+	return applyModelProfile(parent, api, state, target, row, lines, out, trustedOut, options)
 }
 
 // interactiveModelSelect applies one model profile to one session.
@@ -154,6 +213,15 @@ func interactiveModelSelect(parent context.Context, api InteractiveAPI, state *i
 	if err != nil {
 		return err
 	}
+	return applyModelProfile(parent, api, state, target, row, lines, out, trustedOut, options)
+}
+
+// applyModelProfile applies one resolved profile to one session.
+//
+// It is the single submission path for both the explicit "model <profile>" form and
+// the guided selection, so the availability check, the payload and the pinned-scope
+// handling cannot drift between the two surfaces.
+func applyModelProfile(parent context.Context, api InteractiveAPI, state *interactiveState, target sessionTarget, row ModelCatalogViewRow, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	if !row.Available {
 		reason := row.UnavailableReason
 		if reason == "" {

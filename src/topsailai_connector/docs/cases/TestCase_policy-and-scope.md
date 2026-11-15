@@ -105,9 +105,17 @@ followed at startup and the operator would not know what the scope means.
 
 ### TC-POL-15: A scope path of `/` fails startup
 
-**Action:** Set `path: /`.
+**Action:** Set `path: /` and omit `allow_filesystem_root`.
 
 **Expected:** Startup fails. The blast radius is the whole machine.
+
+### TC-POL-15b: A scope path of `/` starts when the policy opts in
+
+**Action:** Set `path: /` and `allow_filesystem_root: true`.
+
+**Expected:** Startup succeeds. The scope serves files inside the root, and a path
+that leaves the root is still refused. The Node's config directory is refused and
+omitted from a listing, because it is on the deny list.
 
 ### TC-POL-16: A scope path of the home directory fails startup
 
@@ -358,8 +366,10 @@ path to resolve.
 
 **Action:** Start the Node with a config directory that does not exist.
 
-**Expected:** The directory is created with `0700` on POSIX and an owner-only ACL on
-Windows.
+**Expected:** The directory is created with `0700` on POSIX. On Windows the Node
+sets no ACL, so the directory inherits its parent's default descriptor, which
+grants `BUILTIN\Users` read access; the operator must choose a parent directory
+with a restrictive ACL.
 
 ### TC-POL-51: A config directory readable by a group is refused or fixed
 

@@ -10,6 +10,8 @@ import uuid
 from cli_topsailai.agent_launch_command import launcher_command
 from cli_topsailai.core import _detect_agent_mode
 from cli_topsailai.project_scope import (
+    _LAUNCH_ENV_KEYS,
+    _PROJECT_WORKSPACE_ENV_KEY,
     _apply_selected_model_environment,
     _wrap_command_for_agent_mode,
 )
@@ -33,12 +35,13 @@ def _session_id() -> str:
 
 def _prepare_environment(folder: str, session_id: str):
     """Apply launch identity and selected model environment."""
-    keys = ("TOPSAILAI_PWD", "PWD", "TOPSAILAI_SESSION_ID", "SESSION_ID")
+    keys = _LAUNCH_ENV_KEYS
     original = {key: os.environ.get(key) for key in keys}
     os.chdir(folder)
     os.environ.update({
         "TOPSAILAI_PWD": folder,
         "PWD": folder,
+        _PROJECT_WORKSPACE_ENV_KEY: folder,
         "TOPSAILAI_SESSION_ID": session_id,
         "SESSION_ID": session_id,
     })

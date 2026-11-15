@@ -353,3 +353,25 @@ func TestReadFileLinesDecodesLatin1(t *testing.T) {
 		t.Fatalf("expected decoded content, got %q", got)
 	}
 }
+
+// TestReadLinesKeepsUTF8BeyondSampleBoundary locks the same fix for the
+// streaming line reader, which samples the file independently of decodeBytes.
+//
+// The line reader cannot inspect the whole buffer, so it must apply the
+// ASCII-only rule to its sample; otherwise read-lines, read-around,
+// read-context, and read-files keep corrupting content beyond the sample.
+func TestReadLinesKeepsUTF8BeyondSampleBoundary(t *testing.T) {
+	data := asciiWithInsertion(t, 66000, "\u2502", 40000)
+	path := filepath.Join(t.TempDir(), "boundary.md")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	got, err := ReadFileLines(path, ReadFileLinesOptions{StartNum: 1, EndNum: -1})
+	if err != nil {
+		t.Fatalf("read lines: %v", err)
+	}
+	if !strings.Contains(got, "\u2502") {
+		t.Fatalf("read lines lost the box-drawing character")
+	}
+}

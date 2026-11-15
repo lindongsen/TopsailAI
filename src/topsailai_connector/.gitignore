@@ -8,5 +8,8 @@ bin/
 *.db-wal
 .env
 .env.local
+# The compose file tells the operator to create docker/server.env beside it.
+# That file holds both Server secrets, so it must never be committable.
+server.env
 __pycache__/
 *.pyc

@@ -7,8 +7,9 @@
   Policy under test:
     - A transient write failure blocks instead of failing fast.
     - TOPSAILAI_DB_WRITE_MAX_BLOCK_SECONDS bounds that block; 0 means unbounded.
-    - When the write cannot make progress the process exits.
-    - Unrecoverable I/O conditions exit immediately without waiting.
+    - A committed write failure is reported to the caller; the process never exits.
+    - A non-committed write failure is logged and skipped; the process never exits.
+    - Unrecoverable I/O conditions are reported immediately without waiting.
     - Scope is writes only; reads keep failing fast.
     - A business "not found" result stays False and is never an I/O failure.
 """
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -37,7 +39,12 @@ def _sqlite_error(code: int, message: str = "synthetic") -> OperationalError:
 
 
 class _ExitRecorder:
-    """Replace db_io_tool._exit_process so the test runner survives."""
+    """Record any attempt to terminate the interpreter.
+
+    The policy never terminates the process, so every assertion on this recorder
+    must observe an empty call list. ``os._exit`` is the only remaining way a
+    database failure could kill the interpreter, so it is the guarded seam.
+    """
 
     def __init__(self):
         self.calls = []
@@ -49,7 +56,7 @@ class _ExitRecorder:
 @pytest.fixture
 def exit_recorder():
     recorder = _ExitRecorder()
-    with patch.object(db_io_tool, "_exit_process", recorder):
+    with patch.object(os, "_exit", recorder):
         yield recorder
 
 
@@ -184,14 +191,31 @@ def test_a14_non_io_error_returned_for_reraise(exit_recorder):
     assert exit_recorder.calls == []
 
 
-def test_a15_io_error_triggers_exit(exit_recorder):
-    db_io_tool.handle_write_failure(_sqlite_error(5), "op")
-    assert exit_recorder.calls == [1]
+def test_a15_io_error_returns_exception_without_exit(exit_recorder):
+    exc = _sqlite_error(5)
+    assert db_io_tool.handle_write_failure(exc, "op") is exc
+    assert exit_recorder.calls == []
 
 
-def test_a16_fatal_error_triggers_exit(exit_recorder):
-    db_io_tool.handle_write_failure(_sqlite_error(13), "op")
-    assert exit_recorder.calls == [1]
+def test_a16_fatal_error_returns_exception_without_exit(exit_recorder):
+    exc = _sqlite_error(13)
+    assert db_io_tool.handle_write_failure(exc, "op") is exc
+    assert exit_recorder.calls == []
+
+
+def test_a17_skipped_write_returns_false_for_transient_error(exit_recorder):
+    assert db_io_tool.handle_skipped_write_failure(_sqlite_error(5), "op") is False
+    assert exit_recorder.calls == []
+
+
+def test_a18_skipped_write_returns_false_for_fatal_error(exit_recorder):
+    assert db_io_tool.handle_skipped_write_failure(_sqlite_error(13), "op") is False
+    assert exit_recorder.calls == []
+
+
+def test_a19_skipped_write_returns_false_for_non_io_error(exit_recorder):
+    assert db_io_tool.handle_skipped_write_failure(ValueError("bad"), "op") is False
+    assert exit_recorder.calls == []
 
 
 # --------------------------------------------------------------------------
@@ -224,17 +248,17 @@ def test_b2_bounded_budget_succeeds_when_lock_clears(manager, db_path, monkeypat
     assert exit_recorder.calls == []
 
 
-def test_b3_bounded_budget_exits_when_lock_never_clears(
+def test_b3_bounded_budget_raises_when_lock_never_clears(
     manager, db_path, monkeypatch, exit_recorder,
 ):
-    """An exhausted budget exits the process, then the exception propagates."""
+    """An exhausted budget reports the failure to the caller, never exits."""
     monkeypatch.setenv(db_io_tool.ENV_MAX_BLOCK_SECONDS, "1")
     from topsailai.context.session_manager.__base import SessionData
 
     data = SessionData(session_id="s-b3", task="t")
     with pytest.raises(OperationalError):
         _run_with_lock(db_path, 5.0, lambda: manager.create_session(data))
-    assert exit_recorder.calls == [1]
+    assert exit_recorder.calls == []
 
 
 def test_b4_update_session_name_blocks_instead_of_returning_false(
@@ -439,7 +463,7 @@ def test_d2_busy_timeout_restored_after_failure(manager, monkeypatch, exit_recor
             db_path, 3.0,
             lambda: manager.create_session(SessionData(session_id="s-d2", task="t")),
         )
-    assert exit_recorder.calls == [1]
+    assert exit_recorder.calls == []
     assert _busy_timeout(manager) == before
 
 
@@ -518,10 +542,10 @@ def test_e1_ctx_manager_propagates_io_failure(exit_recorder):
 
     with pytest.raises(OperationalError):
         ctx_manager.update_session_name("s-e1", "name", session_mgr=_Failing())
-    assert exit_recorder.calls == [1]
+    assert exit_recorder.calls == []
 
 
-def test_e2_token_finalize_propagates_io_failure(exit_recorder, monkeypatch):
+def test_e2_token_finalize_skips_io_failure(exit_recorder, monkeypatch):
     from topsailai.context import ctx_manager, token
 
     class _Failing:
@@ -534,15 +558,14 @@ def test_e2_token_finalize_propagates_io_failure(exit_recorder, monkeypatch):
     monkeypatch.setenv("SESSION_ID", "s-e2")
     stat = token.TokenStat(llm_id="test-e2")
     try:
-        with pytest.raises(OperationalError):
-            stat.finalize_usage(completion_text="hello")
+        assert stat.finalize_usage(completion_text="hello") is True
     finally:
         stat.flag_running = False
         stat.join(5)
-    assert exit_recorder.calls == [1]
+    assert exit_recorder.calls == []
 
 
-def test_e3_session_metrics_propagates_io_failure(exit_recorder, monkeypatch):
+def test_e3_session_metrics_skips_io_failure(exit_recorder, monkeypatch):
     from topsailai.context import ctx_manager
     from topsailai.hooks.points.workspace.after_attempt_settle_user2agent.modules import (
         session_metrics,
@@ -569,17 +592,18 @@ def test_e3_session_metrics_propagates_io_failure(exit_recorder, monkeypatch):
         binding = _Binding()
 
     monkeypatch.setattr(ctx_manager, "get_session_manager", lambda: _Failing())
-    with pytest.raises(OperationalError):
-        session_metrics.main(agent_chat=_AgentChat(), outcome=None, attempt=_Attempt())
-    assert exit_recorder.calls == [1]
+    assert session_metrics.main(
+        agent_chat=_AgentChat(), outcome=None, attempt=_Attempt()
+    ) is False
+    assert exit_recorder.calls == []
 
 
 # --------------------------------------------------------------------------
 # F. Real process exit (no patched hook)
 # --------------------------------------------------------------------------
 
-def test_f1_real_process_exits_with_code_one(tmp_path):
-    """The unpatched policy must terminate the interpreter with exit code 1."""
+def test_f1_real_process_survives_write_failure(tmp_path):
+    """The unpatched policy must let the interpreter continue after a failure."""
     script = tmp_path / "exit_probe.py"
     script.write_text(
         "import sqlite3\n"
@@ -593,12 +617,16 @@ def test_f1_real_process_exits_with_code_one(tmp_path):
         encoding="utf-8",
     )
     env = dict(os.environ)
+    # The package root is the parent of this project folder, so the child must
+    # import ``topsailai`` from there. Building the path from the current working
+    # directory would point at the package itself and fail to import.
+    package_root = str(Path(__file__).resolve().parents[2].parent)
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(tmp_path.parent), os.getcwd(), os.path.join(os.getcwd(), "src")]
-    )
+        [package_root, env.get("PYTHONPATH", "")]
+    ).strip(os.pathsep)
     completed = subprocess.run(
         [sys.executable, str(script)],
         capture_output=True, text=True, timeout=60, env=env,
     )
-    assert completed.returncode == 1, completed.stderr
-    assert "NOT REACHED" not in completed.stdout
+    assert completed.returncode == 0, completed.stderr
+    assert "NOT REACHED" in completed.stdout

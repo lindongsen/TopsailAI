@@ -273,7 +273,7 @@ func TestPerformRefusesAnOperationWithNoHandler(t *testing.T) {
 // path is refused, because a relative path resolves differently per launch and
 // the fence would guard a directory the policy never named.
 func TestOpenScopeRejectsARelativeMapping(t *testing.T) {
-	if _, err := OpenScope("project", "relative/path", nil); err == nil {
+	if _, err := OpenScope("project", "relative/path", nil, ""); err == nil {
 		t.Fatal("OpenScope() = nil error, want a refusal for a relative mapping")
 	}
 }
@@ -283,7 +283,7 @@ func TestOpenScopeRejectsARelativeMapping(t *testing.T) {
 // the operator would believe the scope is live.
 func TestOpenScopeRejectsAMissingDirectory(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent")
-	if _, err := OpenScope("project", missing, nil); err == nil {
+	if _, err := OpenScope("project", missing, nil, ""); err == nil {
 		t.Fatal("OpenScope() = nil error, want a refusal for a missing directory")
 	}
 }
@@ -467,7 +467,7 @@ func TestOpenScopeRejectsASymlinkedRoot(t *testing.T) {
 	link := filepath.Join(parent, "link")
 	mustSymlink(t, real, link)
 
-	if _, err := OpenScope("project", link, nil); err == nil {
+	if _, err := OpenScope("project", link, nil, ""); err == nil {
 		t.Fatal("OpenScope() = nil error, want a refusal for a symlinked root")
 	}
 }

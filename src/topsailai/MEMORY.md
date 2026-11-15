@@ -80,3 +80,35 @@ Trigger: the Human stated on 2026-11-14 that any test involving interactive mode
 Action: never launch an interactive process directly from a tool call or a plain background shell. Create a tmux session, start the process inside it, send keys and read the pane output through tmux, and stop the exact tmux session and its process afterwards.
 
 Why this prevents recurrence: an interactive process reads from a terminal that a plain subprocess does not provide, so direct launches hang, lose prompts, or exit on EOF and produce evidence that does not reflect real interactive behavior. tmux supplies a real pseudo-terminal and a stable, inspectable pane, so the test exercises the same path a human uses and the captured output is trustworthy evidence.
+
+## The `topsailai` CLI must never query the database directly
+
+Trigger: the Human required that the `topsailai` command (`topsailai_cli.py`) never queries the database on its own initiative, and that every piece of information it needs is obtained by invoking a command line.
+
+Action: `topsailai_cli.py` and the `cli_topsailai/` package it dispatches into MUST NOT import or call `SessionSQLAlchemy`, `ctx_manager.get_session_manager`, or any other storage client, and MUST NOT open `memory.db` or any other database file. Session, task, model and history information is obtained by running the dedicated query command and parsing its `--json` output, for example `topsailai_session_info --json <session_id>` or `topsailai_sessions_info --json <id>...`. The query commands themselves (`topsailai_session_info.py`, `topsailai_sessions_info.py`, `ai_list_sessions.py`, `ai_retrieve_messages.py`, `ai_clean_sessions.py`, `ai_stream_sessions.py`) remain the only components that read storage, because reading storage is their entire purpose.
+
+Why this prevents recurrence: the interactive CLI is a navigation and control surface, not a data-access layer. Letting it open the database directly duplicates the storage schema in a second place, makes the CLI depend on a connection string that resolves against the process working directory, and lets a display path silently create an empty database. Routing every read through the query command keeps one storage contract, keeps the CLI free of schema knowledge, and makes the JSON output the single machine-readable interface.
+
+## Out-of-scope commits are recorded, not reverted, when the code itself is correct
+
+Trigger: session `wa-bbe51ff8246b` declared `/TopsailAI/src/topsailai/cli` as its workspace, but four of its commits (`dd399ebc`, `b0f69781`, `feedbbca`, `8088a60c`) also changed agent-core files under `workspace/` and `tests/unit/`. The Human reviewed the situation and decided: keep the current state, do not revert.
+
+Action: when a commit exceeds its declared workspace but the resulting code is verified correct, record the scope violation and leave history untouched. Do not rewrite history, do not revert, and do not treat the violation as authorization to keep crossing the boundary in future work. `git reset` remains prohibited.
+
+Why this prevents recurrence: the boundary violation and the code correctness are separate findings. Reverting correct code to punish a process mistake destroys working behavior, while silently ignoring the violation teaches that the boundary is optional. Recording it keeps both facts visible: the code stays, and the next session is expected to stay inside its own workspace.
+
+## Abnormal exits must preserve the on-disk scene instead of rewriting state
+
+Trigger: the non-interactive database I/O fallback called `update_session_meta_status("error", session_id)` before `os._exit(1)`. The Human rejected it: "兜底逻辑为什么还要去设置meta里面的状态？" and required that an abnormal exit preserve the scene, keep the meta file, and keep the stdout file, without deliberately modifying files.
+
+Action: a last-resort abnormal exit MUST NOT write, rewrite, or delete any state file. `os._exit` is an abnormal termination, so the recorded state is the evidence: `status: running` with `end_ts: null` proves the process died without finalizing, and rewriting it to `error` fabricates a finalized record and erases that proof. Flushing `sys.stdout` / `sys.stderr` before exiting is allowed and required, because flushing only delivers bytes already produced and never invents state. Remove the session identity from the fallback signature so the contract is structural rather than a convention, and assert `update_session_meta_status` is never called in both unit and BDD tests.
+
+Why this prevents recurrence: an abnormal exit is a fault, and a fault must leave its own trace. Writing a tidy `error` status makes a crash indistinguishable from a handled failure, destroys the only signal that the process skipped its finalization path, and hides the same defect class that produced the stale `running` sessions. Flushing keeps the stdout artifact truthful up to the exit instant, while rewriting metadata turns the record into a claim about what the program intended rather than a record of what happened.
+
+## Every `make` test run must tee its output to a timestamped log and print the log path
+
+Trigger: the Human required that running `make` for tests must redirect output to a temporary file for traceability, and added that the command must print the log path so the operator knows where the log is.
+
+Action: every test target in `Makefile` tees its output to `{PROJECT_ROOT}/.tmp/test-logs/<target>_<YYYYMMDDTHHMMSS>.log`, prints `==> Log: <path>` before the run and `==> Log saved: <path>` after it, and keeps the pipeline exit status via `SHELL := /bin/bash` plus `set -o pipefail`. Logs are pruned to the newest `LOG_KEEP_COUNT` (default 50) by the `test-log-init` prerequisite. `.tmp/` is already git-ignored, so logs never enter the repository.
+
+Why this prevents recurrence: `make test` fans out into several recursive pytest and sub-`make` invocations, so a single terminal session cannot retain the whole run and a failure scrolls away before it can be read. A plain `| tee` would also swallow the failure status, because the pipeline reports `tee`'s exit code, so a fully failing suite would still exit 0 and let a downstream `make test && deploy` proceed. `pipefail` plus an explicit `exit $status` keeps the failure observable, and the printed path is what makes the log actually findable instead of merely existing.

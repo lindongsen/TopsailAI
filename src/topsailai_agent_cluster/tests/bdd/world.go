@@ -3,6 +3,7 @@ package bdd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,6 +70,11 @@ type World struct {
 	// instead of the Cluster-minted profile identity. Empty keeps the previous
 	// behaviour for clusters that do not enforce a policy.
 	launchProfileToken string
+	// lockDB and lockTx hold a read-only transaction open on the Server database
+	// so a scenario can prove a write is refused while another reader holds the
+	// file. Both are closed by the scenario cleanup.
+	lockDB *sql.DB
+	lockTx *sql.Tx
 }
 
 // NewWorld creates a scenario-scoped server and SQLite database on a dynamic port.
@@ -89,6 +95,12 @@ func NewWorld(t *testing.T) (*World, error) {
 	server := httptest.NewServer(serverapi.NewHandlerWithCommandsAndBroker(store, "bdd-token", commands, broker))
 	world := &World{Root: root, Store: store, Server: server, Client: server.Client(), Token: "bdd-token", Commands: commands, Transport: transport}
 	t.Cleanup(func() {
+		if world.lockTx != nil {
+			_ = world.lockTx.Rollback()
+		}
+		if world.lockDB != nil {
+			_ = world.lockDB.Close()
+		}
 		server.Close()
 		if err := store.Close(); err != nil {
 			t.Logf("close scenario store: %v", err)

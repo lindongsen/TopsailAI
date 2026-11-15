@@ -15,7 +15,7 @@ agree.
 
 **Precondition:** A Node connected, a policy granting `project: [read]`.
 
-**Action:** `connector-server file read --scope project --path notes.md`.
+**Action:** `connector-server cli --scope project --path notes.md file.read`.
 
 **Expected:** A `POST` to `/v1/nodes/<node-id>/operations` with
 `Authorization: Bearer <client_token>`, `X-Connector-Node-Token: <node-token>` and a
@@ -23,13 +23,13 @@ body naming `file.read`, `project` and `notes.md`.
 
 ### TC-CLI-2: `file list` sends the documented request
 
-**Action:** `connector-server file list --scope project`.
+**Action:** `connector-server cli --scope project file.list`.
 
 **Expected:** A request naming `file.list`.
 
 ### TC-CLI-3: `file stat` sends the documented request
 
-**Action:** `connector-server file stat --scope project --path notes.md`.
+**Action:** `connector-server cli --scope project --path notes.md file.stat`.
 
 **Expected:** A request naming `file.stat`.
 
@@ -75,12 +75,21 @@ Server.
 whole pair never appears in one place, so the Server never holds a value that is
 half public and half secret.
 
-### TC-CLI-9: The CLI does not accept a secret as a flag value
+### TC-CLI-9: The CLI accepts a secret as a flag, and the flag wins over the environment
 
-**Action:** `connector-server file read --client-token gamma ...`.
+**Action:** `connector-server cli --client-token gamma --node node_a.b --scope project file.list`,
+with `CONNECTOR_CLI_CLIENT_TOKEN` and `CONNECTOR_CLI_NODE` also set to different
+values.
 
-**Expected:** The flag does not exist, or it is refused with a message that the
-value would be recorded in the shell history and the process table.
+**Expected:** The request is sent with the flag values, not the environment values.
+`parseArguments` resolves each value with `firstNonEmpty(*flag, lookup(env))`, so a
+flag that is present takes precedence.
+
+**Status:** accepted trade-off, decided by the human on 2026-11-13. A secret on the
+command line is visible in `argv` and in shell history, and that exposure is
+recorded in the residual risks of `docs/permission-design.md`. The environment
+variable remains the recommended form because it keeps the secret out of both. See
+`issues/done/issue-cli-accepts-a-secret-as-a-flag.md`.
 
 ### TC-CLI-10: The CLI does not echo a secret in an error
 
@@ -100,25 +109,25 @@ advertise a capability the binary refuses.
 
 ### TC-CLI-12: An unknown subcommand exits non-zero
 
-**Action:** `connector-server file delete ...`.
+**Action:** `connector-server cli ... file.delete`.
 
 **Expected:** A message and a non-zero exit code.
 
 ### TC-CLI-13: A missing `--scope` exits non-zero
 
-**Action:** `connector-server file read --path notes.md`.
+**Action:** `connector-server cli --path notes.md file.read`.
 
 **Expected:** A message naming the missing flag, exit code non-zero, no request sent.
 
 ### TC-CLI-14: A missing `--path` exits non-zero for `read`
 
-**Action:** `connector-server file read --scope project`.
+**Action:** `connector-server cli --scope project file.read`.
 
 **Expected:** A message, exit code non-zero, no request sent.
 
 ### TC-CLI-15: `--path` is optional for `list`
 
-**Action:** `connector-server file list --scope project`.
+**Action:** `connector-server cli --scope project file.list`.
 
 **Expected:** The request names the scope root.
 

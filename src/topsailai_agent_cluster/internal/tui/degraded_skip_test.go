@@ -1,0 +1,319 @@
+package tui
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"topsailai_agent_cluster/internal/protocol"
+)
+
+// degradedProbeAPI counts forced-collection calls, which is the seam that sends
+// a frame to the machine. A degraded endpoint must never receive one.
+type degradedProbeAPI struct {
+	*runnerStubAPI
+	refreshCalls []string
+}
+
+func (a *degradedProbeAPI) RefreshInventory(_ context.Context, endpointID string) (protocol.InventoryReport, error) {
+	a.refreshCalls = append(a.refreshCalls, endpointID)
+	return protocol.InventoryReport{CollectionStatus: protocol.CollectionSucceeded}, nil
+}
+
+// degradedProbeFixture builds one online endpoint and one degraded endpoint
+// whose inventory is gone, which is the state degradation leaves behind.
+func degradedProbeFixture() *degradedProbeAPI {
+	return &degradedProbeAPI{runnerStubAPI: &runnerStubAPI{
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "live-ep", ConnectionState: "online"},
+			{EndpointID: "deg-ep", ConnectionState: "degraded", ExpiresAtMS: 1797000000000},
+		},
+		reports:         map[string]protocol.InventoryReport{},
+		inventoryErrors: map[string]error{"deg-ep": errors.New("not_found: inventory not found")},
+	}}
+}
+
+// TestStartupNeverQueriesDegradedEndpoint proves the startup list sends no
+// request to a degraded endpoint, drops its row, and prints no count for it.
+//
+// The row is asserted absent because a degraded endpoint is not usable: every
+// command refuses it, so offering it as a list target would only produce a
+// refusal. The count is asserted absent too, because the count exists to explain
+// a row that was dropped for being unreachable, and a degraded endpoint is
+// dropped for being unusable. --all is the documented way to see it.
+func TestStartupNeverQueriesDegradedEndpoint(t *testing.T) {
+	api := degradedProbeFixture()
+	var out, errOut strings.Builder
+	if err := runStartupList(context.Background(), api, &interactiveState{}, &interruptController{}, &out, &errOut, ColorPolicy{}); err != nil {
+		t.Fatalf("runStartupList: %v", err)
+	}
+	for _, call := range api.calls {
+		if call == "inventory:deg-ep" {
+			t.Fatalf("startup queried a degraded endpoint: %v", api.calls)
+		}
+	}
+	if strings.Contains(out.String(), "offline endpoints hidden") {
+		t.Fatalf("startup printed a hidden count: %q", out.String())
+	}
+	if strings.Contains(out.String(), "deg-ep") {
+		t.Fatalf("startup kept the degraded row: %q", out.String())
+	}
+	if errOut.String() != "" {
+		t.Fatalf("startup wrote a diagnostic: %q", errOut.String())
+	}
+}
+
+// TestListAllNeverQueriesDegradedEndpoint proves --all widens visibility without
+// widening reach: the degraded endpoint is listed but never queried.
+func TestListAllNeverQueriesDegradedEndpoint(t *testing.T) {
+	api := degradedProbeFixture()
+	var out, diagnostics strings.Builder
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, &diagnostics, "", false, TableOptions{All: true}); err != nil {
+		t.Fatalf("ListWithOptions: %v", err)
+	}
+	for _, call := range api.calls {
+		if call == "inventory:deg-ep" {
+			t.Fatalf("--all queried a degraded endpoint: %v", api.calls)
+		}
+	}
+	if strings.Contains(diagnostics.String(), "unavailable") {
+		t.Fatalf("--all printed a fetch diagnostic: %q", diagnostics.String())
+	}
+	if !strings.Contains(out.String(), "deg-ep") {
+		t.Fatalf("--all dropped the degraded row: %q", out.String())
+	}
+}
+
+// TestListVisibilityOfDegradedEndpoint proves the default list hides a degraded
+// endpoint while --all and an explicit filter still show it.
+//
+// Hiding the row is a visibility decision, not a reach decision: the loader
+// already refuses to query a degraded endpoint in every form. The row is hidden
+// only where the operator asked for the default view, because a degraded endpoint
+// cannot be a target. --all is the documented way to see the whole fleet, and an
+// explicit filter names the endpoint, so both must keep the row rather than
+// answer with an empty table that reads as "absent".
+func TestListVisibilityOfDegradedEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		filter  string
+		all     bool
+		wantRow bool
+	}{
+		{name: "default", wantRow: false},
+		{name: "all", all: true, wantRow: true},
+		{name: "explicit", filter: "deg-ep", wantRow: true},
+		{name: "explicit-all", filter: "deg-ep", all: true, wantRow: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := degradedProbeFixture()
+			var out, diagnostics strings.Builder
+			if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, &diagnostics, tc.filter, false, TableOptions{All: tc.all}); err != nil {
+				t.Fatalf("ListWithOptions: %v", err)
+			}
+			gotRow := strings.Contains(out.String(), "deg-ep")
+			if gotRow != tc.wantRow {
+				t.Fatalf("degraded row present=%v, want %v: %q", gotRow, tc.wantRow, out.String())
+			}
+			for _, call := range api.calls {
+				if call == "inventory:deg-ep" {
+					t.Fatalf("list queried a degraded endpoint: %v", api.calls)
+				}
+			}
+		})
+	}
+}
+
+// TestRefreshNeverReachesDegradedEndpoint proves every refresh form refuses,
+// including the two that name the endpoint explicitly.
+//
+// An explicit filter and --all both widen the selection, and a forced collection
+// is a request to the machine. Widening what the operator may see must never
+// widen what the client may contact, so the degraded check runs before the
+// explicit and --all overrides rather than after them.
+func TestRefreshNeverReachesDegradedEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		filter string
+		all    bool
+	}{
+		{name: "default"},
+		{name: "all", all: true},
+		{name: "explicit", filter: "deg-ep"},
+		{name: "explicit-all", filter: "deg-ep", all: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := degradedProbeFixture()
+			if _, err := forceCollectionSelected(context.Background(), api, tc.filter, tc.all, nil); err != nil {
+				t.Fatalf("forceCollectionSelected: %v", err)
+			}
+			for _, id := range api.refreshCalls {
+				if id == "deg-ep" {
+					t.Fatalf("refresh reached a degraded endpoint: %v", api.refreshCalls)
+				}
+			}
+		})
+	}
+}
+
+// TestRefreshNamedDegradedEndpointReportsDegraded proves a named degraded
+// endpoint answers with its state instead of the misleading "not found".
+//
+// The refusal leaves no report and no error, so without an explicit check the
+// caller would conclude the endpoint is absent. The endpoint is not absent: its
+// record exists and carries the deletion date, which is the fact the operator
+// needs to decide whether to re-register it.
+func TestRefreshNamedDegradedEndpointReportsDegraded(t *testing.T) {
+	api := degradedProbeFixture()
+	var out, diagnostics strings.Builder
+	err := (CommandRunner{API: api}).Refresh(context.Background(), &out, &diagnostics, "deg-ep", false, TableOptions{})
+	if err == nil {
+		t.Fatalf("refresh of a degraded endpoint returned nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "degraded") {
+		t.Fatalf("err=%q, want it to name the degraded state", err.Error())
+	}
+	if strings.Contains(err.Error(), "not found") {
+		t.Fatalf("err=%q, want it not to claim the endpoint is absent", err.Error())
+	}
+}
+
+// TestListHiddenCountExcludesDegradedEndpoints proves the hidden count reports
+// only the offline endpoints while the degraded row is dropped.
+//
+// The count exists because a skipped endpoint loses its row, so the operator
+// would otherwise read an empty table as proof that the endpoint holds no
+// sessions. A degraded endpoint is dropped for a different reason, so counting it
+// would report it as merely unreachable and invite a retry that can never work.
+func TestListHiddenCountExcludesDegradedEndpoints(t *testing.T) {
+	api := &runnerStubAPI{
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "live-ep", ConnectionState: "online"},
+			{EndpointID: "off-ep", ConnectionState: "offline"},
+			{EndpointID: "deg-ep", ConnectionState: "degraded", ExpiresAtMS: 1797000000000},
+		},
+		reports:         map[string]protocol.InventoryReport{},
+		inventoryErrors: map[string]error{},
+	}
+	var out, diagnostics strings.Builder
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, &diagnostics, "", false, TableOptions{}); err != nil {
+		t.Fatalf("ListWithOptions: %v", err)
+	}
+	if !strings.Contains(out.String(), "offline endpoints hidden: 1 (use --all to include)") {
+		t.Fatalf("count=%q, want exactly the one offline endpoint", out.String())
+	}
+	if strings.Contains(out.String(), "deg-ep") {
+		t.Fatalf("degraded row should stay hidden: %q", out.String())
+	}
+	if strings.Contains(out.String(), "off-ep") {
+		t.Fatalf("offline row should stay hidden: %q", out.String())
+	}
+}
+
+// TestShowDegradedEndpointReportsDegraded proves show names the degraded state
+// instead of claiming the endpoint is absent.
+//
+// show is a store read, so it stays permitted for a degraded endpoint. It cannot
+// find a session there because the inventory is gone, and FindSession can only
+// match an endpoint that has a committed document, so the degraded state must be
+// reported before the absence.
+func TestShowDegradedEndpointReportsDegraded(t *testing.T) {
+	api := &runnerStubAPI{
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "deg-ep", ConnectionState: "degraded", ExpiresAtMS: 1797000000000},
+		},
+		reports:         map[string]protocol.InventoryReport{},
+		inventoryErrors: map[string]error{"deg-ep": errors.New("not_found: inventory not found")},
+	}
+	var out strings.Builder
+	err := (CommandRunner{API: api}).Show(context.Background(), &out, "deg-ep", false)
+	if err == nil {
+		t.Fatalf("show of a degraded endpoint returned nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "degraded") {
+		t.Fatalf("err=%q, want it to name the degraded state", err.Error())
+	}
+	if strings.Contains(err.Error(), "not found") {
+		t.Fatalf("err=%q, want it not to claim the endpoint is absent", err.Error())
+	}
+}
+
+// TestShowOfflineEndpointKeepsAbsenceAnswer proves the degraded branch does not
+// widen into every non-online state.
+//
+// An offline endpoint may come back, so its missing inventory is a transient
+// condition rather than a scheduled deletion. Reporting it as degraded would
+// tell the operator to re-register a machine that only needs restarting.
+func TestShowOfflineEndpointKeepsAbsenceAnswer(t *testing.T) {
+	api := &runnerStubAPI{
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "off-ep", ConnectionState: "offline"},
+		},
+		reports:         map[string]protocol.InventoryReport{},
+		inventoryErrors: map[string]error{"off-ep": errors.New("not_found: inventory not found")},
+	}
+	var out strings.Builder
+	err := (CommandRunner{API: api}).Show(context.Background(), &out, "off-ep", false)
+	if err == nil {
+		t.Fatalf("show of an offline endpoint returned nil")
+	}
+	if strings.Contains(err.Error(), "degraded") {
+		t.Fatalf("err=%q, want the offline endpoint not to be called degraded", err.Error())
+	}
+}
+
+// TestStartPromptNeverAdmitsToDegradedEndpoint proves the start prompt path
+// cannot submit a command to a degraded endpoint.
+//
+// The gate sits inside interactiveStart rather than in each caller because that
+// function is the single point every start path passes through. The launch
+// wizard checks the endpoint before it queries launch options, but the prompt
+// path reaches interactiveStart directly, so a caller-side check alone would
+// leave the prompt able to admit a command to a degraded machine. The assertion
+// is on the admit call count, not on the error text, because an implementation
+// that admitted the command and then reported the refusal would still print a
+// refusal-shaped message while having already sent the frame.
+func TestStartPromptNeverAdmitsToDegradedEndpoint(t *testing.T) {
+	api := degradedProbeFixture()
+	var out, trustedOut strings.Builder
+	request := interactiveStartRequest{EndpointID: "deg-ep", Profile: "adapter", ProfileRevision: "rev-1", Folder: "/work", Payload: json.RawMessage(`{}`)}
+	err := interactiveStart(context.Background(), api, &interactiveState{}, request, &out, &trustedOut, InteractiveOptions{})
+	for _, call := range api.calls {
+		if call == "admit" {
+			t.Fatalf("start admitted a command to a degraded endpoint: %v", api.calls)
+		}
+	}
+	if err == nil {
+		t.Fatalf("interactiveStart of a degraded endpoint returned nil")
+	}
+	if !strings.Contains(err.Error(), "degraded") {
+		t.Fatalf("err=%q, want it to name the degraded state", err.Error())
+	}
+	if !strings.Contains(err.Error(), "no request was sent") {
+		t.Fatalf("err=%q, want it to state that no request was sent", err.Error())
+	}
+	if out.String() != "" || trustedOut.String() != "" {
+		t.Fatalf("start wrote output before refusing: out=%q trusted=%q", out.String(), trustedOut.String())
+	}
+}
+
+// TestStartPromptAdmitsToOnlineEndpoint is the control for the test above: the
+// same path must still admit a command to an online endpoint, so the refusal is
+// attributable to the degraded state and not to the start path being broken.
+func TestStartPromptAdmitsToOnlineEndpoint(t *testing.T) {
+	api := degradedProbeFixture()
+	var out, trustedOut strings.Builder
+	request := interactiveStartRequest{EndpointID: "live-ep", Profile: "adapter", ProfileRevision: "rev-1", Folder: "/work", Payload: json.RawMessage(`{}`)}
+	_ = interactiveStart(context.Background(), api, &interactiveState{}, request, &out, &trustedOut, InteractiveOptions{WaitTimeoutMS: 50})
+	admitted := false
+	for _, call := range api.calls {
+		if call == "admit" {
+			admitted = true
+		}
+	}
+	if !admitted {
+		t.Fatalf("start did not admit a command to an online endpoint: %v", api.calls)
+	}
+}

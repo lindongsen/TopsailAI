@@ -61,10 +61,11 @@ func TestRenderEndpointsTableFramingAndMissingValues(t *testing.T) {
 	if first < 0 || second < 0 || third < 0 || !(first < second && second < third) {
 		t.Fatalf("endpoints are not sorted by ID: %q", text)
 	}
-	// endpoint-3 reports no hostname, display name, observation time or revision,
-	// so four cells must show the dash placeholder.
+	// endpoint-3 reports no hostname, display name, observation time, revision or
+	// deletion date, so five cells must show the dash placeholder. The sixth dash
+	// is the one inside the identifier itself.
 	unreported := endpointRow(t, text, "endpoint-3")
-	if !strings.Contains(unreported, "suspect") || strings.Count(unreported, "-") != 5 {
+	if !strings.Contains(unreported, "suspect") || strings.Count(unreported, "-") != 6 {
 		t.Fatalf("unreported endpoint values are not rendered as dashes: %q", unreported)
 	}
 	if !strings.Contains(text, "22:13:20") {
@@ -272,5 +273,63 @@ func TestInteractiveEndpointsRejectedOutsideWorkspaceScope(t *testing.T) {
 		if out.Len() != 0 || len(api.calls) != 0 {
 			t.Fatalf("%s scope endpoints wrote output=%q calls=%v", kind, out.String(), api.calls)
 		}
+	}
+}
+
+// TestRenderEndpointsShowsDeletionDateOnlyForDegraded pins the EXPIRES_AT
+// column, because a deletion date on a live row would claim an expiry that does
+// not exist.
+//
+// The degraded row must render the date, and every other state must render the
+// unreported marker. Asserting only the degraded row would pass even if the
+// column were populated for every state, so the negative half is required.
+func TestRenderEndpointsShowsDeletionDateOnlyForDegraded(t *testing.T) {
+	expiresAt := int64(1800000000000)
+	endpoints := []protocol.Endpoint{
+		{EndpointID: "deg-1", ConnectionState: "degraded", ExpiresAtMS: expiresAt},
+		{EndpointID: "on-1", ConnectionState: "online", ExpiresAtMS: expiresAt},
+		{EndpointID: "off-1", ConnectionState: "offline", ExpiresAtMS: expiresAt},
+	}
+	var out strings.Builder
+	if err := RenderEndpoints(&out, endpoints, "", false, TableOptions{Location: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "EXPIRES_AT") {
+		t.Fatalf("endpoints table missing the deletion date header: %q", text)
+	}
+	// 1800000000000 ms is 2027-01-15 08:00:00 UTC.
+	if degraded := endpointRow(t, text, "deg-1"); !strings.Contains(degraded, "2027-01-15 08:00:00") {
+		t.Fatalf("degraded row does not show its deletion date: %q", degraded)
+	}
+	// A non-degraded row carries the same timestamp but must not render it.
+	for _, endpointID := range []string{"on-1", "off-1"} {
+		row := endpointRow(t, text, endpointID)
+		if strings.Contains(row, "2027-01-15") {
+			t.Fatalf("%s row shows a deletion date it does not have: %q", endpointID, row)
+		}
+	}
+}
+
+// TestRenderEndpointsSummaryCountsDegraded pins the summary tally, because a
+// state missing from connectionStateOrder would still be counted but would lose
+// its deterministic position.
+func TestRenderEndpointsSummaryCountsDegraded(t *testing.T) {
+	endpoints := []protocol.Endpoint{
+		{EndpointID: "on-1", ConnectionState: "online"},
+		{EndpointID: "deg-1", ConnectionState: "degraded"},
+		{EndpointID: "deg-2", ConnectionState: "degraded"},
+	}
+	var out strings.Builder
+	if err := RenderEndpoints(&out, endpoints, "", false, TableOptions{Location: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	summary := lines[len(lines)-1]
+	if !strings.Contains(summary, "degraded(2)") {
+		t.Fatalf("summary does not count degraded endpoints: %q", summary)
+	}
+	if strings.Index(summary, "online(1)") > strings.Index(summary, "degraded(2)") {
+		t.Fatalf("summary order does not follow connectionStateOrder: %q", summary)
 	}
 }

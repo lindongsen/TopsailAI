@@ -233,6 +233,7 @@ class TestMainExitCode:
             sequential_yes_do_it=False,
             output_file=tmp_path / "test_results.txt",
             temp_root=tmp_path / "runner",
+            keep_invocations=3,
         )
         test_files = [result["file"] for result in results]
         monkeypatch.setattr(runner, "OUTPUT_FILE", tmp_path / "test_results.txt")
@@ -528,3 +529,282 @@ class TestJUnitReconciliation:
         path = tmp_path / "junit.xml"
         path.write_text(xml)
         assert runner.read_case_counts(path)["evidence"] == "malformed"
+
+
+class TestInvocationRetention:
+    """Tests for bounded invocation evidence retention and basetemp release."""
+
+    @staticmethod
+    def _make_invocation(root, name, mtime):
+        """Create one invocation directory with a controlled modification time."""
+        path = root / name
+        path.mkdir(parents=True)
+        (path / "marker.txt").write_text(name, encoding="utf-8")
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def test_prunes_oldest_beyond_keep(self, runner, tmp_path):
+        """Only the newest keep directories survive pruning."""
+        root = tmp_path / "unit-runner"
+        root.mkdir()
+        created = [
+            self._make_invocation(root, f"invocation-{index}", 1000 + index)
+            for index in range(5)
+        ]
+
+        removed = runner.prune_invocations(root, keep=2)
+
+        survivors = sorted(path.name for path in root.iterdir())
+        assert survivors == ["invocation-3", "invocation-4"]
+        assert sorted(path.name for path in removed) == [
+            "invocation-0", "invocation-1", "invocation-2",
+        ]
+        assert not created[0].exists()
+
+    def test_zero_keep_disables_pruning(self, runner, tmp_path):
+        """A non-positive keep value must retain every directory."""
+        root = tmp_path / "unit-runner"
+        root.mkdir()
+        for index in range(3):
+            self._make_invocation(root, f"invocation-{index}", 1000 + index)
+
+        assert runner.prune_invocations(root, keep=0) == []
+        assert len(list(root.iterdir())) == 3
+
+    def test_negative_keep_disables_pruning(self, runner, tmp_path):
+        """A negative keep value must also disable pruning."""
+        root = tmp_path / "unit-runner"
+        root.mkdir()
+        self._make_invocation(root, "invocation-0", 1000)
+
+        assert runner.prune_invocations(root, keep=-1) == []
+        assert len(list(root.iterdir())) == 1
+
+    def test_unrelated_entries_are_never_removed(self, runner, tmp_path):
+        """Files and directories outside the invocation prefix must survive."""
+        root = tmp_path / "unit-runner"
+        root.mkdir()
+        for index in range(3):
+            self._make_invocation(root, f"invocation-{index}", 1000 + index)
+        keep_file = root / "notes.txt"
+        keep_file.write_text("keep me", encoding="utf-8")
+        other_dir = root / "other-evidence"
+        other_dir.mkdir()
+        prefixed_file = root / "invocation-not-a-directory"
+        prefixed_file.write_text("keep me too", encoding="utf-8")
+
+        runner.prune_invocations(root, keep=1)
+
+        assert keep_file.exists()
+        assert other_dir.exists()
+        assert prefixed_file.exists()
+        assert sorted(
+            path.name for path in root.iterdir() if path.is_dir()
+        ) == ["invocation-2", "other-evidence"]
+
+    def test_missing_root_is_tolerated(self, runner, tmp_path):
+        """A missing temp root must not raise."""
+        assert runner.prune_invocations(tmp_path / "absent", keep=1) == []
+
+    def test_removal_failure_is_logged_and_does_not_raise(
+        self, runner, tmp_path, monkeypatch, caplog
+    ):
+        """A failing removal must be reported without interrupting the run."""
+        root = tmp_path / "unit-runner"
+        root.mkdir()
+        for index in range(2):
+            self._make_invocation(root, f"invocation-{index}", 1000 + index)
+
+        def failing_rmtree(path):
+            raise OSError("simulated removal failure")
+
+        monkeypatch.setattr(runner.shutil, "rmtree", failing_rmtree)
+        with caplog.at_level("WARNING"):
+            removed = runner.prune_invocations(root, keep=1)
+
+        assert removed == []
+        assert len(list(root.iterdir())) == 2
+        assert "simulated removal failure" in caplog.text
+
+    def test_release_basetemp_removes_only_the_scratch_tree(self, runner, tmp_path):
+        """Evidence files must survive while the basetemp tree is deleted."""
+        evidence = tmp_path / "attempt-0"
+        evidence.mkdir()
+        basetemp = evidence / "basetemp"
+        basetemp.mkdir()
+        (basetemp / "scratch.txt").write_text("scratch", encoding="utf-8")
+        for name in ("stdout.txt", "stderr.txt", "junit.xml", "metadata.json"):
+            (evidence / name).write_text("evidence", encoding="utf-8")
+
+        runner.release_basetemp(basetemp)
+
+        assert not basetemp.exists()
+        for name in ("stdout.txt", "stderr.txt", "junit.xml", "metadata.json"):
+            assert (evidence / name).exists()
+
+    def test_release_basetemp_tolerates_a_missing_tree(self, runner, tmp_path):
+        """Releasing an already absent basetemp must not raise."""
+        runner.release_basetemp(tmp_path / "absent")
+
+    def test_release_basetemp_failure_is_logged(
+        self, runner, tmp_path, monkeypatch, caplog
+    ):
+        """A failing basetemp removal must be reported without raising."""
+        basetemp = tmp_path / "basetemp"
+        basetemp.mkdir()
+
+        def failing_rmtree(path):
+            raise OSError("simulated basetemp failure")
+
+        monkeypatch.setattr(runner.shutil, "rmtree", failing_rmtree)
+        with caplog.at_level("WARNING"):
+            runner.release_basetemp(basetemp)
+
+        assert "simulated basetemp failure" in caplog.text
+
+    def test_run_test_releases_basetemp_after_writing_evidence(
+        self, runner, monkeypatch, tmp_path
+    ):
+        """run_test must delete the basetemp tree while keeping every evidence file."""
+        captured = {}
+
+        class FakeCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            _write_junit(cmd)
+            basetemp = Path(
+                next(value for value in cmd if value.startswith("--basetemp=")).split("=", 1)[1]
+            )
+            basetemp.mkdir(parents=True, exist_ok=True)
+            (basetemp / "scratch.txt").write_text("scratch", encoding="utf-8")
+            return FakeCompleted()
+
+        monkeypatch.setattr(runner, "RUN_TEMP_ROOT", tmp_path / "unit-runner")
+        monkeypatch.setattr(runner.subprocess, "run", fake_run)
+        status, details, _ = runner.run_test("test_example.py", 5)
+
+        assert status == "PASS"
+        basetemp = Path(
+            next(
+                value for value in captured["cmd"] if value.startswith("--basetemp=")
+            ).split("=", 1)[1]
+        )
+        assert not basetemp.exists()
+        evidence = basetemp.parent
+        for name in ("stdout.txt", "stderr.txt", "junit.xml", "metadata.json"):
+            assert (evidence / name).exists()
+        metadata = json.loads((evidence / "metadata.json").read_text(encoding="utf-8"))
+        assert metadata["basetemp"] == str(basetemp)
+
+    def test_run_test_releases_basetemp_on_every_retry(
+        self, runner, monkeypatch, tmp_path
+    ):
+        """Each retry attempt must release its own basetemp tree."""
+        basetemps = []
+
+        class FakeCompleted:
+            returncode = 1
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            _write_junit(cmd, '<testcase name="bad"><failure/></testcase>')
+            basetemp = Path(
+                next(value for value in cmd if value.startswith("--basetemp=")).split("=", 1)[1]
+            )
+            basetemp.mkdir(parents=True, exist_ok=True)
+            basetemps.append(basetemp)
+            return FakeCompleted()
+
+        monkeypatch.setattr(runner, "RUN_TEMP_ROOT", tmp_path / "unit-runner")
+        monkeypatch.setattr(runner.subprocess, "run", fake_run)
+        status, _, _ = runner.run_test("test_example.py", 5, retries=2)
+
+        assert status == "FAIL"
+        assert len(basetemps) == 3
+        assert all(not path.exists() for path in basetemps)
+
+    def test_main_prunes_older_invocations(self, runner, monkeypatch, tmp_path):
+        """main() must retain only the configured number of invocation directories."""
+        temp_root = tmp_path / "unit-runner"
+        temp_root.mkdir()
+        for index in range(4):
+            self._make_invocation(temp_root, f"invocation-old-{index}", 1000 + index)
+        args = SimpleNamespace(
+            files=[],
+            threshold=10.0,
+            timeout=120,
+            workers=1,
+            retries=0,
+            sequential=False,
+            sequential_yes_do_it=False,
+            output_file=tmp_path / "test_results.txt",
+            temp_root=temp_root,
+            keep_invocations=2,
+        )
+        monkeypatch.setattr(runner, "parse_args", lambda: args)
+        monkeypatch.setattr(runner, "get_test_files", lambda selected=None: ["test_example.py"])
+        monkeypatch.setattr(
+            runner,
+            "execute_concurrently",
+            lambda *unused_args, **unused_kwargs: [
+                {
+                    "file": "test_example.py",
+                    "status": "PASS",
+                    "details": "All tests passed",
+                    "elapsed": 0.1,
+                }
+            ],
+        )
+
+        assert runner.main() == 0
+
+        survivors = sorted(path.name for path in temp_root.iterdir())
+        assert len(survivors) == 2
+        assert all(name.startswith("invocation-") for name in survivors)
+        assert "invocation-old-0" not in survivors
+        assert "invocation-old-1" not in survivors
+        assert "invocation-old-2" not in survivors
+
+    def test_main_keeps_the_active_invocation(self, runner, monkeypatch, tmp_path):
+        """The invocation created by main() must never be pruned."""
+        temp_root = tmp_path / "unit-runner"
+        temp_root.mkdir()
+        for index in range(3):
+            self._make_invocation(temp_root, f"invocation-old-{index}", 1000 + index)
+        args = SimpleNamespace(
+            files=[],
+            threshold=10.0,
+            timeout=120,
+            workers=1,
+            retries=0,
+            sequential=False,
+            sequential_yes_do_it=False,
+            output_file=tmp_path / "test_results.txt",
+            temp_root=temp_root,
+            keep_invocations=1,
+        )
+        monkeypatch.setattr(runner, "parse_args", lambda: args)
+        monkeypatch.setattr(runner, "get_test_files", lambda selected=None: ["test_example.py"])
+        monkeypatch.setattr(
+            runner,
+            "execute_concurrently",
+            lambda *unused_args, **unused_kwargs: [
+                {
+                    "file": "test_example.py",
+                    "status": "PASS",
+                    "details": "All tests passed",
+                    "elapsed": 0.1,
+                }
+            ],
+        )
+
+        assert runner.main() == 0
+
+        survivors = [path for path in temp_root.iterdir()]
+        assert len(survivors) == 1
+        assert not survivors[0].name.startswith("invocation-old-")

@@ -9,23 +9,22 @@
       applied per write connection through the SQLite ``busy_timeout`` pragma.
     - ``TOPSAILAI_DB_WRITE_MAX_BLOCK_SECONDS`` bounds that block. ``0`` (default)
       means block indefinitely.
-    - When the write cannot make progress, the process exits. This covers both an
-      exhausted block budget and an unrecoverable I/O condition such as a full disk
-      or a corrupt database file.
+    - A database I/O failure never terminates the process. A committed write
+      re-raises so the caller can abandon the turn, and a non-committed write is
+      logged and skipped.
     - The scope is writes only. Reads keep the driver default so a stuck write can
       never make a read hang.
 
-  Why the process exits with ``os._exit``:
-    ``_async_update_session_name`` runs inside a daemon thread, so ``sys.exit``
-    there would only stop that thread and the agent would keep running with a lost
-    write. ``os._exit`` terminates the whole process from any thread. Log handlers
-    are flushed first, because ``os._exit`` skips ``atexit`` and buffered output.
+  Why the process is never terminated here:
+    ``_async_update_session_name`` runs inside a daemon thread, so a process-wide
+    exit would also destroy an interactive session that is still usable. The
+    conversation, the session metadata and the diagnostic artifacts all survive a
+    failed write, so the failure is reported to the caller instead of ending the
+    process. Session artifacts are retained on every exit path, including an
+    abnormal one, so a lost write never costs the operator the evidence.
 '''
 
-import logging
-import os
 import sqlite3
-import sys
 
 from sqlalchemy.exc import TimeoutError as SAPoolTimeoutError
 
@@ -192,59 +191,54 @@ def restore_write_block(session, original: int) -> None:
         )
 
 
-def _flush_output() -> None:
-    """Flush every log handler and the standard streams before a hard exit."""
-    for handler in logging.getLogger().handlers:
-        try:
-            handler.flush()
-        except Exception:
-            pass
-    for name in list(logging.Logger.manager.loggerDict):
-        instance = logging.Logger.manager.loggerDict.get(name)
-        if not isinstance(instance, logging.Logger):
-            continue
-        for handler in instance.handlers:
-            try:
-                handler.flush()
-            except Exception:
-                pass
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            if stream is not None:
-                stream.flush()
-        except Exception:
-            pass
-
-
-def _exit_process(code: int = 1) -> None:
-    """Terminate the whole process after flushing buffered output.
-
-    Tests replace this attribute to observe the exit decision without ending
-    the test runner.
-    """
-    _flush_output()
-    os._exit(code)
+def _describe_failure(exc: BaseException, operation: str, context: dict) -> str:
+    """Build one diagnosable description of a failed write."""
+    details = ", ".join(f"{key}={value}" for key, value in context.items())
+    return (
+        f"operation={operation}, transient={is_transient_db_io_failure(exc)}, "
+        f"block_budget_seconds={get_max_block_seconds()}, {details}, "
+        f"error={type(exc).__name__}: {exc}"
+    )
 
 
 def handle_write_failure(exc: BaseException, operation: str, **context) -> BaseException:
-    """Apply the write failure policy and return the exception to re-raise.
+    """Report a failed committed write and return the exception to re-raise.
 
-    An I/O failure never returns: the process exits, because a lost write must
-    not be mistaken for success. A non-I/O failure is returned so the caller can
-    re-raise it with its original traceback.
+    A committed write is a promise: the caller must not mistake a lost write for
+    success, so the exception is always returned for the caller to re-raise. The
+    process is never terminated here, because the conversation, the session
+    metadata and the diagnostic artifacts all survive a failed write and an
+    interactive session stays usable.
+
+    A non-I/O failure is returned unchanged so a programming defect keeps its
+    original traceback and stays testable.
     """
     if not is_db_io_failure(exc):
         return exc
 
-    transient = is_transient_db_io_failure(exc)
-    budget = get_max_block_seconds()
-    details = ", ".join(f"{key}={value}" for key, value in context.items())
     logger.critical(
-        "db_io: write failed and cannot make progress: operation=%s, "
-        "transient=%s, block_budget_seconds=%s, %s, error=%s: %s",
-        operation, transient, budget, details, type(exc).__name__, exc,
+        "db_io: committed write failed: %s", _describe_failure(exc, operation, context),
         exc_info=True,
     )
-    _exit_process(1)
-    # ``_exit_process`` does not return; keep a raise for a replaced hook.
     return exc
+
+
+def handle_skipped_write_failure(
+    exc: BaseException, operation: str, **context
+) -> bool:
+    """Report a failed non-committed write and return ``False``.
+
+    A non-committed write records statistics or presentation metadata. Losing it
+    does not damage the conversation, so it is logged and skipped instead of
+    being raised. Returning ``False`` keeps the caller's existing "not applied"
+    contract without turning a counter into a fatal error.
+    """
+    if not is_db_io_failure(exc):
+        return False
+
+    logger.warning(
+        "db_io: non-committed write skipped: %s",
+        _describe_failure(exc, operation, context),
+        exc_info=True,
+    )
+    return False

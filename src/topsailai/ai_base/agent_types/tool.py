@@ -30,6 +30,7 @@ from topsailai.utils.thread_local_tool import (
 from topsailai.utils import (
     print_tool,
     env_tool,
+    input_tool,
 )
 from topsailai.utils.json_tool import (
     json_load,
@@ -342,7 +343,7 @@ class StepCallTool(StepCallBase):
                 "raw_text": raw_text,
             }
 
-        while True:
+        for _attempt in range(input_tool.MAX_INPUT_RETRY_COUNT):
             input_func = get_agent_runtime_input()
             if input_func is None:
                 input_func = input
@@ -350,6 +351,14 @@ class StepCallTool(StepCallBase):
             if not user_input.strip():
                 continue
             return user_input
+        # Every retry produced an empty message, so the input source is not
+        # going to yield one. EOFError is raised rather than returning an empty
+        # message because the caller already treats it as "the input channel
+        # ended", and returning empty would only move the retry loop one level
+        # up instead of stopping it.
+        raise EOFError(
+            f"no usable input after {input_tool.MAX_INPUT_RETRY_COUNT} attempts"
+        )
 
     def complete_step_thought(self, response, **_):
         """

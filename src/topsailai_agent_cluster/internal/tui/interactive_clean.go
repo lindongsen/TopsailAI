@@ -95,8 +95,15 @@ func resolveCleanTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI, 
 	}
 	matches := make([]sessionTarget, 0, 1)
 	unavailable := make([]string, 0, 1)
+	degraded := make([]string, 0, 1)
 	ambiguous := make([]error, 0, 1)
 	for _, endpoint := range loaded.endpoints {
+		// A degraded endpoint is reported by its known state, not as an inventory
+		// that failed to answer, because its inventory is removed by design.
+		if endpointDegraded(endpoint) {
+			degraded = append(degraded, endpoint.EndpointID)
+			continue
+		}
 		report, ok := loaded.reports[endpoint.EndpointID]
 		if !ok || !report.ReportComplete {
 			unavailable = append(unavailable, endpoint.EndpointID)
@@ -118,6 +125,9 @@ func resolveCleanTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI, 
 	case 1:
 		return cleanTargetFromLoaded(loaded, matches[0].endpointID, matches[0].sessionID, matches[0].generation)
 	case 0:
+		if len(degraded) > 0 {
+			return sessionTarget{}, numericTokenHint(token, degradedEndpointError(degraded))
+		}
 		if len(unavailable) > 0 {
 			return sessionTarget{}, numericTokenHint(token, unavailableInventoryError(unavailable))
 		}

@@ -779,8 +779,9 @@ class SessionSQLAlchemy(SessionStorageBase):
         Returns:
             bool: True if the session name was updated successfully (or already
                   equalled the requested name), False if the session does not
-                  exist. A database I/O failure never returns: it blocks, then
-                  exits the process, so a lost write cannot look like success.
+                  exist or the write could not be applied. A database I/O
+                  failure is logged and skipped, because a lost rename must not
+                  end an otherwise usable session.
         """
         db_session = self.SessionLocal()
         original_busy_timeout = db_io_tool.apply_write_block(db_session)
@@ -800,11 +801,9 @@ class SessionSQLAlchemy(SessionStorageBase):
         except Exception as e:
             db_session.rollback()
             logger.error(f"update_session_name failed: session_id={session_id}, {e}")
-            if db_io_tool.is_db_io_failure(e):
-                raise db_io_tool.handle_write_failure(
-                    e, "update_session_name", session_id=session_id,
-                )
-            return False
+            return db_io_tool.handle_skipped_write_failure(
+                e, "update_session_name", session_id=session_id,
+            )
         finally:
             db_io_tool.restore_write_block(db_session, original_busy_timeout)
             db_session.close()
@@ -866,11 +865,9 @@ class SessionSQLAlchemy(SessionStorageBase):
                 f"tokens={delta_tokens}, cached={delta_cached}, "
                 f"completion={delta_completion}, {e}"
             )
-            if db_io_tool.is_db_io_failure(e):
-                raise db_io_tool.handle_write_failure(
-                    e, "accumulate_session_tokens", session_id=session_id,
-                )
-            return False
+            return db_io_tool.handle_skipped_write_failure(
+                e, "accumulate_session_tokens", session_id=session_id,
+            )
         finally:
             db_io_tool.restore_write_block(db_session, original_busy_timeout)
             db_session.close()
@@ -951,11 +948,9 @@ class SessionSQLAlchemy(SessionStorageBase):
                 f"accumulate_session_metrics failed: session_id={session_id}, "
                 f"deltas={deltas}, {e}"
             )
-            if db_io_tool.is_db_io_failure(e):
-                raise db_io_tool.handle_write_failure(
-                    e, "accumulate_session_metrics", session_id=session_id,
-                )
-            return False
+            return db_io_tool.handle_skipped_write_failure(
+                e, "accumulate_session_metrics", session_id=session_id,
+            )
         finally:
             db_io_tool.restore_write_block(db_session, original_busy_timeout)
             db_session.close()

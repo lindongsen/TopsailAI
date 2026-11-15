@@ -279,3 +279,203 @@ Trigger: adding a second bundled `error_llm_chat_attempt` module made a discover
 Action: locate the expected handler by its stable identity before asserting its return value or error, while retaining separate assertions for terminal handler ordering.
 
 Why this prevents recurrence: bundled Hook resources can expand without changing the configured plugin contract, so identity-based assertions verify the intended resource and do not fail merely because another valid handler is inserted earlier.
+
+## Hoisting a statement across a conditional boundary is a behaviour change, not a refactor
+
+Trigger: while adding a post-answer persistence guard, `self.last_message = answer` was moved out of an enclosing `if answer:` block so the recovery branch could restore the answer after a failed write. The pre-existing sibling test `test_run_with_agent_end_process_exception` then failed with `'' != {'role': 'assistant', 'content': 'Last message'}`: with an empty answer the unconditional assignment overwrote the message that the `AgentEndProcess` branch had just stored.
+
+Action: treat any edit that changes a statement's enclosing condition as a behaviour change. Re-read the surrounding block before moving a line, keep the original guard when the moved statement must not run on an empty value, and re-run every sibling test file of the enclosing function, not only the new targeted test.
+
+Why this prevents recurrence: the new test could not observe the defect because it always supplied a non-empty answer, so only the pre-existing test that exercised the empty-answer path caught it. A targeted test proves the new branch works; it cannot prove the old branches still work, because it never enters them. Attributing the failure at pristine `HEAD` in an isolated worktree first was what separated a real regression from a stale expectation, and the fix was one restored `if answer:` guard rather than a rewrite.
+
+## A retry loop is only bounded if the function it calls can return
+
+Trigger: the disk-growth issue named two unbounded prompt loops, `ai_base/agent_types/tool.py:346` and `ai_base/llm_base.py:659`. Both were real `while True` structures, yet neither was the spinner that produced 51.75 GB. Both funnel through `workspace/input_tool.py::input_one_line`, which caught every `EOFError` and `continue`d. With stdin at `/dev/null` the read raised `EOFError` immediately and forever, so the prompt re-printed without bound. The retry helper's own bound (`max_invalid_choices=3`, `EOFError` returns `"exit"`) never received a return value at all.
+
+Action: when auditing a loop for boundedness, follow the call chain into the function that supplies the loop's exit condition. A bound expressed in the caller is worthless if the callee converts the terminating signal into a retry. Distinguish the two meanings of the same exception: a pipe EOF marker ends one message and more may arrive, while a closed stdin can never answer. Propagate the condition in the second case and reprompt only in the first.
+
+Why this prevents recurrence: reading the loop body alone shows a `continue` and a bound, which looks safe. The defect lives one frame down, where `except EOFError: continue` silently converts the only terminating signal into another iteration. Fixing the two named sites would have left the producer intact, and the measured evidence proves it: the bounded implementation writes 117 bytes and exits, while a deliberate reproduction of the old behaviour wrote 1,301,180 bytes in five seconds. A negative control that reproduces the old behaviour is what makes the byte measurement meaningful rather than trivially zero.
+
+## A retry bound is only real if the function it calls can return
+
+Trigger: the closed-writer FIFO path was reported as returning an empty string and hot-spinning. Real-FIFO probes showed the opposite: `input_from_pipe` slept `0.01s` per iteration and never returned at all when `timeout=None`, which is the production default. A caller-side `for _ in range(999)` counter could never help, because the callee never returned to be counted.
+
+Action: fix the callee first, then add the caller bound as a second layer. `select()` reports a FIFO readable only after a writer has connected, so a readable descriptor that yields no bytes means the writer opened and closed without sending data. Treat that as a closed channel: raise `EOFError` when the caller asked for it, otherwise return the empty result. Use `EOFError` as the exhaustion signal for every retry bound, because all existing callers already treat it as "the input channel ended"; returning an empty message would only move the retry loop one level up.
+
+Why this prevents recurrence: a bound in the caller looks like a complete fix and passes any test that stubs the callee to return quickly. The defect is that the callee blocks, so the counter is never reached. The negative control is what proves it: the same FIFO test timed out at 60 seconds on pristine `ed8c982f` and passed after the fix, and the pristine sleep-call count was 93 versus 0. A test that only asserts "the caller stops after N attempts" would pass on both trees.
+
+
+## A path-spelling bug must be tested at the boundary that produces the spelling, not at the comparison helper
+
+Trigger: the reaper refused every session deletion with `unverified recorded home`. The database records `topsailai_home` with the folder-constants value (`os.path.abspath`, symbolic links unresolved), while the reaper child received `Path(home).resolve()`, which follows the symlinked home. The two spellings could never match.
+
+Action: treat the folder constants as the single authority for the home spelling and normalize every comparison site with the same function (`os.path.abspath(os.path.expanduser(...))`), never `Path.resolve()`. Note that `Path.absolute()` is not equivalent either: it keeps `..` segments that `os.path.abspath` collapses.
+
+Why this prevents recurrence: the first regression test I wrote exercised `SessionActivityProbe` directly with a symlinked root and a symlinked recorded home, and it **passed on the pristine tree**. Both sides used `Path.absolute()`, so they agreed with each other and the bug was invisible. The defect lived one layer up, in the reaper that produced the child's `TOPSAILAI_HOME`. Only a test at that boundary — asserting the value passed to `--home`, to the probe root, and to `_configure_child_logging` — failed on pristine and passed after the fix. A comparison helper can be perfectly consistent internally while every caller feeds it two different spellings, so the test must observe the value where it is produced. The negative control is mandatory: run the new test on a pristine worktree and confirm it fails there, otherwise a green suite proves nothing.
+
+## A `BaseException` exit command bypasses the `except Exception` handler that owns the completion write
+
+Trigger: typing `q` to end an interactive session left the session metadata at `status: interrupted` instead of `completed`. `q` is in `DESCRIPTION_EXIT_SET` in `utils/instruction_tool.py`, and that path calls `sys.exit(0)`, which raises `SystemExit`. `AgentChat.run()` in `workspace/agent/agent_shell_base.py` sets `completed = True` only after `self._run(...)` returns, and its handler is `except Exception`, which never sees a `BaseException`. The `finally` block then skips `update_session_meta_status` because `if completed:` is still false, so the metadata keeps `running` and the `atexit` handler `_finalize_on_exit` rewrites it to `interrupted`.
+
+Action: when a completion or finalization write is gated by a flag set on the normal return path, enumerate every way the guarded call can be skipped, including `BaseException` subclasses such as `SystemExit` and `KeyboardInterrupt`. Treat a deliberate exit command as a normal end of the session: set the completion flag and re-raise so the requested exit code still propagates, and keep `error` and `interrupted` reserved for genuine failures.
+
+Why this prevents recurrence: the `atexit` fallback is not the defect, it is the messenger. It cannot distinguish a deliberate exit from a crash because the only signal it receives is "the status is still `running`". Fixing the fallback would corrupt the crash case, so the fix must land where the completion write is skipped. The probes also show why reading the code alone is not enough: `except Exception` looks like it covers the run, and `if completed:` looks like a correct guard, yet the two together silently convert a normal exit into an abnormal one. The negative control matters here too — the same probe without the `SystemExit` leaves `completed`, which proves the exit path is the only difference.
+
+## A pathspec commit takes the working tree, so it silently discards hunk-level staging
+
+Trigger: `agent_shell_base.py` contained my 12-line `SystemExit` branch plus another
+agent's uncommitted db-io work in two separate hunks. I staged only my hunk with
+`git apply --cached --unidiff-zero`, verified the index held exactly those 12 lines and
+that the two foreign hunks were still unstaged, then ran
+`git commit -m "..." -- <three paths>`. The commit `b389d3ee` came out as
+`335 insertions(+), 4 deletions(-)` and contained all three hunks, including the foreign
+db-io code. The working tree was left clean, so the foreign work had been absorbed.
+
+Action: `git commit -- <pathspec>` does not commit the index for those paths; it commits
+the working-tree content of those paths, so any hunk-level staging is bypassed. When a
+file contains both my change and foreign uncommitted work, a pathspec commit cannot
+isolate my hunk. Either commit the index without a pathspec after proving the index holds
+only my files, or isolate the change in a separate file or worktree. Verify with
+`git show --name-only --format="" HEAD` **and** `git show HEAD -- <file> | grep '^@@'`,
+because the file list alone cannot reveal that extra hunks were swept in.
+
+Why this prevents recurrence: the two safeguards I relied on each looked sufficient and
+were not. The pathspec form protects against foreign *files* already in the index, and
+hunk-level staging protects against foreign *hunks* in the same file, but the pathspec
+form re-reads the working tree and therefore cancels the hunk-level staging. The
+insertion count was the only visible signal, and it appeared after the commit had already
+landed. Checking the hunk list of the committed diff is the only reliable proof, since a
+contaminated commit and a clean one both succeed silently with the same message.
+
+## A test-only import path that omits a package the production code imports is a latent failure
+
+Trigger: `make cli-unit-test` reported 9 failures. Five of them were
+`ModuleNotFoundError: No module named 'topsailai'` raised inside subprocess-based
+tests. `Makefile` set `CLI_PYTHONPATH := $(CLI_ROOT)` only, but
+`cli_topsailai/colors.py` imports `topsailai.utils.ansi_color`, and the
+`topsailai` package lives at `/TopsailAI/src/topsailai` — one level above
+`SRC_ROOT=/TopsailAI/src`. In-process tests never noticed because the editable
+install already provided `topsailai`; only tests that spawn a child with an
+explicit `PYTHONPATH` inherited the truncated path.
+
+Action: when a test harness sets `PYTHONPATH` explicitly, derive it from the
+imports the code under test actually performs, not from the directory layout of
+the test tree. Add `$(SRC_ROOT)` and verify no shadowing is introduced: check
+that no `$(SRC_ROOT)/tests` and no `$(SRC_ROOT)/cli_topsailai` exist, because
+either would silently take precedence over the intended `cli/tests` and
+`cli/cli_topsailai`.
+
+Why this prevents recurrence: an editable install masks a truncated
+`PYTHONPATH` for every in-process test, so the defect is invisible until a test
+spawns a subprocess. The failure then looks like a product bug in an unrelated
+area rather than a harness configuration error. The shadowing check is the part
+that cannot be skipped: widening a `PYTHONPATH` is only safe after proving the
+new entry does not contain a same-named top-level package, and here the comment
+that justified the narrow path was itself correct about the project root while
+silently omitting the source root.
+
+## A capability probe that depends on the host must be pinned by the test that does not test it
+
+Trigger: `test_r11_agent_launch_background_dispatches_selected_mechanism` failed
+with `assert 4 == 0` and stderr `tmux does not support new-session -e`. The test
+monkeypatched `submit_terminal` and `_prepare_environment` but not the capability
+probe, so `resolve_mechanism()` called the real
+`_tmux_supports_environment_option()`, which requires tmux >= 3.2 while this host
+runs 3.0a. The test's own docstring says it proves "a background terminal
+mechanism reaches the terminal submit path" — dispatch, not version support.
+
+Action: identify every host-dependent probe on the path under test and pin it,
+even when the test is not about that probe. Here the probe is imported inside the
+function body (`from cli_topsailai.project_scope import
+_tmux_supports_environment_option`), so the patch target is the defining module
+attribute, not the importing module. Keep a separate test for the probe's own
+version parsing so pinning it does not remove coverage.
+
+Why this prevents recurrence: a test that asserts a dispatch outcome while
+silently depending on an installed binary version passes on the developer's host
+and fails on any host with an older tool, which reads as a product regression
+rather than an environment difference. Pinning the probe makes the assertion
+match the stated intent, and the negative control is direct: the same test failed
+before the patch and passed after it, with the rest of the file unchanged at 159
+passed.
+
+## A sort key on a coarse timestamp needs a deterministic tiebreaker
+
+Trigger: `test_workspace_hostname.py::test_temporary_session_and_task` failed
+intermittently. `discover_log_files()` sorted only by `x["ctime"]`, and two files
+created within the same clock tick shared an identical `ctime`
+(`1794675567.345807552` for both), so the final order followed `os.listdir`
+order and changed between runs.
+
+Action: when a sort key can collide, add a stable secondary key derived from the
+data itself (here the filename) rather than relying on input order. Verify the
+collision exists before changing the key, so the fix targets a real tie instead
+of a suspected one.
+
+Why this prevents recurrence: filesystem timestamp granularity is coarser than
+the operations that create files, so "created at different times" does not imply
+"different ctime". A single-key sort looks correct and is correct whenever the
+timestamps differ, which is why the failure appears only under fast execution and
+reads as flakiness rather than a defect.
+
+## A capability probe that gates a feature needs a working degraded form, not a fallback to another mechanism
+
+Trigger: the CLI rejected tmux older than 3.2 because `new-session -e` does not
+exist there, and `_wrap_command_for_agent_mode` silently fell back to dtach/raw.
+The host runs tmux 3.0a, so `--agent-mode tmux` could never be used even though
+old tmux can forward the environment perfectly well.
+
+Action: branch on the capability probe and keep the same mechanism. Old tmux
+still execs the command directly, so the same `KEY=value` pairs are passed as
+arguments to `env` instead of through `-e`. A probe that only decides "reject or
+downgrade" is a missing implementation, not a compatibility check.
+
+Why this prevents recurrence: the probe was correct and the fallback was
+documented, so the code looked deliberate. The defect was that the degraded form
+was never implemented, and a silent downgrade hides it: the user asks for tmux
+and gets dtach with only a warning. Verify the degraded form on the real old
+binary, because the capability probe cannot tell you whether the substitute
+works.
+
+## Tmux re-parses its whole command line, so a trailing `;` in any argument breaks the launch
+
+Trigger: forwarding `TOPSAILAI_DISABLED_TOOLS=agent_tool;story_tool;` through
+`env` made tmux fail with `unknown command: TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE=`
+and the session never started. The same failure occurs on the argv path, so
+"one argv element per pair" does not protect the value.
+
+Action: escape only a **terminating** `;` (`pair[:-1] + r"\;")` before handing the
+pair to tmux, in both the `-e` and the `env` positions. Do not escape every
+semicolon: measured on tmux 3.0a, escaping all of them makes the launch succeed
+but corrupts the value to `agent_tool\;story_tool;`, because an interior `;` is
+already part of the same token and stays literal.
+
+Why this prevents recurrence: the failure is silent in the worst way — the
+session simply never appears, and the error names a different variable than the
+one that was malformed. Both plausible fixes look reasonable: escaping nothing
+fails loudly, escaping everything fails quietly by corrupting data. Only a
+readback of the value the child actually received distinguishes them, so the
+test must assert the received value, not the command string.
+
+## A probe harness must reproduce the production invocation shape
+
+Trigger: three successive tmux probes reported "no output" and I nearly
+concluded the `env` forwarding was broken. The wrapper emits a command without
+`-d`, so it needs a real terminal; my harness ran it under `bash -lc` and got
+`open terminal failed: not a terminal`. Later probes put pipes and quotes inside
+the inner command, which tmux's own parser split, and one probe passed a key that
+`_ENV_KEYS` filters out, so the value observed came from the inherited
+environment instead of the forwarded pair.
+
+Action: before trusting a probe result, confirm it matches production on every
+axis that matters: the same flags (`-d` when no TTY is available), an inner
+command free of characters tmux itself parses (`;`, `|`, quotes), a key that the
+production filter actually forwards, and a persistent server so one run's
+teardown does not invalidate the next. Read back the value the child received
+rather than the command string.
+
+Why this prevents recurrence: a probe that fails for harness reasons is
+indistinguishable from a probe that fails for product reasons, and the natural
+reaction is to "fix" working code. Three of my four failures were harness
+defects. The one real defect (the argv path) was found only after the harness was
+corrected, and it would have shipped had I trusted the earlier noise.

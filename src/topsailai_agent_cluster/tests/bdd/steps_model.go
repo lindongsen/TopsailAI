@@ -3,6 +3,7 @@ package bdd
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -10,6 +11,10 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/tests/harness"
 )
+
+// sgrPattern matches one ANSI SGR sequence, which is how the table renderer
+// applies colour to a header or a cell.
+var sgrPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 // registerModelSteps registers the model catalog scenarios. They drive the real
 // binaries over a real WebSocket, because the row-number rule is a client-side
@@ -21,6 +26,7 @@ func registerModelSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the model command is run in session scope$`, runModelListInSessionScope)
 	ctx.Step(`^the model command is run in workspace scope for the fixture session$`, runModelListInWorkspaceScope)
 	ctx.Step(`^the model catalog is rendered with numbered rows$`, assertModelCatalogRendered)
+	ctx.Step(`^the model catalog marks the profile the provider reports as current$`, assertModelCatalogMarksTheCurrentProfile)
 	ctx.Step(`^the second model row is applied in session scope$`, applySecondModelRowInSessionScope)
 	ctx.Step(`^the first model row is applied in workspace scope$`, applyFirstModelRowInWorkspaceScope)
 	ctx.Step(`^the provider receives the second profile name and no row number$`, assertProviderReceivedSecondProfileName)
@@ -31,12 +37,19 @@ func registerModelSteps(ctx *godog.ScenarioContext) {
 // modelListScript navigates to the sole session and lists the catalog. Two
 // navigations are required: model reads the endpoint and the session from the
 // current scope, and both are empty at workspace scope.
-const modelListScript = "cd 1\ncd 1\nmodel\nquit\n"
+//
+// The trailing empty line answers the guided selection question with "keep the
+// current model", so the script ends the way an operator who only wanted to look
+// would end it.
+const modelListScript = "cd 1\ncd 1\nmodel\n\nquit\n"
 
 // modelSelectScript lists the catalog and then applies the second row. The
 // catalog must be rendered in the same session, because a number is resolved
 // against the catalog the operator last saw.
-const modelSelectScript = "cd 1\ncd 1\nmodel\nmodel 2\ny\nquit\n"
+//
+// The row number answers the guided question, and the following "y" answers the
+// confirmation that every mutating operation still requires.
+const modelSelectScript = "cd 1\ncd 1\nmodel\n2\ny\nquit\n"
 
 // modelWorkspaceListScript names the session explicitly, because workspace scope
 // does not already name a target.
@@ -178,6 +191,67 @@ func assertModelCatalogRendered() error {
 }
 
 // modelSelectPayloadKey returns the provider-private model key the adapter sent
+// assertModelCatalogMarksTheCurrentProfile proves the CURRENT column reports the
+// profile the provider said the session is using.
+//
+// The assertion is positional rather than a substring search, because "yes" also
+// appears in the AVAILABLE column: a substring hit would pass even if CURRENT were
+// still unknown. Each row is split on the table's own cell separator and the
+// CURRENT cell is read by index, so the column that carries the value is the
+// column that is checked.
+func assertModelCatalogMarksTheCurrentProfile() error {
+	rows, err := modelCatalogRows(interactiveOutput())
+	if err != nil {
+		return err
+	}
+	want := map[string]string{"fixture-model-a": "yes", "fixture-model-b": "no"}
+	for name, expected := range want {
+		current, ok := rows[name]
+		if !ok {
+			return fmt.Errorf("the catalog table has no row for profile %q", name)
+		}
+		if current != expected {
+			return fmt.Errorf("profile %q reports CURRENT=%q, want %q", name, current, expected)
+		}
+	}
+	return nil
+}
+
+// modelCatalogRows maps each rendered profile name to its CURRENT cell.
+//
+// The table prints cells separated by " │ " and pads them to the column width, so
+// the value is trimmed before comparison. Styling is removed first, because the
+// header and the cells are styled on a real terminal and an SGR sequence inside a
+// cell would make a correct value look wrong.
+func modelCatalogRows(text string) (map[string]string, error) {
+	rows := make(map[string]string)
+	for _, line := range strings.Split(stripTableSGR(text), "\n") {
+		cells := strings.Split(line, " │ ")
+		if len(cells) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(cells[1])
+		if name != "fixture-model-a" && name != "fixture-model-b" {
+			continue
+		}
+		rows[name] = strings.TrimSpace(cells[2])
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no catalog row could be parsed from the rendered table: %s", text)
+	}
+	return rows, nil
+}
+
+// stripTableSGR removes every SGR sequence the table renderer can emit.
+//
+// The table styles headers, states and warned cells, so the set of sequences is
+// wider than the follow prefix. A general pattern is used instead of a fixed
+// replacer list, because a replacer silently stops covering a sequence the moment
+// the palette gains one, and the failure would look like a wrong cell value.
+func stripTableSGR(text string) string {
+	return sgrPattern.ReplaceAllString(text, "")
+}
+
 // with a model select.
 //
 // The key is not a top-level argv element: the Generic CLI Adapter sends the typed

@@ -281,9 +281,13 @@ func modelSelectStubFixture() modelSelectStub {
 
 // TestInteractiveModelSelectRequiresConfirmation proves a declined confirmation
 // admits nothing, because applying a profile changes the live agent.
+//
+// The guided question consumes the row number, so the confirmation is the next line.
+// Keeping the confirmation on the guided path is the point: a convenient selection
+// must not become an unconfirmed mutation.
 func TestInteractiveModelSelectRequiresConfirmation(t *testing.T) {
 	stub := modelSelectStubFixture()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\nmodel 2\nn\nexit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\n2\nn\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -302,7 +306,7 @@ func TestInteractiveModelSelectRequiresConfirmation(t *testing.T) {
 // the client must carry the one it resolved rather than leaving it blank.
 func TestInteractiveModelSelectCarriesTheGeneration(t *testing.T) {
 	stub := modelSelectStubFixture()
-	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\nmodel 2\ny\nexit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\n2\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -324,5 +328,91 @@ func TestInteractiveModelSelectCarriesTheGeneration(t *testing.T) {
 	}
 	if strings.Contains(string(intent.Payload), `"2"`) {
 		t.Fatalf("payload must not carry the row number, got %s", intent.Payload)
+	}
+}
+
+// TestInteractiveModelGuidedSelectOffersAChoice proves the catalog render is
+// followed by a guided question, so the operator does not have to retype the
+// command to act on the table they just read.
+func TestInteractiveModelGuidedSelectOffersAChoice(t *testing.T) {
+	stub := modelSelectStubFixture()
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\n\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "select model profile [1-2]") {
+		t.Fatalf("missing guided selection question: %q", output)
+	}
+	if !strings.Contains(output, "Enter to keep the current model") {
+		t.Fatalf("the question must state that Enter keeps the current model: %q", output)
+	}
+}
+
+// TestInteractiveModelGuidedSelectEmptyKeepsTheCurrentModel proves an empty answer
+// configures nothing and says so.
+//
+// This is the behaviour the human asked for: reading the catalog and deciding to keep
+// the current model must be one keystroke, and it must not be reported as a
+// cancellation, because nothing was cancelled.
+func TestInteractiveModelGuidedSelectEmptyKeepsTheCurrentModel(t *testing.T) {
+	stub := modelSelectStubFixture()
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\n\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("an empty answer admitted %d commands", stub.admit)
+	}
+	if !strings.Contains(output, "model unchanged") {
+		t.Fatalf("missing unchanged notice: %q", output)
+	}
+	if strings.Contains(output, "cancelled") {
+		t.Fatalf("an empty answer is a decision, not a cancellation: %q", output)
+	}
+}
+
+// TestInteractiveModelGuidedSelectRejectsAnUnrenderedNumber proves an out-of-range
+// answer is refused instead of being retried as a profile identifier.
+//
+// The refusal travels the REPL's error channel, which is where every refused command
+// is reported, so the assertion reads diagnostics rather than the rendered table.
+func TestInteractiveModelGuidedSelectRejectsAnUnrenderedNumber(t *testing.T) {
+	stub := modelSelectStubFixture()
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\n9\nexit\n", ColorPolicy{})
+	if stub.admit != 0 {
+		t.Fatalf("an unrendered number admitted %d commands", stub.admit)
+	}
+	if !strings.Contains(diagnostics, "not in the last rendered catalog") {
+		t.Fatalf("missing refusal notice: %q", diagnostics)
+	}
+}
+
+// TestInteractiveModelGuidedSelectEchoesTheChosenProfile proves the accepted choice
+// is echoed beside the answer, so the operator sees which profile the number meant.
+func TestInteractiveModelGuidedSelectEchoesTheChosenProfile(t *testing.T) {
+	stub := modelSelectStubFixture()
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\n2\nn\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "(gpt (mp-2))") {
+		t.Fatalf("missing echo of the chosen profile: %q", output)
+	}
+}
+
+// TestInteractiveModelGuidedSelectKeepsTheExplicitForm proves the explicit
+// "model <number>" form still works after the guided question was declined, because
+// the rendered namespace stays in place.
+func TestInteractiveModelGuidedSelectKeepsTheExplicitForm(t *testing.T) {
+	stub := modelSelectStubFixture()
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nmodel\n\nmodel 2\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 1 || len(stub.intents) != 1 {
+		t.Fatalf("admitted %d commands with %d intents, want 1", stub.admit, len(stub.intents))
+	}
+	if !strings.Contains(string(stub.intents[0].Payload), "mp-2") {
+		t.Fatalf("payload must carry the opaque profile ID, got %s", stub.intents[0].Payload)
 	}
 }

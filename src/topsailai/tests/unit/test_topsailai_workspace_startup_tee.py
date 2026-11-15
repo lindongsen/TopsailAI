@@ -112,7 +112,9 @@ def test_failed_startup_restores_and_retains(monkeypatch, capture_folder, error_
     assert sys.stdout is terminal
     assert owners[0].log_file.closed
     state.cancel.assert_called_once_with()
-    cleanup.assert_called_once_with(owners[0].delete_log_files)
+    # A diagnostic artifact must never be registered for deletion, so no exit
+    # cleanup function is armed for it.
+    cleanup.assert_not_called()
     path = capture_folder / f"failed.{os.getpid()}.session.stdout"
     assert path.read_text(encoding="utf-8") == "startup diagnostic\n"
 
@@ -174,11 +176,12 @@ def test_new_session_input_is_captured_before_agent_creation(monkeypatch, captur
     assert create_session.call_args.kwargs["task"] == "first task"
 
 
-@pytest.mark.parametrize("outcome", ["normal", "failure", "interrupt", "run"])
-def test_startup_files_removed_on_process_exit(tmp_path, outcome):
-    """Run real exit callbacks without requiring AgentChat.run to be reached."""
+@pytest.mark.parametrize("outcome", ["normal", "failure", "interrupt", "run", "sigterm"])
+def test_startup_files_retained_on_process_exit(tmp_path, outcome):
+    """Run real exit callbacks and prove diagnostics survive every exit path."""
     script = r"""
 import os
+import signal
 import sys
 from pathlib import Path
 from topsailai.workspace import agent_shell, print_tool
@@ -193,7 +196,7 @@ rotation = Path(str(path) + ".1")
 unrelated = folder / "unrelated.session.stdout"
 unrelated.write_text("keep", encoding="utf-8")
 
-@print_tool.decorator_tee_output_by_session(need_delete_log_files=True)
+@print_tool.decorator_tee_output_by_session(need_delete_log_files=False)
 def run():
     # Retain the existing runtime owner and verify sequential append.
     print("running")
@@ -223,6 +226,9 @@ assert sys.stdout is terminal
 assert path.exists() and rotation.exists()
 if outcome == "run":
     assert path.read_text(encoding="utf-8") == "startup diagnostic\nrunning\n"
+if outcome == "sigterm":
+    # A default-action signal terminates the process after exit cleanup runs.
+    os.kill(os.getpid(), signal.SIGTERM)
 print("exit cleanup armed")
 """
     env = dict(os.environ)
@@ -241,7 +247,12 @@ print("exit cleanup armed")
         [resolve_python_interpreter(), "-c", script, str(tmp_path), outcome],
         env=env, cwd=str(tmp_path), capture_output=True, text=True,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "exit cleanup armed" in result.stdout
-    assert not list(tmp_path.glob("owned.*.session.stdout*"))
+    if outcome == "sigterm":
+        assert result.returncode == -15, result.stdout + result.stderr
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "exit cleanup armed" in result.stdout
+    # Diagnostics are never deleted, so both the active file and its rotation
+    # survive a normal exit, an exception, an interrupt and a signal.
+    assert list(tmp_path.glob("owned.*.session.stdout*"))
     assert (tmp_path / "unrelated.session.stdout").read_text(encoding="utf-8") == "keep"

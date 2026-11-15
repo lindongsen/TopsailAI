@@ -323,7 +323,11 @@ func timeoutAfter(t *testing.T) <-chan time.Time {
 func writeNodePolicy(t *testing.T, configDir string) string {
 	t.Helper()
 
-	scopeDir := filepath.Join(configDir, "project")
+	// The scope is a sibling of the config directory, not a child of it. A scope
+	// that contains the config directory could list the Node's own credentials,
+	// which Open refuses at startup, so a fixture that nested the scope inside the
+	// config directory would exercise the refusal instead of the code under test.
+	scopeDir := t.TempDir()
 	if err := os.MkdirAll(scopeDir, 0o755); err != nil {
 		t.Fatalf("create scope directory: %v", err)
 	}

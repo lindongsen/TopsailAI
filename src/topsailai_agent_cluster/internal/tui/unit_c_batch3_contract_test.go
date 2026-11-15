@@ -101,7 +101,7 @@ func TestUnitCBatch3LiveAuthority(t *testing.T) {
 			unitC19Finish(t, d)
 			after, intents := d.api.snapshot()
 			delta := unitCAPIAdd(d.baseline, after)
-			want := unitCAPICounts{Capability: 1, Admit: 1, Command: 1}
+			want := unitCAPICounts{List: 1, Capability: 1, Admit: 1, Command: 1}
 			if mode == "removed" || mode == "lookup" {
 				want.Admit = 0
 				want.Command = 0
@@ -154,7 +154,7 @@ func TestUnitCBatch3DispatcherRequest(t *testing.T) {
 	}
 	exit, err := executeInteractiveLine(context.Background(), api, &state, `start --task "existing tag" --folder work`, lines, &out, &out, io.Discard, InteractiveOptions{})
 	counts, intents := api.snapshot()
-	if exit || err != nil || counts != (unitCAPICounts{Capability: 1, Admit: 1, Command: 1}) || len(intents) != 1 {
+	if exit || err != nil || counts != (unitCAPICounts{List: 1, Capability: 1, Admit: 1, Command: 1}) || len(intents) != 1 {
 		t.Fatalf("F6 dispatcher: exit=%v err=%v counts=%+v intents=%v", exit, err, counts, intents)
 	}
 	unitC3CheckIntent(t, intents[0], `{"task":"existing tag"}`, "work")
@@ -184,7 +184,7 @@ func TestUnitCBatch3DispatcherErrors(t *testing.T) {
 				t.Fatalf("F6 original error: %v", err)
 			}
 			c, _ := api.snapshot()
-			want := unitCAPICounts{Capability: 1, Admit: 1, Command: 1}
+			want := unitCAPICounts{List: 1, Capability: 1, Admit: 1, Command: 1}
 			if mode == "lookup" {
 				want.Admit = 0
 				want.Command = 0

@@ -270,7 +270,7 @@ func control(args []string) {
 	if len(args) == 0 || args[0] != "control" {
 		fail("unsupported runtime subcommand")
 	}
-	action, session := "", ""
+	action, session, payload := "", "", ""
 	for index := 1; index < len(args); index++ {
 		switch args[index] {
 		case "-s":
@@ -278,10 +278,12 @@ func control(args []string) {
 				session = args[index+1]
 				index++
 			}
-		case "-a", "--json":
-			if args[index] == "-a" {
+		case "-a":
+			if index+1 < len(args) {
+				payload = args[index+1]
 				index++
 			}
+		case "--json":
 		default:
 			if action == "" {
 				action = args[index]
@@ -295,6 +297,25 @@ func control(args []string) {
 	// reached the provider. The payload is the only place a resolved profile
 	// name differs from a row number, and the parser above discards it.
 	recordInvocation(args)
+	// The registered-instruction surface answers with the instruction's own
+	// result, which is what the adapter reads to report the current model. The
+	// answer is a registry name so it maps onto a rendered row; an unlisted name
+	// would prove only the degrade path.
+	if action == "call_instruction" {
+		emit(map[string]any{
+			"ok":             true,
+			"action":         action,
+			"session_id":     session,
+			"delivery_state": "control_acknowledged",
+			"request_id":     "fixture-request",
+			"response": map[string]any{
+				"request_id": "fixture-request",
+				"status":     "ok",
+				"result":     fixtureCurrentModel(payload),
+			},
+		})
+		return
+	}
 	// The provider reports control delivery as control_acknowledged, which the
 	// adapter maps to an acknowledged submitted boundary. Emitting a bare
 	// "acknowledged" would fall through the adapter's switch to unknown, so the
@@ -306,6 +327,25 @@ func control(args []string) {
 		"delivery_state": "control_acknowledged",
 		"request_id":     "fixture-request",
 	})
+}
+
+// fixtureCurrentModel returns the current model for one registered instruction.
+//
+// Only the current-model read has an answer; every other instruction returns an
+// empty result, because the fixture must not invent a value for a read it does
+// not model. The name is the first registry entry, so a scenario can assert the
+// CURRENT column marks exactly that row.
+func fixtureCurrentModel(payload string) string {
+	var request struct {
+		Instruction string `json:"instruction"`
+	}
+	if err := json.Unmarshal([]byte(payload), &request); err != nil {
+		return ""
+	}
+	if request.Instruction != "agent.llm" {
+		return ""
+	}
+	return "fixture-model-a"
 }
 
 // emit writes one JSON document to stdout.

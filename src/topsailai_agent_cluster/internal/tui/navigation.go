@@ -106,16 +106,18 @@ func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *i
 	// A session entry is not an action result, so it carries no receipt and the
 	// tail keeps its previous behaviour: selecting a session is exactly when the
 	// operator wants to see its output.
-	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, "session selected", nil)
+	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, "session selected", nil, 0)
 }
 
 // renderAutomaticSnapshot renders one bounded output snapshot for the selected
 // session and reports a failed read as a diagnostic instead of an error. The
 // caller has already validated the selection, so a follow-up read must never
 // turn an accepted action into a failure. failurePrefix names the action that
-// triggered the read, so the operator can tell which step failed.
-func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *interactiveState, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string) error {
-	return renderSnapshotForTarget(parent, api, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, color, options, failurePrefix)
+// triggered the read, so the operator can tell which step failed. maxLines is the
+// budget the step asked for, so the substitute reads the same amount the stream
+// it replaces would have read.
+func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *interactiveState, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string, maxLines int) error {
+	return renderSnapshotForTarget(parent, api, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, color, options, failurePrefix, maxLines)
 }
 
 // renderSnapshotForTarget renders one bounded output snapshot for an explicit
@@ -123,12 +125,15 @@ func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *
 // two routes cannot drift into two renderers, two budgets or two failure
 // messages. The target is passed explicitly because a recovery addresses the
 // session that was followed, which is not necessarily the current selection.
-func renderSnapshotForTarget(parent context.Context, api InteractiveAPI, endpointID, sessionID, generation string, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string) error {
-	maxBytes, maxLines := interactiveOutputBounds(options)
+// A non-positive maxLines keeps the REPL budget, which is what the follow
+// recovery wants: it recovers a stream that already ran, so it has no smaller
+// budget of its own to honour.
+func renderSnapshotForTarget(parent context.Context, api InteractiveAPI, endpointID, sessionID, generation string, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions, failurePrefix string, maxLines int) error {
+	maxBytes, lines := outputBoundsForLines(options, maxLines)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	if err := runner.RenderSessionSnapshot(ctx, trustedOut, endpointID, sessionID, generation, maxBytes, maxLines, color); err != nil {
+	if err := runner.RenderSessionSnapshot(ctx, trustedOut, endpointID, sessionID, generation, maxBytes, lines, color); err != nil {
 		// The diagnostic interpolates a provider error, so it is sanitized
 		// before it reaches the trusted writer.
 		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic logs failed: "+sanitizeTerminal([]byte(err.Error())))
@@ -176,7 +181,7 @@ func recoverFollowOutput(parent context.Context, api InteractiveAPI, watch Watch
 	if _, err := fmt.Fprintln(trustedOut, renderFollowStatus(message, ansiDim, OutputColorPolicy(trustedOut), false)); err != nil {
 		return err
 	}
-	return renderSnapshotForTarget(parent, api, request.EndpointID, request.ResourceID, request.ProviderGeneration, trustedOut, OutputColorPolicy(trustedOut), options, "follow recovery")
+	return renderSnapshotForTarget(parent, api, request.EndpointID, request.ResourceID, request.ProviderGeneration, trustedOut, OutputColorPolicy(trustedOut), options, "follow recovery", 0)
 }
 
 // refreshSelectedSession asks the selected session's Endpoint for one fresh
@@ -232,6 +237,23 @@ func interactiveOutputBounds(options InteractiveOptions) (int, int) {
 		maxBytes = 64 << 10
 	}
 	return maxBytes, maxLines
+}
+
+// outputBoundsForLines resolves the bounded output read limits for one step that
+// may carry its own trailing line count. A positive maxLines is used as given,
+// because a step such as the post-send tail deliberately reads fewer lines than
+// the REPL default; a non-positive value keeps the REPL budget through
+// interactiveOutputBounds. The byte budget is always the REPL byte budget, so a
+// smaller line count never widens the record bound.
+//
+// This is the only place the two budgets meet, so a stream and the snapshot that
+// substitutes for it cannot disagree about how much output they read.
+func outputBoundsForLines(options InteractiveOptions, maxLines int) (int, int) {
+	maxBytes, lines := interactiveOutputBounds(options)
+	if maxLines > 0 {
+		lines = maxLines
+	}
+	return maxBytes, lines
 }
 
 // rerenderNavigatedList refreshes the visible list for workspace and endpoint scopes.
@@ -369,10 +391,16 @@ func cdSingle(ctx context.Context, state *interactiveState, loaded reportLoad, t
 // cdPair resolves hostname/endpoint-id or endpoint-id/session targets.
 func cdPair(state *interactiveState, loaded reportLoad, first, second string) error {
 	if endpoint, ok := endpointByHostnameAndID(loaded, first, second); ok {
+		if err := refuseDegradedEndpoint(endpoint); err != nil {
+			return err
+		}
 		state.enterEndpoint(endpoint)
 		return nil
 	}
 	if endpoint, ok := endpointByID(loaded, first); ok {
+		if err := refuseDegradedEndpoint(endpoint); err != nil {
+			return err
+		}
 		outcome, err := resolveSessionInEndpoint(state, loaded, endpoint.EndpointID, second)
 		if outcome == outcomeResolved || err != nil {
 			return err
@@ -388,6 +416,9 @@ func cdTriple(state *interactiveState, loaded reportLoad, hostname, endpointID, 
 	if !ok {
 		return fmt.Errorf("endpoint %q was not found", hostname+"/"+endpointID)
 	}
+	if err := refuseDegradedEndpoint(endpoint); err != nil {
+		return err
+	}
 	outcome, err := resolveSessionInEndpoint(state, loaded, endpoint.EndpointID, sessionID)
 	if outcome == outcomeResolved || err != nil {
 		return err
@@ -398,6 +429,13 @@ func cdTriple(state *interactiveState, loaded reportLoad, hostname, endpointID, 
 // resolveEndpoint enters an endpoint by exact ID or by unique hostname.
 func resolveEndpoint(ctx context.Context, state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (resolveOutcome, error) {
 	if endpoint, ok := endpointByID(loaded, target); ok {
+		// A degraded endpoint is refused by name, because its inventory is already
+		// deleted and every command inside the scope would be refused. An offline
+		// endpoint stays enterable: navigation sends no frame, and its retained
+		// inventory is still readable.
+		if err := refuseDegradedEndpoint(endpoint); err != nil {
+			return outcomeCancelled, err
+		}
 		state.enterEndpoint(endpoint)
 		return outcomeResolved, nil
 	}
@@ -407,15 +445,28 @@ func resolveEndpoint(ctx context.Context, state *interactiveState, loaded report
 			matches = append(matches, endpoint)
 		}
 	}
-	switch len(matches) {
+	// A degraded endpoint is dropped from the candidates before the count is
+	// decided, so a hostname shared by one online and one degraded endpoint
+	// resolves to the online one instead of asking the operator to choose between
+	// a usable row and an unusable one.
+	enterable := make([]protocol.Endpoint, 0, len(matches))
+	for _, endpoint := range matches {
+		if !endpointDegraded(endpoint) {
+			enterable = append(enterable, endpoint)
+		}
+	}
+	switch len(enterable) {
 	case 0:
+		if len(matches) > 0 {
+			return outcomeCancelled, requireQueryableEndpoint(matches[0])
+		}
 		return outcomeNotFound, nil
 	case 1:
-		state.enterEndpoint(matches[0])
+		state.enterEndpoint(enterable[0])
 		return outcomeResolved, nil
 	default:
-		sort.Slice(matches, func(i, j int) bool { return matches[i].EndpointID < matches[j].EndpointID })
-		return chooseEndpoint(ctx, state, matches, target, lineSource, out, trustedOut, color)
+		sort.Slice(enterable, func(i, j int) bool { return enterable[i].EndpointID < enterable[j].EndpointID })
+		return chooseEndpoint(ctx, state, enterable, target, lineSource, out, trustedOut, color)
 	}
 }
 
@@ -589,6 +640,61 @@ func validateEndpointOnline(endpoint protocol.Endpoint) error {
 		return fmt.Errorf("endpoint %q is not online: connection_state=%s", endpoint.EndpointID, endpoint.ConnectionState)
 	}
 	return nil
+}
+
+// requireQueryableEndpoint rejects an endpoint that must not be contacted,
+// before any request that would reach the machine is sent.
+//
+// A degraded endpoint is reported distinctly from a merely offline one, because
+// the two need different operator actions: an offline endpoint may come back, so
+// the operator waits or restarts it, while a degraded endpoint has already passed
+// the expiry window and its record is scheduled for deletion, so waiting is
+// pointless and the machine must be re-registered. Reporting both as "not online"
+// would hide the deletion date, which is the only fact that tells the operator
+// which of the two situations they are in.
+//
+// Reading the endpoint record itself is never refused. The record is what carries
+// the state this check reads, so refusing the read would make the check
+// impossible; only requests that send a frame to the machine are refused.
+func requireQueryableEndpoint(endpoint protocol.Endpoint) error {
+	if endpoint.ConnectionState == "degraded" {
+		return fmt.Errorf("endpoint %q is degraded: it was offline past the expiry window and its record will be deleted at %s, so no request was sent; re-register the endpoint to use it again", endpoint.EndpointID, formatDateTime(endpoint.ExpiresAtMS, nil))
+	}
+	return validateEndpointOnline(endpoint)
+}
+
+// requireQueryableEndpointByID resolves one endpoint record and applies the
+// queryable check to it.
+//
+// A failed inventory read does not fail the command. The gate is a pre-check, so
+// when the record cannot be read the state is unknown and the request that
+// follows reports the real problem with a precise diagnostic; replacing that with
+// the gate's own read error would describe the inventory as the fault when the
+// fault may be the endpoint itself. This matches the existing fallback that keeps
+// an identifier usable when the inventory is unavailable.
+//
+// An endpoint absent from the list is likewise not rejected here, because the
+// request that follows reports the absence itself.
+func requireQueryableEndpointByID(ctx context.Context, api InteractiveAPI, endpointID string) error {
+	endpoints, err := api.ListEndpoints(ctx)
+	if err != nil {
+		return nil
+	}
+	endpoint, ok := endpointByID(reportLoad{endpoints: endpoints}, endpointID)
+	if !ok {
+		return nil
+	}
+	return requireQueryableEndpoint(endpoint)
+}
+
+// degradedEndpointByID resolves one degraded endpoint record by identifier.
+func degradedEndpointByID(endpoints []protocol.Endpoint, endpointID string) (protocol.Endpoint, bool) {
+	for _, endpoint := range endpoints {
+		if endpoint.EndpointID == endpointID && endpointDegraded(endpoint) {
+			return endpoint, true
+		}
+	}
+	return protocol.Endpoint{}, false
 }
 
 // endpointByID returns the endpoint with the exact identifier.

@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 import pytest
+from cli_topsailai import agent_launch_attempt as attempt_module
 from cli_topsailai import agent_launch_terminal as terminal
 
 from test_agent_launch_terminal_helpers import *
@@ -39,13 +40,12 @@ def test_resolve_mechanism_rejects_unknown_name():
         terminal.resolve_mechanism("screen")
 
 
-def test_resolve_mechanism_rejects_tmux_without_environment_option():
-    """A tmux that cannot forward the identity environment is unusable."""
+def test_resolve_mechanism_accepts_tmux_without_environment_option():
+    """An older tmux is usable because the environment travels through env."""
     with patch.object(terminal.shutil, "which", return_value="/usr/bin/tmux"), \
          patch("cli_topsailai.project_scope._tmux_supports_environment_option",
                return_value=False):
-        with pytest.raises(terminal.TerminalUnavailable, match="new-session -e"):
-            terminal.resolve_mechanism("tmux")
+        assert terminal.resolve_mechanism("tmux") == "tmux"
 
 
 def test_resolve_mechanism_accepts_installed_terminal_binaries():
@@ -111,6 +111,103 @@ def test_build_command_preserves_identity_aliases_and_cwd(home):
         str(attempt.request_path),
         str(attempt.control_path),
     ]
+
+
+def test_build_command_uses_environment_option_on_new_tmux(home):
+    """tmux 3.2 and later receive the pairs through new-session -e."""
+    attempt = terminal.prepare_attempt("tmux", "session-1")
+    environment = {"SESSION_ID": "session-1", "PATH": "/usr/bin"}
+    with patch.object(
+        attempt_module, "_tmux_accepts_environment_option", return_value=True
+    ):
+        command = terminal.build_command(
+            attempt, ["python", "entry.py"], "/work/proj", environment
+        )
+    assert "-e" in command
+    assert "env" not in command
+    # Pairs follow the canonical key order, not the mapping insertion order.
+    assert command[command.index("-e") + 1] == "PATH=/usr/bin"
+    assert "SESSION_ID=session-1" in command
+
+
+def test_build_command_uses_env_prefix_on_old_tmux(home):
+    """An older tmux receives the pairs as env arguments after every option."""
+    attempt = terminal.prepare_attempt("tmux", "session-1")
+    environment = {"SESSION_ID": "session-1", "PATH": "/usr/bin"}
+    with patch.object(
+        attempt_module, "_tmux_accepts_environment_option", return_value=False
+    ):
+        command = terminal.build_command(
+            attempt, ["python", "entry.py"], "/work/proj", environment
+        )
+    assert "-e" not in command
+    env_index = command.index("env")
+    assert command[env_index + 1:env_index + 3] == [
+        "PATH=/usr/bin", "SESSION_ID=session-1",
+    ]
+    # env must follow every tmux option, otherwise tmux treats it as the command.
+    assert env_index > command.index("-c")
+    assert command[-3:] == [
+        "--internal-workspace-agent-supervisor",
+        str(attempt.request_path),
+        str(attempt.control_path),
+    ]
+
+
+def test_build_command_old_tmux_keeps_special_characters_literal(home):
+    """Spaces, interior semicolons and quotes survive as one argv element.
+
+    Only a terminating ``;`` needs escaping; an interior one is already part of
+    the same token, so this value must arrive unchanged.
+    """
+    attempt = terminal.prepare_attempt("tmux", "session-1")
+    environment = {"PATH": "/a b;c", "HOME": "it's ok"}
+    with patch.object(
+        attempt_module, "_tmux_accepts_environment_option", return_value=False
+    ):
+        command = terminal.build_command(
+            attempt, ["python", "entry.py"], "/work/proj", environment
+        )
+    env_index = command.index("env")
+    pairs = command[env_index + 1:env_index + 3]
+    assert pairs == ["PATH=/a b;c", "HOME=it's ok"]
+
+
+def test_build_command_old_tmux_escapes_terminating_semicolon(home):
+    """A value ending with ``;`` is escaped so tmux does not split the command.
+
+    Tmux re-parses its whole command line even when the pairs arrive as argv,
+    so an unescaped terminating semicolon makes the session fail to start.
+    Only that terminating semicolon is escaped: an interior one stays literal,
+    otherwise list-shaped values would be corrupted.
+    """
+    attempt = terminal.prepare_attempt("tmux", "session-1")
+    environment = {
+        "PATH": "/usr/bin",
+        "SESSION_ID": "agent_tool;story_tool;",
+    }
+    with patch.object(
+        attempt_module, "_tmux_accepts_environment_option", return_value=False
+    ):
+        command = terminal.build_command(
+            attempt, ["python", "entry.py"], "/work/proj", environment
+        )
+    env_index = command.index("env")
+    pairs = command[env_index + 1:env_index + 3]
+    assert pairs == ["PATH=/usr/bin", "SESSION_ID=agent_tool;story_tool\\;"]
+
+
+def test_build_command_old_tmux_without_environment_omits_env(home):
+    """No forwarded pair means no env prefix at all."""
+    attempt = terminal.prepare_attempt("tmux", "session-1")
+    with patch.object(
+        attempt_module, "_tmux_accepts_environment_option", return_value=False
+    ):
+        command = terminal.build_command(
+            attempt, ["python", "entry.py"], "/work/proj", None
+        )
+    assert "env" not in command
+    assert "-e" not in command
 
 
 def test_build_command_dtach_uses_private_socket(home):

@@ -112,10 +112,15 @@ provider document is escaped.
 - The default output of an action command is the rendered receipt: the status
   label, the durable receipt fields, then the provider document as its own
   `provider_response:` section.
-- The provider document is printed verbatim. It is opaque provider evidence, so
-  it is never re-encoded, re-escaped or reinterpreted as a provider success claim.
-  An escaped copy is not the provider's answer, and an operator who asked for the
-  provider's result must not have to unescape it by eye.
+- The provider document is rendered as readable text. It is opaque provider
+  evidence, so it is never reinterpreted as a provider success claim, but it is
+  also not dumped as one line of JSON punctuation: a first-level value that is
+  itself an object or a list is indented under its key, so a nested answer stays
+  legible. The rendering is display-only; the stored document and the `--json`
+  envelope keep the provider's original bytes.
+- A document that is not one JSON value is printed unchanged. A failed invocation
+  carries the provider's stderr and a truncated answer is invalid JSON by
+  construction, so re-encoding either would drop the only diagnostic available.
 - `--json` keeps the machine envelope, because a script parses that document. The
   envelope carries the same document in `provider_response`, so no evidence is
   lost by choosing the machine form.
@@ -126,9 +131,10 @@ provider document is escaped.
 
 The rule exists because the two surfaces previously disagreed: the interactive
 REPL rendered the receipt while the standalone command emitted the envelope for
-every invocation, so the same `btw` result appeared verbatim in one surface and
-escaped in the other. Sharing one renderer makes that divergence structurally
-impossible rather than dependent on someone remembering to change both.
+every invocation, so the same `btw` result appeared as a rendered section in one
+surface and as an escaped JSON string in the other. Sharing one renderer makes
+that divergence structurally impossible rather than dependent on someone
+remembering to change both.
 
 ## Automatic follow-up steps
 
@@ -146,25 +152,36 @@ see the effect.
   primary action may already have exhausted.
 - A follow-up step is interactive-only. The standalone surface keeps one command
   per action, so a script never receives extra output it did not ask for.
-- Four interactive steps arm the same live tail as `logs -f`: entering a session,
-  `send`, `btw` and `start`. They share one arm-or-snapshot helper, so the four
-  cannot drift into four copies of the capability check, the announcement or the
-  degradation wording. `interrupt` is deliberately excluded, because stopping a
-  turn is not a reason to expect new output.
+- Four interactive steps arm a live tail: entering a session, `send`, `btw` and
+  `start`. They share one arm-or-snapshot helper, so the four cannot drift into
+  four copies of the capability check, the announcement or the degradation
+  wording. `interrupt` is deliberately excluded, because stopping a turn is not a
+  reason to expect new output.
+- The tail's trailing line count is a per-step budget, not one global value.
+  Entering a session and `start` read the REPL budget, because the operator is
+  looking at a session for the first time and wants its recent context. `send` and
+  `btw` read 10 lines, so they behave as `logs -n 10 -f`: the operator just acted
+  on a session they were already reading, so the tail only has to show the effect
+  of that action. The two budgets meet in one resolver, so a stream and the
+  snapshot that substitutes for it can never read a different amount.
+- The 10-line budget is deliberately below the REPL minimum of 100. It is a fixed
+  budget for one automatic step, so it must not pass through the startup-budget
+  clamp, which would silently turn 10 into 100 and make the step read the whole
+  REPL budget again.
 - Entering a session arms the tail for the identity the transition already
   validated, so the entry costs one output read and no repeated discovery. It
   degrades to one bounded snapshot, with a diagnostic that says so, when the client
   cannot stream or the input mode cannot observe a keypress.
 - `btw` arms the tail after its durable receipt, because injected context usually
   makes the agent keep working and the operator should not have to type `logs` to
-  see the effect.
-- `send` arms the same live tail as `logs -f` and then forces one collection for the
-  selected endpoint and revalidates only the selected session, so a later `list`
-  reads a newer persisted document. The tail is armed first because it binds the
-  generation validated before the send, while a refresh can replace that
-  generation; the stream itself opens on the next prompt, through the same seam
-  that starts an explicit `logs -f`. A one-shot snapshot is not used here, because
-  it stops at the moment it was read while the agent keeps writing.
+  see the effect. It reads 10 trailing lines, so it behaves as `logs -n 10 -f`.
+- `send` arms the same 10-line tail as `logs -n 10 -f` and then forces one
+  collection for the selected endpoint and revalidates only the selected session,
+  so a later `list` reads a newer persisted document. The tail is armed first
+  because it binds the generation validated before the send, while a refresh can
+  replace that generation; the stream itself opens on the next prompt, through the
+  same seam that starts an explicit `logs -f`. A one-shot snapshot is not used
+  here, because it stops at the moment it was read while the agent keeps writing.
 - `start` arms the same live tail as `logs -f` for the session it launched, so the
   operator watches the new session without typing `logf`. The tail is armed
   **after** the post-start collection, and that order is the opposite of `send` on
@@ -187,7 +204,9 @@ see the effect.
   so, when the client cannot stream or the input mode cannot observe a keypress.
   A live tail that cannot be stopped would be worse than a snapshot, and a
   snapshot presented as a stream would look complete while silently missing
-  everything written after it.
+  everything written after it. The substitute reads the same trailing line count
+  the stream would have read, so a degraded `send` or `btw` still shows 10 lines
+  and a degraded entry or `start` still shows the REPL budget.
 - A refresh that replaces the selected session drops the armed tail and reports
   it, because a stream bound to the replaced generation must never start.
 - `send` asks for confirmation only when the payload is not already on screen. An
@@ -258,7 +277,7 @@ was dispatched rather than rejected as unknown.
 |---|---|---|---|
 | `list` | `list`, `list --full`, `lf`, `list --brief`, `lb` | `list`, `l`, `list --full`, `lf`, `list --brief`, `lb` | yes (the `lf` shorthand implies the full layout and the `lb` shorthand implies the brief column set, on both surfaces) |
 | `refresh` | `refresh [endpoint] [-a|--all]` | `refresh [endpoint] [-a|--all]`, `r` | yes (defaults to online Endpoints; an explicit Endpoint wins over that default) |
-| `history` | `history <endpoint-id-or-hostname>` | `history [endpoint-id-or-hostname]` | yes (standalone requires the endpoint argument; interactive requires it in workspace scope, and in endpoint scope it defaults to the current endpoint while rejecting a different one) |
+| `history` | `history <endpoint-id-or-hostname>` | `history [endpoint-id-or-hostname]` | yes (standalone requires the endpoint argument; interactive prints the numbered online endpoints and reads one answer in workspace scope, and in endpoint scope it defaults to the current endpoint while rejecting a different one) |
 | `messages` | `messages <endpoint-id-or-hostname> <session-id>` | `messages [row-number-or-session-id]` | yes (standalone requires both arguments and addresses the provider session key; interactive resolves a bare number against the most recently rendered table, either the list or the history table, and rejects a number when neither is available) |
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
@@ -271,7 +290,7 @@ was dispatched rather than rejected as unknown.
 | `ctl.<action>` | `ctl` | `ctl`, `control`, `ctl.<action>` | yes |
 | `command.exec` | `exec` | `!<argv...>` | yes |
 | `agent.start` | `start` | `start` | yes |
-| `agent.resume` | `resume` | not applicable | yes (standalone only: session scope requires a live generation while resume authorizes on a proven absence, so the interactive spelling was removed) |
+| `agent.resume` | `resume <endpoint> <resource> [text] [generation]` | `resume [-s <session_id>] [row\|session]` | yes (interactive `resume` selects a row from the most recently rendered table, or names a session in endpoint scope; `-s`/`--session` names a provider session identifier directly and the client performs no existence check, because the operator named the exact target and the endpoint mints the mapping when the command arrives; the endpoint still inspects the provider, so a live target is rejected with `target_still_active`) |
 | `agent.stop` | `stop` | `stop` | yes |
 | `workspace.clean` | `--yes clean <endpoint> <resource> [generation]` | `clean <row|session>` in workspace and endpoint scopes | yes (destructive confirmation is mandatory; session scope does not offer cleanup; row numbers and literal IDs resolve against the current persisted inventory before exact Endpoint-side inspection) |
 | `agent.drive.start` | `drive start` | `drive start [session]` | yes |

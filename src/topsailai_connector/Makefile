@@ -7,6 +7,22 @@
 
 SHELL := /bin/bash
 
+# `.SHELLFLAGS` is the special variable Make uses to build the shell command
+# line; the leading dot is required. A plain `SHELLFLAGS` is an ordinary
+# variable that Make silently ignores, which is how the first attempt at this
+# fix did nothing.
+#
+# `-o pipefail` makes a recipe fail when any stage of a pipeline fails. Without
+# it the exit status of `go test ... | tee log` is tee's status, so a failing
+# suite reported success as long as tee could write the log. That defect hid a
+# real BDD failure for three commits; see
+# issues/issue-make-check-masks-suite-failures.md.
+#
+# Only `pipefail` is added. `-e` and `-u` would change nothing here: every recipe
+# line already runs in its own shell, so Make stops at the first failing line
+# without help, and no recipe uses a shell variable that could be unset.
+.SHELLFLAGS := -o pipefail -c
+
 # BIN_DIR and TMP_DIR are overridable from the command line, so a release build
 # can write somewhere other than bin/ without editing this file:
 #
@@ -35,13 +51,78 @@ SHARED_PKGS := ./internal/protocol/... ./internal/security/...
 COVERAGE_FILE := $(TMP_DIR)/coverage.out
 COVERAGE_HTML := $(TMP_DIR)/coverage.html
 
+# Packaging inputs. `make package` builds one executable with the configuration
+# compiled in, and that the operator can address with the CLI immediately. Set
+# PACKAGE_EMBED_CONFIG=0, or run `make package-zip`, for a zip that a user unzips
+# and starts instead.
+#
+# The two required inputs are the Server address and the folders to expose:
+#
+#   make package \
+#     PACKAGE_SERVER_URL=https://connector.example.com:8443 \
+#     PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool'
+#
+# PACKAGE_SCOPES takes one or more `name=path` entries. The paths are the paths
+# on the machine that will run the Node, not on this build host, because the
+# bundle turns them into a policy file when it starts. A path containing spaces
+# is easier to supply through PACKAGE_SCOPES_FILE, which takes a file with the
+# same `name=path` lines.
+#
+# PACKAGE_TUNNEL_TOKEN is optional. When it is set, the bundle carries the token
+# in a 0600 file so the user needs no further configuration; when it is unset,
+# the bundle requires CONNECTOR_NODE_TUNNEL_TOKEN in the environment.
+#
+# PACKAGE_ALLOW_FILESYSTEM_ROOT is off by default and is the only way a bundle
+# can expose a whole volume. When it is set to 1, the bundle's start script
+# accepts a scope whose path is a drive root (`C:\`) or `/`, and the generated
+# policy carries `allow_filesystem_root: true`. The Node still refuses such a
+# scope unless that key is present, so the decision is written down at packaging
+# time by the operator who understands the blast radius, rather than by whoever
+# receives the bundle and edits scopes.txt. The bundle's own config directory
+# stays unreadable through such a scope: the Node denies it by resolved path and
+# omits it from a listing.
+#
+# PACKAGE_EMBED_CONFIG selects the packaging mode, and it defaults to 1: `make
+# package` produces one executable instead of a zip. The Server URL, the policy
+# and, when PACKAGE_TUNNEL_TOKEN is set, the tunnel token are compiled into the
+# binary, so the recipient runs it and the Node connects with no configuration
+# file and no environment variable.
+#
+# Set PACKAGE_EMBED_CONFIG=0 to get the zip instead. The zip is the mode to pick
+# when the recipient must edit the scopes themselves, when the policy must be
+# reloadable on SIGHUP, or when one artifact must not carry the Server-wide
+# tunnel token.
+#
+# The identity is deliberately not embedded. It is generated on first start,
+# polled every second and rewritten by `regenerate`, and two copies of one binary
+# would share a node-id, which makes the Server's registry evict the first.
+#
+# A binary built this way carries a credential, so the Node adds its own
+# executable to the deny list: a scope that contains the binary cannot serve it.
+# The values are stored as plain text in the binary, so `strings` recovers them.
+# A leaked zip exposes one Node's identity; a leaked embedded binary exposes the
+# tunnel token, which gates every Node on that Server.
+#
+# PACKAGE_GOOS and PACKAGE_GOARCH default to this host, so a bundle for the
+# operator's own machine needs no platform argument. `make package-windows`
+# sets them to windows/amd64.
+PACKAGE_NAME ?= connector-node-$(PACKAGE_GOOS)-$(PACKAGE_GOARCH)
+PACKAGE_GOOS ?= $(shell go env GOOS)
+PACKAGE_GOARCH ?= $(shell go env GOARCH)
+PACKAGE_SERVER_URL ?=
+PACKAGE_SCOPES ?=
+PACKAGE_SCOPES_FILE ?=
+PACKAGE_TUNNEL_TOKEN ?=
+PACKAGE_ALLOW_FILESYSTEM_ROOT ?=
+PACKAGE_EMBED_CONFIG ?= 1
+
 # The unit suite is what `go test ./...` runs. Integration and BDD suites are
 # behind build tags so a plain unit run stays fast and needs no built binary.
 UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
 
-.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile
+.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile package package-windows
 
 help:
 	@echo "Targets:"
@@ -58,17 +139,38 @@ help:
 	@echo "  coverage-html   Write an HTML coverage report to $(COVERAGE_HTML)"
 	@echo "  integration     Build the binaries, then run the integration suite"
 	@echo "  bdd             Run the Gherkin scenarios in tests/bdd/"
-	@echo "  e2e             Build the binaries, then drive one read through two real processes"
+	@echo "  e2e             Build the binaries, then drive real processes and a real bundle"
 	@echo "  check           vet, unit, coverage, integration, bdd and e2e in that order"
 	@echo "  fmt             Format every Go source file"
 	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
 	@echo "  test-windows-compile  Compile the windows test binaries and run vet for windows"
+	@echo "  package         Build a zip a user unzips and starts; needs PACKAGE_SERVER_URL and PACKAGE_SCOPES"
+	@echo "  package-windows Build that zip for windows/amd64"
 	@echo "  clean           Remove build and test artifacts"
 	@echo ""
 	@echo "Variables:"
 	@echo "  BIN_DIR         Where binaries are written. Default bin. Override with"
 	@echo "                  'make build BIN_DIR=/somewhere/else'"
 	@echo "  TMP_DIR         Where test artifacts are written. Default .tmp"
+	@echo "  PACKAGE_SERVER_URL  Server address the bundle dials. Required by package."
+	@echo "                      http/https is accepted and converted to ws/wss"
+	@echo "  PACKAGE_SCOPES      Folders to expose, as name=path entries. Required"
+	@echo "                      by package. Example:"
+	@echo "                      'PACKAGE_SCOPES=project=/home/me/project tool=/opt/tool'"
+	@echo "  PACKAGE_SCOPES_FILE A file of name=path lines, for paths with spaces"
+	@echo "  PACKAGE_ALLOW_FILESYSTEM_ROOT  Set to 1 to let a bundle expose a whole"
+	@echo "                      volume (C:\\ or /). Off by default. The Node still"
+	@echo "                      denies the bundle's own config directory"
+	@echo "  PACKAGE_TUNNEL_TOKEN Optional tunnel_token to embed in the bundle"
+	@echo "  PACKAGE_EMBED_CONFIG  Packaging mode. Default 1: one executable with"
+	@echo "                      the configuration compiled in, needing no file and"
+	@echo "                      no environment variable. Set to 0 for a zip, which"
+	@echo "                      the recipient can edit and reload. The executable"
+	@echo "                      carries the tunnel token, so treat it as a"
+	@echo "                      credential: a leak exposes every Node on the Server"
+	@echo "  PACKAGE_NAME        Bundle name. Default connector-node-<goos>-<goarch>"
+	@echo "  PACKAGE_GOOS        Target OS. Default this host"
+	@echo "  PACKAGE_GOARCH      Target architecture. Default this host"
 
 build: build-server build-node
 
@@ -141,12 +243,44 @@ bdd:
 # it on the way out. long_run.sh restarts the real Node twenty times and asserts the
 # Server's own log balances established against closed channels, which is the
 # process-level evidence that no registration is left behind.
+#
+# deep_nesting.sh proves depth does not weaken the fence across the wire: it reads,
+# stats and lists at nine depths up to 200, refuses a symlink planted at depth 20,
+# reports that symlink without following it, and refuses a path over the grammar
+# limit. The unit test proves the same property in-process, but a depth limit could
+# also come from the frame cap, the JSON encoding or the CLI's own argument parsing,
+# none of which the unit test touches.
+#
+# manual_probe.sh is the only script that asserts the secrets never reach a log: it
+# greps the Server log for the node token, the client token and the tunnel token, and
+# asserts the node token appears exactly once in the Node log, from the first-run
+# print. It also covers a dot component being refused rather than normalised, which
+# no other script asserts. It is named "manual" because it was written to be read
+# line by line, not because it needs a human: it picks its own port, starts and stops
+# its own processes by exact PID, and exits non-zero on failure, so it runs here.
+#
+# windows_deep_nesting.sh is deliberately absent. It exercises the Windows path rules
+# and cannot run on this host: wine resolves paths through the Linux filesystem, so it
+# does not enforce MAX_PATH and a tree Windows refuses would pass there. The Windows
+# coverage that does run here is test-windows-compile, which compiles the Windows test
+# binaries; the live Windows evidence is recorded in docs/permission-design.md.
+#
+# verify_package.sh is the only check that exercises the delivery path: it builds a
+# real zip, unzips it, and starts the bundle with the bundle's own start script
+# rather than with a command written for the test. A bundle that is well formed but
+# cannot start is exactly the failure the other scripts cannot see, because they
+# never run the artifact that is handed to another person. It also asserts the
+# filesystem-root opt-in: off by default, on only when the packaging operator asked
+# for it, and never a way to allow the home directory.
 e2e: build
 	@mkdir -p $(TMP_DIR)
 	bash tests/e2e/start.sh 2>&1 | tee $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/reconnect.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/long_run.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/deep_nesting.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/manual_probe.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+	bash tests/e2e/verify_package.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 
 # Windows is a supported platform for the Node, so the Node must be compiled for
 # it on every check. The Server is deployed on Linux and is not built here: a
@@ -176,6 +310,75 @@ test-windows-compile:
 	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/security.test.exe ./internal/security/
 	GOOS=windows GOARCH=amd64 go test -c -o $(TMP_DIR)/xbuild/connector-node.test.exe ./cmd/connector-node/
 	@echo "compiled the windows test binaries"
+
+# package builds one executable with the configuration compiled in, and that the
+# operator can address with the CLI immediately. Set PACKAGE_EMBED_CONFIG=0, or
+# run `make package-zip`, for a zip that a user unzips and starts instead.
+#
+# It depends on build-node because the zip mode generates the identity pair with
+# the host build of the Node. Generating the pair with a second implementation
+# here would be a second definition of the pair format, and the two would
+# eventually disagree about what a valid pair is. The default mode does not read
+# the host binary, because the identity is created on the target machine, so the
+# dependency is only load-bearing for the zip.
+#
+# The scope paths are not baked into a policy file. A policy requires absolute
+# paths, and the build host's paths are not the user's paths, so the bundle
+# carries an editable scopes.txt and its start script writes policy.yaml on the
+# machine that will serve the files. That is what makes the same zip usable on a
+# machine whose folders this host has never seen.
+#
+# The artifact is a credential artifact either way. The default mode compiles the
+# configuration into one executable, so the file carries the tunnel token and a
+# leak exposes every Node on that Server. The zip mode carries the Node's identity
+# pair, and the tunnel token when PACKAGE_TUNNEL_TOKEN is set, so a leak exposes
+# one Node. The script prints what the artifact carries and says so rather than
+# leaving it to be discovered.
+package: build-node
+	@PACKAGE_NAME='$(PACKAGE_NAME)' \
+	PACKAGE_GOOS='$(PACKAGE_GOOS)' \
+	PACKAGE_GOARCH='$(PACKAGE_GOARCH)' \
+	PACKAGE_SERVER_URL='$(PACKAGE_SERVER_URL)' \
+	PACKAGE_SCOPES='$(PACKAGE_SCOPES)' \
+	PACKAGE_SCOPES_FILE='$(PACKAGE_SCOPES_FILE)' \
+	PACKAGE_TUNNEL_TOKEN='$(PACKAGE_TUNNEL_TOKEN)' \
+	PACKAGE_ALLOW_FILESYSTEM_ROOT='$(PACKAGE_ALLOW_FILESYSTEM_ROOT)' \
+	PACKAGE_EMBED_CONFIG='$(PACKAGE_EMBED_CONFIG)' \
+	BIN_DIR='$(BIN_DIR)' \
+	TMP_DIR='$(TMP_DIR)' \
+	bash packaging/build-package.sh
+
+# package-windows is the same bundle for windows/amd64, which is the platform the
+# Node is most often handed to a user on. It is a separate target rather than a
+# variable the caller must remember, because forgetting it produces a Linux
+# binary in a zip that a Windows user cannot run, and the failure appears on
+# their machine rather than here.
+package-windows:
+	@$(MAKE) --no-print-directory package PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
+
+# package-embedded is kept as an explicit spelling of the default mode: one
+# executable with the Server URL, the policy and, when PACKAGE_TUNNEL_TOKEN is
+# set, the tunnel token compiled in. It now only restates the default, so a
+# script that already calls it keeps working after the default changed.
+#
+# The identity is not embedded, so the recipient runs the binary once with `id`
+# to create it. That is stated in the summary the script prints.
+package-embedded:
+	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=1
+
+# package-embedded-windows is package-embedded for windows/amd64.
+package-embedded-windows:
+	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=1 PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
+
+# package-zip is the opt-out: a zip with a start script, an editable scopes.txt
+# and a policy the Node reloads on SIGHUP. It exists as a named target so a
+# caller who wants the zip does not have to remember the variable.
+package-zip:
+	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=0
+
+# package-zip-windows is package-zip for windows/amd64.
+package-zip-windows:
+	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=0 PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
 
 check: vet test-unit coverage integration bdd e2e build-windows test-windows-compile
 

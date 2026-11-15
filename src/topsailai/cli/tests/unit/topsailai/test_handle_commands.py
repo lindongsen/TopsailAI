@@ -1841,6 +1841,51 @@ class TestWorkspaceFormat(unittest.TestCase):
 
         self.assertIsNone(item["created_at"])
 
+    def test_json_item_reports_empty_session_id_for_a_temporary_session(self) -> None:
+        """A temporary row reports the absent identity, not the display label."""
+        from cli_topsailai.core import _workspace_json_item
+
+        item = self._enriched_json_item(
+            {"filename": "topsailai.4109219.session.stdout",
+             "session_id": "(temp)", "is_task": False, "pid": 4109219},
+            1,
+        )
+
+        self.assertEqual(item["session_id"], "")
+        self.assertIsNone(item["session_qualifier"])
+
+    def test_json_item_reports_empty_session_id_for_a_temporary_task_row(self) -> None:
+        """A temporary task row also reports the absent identity."""
+        from cli_topsailai.core import _workspace_json_item
+
+        item = self._enriched_json_item(
+            {"filename": "topsailai.4109219.step.task.stdout",
+             "session_id": "(temp)", "is_task": True, "pid": 4109219},
+            1,
+        )
+
+        self.assertEqual(item["session_id"], "")
+        self.assertEqual(item["session_qualifier"], "task")
+
+    def test_json_item_keeps_a_real_session_id(self) -> None:
+        """An ordinary row keeps its exact session ID."""
+        from cli_topsailai.core import _workspace_json_item
+
+        item = self._enriched_json_item(
+            {"filename": "20261111094237.1686809.session.stdout",
+             "session_id": "20261111094237", "is_task": False, "pid": 1686809},
+            1,
+        )
+
+        self.assertEqual(item["session_id"], "20261111094237")
+
+    def test_table_still_renders_the_temporary_display_label(self) -> None:
+        """The display contract is unchanged, so the table keeps ``(temp)``."""
+        from cli_topsailai.log_files import display_session_id
+
+        self.assertEqual(display_session_id("(temp)"), "(temp)")
+        self.assertEqual(display_session_id("(temp)", is_task=True), "(task) (temp)")
+
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=True)
     @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
     def test_json_item_status_is_input_when_session_pipe_is_open(

@@ -40,6 +40,9 @@ type TerminalEditor struct {
 	// an echo appended at submit time lands after the typed text instead of at a
 	// column the caller would have to recompute.
 	blockLastRowWidth int
+	// renderedWidth records the terminal width used for the current input block.
+	// Idle polling redraws only when this width changes or new output is printed.
+	renderedWidth int
 }
 
 // NewTerminalEditor injects terminal operations at the CLI boundary.
@@ -131,7 +134,7 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 	t.editor.reset()
 	// A new prompt always starts a new input block, so no stale row count from a
 	// previous read can move the cursor on the first redraw.
-	t.blockRows, t.blockCursorRow, t.blockLastRowWidth = 0, 0, 0
+	t.blockRows, t.blockCursorRow, t.blockLastRowWidth, t.renderedWidth = 0, 0, 0, 0
 	defer t.editor.reset()
 	// Only question-style prompts request a new row; named prompts are already printed.
 	// The marker is captured before it is stripped, because a question row is allowed
@@ -151,8 +154,12 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 			if watch == nil {
 				return nil
 			}
-			if err := t.applyWatch(watch); err != nil {
+			wrote, err := t.applyWatch(watch)
+			if err != nil {
 				return err
+			}
+			if !wrote && t.renderedWidth == t.terminalWidth() {
+				return nil
 			}
 			return t.redraw(prompt, questionRow)
 		}
@@ -335,28 +342,31 @@ func watchStopLabel(watch WatchSession, policy ColorPolicy) string {
 }
 
 // applyWatch prints one pending refresh between keypresses. The whole input
-// block is erased first, so the table never overwrites the operator's input.
-func (t *TerminalEditor) applyWatch(watch WatchSession) error {
+// block is erased first, so the table never overwrites the operator's input. It
+// reports whether it wrote output, allowing an idle poll to stay byte-silent.
+func (t *TerminalEditor) applyWatch(watch WatchSession) (bool, error) {
 	payload, err := watch.Idle()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(payload) == 0 {
-		return nil
+		return false, nil
 	}
 	if err := t.eraseBlock(); err != nil {
-		return err
+		return false, err
 	}
 	converted := toCRLF(payload)
 	if _, err := t.output.Write(converted); err != nil {
-		return err
+		return false, err
 	}
 	// The redrawn input block must start on its own row, so a payload that does
 	// not end with a newline still leaves the cursor at the beginning of a row.
 	if len(converted) == 0 || converted[len(converted)-1] != '\n' {
-		_, err = io.WriteString(t.output, "\r\n")
+		if _, err = io.WriteString(t.output, "\r\n"); err != nil {
+			return false, err
+		}
 	}
-	return err
+	return true, nil
 }
 
 // toCRLF converts bare newlines to CRLF. The terminal is in raw mode, where a
@@ -373,6 +383,16 @@ func toCRLF(payload []byte) []byte {
 	return converted
 }
 
+// terminalWidth returns the usable width floor shared by resize detection and
+// rendering, so an undersized terminal does not trigger an idle redraw forever.
+func (t *TerminalEditor) terminalWidth() int {
+	width := t.width()
+	if width < 4 {
+		return 4
+	}
+	return width
+}
+
 // redraw renders the input as a soft-wrapped block, so a long edit keeps its
 // head visible instead of scrolling out of a single row. The previous block is
 // erased in the same write, so a shorter block never leaves stale rows behind.
@@ -380,10 +400,7 @@ func toCRLF(payload []byte) []byte {
 // of the half-row budget that keeps a named prompt short; otherwise a long
 // question would lose its trailing answer hint.
 func (t *TerminalEditor) redraw(prompt string, questionRow bool) error {
-	width := t.width()
-	if width < 4 {
-		width = 4
-	}
+	width := t.terminalWidth()
 	green := strings.HasPrefix(prompt, ansiBoldGreen) && strings.HasSuffix(prompt, ansiReset+" ")
 	if green {
 		prompt = strings.TrimSuffix(strings.TrimPrefix(prompt, ansiBoldGreen), ansiReset+" ") + " "
@@ -473,7 +490,7 @@ func (t *TerminalEditor) redraw(prompt string, questionRow bool) error {
 	if column > 0 {
 		fmt.Fprintf(&out, "\x1b[%dC", column)
 	}
-	t.blockRows, t.blockCursorRow = len(visibleRows), cursorRow
+	t.blockRows, t.blockCursorRow, t.renderedWidth = len(visibleRows), cursorRow, width
 	// The last row's visible width is recorded so an echo appended at submit
 	// time lands after the typed text, whatever the cursor's editing position.
 	// The prompt shares the first row, so a single-row block must count it: the

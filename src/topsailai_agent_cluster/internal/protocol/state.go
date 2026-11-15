@@ -11,9 +11,9 @@ func CanTransition(from, to CommandStatus) bool {
 	case StatusAdmitted:
 		return to == StatusDispatched || to == StatusCancelled || to == StatusExpired || to == StatusRejected || to == StatusFailed
 	case StatusDispatched:
-		return to == StatusEndpointAdmitted || to == StatusExpired || to == StatusRejected || to == StatusFailed
+		return to == StatusEndpointAdmitted || to == StatusExpired || to == StatusRejected || to == StatusFailed || to == StatusUnconfirmed
 	case StatusEndpointAdmitted:
-		return to == StatusExecuting || to == StatusFinished || to == StatusRejected || to == StatusFailed
+		return to == StatusExecuting || to == StatusFinished || to == StatusRejected || to == StatusFailed || to == StatusUnconfirmed
 	case StatusExecuting:
 		return to == StatusFinished || to == StatusFailed || to == StatusUnconfirmed
 	default:

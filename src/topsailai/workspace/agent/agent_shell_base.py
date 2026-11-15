@@ -14,6 +14,7 @@ import time
 
 from topsailai.logger import logger
 from topsailai.utils import (
+    db_io_tool,
     env_tool,
     thread_tool,
     time_tool,
@@ -121,6 +122,64 @@ def _resolve_recoverable_provider_error(error):
     return None
 
 
+def _resolve_db_io_failure(error):
+    """Return the database I/O failure carried by an exception chain, else ``None``.
+
+    A committed write failure can reach the User2Agent loop directly or wrapped
+    by an intermediate layer that re-raises it. Both shapes describe the same
+    condition, so walk the chain before deciding how to recover.
+
+    Args:
+        error (BaseException): The exception caught by the turn loop.
+
+    Returns:
+        BaseException | None: The database I/O failure, or ``None`` when the
+        failure is unrelated and must keep its original contract.
+    """
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if db_io_tool.is_db_io_failure(current):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
+# Exit code used when a non-interactive run cannot persist its result. A
+# non-zero code is required because a lost write must never look like success
+# to a script, a CI job or the launcher that started this process.
+DB_IO_FALLBACK_EXIT_CODE = 1
+
+
+def _exit_after_db_io_failure(error) -> None:
+    """Terminate a non-interactive run after a database I/O failure.
+
+    This is the last-resort fallback for a caller that cannot wait for a human.
+    ``os._exit`` is an abnormal termination, so the on-disk scene is preserved
+    exactly as the failure left it: the session metadata keeps its ``running``
+    state instead of being rewritten, and both output streams are flushed so
+    the stdout artifact keeps the evidence already produced. Flushing only
+    delivers buffered bytes; it never fabricates state. No artifact is removed.
+
+    Args:
+        error: The database I/O failure that ended the run.
+    """
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        logger.critical(
+            "Failed to flush output before fallback exit: [%s] %s",
+            type(error).__name__, error, exc_info=True,
+        )
+    logger.critical(
+        "Non-interactive run terminated after a database I/O failure: [%s] %s",
+        type(error).__name__, error,
+    )
+    os._exit(DB_IO_FALLBACK_EXIT_CODE)
+
+
 def _get_session_token_totals(session_id: str, ai_agent) -> tuple[int, int]:
     """
     Resolve total token counts for the end-of-run summary.
@@ -214,7 +273,7 @@ LAZY_EXECUTION_WARNING = (
 )
 
 class AgentChat(AgentChatBase):
-    @decorator_tee_output_by_session(need_delete_log_files=True)
+    @decorator_tee_output_by_session(need_delete_log_files=False)
     def run(self, *args, **kwargs):
         """Run the agent chat session.
 
@@ -255,12 +314,43 @@ class AgentChat(AgentChatBase):
             result = self._run(*args, **kwargs)
             completed = True
             return result
-        except Exception:
+        except SystemExit:
+            # A deliberate exit command (`q`, `exit`, `quit`) raises
+            # SystemExit, which is a BaseException and therefore never reaches
+            # the `except Exception` handler below. Without this branch the
+            # completion write in `finally` is skipped, the metadata keeps
+            # `running`, and the atexit fallback rewrites it to `interrupted`,
+            # misreporting a normal end of session as an abnormal termination.
+            # Mark the session complete and re-raise so the requested exit code
+            # still propagates. KeyboardInterrupt is deliberately not handled
+            # here: an interrupted run must keep reporting `interrupted`.
+            completed = True
+            raise
+        except Exception as e:
+            db_error = _resolve_db_io_failure(e)
             update_session_meta_status(
                 "error",
                 getattr(self.ctx_runtime_data, "session_id", None),
             )
-            raise
+            if db_error is None:
+                raise
+            # Last-resort net: a database I/O failure must never escape as an
+            # uncaught exception, because that would terminate the process and
+            # lose the session. The metadata records the failure, the diagnostic
+            # artifacts are retained, and the caller receives an explicit
+            # failure answer instead of a traceback.
+            logger.critical(
+                "Database I/O failure ended the session: [%s] %s",
+                type(db_error).__name__, db_error,
+            )
+            self._terminal_failure = True
+            failure_answer = (
+                "Task terminated: a database write failed and the session could "
+                f"not continue: [{type(db_error).__name__}] {db_error}"
+            )
+            self.last_message = failure_answer
+            print(failure_answer)
+            return failure_answer
         finally:
             if completed:
                 update_session_meta_status(
@@ -435,10 +525,17 @@ class AgentChat(AgentChatBase):
                 print(self.ctx_rt_instruction.ctx_history())
 
             func_print_pre_input_message()
-            message = get_message(
-                self.hook_instruction,
-                need_input=interactive_enabled,
-            )
+            try:
+                message = get_message(
+                    self.hook_instruction,
+                    need_input=interactive_enabled,
+                )
+            except EOFError:
+                # The input channel is closed before the first message, so the
+                # session has nothing to run. End it cleanly instead of
+                # reprinting the prompt without bound or raising a traceback.
+                logger.info("agent loop run is exiting: input channel closed")
+                return ""
 
         if not self.first_message:
             self.first_message = message
@@ -495,12 +592,19 @@ class AgentChat(AgentChatBase):
         while True:
             if self.interrupted:
                 func_print_pre_input_message()
-                while True:
-                    message = input_message(hook=self.hook_instruction).strip()
-                    if message:
-                        message = self.format_message(message)
-                        self._clear_interrupt_state()
-                        break
+                try:
+                    while True:
+                        message = input_message(hook=self.hook_instruction).strip()
+                        if message:
+                            message = self.format_message(message)
+                            self._clear_interrupt_state()
+                            break
+                except EOFError:
+                    # The input channel is closed, so no resume message can
+                    # arrive. End the session instead of reprinting the prompt
+                    # without bound.
+                    self._clear_interrupt_state()
+                    break
                 continue
             flag_abort = False
             back_to_chat_requested = False
@@ -669,6 +773,66 @@ class AgentChat(AgentChatBase):
                 if need_confirm_abort and not input_yes("Agent Session Continue [yes/no] "):
                     self.call_hooks_post_fail_run(KeyboardInterrupt())
                     break
+            except Exception as e:
+                db_error = _resolve_db_io_failure(e)
+                if db_error is None:
+                    # Only a database I/O failure is recoverable here. Every
+                    # other unexpected exception keeps its original contract.
+                    raise
+                # A database I/O failure must never terminate the process. The
+                # conversation, the session metadata and the diagnostic
+                # artifacts all survive, so the turn is abandoned instead.
+                logger.critical(
+                    "Database I/O failure aborted this turn: [%s] %s",
+                    type(db_error).__name__, db_error,
+                )
+                self.call_hooks_post_fail_run(e)
+                if not interactive_enabled or not thread_tool.is_main_thread():
+                    # A caller that cannot wait for a human ends the run with an
+                    # explicit failure answer instead of an uncaught traceback.
+                    self._terminal_failure = True
+                    answer = (
+                        "Task terminated: a database write failed and this turn "
+                        f"could not be persisted: [{type(db_error).__name__}] {db_error}"
+                    )
+                    self.last_message = answer
+                    print(answer)
+                    if not interactive_enabled and thread_tool.is_main_thread():
+                        # Last-resort fallback: a lost write must never look
+                        # like success to a script, a CI job or the launcher, so
+                        # the process exits non-zero. The on-disk scene is left
+                        # untouched: ``os._exit`` is an abnormal termination, so
+                        # the metadata keeps its ``running`` state and the
+                        # artifacts stay exactly as the failure left them. A
+                        # worker thread never reaches this call: it must not
+                        # terminate the interpreter that owns a possibly usable
+                        # interactive session.
+                        _exit_after_db_io_failure(db_error)
+                    break
+                print_warning(
+                    "Database write failed; this turn was not persisted: "
+                    f"[{type(db_error).__name__}] {db_error}"
+                )
+                if answer:
+                    # The answer was already produced, so show it before the
+                    # turn is abandoned: a lost write must not lose the result.
+                    print(answer)
+                back_to_chat_requested = True
+                answer = ""
+                try:
+                    message = self._read_next_user_message(
+                        func_print_pre_input_message
+                    )
+                except (KeyboardInterrupt, EOFError):
+                    back_to_chat_requested = False
+                    flag_abort = True
+                    answer = "failed due to abort by Human"
+                    if need_confirm_abort and not input_yes("Agent Session Continue [yes/no] "):
+                        self.call_hooks_post_fail_run(KeyboardInterrupt())
+                        break
+                # An abandoned turn is not a completed scheduled turn, so the
+                # finite-turn budget is restored before the loop continues.
+                curr_count -= 1
 
             if not back_to_chat_requested:
                 if answer:
@@ -690,27 +854,56 @@ class AgentChat(AgentChatBase):
                         need_save_answer = True
                         only_save_final = True
 
+                answer_printed = False
+                try:
                     if need_save_answer:
                         if only_save_final:
                             self.ctx_runtime_data.add_session_message(ROLE_ASSISTANT, answer)
                         else:
                             if not flag_abort:
                                 self.ctx_rt_aiagent.add_session_message()
-                    self.last_message = answer
+                    if answer:
+                        # An empty answer must not overwrite the last message
+                        # recorded by an earlier branch such as AgentEndProcess.
+                        self.last_message = answer
 
-                self.call_hook_for_final_answer()
-                self.call_hooks_post_succ_run()
+                    self.call_hook_for_final_answer()
+                    self.call_hooks_post_succ_run()
 
-                # Use the interactivity resolved once for this run. An explicit
-                # need_interactive=False must not be overridden by process state.
-                if not env_tool.is_debug_mode() or not interactive_enabled:
-                    print(answer)
+                    # Use the interactivity resolved once for this run. An explicit
+                    # need_interactive=False must not be overridden by process state.
+                    if not env_tool.is_debug_mode() or not interactive_enabled:
+                        print(answer)
+                        answer_printed = True
 
-                reached_times_limit = times > 0 and curr_count >= times
-                if not reached_times_limit:
-                    self.ctx_runtime_data.reset_messages()
-                    if interactive_enabled:
-                        print(self.ctx_rt_instruction.ctx_history())
+                    reached_times_limit = times > 0 and curr_count >= times
+                    if not reached_times_limit:
+                        self.ctx_runtime_data.reset_messages()
+                        if interactive_enabled:
+                            print(self.ctx_rt_instruction.ctx_history())
+                except Exception as e:
+                    db_error = _resolve_db_io_failure(e)
+                    if db_error is None:
+                        raise
+                    # The answer already exists, so a failed persistence must not
+                    # discard it or end the process. Report the loss, skip the
+                    # session reload that would fail the same way, and let the
+                    # loop continue from the prompt.
+                    logger.critical(
+                        "Database I/O failure while persisting the answer: [%s] %s",
+                        type(db_error).__name__, db_error,
+                    )
+                    print_warning(
+                        "The answer could not be persisted to the database: "
+                        f"[{type(db_error).__name__}] {db_error}"
+                    )
+                    if answer and not answer_printed:
+                        print(answer)
+                    if answer:
+                        # The answer is the turn's result even though it could
+                        # not be stored, so it must remain the last message.
+                        self.last_message = answer
+                    reached_times_limit = times > 0 and curr_count >= times
 
                 # end time
                 end_time = int(time.time())
@@ -780,12 +973,18 @@ class AgentChat(AgentChatBase):
 
                 # next time
                 func_print_pre_input_message()
-                while True:
-                    message = input_message(hook=self.hook_instruction)
-                    message = message.strip()
-                    if message:
-                        message = self.format_message(message)
-                        break
+                try:
+                    while True:
+                        message = input_message(hook=self.hook_instruction)
+                        message = message.strip()
+                        if message:
+                            message = self.format_message(message)
+                            break
+                except EOFError:
+                    # The input channel is closed, so no next message can
+                    # arrive. End the session instead of reprinting the prompt
+                    # without bound.
+                    break
 
         # hook answer
         self.hook_for_answer(answer)

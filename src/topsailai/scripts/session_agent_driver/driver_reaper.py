@@ -134,9 +134,11 @@ def _spawn_reaper():
     if not home:
         logger.warning("cannot spawn session reaper: TOPSAILAI_HOME is unset")
         return
-    # Resolve here: the child imports the framework, which re-reads
-    # TOPSAILAI_HOME, so a relative value would be resolved twice.
-    home = str(Path(home).expanduser().resolve())
+    # Make the value absolute here: the child imports the framework, which
+    # re-reads TOPSAILAI_HOME, so a relative value would be resolved twice.
+    # Symbolic links stay unresolved so the spelling matches the folder
+    # constants and the home recorded in the database.
+    home = os.path.abspath(os.path.expanduser(home))
     command = build_reaper_command(os.getpid(), home, session_ids)
     try:
         process = subprocess.Popen(
@@ -257,9 +259,11 @@ def _delete_session_row(session_id):
 def reap_sessions(parent_pid, session_ids, home, timeout=DEFAULT_TIMEOUT,
                   poll_interval=DEFAULT_POLL_INTERVAL, observer=None):
     """Wait for the parent to exit, then delete each tracked session."""
-    # Resolve the home before any framework import: importing topsailai
+    # Make the home absolute before any framework import: importing topsailai
     # re-reads TOPSAILAI_HOME and a relative value would be resolved twice.
-    home = Path(home).expanduser().resolve()
+    # Symbolic links stay unresolved so the spelling matches the folder
+    # constants and the home recorded in the database.
+    home = Path(os.path.abspath(os.path.expanduser(str(home))))
     if not wait_for_parent_exit(parent_pid, timeout, poll_interval, observer):
         logger.warning(
             "parent %s still alive after %ss; preserving %d analysis session(s)",
@@ -347,8 +351,10 @@ def main(argv=None):
         print("error: --sessions must be a JSON array of session ids", file=sys.stderr)
         return 2
 
-    # Resolve once, before any framework import can re-read TOPSAILAI_HOME.
-    home = Path(args.home).expanduser().resolve()
+    # Make the home absolute once, before any framework import can re-read
+    # TOPSAILAI_HOME. Symbolic links stay unresolved so the spelling matches
+    # the folder constants and the home recorded in the database.
+    home = Path(os.path.abspath(os.path.expanduser(args.home)))
     _configure_child_logging(home)
     _ensure_project_paths()
     timeout = _read_int_env(REAPER_TIMEOUT_ENV, DEFAULT_TIMEOUT)

@@ -984,3 +984,142 @@ Why this prevents recurrence: process cleanup is a property of every exit path, 
 A safety branch is often reviewed only for its error classification, so a correct kill call looks
 complete while asynchronous descendants still exist. Waiting on the owned group turns a requested
 termination into verified resource release and keeps one malformed Provider from leaking processes.
+
+## A failed SQLite commit can leave the pooled connection inside its transaction
+
+Trigger: Endpoint expiry reached `COMMIT` while another SQLite connection held a read lock. SQLite returned `SQLITE_BUSY` and kept the underlying transaction active, but `database/sql.Tx.Commit` had already marked the Go transaction finished, so the deferred `Rollback` could not clean it. The Server had one pooled connection, and every later inventory write failed with `cannot start a transaction within a transaction`.
+
+Action: when the driver can leave a transaction active after commit failure, pin one `sql.Conn`, issue `BEGIN` and `COMMIT` on that connection, and issue `ROLLBACK` on the same connection with an independent cleanup context before returning it to the pool. If rollback cannot be confirmed, mark the driver connection bad so the pool discards it. Put connection-local PRAGMAs in the driver DSN so a replacement connection receives the same durability and lock-wait settings. Test with a real second SQLite connection that holds a read transaction until commit fails, then release it and prove the next write succeeds.
+
+Why this prevents recurrence: a deferred rollback only works while its transaction handle still owns a usable driver transaction, and a one-connection pool turns one poisoned connection into a permanent write outage. Same-connection cleanup removes the active transaction before reuse, discarding handles the unprovable case, and per-connection configuration prevents recovery from silently changing database behaviour.
+
+## An idle terminal poll must be byte-silent without losing resize reflow
+
+Trigger: interactive `watch` and an idle `logf` produced about 5 KB/s of SSH traffic even when no table changed and no log record arrived. The 50 ms input poll correctly found no pending payload, but its idle callback still erased and redrew the prompt unconditionally. A few dozen terminal bytes per poll became persistent encrypted SSH packets and acknowledgements, so application-level output that looked negligible became hundreds of megabytes per day on a remote connection.
+
+Action: make the pending-output function report whether it actually wrote terminal bytes, and redraw the input block only after real output. Track the width used for the last render separately, so a terminal resize still causes one necessary idle redraw and subsequent unchanged polls return to complete silence. Test byte identity between zero idle polls and several empty idle polls, then separately test that a width change adds exactly one redraw.
+
+Why this prevents recurrence: polling frequency controls detection latency, not permission to write. Keeping the 50 ms poll preserves responsive streaming, while making an unchanged poll byte-silent removes transport amplification. Treating resize as an explicit state change avoids the tempting but incorrect one-line optimization that would suppress all idle redraws and leave wrapped prompts stale until the next keypress or output record.
+
+## Reusing a renderer means inheriting its decoder assumptions
+
+Trigger: `provider_response` was rendered by reusing `renderStructuredBody`, which already existed for
+conversation bodies. The reuse was correct, but the function's decoder carried two assumptions that
+were harmless for a message body and wrong for a provider document. `json.Unmarshal` into `any`
+decodes every number as `float64`, so `1794470400000` printed as `1.7944704e+12`; and a decoder reads
+one value and ignores the rest, so a JSON Lines document would have rendered only its first record and
+silently dropped the others. Both were found by running the decoder on the real shapes before
+committing to the reuse, not by reading the function.
+
+Action: before reusing an existing renderer or parser for a new input, run it on the new input's real
+shapes and compare the output against what the operator needs. Check the numeric representation, the
+number of values the decoder consumes, and whether trailing content is detected. Here the fix was
+`json.NewDecoder` with `UseNumber()` plus an EOF guard that falls back to verbatim output, so a
+document that is not exactly one JSON value is never partially rendered.
+
+Why this prevents recurrence: a shared helper is reviewed as a solved problem, so its assumptions stop
+being visible the moment it is reused. The two defects are both silent in the direction that matters:
+scientific notation is still the same value, and a dropped trailing record still looks like a complete
+answer. Neither shows up as a changed line in the diff, because the reuse itself is the change.
+
+## A nested fixture's indentation is one level deeper than the parent key
+
+Trigger: while asserting that a nested list renders as bullets, the expectation used two spaces
+(`"  - a"`) for a list that sits inside `response.items`. The renderer emitted four spaces, because
+`items` is one level below `response`, which is itself one level below the document root. The renderer
+was correct and the expectation was wrong, and the failure read like a rendering defect.
+
+Action: when asserting indentation, count the depth from the document root to the value, not from the
+nearest key that happens to be mentioned in the test name. Prefer an exact whole-line comparison so the
+indentation is actually asserted, and derive the expected depth from the fixture rather than from the
+sentence describing it.
+
+Why this prevents recurrence: an indentation assertion is the only thing that proves nesting, so
+loosening it to a substring match would make the test pass while losing the property it exists to
+check. The failure is also easy to misattribute, because the message names the renderer's output rather
+than the expectation, and the renderer's output is the part that looks wrong.
+
+## A shared wait-marker that depends on the guard under test collapses attribution
+
+Trigger: the endpoint-expiry BDD suite seeded a `sweep-sentinel` endpoint in every scenario and waited
+for it to disappear as proof that a sweep had run. The sentinel was seeded with
+`offline_since_at_ms = 0`, so it only became expirable through the startup backfill. Breaking the
+backfill therefore failed **all six** scenarios, including `a_connected_endpoint_is_never_expired`,
+which has nothing to do with the backfill. The suite looked sensitive, but it could not attribute a
+failure to a boundary.
+
+Action: when a test needs a marker that proves a shared mechanism ran, seed that marker so it is
+eligible on its own, independent of every guard the scenarios are meant to discriminate. Here the
+sentinel now carries a positive `offline_since_at_ms`, so it expires regardless of the backfill, and
+breaking the backfill fails only the legacy scenario. Write the reason into the seed function's
+comment, because the zero value looks like the natural choice and the coupling is invisible.
+
+Why this prevents recurrence: a shared marker is convenient precisely because it is shared, so it is
+easy to give it the same shape as the scenario fixtures. That shape is what couples every scenario to
+one guard. The failure mode is the opposite of a missing test: the suite is green, and it does fail
+when the guard breaks, so it appears to work. Only breaking one guard at a time reveals that the
+failures are not attributable. The same trap applies to any shared readiness probe, shared fixture row
+or shared "wait until" condition whose eligibility depends on the code path under test.
+
+## A guard that production writes cannot reach must be proven at the storage layer
+
+Trigger: removing `connection_state != 'online'` from both expiry DELETEs did not fail any BDD
+scenario, including the one named `a_connected_endpoint_is_never_expired`. Investigation showed the
+guard is unreachable through production writes: `UpsertEndpoint` forces `offline_since_at_ms = 0` for
+an online state, and `MarkPersistedEndpointsOffline` converts every online row to offline before a
+sweep runs. So `offline_since_at_ms > 0` already excludes online rows, and the state guard only
+protects against a corrupt or hand-edited row.
+
+Action: when a deliberate break does not fail the test that claims to guard it, first decide whether
+the guard is redundant or the test is wrong, and prove which by tracing the write paths that can
+produce the guarded state. If no production path can produce it, the guard is defense-in-depth and
+must be proven where the state can be created directly, which is usually the storage layer. Seed the
+corrupt state there, assert the row survives, and confirm the test fails when the guard is removed.
+Then narrow the BDD scenario's stated claim to the reachable invariant, and record the distinction so
+nobody later reads that scenario as proof of the guard.
+
+Why this prevents recurrence: a safety scenario that passes for the wrong reason is worse than no
+scenario, because it certifies a guard nobody has exercised. The tempting response to a break that
+does not fail is to assume the guard is redundant and delete it, which removes the only protection
+against a corrupt row. The other tempting response is to leave the green scenario alone, which keeps
+a false claim in the suite. Tracing the write paths answers the question with evidence, and moving the
+proof to the layer that can create the state keeps the guard tested without pretending BDD covers it.
+
+## A gate on the action does not guard the menu that offers the action
+
+Trigger: `start` and `cd` printed every registered endpoint as a numbered choice, including offline
+and degraded ones, while the request that followed was correctly refused. The operator was offered a
+row, chose it, and was refused afterwards. Auditing all 11 `ListEndpoints` call sites showed the
+asymmetry: 13 sites refused a *named* unusable endpoint before sending, but only 2 sites printed a
+list and neither filtered it.
+
+Action: treat "what may be offered" and "what may be executed" as two separate decisions with two
+separate proofs. A selection list is a third kind of access beside a store read and a machine
+access: it may read every record, but it must not offer a row the operator cannot use. Give the
+filter one shared helper (`selectableEndpoints`) instead of letting each list invent its own rule,
+and prove it by removing it and watching the list assertion fail. Then prove the resolution sites
+separately, because a list assertion only proves the row was not printed, never that the identifier
+could not be typed.
+
+Why this prevents recurrence: a refusal gate makes the command safe, so the defect is invisible to
+every test that asserts the refusal. The operator still wastes a choice and reads a failure that
+looks like a fault. The two decisions also drift apart silently: three different state predicates
+existed (`validateEndpointOnline`, `endpointOnline`, `endpointDegraded`) and most lists used none of
+them. One shared helper plus one proof per decision keeps the menu and the gate from diverging.
+
+## A numbered list and the answer that selects from it must share one filtered slice
+
+Trigger: filtering the `start` wizard's printed list was not enough, because `start 1` resolved the
+bare number against every registered endpoint. The wizard printed `1. online-b` while `start 1`
+selected an offline endpoint that was never shown, so the same number meant two different machines.
+
+Action: when a prompt prints a numbered list and later resolves a bare number, both must be computed
+from the same slice, in the same order. Filter once, print that slice, and resolve against that
+slice. Preserve the order, because reordering silently changes which endpoint a number means. A
+named identifier is different: resolve it against every record so a machine that is not offered
+reports its real state instead of being described as absent.
+
+Why this prevents recurrence: the printed list and the resolver are two functions, so filtering one
+leaves the other addressing rows the operator never saw. The failure is silent because the number is
+valid, just for a different machine. Sharing the slice makes the two views structurally identical,
+and the order requirement is the part that a later refactor is most likely to break.

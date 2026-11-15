@@ -14,13 +14,21 @@ import (
 // list and accepts a bare number instead of demanding the identifier.
 func launchEndpointChoices(ctx context.Context, api InteractiveAPI, out io.Writer) ([]protocol.Endpoint, error) {
 	queryCtx, cancel := commandContext(ctx)
-	endpoints, err := api.ListEndpoints(queryCtx)
+	reported, err := api.ListEndpoints(queryCtx)
 	cancel()
 	if err != nil {
 		return nil, err
 	}
+	// Only an online endpoint is offered, because starting an agent sends a frame
+	// to the machine. The filtered slice is what the wizard numbers and what it
+	// resolves the answer against, so a number can never address a row that was
+	// not printed.
+	endpoints := selectableEndpoints(reported)
 	if len(endpoints) == 0 {
-		return nil, fmt.Errorf("no endpoint is registered; register an endpoint before starting an agent")
+		if len(reported) == 0 {
+			return nil, fmt.Errorf("no endpoint is registered; register an endpoint before starting an agent")
+		}
+		return nil, fmt.Errorf("no endpoint is online; %d registered endpoint(s) are offline or degraded, so an agent cannot be started on them", len(reported))
 	}
 	for index, endpoint := range endpoints {
 		if _, err := fmt.Fprintf(out, "%d. %s\n", index+1, launchEndpointRowLabel(endpoint)); err != nil {
@@ -148,6 +156,13 @@ func resolveLaunchEndpointTarget(ctx context.Context, api InteractiveAPI, target
 // resolveLaunchEndpointValue maps one operator answer onto an endpoint identifier
 // using an already-fetched inventory. The exact identifier is checked first, so a
 // numeric identifier is never mistaken for a row number.
+//
+// A bare number is resolved against the selectable endpoints, because that is the
+// list the wizard printed. Resolving it against every record would make the same
+// number mean two different machines: the wizard would print "1. online-b" while
+// "start 1" selected an offline endpoint that was never shown. A named endpoint is
+// still resolved against every record, so a machine that is not offered reports its
+// real state instead of being described as absent.
 func resolveLaunchEndpointValue(endpoints []protocol.Endpoint, answer string) (string, error) {
 	trimmed := strings.TrimSpace(answer)
 	if trimmed == "" {
@@ -157,13 +172,17 @@ func resolveLaunchEndpointValue(endpoints []protocol.Endpoint, answer string) (s
 		return endpoint.EndpointID, nil
 	}
 	if isASCIIDecimal(trimmed) {
-		return resolveLaunchEndpointAnswer(endpoints, trimmed)
+		return resolveLaunchEndpointAnswer(selectableEndpoints(endpoints), trimmed)
 	}
 	matches := launchEndpointsByHostname(endpoints, trimmed)
 	switch len(matches) {
 	case 1:
 		return matches[0].EndpointID, nil
 	case 0:
+		// Neither the identifier nor the hostname matched, so the record does not
+		// exist. A degraded endpoint never reaches this branch: it is matched by
+		// identifier above or by hostname below, and the shared queryable gate then
+		// refuses it with its real state.
 		return "", nonSyntaxError{message: fmt.Sprintf("endpoint %q was not found", trimmed)}
 	default:
 		return "", nonSyntaxError{message: fmt.Sprintf("hostname %q matches %d endpoints; enter an endpoint identifier instead", trimmed, len(matches))}

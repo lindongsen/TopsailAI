@@ -283,6 +283,9 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         """
         Update the access metadata for a message: set access_time to current time and increment access_count.
 
+        Access metadata is not part of the conversation, so a database I/O
+        failure is logged and skipped instead of ending the process.
+
         Args:
             msg_id (str): The unique identifier of the message to update.
         """
@@ -298,7 +301,9 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         except Exception as e:
             session.rollback()
             logger.error(f"update_message failed: msg_id={msg_id}, {e}")
-            raise db_io_tool.handle_write_failure(e, "update_message_access", msg_id=msg_id)
+            db_io_tool.handle_skipped_write_failure(
+                e, "update_message_access", msg_id=msg_id,
+            )
         finally:
             db_io_tool.restore_write_block(session, original_busy_timeout)
             session.close()
@@ -393,7 +398,7 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
     def delete_cleanup_message(self, msg_id, before_seconds):
         """Delete one still-old message and all its mappings in one transaction.
 
-        A database I/O failure never returns; it blocks or exits the process.
+        A database I/O failure is logged and skipped; it never ends the process.
         """
         session = self.SessionLocal()
         original_busy_timeout = db_io_tool.apply_write_block(session)
@@ -411,9 +416,10 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         except Exception as e:
             session.rollback()
             logger.error(f"delete_cleanup_message failed: msg_id={msg_id}, {e}")
-            raise db_io_tool.handle_write_failure(
+            db_io_tool.handle_skipped_write_failure(
                 e, "delete_cleanup_message", msg_id=msg_id,
             )
+            return 0
         finally:
             db_io_tool.restore_write_block(session, original_busy_timeout)
             session.close()
@@ -427,8 +433,9 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
                                 Messages with access_time less than (current time - before_seconds) will be deleted.
 
         Returns:
-            int: Number of messages deleted.
-                A database I/O failure never returns; it blocks or exits the process.
+            int: Number of messages deleted. A database I/O failure is reported
+                to the caller, which decides how to react; the process is never
+                terminated here.
         """
         session = self.SessionLocal()
         original_busy_timeout = db_io_tool.apply_write_block(session)

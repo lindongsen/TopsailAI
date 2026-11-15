@@ -138,14 +138,53 @@ def test_topsailai_session_id_wins_over_legacy_alias() -> None:
 
 
 @pytest.mark.parametrize("blank", ["", "   "])
-def test_blank_session_id_is_treated_as_unset(blank: str) -> None:
-    """A blank alias value must not suppress generation."""
+def test_blank_session_id_means_no_session(blank: str) -> None:
+    """A present but blank alias opts out of session persistence."""
     os.environ["TOPSAILAI_SESSION_ID"] = blank
     os.environ["SESSION_ID"] = blank
     mock_get_chat = _run_main()
 
     _, kwargs = mock_get_chat.call_args
-    assert re.fullmatch(GENERATED_SESSION_ID_PATTERN, kwargs["session_id"])
+    assert kwargs["session_id"] == ""
+
+
+def test_blank_session_id_is_not_generated() -> None:
+    """An explicit blank value must never be replaced by a generated identity."""
+    os.environ["TOPSAILAI_SESSION_ID"] = ""
+    with mock.patch.object(agent_chats, "_generate_session_id") as mock_generate:
+        _run_main()
+
+    mock_generate.assert_not_called()
+
+
+def test_absent_topsailai_session_id_falls_through_to_legacy_alias() -> None:
+    """An absent alias must not stop the search for a configured one."""
+    os.environ.pop("TOPSAILAI_SESSION_ID", None)
+    os.environ["SESSION_ID"] = "legacy-only"
+    mock_get_chat = _run_main()
+
+    _, kwargs = mock_get_chat.call_args
+    assert kwargs["session_id"] == "legacy-only"
+
+
+def test_blank_topsailai_session_id_does_not_fall_through_to_legacy_alias() -> None:
+    """A present blank alias decides, so the legacy alias is not consulted."""
+    os.environ["TOPSAILAI_SESSION_ID"] = ""
+    os.environ["SESSION_ID"] = "legacy"
+    mock_get_chat = _run_main()
+
+    _, kwargs = mock_get_chat.call_args
+    assert kwargs["session_id"] == ""
+
+
+def test_no_session_identity_is_published_as_empty() -> None:
+    """Opting out publishes an empty identity instead of leaving a stale one."""
+    os.environ["TOPSAILAI_SESSION_ID"] = ""
+    os.environ["SESSION_ID"] = ""
+    _run_main()
+
+    assert os.environ["TOPSAILAI_SESSION_ID"] == ""
+    assert os.environ["SESSION_ID"] == ""
 
 
 def test_generated_session_id_is_announced_when_library_is_silent() -> None:
@@ -175,3 +214,42 @@ def test_configured_session_id_is_never_announced() -> None:
             _run_main()
 
     mock_print.assert_not_called()
+
+
+def test_closed_input_channel_ends_the_chat_without_a_traceback() -> None:
+    """A closed input channel ends the chat instead of raising ``EOFError``.
+
+    The prompt can never be answered once the channel is closed, so the entry
+    point must report the condition and return normally. Letting ``EOFError``
+    escape would print a traceback and exit abnormally.
+    """
+    with mock.patch.object(agent_chats, "get_agent_chat") as mock_get_chat:
+        mock_get_chat.return_value.run.side_effect = EOFError()
+        with mock.patch.object(agent_chats, "print_info") as mock_print:
+            agent_chats.main()
+
+    mock_print.assert_called_once_with("Input channel closed; ending the chat.")
+
+
+def test_closed_input_channel_still_announces_the_session_first() -> None:
+    """The session identity is announced before the chat is abandoned.
+
+    A closed channel must not hide which session was created, otherwise the
+    operator cannot find the retained metadata and stdout artifacts.
+    """
+    with mock.patch.object(agent_chats, "_library_prints_session", return_value=False):
+        with mock.patch.object(agent_chats, "get_agent_chat") as mock_get_chat:
+            mock_get_chat.return_value.run.side_effect = EOFError()
+            with mock.patch.object(agent_chats, "print_info") as mock_print:
+                agent_chats.main()
+
+    _, kwargs = mock_get_chat.call_args
+    mock_print.assert_any_call(f"session_id: {kwargs['session_id']}")
+
+
+def test_unrelated_failure_is_not_swallowed() -> None:
+    """Only ``EOFError`` is handled; other failures keep their contract."""
+    with mock.patch.object(agent_chats, "get_agent_chat") as mock_get_chat:
+        mock_get_chat.return_value.run.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"):
+            agent_chats.main()

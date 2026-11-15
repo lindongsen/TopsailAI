@@ -51,6 +51,14 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return err
 	}
+	// The gate runs before the snapshot or the stream is requested, because both
+	// send a frame to the machine. Reading the endpoint record above is allowed:
+	// it is a store read, and it is what supplies the state this gate reads.
+	if endpoint, ok := endpointByID(loaded, endpointID); ok {
+		if gateErr := requireQueryableEndpoint(endpoint); gateErr != nil {
+			return gateErr
+		}
+	}
 	_, _, session, err := findSessionInEndpoint(loaded, endpointID, resourceID)
 	if err != nil {
 		return numericTokenHint(strings.TrimSpace(rest), err)
@@ -554,7 +562,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	// happened, so the operator should not have to type logs to see the effect.
 	// The automatic step is the same live tail as logs -f, because a one-shot
 	// snapshot stops at the moment it was read while the agent keeps writing.
-	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, "send completed", actionResultData); err != nil {
+	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, "send completed", actionResultData, autoFollowMaxLines); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
@@ -575,6 +583,14 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	return nil
 }
 
+// autoFollowMaxLines is the trailing line count the post-send and post-btw tails
+// read, so those two steps behave as logs -n 10 -f instead of as a bare logf.
+// The value is deliberately below MinInteractiveMaxLines: it is a fixed budget
+// for one automatic step, not the operator's startup budget, so it must not pass
+// through NormalizeInteractiveMaxLines, which would clamp it up to 100 and
+// silently turn the requested 10 into the REPL default.
+const autoFollowMaxLines = 10
+
 // autoFollowAfterAction arms the live tail that follows a completed session
 // action. It arms the same intent logs -f arms, so every automatic step and the
 // explicit command share one streaming path, one announcement and one capability
@@ -586,6 +602,12 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 // and says so, because a snapshot presented as a stream would look complete
 // while silently missing everything written after it.
 //
+// maxLines is the trailing line count this step reads. A positive value is used
+// as given, so a step can ask for a smaller budget than the REPL default; a
+// non-positive value keeps the REPL budget. The stream and the degraded snapshot
+// resolve the same value through outputBoundsForLines, so the substitute can
+// never read a different amount than the stream it replaces.
+//
 // result is the durable receipt of the action that triggered the tail. When the
 // receipt proves the effect was not applied, no tail is armed and no snapshot is
 // rendered: a stream after a rejected command would show output that has nothing
@@ -595,18 +617,18 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 // definition. A nil result decodes to a zero receipt, which is not
 // EffectNotApplied, so a caller with no action receipt keeps its previous
 // behaviour.
-func autoFollowAfterAction(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation string, trustedOut io.Writer, options InteractiveOptions, failurePrefix string, result map[string]any) error {
+func autoFollowAfterAction(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation string, trustedOut io.Writer, options InteractiveOptions, failurePrefix string, result map[string]any, maxLines int) error {
 	if ReceiptForStatus(result).EffectCertainty == protocol.EffectNotApplied {
 		return nil
 	}
 	if _, ok := api.(OutputFollower); !ok || options.WatchReader == nil {
-		if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, failurePrefix); err != nil {
+		if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, failurePrefix, maxLines); err != nil {
 			return err
 		}
 		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
 	}
-	maxBytes, maxLines := interactiveOutputBounds(options)
-	if err := armFollowStream(api, state, endpointID, sessionID, generation, maxBytes, maxLines, trustedOut); err != nil {
+	maxBytes, lines := outputBoundsForLines(options, maxLines)
+	if err := armFollowStream(api, state, endpointID, sessionID, generation, maxBytes, lines, trustedOut); err != nil {
 		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
 	}
 	return nil
@@ -737,6 +759,14 @@ func parseInteractiveStartTokens(args []string, allowMissing bool) (interactiveS
 func interactiveStart(parent context.Context, api InteractiveAPI, state *interactiveState, request interactiveStartRequest, out, trustedOut io.Writer, options InteractiveOptions) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
+	// The gate lives here rather than in each caller because this function is the
+	// single point every start path passes through. The launch wizard already
+	// checks the endpoint before it queries launch options, but the prompt path
+	// reaches this function directly, so a caller-side check alone would leave it
+	// able to submit a command to a degraded endpoint.
+	if gateErr := requireQueryableEndpointByID(ctx, api, request.EndpointID); gateErr != nil {
+		return gateErr
+	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
 	actionRequest := ActionRequest{
 		Operation:       protocol.OperationAgentStart,
@@ -912,7 +942,8 @@ func startRefreshDiagnostic(out io.Writer, err error) error {
 
 // renderInteractiveStartResult writes the durable start result without JSON formatting.
 // The provider's own return document is printed as a separate section so the
-// operator sees both this service's receipt and the provider's raw answer.
+// operator sees both this service's receipt and the provider's answer, rendered
+// through the same shared section renderer the other surfaces use.
 func renderInteractiveStartResult(out io.Writer, commandID string, result map[string]any) error {
 	if _, err := fmt.Fprintf(out, "CommandID: %s\nStatus: %s\nDeliveryBoundary: %s\nEffectCertainty: %s\nErrorCode: %s\n", commandID, valueString(result, "status", "Status"), valueString(result, "delivery_boundary", "DeliveryBoundary"), valueString(result, "effect_certainty", "EffectCertainty"), valueString(result, "error_code", "ErrorCode")); err != nil {
 		return err
@@ -1014,7 +1045,7 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	var postSubmit func(context.Context, map[string]any) error
 	if op == protocol.OperationContextInject {
 		postSubmit = func(postCtx context.Context, result map[string]any) error {
-			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, name+" completed", result)
+			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, name+" completed", result, autoFollowMaxLines)
 		}
 		// Context injection is additive and the operator already stated the
 		// command and its text, so it submits directly. A confirmation here could
@@ -1120,7 +1151,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 // step its own bounded budget.
 func submitInteractiveAction(ctx, parent context.Context, api InteractiveAPI, state *interactiveState, op, name string, target confirmationTarget, generation string, payload json.RawMessage, out io.Writer, options InteractiveOptions, postSubmit func(context.Context, map[string]any) error) error {
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.ClusterSessionID, ProviderGeneration: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: target.ProviderDisplayName, ProviderSessionID: target.ProviderSessionID}
+	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.ClusterSessionID, ProviderGeneration: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: target.ProviderDisplayName, ProviderSessionID: target.ProviderSessionID, ProviderSessionHandle: target.ProviderSessionHandle}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)
 	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {

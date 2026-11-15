@@ -20,11 +20,19 @@ const (
 	columnConnectionState    = "connection_state"
 	columnObservedAt         = "observed_at"
 	columnCapabilityRevision = "capability_revision"
+	columnExpiresAt          = "expires_at"
 )
 
 // endpointColumns is the complete endpoint layout. Connection state is a
 // different domain from session state, so it keeps its own column and colour
 // mapping instead of reusing the session table.
+//
+// EXPIRES_AT is a separate column rather than a suffix on CONNECTION_STATE
+// because the state cell has a 14-character cap: "degraded" fits, but a form
+// such as "degraded(2026-12-14)" would be clipped and the deletion date would be
+// lost. The column renders a dash for every non-degraded row, because only a
+// degraded Endpoint has a deletion date and a computed date on an online row
+// would imply an expiry that does not exist.
 var endpointColumns = []tableColumn{
 	{key: columnEndpointID, header: "ENDPOINT_ID", cap: 36},
 	{key: columnHostname, header: "HOSTNAME", cap: 40},
@@ -32,10 +40,13 @@ var endpointColumns = []tableColumn{
 	{key: columnConnectionState, header: "CONNECTION_STATE", cap: 14},
 	{key: columnObservedAt, header: "OBSERVED_AT", cap: 10},
 	{key: columnCapabilityRevision, header: "CAPABILITY_REVISION", cap: 24},
+	{key: columnExpiresAt, header: "EXPIRES_AT", cap: 19},
 }
 
 // connectionStateOrder fixes the summary precedence so output is deterministic.
-var connectionStateOrder = []string{"online", "suspect", "offline", "unknown"}
+// degraded sits after offline because it is a later stage of the same
+// disconnected lifecycle, and before unknown because it is a known state.
+var connectionStateOrder = []string{"online", "suspect", "offline", "degraded", "unknown"}
 
 // Endpoints lists every registered endpoint with its reported details.
 func (r CommandRunner) Endpoints(ctx context.Context, out io.Writer, filter string, jsonMode bool, options TableOptions) error {
@@ -96,7 +107,25 @@ func endpointCells(endpoint protocol.Endpoint, location *time.Location) map[stri
 		columnConnectionState:    escapeCell(orDash(endpoint.ConnectionState)),
 		columnObservedAt:         escapeCell(formatObservedAt(endpoint.ObservedAtMS, location)),
 		columnCapabilityRevision: escapeCell(orDash(endpoint.CapabilityRevision)),
+		columnExpiresAt:          escapeCell(formatEndpointExpiresAt(endpoint, location)),
 	}
+}
+
+// formatEndpointExpiresAt renders the deletion date of a degraded Endpoint.
+//
+// Only a degraded row has a deletion date, so every other state renders the
+// unreported marker. Reporting a date for an online or merely offline row would
+// claim an expiry that does not exist, and an operator would read it as a
+// scheduled deletion.
+//
+// The layout is the date-and-clock layout rather than the table-cell clock
+// layout, because a deletion date is days away and a bare clock would make it
+// look like it happens today.
+func formatEndpointExpiresAt(endpoint protocol.Endpoint, location *time.Location) string {
+	if endpoint.ConnectionState != "degraded" {
+		return unreportedTime
+	}
+	return formatDateTime(endpoint.ExpiresAtMS, location)
 }
 
 // endpointStates colours every cell of a row with the endpoint connection state,

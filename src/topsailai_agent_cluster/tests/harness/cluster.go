@@ -65,6 +65,13 @@ type ClusterOptions struct {
 	// ignored and the harness always starts the mock Provider CLI. A scenario that
 	// still sets it is not selecting anything.
 	ProviderType string
+	// SeedServerDB writes rows into the Server database before the Server process
+	// opens it. A scenario that must observe a startup repair has no other way to
+	// create the pre-existing state: the repair runs immediately after the
+	// database is opened, so a row inserted through the HTTP API afterwards would
+	// never exercise it. The callback receives the database path and must create
+	// the schema itself, because the Server has not opened the file yet.
+	SeedServerDB func(path string) error
 }
 
 // FaultInjection contains test-only process-composition controls shared by integration and BDD tests.
@@ -207,16 +214,24 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create certificates: %w", err)
 	}
-	serverBin, endpointBin, mockBin := filepath.Join(root, "server"), filepath.Join(root, "endpoint"), filepath.Join(root, "mock")
-	if err := Build(serverBin, "./src/main/agent-cluster-server"); err != nil {
+	// The three binaries are identical for every scenario, so they are built once
+	// per test process instead of once per scenario. Building them into root would
+	// cost 43 MB per real-cluster scenario and hold it until the top-level test
+	// returned; see sharedbuild.go.
+	serverBin, err := SharedBinary("agent-cluster-server", "./src/main/agent-cluster-server")
+	if err != nil {
 		return nil, err
 	}
-	if err := Build(endpointBin, "./src/main/agent-cluster-endpoint"); err != nil {
+	endpointBin, err := SharedBinary("agent-cluster-endpoint", "./src/main/agent-cluster-endpoint")
+	if err != nil {
 		return nil, err
 	}
 	// The Provider CLI is a separate Go module, so it is built from its own
 	// directory. Building it from the repository root fails with "main module
-	// does not contain package", which is why BuildModule exists.
+	// does not contain package", which is why BuildModule exists. It stays
+	// scenario-local because BuildModule cannot share the shared build directory
+	// that SharedBinary uses for the repository's own binaries.
+	mockBin := filepath.Join(root, "mock")
 	if err := BuildModule(mockBin, filepath.Join(ModuleRootForBuild(), "providers", "mock"), "."); err != nil {
 		return nil, err
 	}
@@ -251,6 +266,13 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	}
 	serverEnv = appendFaultEnvironment(serverEnv, options.Faults)
 	serverEnv = append(serverEnv, sortedEnvironment(options.Environment)...)
+	// The seed runs before the Server process exists, because the startup repair
+	// it must exercise happens immediately after the Server opens the database.
+	if options.SeedServerDB != nil {
+		if err := options.SeedServerDB(cluster.ServerDB); err != nil {
+			return nil, fmt.Errorf("seed server database: %w", err)
+		}
+	}
 	cluster.Server, err = StartProcessE(serverBin, serverEnv)
 	if err != nil {
 		return nil, err
@@ -737,8 +759,10 @@ func (c *Cluster) BuildTUI(tb testing.TB) (string, error) {
 	if c.TUIPath != "" {
 		return c.TUIPath, nil
 	}
-	path := filepath.Join(c.Root, "agent-cluster-cli")
-	if err := Build(path, "./src/main/agent-cluster-cli"); err != nil {
+	// The CLI is identical for every scenario, so it comes from the shared build
+	// cache instead of a scenario-local copy.
+	path, err := SharedBinary("agent-cluster-cli", "./src/main/agent-cluster-cli")
+	if err != nil {
 		return "", err
 	}
 	c.TUIPath = path

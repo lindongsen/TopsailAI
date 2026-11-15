@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
 
@@ -45,7 +46,12 @@ func openLineReader(path string, fs FS) (*lineReader, error) {
 	}
 
 	var source io.Reader = fd
-	if enc := lookupEncoding(detectEncoding(sample)); enc != nil {
+	if isAsciiOnly(sample) {
+		// An ASCII-only sample carries no encoding evidence, so the detected
+		// charset would be arbitrary. Decode as UTF-8 with replacement so valid
+		// runs beyond the sample survive and only invalid bytes are replaced.
+		source = transform.NewReader(fd, unicode.UTF8.NewDecoder())
+	} else if enc := lookupEncoding(detectEncoding(sample)); enc != nil {
 		source = transform.NewReader(fd, enc.NewDecoder())
 	}
 

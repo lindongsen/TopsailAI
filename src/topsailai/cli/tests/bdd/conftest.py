@@ -21,4 +21,5 @@ pytest_plugins = [
     "tests.bdd.steps.hard_interrupt_steps",
     "tests.bdd.steps.hard_interrupt_mock_server_steps",
     "tests.bdd.steps.streaming_mock_server_steps",
+    "tests.bdd.steps.resume_workspace_steps",
 ]

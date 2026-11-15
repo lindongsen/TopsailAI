@@ -51,33 +51,39 @@ Configured through environment variables:
 - `TOPSAILAI_SESSION_ID` — session identifier for maintaining conversation
   history. Takes precedence over `SESSION_ID`.
 - `SESSION_ID` — session identifier used when `TOPSAILAI_SESSION_ID` is not set.
-  When neither variable carries a non-blank value, a session identifier is
-  generated automatically (see below).
+  When neither variable is present, a session identifier is generated
+  automatically (see below).
 - `SYSTEM_PROMPT` — a file path or inline content for the system prompt.
 - `CHAT_MULTI_LINE` — enables multi-line input (set to `1` by the `bin/` wrapper).
 - `DEBUG` — debug verbosity (set to `1` by the `bin/` wrapper).
 
 ### Automatic session identifier
 
-When neither `TOPSAILAI_SESSION_ID` nor `SESSION_ID` carries a non-blank value,
-the command generates a session identifier before the agent starts, so every
-chat run owns a session record, a session stdout file, and resumable history
-instead of running without an identity.
+Presence decides, not content. When neither `TOPSAILAI_SESSION_ID` nor
+`SESSION_ID` is present in the environment, the command generates a session
+identifier before the agent starts, so every chat run owns a session record, a
+session stdout file, and resumable history instead of running without an
+identity. Setting either variable to an empty value is an explicit opt-out: the
+chat then runs without a session identity and nothing is generated.
 
 - Resolution order: `TOPSAILAI_SESSION_ID`, then `SESSION_ID`, then generate.
-  A configured value is used verbatim; a blank or whitespace-only value counts
-  as unset.
+  An absent variable is skipped; the first present variable decides.
+- A present non-blank value is used verbatim.
+- A present blank or whitespace-only value means "no session": the chat runs
+  without an identity, and the value is not replaced by a generated one. This
+  is how a caller opts out of session persistence.
 - Generated format: the compact local timestamp `YYYYMMDDHHMMSS`, for example
   `20261105172015`. This is the same format the launcher uses, so chat sessions
   sort by creation time and stay recognizable in the session list.
 - The effective identifier is exported through both `TOPSAILAI_SESSION_ID` and
   `SESSION_ID`, so the agent library, the session record, and any child process
-  agree on one identity.
+  agree on one identity. When the chat runs without a session, both aliases are
+  exported as an empty value so no stale identity survives.
 - The generated identifier is printed once as `session_id: <id>` when the agent
   library does not print it itself. The library prints that line only in
   interactive, non-debug runs, so the `bin/` wrapper (which sets `DEBUG=1`)
   shows the line from this command instead. A configured identifier is never
-  announced by this command.
+  announced by this command, and an opted-out run announces nothing.
 
 ### Continuing history across turns
 
@@ -105,6 +111,9 @@ SESSION_ID=my-session SYSTEM_PROMPT=/path/to/system.txt topsailai_agent_chats
 # Without any session variable, an identifier is generated and printed
 topsailai_agent_chats
 
+# Opt out of session persistence with an explicitly empty value
+SESSION_ID= topsailai_agent_chats
+
 # Show help
 topsailai_agent_chats -h
 ```
@@ -115,8 +124,11 @@ topsailai_agent_chats -h
   avoid recursive agent calls.
 - Exit by typing `exit`, `quit`, or pressing `Ctrl+C`.
 - Session history can be maintained through `TOPSAILAI_SESSION_ID` or
-  `SESSION_ID`; when neither is set, a `YYYYMMDDHHMMSS` timestamp is generated
-  and printed so the run can be resumed later. Because that identifier is
-  digits-only, `/cd`, `/send`, and `/resume` read it as a 1-based list index;
-  select the session by its list position, or pass the identifier explicitly
-  where a literal value is accepted.
+  `SESSION_ID`; when neither is present, a `YYYYMMDDHHMMSS` timestamp is
+  generated and printed so the run can be resumed later. Because that
+  identifier is digits-only, `/cd`, `/send`, and `/resume` read it as a 1-based
+  list index; select the session by its list position, or pass the identifier
+  explicitly where a literal value is accepted.
+- Setting either variable to an empty value disables session persistence for
+  that run: no identity is generated, no session record is created, and the
+  conversation is not resumable.

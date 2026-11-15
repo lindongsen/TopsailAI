@@ -69,8 +69,16 @@ _RESUME_DRIVER_OPTIONS = [
 # session through either alias.
 _IDENTITY_ENV_KEYS = ("TOPSAILAI_SESSION_ID", "SESSION_ID")
 
+# The project workspace the resumed worker must observe. The normal launch
+# boundary already exports this variable, so a resume must export the same
+# value or the child records an empty workspace and silently skips the
+# project workspace lock.
+_PROJECT_WORKSPACE_ENV_KEY = "TOPSAILAI_PROJECT_WORKSPACE"
+
 # Environment keys mutated for one launch and restored immediately afterward.
-_LAUNCH_ENV_KEYS = ("TOPSAILAI_PWD", "PWD") + _IDENTITY_ENV_KEYS
+_LAUNCH_ENV_KEYS = (
+    "TOPSAILAI_PWD", "PWD", _PROJECT_WORKSPACE_ENV_KEY
+) + _IDENTITY_ENV_KEYS
 
 # Bounds for the single authoritative session lookup: the capture must never
 # grow without limit and a hung query must not block the resume forever.
@@ -699,6 +707,20 @@ def _tmux_safe_env_value(value: str) -> str:
     return value.replace(";", r"\;")
 
 
+def _tmux_safe_env_argument(pair: str) -> str:
+    """Escape only a terminating ``;`` in a ``KEY=value`` argument for ``env``.
+
+    Tmux re-parses its whole command line, so a pair whose value ends with
+    ``;`` is read as a command separator and the session never starts.  Only
+    that terminating semicolon needs escaping: an interior ``;`` is already
+    part of the same token and stays literal, so escaping every semicolon
+    would corrupt list-shaped values such as ``agent_tool;story_tool;``.
+    """
+    if pair.endswith(";"):
+        return pair[:-1] + r"\;"
+    return pair
+
+
 def _wrap_command_for_agent_mode(
     command: str,
     mode: str,
@@ -731,16 +753,6 @@ def _wrap_command_for_agent_mode(
                 "tmux is not installed or not found in PATH. "
                 "Install tmux to use --agent-mode tmux, or choose raw/dtach."
             )
-        if not _tmux_supports_environment_option(tmux_path):
-            print(
-                f"{Colors.YELLOW}[WARN] tmux does not support new-session -e; "
-                f"falling back to dtach/raw mode.{Colors.RESET}"
-            )
-            return _wrap_command_for_agent_mode(
-                command,
-                "dtach",
-                forwarded_environment,
-            )
         if session_name is None:
             session_name = _generate_agent_session_name()
         forwarded_keys = {
@@ -749,7 +761,7 @@ def _wrap_command_for_agent_mode(
         forwarded_keys.update(("PATH", "HOME", "SHELL", "USER", "PWD"))
         # Both accepted identity aliases must be forwarded explicitly: an
         # existing tmux server keeps its own environment, so an alias that is
-        # not passed with ``-e`` can retain a stale or conflicting identity.
+        # not passed explicitly can retain a stale or conflicting identity.
         forwarded_keys.update(_IDENTITY_ENV_KEYS)
         forwarded_keys.update(forwarded_environment or set())
         env_vars = {
@@ -757,13 +769,27 @@ def _wrap_command_for_agent_mode(
             for key in forwarded_keys
             if os.environ.get(key) is not None
         }
+        if _tmux_supports_environment_option(tmux_path):
+            env_args = " ".join(
+                f"-e {shlex.quote(_tmux_safe_env_value(f'{key}={value}'))}"
+                for key, value in sorted(env_vars.items())
+            )
+            env_part = f" {env_args}" if env_args else ""
+            return (
+                f"tmux new-session{env_part} -s {shlex.quote(session_name)} "
+                f"{command}"
+            )
+        # A tmux older than 3.2 has no ``new-session -e``.  It still execs the
+        # command directly, so the same pairs are forwarded through ``env``
+        # instead of downgrading to another mechanism.  ``env`` must follow
+        # every tmux option, otherwise tmux parses it as the command to run.
         env_args = " ".join(
-            f"-e {shlex.quote(_tmux_safe_env_value(f'{key}={value}'))}"
+            shlex.quote(_tmux_safe_env_argument(f"{key}={value}"))
             for key, value in sorted(env_vars.items())
         )
-        env_part = f" {env_args}" if env_args else ""
+        env_part = f"env {env_args} " if env_args else ""
         return (
-            f"tmux new-session{env_part} -s {shlex.quote(session_name)} {command}"
+            f"tmux new-session -s {shlex.quote(session_name)} {env_part}{command}"
         )
 
     raise ValueError(f"Unsupported agent launch mode: {mode!r}")
@@ -933,6 +959,7 @@ def launch_agent_driver(
             os.chdir(target_folder)
             os.environ["TOPSAILAI_PWD"] = target_folder
             os.environ["PWD"] = target_folder
+            os.environ[_PROJECT_WORKSPACE_ENV_KEY] = target_folder
             os.environ["TOPSAILAI_SESSION_ID"] = session_id
             os.environ["SESSION_ID"] = session_id
             model_environment = _apply_selected_model_environment(target_folder)

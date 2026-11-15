@@ -26,13 +26,22 @@ later change has a name to argue against instead of inventing a second one.
 Configuration is resolved in one place, at startup, in this order:
 
 1. Environment variable.
-2. Built-in default.
+2. Value compiled into the binary, when the binary was built with the
+   configuration embedded, which is the default for `make package`.
+3. Built-in default.
 
 There is no command-line flag for a configuration value and no configuration
 file, because a second source of the same value is a second place for the two to
 disagree. The flags that exist select a subcommand; they do not override a
 variable. A value that has no default is required, and an absent required value
 fails startup instead of falling back.
+
+The embedded values sit below the environment on purpose: an operator who has to
+repoint one binary at another Server can do it without a rebuild, and a rebuild is
+the only way to change the policy because a policy is a whole document rather than
+a single value. A binary that embedded a policy therefore **refuses**
+`CONNECTOR_NODE_POLICY_FILE` instead of letting a file path silently replace every
+scope and every grant.
 
 A value is read once at the boundary and converted into a typed field, then passed
 downward as a parameter. No package below the entry point reads the environment,
@@ -74,8 +83,10 @@ What the decision does **not** change:
 - The Node's `node-token` is **not** an environment variable on the Server. It is
   never configured there at all, because the Server must never learn it.
 - The Node's own `node-id.node-token` lives in the Node's config directory with
-  `0600` on POSIX and an owner-only ACL on Windows, because it is per-Node and
-  long-lived and there is no reason to put it in the environment.
+  `0600` on POSIX. On Windows the file carries no explicit ACL: it inherits the
+  default descriptor of its parent directory, which grants read access to
+  `BUILTIN\Users` and therefore to every local account. See "Windows file
+  protection" below.
 
 A deployment that must not use environment variables for secrets can pass them
 through a systemd `EnvironmentFile=` with `0600` permissions, which is a file with
@@ -162,14 +173,78 @@ they never need a dial target or a tunnel token, and requiring one would make th
 documented first-run order impossible.
 
 The Node's identity — the `node-id.node-token` pair — is **not** an environment
-variable. It lives in `<config>/identity` with `0600` on POSIX and an owner-only
-ACL on Windows, because it is per-Node, long-lived and regenerable, and because a
-value that the Node rewrites itself belongs in a file the Node owns rather than in
-the environment of whatever process launched it.
+variable. It lives in `<config>/identity` with `0600` on POSIX, because it is
+per-Node, long-lived and regenerable, and because a value that the Node rewrites
+itself belongs in a file the Node owns rather than in the environment of whatever
+process launched it.
 
-The Node's config directory is created with `0700` on POSIX and an owner-only ACL
-on Windows, because it holds the `node-token`. A scope whose root is inside this
-directory, or which contains it, is refused at startup.
+The Node's config directory is created with `0700` on POSIX. A scope whose root is
+inside this directory, or which contains it, is refused at startup.
+
+#### Embedded configuration
+
+This is the default packaging mode: `make package` builds a binary that carries
+its configuration, so it needs no environment variable and no file. Three values
+are compiled in:
+
+| Value | Source | Overridable at runtime |
+|---|---|---|
+| Server channel address | `PACKAGE_SERVER_URL` | Yes, `CONNECTOR_NODE_SERVER_URL` |
+| Policy document | `PACKAGE_SCOPES` or `PACKAGE_SCOPES_FILE` | **No.** `CONNECTOR_NODE_POLICY_FILE` is refused |
+| `tunnel_token` | `PACKAGE_TUNNEL_TOKEN`, when set | Yes, `CONNECTOR_NODE_TUNNEL_TOKEN` |
+
+The identity is **not** embedded. It is generated on first start, polled every
+second and rewritten by `regenerate`; two copies of one binary would share a
+`node-id`, and the Server's `node_id -> connection` registry would evict the first.
+The recipient therefore runs the binary once with `id` to create the pair, exactly
+as with a zip bundle.
+
+The policy is stored base64 encoded. That is a **quoting** decision, not a secrecy
+one: a YAML document contains newlines, quotes and spaces, and the linker splits
+its argument on whitespace. The values are stored as plain text in the binary's
+data section, so `strings` recovers them. A binary built this way is a credential.
+
+Because the binary is a credential, a build that carries the `tunnel_token` adds
+its own executable to the deny list. A scope that contains the binary cannot serve
+it: `file.read` and `file.stat` return `denied`, and `file.list` omits it. The
+entry is conditional on the token being present, so a normal build is unaffected
+and an install directory stays readable.
+
+The scope paths are written into the embedded policy exactly as they were given,
+not resolved on the build host. A zip bundle resolves them when it starts, because
+it runs on the target; an embedded policy is fixed at build time, so resolving
+would bake the build host's filesystem into a binary meant for another machine. A
+path that does not exist on the target is refused when the binary starts.
+
+#### Windows file protection
+
+On Windows the Node sets **no** ACL on the identity file or on the config
+directory. `os.MkdirAll` ignores its permission argument on Windows, and
+`os.Chmod` only toggles the read-only attribute; neither writes a security
+descriptor. Both therefore inherit the default descriptor of their parent
+directory.
+
+The inherited descriptor grants `BUILTIN\Users` read access, so **every local
+account on the machine can read the identity file**, which holds a `node-token`
+that never expires. This was measured on Windows Server 2022 with `Get-Acl`:
+
+```
+Path   : C:\connector\config\identity
+Access : NT AUTHORITY\SYSTEM Allow  FullControl
+         BUILTIN\Administrators Allow  FullControl
+         BUILTIN\Users Allow  ReadAndExecute, Synchronize
+```
+
+`checkIdentityFileMode` does not detect this, because on Windows the permission
+bits Go reports are synthesised from the read-only attribute and carry no
+ownership information. The check is skipped there rather than pretending to
+answer a question it cannot.
+
+The consequence for an operator: on Windows, place the config directory somewhere
+whose ACL is already restrictive, for example a directory whose inherited
+permissions have been replaced with an owner-only descriptor. The Node does not do
+this for you, and it does not warn you that it has not. On POSIX no action is
+needed, because `0600` is enforced and verified at load time.
 
 #### `CONNECTOR_NODE_POLICY_FILE` validation and failure modes
 

@@ -74,21 +74,83 @@ func TestOpenAssemblesARuntime(t *testing.T) {
 	}
 }
 
-// TestOpenDeniesTheIdentityFile checks that the Node's own identity file cannot be
-// read through a scope, because reading it would hand a caller the credential that
-// authorizes every operation on this Node.
-func TestOpenDeniesTheIdentityFile(t *testing.T) {
+// TestOpenRefusesAScopeThatOverlapsTheConfigDirectory checks that a scope which
+// contains, sits inside or equals the Node's config directory stops startup.
+//
+// The deny list protects the contents of the Node's own files, but a listing of
+// the config directory still reports their names and sizes. Refusing the overlap
+// removes that metadata leak as well, which is why the design requires a startup
+// refusal rather than relying on the deny list alone.
+func TestOpenRefusesAScopeThatOverlapsTheConfigDirectory(t *testing.T) {
+	cases := []struct {
+		name      string
+		scopePath func(config Config) string
+	}{
+		{
+			name:      "scope equals the config directory",
+			scopePath: func(config Config) string { return config.ConfigDir },
+		},
+		{
+			name:      "scope contains the config directory",
+			scopePath: func(config Config) string { return filepath.Dir(config.ConfigDir) },
+		},
+		{
+			name: "scope sits inside the config directory",
+			scopePath: func(config Config) string {
+				inside := filepath.Join(config.ConfigDir, "inner")
+				if err := os.Mkdir(inside, 0o700); err != nil {
+					t.Fatalf("mkdir inner scope: %v", err)
+				}
+				return inside
+			},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			config := newRuntimeFixture(t)
+			scopePath := testCase.scopePath(config)
+
+			writeFile(t, config.PolicyPath, "version: 1\n"+
+				"scopes:\n"+
+				"  project:\n"+
+				"    path: "+scopePath+"\n"+
+				"grants:\n"+
+				"  - scope: project\n"+
+				"    permissions: [read, list, stat]\n")
+
+			runtime, err := Open(config, discardLogger())
+			if err == nil {
+				runtime.Close()
+				t.Fatal("Open() = nil error, want a refusal for a scope overlapping the config directory")
+			}
+			if !strings.Contains(err.Error(), "overlaps the Node's config directory") {
+				t.Fatalf("Open() = %v, want a message naming the config-directory overlap", err)
+			}
+		})
+	}
+}
+
+// TestOpenDeniesThePolicyFileInsideAScope checks that the deny list still refuses
+// the Node's own policy file when that file legitimately sits inside a scope.
+//
+// The policy path is configurable, so an operator may keep it beside the files it
+// governs. The identity file cannot reach this situation any more, because no
+// scope may overlap the config directory, so the policy file is the deny entry
+// that still carries weight.
+func TestOpenDeniesThePolicyFileInsideAScope(t *testing.T) {
 	config := newRuntimeFixture(t)
 
-	// The identity file is written into the config directory, which is outside
-	// the scope. To prove the deny list works, the scope is pointed at the config
-	// directory itself, which is the case an operator could create by mistake.
+	// Move the policy file into the scope directory, which is a layout the
+	// operator can choose through CONNECTOR_NODE_POLICY_FILE.
+	scopeDir := filepath.Join(filepath.Dir(config.ConfigDir), "project")
+	config.PolicyPath = filepath.Join(scopeDir, "policy.yaml")
 	writeFile(t, config.PolicyPath, "version: 1\n"+
 		"scopes:\n"+
-		"  config:\n"+
-		"    path: "+config.ConfigDir+"\n"+
+		"  project:\n"+
+		"    path: "+scopeDir+"\n"+
 		"grants:\n"+
-		"  - scope: config\n"+
+		"  - scope: project\n"+
 		"    permissions: [read]\n")
 
 	runtime, err := Open(config, discardLogger())
@@ -97,18 +159,13 @@ func TestOpenDeniesTheIdentityFile(t *testing.T) {
 	}
 	defer runtime.Close()
 
-	scope, ok := runtime.Authority().Scope(security.Scope("config"))
+	scope, ok := runtime.Authority().Scope(security.Scope("project"))
 	if !ok {
-		t.Fatal("Scope(config) reported missing, want present")
+		t.Fatal("Scope(project) reported missing, want present")
 	}
 
-	_, _, err = scope.Read(IdentityFileName, 0, 0)
-	if err == nil {
-		t.Fatal("Read(identity) = nil error, want a refusal for the Node's own credential")
-	}
-
-	// The policy file is deny-listed too, because it names the directories the
-	// Node serves and a caller has no business reading it.
+	// The policy file names the directories the Node serves, so a caller has no
+	// business reading it even though it sits inside the scope.
 	if _, _, err := scope.Read("policy.yaml", 0, 0); err == nil {
 		t.Fatal("Read(policy.yaml) = nil error, want a refusal for the Node's own policy")
 	}
