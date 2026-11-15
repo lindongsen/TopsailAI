@@ -8,3 +8,7 @@
 # depth and would silently exclude that source tree from version control.
 /topsailai_fixture
 /topsailai_session_info_fixture
+
+# Binary dropped in the Mock Provider module by `go build .` there. The module
+# name is agent-cluster-provider-mock, so go build names the output after it.
+/providers/mock/agent-cluster-provider-mock
