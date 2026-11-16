@@ -56,6 +56,7 @@ from .exception import (
     HardInterruptError,
     LLMBackToChatError,
     LLMRetryExhaustedError,
+    SummaryWindowLimitError,
 )
 from .llm_control.exception import (
     JsonError,
@@ -123,6 +124,9 @@ from .llm_control.null_response_recovery import (
 from .llm_control.retry_runtime_state import (
     bind_retry_runtime_operation as _bind_retry_runtime_operation,
     track_retry_runtime_state as _track_retry_runtime_state,
+)
+from .llm_control.summary_window_guard import (
+    get_agent_summary_window_guard as _get_agent_summary_window_guard,
 )
 from .llm_control.response_events import LLMResponseEventMixin
 
@@ -696,6 +700,23 @@ class LLMModel(
                 return_mode=return_mode,
             ),
         )
+        # Bottom-line guard: stop a turn whose recent LLM traffic is dominated
+        # by summary requests. It is recorded once per logical request, before
+        # the retry loop, so a retried request cannot inflate the window. The
+        # guard lives on the agent because the default summary processor builds
+        # an independent model that a per-model window would never observe.
+        summary_guard = _get_agent_summary_window_guard(get_agent_object())
+        if summary_guard is not None:
+            exceeded, summary_count, window_size, max_summaries = (
+                summary_guard.record(return_mode)
+            )
+            if exceeded:
+                raise SummaryWindowLimitError(
+                    "Summary window limit reached: "
+                    f"{summary_count} summary requests in the last "
+                    f"{window_size} LLM requests exceeds the limit of "
+                    f"{max_summaries}."
+                )
         request_started_at = time.monotonic()
         # One wall-clock budget for the whole logical request. It is read once
         # per request so every attempt of this request is bounded by the same
@@ -1027,7 +1048,12 @@ class LLMModel(
                 print_error(f"blocking chat {sec}s ...")
                 time.sleep(sec)
                 continue
-            except (HardInterruptError, LLMBackToChatError, LLMRetryExhaustedError):
+            except (
+                HardInterruptError,
+                LLMBackToChatError,
+                LLMRetryExhaustedError,
+                SummaryWindowLimitError,
+            ):
                 # These signals control a higher-level flow and must never
                 # be mistaken for retryable provider failures.
                 raise

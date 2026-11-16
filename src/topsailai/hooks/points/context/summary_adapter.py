@@ -7,7 +7,12 @@ from __future__ import annotations
 
 from concurrent.futures import CancelledError
 
-from topsailai.ai_base.exception import HeavyTaskError, HardInterruptError, LLMBackToChatError
+from topsailai.ai_base.exception import (
+    HeavyTaskError,
+    HardInterruptError,
+    LLMBackToChatError,
+    SummaryWindowLimitError,
+)
 from topsailai.ai_base.llm_control.exception import (
     LLMProviderError, LLMProviderTimeoutError, LLMProviderConnectionError,
     LLMProviderReadError,
@@ -131,7 +136,13 @@ def summary_operation(layer):
     return decorate
 
 
-SUMMARY_CONTROL_EXCEPTIONS = (CancelledError, HeavyTaskError, HardInterruptError, LLMBackToChatError)
+SUMMARY_CONTROL_EXCEPTIONS = (
+    CancelledError,
+    HeavyTaskError,
+    HardInterruptError,
+    LLMBackToChatError,
+    SummaryWindowLimitError,
+)
 
 
 def emit_summary_checkpoint(checkpoint, **classification):

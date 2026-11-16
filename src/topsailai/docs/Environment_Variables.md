@@ -186,6 +186,8 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_SEVERE_REPETITION_MAX_CONSECUTIVE` | `2` | Number of consecutive severe-repetition verdicts tolerated before the request stops instead of retrying. Positive integer; values below `1` are treated as `1`. |
 | `TOPSAILAI_HEAVY_TASK_THRESHOLD_CONTINUOUS_SUMMARY_TIMES` | `5` | Threshold of continuous summarizations before a heavy task alert is triggered. |
 | `TOPSAILAI_HEAVY_TASK_PROMPT` | `""` | Prompt used when a heavy task is detected. |
+| `TOPSAILAI_SUMMARY_WINDOW_SIZE` | `10` | Number of most recent LLM requests kept in the sliding window used by the summary guard. Positive integer; invalid or non-positive values fall back to `10`. |
+| `TOPSAILAI_SUMMARY_WINDOW_MAX_SUMMARIES` | `3` | Number of summary requests tolerated inside that window. The turn ends when the count is strictly greater than this value, so the default `3` ends the turn at `4`. Non-negative integer; `0` disables the guard, and negative or invalid values fall back to `3`. |
 
 ### Threshold Resolution
 
