@@ -33,6 +33,16 @@ func TestStreamHelperProcess(t *testing.T) {
 		fmt.Println(streamLine(providercli.FrameStarted, 1))
 		fmt.Println(streamLine(providercli.FrameRecord, 2))
 		fmt.Println(streamLine(providercli.FrameEnd, 3))
+	case "many-records":
+		// Write far more records than the runner's max_records, then end the
+		// stream normally. A live follow is bounded by bytes and by its deadline,
+		// so this stream is healthy and must complete: a record count would end it
+		// with an error that names the provider.
+		fmt.Println(streamLine(providercli.FrameStarted, 1))
+		for sequence := int64(2); sequence <= 41; sequence++ {
+			fmt.Println(streamLine(providercli.FrameRecord, sequence))
+		}
+		fmt.Println(streamLine(providercli.FrameEnd, 42))
 	case "empty":
 		// Write nothing at all, so the stream ends before any frame arrives.
 	case "hold":
@@ -176,5 +186,30 @@ func TestInvokeStreamAcceptsCompleteStream(t *testing.T) {
 	}
 	if records != 1 {
 		t.Fatalf("forwarded %d records, want 1", records)
+	}
+}
+
+// TestInvokeStreamCompletesAStreamLongerThanMaxRecords proves the record budget
+// does not end a healthy stream, through a real child process rather than the
+// scanner alone.
+//
+// The scanner-level guard proves scanStream does not count records. This one
+// proves the whole invokeStream path agrees: the process is not killed, the
+// terminal frame is accepted, and the caller sees success. A record count
+// reintroduced anywhere between the scanner and the caller would end a 40-record
+// tail with an error while the provider had answered correctly.
+func TestInvokeStreamCompletesAStreamLongerThanMaxRecords(t *testing.T) {
+	var records int
+	err := streamHelperRunner(t, "many-records").invokeStream(context.Background(), followRequest(), func(frame providercli.StreamFrame) error {
+		if frame.Type == providercli.FrameRecord {
+			records++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("a healthy stream carrying %d records was rejected with max_records 10: %v", records, err)
+	}
+	if records != 40 {
+		t.Fatalf("forwarded %d records, want all 40", records)
 	}
 }

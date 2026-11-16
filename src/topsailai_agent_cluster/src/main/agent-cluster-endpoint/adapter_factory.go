@@ -17,10 +17,18 @@ import (
 // configuration because the operator-facing adapter document carries no limit
 // fields, and genericcli.New rejects a zero limit rather than inventing one.
 //
-// The values match what the shipped Provider CLI advertises, so the effective
-// concurrency is the provider's own bound and not an arbitrary local one. A
-// provider that advertises a smaller bound still wins, because the adapter takes
-// the minimum of the Endpoint, adapter and provider limits.
+// The byte limits equal what the shipped Provider CLI advertises, so the Endpoint
+// does not narrow a provider that is willing to answer more. The record budget
+// does not: it is smaller than the provider's advertised 10_000, and the Endpoint
+// never counts records, because a count truncates a healthy stream whose only
+// fault is being long. A live follow is bounded by bytes and by its deadline
+// instead. The value survives only because genericcli.New and the wire schema both
+// require a positive budget, so a provider that began enforcing it would truncate
+// a long tail; the follow path must therefore never treat it as a bound.
+//
+// Concurrency is narrowed by the provider, because the adapter takes the minimum
+// of the Endpoint, adapter and provider limits. The byte and record budgets are
+// not narrowed that way: they are sent as the Endpoint's own values.
 const (
 	genericCLIMaxStdinBytes  = 1 << 20
 	genericCLIMaxStdoutBytes = 1 << 20

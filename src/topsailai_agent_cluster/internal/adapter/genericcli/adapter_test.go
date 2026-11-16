@@ -167,6 +167,44 @@ func TestFollowReturnsConsumerStopUnchanged(t *testing.T) {
 	}
 }
 
+// TestFollowForwardsTheConfiguredRecordBudget proves the record budget in the
+// provider request is the configured value rather than a literal invented on the
+// follow path.
+//
+// The budget is not a bound the Endpoint enforces, so nothing fails when it is
+// dropped or replaced: the follow still works, and the only symptom is a provider
+// receiving a different number than the operator configured. Asserting the
+// forwarded value is what keeps the wire budget a configuration decision instead
+// of a constant that drifts away from the one the factory declares.
+func TestFollowForwardsTheConfiguredRecordBudget(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		return describeResponseWithFunctions(request, providercli.FunctionFollowOutput), nil
+	}
+	binding := mustAdapter(t, provider)
+	binding.config.Mapper.(*fakeMapper).mappings["session-id"] = adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native", ResourceID: "session-id"}
+
+	if err := binding.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: "session-id", ProviderGeneration: "g", MaxBytes: 10, MaxLines: 300}, func(protocol.OutputChunk) error { return nil }); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	request := provider.requests[len(provider.requests)-1]
+	if request.Budget.MaxRecords != binding.config.MaxRecords {
+		t.Fatalf("follow request budget MaxRecords = %d, want the configured %d", request.Budget.MaxRecords, binding.config.MaxRecords)
+	}
+	// The line budget is the caller's own, and it is the value a record count used
+	// to truncate: the REPL asks for a 300-line tail while the Endpoint allowed 128
+	// records. Both numbers must survive to the provider unchanged.
+	var payload struct {
+		MaxLines int `json:"max_lines"`
+	}
+	if err := json.Unmarshal(request.Payload, &payload); err != nil {
+		t.Fatalf("decode follow payload: %v", err)
+	}
+	if payload.MaxLines != 300 {
+		t.Fatalf("follow payload max_lines = %d, want the caller's 300", payload.MaxLines)
+	}
+}
+
 func TestAdapterMapsModelSelectPayloadToProviderKey(t *testing.T) {
 	provider := newFakeProvider(t)
 	binding := mustAdapter(t, provider)
