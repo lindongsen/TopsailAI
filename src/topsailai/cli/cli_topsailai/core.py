@@ -352,6 +352,14 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
         if clean_args and clean_args[0] == "--":
             clean_args = clean_args[1:]
         return run_workspace_clean_cli(clean_args)
+    if workspace_command == "reclaim":
+        from cli_topsailai.workspace_reclaim_cli import run_workspace_reclaim_cli
+        reclaim_args = list(getattr(args, "reclaim_args", []) or [])
+        if getattr(args, "reclaim_help", False):
+            reclaim_args.insert(0, "--help")
+        if reclaim_args and reclaim_args[0] == "--":
+            reclaim_args = reclaim_args[1:]
+        return run_workspace_reclaim_cli(reclaim_args)
     output_format = getattr(args, "format", None)
     if workspace_command == "list" and getattr(args, "json", False):
         output_format = "json"
@@ -1562,6 +1570,11 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         sys.exit(run_workspace_clean_cli(argv[2:]))
 
+    if argv[:2] == ["workspace", "reclaim"]:
+        from cli_topsailai.workspace_reclaim_cli import run_workspace_reclaim_cli
+
+        sys.exit(run_workspace_reclaim_cli(argv[2:]))
+
     _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models", "runtime", "session"}
     _TOP_LEVEL_OPTIONS = {
         "-h", "--help", "--version", "-w", "--workspace",
@@ -1855,6 +1868,18 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     workspace_clean_parser.add_argument("clean_args", nargs=argparse.REMAINDER)
     workspace_clean_parser.set_defaults(func=_handle_workspace_subcommand)
+    workspace_reclaim_parser = workspace_subparsers.add_parser(
+        "reclaim",
+        help="report which session owner records are reclaimable and why others are blocked",
+        add_help=False,
+    )
+    workspace_reclaim_parser.add_argument(
+        "-h", "--help", action="store_true", dest="reclaim_help",
+    )
+    workspace_reclaim_parser.add_argument(
+        "reclaim_args", nargs=argparse.REMAINDER,
+    )
+    workspace_reclaim_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_resume_parser = workspace_subparsers.add_parser(
         "resume", help="resume an exact persisted session", allow_abbrev=False,
     )
