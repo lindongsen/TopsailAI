@@ -534,3 +534,86 @@ class TestPersistentDeletion:
 
         deleted_ids = self._deleted_ids(mock_ctx_manager)
         assert "id0" in deleted_ids
+
+
+class TestReconstructionTailFloor:
+    """The reconstruction path must use the same release-aware tail floor.
+
+    Feasibility estimation and in-memory reconstruction must agree, otherwise a
+    released observation can be counted as compressible during the check and
+    then re-absorbed by the tail window during the rebuild. The floor is
+    therefore pinned structurally: reconstruction must call the shared helper
+    instead of computing a head-length floor of its own.
+    """
+
+    def _run_reconstruction(self, monkeypatch, runtime, tail_offset):
+        """Drive summarize_messages_for_processing on the given runtime."""
+        runtime.ai_agent.messages = list(runtime.messages)
+        runtime.ai_agent.get_work_memory_first_position.return_value = 0
+
+        llm_chat = MagicMock()
+        llm_chat.prompt_ctl.messages = [{"role": "assistant", "content": "Summary"}]
+
+        monkeypatch.setattr(
+            runtime, "_summarize_messages", lambda *a, **k: (llm_chat, "Summary")
+        )
+        monkeypatch.setattr(
+            runtime, "_can_summarize_agent2llm_messages", lambda *a, **k: (True, 100)
+        )
+        monkeypatch.setattr(
+            runtime, "_get_head_offset_to_keep_in_summary", lambda *a, **k: 0
+        )
+        monkeypatch.setattr(
+            runtime, "_get_tail_offset_to_keep_in_summary", lambda *a, **k: tail_offset
+        )
+        monkeypatch.setattr(
+            runtime, "_get_agent2llm_summary_token_reserve", lambda *a, **k: 0
+        )
+        monkeypatch.setattr(runtime, "_record_summary_applied", lambda *a, **k: None)
+        monkeypatch.setattr(
+            runtime, "_log_summarize_message_identity_changes", lambda *a, **k: None
+        )
+        monkeypatch.setattr(
+            runtime, "_check_summarize_token_reduction", lambda *a, **k: None
+        )
+        runtime.ai_agent.runtime.token_stat.add_msgs = MagicMock()
+
+        runtime.summarize_messages_for_processing(force=True)
+        return runtime
+
+    def test_reconstruction_uses_release_aware_tail_floor(self, release_env):
+        """Reconstruction must call the shared floor helper, not a head length."""
+        runtime = build_runtime(
+            ContextRuntimeAgent2LLM,
+            [make_observation(BIG_OBSERVATION_TEXT), make_task(), make_assistant()],
+        )
+        calls = []
+        original = runtime._get_summary_preserved_prefix_length
+
+        def _record(messages, head_messages, head_offset_to_keep):
+            calls.append((len(messages), len(head_messages), head_offset_to_keep))
+            return original(messages, head_messages, head_offset_to_keep)
+
+        release_env.setattr(runtime, "_get_summary_preserved_prefix_length", _record)
+
+        self._run_reconstruction(release_env, runtime, tail_offset=1)
+
+        assert calls, "reconstruction must use the release-aware tail floor"
+
+    def test_reconstruction_does_not_reabsorb_released_observation(self, release_env):
+        """A released observation must not come back through the tail window."""
+        runtime = build_runtime(
+            ContextRuntimeAgent2LLM,
+            [
+                make_observation(BIG_OBSERVATION_TEXT),
+                make_task(),
+                make_assistant("a1"),
+                make_assistant("a2"),
+            ],
+        )
+        assert runtime._should_release_opening_observation(runtime.messages)
+
+        self._run_reconstruction(release_env, runtime, tail_offset=3)
+
+        rebuilt = runtime.ai_agent.messages
+        assert "observation" not in [label(message) for message in rebuilt]

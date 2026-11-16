@@ -474,10 +474,15 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             # The tail window is selected by message count, so it can start on a
             # tool observation whose owning assistant message is summarized away.
             # Expand the window backwards to that owner so the preserved tail stays
-            # pair-atomic; the head region bounds the expansion.
+            # pair-atomic. The floor must be release-aware: a head-length floor
+            # would let the tail absorb the observation the head just released,
+            # which would silently defeat the gate and disagree with the
+            # partition path that already uses the same helper.
             tail_messages = []
             if tail_offset_to_keep > 0:
-                tail_floor = max(len(keeping_messages), head_offset_to_keep)
+                tail_floor = self._get_summary_preserved_prefix_length(
+                    messages, keeping_messages, head_offset_to_keep
+                )
                 failed_stage = "tool_pairing"
                 tail_start = message_tool.expand_tail_start_for_tool_pairing(
                     messages,
