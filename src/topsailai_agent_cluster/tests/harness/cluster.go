@@ -72,6 +72,22 @@ type ClusterOptions struct {
 	// never exercise it. The callback receives the database path and must create
 	// the schema itself, because the Server has not opened the file yet.
 	SeedServerDB func(path string) error
+	// SecondServer starts a second independent Server with its own database and
+	// its own API and channel ports. A re-home needs two independent Servers, and
+	// the second must not share the first's SQLite file: a shared database would
+	// make the scenario pass for the wrong reason, because the "new" Server would
+	// already know the previous Server's commands.
+	SecondServer bool
+	// ChannelProxy routes the Endpoint's first dial through a proxy so a scenario
+	// can force a real reconnect to the primary Server. The reconnect is what
+	// advances the primary Server's in-memory fence, and without it a re-home
+	// between two fresh Servers compares generation 1 against generation 1 and
+	// passes even when the connection-layer fix is absent.
+	ChannelProxy bool
+	// EndpointLogFile sends the Endpoint's own log to a file so a scenario can
+	// assert on a reconnect or on the absence of a superseded rejection. The log
+	// is the only place either event is observable.
+	EndpointLogFile bool
 }
 
 // FaultInjection contains test-only process-composition controls shared by integration and BDD tests.
@@ -243,7 +259,24 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("allocate channel port: %w", err)
 	}
-	cluster := &Cluster{Root: root, API: apiPort, Channel: channelPort, ServerDB: filepath.Join(root, "server.db"), EndpointDB: filepath.Join(root, "endpoint.db"), Record: filepath.Join(root, "records.jsonl"), Certs: certs}
+	cluster := &Cluster{Root: root, API: apiPort, Channel: channelPort, ServerDB: filepath.Join(root, "server.db"), EndpointDB: filepath.Join(root, "endpoint.db"), Record: filepath.Join(root, "records.jsonl"), Certs: certs, ServerPath: serverBin}
+	// A second Server gets its own database and its own ports. Sharing either
+	// with the primary would make a re-home scenario pass for the wrong reason:
+	// the "new" Server would already know the previous Server's commands, so a
+	// receipt rejection could never be observed.
+	if options.SecondServer {
+		secondaryAPI, portErr := FreePortE()
+		if portErr != nil {
+			return nil, fmt.Errorf("allocate secondary API port: %w", portErr)
+		}
+		secondaryChannel, portErr := FreePortE()
+		if portErr != nil {
+			return nil, fmt.Errorf("allocate secondary channel port: %w", portErr)
+		}
+		cluster.SecondaryAPI = secondaryAPI
+		cluster.SecondaryChannel = secondaryChannel
+		cluster.SecondaryServerDB = filepath.Join(root, "server-secondary.db")
+	}
 	// The Endpoint only listens when the Server dials, so its channel port is
 	// allocated on demand and stays empty for the default direction.
 	endpointChannelPort := ""
@@ -277,9 +310,16 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The Server's own configuration is retained so a scenario can restart the
+	// process with exactly the same environment. A restart keeps the database and
+	// therefore the durable identity, while the in-memory fence starts again at 1.
+	cluster.ServerEnv = append([]string(nil), serverEnv...)
 	t.Cleanup(func() {
 		if err := StopProcessE(cluster.Endpoint); err != nil {
 			t.Logf("stop endpoint: %v", err)
+		}
+		if err := StopProcessE(cluster.SecondaryServer); err != nil {
+			t.Logf("stop secondary server: %v", err)
 		}
 		if err := StopProcessE(cluster.Server); err != nil {
 			t.Logf("stop server: %v", err)
@@ -287,6 +327,13 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	})
 	if err := waitServerReady(cluster, serverReadinessWait); err != nil {
 		return nil, err
+	}
+	// The second Server starts after the primary is ready, so a failure names the
+	// Server that actually failed instead of leaving two half-started processes.
+	if options.SecondServer {
+		if err := cluster.StartSecondaryServerE(nil); err != nil {
+			return nil, err
+		}
 	}
 	mode := "one"
 	if options.Faults.NoSessions {
@@ -399,7 +446,25 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if options.SharedCertificate {
 		endpointCert, endpointKey = certs.ServerCert, certs.ServerKey
 	}
-	endpointEnv := []string{"AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
+	// The Endpoint's dial address is the primary Server unless a scenario needs a
+	// second Server or a forced reconnect. In those cases the Endpoint receives an
+	// ordered list, because the whole point of the scenario is that it walks the
+	// list and adopts the next Server on its own.
+	primaryAddress := "wss://127.0.0.1:" + cluster.Channel
+	if options.ChannelProxy {
+		// The proxy sits in front of the primary Server so the scenario can sever
+		// the transport without stopping the Server. Stopping it would reset the
+		// in-memory fence to 1, which is the opposite of the precondition: the
+		// Endpoint must hold a generation higher than the one the second Server
+		// will hand out.
+		cluster.ChannelProxy = StartChannelProxy(t, "127.0.0.1:"+cluster.Channel)
+		primaryAddress = cluster.ChannelProxy.Address()
+	}
+	addressVariable := "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=" + primaryAddress
+	if options.SecondServer {
+		addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES=" + primaryAddress + ",wss://127.0.0.1:" + cluster.SecondaryChannel
+	}
+	endpointEnv := []string{addressVariable, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
 	if options.ChannelDirection != "" {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
 	}
@@ -420,6 +485,15 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 			return nil, writeErr
 		}
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE="+allowlistPath)
+	}
+	// A scenario that must assert on a reconnect or on a superseded rejection
+	// needs the Endpoint's own log, because neither event is observable anywhere
+	// else. The log goes to a file rather than to the test output so the scenario
+	// can read it back at the exact moment it needs to, instead of relying on
+	// whatever the test framework has already flushed.
+	if options.EndpointLogFile {
+		cluster.EndpointLogPath = filepath.Join(root, "endpoint.log")
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_LOG_OUTPUT=file", "AGENT_CLUSTER_LOG_PATH="+cluster.EndpointLogPath)
 	}
 	endpointEnv = append(endpointEnv, sortedEnvironment(options.EndpointEnvironment)...)
 	cluster.EndpointPath = endpointBin

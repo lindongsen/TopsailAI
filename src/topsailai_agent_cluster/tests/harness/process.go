@@ -33,12 +33,31 @@ type Cluster struct {
 	// starts. It is the client-side configuration seam: the Endpoint token map
 	// lives here because it is the CLI's own configuration, and the Server must
 	// never hold it.
-	CLIEnv []string
-	Certs                       CertFiles
-	TUIPath                     string
-	tuiBuildMu                  sync.Mutex
-	stopMu                      sync.Mutex
-	stopped                     bool
+	CLIEnv  []string
+	Certs   CertFiles
+	TUIPath string
+	// ServerPath and ServerEnv are retained so a scenario can restart the
+	// primary Server with its original configuration. A restart keeps the
+	// database and therefore the Server's durable identity, while the in-memory
+	// fence starts again at 1, which is exactly the case a restarted Server
+	// presents to an Endpoint that still holds a higher generation.
+	ServerPath string
+	ServerEnv  []string
+	// SecondaryAPI, SecondaryChannel and SecondaryServerDB describe the second
+	// independent Server. They stay empty unless the scenario asked for one, so
+	// every existing scenario keeps its exact single-Server topology.
+	SecondaryAPI, SecondaryChannel string
+	SecondaryServerDB              string
+	SecondaryServer                *exec.Cmd
+	// ChannelProxy sits between the Endpoint and the primary Server when a
+	// scenario must force a real reconnect. It stays nil otherwise.
+	ChannelProxy *ChannelProxy
+	// EndpointLogPath is the file that receives the Endpoint's own log when a
+	// scenario must assert on a reconnect or a superseded rejection.
+	EndpointLogPath string
+	tuiBuildMu      sync.Mutex
+	stopMu          sync.Mutex
+	stopped         bool
 }
 
 // ModuleRoot returns the repository root for tests launched from a package directory.
