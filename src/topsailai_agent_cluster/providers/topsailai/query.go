@@ -53,7 +53,7 @@ type historyEntry struct {
 	SessionName      string `json:"session_name"`
 	ProjectWorkspace string `json:"project_workspace"`
 	ModifiedTimeRaw  string `json:"modified_time_raw"`
-	CreateTimeRaw    string `json:"create_time_raw"`
+	CreateTime       string `json:"create_time"`
 	Task             string `json:"task"`
 	No               int    `json:"no"`
 	Status           string `json:"status"`
@@ -220,7 +220,7 @@ func (p *provider) history(ctx context.Context, requested *target, raw json.RawM
 		}
 		seen[key] = struct{}{}
 		resumable, reason := historyResumability(entry.Status)
-		result.Rows = append(result.Rows, historyRowFact{resourceSession, key, entry.SessionID, entry.SessionName, entry.ProjectWorkspace, boundedString(entry.Task, maxHistoryTaskBytes), entry.Status, providerTimeMS(entry.CreateTimeRaw), providerTimeMS(entry.ModifiedTimeRaw), entry.No, resumable, reason})
+		result.Rows = append(result.Rows, historyRowFact{resourceSession, key, entry.SessionID, entry.SessionName, entry.ProjectWorkspace, boundedString(entry.Task, maxHistoryTaskBytes), entry.Status, providerTimeMS(entry.CreateTime), providerTimeMS(entry.ModifiedTimeRaw), entry.No, resumable, reason})
 	}
 	return result, nil
 }

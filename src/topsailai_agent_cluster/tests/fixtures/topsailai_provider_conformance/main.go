@@ -87,7 +87,20 @@ func project(args []string) {
 	case "list":
 		emit([]map[string]any{})
 	case "list_sessions":
-		emit([]map[string]any{})
+		// One row, because the history query is only meaningful when it has a
+		// row to convert. The row carries `create_time`, which is the field the
+		// Provider reads for `created_at_ms`; an empty array here would let a
+		// stale field name pass conformance while silently zeroing the value.
+		emit([]map[string]any{{
+			"session_id":        fixtureSessionID,
+			"session_name":      "fixture",
+			"project_workspace": "/fixture",
+			"task":              "fixture task",
+			"status":            "Idle",
+			"no":                1,
+			"create_time":       "2026-11-09T10:00:00",
+			"modified_time_raw": "2026-11-09T10:05:00",
+		}})
 	default:
 		fail("unsupported project subcommand " + args[0])
 	}
