@@ -84,7 +84,7 @@ func (p *provider) runFollow(ctx context.Context, request request, emit func(fol
 	if err := decodeStrict(request.Payload, &payload); err != nil || payload.MaxBytes < 0 || payload.MaxBytes > followMaxRecordBytes || payload.MaxLines < 0 || payload.MaxLines > 10000 {
 		return fmt.Errorf("%w: invalid output payload", errInvalidRequest)
 	}
-	resolved, err := p.resolveWorkspaceTarget(ctx, request.Target)
+	resolved, err := p.resolveReadTarget(ctx, request.Target)
 	if err != nil {
 		return err
 	}

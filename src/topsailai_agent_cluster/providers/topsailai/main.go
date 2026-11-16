@@ -37,8 +37,10 @@ func serve(reader io.Reader, writer io.Writer) error {
 		return err
 	}
 	// The platform capabilities are detected once here, beside the catalog, so no
-	// later decision re-probes the host.
-	provider := newProvider(newCLIRunner(os.Environ()), control, probePlatformCapabilities())
+	// later decision re-probes the host. The task directory is resolved from the
+	// same environment for the same reason: one boundary read, passed down.
+	environment := os.Environ()
+	provider := newProvider(newCLIRunner(environment), control, probePlatformCapabilities(), resolveTaskDir(environment))
 	if request.Function == functionFollowOutput {
 		return provider.followOutput(context.Background(), request, writer)
 	}

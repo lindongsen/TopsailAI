@@ -110,8 +110,8 @@ func TestAgentStopStillRunsOnASupportedHost(t *testing.T) {
 // Two providers built with different values must disagree in the same process. A
 // package-level switch would make the second construction overwrite the first.
 func TestPlatformGateIsNotAPackageGlobal(t *testing.T) {
-	supported := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform)
-	unsupported := newProvider(stubCommandRunner{}, controlCatalog{}, unsupportedPlatform)
+	supported := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform, "")
+	unsupported := newProvider(stubCommandRunner{}, controlCatalog{}, unsupportedPlatform, "")
 	supportedNames := advertisedOperations(supported.platform)
 	unsupportedNames := advertisedOperations(unsupported.platform)
 	if !containsOperation(supportedNames, operationAgentStop) {
