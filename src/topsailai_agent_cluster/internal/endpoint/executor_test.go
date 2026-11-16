@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -302,6 +303,11 @@ func TestResumePreflightRequiresAuthoritativeAbsence(t *testing.T) {
 		// execute, because refusing on Found would reject every resumable session.
 		{name: "listed but unverified executes", inspection: adapter.InspectResult{Found: true, Live: false}, wantCalls: 1},
 		{name: "observation failure rejects", inspectErr: errors.New("provider unavailable"), wantCode: "target_observation_failed"},
+		// A busy adapter never observed the target, so the rejection must not
+		// claim the target was unobservable. The same intent may succeed unchanged
+		// once the competing invocation finishes, which is why this is a distinct
+		// retryable code rather than a provider failure.
+		{name: "busy adapter rejects as retryable", inspectErr: fmt.Errorf("%w: discovery", adapter.ErrBusy), wantCode: "adapter_busy"},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -894,6 +900,10 @@ func TestWorkspaceCleanGenerationlessAdmission(t *testing.T) {
 		{name: "exact expired row executes", inspection: adapter.InspectResult{Found: true, Live: false}, wantCalls: 1},
 		{name: "missing row rejects", inspection: adapter.InspectResult{Found: false}, wantCode: "target_not_found"},
 		{name: "inspection failure rejects", inspectionErr: errors.New("provider unavailable"), wantCode: "target_observation_failed"},
+		// Cleanup shares the same preflight, so a busy adapter must be reported
+		// the same way here: the row was never observed, and the operator must be
+		// told to retry rather than to doubt the row.
+		{name: "busy adapter rejects as retryable", inspectionErr: fmt.Errorf("%w: discovery", adapter.ErrBusy), wantCode: "adapter_busy"},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {

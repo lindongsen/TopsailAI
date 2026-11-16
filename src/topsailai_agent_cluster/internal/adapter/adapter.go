@@ -11,6 +11,17 @@ import (
 // ErrUnsupported indicates that an adapter does not implement a requested capability.
 var ErrUnsupported = errors.New("adapter capability unsupported")
 
+// ErrBusy reports that an adapter could not obtain the capacity it needs within
+// the caller's budget, so the requested observation never happened.
+//
+// It is deliberately distinct from a provider failure. A busy adapter says
+// nothing about the target: the same intent may succeed unchanged once the
+// competing invocation finishes, so a caller must be able to tell "retry" from
+// "the target cannot be observed". The sentinel lives here rather than in a
+// concrete adapter package because the Endpoint owns this contract and must not
+// import an implementation to recognise the condition.
+var ErrBusy = errors.New("adapter capacity unavailable")
+
 // Descriptor identifies one configured adapter instance and its capabilities.
 type Descriptor struct {
 	AdapterID    string

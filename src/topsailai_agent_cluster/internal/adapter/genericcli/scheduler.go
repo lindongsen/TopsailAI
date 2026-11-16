@@ -7,13 +7,17 @@ import (
 	"sync"
 	"time"
 
+	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/providercli"
 )
 
 // ErrCapacity reports that one Adapter instance has no immediate capacity for a
 // Provider CLI invocation. Admission is deliberately non-blocking: waiting in an
 // unbounded queue would let a caller believe its operation had already started.
-var ErrCapacity = errors.New("provider adapter capacity exhausted")
+//
+// It wraps adapter.ErrBusy so the Endpoint can recognise a capacity condition
+// through the contract it owns, without importing this implementation package.
+var ErrCapacity = fmt.Errorf("%w: provider adapter capacity exhausted", adapter.ErrBusy)
 
 type invocationClass string
 

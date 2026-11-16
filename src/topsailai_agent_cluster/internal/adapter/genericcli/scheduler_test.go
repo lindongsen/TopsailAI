@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/providercli"
 )
 
@@ -36,6 +37,33 @@ func TestSchedulerRejectsClassSaturationAndRestoresTotalSlot(t *testing.T) {
 		t.Fatalf("class rejection leaked total capacity: %v", err)
 	}
 	releaseMutation()
+}
+
+// TestSchedulerCapacityErrorIsRecognisableThroughTheAdapterContract proves the
+// capacity condition is reachable through the sentinel the Endpoint owns.
+//
+// The Endpoint must not import this implementation package to recognise a busy
+// adapter, so the check it performs is errors.Is(err, adapter.ErrBusy). If
+// ErrCapacity stopped wrapping that sentinel, every capacity collision would fall
+// back to the provider-failure code and the operator would again be told the
+// target could not be observed.
+func TestSchedulerCapacityErrorIsRecognisableThroughTheAdapterContract(t *testing.T) {
+	scheduler := mustScheduler(t, providercli.ConcurrencyLimits{Total: 1, Discovery: 1, Mutation: 1, Follow: 1})
+	release, err := scheduler.acquire(classDiscovery)
+	if err != nil {
+		t.Fatalf("acquire first slot: %v", err)
+	}
+	defer release()
+	_, err = scheduler.acquire(classDiscovery)
+	if err == nil {
+		t.Fatal("second acquire succeeded with no capacity")
+	}
+	if !errors.Is(err, adapter.ErrBusy) {
+		t.Fatalf("capacity error = %v, want it to wrap adapter.ErrBusy", err)
+	}
+	if !errors.Is(err, ErrCapacity) {
+		t.Fatalf("capacity error = %v, want it to keep wrapping ErrCapacity", err)
+	}
 }
 
 func TestSchedulerReleaseIsIdempotent(t *testing.T) {

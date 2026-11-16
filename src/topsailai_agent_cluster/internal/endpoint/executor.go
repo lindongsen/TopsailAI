@@ -152,7 +152,7 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			// sessions resume exists for.
 			inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
 			if inspectErr != nil {
-				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_observation_failed"))
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, observationFailureCode(inspectErr)))
 			}
 			if inspection.Live {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_still_active"))
@@ -166,7 +166,7 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			// operation exists for.
 			inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
 			if inspectErr != nil {
-				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_observation_failed"))
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, observationFailureCode(inspectErr)))
 			}
 			if !inspection.Found {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_not_found"))
@@ -177,7 +177,7 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			// the provider to still report that exact row before dispatch.
 			inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
 			if inspectErr != nil {
-				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_observation_failed"))
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, observationFailureCode(inspectErr)))
 			}
 			if !inspection.Found {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_not_found"))
@@ -547,6 +547,23 @@ func rejectedReceipt(intent protocol.ImmutableIntent, hash, code string) protoco
 	receipt.ErrorCode = code
 	return receipt
 }
+
+// observationFailureCode names why a preflight observation did not happen.
+//
+// A busy adapter and a broken provider are different facts and must not share one
+// code. Capacity is a transient collision with another invocation of the same
+// Adapter instance, so the same intent may succeed unchanged once that invocation
+// finishes; reporting it as target_observation_failed told the operator the target
+// could not be observed, which sent them to inspect a session that was never the
+// problem. The provider-failure code is kept for every other error, because only a
+// capacity condition is provably unrelated to the target.
+func observationFailureCode(err error) string {
+	if errors.Is(err, adapter.ErrBusy) {
+		return "adapter_busy"
+	}
+	return "target_observation_failed"
+}
+
 func decodeReceipt(value string) (protocol.ExecutionReceipt, error) {
 	var receipt protocol.ExecutionReceipt
 	if value == "" {
