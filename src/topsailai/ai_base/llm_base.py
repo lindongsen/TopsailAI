@@ -63,6 +63,7 @@ from .llm_control.exception import (
     ModelServiceError,
     LLMServiceSpecialResponseError,
     LLMSevereRepetitionError,
+    LLMRequestTimeoutError,
     LLMProviderBadRequestError,
     LLMProviderConnectionError,
     LLMProviderInternalServerError,
@@ -74,6 +75,7 @@ from .llm_control.exception import (
 from .llm_control.message import get_response_message, format_response
 from .llm_control.configuration import (
     get_first_byte_timeout_config as _get_first_byte_timeout_config,
+    get_llm_request_wall_clock_budget as _get_llm_request_wall_clock_budget,
 )
 from .llm_control.base_class import (
     LLMModelBase,
@@ -347,6 +349,44 @@ class LLMModel(
         Thin wrapper around the provider-neutral helper in ``llm_control``.
         """
         return _get_first_byte_timeout_config(env_tool.EnvReaderInstance)
+
+    def _get_request_wall_clock_budget(self):
+        """Return the wall-clock budget of one logical request in seconds.
+
+        Thin wrapper around the provider-neutral helper in ``llm_control``.
+        The value is read at call time so an operator can tune it on a
+        running process. ``0`` disables the budget.
+        """
+        return _get_llm_request_wall_clock_budget(env_tool.EnvReaderInstance)
+
+    def _check_request_wall_clock_budget(
+            self, request_started_at, budget, attempt_number,
+        ):
+        """Raise once one logical request has spent its wall-clock budget.
+
+        The budget is measured from the start of the request, so it bounds the
+        whole retry loop rather than one attempt. Without it a request can
+        resend itself for hours while every individual attempt still looks
+        short, and no caller above the loop can observe the stall.
+
+        Args:
+            request_started_at (float): Monotonic start time of the request.
+            budget (float): Budget in seconds; ``<= 0`` disables the check.
+            attempt_number (int): Attempt about to start, used in the message.
+
+        Raises:
+            LLMRequestTimeoutError: When the elapsed time exceeds the budget.
+        """
+        if budget is None or budget <= 0:
+            return
+        elapsed = time.monotonic() - request_started_at
+        if elapsed < budget:
+            return
+        raise LLMRequestTimeoutError(
+            f"{LLM_KEYWORD_SERVICE}: request exceeded its wall-clock budget "
+            f"after {elapsed:.1f}s over {attempt_number - 1} attempts "
+            f"(budget={budget:.0f}s); retrying the same request cannot recover"
+        )
 
     def _make_first_byte_timeout_error(self, first_byte_timeout):
         """Construct the provider timeout error through the OpenAI adapter."""
@@ -657,6 +697,12 @@ class LLMModel(
             ),
         )
         request_started_at = time.monotonic()
+        # One wall-clock budget for the whole logical request. It is read once
+        # per request so every attempt of this request is bounded by the same
+        # value, and it covers retry attempts plus backoff sleeps. Without it a
+        # request can resend itself for hours while each attempt still looks
+        # short, and no caller above this loop can observe the stall.
+        request_wall_clock_budget = self._get_request_wall_clock_budget()
         policy = retry_interaction_policy or LLMRetryInteractionPolicy()
         prompt_allowed = policy.can_prompt() and thread_tool.is_main_thread()
         attempts_per_cycle = 18
@@ -672,6 +718,12 @@ class LLMModel(
         for total_attempt in range(1, loop_attempts + 1):
             attempt_in_cycle = (total_attempt - 1) % attempts_per_cycle + 1
             i = attempt_in_cycle - 1
+            # Check the budget before any cycle-exhaustion prompt or backoff
+            # sleep, so a stalled request stops instead of paying another wait
+            # and asking the human to continue a request that cannot recover.
+            self._check_request_wall_clock_budget(
+                request_started_at, request_wall_clock_budget, total_attempt,
+            )
             if attempt_in_cycle == 1:
                 err_count_map = {}
                 if total_attempt > 1:
@@ -932,6 +984,25 @@ class LLMModel(
                 # generic ModelServiceError branch, which would otherwise treat
                 # it as retryable and keep resending the same request.
                 print_error(f"!!! [{i}] {LLM_KEYWORD_SERVICE}: {e}")
+                raise
+            except LLMRequestTimeoutError as e:
+                # The wall-clock budget is measured from the start of this
+                # request, so it is already spent. Catch it before the generic
+                # ModelServiceError branch, which would otherwise treat it as
+                # retryable and resend the very request the budget exists to
+                # stop.
+                print_error(f"!!! [{i}] {LLM_KEYWORD_SERVICE}: {e}")
+                _record_llm_request_event(
+                    "llm.request.end",
+                    _build_llm_request_end_payload(
+                        operation_id=operation_id,
+                        model_name=_resolve_model_name(self),
+                        outcome="failed",
+                        attempt_count=total_attempt,
+                        duration_sec=time.monotonic() - request_started_at,
+                        error_category="LLMRequestTimeoutError",
+                    ),
+                )
                 raise
             except ModelServiceError as e:
                 last_error = e

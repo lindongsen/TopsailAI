@@ -131,6 +131,11 @@ TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=180
 # Default 0; standalone/class-wrapper compatibility instead stops and returns [].
 TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE=0
 
+# Wall-clock budget in seconds for one whole logical LLM request (default 1800).
+# Covers every retry attempt plus backoff sleeps of that request; 0 disables it.
+# On expiry the request raises LLMRequestTimeoutError instead of resending.
+TOPSAILAI_LLM_REQUEST_WALL_CLOCK_BUDGET_SEC=1800
+
 # =============================================================================
 # LLM Response Event Recording
 # =============================================================================

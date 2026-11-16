@@ -115,6 +115,42 @@ def get_llm_request_retry_state_threshold(env_reader=None):
     return threshold
 
 
+LLM_REQUEST_WALL_CLOCK_BUDGET_DEFAULT_SEC = 1800
+
+
+def get_llm_request_wall_clock_budget(env_reader=None):
+    """Return the wall-clock budget of one logical LLM request in seconds.
+
+    The budget is measured from the start of the request and covers every
+    retry attempt plus every backoff sleep, because a request can stall while
+    each individual attempt still looks short. It is read at call time so an
+    operator can tune it on a running process.
+
+    Args:
+        env_reader: Optional reader exposing ``get``. Defaults to
+            ``EnvReaderInstance``.
+
+    Returns:
+        float: Budget in seconds. ``0`` disables the budget; a negative or
+        invalid value falls back to the default.
+    """
+    if env_reader is None:
+        env_reader = EnvReaderInstance
+    raw = env_reader.get(
+        "TOPSAILAI_LLM_REQUEST_WALL_CLOCK_BUDGET_SEC",
+        default=LLM_REQUEST_WALL_CLOCK_BUDGET_DEFAULT_SEC,
+    )
+    if isinstance(raw, bool):
+        return float(LLM_REQUEST_WALL_CLOCK_BUDGET_DEFAULT_SEC)
+    try:
+        budget = float(raw)
+    except (TypeError, ValueError):
+        return float(LLM_REQUEST_WALL_CLOCK_BUDGET_DEFAULT_SEC)
+    if budget < 0:
+        return float(LLM_REQUEST_WALL_CLOCK_BUDGET_DEFAULT_SEC)
+    return budget
+
+
 def get_configured_extra_body():
     """Parse provider-specific fields from TOPSAILAI_LLM_EXTRA_BODY."""
     return get_json_object_from_env("TOPSAILAI_LLM_EXTRA_BODY")

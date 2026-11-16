@@ -38,6 +38,23 @@ class LLMSevereRepetitionError(ModelServiceError):
     """
 
 
+class LLMRequestTimeoutError(ModelServiceError):
+    """Report one logical LLM request that spent its wall-clock budget.
+
+    This is a specialized model-service error: the request is unusable for the
+    same reason a generic service error is, but the cause is the retry loop
+    itself rather than one provider reply. Every individual attempt may look
+    short while the loop keeps resending the same request, so only a budget
+    measured from the start of the request can bound the stall.
+
+    It subclasses ``ModelServiceError`` so callers that already handle model
+    service failures keep working. The retry loop must therefore never let the
+    generic ``ModelServiceError`` branch catch it, because that branch treats
+    the error as retryable and would resend the very request the budget exists
+    to stop.
+    """
+
+
 class LLMProviderError(Exception):
     """Base error translated from an LLM provider SDK or transport."""
 
