@@ -110,6 +110,14 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 		// misreported it.
 		code = protocol.AdapterBusy
 		s.logError("follow provider output", err)
+	case errors.Is(err, adapter.ErrOutputLimit):
+		// A local byte budget stopped the stream, so the provider was not at
+		// fault. Reporting it as provider_error sent the operator to investigate a
+		// provider that behaved correctly, and the same follow may succeed with a
+		// smaller request. This case must precede the default, because the default
+		// is what misreported it.
+		code = protocol.OutputLimit
+		s.logError("follow provider output", err)
 	default:
 		code = "provider_error"
 		s.logError("follow provider output", err)

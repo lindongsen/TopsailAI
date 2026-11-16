@@ -66,6 +66,21 @@ const PolicyDenied = "policy_denied"
 // failure, and two literals in two packages would drift.
 const AdapterBusy = "adapter_busy"
 
+// OutputLimit reports that a streamed read stopped because a local byte budget was
+// exhausted, so the provider was not at fault.
+//
+// It is deliberately distinct from a provider failure. The provider wrote valid
+// frames and the Endpoint refused to buffer more of them, so the operator must be
+// told that the local bound was reached rather than sent to investigate a provider
+// that behaved correctly. A record count is not part of this condition: a live
+// follow is bounded by bytes and by its deadline, because a record count truncates
+// a healthy stream whose only fault is being long.
+//
+// It lives here rather than in the Endpoint package because the Server and the TUI
+// must recognise the code to report it as a local bound instead of a provider
+// failure, and two literals in two packages would drift.
+const OutputLimit = "output_limit"
+
 // Standard safety classes. The vocabulary is closed, because the value decides
 // whether an operator must confirm an operation and which scope a credential must
 // hold. A read-only listing advertised as mutating is a contract lie: it forces a

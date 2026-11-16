@@ -279,6 +279,66 @@ Exit codes: `0` for a preview, an empty inventory, or a complete deletion; `1`
 when the task directory cannot be read or at least one removal failed; `2` for a
 usage error.
 
+### Non-interactive reclaim inspection
+
+```text
+topsailai workspace reclaim [-s ID1,ID2] [--dry-run] [--verbose] [--json]
+```
+
+`workspace reclaim` reports which session owner records the agent will reclaim
+at its next startup and why every other session is blocked. It is read-only by
+design: it never deletes, renames, or truncates anything, so `--dry-run` is an
+explicit alias for the default behaviour rather than a mode switch.
+
+The command exists because `workspace clean` cannot answer this question. That
+command discovers `.stdout` and `.stderr` log files only, while the reclaim
+paths act on the wider owner-record set that includes metadata, `stats.jsonl`,
+`events`, and socket endpoints. A session whose metadata is already gone is
+invisible to `workspace clean` even though the agent will still reclaim its
+remaining records.
+
+The report reuses the framework's own owner-record pattern and the framework's
+activity probe, so it describes the same population and the same authorization
+the production paths use. Two production paths are mirrored: a session that
+still owns metadata is reclaimed by the metadata retention path together with
+its artifacts, and a session that lost its metadata is reclaimed by the orphan
+path, which removes only its own expired records. Both paths require a provably
+stopped owner, so the liveness gate is evaluated first and is identical.
+
+A socket endpoint is not a regular file and is owned by the channel that created
+it, so it is never reported as a reclaimable record. A session whose only
+remaining record is a socket endpoint is reported as blocked with that reason
+instead of being described as a retention-window decision.
+
+`-s/--session ID1,ID2` restricts the report to the named comma-separated
+sessions using the same selector syntax as `workspace list`. The display
+spelling `(temp)` selects the records whose on-disk prefix is `topsailai`, so
+both spellings reach the same rows. An empty or whitespace-only selector is a
+usage error with exit code `2` rather than a silent "select everything", and two
+different `-s` values in one invocation are rejected as ambiguous.
+
+`--verbose` adds one line per owner record with its own size, modification time,
+age, and expiry verdict, so a blocked session can be explained down to the file
+that keeps it alive.
+
+With `--json`, stdout contains exactly one receipt and every human diagnostic
+line goes to stderr. `response` carries `retention_days`, `meta_max_count`,
+`selectors`, `sessions`, `session_count`, `reclaimable_sessions`,
+`reclaimable_session_count`, `blocked_session_count`,
+`reclaimable_record_count`, and `reclaimable_bytes`. Each entry in `sessions`
+carries `session_id`, `owner_pids`, `record_count`, `socket_count`,
+`has_metadata`, `activity_state`, `activity_reason`, `expired_count`,
+`expired_bytes`, `decision`, `reason`, and `records`. `decision` is
+`reclaimable` or `blocked`, and `reason` states why. `delivery_state` is
+`inspected` or `nothing_to_inspect`.
+
+A non-positive `TOPSAILAI_SESSION_META_RETENTION_DAYS` disables both production
+paths, so the command reports `nothing_to_inspect` instead of claiming records
+that no path would remove.
+
+Exit codes: `0` for a completed inspection or an empty inventory; `1` when the
+task directory cannot be read; `2` for a usage error.
+
 ### Workspace task list columns
 
 When the CLI starts, it prints the workspace task list built by scanning `{TOPSAILAI_HOME}/workspace/task/` for `.stdout` and `.stderr` log files produced by running sessions and their tasks. Each row represents a discovered log file and shows:
@@ -597,6 +657,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; success requires the resumed process to answer on its control channel within 7 seconds. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `workspace clean [-s ID1,ID2] [-p PID1,PID2] [--yes] [--json]` | List expired session files without prompting, and delete them only with `--yes`. `-s/--session` restricts the inventory to the named comma-separated sessions, and `-p/--pid` narrows it to the named session instances by owning PID; the two combine as an intersection. `--json` emits one receipt on stdout with diagnostics on stderr. See [Non-interactive clean](#non-interactive-clean). |
+| `workspace reclaim [-s ID1,ID2] [--dry-run] [--verbose] [--json]` | Report which session owner records the agent will reclaim at its next startup and why every other session is blocked. Read-only: it never deletes, so `--dry-run` is an explicit alias for the default. `-s/--session` restricts the report to the named comma-separated sessions, and `--verbose` lists every owner record with its own expiry verdict. `--json` emits one receipt on stdout with diagnostics on stderr. See [Non-interactive reclaim inspection](#non-interactive-reclaim-inspection). |
 | `docs list [--json]` | List all usage documentation files and exit. `--json` outputs a JSON array of document records instead of a table. |
 | `docs read <name> [--json]` | Read a specific usage documentation file and exit. `--json` outputs one structured result object instead of the raw content. |
 | `project add <path> [name]` | Add a project to the managed project list. |
