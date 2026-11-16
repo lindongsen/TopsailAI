@@ -419,3 +419,104 @@ class TestCallSites:
         no_answer_index = source.index("NO ANSWER")
         release_index = source.index("release_opening_observation_after_summary")
         assert no_answer_index < release_index
+
+
+# =============================================================================
+# Observability: print, log and event
+# =============================================================================
+
+class TestReleaseObservability:
+    """Every message-changing behavior must print, log and record an event."""
+
+    def _prepare(self, monkeypatch, tokens=400, budget=1000):
+        monkeypatch.setenv(
+            "TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO", "0.3"
+        )
+        runtime = _runtime()
+        _patch_tokens(runtime, tokens)
+        _patch_budget(runtime, budget)
+        return runtime
+
+    def test_release_prints_a_warning(self, monkeypatch):
+        """A rare release is reported with print_warning, not a step print."""
+        runtime = self._prepare(monkeypatch)
+        messages = [OBSERVATION, TASK]
+        with patch(
+            "topsailai.workspace.context.base.print_tool.print_warning"
+        ) as warn_mock:
+            runtime.release_opening_observation_after_summary(messages)
+
+        warn_mock.assert_called_once()
+        text = warn_mock.call_args[0][0]
+        assert "released opening observation" in text
+        assert "removed=1" in text
+        assert "block_tokens=400" in text
+        assert "budget=1000" in text
+
+    def test_no_warning_when_nothing_is_released(self, monkeypatch):
+        """A kept observation must not produce a warning."""
+        runtime = self._prepare(monkeypatch, tokens=100)
+        messages = [OBSERVATION, TASK]
+        with patch(
+            "topsailai.workspace.context.base.print_tool.print_warning"
+        ) as warn_mock:
+            assert runtime.release_opening_observation_after_summary(messages) == 0
+
+        warn_mock.assert_not_called()
+
+    def test_release_records_an_event(self, monkeypatch):
+        """The in-memory removal must leave an auditable event."""
+        runtime = self._prepare(monkeypatch)
+        messages = [OBSERVATION, TASK]
+        with patch("topsailai.events.record_event") as event_mock:
+            runtime.release_opening_observation_after_summary(
+                messages, session_id="sess-1"
+            )
+
+        event_mock.assert_called_once()
+        event_type, payload = event_mock.call_args[0][0], event_mock.call_args[0][1]
+        assert event_type == "context.summary.opening_observation_released"
+        assert payload["removed_messages"] == 1
+        assert payload["block_tokens"] == 400
+        assert payload["budget_tokens"] == 1000
+        assert payload["ratio"] == 0.3
+        assert payload["session_id"] == "sess-1"
+        assert payload["persisted"] is False
+
+    def test_persisted_deletion_records_its_own_event(self):
+        """The persisted removal is reported separately from the memory one."""
+        runtime = _runtime()
+        raw = [
+            MagicMock(msg_id="id0", message=json.dumps(OBSERVATION)),
+            MagicMock(msg_id="id1", message=json.dumps(TASK)),
+        ]
+        with patch(
+            "topsailai.workspace.context.base.ctx_manager.get_messages_by_session",
+            return_value=raw,
+        ), patch(
+            "topsailai.workspace.context.base.ctx_manager.del_session_messages"
+        ), patch(
+            "topsailai.workspace.context.base.print_tool.print_warning"
+        ) as warn_mock, patch(
+            "topsailai.events.record_event"
+        ) as event_mock:
+            runtime._delete_persisted_opening_observation("sess-1")
+
+        warn_mock.assert_called_once()
+        assert "removed_rows=1" in warn_mock.call_args[0][0]
+        event_mock.assert_called_once()
+        payload = event_mock.call_args[0][1]
+        assert payload["removed_messages"] == 1
+        assert payload["persisted"] is True
+
+    def test_event_failure_does_not_interrupt_the_release(self, monkeypatch):
+        """Event recording is best-effort and must never break summarization."""
+        runtime = self._prepare(monkeypatch)
+        messages = [OBSERVATION, TASK]
+        with patch(
+            "topsailai.events.record_event", side_effect=RuntimeError("boom")
+        ):
+            removed = runtime.release_opening_observation_after_summary(messages)
+
+        assert removed == 1
+        assert messages == [TASK]

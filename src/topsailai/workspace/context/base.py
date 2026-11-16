@@ -473,24 +473,81 @@ class ContextRuntimeBase(object):
             return 0.0
         return ratio
 
+    # ------------------------------------------------------------------
+    # PITFALLS: only the LEADING CONTIGUOUS user-role observation block may
+    # be released, and in practice that block holds exactly ONE message.
+    #
+    # 1. Only user-role observation messages are eligible. Eligibility is
+    #    decided by _is_observation_message(), which requires BOTH
+    #    role == ROLE_USER and content.step_name == STEP_NAME_OBSERVATION.
+    #    The role check is not redundant: task inputs also use the user
+    #    role, so step_name alone would treat a task as an observation.
+    #
+    # 2. The startup observation is injected once, at session start, so a
+    #    normal session has a single observation at the head. A block of
+    #    several messages appears only when more than one startup
+    #    observation was injected back to back. Never assume "all
+    #    observations" and never assume "exactly one": scan the contiguous
+    #    run and stop at the first message that is not an observation.
+    #
+    # 3. Contiguity is the ONLY separator, because a tool result can also be
+    #    a user-role observation message. add_tool_message() appends
+    #    role=ROLE_TOOL only when a tool_call_id is available; without one it
+    #    falls back to role=ROLE_USER while keeping
+    #    step_name=STEP_NAME_OBSERVATION. Such a message is therefore
+    #    indistinguishable from startup context by shape alone, and it sits
+    #    after the assistant/tool exchange rather than at the head. Removing
+    #    it would strip a tool result out of the conversation, so the scan
+    #    MUST stop at the first non-observation message instead of collecting
+    #    every observation in the list.
+    #
+    # 4. Do not locate the block by content. A later message may
+    #    legitimately repeat the startup text (a user quoting it, a
+    #    summary echoing it), and content matching would delete that one
+    #    instead. Return an index span and delete exactly those positions.
+    #
+    # 5. Leading system messages are skipped first. The system prompt sits
+    #    at the head, so the observation block starts after it; scanning
+    #    from index 0 without skipping system messages would find nothing.
+    #
+    # 6. A released observation can come back through another path. When
+    #    the observation is the only user message, last_user_message
+    #    returns the observation itself, so a "keep the last user message"
+    #    rule resurrects it. The persisted rows must likewise be deleted
+    #    before the session reload, otherwise the reload restores them and
+    #    the release silently has no effect in production while every
+    #    in-memory assertion still passes.
+    # ------------------------------------------------------------------
     def _opening_observation_span(self, messages: list) -> tuple[int, int]:
         """Return the ``[start, end)`` span of the opening observation block.
 
-        Only the leading block qualifies. Tool results also carry
-        ``step_name=observation``, so a later observation may be a tool result
-        whose removal would break tool-call pairing; scanning therefore stops at
-        the first non-observation message. An index span is returned instead of
-        the messages themselves so callers can drop exactly those positions
-        without relying on content equality, which would also match a later
-        message that legitimately repeats the startup text.
+        Only the leading contiguous run of user-role observation messages
+        qualifies, and in practice that run holds exactly one message. A tool
+        result can also be a user-role observation message, because
+        ``add_tool_message()`` falls back to the user role when no
+        ``tool_call_id`` is available, so a later observation is not startup
+        context and must not be released. Scanning therefore stops at the first
+        non-observation message. An index span is returned instead of the
+        messages themselves so callers can drop exactly those positions without
+        relying on content equality, which would also match a later message that
+        legitimately repeats the startup text.
         """
         index = 0
+        # Skip the leading system prompt so the scan starts at the first
+        # non-system message, which is where the observation block begins.
         while index < len(messages):
             message_dict = json_tool.safe_json_load(messages[index])
             if not isinstance(message_dict, dict) or message_dict.get("role") != ROLE_SYSTEM:
                 break
             index += 1
         start = index
+        # Consume the contiguous user-role observation run only. In a normal
+        # session this loop advances exactly once, because the startup
+        # observation is injected a single time; it advances more only when
+        # several startup observations were injected back to back. Stopping at
+        # the first non-observation message is what keeps a later user-role
+        # observation, such as a tool result without a tool_call_id, out of the
+        # released span.
         while index < len(messages) and self._is_observation_message(messages[index]):
             index += 1
         return start, index
@@ -538,10 +595,19 @@ class ContextRuntimeBase(object):
         if not msg_ids:
             return 0
         ctx_manager.del_session_messages(session_id, msg_ids)
-        logger.info(
-            "released opening observation from session: session_id=%.128s, removed_rows=%s",
-            session_id,
-            len(msg_ids),
+        # Persisted removal is the half that survives a restart, so it is
+        # reported separately from the in-memory removal.
+        print_tool.print_warning(
+            f"[Summarization] released opening observation from session: "
+            f"session_id={session_id}, removed_rows={len(msg_ids)}"
+        )
+        self._record_observation_release_event(
+            removed=len(msg_ids),
+            block_tokens=0,
+            budget=0,
+            ratio=0.0,
+            session_id=session_id,
+            persisted=True,
         )
         return len(msg_ids)
 
@@ -594,18 +660,68 @@ class ContextRuntimeBase(object):
 
         del messages[start:end]
         removed = end - start
-        logger.info(
-            "released opening observation after summary: removed=%s, block_tokens=%s, "
-            "budget=%s, ratio=%s, session_id=%.128s",
-            removed,
-            block_tokens,
-            budget,
-            ratio,
-            session_id or "",
+        # This release is rare, so it is reported as a warning instead of a
+        # per-step print: the operator must be able to see that conversation
+        # messages were removed without enabling step printing.
+        print_tool.print_warning(
+            f"[Summarization] released opening observation: removed={removed}, "
+            f"block_tokens={block_tokens}, budget={budget}, ratio={ratio}, "
+            f"session_id={session_id or ''}"
+        )
+        self._record_observation_release_event(
+            removed=removed,
+            block_tokens=block_tokens,
+            budget=budget,
+            ratio=ratio,
+            session_id=session_id,
         )
         if session_id:
             self._delete_persisted_opening_observation(session_id)
         return removed
+
+    def _record_observation_release_event(
+            self,
+            removed: int,
+            block_tokens: int,
+            budget: int,
+            ratio: float,
+            session_id: str,
+            persisted: bool = False,
+    ) -> None:
+        """Record the opening-observation release as an event.
+
+        Every behavior that changes the message list must leave an event record
+        so the removal can be audited after the fact. Event recording is
+        best-effort: a failure is logged and never interrupts summarization.
+
+        Args:
+            removed (int): Number of messages or rows removed.
+            block_tokens (int): Measured tokens of the released block, or 0 when
+                the caller only reports a persisted removal.
+            budget (int): Budget used for the decision, or 0 for a persisted
+                removal that carries no decision data.
+            ratio (float): Configured ratio, or 0.0 for a persisted removal.
+            session_id (str): Session whose rows were removed, or "".
+            persisted (bool): Whether this event reports the persisted removal
+                rather than the in-memory removal.
+        """
+        try:
+            from topsailai.events import record_event
+
+            record_event(
+                "context.summary.opening_observation_released",
+                {
+                    "removed_messages": removed,
+                    "block_tokens": block_tokens,
+                    "budget_tokens": budget,
+                    "ratio": ratio,
+                    "session_id": session_id or "",
+                    "persisted": persisted,
+                },
+                session_id=session_id or None,
+            )
+        except Exception:
+            logger.exception("failed to record opening observation release event")
 
     def _get_summary_head_messages(
         self,
