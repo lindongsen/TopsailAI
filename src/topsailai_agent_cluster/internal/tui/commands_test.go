@@ -58,7 +58,7 @@ func TestCommandRunnerListUsesSharedQueryAndLegacyBytes(t *testing.T) {
 	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).List(context.Background(), &out, "", false); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); !strings.Contains(got, "NO │ SESSION_STATUS") || !strings.Contains(got, "─┼─") || !strings.Contains(got, "ep") {
+	if got := out.String(); !strings.Contains(got, "NO │ SESSION_STATUS") || !strings.Contains(got, "MESSAGES") || !strings.Contains(got, "─┼─") || !strings.Contains(got, "ep") {
 		t.Fatalf("output=%q missing table separators", got)
 	}
 	if got, want := strings.Join(api.calls, ","), "list,inventory:ep"; got != want {

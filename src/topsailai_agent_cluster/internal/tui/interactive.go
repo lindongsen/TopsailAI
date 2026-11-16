@@ -1023,7 +1023,12 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	staged := make([]SessionRow, 0)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, tableOptionsFor(out, color, arguments, func(rows []SessionRow) { staged = append(staged, rows...) }))
+	options := tableOptionsFor(out, color, arguments, func(rows []SessionRow) { staged = append(staged, rows...) })
+	// Only the list render reads live message counts. The closure is built from
+	// this command's context, so the counts share the command budget, and it is
+	// nil for a client that cannot read them.
+	options.EnrichRows = MetricsEnricher(ctx, api)
+	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, options)
 	if err != nil {
 		state.Rows = nil
 		return err

@@ -36,6 +36,12 @@ type SessionRow struct {
 	// value means the provider reported no driver observation, which is not a
 	// confirmed absence of a controller.
 	Drive *protocol.DriveSummary `json:"drive,omitempty"`
+	// Messages carries the live message counts of this session. A nil value means
+	// the counts were not observed, which is not a count of zero: the counts are a
+	// live measurement of a running session, so a session with no live process has
+	// no counts to report. It is populated on demand for the rows a list render is
+	// about to show, never by inventory collection.
+	Messages *protocol.MessageCounts `json:"messages,omitempty"`
 }
 
 // ListRows converts endpoint reports into a deterministic session list.
