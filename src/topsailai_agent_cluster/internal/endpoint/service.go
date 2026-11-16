@@ -457,6 +457,10 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.historyFrame(ctx, frame)
 		case channel.FrameMessagesRequest:
 			s.messagesFrame(ctx, frame)
+		case channel.FrameMetricsRequest:
+			s.metricsFrame(ctx, frame)
+		case channel.FrameDetailRequest:
+			s.detailFrame(ctx, frame)
 		case channel.FrameModelCatalogRequest:
 			s.modelCatalogFrame(ctx, frame)
 		case channel.FrameOutputRequest:

@@ -111,6 +111,8 @@ func (h *Handler) routes() http.Handler {
 	mux.HandleFunc("/api/v1/launch-options", h.launchOptions)
 	mux.HandleFunc("/api/v1/history", h.history)
 	mux.HandleFunc("/api/v1/messages", h.messages)
+	mux.HandleFunc("/api/v1/metrics", h.metrics)
+	mux.HandleFunc("/api/v1/detail", h.detail)
 	mux.HandleFunc("/api/v1/model-catalog", h.modelCatalog)
 	mux.HandleFunc("/api/v1/commands/", h.commandResource)
 	if h.Broker != nil {

@@ -49,6 +49,18 @@ const (
 	FrameMessagesRequest = "messages_request"
 	// FrameMessagesResponse returns a bounded provider conversation read.
 	FrameMessagesResponse = "messages_response"
+	// FrameMetricsRequest requests one session's current message counts. It is a
+	// live observation of a running session, so it is read on demand for the rows
+	// an operator is about to see and never collected into the inventory.
+	FrameMetricsRequest = "metrics_request"
+	// FrameMetricsResponse returns one session's current message counts.
+	FrameMetricsResponse = "metrics_response"
+	// FrameDetailRequest requests one session's provider metadata and runtime
+	// document. It is a read-only query, so it carries no generation requirement.
+	FrameDetailRequest = "detail_request"
+	// FrameDetailResponse returns one session's provider metadata and runtime
+	// document.
+	FrameDetailResponse = "detail_response"
 	// FrameModelCatalogRequest requests a bounded model-catalog read for one
 	// session. It is a read-only query, so it carries no generation requirement.
 	FrameModelCatalogRequest = "model_catalog_request"
@@ -80,6 +92,10 @@ type Frame struct {
 	HistoryResult        *protocol.HistoryResult          `json:"history_result,omitempty"`
 	MessagesQuery        *protocol.MessagesQuery          `json:"messages_query,omitempty"`
 	MessagesResult       *protocol.MessagesResult         `json:"messages_result,omitempty"`
+	MetricsQuery         *protocol.SessionMetricsQuery     `json:"metrics_query,omitempty"`
+	MetricsResult        *protocol.SessionMetrics          `json:"metrics_result,omitempty"`
+	DetailQuery          *protocol.SessionDetailQuery      `json:"detail_query,omitempty"`
+	DetailResult         *protocol.SessionDetail           `json:"detail_result,omitempty"`
 	ModelCatalogQuery    *protocol.ModelCatalogQuery      `json:"model_catalog_query,omitempty"`
 	ModelCatalog         *protocol.ModelCatalog           `json:"model_catalog,omitempty"`
 	Type                 string                           `json:"type"`
