@@ -312,7 +312,7 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 		MaxBytes int `json:"max_bytes"`
 		MaxLines int `json:"max_lines"`
 	}{request.MaxBytes, request.MaxLines})
-	release, err := a.scheduler.acquire(classFollow)
+	release, err := a.scheduler.acquireWithin(ctx, classFollow)
 	if err != nil {
 		return err
 	}
@@ -517,7 +517,11 @@ func (a *Adapter) call(ctx context.Context, class invocationClass, function stri
 	if function != providercli.FunctionDescribe && !a.supportsFunction(function) {
 		return providercli.Response{}, adapter.ErrUnsupported
 	}
-	release, err := a.scheduler.acquire(class)
+	// Capacity is waited for inside the caller's budget rather than refused on the
+	// first collision: a read that arrived while the collection cycle held the one
+	// discovery slot used to fail outright, which made resume, history and model
+	// reads fail intermittently and marked the inventory unavailable.
+	release, err := a.scheduler.acquireWithin(ctx, class)
 	if err != nil {
 		return providercli.Response{}, err
 	}
