@@ -203,6 +203,39 @@ func TestTypedQueriesReturnProviderFactsWithoutClusterIDs(t *testing.T) {
 	}
 }
 
+// TestHistoryRowConvertsProviderCreateTime proves the history row reads the
+// provider's own creation timestamp field.
+//
+// The provider emits `create_time` on every `project list_sessions --json` row.
+// An earlier version of this Provider read a duplicate field named
+// `create_time_raw`, which the provider has since removed. Because
+// providerTimeMS returns 0 for an absent field and the result field carries
+// `omitempty`, a stale field name silently zeroed `created_at_ms` with no error
+// and no log line. This test pins the field name, so a future rename fails here
+// instead of disappearing from the JSON output.
+func TestHistoryRowConvertsProviderCreateTime(t *testing.T) {
+	document := `[{"session_id":"s-old","status":"Idle","task":"work","create_time":"2026-11-15T09:12:23","modified_time_raw":"2026-11-15T09:18:37","no":1}]`
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"project\x00list_sessions\x00--json": answer(document)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(queryHistoryMessages, nil, `{"limit":10}`))
+	if !response.OK || len(response.QueryResult) == 0 {
+		t.Fatalf("response=%+v", response)
+	}
+	var result historyResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("rows=%+v", result.Rows)
+	}
+	expected := time.Date(2026, 11, 15, 9, 12, 23, 0, time.Local).UnixMilli()
+	if result.Rows[0].CreatedAtMS != expected {
+		t.Fatalf("created_at_ms=%d, want %d", result.Rows[0].CreatedAtMS, expected)
+	}
+	if result.Rows[0].ModifiedAtMS == 0 {
+		t.Fatalf("modified_at_ms was not converted: %+v", result.Rows[0])
+	}
+}
+
 func TestReadOutputPreservesAndAppliesBounds(t *testing.T) {
 	session := sessionTarget(t)
 	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
