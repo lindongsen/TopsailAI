@@ -96,6 +96,49 @@ machine is ready, so one absent directory must not stop a Node that serves
 several; the scope stays defined so the operator does not believe a grant exists
 that does not.
 
+### TC-POL-12b: A policy mixing present and absent scopes serves the present ones
+
+**Action:** Define three scopes whose directories exist and three whose directories
+do not, grant `read`, `list` and `stat` on all six, then start the Node and request
+each operation on each scope.
+
+**Expected:** Startup succeeds. The ready line lists all six scopes and names only
+the three absent ones in `absent_scopes`, with one WARN per absent scope carrying
+its path. Every operation on a present scope succeeds and returns that scope's own
+content, including a file several directories deep. Every operation on an absent
+scope returns `not_found`. A malformed path on an absent scope still returns
+`invalid_argument`, because the grammar is a property of the request and not of the
+directory. A missing file inside a present scope returns `not_found` with a
+different reason, so the two causes stay distinguishable in the log. The process
+stays alive, and a present scope still serves after every refusal.
+
+### TC-POL-12c: A Windows policy mixing a present drive and absent drives starts
+
+**Action:** On a Windows host where only `C:` exists, define one scope on a
+directory under `C:`, one scope on `D:\` and one on `E:\`, grant the three read
+permissions on all of them, then start the Node and request each operation.
+
+**Expected:** Startup succeeds. `absent_scopes` names `D:` and `E:` and not the
+present scope. The present scope serves its files. Every operation on `D:` and
+`E:` returns `not_found`, and the log reason says the scope has no directory rather
+than that the path was refused. A path containing a backslash or a colon on an
+absent drive returns `invalid_argument`. The process stays alive.
+
+The same policy with `C:\` itself as a scope root requires
+`allow_filesystem_root: true`; with the opt-in the drive root serves files and the
+Node's config directory is still refused and omitted from a listing.
+
+### TC-POL-12d: An absent drive is refused once the drive appears
+
+**Action:** Start the Node with a scope on `D:\` while `D:` does not exist, then
+create `D:` and start the same policy again without `allow_filesystem_root`.
+
+**Expected:** The first start succeeds and names the scope in `absent_scopes`. The
+second start fails with `path "D:\\" is a filesystem root; its blast radius is the
+whole machine`. Adding `allow_filesystem_root: true` makes the second start succeed
+and the scope serve. The absence is tolerated, but it never becomes a silent grant
+of a whole volume: the volume is refused the moment it exists, unless the operator
+wrote the opt-in down.
 
 ### TC-POL-13: A scope path that is a file fails startup
 
