@@ -9,7 +9,7 @@ programming_language: python
 
 # Reaper Deletes Its Own Authorization Evidence And Reports False Success
 
-Status: fixed in the working tree, awaiting commit confirmation.
+Status: fixed and committed in `e2d595a6`.
 
 ## Symptom
 
