@@ -119,9 +119,11 @@ def get_summary_window_max_summaries(env_reader=None):
 class SummaryWindowGuard(object):
     """Count summary requests inside a sliding window of recent LLM requests.
 
-    The window holds the return mode of the most recent LLM requests, so the
-    denominator grows with ordinary traffic exactly as it does in production.
-    A summary request is any request whose return mode is ``raw``.
+    The window holds one entry per recent LLM request, so the denominator grows
+    with ordinary traffic exactly as it does in production. An entry is a
+    summary entry only when the caller explicitly marked the request as a
+    summary request; the return shape of a request is never used as a proxy,
+    because several unrelated callers share the same return shape.
 
     The guard is deliberately a bottom-line net: it does not try to judge
     whether a summary was useful, it only stops a turn whose recent traffic is
@@ -142,7 +144,7 @@ class SummaryWindowGuard(object):
         self._window_size = window_size
         self._max_summaries = max_summaries
         self._env_reader = env_reader
-        self._modes = deque()
+        self._entries = deque()
 
     def _resolve_window_size(self):
         """Return the effective window size, reading configuration if needed."""
@@ -156,15 +158,15 @@ class SummaryWindowGuard(object):
             return self._max_summaries
         return get_summary_window_max_summaries(self._env_reader)
 
-    def record(self, return_mode):
+    def record(self, is_summary):
         """Record one LLM request and report whether the limit is exceeded.
 
         The current request is included in the count, so the guard stops before
         the offending request is sent.
 
         Args:
-            return_mode (str): Return mode of the request; ``raw`` marks a
-                summary request.
+            is_summary (bool): Whether the caller explicitly marked this
+                request as a summary request.
 
         Returns:
             tuple: ``(exceeded, summary_count, window_size, max_summaries)``.
@@ -172,21 +174,21 @@ class SummaryWindowGuard(object):
         window_size = self._resolve_window_size()
         max_summaries = self._resolve_max_summaries()
 
-        self._modes.append(return_mode)
-        while len(self._modes) > window_size:
-            self._modes.popleft()
+        self._entries.append(bool(is_summary))
+        while len(self._entries) > window_size:
+            self._entries.popleft()
 
-        summary_count = sum(1 for mode in self._modes if mode == "raw")
+        summary_count = sum(1 for entry in self._entries if entry)
         exceeded = max_summaries > 0 and summary_count > max_summaries
         return exceeded, summary_count, window_size, max_summaries
 
     def reset(self):
         """Drop every recorded request."""
-        self._modes.clear()
+        self._entries.clear()
 
     def snapshot(self):
-        """Return the recorded return modes, oldest first."""
-        return list(self._modes)
+        """Return the recorded summary markers, oldest first."""
+        return list(self._entries)
 
 
 def get_agent_summary_window_guard(agent):

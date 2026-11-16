@@ -38,3 +38,11 @@ Feature: Sliding-window summary guard
     When six summary requests are sent through the provider boundary
     Then the summary window guard does not terminate the turn
     And the provider received exactly 6 requests
+
+  Scenario: One summary request retried many times terminates the turn
+    Given a summary window guard with a window of 10 requests and a limit of 3
+    When one summary request is retried twelve times by the provider
+    Then the summary window guard terminates the turn
+    And the termination names 4 summary requests in the last 10 LLM requests
+    And the provider received exactly 9 requests
+    And the summary window recorded 4 summary requests

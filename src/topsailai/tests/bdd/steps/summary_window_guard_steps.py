@@ -4,8 +4,8 @@ import pytest
 from pytest_bdd import given, parsers, then, when
 
 from tests.bdd.summary_window_guard_harness import (
-    ORDINARY_MODE,
-    SUMMARY_MODE,
+    ORDINARY_REQUEST,
+    SUMMARY_REQUEST,
     SummaryWindowGuardScenario,
 )
 
@@ -61,6 +61,12 @@ def when_six_summaries(summary_window_ctx):
     summary_window_ctx.run_disabled()
 
 
+@when("one summary request is retried twelve times by the provider")
+def when_retry_storm(summary_window_ctx):
+    """Send one summary request that the provider fails twelve times."""
+    summary_window_ctx.run_retry_storm(failures=12)
+
+
 @then("the summary window guard terminates the turn")
 def then_terminates(summary_window_ctx):
     """Verify the guard raised the control-flow signal."""
@@ -98,11 +104,11 @@ def then_provider_count(summary_window_ctx, count):
 def then_window_summary_count(summary_window_ctx, count):
     """Verify the window holds the expected number of summary requests."""
     snapshot = summary_window_ctx.window_snapshot()
-    assert snapshot.count(SUMMARY_MODE) == count, snapshot
+    assert snapshot.count(SUMMARY_REQUEST) == count, snapshot
 
 
 @then("the summary window holds only ordinary agent requests")
 def then_window_ordinary_only(summary_window_ctx):
     """Verify ordinary traffic never counts as summary traffic."""
     snapshot = summary_window_ctx.window_snapshot()
-    assert snapshot == [ORDINARY_MODE] * 10, snapshot
+    assert snapshot == [ORDINARY_REQUEST] * 10, snapshot

@@ -24,12 +24,13 @@ from topsailai.utils.thread_local_tool import ctxm_set_agent
 
 SUCCESS_RESPONSE = "summary window response"
 
-# One summary request is a raw-mode request, which is how the production
-# summarizer calls the model.
-SUMMARY_MODE = "raw"
+# Explicit marker for one summary request. The scenario states the request's
+# purpose directly instead of deriving it from the return shape, because the
+# return shape is shared by unrelated callers such as multimodal recognition.
+SUMMARY_REQUEST = True
 
-# One ordinary agent request, which must never count toward the limit.
-ORDINARY_MODE = "response_and_parsed"
+# Explicit marker for one ordinary agent request, which must never count.
+ORDINARY_REQUEST = False
 
 
 class _LLMModelName(object):
@@ -60,6 +61,10 @@ class _Agent(object):
             window_size=window_size, max_summaries=max_summaries
         )
         self.runtime = _Runtime()
+
+    def _check_hard_interrupt(self):
+        """Accept the interrupt probe the request boundary performs."""
+        return None
 
 
 class SummaryWindowGuardScenario:
@@ -110,8 +115,8 @@ class SummaryWindowGuardScenario:
         self.model = LLMModel()
         self.agent = _Agent(window_size=window_size, max_summaries=max_summaries)
 
-    def _send(self, mode: str) -> None:
-        """Send one request through the production boundary in the given mode."""
+    def _send(self, is_summary: bool) -> None:
+        """Send one request through the production boundary with its marker."""
         assert self.model is not None
         assert self.agent is not None
         policy = LLMRetryInteractionPolicy(
@@ -120,10 +125,10 @@ class SummaryWindowGuardScenario:
         )
         messages = [{"role": "user", "content": "summarize the conversation"}]
         with ctxm_set_agent(self.agent):
-            if mode == SUMMARY_MODE:
+            if is_summary:
                 self.model.chat(
                     messages,
-                    for_raw=True,
+                    is_summary_request=True,
                     retry_interaction_policy=policy,
                 )
             else:
@@ -134,45 +139,127 @@ class SummaryWindowGuardScenario:
                 )
         self.completed_requests += 1
 
-    def run_sequence(self, modes: tuple[str, ...]) -> None:
+    def run_sequence(self, markers: tuple[bool, ...]) -> None:
         """Send each request in order, stopping at the first guard termination."""
-        for mode in modes:
+        for is_summary in markers:
             try:
-                self._send(mode)
+                self._send(is_summary)
             except SummaryWindowLimitError as error:
                 self.error = error
                 return
 
     def run_three_summaries(self) -> None:
         """Send exactly three summary requests, which must stay below the limit."""
-        self.run_sequence((SUMMARY_MODE,) * 3)
+        self.run_sequence((SUMMARY_REQUEST,) * 3)
 
     def run_four_summaries(self) -> None:
         """Send four summary requests, where the fourth must terminate the turn."""
-        self.run_sequence((SUMMARY_MODE,) * 4)
+        self.run_sequence((SUMMARY_REQUEST,) * 4)
 
     def run_interleaved(self) -> None:
         """Send summary traffic interleaved with ordinary agent requests."""
         self.run_sequence(
             (
-                SUMMARY_MODE, ORDINARY_MODE,
-                SUMMARY_MODE, ORDINARY_MODE,
-                SUMMARY_MODE, ORDINARY_MODE,
-                SUMMARY_MODE, ORDINARY_MODE,
-                SUMMARY_MODE, ORDINARY_MODE,
-                SUMMARY_MODE, ORDINARY_MODE,
-                SUMMARY_MODE, ORDINARY_MODE,
-                SUMMARY_MODE, ORDINARY_MODE,
+                SUMMARY_REQUEST, ORDINARY_REQUEST,
+                SUMMARY_REQUEST, ORDINARY_REQUEST,
+                SUMMARY_REQUEST, ORDINARY_REQUEST,
+                SUMMARY_REQUEST, ORDINARY_REQUEST,
+                SUMMARY_REQUEST, ORDINARY_REQUEST,
+                SUMMARY_REQUEST, ORDINARY_REQUEST,
+                SUMMARY_REQUEST, ORDINARY_REQUEST,
+                SUMMARY_REQUEST, ORDINARY_REQUEST,
             )
         )
 
     def run_ordinary_only(self) -> None:
         """Send only ordinary agent requests, which must never terminate."""
-        self.run_sequence((ORDINARY_MODE,) * 12)
+        self.run_sequence((ORDINARY_REQUEST,) * 12)
 
     def run_disabled(self) -> None:
         """Send summary traffic with the guard disabled by a zero limit."""
-        self.run_sequence((SUMMARY_MODE,) * 6)
+        self.run_sequence((SUMMARY_REQUEST,) * 6)
+
+    def run_retry_storm(self, failures: int = 12) -> None:
+        """Send one summary request that the provider fails many times.
+
+        This reproduces the incident shape: a single logical summary request
+        retried repeatedly. Counting only the logical request recorded it once,
+        so the window never exceeded the limit and the turn never ended. The
+        provider really returns the scripted errors, so every retry is a real
+        HTTP attempt, and only the backoff wait is skipped to keep the scenario
+        fast.
+
+        The provider sees nine requests, not four, because the OpenAI SDK
+        retries each failed HTTP attempt internally before the outer retry loop
+        observes the failure. Three outer attempts therefore reach the provider
+        three times each. The fourth outer attempt is stopped by the guard
+        before it is sent, so the provider never receives the remaining nine
+        scripted failures. That difference is exactly what the guard
+        contributes, and it is why the scenario asserts the provider count.
+        """
+        assert self.model is not None
+        assert self.agent is not None
+        self._restart_server_with_errors(failures)
+        policy = LLMRetryInteractionPolicy(
+            interactive_enabled=False,
+            max_manual_retry_cycles=0,
+        )
+        messages = [{"role": "user", "content": "summarize the conversation"}]
+        with self._no_backoff():
+            with ctxm_set_agent(self.agent):
+                try:
+                    self.model.chat(
+                        messages,
+                        is_summary_request=True,
+                        for_stream=True,
+                        retry_interaction_policy=policy,
+                    )
+                except SummaryWindowLimitError as error:
+                    self.error = error
+
+    def _restart_server_with_errors(self, failures: int) -> None:
+        """Replace the provider with one that fails the first N attempts."""
+        self._stop_server()
+        config = MockServerConfig(
+            port=0,
+            request_body_capacity=64,
+            reply=SUCCESS_RESPONSE,
+            complete_response_replies=(SUCCESS_RESPONSE,) * 64,
+            # Streaming must be enabled or the mock rejects the request with
+            # 400 before it can serve any scripted error.
+            stream_chunks=(SUCCESS_RESPONSE,),
+            stream_http_error_responses=((500, "scripted retry storm"),) * failures,
+        )
+        self.server = create_server(config)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = self.server.server_address
+        base_url = f"http://{host}:{port}/v1"
+        self.monkeypatch.setenv("OPENAI_API_BASE", base_url)
+        self.monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+        # The model captured the previous endpoint when it was built, so it must
+        # be rebuilt against the new port or every attempt fails to connect.
+        if self.model is not None:
+            self.model.close()
+        self.model = LLMModel()
+
+    def _stop_server(self) -> None:
+        """Stop the current provider and its exact serving thread."""
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
+        if self.thread is not None:
+            self.thread.join(timeout=5)
+            if self.thread.is_alive():
+                raise AssertionError("summary-window BDD server thread did not stop")
+            self.thread = None
+
+    def _no_backoff(self):
+        """Skip retry backoff sleeps so the scenario stays fast."""
+        from unittest.mock import patch
+
+        return patch("topsailai.ai_base.llm_base.time.sleep")
 
     def state(self) -> dict[str, Any]:
         """Read provider-side request evidence through the debug endpoint."""
@@ -187,8 +274,8 @@ class SummaryWindowGuardScenario:
         """Return how many requests actually reached the provider."""
         return len(self.state()["request_bodies"])
 
-    def window_snapshot(self) -> list[str]:
-        """Return the recorded return modes, oldest first."""
+    def window_snapshot(self) -> list[bool]:
+        """Return the recorded summary markers, oldest first."""
         assert self.agent is not None
         return self.agent._summary_window_guard.snapshot()
 

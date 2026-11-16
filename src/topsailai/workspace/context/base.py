@@ -1312,6 +1312,12 @@ class ContextRuntimeBase(object):
         """Run one summary request and warn if its cached-token count decreases."""
         token_stat = getattr(llm_chat.llm_model, "tokenStat", None)
         cached_tokens_before = getattr(token_stat, "current_cached_tokens", None)
+        # Mark the request explicitly. Every context-summary request funnels
+        # through this method, so this is the one place that can state the
+        # request's purpose. The summary-window guard counts only this marker;
+        # it must never infer a summary from the request's return shape, which
+        # unrelated callers such as multimodal recognition also use.
+        kwargs["is_summary_request"] = True
         answer = llm_chat.chat(*args, **kwargs)
         cached_tokens_after = getattr(token_stat, "current_cached_tokens", None)
         if (

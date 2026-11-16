@@ -48,9 +48,9 @@ def _guard(window_size=10, max_summaries=3):
 def test_three_summaries_in_ten_requests_does_not_fire():
     """Exactly three summary requests inside the window must stay below the limit."""
     guard = _guard()
-    sequence = ["raw", "parsed", "raw", "parsed", "raw"] + ["parsed"] * 5
+    sequence = [True, False, True, False, True] + [False] * 5
 
-    results = [guard.record(mode) for mode in sequence]
+    results = [guard.record(is_summary) for is_summary in sequence]
 
     exceeded, summary_count, window_size, max_summaries = results[-1]
     assert exceeded is False
@@ -63,7 +63,7 @@ def test_fourth_summary_in_ten_requests_fires():
     """The fourth summary request inside the window must trip the guard."""
     guard = _guard()
 
-    results = [guard.record("raw") for _ in range(4)]
+    results = [guard.record(True) for _ in range(4)]
 
     assert [item[0] for item in results] == [False, False, False, True]
     exceeded, summary_count, _, _ = results[-1]
@@ -76,7 +76,7 @@ def test_alternating_summary_and_agent_requests_fires():
     guard = _guard()
 
     results = [
-        guard.record("raw" if index % 2 == 0 else "parsed")
+        guard.record(index % 2 == 0)
         for index in range(10)
     ]
 
@@ -89,13 +89,13 @@ def test_window_evicts_oldest_request():
     """Ordinary traffic must push old summaries out of the window."""
     guard = _guard()
     for _ in range(3):
-        guard.record("raw")
+        guard.record(True)
 
     for _ in range(10):
-        guard.record("parsed")
+        guard.record(False)
 
-    assert guard.snapshot() == ["parsed"] * 10
-    assert guard.record("parsed")[1] == 0
+    assert guard.snapshot() == [False] * 10
+    assert guard.record(False)[1] == 0
 
 
 def test_window_keeps_only_the_configured_size():
@@ -103,7 +103,7 @@ def test_window_keeps_only_the_configured_size():
     guard = _guard(window_size=4)
 
     for _ in range(9):
-        guard.record("parsed")
+        guard.record(False)
 
     assert len(guard.snapshot()) == 4
 
@@ -112,7 +112,7 @@ def test_zero_max_summaries_disables_the_guard():
     """A zero limit disables the guard, matching the project threshold convention."""
     guard = _guard(max_summaries=0)
 
-    results = [guard.record("raw") for _ in range(6)]
+    results = [guard.record(True) for _ in range(6)]
 
     assert all(item[0] is False for item in results)
 
@@ -121,12 +121,12 @@ def test_reset_clears_the_window():
     """Reset must drop every recorded request."""
     guard = _guard()
     for _ in range(4):
-        guard.record("raw")
+        guard.record(True)
 
     guard.reset()
 
     assert guard.snapshot() == []
-    assert guard.record("raw") == (False, 1, 10, 3)
+    assert guard.record(True) == (False, 1, 10, 3)
 
 
 def test_configuration_is_read_at_call_time():
@@ -137,11 +137,11 @@ def test_configuration_is_read_at_call_time():
     })
     guard = SummaryWindowGuard(env_reader=reader)
 
-    assert guard.record("raw")[0] is False
-    assert guard.record("raw")[0] is True
+    assert guard.record(True)[0] is False
+    assert guard.record(True)[0] is True
 
     reader._values["TOPSAILAI_SUMMARY_WINDOW_MAX_SUMMARIES"] = "5"
-    assert guard.record("raw")[0] is False
+    assert guard.record(True)[0] is False
 
 
 def test_invalid_configuration_falls_back_to_defaults():
@@ -280,7 +280,7 @@ def test_guard_fires_through_a_real_chat_call():
     ):
         for index in range(6):
             try:
-                model.chat([{"role": "user", "content": "hi"}], for_raw=True)
+                model.chat([{"role": "user", "content": "hi"}], is_summary_request=True)
             except SummaryWindowLimitError as error:
                 fired_at = (index, str(error))
                 break
@@ -290,7 +290,7 @@ def test_guard_fires_through_a_real_chat_call():
     assert index == 3, f"expected the 4th summary to fire, got index {index}"
     assert "4 summary requests" in message
     assert "last 10 LLM requests" in message
-    assert agent._summary_window_guard.snapshot() == ["raw"] * 4
+    assert agent._summary_window_guard.snapshot() == [True] * 4
 
 
 def test_ordinary_requests_never_fire_through_chat():
@@ -317,7 +317,7 @@ def test_ordinary_requests_never_fire_through_chat():
             except SummaryWindowLimitError:
                 pytest.fail("ordinary traffic must never trip the guard")
 
-    assert agent._summary_window_guard.snapshot() == ["response_and_parsed"] * 10
+    assert agent._summary_window_guard.snapshot() == [False] * 10
 
 
 def test_guard_is_skipped_without_an_agent():
@@ -333,6 +333,134 @@ def test_guard_is_skipped_without_an_agent():
     ):
         for _ in range(6):
             try:
-                model.chat([{"role": "user", "content": "hi"}], for_raw=True)
+                model.chat([{"role": "user", "content": "hi"}], is_summary_request=True)
             except SummaryWindowLimitError:
                 pytest.fail("no agent means no window and no termination")
+
+
+def _retrying_llm_stack(failures):
+    """Make the provider seam fail a fixed number of times, then succeed.
+
+    The retry loop treats an ordinary exception as a retryable provider
+    failure, so this reproduces a real retry storm without any network access.
+
+    Args:
+        failures (int): Number of leading attempts that must fail.
+
+    Returns:
+        ExitStack: Active patches; use as a context manager.
+    """
+    from contextlib import ExitStack
+    from unittest.mock import patch
+
+    from topsailai.ai_base.llm_base import LLMModel
+
+    state = {"remaining": failures}
+
+    def _flaky(*_args, **_kwargs):
+        """Fail while the budget lasts, then return a normal result."""
+        if state["remaining"] > 0:
+            state["remaining"] -= 1
+            raise RuntimeError("transient provider failure")
+        return (None, "ok")
+
+    stack = ExitStack()
+    stack.enter_context(patch.object(LLMModel, "call_llm_model", side_effect=_flaky))
+    stack.enter_context(
+        patch.object(LLMModel, "call_llm_model_by_stream", side_effect=_flaky)
+    )
+    stack.enter_context(
+        patch.object(
+            LLMModel,
+            "_split_native_tool_call_response",
+            return_value=(None, "ok", 1, 1),
+        )
+    )
+    stack.enter_context(
+        patch.object(LLMModel, "_return_chat_response", return_value="ok")
+    )
+    # Backoff sleeps would make the test slow and prove nothing about counting.
+    stack.enter_context(patch("topsailai.ai_base.llm_base.time.sleep"))
+    return stack
+
+
+def test_one_logical_request_retried_twelve_times_fires_the_guard():
+    """A single summary request retried twelve times must trip the guard.
+
+    This is the exact shape of the incident that motivated attempt-level
+    counting: one logical summary request retried twelve times and stalled for
+    over an hour. Counting only the logical request recorded it once, so the
+    window never exceeded the limit and the turn never ended.
+    """
+    from unittest.mock import patch
+
+    from topsailai.ai_base.llm_base import LLMModel
+
+    class _Agent(object):
+        """Minimal agent that owns the guard."""
+
+    agent = _Agent()
+    agent._summary_window_guard = SummaryWindowGuard(
+        window_size=10, max_summaries=3
+    )
+    model = LLMModel()
+
+    with _retrying_llm_stack(failures=12), patch(
+        "topsailai.ai_base.llm_base.get_agent_object", return_value=agent
+    ):
+        with pytest.raises(SummaryWindowLimitError) as excinfo:
+            model.chat([{"role": "user", "content": "hi"}], is_summary_request=True)
+
+    message = str(excinfo.value)
+    assert "4 summary requests" in message
+    assert "last 10 LLM requests" in message
+    # Four attempts were recorded before the guard stopped the request, so the
+    # window proves the retries were counted individually.
+    assert agent._summary_window_guard.snapshot() == [True] * 4
+
+
+def test_retries_of_ordinary_requests_never_fire_the_guard():
+    """Retrying ordinary traffic must not be mistaken for summary traffic."""
+    from unittest.mock import patch
+
+    from topsailai.ai_base.llm_base import LLMModel
+
+    class _Agent(object):
+        """Minimal agent that owns the guard."""
+
+    agent = _Agent()
+    agent._summary_window_guard = SummaryWindowGuard(
+        window_size=10, max_summaries=3
+    )
+    model = LLMModel()
+
+    with _retrying_llm_stack(failures=12), patch(
+        "topsailai.ai_base.llm_base.get_agent_object", return_value=agent
+    ):
+        try:
+            model.chat([{"role": "user", "content": "hi"}], for_response=True)
+        except SummaryWindowLimitError:
+            pytest.fail("ordinary retries must never trip the guard")
+
+    snapshot = agent._summary_window_guard.snapshot()
+    assert snapshot == [False] * 10, snapshot
+
+
+def test_attempt_level_window_evicts_older_attempts():
+    """The window must slide over attempts, not over logical requests."""
+    guard = _guard(window_size=4, max_summaries=1)
+
+    # One summary attempt is tolerated; the second one exceeds the limit.
+    assert guard.record(True)[0] is False
+    assert guard.record(True)[0] is True
+    # Ordinary attempts do not clear the limit until they evict both summary
+    # attempts, which proves the window slides one attempt at a time.
+    assert guard.record(False)[0] is True
+    assert guard.record(False)[0] is True
+    assert guard.snapshot() == [True, True, False, False]
+    # The fifth attempt evicts the oldest summary attempt.
+    assert guard.record(False)[0] is False
+    assert guard.snapshot() == [True, False, False, False]
+    # The sixth attempt evicts the last summary attempt.
+    assert guard.record(False)[0] is False
+    assert guard.snapshot() == [False, False, False, False]

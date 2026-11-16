@@ -361,7 +361,9 @@ class TestContextRuntimeBaseEnvMethods:
         llm_chat.chat.side_effect = chat
 
         assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
-        llm_chat.chat.assert_called_once_with(need_print=False)
+        llm_chat.chat.assert_called_once_with(
+            need_print=False, is_summary_request=True
+        )
         mock_print_warning.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -392,7 +394,9 @@ class TestContextRuntimeBaseEnvMethods:
         llm_chat.chat.side_effect = chat
 
         assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
-        llm_chat.chat.assert_called_once_with(need_print=False)
+        llm_chat.chat.assert_called_once_with(
+            need_print=False, is_summary_request=True
+        )
         mock_print_warning.assert_not_called()
 
     @patch('topsailai.workspace.context.base.print_tool.print_warning')
@@ -408,7 +412,9 @@ class TestContextRuntimeBaseEnvMethods:
         llm_chat.chat.return_value = "summary"
 
         assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
-        llm_chat.chat.assert_called_once_with(need_print=False)
+        llm_chat.chat.assert_called_once_with(
+            need_print=False, is_summary_request=True
+        )
         mock_print_warning.assert_not_called()
 
     @patch('topsailai.workspace.context.base.print_tool.print_warning')
@@ -431,11 +437,61 @@ class TestContextRuntimeBaseEnvMethods:
         llm_chat.chat.side_effect = chat
 
         assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
-        llm_chat.chat.assert_called_once_with(need_print=False)
+        llm_chat.chat.assert_called_once_with(
+            need_print=False, is_summary_request=True
+        )
         mock_print_warning.assert_called_once_with(
             "[summarize] cached tokens decreased after summarization: "
             "cached_tokens_before=20, cached_tokens_after=10"
         )
+
+    @patch('topsailai.workspace.context.base.print_tool.print_warning')
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_summary_funnel_marks_the_request_as_a_summary(
+        self, mock_ctx_manager, mock_print_warning
+    ):
+        """The summary funnel must mark its request explicitly.
+
+        The summary-window guard counts only this marker. It must never infer a
+        summary from the request's return shape, because unrelated callers such
+        as multimodal recognition and session naming share that shape. This test
+        pins the marker at the one funnel every context-summary request uses, so
+        removing it fails here instead of silently disabling the guard.
+        """
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        runtime = ContextRuntimeBase()
+        llm_chat = MagicMock()
+        llm_chat.llm_model.tokenStat = MagicMock(current_cached_tokens=None)
+
+        runtime._chat_for_summary(llm_chat, need_print=False)
+
+        _, kwargs = llm_chat.chat.call_args
+        assert kwargs["is_summary_request"] is True, kwargs
+
+    @patch('topsailai.workspace.context.base.print_tool.print_warning')
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_summary_funnel_marker_cannot_be_overridden_by_the_caller(
+        self, mock_ctx_manager, mock_print_warning
+    ):
+        """A caller must not be able to unmark a summary request.
+
+        The funnel states the request's purpose, so a stray caller argument must
+        not be able to turn the marker off and hide summary traffic from the
+        guard.
+        """
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        runtime = ContextRuntimeBase()
+        llm_chat = MagicMock()
+        llm_chat.llm_model.tokenStat = MagicMock(current_cached_tokens=None)
+
+        runtime._chat_for_summary(
+            llm_chat, need_print=False, is_summary_request=False
+        )
+
+        _, kwargs = llm_chat.chat.call_args
+        assert kwargs["is_summary_request"] is True, kwargs
 
 
 # ==============================================================================

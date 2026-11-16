@@ -642,6 +642,7 @@ class LLMModel(
             tools=None,
             tool_choice="auto",
             retry_interaction_policy=None,
+            is_summary_request=False,
         ):
         """
         Main chat method with comprehensive error handling and retry logic.
@@ -658,6 +659,11 @@ class LLMModel(
             tools (list, optional): List of available tools.
             tool_choice (str, optional): Tool choice strategy.
             retry_interaction_policy: Per-run LLM retry interaction policy.
+            is_summary_request (bool, optional): Explicit marker set by the
+                caller that issues a context-summary request. It is the only
+                signal the summary-window guard counts, because the return
+                shape of a request is shared by unrelated callers and cannot
+                identify a summary request.
 
         Raises:
             LLMBackToChatError: If an interactive user abandons this turn.
@@ -700,23 +706,6 @@ class LLMModel(
                 return_mode=return_mode,
             ),
         )
-        # Bottom-line guard: stop a turn whose recent LLM traffic is dominated
-        # by summary requests. It is recorded once per logical request, before
-        # the retry loop, so a retried request cannot inflate the window. The
-        # guard lives on the agent because the default summary processor builds
-        # an independent model that a per-model window would never observe.
-        summary_guard = _get_agent_summary_window_guard(get_agent_object())
-        if summary_guard is not None:
-            exceeded, summary_count, window_size, max_summaries = (
-                summary_guard.record(return_mode)
-            )
-            if exceeded:
-                raise SummaryWindowLimitError(
-                    "Summary window limit reached: "
-                    f"{summary_count} summary requests in the last "
-                    f"{window_size} LLM requests exceeds the limit of "
-                    f"{max_summaries}."
-                )
         request_started_at = time.monotonic()
         # One wall-clock budget for the whole logical request. It is read once
         # per request so every attempt of this request is bounded by the same
@@ -745,6 +734,29 @@ class LLMModel(
             self._check_request_wall_clock_budget(
                 request_started_at, request_wall_clock_budget, total_attempt,
             )
+            # Bottom-line guard: stop a turn whose recent LLM traffic is
+            # dominated by summary requests. It is recorded once per provider
+            # attempt, inside the retry loop, because one logical request can
+            # resend itself many times: counting only the logical request would
+            # hide a summary request that retried twelve times and stalled for
+            # over an hour. The guard lives on the agent because the default
+            # summary processor builds an independent model that a per-model
+            # window would never observe. Only the explicit caller marker is
+            # counted; the return shape of a request is shared by unrelated
+            # callers such as multimodal recognition and session naming, so it
+            # cannot identify a summary request.
+            summary_guard = _get_agent_summary_window_guard(get_agent_object())
+            if summary_guard is not None:
+                exceeded, summary_count, window_size, max_summaries = (
+                    summary_guard.record(is_summary_request)
+                )
+                if exceeded:
+                    raise SummaryWindowLimitError(
+                        "Summary window limit reached: "
+                        f"{summary_count} summary requests in the last "
+                        f"{window_size} LLM requests exceeds the limit of "
+                        f"{max_summaries}."
+                    )
             if attempt_in_cycle == 1:
                 err_count_map = {}
                 if total_attempt > 1:
