@@ -111,13 +111,15 @@ The `hook__aibase__after__prompt_base_init` point is a Human-authorized local ex
 
 ### Current implementation inventory
 
-Eleven Hook Points are declared: ten Summary points under `hooks/points/context/` and one workspace point `hook__workspace__before__input_message` under `hooks/points/workspace/before_input_message/`.
+The table below lists the Summary and workspace groups. Additional `aibase` and
+`llm` points are declared under their own domains and are not repeated here.
 
 | Group | Points | Modules |
 |---|---|---|
 | ACTIVE Summary (phase one) | `before_summary_generate_{user2agent,agent2llm}`, `after_summary_apply_{user2agent,agent2llm}`, `error_summary_generate_{user2agent,agent2llm}`, `error_summary_apply_{user2agent,agent2llm}` | one `modules/observer.py` each (8 total), all delegating to `hooks/points/context/summary_events_observer/observer.py` |
 | INACTIVE Summary (phase-two candidate) | `after_summary_generate_user2agent`, `after_summary_generate_agent2llm` | none (no `modules/` directory) |
 | Workspace | `hook__workspace__before__input_message` | none (no `modules/` directory) |
+| Workspace heavy task | `hook__workspace__after__heavy_task_warning`, `hook__workspace__error__heavy_task_terminated` | one `modules/record_event.py` each, recording `heavy_task.warning` and `heavy_task.terminated` |
 
 No `scripts/` directory exists under `hooks/points/`; `TOPSAILAI_HOOK_POINTS` defaults to `"{}"` in `env_template`, so only bundled point-local Modules execute unless external resources are configured.
 

@@ -299,7 +299,7 @@ Because `@record_tool_call_events` is the innermost decorator, it measures the a
 
 ### 9.2 Mounted Through Direct `record_event()` Calls
 
-Two event sources are mounted by calling `record_event()` directly instead of
+Several event sources are mounted by calling `record_event()` directly instead of
 using the decorators above, because the decorators record too little to be
 useful at those locations.
 
@@ -321,8 +321,33 @@ terminal `outcome` is one of `success`, `exhausted`, `abandoned`, or `failed`,
 and every early exit inside the retry loop records its own terminal event before
 raising, so a request can never leave a dangling start event.
 
-No production code calls `record_event()` directly outside of these two mounted
-locations and the mounted `record_tool_call_events` decorator.
+### 9.3 Mounted Through Hook Point Modules
+
+Some event sources are recorded by a bundled Hook Point Module rather than by
+business code. The business function calls the named Hook Point directly, and
+the point-local `modules/record_event.py` performs the recording, so the event
+contract stays separate from the business decision.
+
+| Hook Point | Event types | Source |
+|------------|-------------|--------|
+| `hook__context__*__summary_*` (eight active Summary points) | `summary.hook.observed` | `hooks.summary_events_observer` |
+| `hook__workspace__after__heavy_task_warning` | `heavy_task.warning` | `hooks.heavy_task_warning` |
+| `hook__workspace__error__heavy_task_terminated` | `heavy_task.terminated` | `hooks.heavy_task_terminated` |
+
+The Summary observer records one event per consumed checkpoint, so a normal
+summarization emits `before_summary_generate` and `after_summary_apply` and an
+error path emits the matching `error_*` checkpoint instead. The heavy-task points
+record metadata only: `continuous_summary_times`, `threshold`, and, for the
+termination point, `fatal_offset`. The advisory prompt text and the agent object
+never enter a payload.
+
+A Hook Point Module failure is isolated: the Module logs a constant warning and
+returns `{"recorded": False}`, so a recording failure never interrupts the agent
+turn and never replaces `HeavyTaskError`.
+
+No production code calls `record_event()` directly outside of the mounted
+locations above, the mounted `record_tool_call_events` decorator, and the bundled
+Hook Point Modules listed in 9.3.
 
 ---
 

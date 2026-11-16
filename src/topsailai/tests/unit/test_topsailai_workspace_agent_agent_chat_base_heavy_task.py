@@ -290,3 +290,164 @@ class TestHookSummarizeMessagesHeavyTask:
         hook_summarize_messages(ai_agent)
 
         ctx_runtime_data.add_session_message.assert_not_called()
+
+
+class TestHeavyTaskHookPointIntegration:
+    """Verify the two heavy-task Hook Points are invoked at the right moments.
+
+    The Hook Points are called directly from business code, so these tests patch
+    the module-level names that `agent_chat_base` imported and assert both the
+    call count and the exact metadata. They also prove the warning point is not
+    reached when the hard stage terminates the turn first.
+    """
+
+    def _build(self, mock_env_tool, mock_set_ai_agent, mock_get_hooks,
+               continuous_summary_times):
+        """Build one AgentChatBase with the heavy-task counter preloaded."""
+        from topsailai.workspace.agent.agent_chat_base import AgentChatBase
+
+        mock_get_hooks.return_value = []
+        mock_env_tool.EnvReaderInstance.get.return_value = None
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        ai_agent = Mock()
+        ai_agent.messages = [{"role": "user", "content": f"msg-{i}"} for i in range(75)]
+        ai_agent.hooks_after_init_prompt = []
+        ai_agent.hooks_after_new_session = []
+        ai_agent.hooks_pre_chat = []
+
+        ctx_runtime_data = Mock()
+        ctx_runtime_data.messages = []
+        ctx_runtime_data.is_need_summarize_for_processed.return_value = False
+        ctx_runtime_data.is_need_summarize_for_processing.return_value = True
+        ctx_runtime_data.summarize_messages_for_processing.return_value = "summary"
+
+        ctx_rt_aiagent = Mock()
+        ctx_rt_aiagent.ai_agent = ai_agent
+        ctx_rt_aiagent.ctx_runtime_data = ctx_runtime_data
+
+        agent_chat = AgentChatBase(
+            hook_instruction=Mock(),
+            ctx_rt_aiagent=ctx_rt_aiagent,
+            ctx_rt_instruction=Mock(),
+        )
+        agent_chat.heavy_task.threshold_continuous_summary_times = 5
+        agent_chat.heavy_task.continuous_summary_times = continuous_summary_times
+        return agent_chat, ai_agent
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    def test_warning_point_fires_after_advisory_is_appended(
+        self, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+    ):
+        """The advisory point observes the delivered warning, not the decision."""
+        from topsailai.workspace.agent import agent_chat_base as module
+
+        agent_chat, ai_agent = self._build(
+            mock_env_tool, mock_set_ai_agent, mock_get_hooks, 6
+        )
+        calls = []
+        with patch.object(module, "hook__workspace__after__heavy_task_warning",
+                          lambda **payload: calls.append(payload)):
+            agent_chat.ai_agent.hooks_pre_chat[0](ai_agent)
+
+        assert calls == [{"schema_version": 1,
+                          "continuous_summary_times": 7,
+                          "threshold": 5}]
+        # The advisory must already be in the context when the point fires.
+        ai_agent.append_message.assert_called_once()
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    def test_termination_point_fires_before_the_business_error(
+        self, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+    ):
+        """The termination point observes the fatal stage before HeavyTaskError."""
+        from topsailai.workspace.agent import agent_chat_base as module
+        from topsailai.workspace.agent.agent_chat_base import HeavyTaskError
+
+        agent_chat, ai_agent = self._build(
+            mock_env_tool, mock_set_ai_agent, mock_get_hooks, 11
+        )
+        calls = []
+        with patch.object(module, "hook__workspace__error__heavy_task_terminated",
+                          lambda **payload: calls.append(payload)):
+            with pytest.raises(HeavyTaskError):
+                agent_chat.ai_agent.hooks_pre_chat[0](ai_agent)
+
+        assert calls == [{"schema_version": 1,
+                          "continuous_summary_times": 12,
+                          "threshold": 5,
+                          "fatal_offset": 7}]
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    def test_warning_point_does_not_fire_when_hard_stage_terminates(
+        self, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+    ):
+        """A terminated turn never reports a delivered advisory."""
+        from topsailai.workspace.agent import agent_chat_base as module
+        from topsailai.workspace.agent.agent_chat_base import HeavyTaskError
+
+        agent_chat, ai_agent = self._build(
+            mock_env_tool, mock_set_ai_agent, mock_get_hooks, 11
+        )
+        warnings = []
+        with patch.object(module, "hook__workspace__after__heavy_task_warning",
+                          lambda **payload: warnings.append(payload)):
+            with pytest.raises(HeavyTaskError):
+                agent_chat.ai_agent.hooks_pre_chat[0](ai_agent)
+
+        assert warnings == []
+        ai_agent.append_message.assert_not_called()
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    def test_no_heavy_task_point_fires_below_the_soft_threshold(
+        self, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+    ):
+        """A normal turn emits neither heavy-task point."""
+        from topsailai.workspace.agent import agent_chat_base as module
+
+        agent_chat, ai_agent = self._build(
+            mock_env_tool, mock_set_ai_agent, mock_get_hooks, 0
+        )
+        warnings, terminations = [], []
+        with patch.object(module, "hook__workspace__after__heavy_task_warning",
+                          lambda **payload: warnings.append(payload)), \
+             patch.object(module, "hook__workspace__error__heavy_task_terminated",
+                          lambda **payload: terminations.append(payload)):
+            agent_chat.ai_agent.hooks_pre_chat[0](ai_agent)
+
+        assert warnings == []
+        assert terminations == []
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    def test_observer_failure_never_blocks_the_advisory(
+        self, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+    ):
+        """A failing dispatch cannot prevent the advisory from being delivered.
+
+        The real named function is used, so this proves its own guard isolates a
+        dispatch failure instead of replacing the function under test.
+        """
+        import topsailai.hooks as hooks
+
+        agent_chat, ai_agent = self._build(
+            mock_env_tool, mock_set_ai_agent, mock_get_hooks, 6
+        )
+
+        def explode(*args, **kwargs):
+            """Simulate a dispatch failure inside the Hook framework."""
+            raise RuntimeError("dispatch down")
+
+        with patch.object(hooks, "invoke_hook_point", explode):
+            agent_chat.ai_agent.hooks_pre_chat[0](ai_agent)
+
+        ai_agent.append_message.assert_called_once()

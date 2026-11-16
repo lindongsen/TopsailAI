@@ -43,6 +43,17 @@ from topsailai.workspace.plugin_instruction.base.cache import set_ai_agent
 from topsailai.workspace.agent.agent_constants import (
     DEFAULT_HEAD_TAIL_OFFSET,
 )
+from topsailai.hooks.points.workspace.after_heavy_task_warning import (
+    hook__workspace__after__heavy_task_warning,
+)
+from topsailai.hooks.points.workspace.error_heavy_task_terminated import (
+    hook__workspace__error__heavy_task_terminated,
+)
+
+# Fatal offset added to the soft threshold before the hard stage terminates the
+# turn. Single source of truth for both the comparison and the observed payload.
+HEAVY_TASK_FATAL_OFFSET = 7
+
 
 class HeavyTaskBase(object):
     """Two-stage heavy-task guard driven by consecutive summaries in ONE turn.
@@ -111,7 +122,15 @@ class HeavyTaskBase(object):
 
     def block_heavy_task(self):
         """Stage 2 (hard): raise HeavyTaskError once the fatal offset is reached."""
-        if self.continuous_summary_times >= (self.threshold_continuous_summary_times + 7):
+        if self.continuous_summary_times >= (self.threshold_continuous_summary_times + HEAVY_TASK_FATAL_OFFSET):
+            # Observe the termination before the business error is raised, so an
+            # observer can never replace or suppress HeavyTaskError.
+            hook__workspace__error__heavy_task_terminated(
+                schema_version=1,
+                continuous_summary_times=self.continuous_summary_times,
+                threshold=self.threshold_continuous_summary_times,
+                fatal_offset=HEAVY_TASK_FATAL_OFFSET,
+            )
             raise HeavyTaskError(self.prompt)
         return
 
@@ -371,6 +390,13 @@ class AgentChatBase(object):
                 )
                 logger.warning("Heavy Task Trigger")
                 self.ai_agent.append_message(_msg.to_dict())
+                # Observe the advisory only after it was actually appended, so
+                # the event means "the agent received the warning".
+                hook__workspace__after__heavy_task_warning(
+                    schema_version=1,
+                    continuous_summary_times=self.heavy_task.continuous_summary_times,
+                    threshold=self.heavy_task.threshold_continuous_summary_times,
+                )
 
         # add hooks
         self.ai_agent.hooks_after_init_prompt.append(hook_after_init_prompt)
