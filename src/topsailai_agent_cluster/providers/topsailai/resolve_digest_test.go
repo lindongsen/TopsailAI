@@ -163,17 +163,31 @@ func TestResolveReadTargetSkipsDiscoveryForAProvenRow(t *testing.T) {
 // same way the provider CLI derives it.
 //
 // A mismatch here would make the shortcut silently useless, because it would scan
-// a directory that holds no stdout files and fall back on every read.
+// a directory that holds no stdout files and fall back on every read. The
+// directories are created, because the derivation only reports a path it can
+// actually read: a test that asserted an uncreated path would be asserting the
+// guess rather than the directory the scan would use.
 func TestResolveTaskDirFollowsProviderPrecedence(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	configured := filepath.Join(root, "ts")
+	for _, directory := range []string{
+		filepath.Join(configured, "workspace", "task"),
+		filepath.Join(home, ".topsailai", "workspace", "task"),
+		filepath.Join(home, "ts", "workspace", "task"),
+	} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatalf("create %s: %v", directory, err)
+		}
+	}
 	tests := []struct {
 		name        string
 		environment []string
 		want        string
 	}{
-		{"topsailai home wins", []string{"TOPSAILAI_HOME=/srv/ts", "HOME=/home/op"}, "/srv/ts/workspace/task"},
-		{"home is the default", []string{"HOME=/home/op"}, "/home/op/.topsailai/workspace/task"},
-		{"tilde expands against home", []string{"TOPSAILAI_HOME=~/ts", "HOME=/home/op"}, "/home/op/ts/workspace/task"},
-		{"no home falls back", nil, "/topsailai/workspace/task"},
+		{"topsailai home wins", []string{"TOPSAILAI_HOME=" + configured, "HOME=" + home}, filepath.Join(configured, "workspace", "task")},
+		{"home is the default", []string{"HOME=" + home}, filepath.Join(home, ".topsailai", "workspace", "task")},
+		{"tilde expands against home", []string{"TOPSAILAI_HOME=~/ts", "HOME=" + home}, filepath.Join(home, "ts", "workspace", "task")},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -181,6 +195,31 @@ func TestResolveTaskDirFollowsProviderPrecedence(t *testing.T) {
 				t.Fatalf("resolveTaskDir = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+// TestResolveTaskDirRefusesADirectoryItCannotRead proves the shortcut is disabled
+// rather than guessed when the derived path does not exist.
+//
+// The precedence above is a second copy of a rule the provider CLI owns, so it can
+// disagree with the CLI. A disagreement would make the digest scan read a directory
+// that holds no stdout files, and every read would fall back to discovery while the
+// shortcut looked healthy. An empty result disables the shortcut outright, so the
+// cost of a wrong guess is the discovery call it was meant to avoid.
+func TestResolveTaskDirRefusesADirectoryItCannotRead(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "absent")
+	if got := resolveTaskDir([]string{"TOPSAILAI_HOME=" + missing, "HOME=" + root}); got != "" {
+		t.Fatalf("resolveTaskDir = %q for a directory that does not exist, want an empty result", got)
+	}
+	// A file where a directory is expected must be refused too, because the scan
+	// would fail on it and the shortcut would silently prove nothing.
+	file := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", file, err)
+	}
+	if got := resolveTaskDir([]string{"TOPSAILAI_HOME=" + file, "HOME=" + root}); got != "" {
+		t.Fatalf("resolveTaskDir = %q for a regular file, want an empty result", got)
 	}
 }
 

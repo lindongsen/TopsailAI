@@ -27,7 +27,17 @@ const (
 // rule here lets the Provider locate the same directory without asking the CLI.
 // It is called once at startup and the result is passed down, so no later
 // decision re-reads the environment.
+//
+// The derived path is returned only when it is an existing directory. This is the
+// fail-closed half of the shortcut: the precedence above is a second copy of a rule
+// the provider CLI owns, so it can disagree with the CLI after a CLI change. A
+// disagreement would make the digest scan read a directory that holds no stdout
+// files, and every read would then fall back to discovery while looking like a
+// working shortcut. Returning an empty directory disables the shortcut outright, so
+// a wrong guess costs the discovery call it was meant to avoid instead of silently
+// proving nothing. An empty result is therefore a supported state, not an error.
 func resolveTaskDir(environment []string) string {
+	candidate := ""
 	if configured := environmentValue(environment, "TOPSAILAI_HOME"); configured != "" {
 		expanded := configured
 		if strings.HasPrefix(expanded, "~") {
@@ -36,13 +46,20 @@ func resolveTaskDir(environment []string) string {
 			}
 		}
 		if absolute, err := filepath.Abs(expanded); err == nil {
-			return filepath.Join(absolute, "workspace", "task")
+			candidate = filepath.Join(absolute, "workspace", "task")
 		}
 	}
-	if home := environmentValue(environment, "HOME"); home != "" {
-		return filepath.Join(home, ".topsailai", "workspace", "task")
+	if candidate == "" {
+		if home := environmentValue(environment, "HOME"); home != "" {
+			candidate = filepath.Join(home, ".topsailai", "workspace", "task")
+		} else {
+			candidate = filepath.Join("/topsailai", "workspace", "task")
+		}
 	}
-	return filepath.Join("/topsailai", "workspace", "task")
+	if info, err := os.Stat(candidate); err != nil || !info.IsDir() {
+		return ""
+	}
+	return candidate
 }
 
 // resolveRowTargetByDigest proves which workspace row a row-scoped key names by
