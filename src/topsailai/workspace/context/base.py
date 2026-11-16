@@ -440,19 +440,10 @@ class ContextRuntimeBase(object):
             and content.get("step_name") == STEP_NAME_OBSERVATION
         )
 
-    def _get_summary_token_threshold(self) -> int:
-        """Return this layer's positive token summarize threshold, or 0.
-
-        Each layer overrides this so the observation-release budget is derived
-        from the same threshold that already governs its own summarization,
-        instead of introducing a second, unrelated notion of "too large".
-        """
-        return 0
-
     def _get_observation_release_ratio(self) -> float:
         """Return the configured opening-observation release ratio.
 
-        A value of ``0`` or below disables the gate, which preserves the
+        A value of ``0`` or below disables the release, which preserves the
         historical behavior of pinning the opening observation indefinitely.
         """
         default_ratio = 0.3
@@ -471,7 +462,7 @@ class ContextRuntimeBase(object):
             )
             return default_ratio
         ratio = float(ratio)
-        if not math.isfinite(ratio):
+        if not math.isfinite(ratio) or ratio > 1:
             logger.warning(
                 "invalid TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO [%s], using default %s",
                 ratio,
@@ -480,24 +471,18 @@ class ContextRuntimeBase(object):
             return default_ratio
         if ratio <= 0:
             return 0.0
-        if ratio > 1:
-            logger.warning(
-                "invalid TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO [%s], using default %s",
-                ratio,
-                default_ratio,
-            )
-            return default_ratio
         return ratio
 
     def _opening_observation_span(self, messages: list) -> tuple[int, int]:
         """Return the ``[start, end)`` span of the opening observation block.
 
-        Only the leading block qualifies. Observations appearing later may be
-        tool results or runtime events rather than startup context, so scanning
-        stops at the first non-observation message. An index span is returned
-        instead of the messages themselves so callers can drop exactly those
-        positions without relying on content equality, which would also match a
-        later message that legitimately repeats the startup text.
+        Only the leading block qualifies. Tool results also carry
+        ``step_name=observation``, so a later observation may be a tool result
+        whose removal would break tool-call pairing; scanning therefore stops at
+        the first non-observation message. An index span is returned instead of
+        the messages themselves so callers can drop exactly those positions
+        without relying on content equality, which would also match a later
+        message that legitimately repeats the startup text.
         """
         index = 0
         while index < len(messages):
@@ -510,18 +495,17 @@ class ContextRuntimeBase(object):
             index += 1
         return start, index
 
-    def _get_observation_release_budget(self) -> int:
-        """Return the usable input token budget for the release gate.
+    def _get_observation_release_budget(self, token_threshold: int) -> int:
+        """Return the usable input token budget for the release decision.
 
         The raw context window is not an input budget, so the budget is the
         smaller of this layer's token summarize threshold and the model
-        summary-safe input limit. When neither is available the gate stays
+        summary-safe input limit. When neither is available the release stays
         disabled rather than guessing a denominator.
         """
         candidates = []
-        threshold = self._get_summary_token_threshold()
-        if isinstance(threshold, int) and threshold > 0:
-            candidates.append(threshold)
+        if isinstance(token_threshold, int) and token_threshold > 0:
+            candidates.append(token_threshold)
 
         llm_model = getattr(self.ai_agent, "llm_model", None) if getattr(self, "ai_agent", None) else None
         limits = self._compute_context_limits(
@@ -535,55 +519,93 @@ class ContextRuntimeBase(object):
             return 0
         return min(candidates)
 
-    def _should_release_opening_observation(self, messages: list) -> bool:
-        """Decide whether the opening observation must become compressible.
+    def _delete_persisted_opening_observation(self, session_id: str) -> int:
+        """Delete the persisted rows of the opening observation block.
+
+        The span is recomputed on the raw records instead of being mapped from
+        the in-memory list. Span detection is shape-independent, so both sides
+        agree, and recomputing avoids a length-based slice that would delete the
+        wrong rows once the in-memory list no longer starts with the observation.
+        """
+        raw_messages = ctx_manager.get_messages_by_session(session_id, for_raw=True) or []
+        if not raw_messages:
+            return 0
+        raw_values = [raw_msg.message for raw_msg in raw_messages]
+        start, end = self._opening_observation_span(raw_values)
+        if start >= end:
+            return 0
+        msg_ids = [raw_msg.msg_id for raw_msg in raw_messages[start:end]]
+        if not msg_ids:
+            return 0
+        ctx_manager.del_session_messages(session_id, msg_ids)
+        logger.info(
+            "released opening observation from session: session_id=%.128s, removed_rows=%s",
+            session_id,
+            len(msg_ids),
+        )
+        return len(msg_ids)
+
+    def release_opening_observation_after_summary(
+            self,
+            messages: list,
+            token_threshold: int = 0,
+            session_id: str = "",
+    ) -> int:
+        """Remove the opening observation from a finished summary result.
+
+        This is a post-step: it runs only after summarization has completed and
+        the result has already been constructed, so the summary LLM still
+        received the observation and its content survives inside the summary. A
+        skipped summarization never reaches this method, which is intentional
+        because without a summary there is nothing to compensate for the removed
+        content.
 
         The observation is released only when it occupies more than the
         configured ratio of the usable input budget. Below that ratio it stays
         pinned, because keeping it avoids an unnecessary summary request.
+
+        Args:
+            messages (list): The finished message list, mutated in place.
+            token_threshold (int): This layer's token summarize threshold, or 0.
+            session_id (str): Session whose persisted rows must be removed too.
+
+        Returns:
+            int: Number of in-memory messages removed.
         """
         ratio = self._get_observation_release_ratio()
         if ratio <= 0:
-            return False
+            return 0
 
         start, end = self._opening_observation_span(messages)
         if start >= end:
-            return False
+            return 0
 
-        budget = self._get_observation_release_budget()
+        budget = self._get_observation_release_budget(token_threshold)
         if budget <= 0:
-            return False
+            return 0
 
         # Normalize both shapes so the in-memory dict path and the persisted
         # JSON-string path measure the same text and cannot disagree about
-        # whether the gate fired.
+        # whether the release fired.
         normalized = [json_tool.safe_json_load(msg) for msg in messages[start:end]]
-        block_tokens = self._get_current_tokens(normalized)
-        if not block_tokens:
-            return False
-        return block_tokens > budget * ratio
+        block_tokens = self._get_current_tokens(normalized) or 0
+        if block_tokens <= budget * ratio:
+            return 0
 
-    def _drop_opening_observation(self, group: list, reference_messages: list | None = None) -> list:
-        """Drop the opening-observation span from one preserved group.
-
-        The head policy alone is not enough: session retention and the
-        last-user-message rule can each re-add the observation, which would
-        silently defeat the gate. Removal is positional rather than
-        content-based, because a later message may legitimately carry text
-        identical to the startup observation and must not be dropped with it.
-
-        The gate is evaluated against ``reference_messages`` when supplied, so a
-        single-message group such as the last user message is judged by the
-        whole context rather than by itself. When the gate is closed the group
-        is returned unchanged, which preserves the historical behavior.
-        """
-        gate_messages = reference_messages if reference_messages is not None else group
-        if not self._should_release_opening_observation(gate_messages):
-            return group
-        start, end = self._opening_observation_span(group)
-        if start >= end:
-            return group
-        return group[:start] + group[end:]
+        del messages[start:end]
+        removed = end - start
+        logger.info(
+            "released opening observation after summary: removed=%s, block_tokens=%s, "
+            "budget=%s, ratio=%s, session_id=%.128s",
+            removed,
+            block_tokens,
+            budget,
+            ratio,
+            session_id or "",
+        )
+        if session_id:
+            self._delete_persisted_opening_observation(session_id)
+        return removed
 
     def _get_summary_head_messages(
         self,
@@ -628,7 +650,7 @@ class ContextRuntimeBase(object):
                     break
                 if i > max_count:
                     break
-            return self._release_opening_observation_if_needed(messages, head_messages)
+            return head_messages
 
         head_messages = []
         index = 0
@@ -650,57 +672,7 @@ class ContextRuntimeBase(object):
         # Deliberately do not apply max_count here. After the first summary the
         # task may be absent, and a positional fallback would absorb the prior
         # summary and make the retained head drift on every subsequent round.
-        return self._release_opening_observation_if_needed(messages, head_messages)
-
-    def _release_opening_observation_if_needed(self, messages: list, head_messages: list) -> list:
-        """Drop the opening observation from the head when the gate fires.
-
-        Both head branches funnel through this single post-step so the
-        feasibility estimate, in-memory reconstruction, and persistent deletion
-        cannot disagree about whether the observation was released.
-        """
-        return self._drop_opening_observation(head_messages, reference_messages=messages)
-
-    def _map_head_messages_to_indexes(self, messages: list, head_messages: list) -> list:
-        """Map head messages back to their indexes inside ``messages``.
-
-        The head is a subsequence of ``messages`` in chronological order, but it
-        is not necessarily a prefix: releasing the opening observation removes a
-        span from the middle of the prefix. A length-based range would therefore
-        preserve the wrong indexes and silently re-add the released observation,
-        so positions are recovered by object identity instead of by count.
-        """
-        indexes = []
-        head_index = 0
-        for index, message in enumerate(messages):
-            if head_index >= len(head_messages):
-                break
-            if message is head_messages[head_index]:
-                indexes.append(index)
-                head_index += 1
-        return indexes
-
-    def _get_summary_preserved_prefix_length(
-            self,
-            messages: list,
-            head_messages: list,
-            head_offset_to_keep: int,
-    ) -> int:
-        """Return the leading length a count-based tail window must not absorb.
-
-        The tail window is selected by message count, so it can grow backwards
-        into the retained head. When the opening observation is released, the
-        head shrinks and a head-length floor would let the tail absorb the very
-        observation that was just released, which would silently defeat the gate.
-        """
-        floor = max(0, head_offset_to_keep)
-        head_indexes = self._map_head_messages_to_indexes(messages, head_messages)
-        if head_indexes:
-            floor = max(floor, head_indexes[-1] + 1)
-        if self._should_release_opening_observation(messages):
-            _, observation_end = self._opening_observation_span(messages)
-            floor = max(floor, observation_end)
-        return floor
+        return head_messages
 
     def _get_messages_before_first_user_task_message(
         self,

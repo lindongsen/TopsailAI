@@ -98,17 +98,6 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         return deleted_list
 
 
-    def _get_summary_token_threshold(self) -> int:
-        """Return the Agent2LLM token summarize threshold, or 0 when disabled."""
-        threshold = env_tool.EnvReaderInstance.get(
-            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD",
-            default=128000,
-            formatter=int,
-        )
-        if not isinstance(threshold, int) or threshold <= 0:
-            return 0
-        return threshold
-
     @staticmethod
     def _get_agent2llm_summary_token_reserve() -> int:
         """Return the token budget reserved for a future Agent2LLM summary."""
@@ -121,7 +110,6 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if not isinstance(reserve, int) or reserve < 0:
             return default_reserve
         return reserve
-
 
     def _build_agent2llm_summary_partitions(
             self,
@@ -145,18 +133,13 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if need_session_messages:
             # Session retention is independent of intrinsic task retention, so
             # it may intentionally preserve a task even when the switch is off.
-            # It must still honor the observation-release gate, otherwise the
-            # whole session re-adds the observation the head just released.
-            message_groups.append(self._drop_opening_observation(self.messages))
+            message_groups.append(self.messages)
         if tail_offset_to_keep > 0:
             # The tail window is selected by message count, so it can start on
             # a tool observation whose owning assistant message falls into the
             # summarized middle. Providers reject such an orphan, so expand the
-            # window backwards to the owner, bounded by the retained head and by
-            # a released observation, which the tail must not absorb back.
-            tail_floor = self._get_summary_preserved_prefix_length(
-                messages, head_portion, head_offset_to_keep
-            )
+            # window backwards to the owner, bounded by the head region.
+            tail_floor = max(len(head_portion), head_offset_to_keep)
             tail_start = message_tool.expand_tail_start_for_tool_pairing(
                 messages,
                 len(messages) - tail_offset_to_keep,
@@ -166,9 +149,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         last_user_msg = self.last_user_message
         if last_user_msg:
-            # The last user message may itself be the opening observation when
-            # no later human input exists, so it must obey the same gate.
-            message_groups.append(self._drop_opening_observation([last_user_msg]))
+            message_groups.append([last_user_msg])
 
         for message_group in message_groups:
             for message in message_group:
@@ -457,15 +438,12 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
             # add session messages
             if need_session_messages:
-                # Session retention must honor the observation-release gate,
-                # otherwise it re-adds the observation the head just released.
-                session_messages = self._drop_opening_observation(self.messages)
                 if not new_messages:
                     # Note that they are different objects, so use '+=', DONOT use '='
-                    new_messages += session_messages
+                    new_messages += self.messages
                 else:
                     _len = len(new_messages)
-                    for msg in session_messages:
+                    for msg in self.messages:
                         if self._message_in_list(msg, new_messages[:_len]):
                             continue
                         new_messages.append(msg)
@@ -474,15 +452,10 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             # The tail window is selected by message count, so it can start on a
             # tool observation whose owning assistant message is summarized away.
             # Expand the window backwards to that owner so the preserved tail stays
-            # pair-atomic. The floor must be release-aware: a head-length floor
-            # would let the tail absorb the observation the head just released,
-            # which would silently defeat the gate and disagree with the
-            # partition path that already uses the same helper.
+            # pair-atomic; the head region bounds the expansion.
             tail_messages = []
             if tail_offset_to_keep > 0:
-                tail_floor = self._get_summary_preserved_prefix_length(
-                    messages, keeping_messages, head_offset_to_keep
-                )
+                tail_floor = max(len(keeping_messages), head_offset_to_keep)
                 failed_stage = "tool_pairing"
                 tail_start = message_tool.expand_tail_start_for_tool_pairing(
                     messages,
@@ -505,17 +478,27 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
 
             if last_user_msg:
-                # The last user message may itself be the opening observation
-                # when no later human input exists, so it obeys the same gate.
-                if self._drop_opening_observation([last_user_msg]):
-                    if not self._message_in_list(last_user_msg, new_messages):
-                        new_messages.append(last_user_msg)
+                if not self._message_in_list(last_user_msg, new_messages):
+                    new_messages.append(last_user_msg)
 
             self._log_summarize_message_identity_changes(
                 "summarize_messages_for_processing",
                 original_messages + self.messages,
                 new_messages,
                 summary_answer,
+            )
+            # Post-step: the summary already consumed the opening observation, so
+            # removing it now cannot lose content. A skipped summarization never
+            # reaches this point, which is intentional because there is no
+            # summary to compensate for the removed content.
+            self.release_opening_observation_after_summary(
+                new_messages,
+                token_threshold=env_tool.EnvReaderInstance.get(
+                    "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD",
+                    default=128000,
+                    formatter=int,
+                ) or 0,
+                session_id=self.session_id or "",
             )
             partial_apply_possible = True
             self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
