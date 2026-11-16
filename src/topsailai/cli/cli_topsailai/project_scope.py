@@ -301,12 +301,16 @@ def build_project_list(
 ) -> List[Dict[str, Any]]:
     """Build the list of recent sessions with a project workspace.
 
-    Runs ``topsailai_list_sessions --json --has-project --sort desc`` with an
-    optional session ID, the internal-category exclusion, and a limit, then
-    parses the JSON output. Sessions are then re-sorted by the modification
-    time of their most recent ``*.session.stdout`` file (oldest first, newest
-    last). When a session has no stdout file, its ``create_time`` is used as a
-    fallback.
+    Runs ``topsailai_list_sessions --json --has-project --order-by=-update_time``
+    with an optional session ID, the internal-category exclusion, and a limit,
+    then parses the JSON output. Because the limit is applied together with the
+    ordering, the page holds the most recently modified sessions rather than the
+    most recently created ones. The returned rows are then re-sorted for display
+    oldest-first, so the newest modification appears last.
+
+    The modification time is the stored ``update_time``. A row that carries no
+    ``update_time`` falls back to the newest ``*.session.stdout`` mtime and then
+    to ``create_time``, so one sort key never mixes unrelated clocks.
 
     Internal machinery sessions listed in ``_INTERNAL_SESSION_CATEGORIES`` are
     excluded from the default list, because the session agent driver exports the
@@ -335,8 +339,12 @@ def build_project_list(
         "topsailai_list_sessions",
         "--json",
         "--has-project",
-        "--sort",
-        "desc",
+        # Page selection must follow the modification time, not the creation
+        # time: with a limit, the ordering decides which rows are returned, so
+        # ordering by create_time silently drops recently modified sessions.
+        # The equals form is required because argparse rejects a separate value
+        # that begins with "-".
+        "--order-by=-update_time",
     ]
     if session_id:
         cmd.append(session_id)
@@ -388,15 +396,31 @@ def build_project_list(
     # One listing serves both the mtime sort and the running-status enrichment.
     stdout_index = _build_stdout_index(task_dir)
 
+    def _sort_timestamp(value: str) -> float:
+        """Return a comparable timestamp for an ISO string, or 0.0."""
+        if not value:
+            return 0.0
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return 0.0
+
     entries = []
     for session in sessions:
         session_id_value = session.get("session_id") or ""
         create_time_raw = session.get("create_time") or ""
-        mtime = _resolve_session_mtime(task_dir, session_id_value, index=stdout_index)
-        if mtime is not None:
-            modified_time_raw = datetime.fromtimestamp(mtime).isoformat()
+        update_time_raw = session.get("update_time") or ""
+        # The stored update_time is the authoritative modification time. The
+        # stdout mtime and create_time are fallbacks for a row that carries no
+        # update_time, so one sort key never mixes two unrelated clocks.
+        if update_time_raw:
+            modified_time_raw = update_time_raw
         else:
-            modified_time_raw = create_time_raw
+            mtime = _resolve_session_mtime(task_dir, session_id_value, index=stdout_index)
+            if mtime is not None:
+                modified_time_raw = datetime.fromtimestamp(mtime).isoformat()
+            else:
+                modified_time_raw = create_time_raw
         entries.append(
             {
                 "session_id": session_id_value,
@@ -405,27 +429,20 @@ def build_project_list(
                 "modified_time_raw": modified_time_raw,
                 "create_time_raw": create_time_raw,
                 "task": session.get("task") or "",
-                "_mtime": mtime if mtime is not None else 0.0,
-                "_fallback_time": create_time_raw,
+                "_sort_time": _sort_timestamp(modified_time_raw),
             }
         )
 
-    # Sort oldest-first by stdout mtime. Entries without a stdout file fall
-    # back to their create_time for stable ordering.
-    entries.sort(
-        key=lambda e: (
-            e["_mtime"] if e["_mtime"] else datetime.fromisoformat(
-                e["_fallback_time"]
-            ).timestamp() if e["_fallback_time"] else 0.0
-        )
-    )
+    # Display oldest-first, matching the workspace list convention. The page is
+    # fetched newest-first by update_time, so the most recently modified
+    # sessions are in the page while the oldest of them still appears on top.
+    entries.sort(key=lambda e: e["_sort_time"])
 
     # Assign visible row numbers after sorting and drop internal sort keys.
     for idx, entry in enumerate(entries, start=1):
         entry["no"] = idx
         entry["modified_time"] = _format_time(entry["modified_time_raw"])
-        entry.pop("_mtime", None)
-        entry.pop("_fallback_time", None)
+        entry.pop("_sort_time", None)
 
     _enrich_running_status(entries, index=stdout_index)
     return entries

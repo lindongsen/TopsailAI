@@ -278,6 +278,7 @@ def _session_to_dict(session):
         "session_name": str(session.session_name) if session.session_name else "",
         "category": str(getattr(session, "category", "") or ""),
         "create_time": session.create_time.strftime("%Y-%m-%dT%H:%M:%S") if session.create_time else "",
+        "update_time": session.update_time.strftime("%Y-%m-%dT%H:%M:%S") if getattr(session, "update_time", None) else "",
         "task": str(session.task) if session.task else "",
         "project_workspace": str(session.project_workspace) if session.project_workspace else "",
         "pwd": str(session.pwd) if session.pwd else "",
