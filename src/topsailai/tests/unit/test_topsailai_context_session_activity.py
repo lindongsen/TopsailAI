@@ -465,15 +465,45 @@ def test_expired_stdout_orphan_is_excluded(tmp_path):
     assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).can_clean("a.b[1]")
 
 
-def test_orphan_socket_file_still_blocks_cleanup(tmp_path):
-    """A leftover socket file is not proof of absence and keeps the session blocked."""
+def test_orphan_socket_file_with_dead_owner_is_excluded(tmp_path):
+    """A socket file no process listens on is residue, not liveness evidence."""
     record(tmp_path, pid=123)
     (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
     (tmp_path / "a.b[1].456.session.sock").write_text("endpoint")
 
     observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
 
-    assert observation.state == State.UNKNOWN
+    assert observation.state == State.STOPPED
+
+
+def test_orphan_with_connectable_endpoint_still_blocks_cleanup(tmp_path):
+    """A responding endpoint protects the session even when its PID looks dead."""
+    record(tmp_path, pid=123)
+    (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
+    (tmp_path / "a.b[1].456.session.sock").write_text("endpoint")
+    endpoint = Mock(return_value=True)
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, endpoint_observer=endpoint,
+    )
+
+    assert probe.observe("a.b[1]").state == State.RUNNING
+    assert not probe.can_clean("a.b[1]")
+
+
+def test_orphan_with_uncertain_endpoint_probe_still_blocks_cleanup(tmp_path):
+    """An unreadable endpoint keeps the conservative unknown result."""
+    record(tmp_path, pid=123)
+    (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
+    (tmp_path / "a.b[1].456.session.sock").write_text("endpoint")
+    endpoint = Mock(side_effect=OSError("probe failed"))
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, endpoint_observer=endpoint,
+    )
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+    assert not probe.can_clean("a.b[1]")
 
 
 def test_live_orphan_pid_still_blocks_cleanup(tmp_path):

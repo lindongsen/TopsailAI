@@ -259,25 +259,23 @@ class SessionActivityProbe:
         state = ActivityState.UNKNOWN if ActivityState.UNKNOWN in states else ActivityState.STOPPED
         return ActivityObservation(state, "strict owner inventory")
 
-    def _exclude_expired_orphan(self, root, session_id, pid, names):
+    def _exclude_expired_orphan(self, root, names):
         """Return ``None`` for a dead owner whose artifacts all expired.
 
         A PID that lost its metadata still counts as an owner record, so it
         would otherwise keep the whole session unauthorized forever. Such a
         record is excluded only when every remaining gate proves it cannot be
-        live: no metadata, no socket file, a dead PID, and no unexpired stdout
-        artifact. Any other shape keeps the conservative ``UNKNOWN`` result.
+        live: no metadata, a dead PID, and no unexpired stdout artifact.
+
+        A leftover socket file is deliberately not re-checked here. The caller
+        has already probed that endpoint and observed the PID: a connectable
+        endpoint returns ``RUNNING`` before this method is reached, and an
+        uncertain probe failure returns ``UNKNOWN``. A socket file that no
+        process listens on is residue from an abnormal exit, not evidence of a
+        live owner, so treating its mere existence as proof of liveness would
+        block cleanup forever.
         """
         if any(name.endswith(".session.meta") for name in names):
-            return ActivityState.UNKNOWN
-        socket_path = root / f"{session_id}.{pid}.session.sock"
-        try:
-            socket_path.lstat()
-            return ActivityState.UNKNOWN
-        except FileNotFoundError:
-            pass
-        except OSError:
-            logger.warning("Cannot inspect session endpoint %s", socket_path, exc_info=True)
             return ActivityState.UNKNOWN
         if self.stdout_retention_seconds <= 0:
             return ActivityState.UNKNOWN
@@ -314,7 +312,7 @@ class SessionActivityProbe:
 
         metadata = [name for name in names if name.endswith(".session.meta")]
         if len(metadata) != 1:
-            return self._exclude_expired_orphan(root, session_id, pid, names)
+            return self._exclude_expired_orphan(root, names)
         path = root / metadata[0]
         try:
             first = path.lstat()

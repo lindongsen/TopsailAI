@@ -22,7 +22,11 @@ from topsailai.utils import env_tool
 from topsailai.utils.qos_tool import log_if_slow_decorator
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 from topsailai.workspace.project_workspace import resolve_project_workspace
-from topsailai.context.session_activity import ActivityState, SessionActivityProbe
+from topsailai.context.session_activity import (
+    ActivityState,
+    SessionActivityProbe,
+    _OWNER_PATTERN,
+)
 from topsailai.context.session_category import resolve_session_category
 
 logger = logging.getLogger(__name__)
@@ -358,6 +362,29 @@ def _file_identity(path):
     )
 
 
+def _cleanable_session_ids(session_ids, activity_probe):
+    """Return cleanup decisions for explicit session identifiers.
+
+    One batch observation is used when the probe supports it, so a directory
+    with hundreds of sessions is inventoried once instead of once per session.
+    """
+    ordered = tuple(sorted(set(session_ids)))
+    if not ordered:
+        return {}
+    observe_many = getattr(type(activity_probe), "observe_many", None)
+    if callable(observe_many):
+        observations = activity_probe.observe_many(ordered)
+        return {
+            session_id: observations.get(session_id) is not None
+            and observations[session_id].state == ActivityState.STOPPED
+            for session_id in ordered
+        }
+    return {
+        session_id: bool(activity_probe.can_clean(session_id))
+        for session_id in ordered
+    }
+
+
 def _cleanable_sessions(paths, activity_probe):
     """Return cleanup decisions using one batch observation when supported."""
     session_ids = tuple(sorted({
@@ -365,21 +392,7 @@ def _cleanable_sessions(paths, activity_probe):
         for session_id in (_parse_meta_session_id(path) for path in paths)
         if session_id
     }))
-    if not session_ids:
-        return {}
-    observe_many = getattr(type(activity_probe), "observe_many", None)
-    if callable(observe_many):
-        observations = activity_probe.observe_many(session_ids)
-        return {
-            session_id: observations.get(session_id).state == ActivityState.STOPPED
-            if observations.get(session_id) is not None
-            else False
-            for session_id in session_ids
-        }
-    return {
-        session_id: bool(activity_probe.can_clean(session_id))
-        for session_id in session_ids
-    }
+    return _cleanable_session_ids(session_ids, activity_probe)
 
 
 def _capture_cleanup_candidates(paths):
@@ -529,3 +542,150 @@ def cleanup_session_meta_files(activity_probe=None) -> None:
                 logger.debug("Preserved uncertain session meta temp file: %s", path)
         except OSError:
             continue
+
+
+def _index_owner_records(directory):
+    """Group every owner record in *directory* by its session identifier.
+
+    The framework's own owner-record pattern is reused so this inventory cannot
+    drift from the suffixes the activity probe recognizes. A name that the
+    pattern rejects is not an owner record and is never a cleanup candidate.
+    """
+    grouped = {}
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        logger.warning("Cannot list the task directory %s", directory, exc_info=True)
+        return grouped
+    for name in entries:
+        match = _OWNER_PATTERN.fullmatch(name)
+        if match is None:
+            continue
+        grouped.setdefault(match.group(1), []).append(name)
+    return grouped
+
+
+def _orphan_cleanup_candidates(grouped, directory, now, retention_seconds):
+    """Return expired owner records of sessions that have no metadata left.
+
+    A session that still owns a metadata file is left to
+    ``cleanup_session_meta_files``, which reclaims the metadata and its
+    artifacts together. Only a session whose metadata is already gone is an
+    orphan, and only its own expired records are candidates.
+
+    The age gate is per file and is not optional. A session writes its
+    statistics before its metadata, so a freshly started session briefly looks
+    like an orphan; deleting on liveness alone would destroy a live session's
+    statistics during that window.
+
+    Each candidate carries the regular-file identity captured before the
+    authorization pass, so a record rewritten or replaced while the probe runs
+    cannot be deleted on stale evidence.
+    """
+    candidates = {}
+    for session_id, names in grouped.items():
+        if any(name.endswith(f".session.{META_EXTENSION}") for name in names):
+            continue
+        expired = []
+        for name in names:
+            path = os.path.join(directory, name)
+            try:
+                if now - os.path.getmtime(path) <= retention_seconds:
+                    continue
+            except OSError:
+                continue
+            identity = _file_identity(path)
+            if identity is None:
+                continue
+            expired.append((path, identity))
+        if expired:
+            candidates[session_id] = expired
+    return candidates
+
+
+def _remove_orphan_records(candidates, decisions):
+    """Delete authorized orphan records only when their identity is unchanged.
+
+    Every path is re-identified immediately before removal, so a record that was
+    rewritten, replaced, or turned into a symlink after the inventory pass is
+    preserved. Non-regular files are skipped: a socket endpoint is owned by the
+    channel that created it, not by this cleanup.
+    """
+    removed = []
+    for session_id, entries in candidates.items():
+        if not decisions.get(session_id):
+            continue
+        for path, identity in entries:
+            if _file_identity(path) != identity:
+                continue
+            try:
+                os.remove(path)
+            except OSError:
+                logger.warning("Cannot remove orphan session record %s", path, exc_info=True)
+                continue
+            removed.append(path)
+            logger.debug("Removed orphan session record: %s", path)
+    return removed
+
+
+@safe_session_meta
+@log_if_slow_decorator(
+    threshold=SESSION_META_CLEANUP_SLOW_SECONDS,
+    message="Orphan session cleanup exceeded startup latency threshold",
+    level="critical",
+    logger_obj=logger,
+)
+@_serialized_session_meta
+def cleanup_orphan_session_files(activity_probe=None, directory=None,
+                                 retention_days=None, now=None) -> list:
+    """Remove expired owner records of sessions whose metadata is already gone.
+
+    ``cleanup_session_meta_files`` iterates metadata files, so a session that
+    lost its metadata is invisible to it and its remaining owner records stay on
+    disk forever. This function covers exactly that population: sessions with no
+    metadata file at all, whose every remaining record is expired and whose
+    owners are all provably stopped.
+
+    Configuration:
+      TOPSAILAI_SESSION_META_RETENTION_DAYS (default 7)
+
+    Args:
+        activity_probe: Optional probe; one is built for *directory* when absent.
+        directory: Task directory, defaulting to ``FOLDER_WORKSPACE_TASK``.
+        retention_days: Age in days a record must exceed, defaulting to the
+            configured retention. Zero or negative disables the cleanup.
+        now: Reference timestamp, defaulting to the current time.
+
+    Returns:
+        list: Paths that were actually removed.
+    """
+    if retention_days is None:
+        retention_days = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_SESSION_META_RETENTION_DAYS",
+            default=7,
+            formatter=int,
+        )
+    if retention_days <= 0:
+        return []
+    directory = directory or FOLDER_WORKSPACE_TASK
+    reference = time.time() if now is None else now
+    retention_seconds = retention_days * 86400
+    activity_probe = activity_probe if activity_probe is not None else SessionActivityProbe((directory,))
+
+    grouped = _index_owner_records(directory)
+    candidates = _orphan_cleanup_candidates(grouped, directory, reference, retention_seconds)
+    if not candidates:
+        return []
+    decisions = _cleanable_session_ids(tuple(candidates), activity_probe)
+    removed = _remove_orphan_records(candidates, decisions)
+    if removed:
+        removed_set = set(removed)
+        removed_sessions = {
+            session_id for session_id, entries in candidates.items()
+            if any(path in removed_set for path, _ in entries)
+        }
+        logger.info(
+            "Removed %d orphan session record(s) across %d session(s)",
+            len(removed), len(removed_sessions),
+        )
+    return removed

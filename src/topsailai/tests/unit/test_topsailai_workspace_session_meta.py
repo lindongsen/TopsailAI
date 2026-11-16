@@ -643,3 +643,243 @@ def test_stats_removal_leaves_no_orphan_owner_record():
 def test_stats_artifact_is_declared_for_reclamation():
     """The artifact inventory must name stats so cleanup cannot leave it behind."""
     assert "stats.jsonl" in session_meta.ARTIFACT_SUFFIXES
+
+
+def _write_owner_record(session_id, pid, suffix, age_days=30, content="record"):
+    """Create one owner record with a controlled modification time."""
+    path = os.path.join(
+        session_meta.FOLDER_WORKSPACE_TASK, f"{session_id}.{pid}.session.{suffix}"
+    )
+    with open(path, "w", encoding="utf-8") as fd:
+        fd.write(content)
+    stamp = time.time() - age_days * 86400
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def _stopped_probe():
+    """Return a probe that authorizes every session."""
+    return MagicMock(can_clean=MagicMock(return_value=True))
+
+
+def test_orphan_cleanup_removes_expired_stats_without_metadata():
+    """A session whose metadata is gone still has its expired stats reclaimed."""
+    stats_path = _write_owner_record("orphan-stats", 4242, "stats.jsonl")
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=7
+    )
+
+    assert removed == [stats_path]
+    assert not os.path.exists(stats_path)
+
+
+def test_orphan_cleanup_preserves_fresh_record_during_startup_window():
+    """A session writes stats before metadata, so a fresh record is not an orphan."""
+    fresh_path = _write_owner_record("orphan-fresh", 4243, "stats.jsonl", age_days=0)
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=7
+    )
+
+    assert removed == []
+    assert os.path.exists(fresh_path)
+
+
+def test_orphan_cleanup_skips_session_that_still_owns_metadata():
+    """A session with metadata belongs to the metadata cleanup, not to this one."""
+    meta_path = session_meta.create_session_meta("orphan-with-meta")
+    stats_path = _write_owner_record("orphan-with-meta", 4244, "stats.jsonl")
+    old_time = time.time() - 30 * 86400
+    os.utime(meta_path, (old_time, old_time))
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=7
+    )
+
+    assert removed == []
+    assert os.path.exists(meta_path)
+    assert os.path.exists(stats_path)
+
+
+def test_orphan_cleanup_retains_records_of_unauthorized_session():
+    """A session the probe refuses to authorize keeps every record."""
+    stats_path = _write_owner_record("orphan-running", 4245, "stats.jsonl")
+    probe = MagicMock(can_clean=MagicMock(return_value=False))
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=probe, retention_days=7
+    )
+
+    assert removed == []
+    assert os.path.exists(stats_path)
+
+
+def test_orphan_cleanup_retains_socket_endpoint():
+    """A socket endpoint is owned by its channel, so cleanup never removes it."""
+    sock_path = os.path.join(
+        session_meta.FOLDER_WORKSPACE_TASK, "orphan-socket.4246.session.sock"
+    )
+    endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        endpoint.bind(sock_path)
+        old_time = time.time() - 30 * 86400
+        os.utime(sock_path, (old_time, old_time))
+
+        removed = session_meta.cleanup_orphan_session_files(
+            activity_probe=_stopped_probe(), retention_days=7
+        )
+
+        assert removed == []
+        assert os.path.exists(sock_path)
+    finally:
+        endpoint.close()
+
+
+def test_orphan_cleanup_is_disabled_by_zero_retention():
+    """A zero retention disables the cleanup instead of deleting everything."""
+    stats_path = _write_owner_record("orphan-disabled", 4247, "stats.jsonl")
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=0
+    )
+
+    assert removed == []
+    assert os.path.exists(stats_path)
+
+
+def test_orphan_cleanup_retains_symlink_and_its_target(tmp_path):
+    """A symlink is not a regular owner record and its target is never touched."""
+    target = tmp_path / "outside.txt"
+    target.write_text("outside", encoding="utf-8")
+    link_path = os.path.join(
+        session_meta.FOLDER_WORKSPACE_TASK, "orphan-link.4248.session.stats.jsonl"
+    )
+    os.symlink(str(target), link_path)
+    old_time = time.time() - 30 * 86400
+    os.utime(link_path, (old_time, old_time), follow_symlinks=False)
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=7
+    )
+
+    assert removed == []
+    assert os.path.islink(link_path)
+    assert target.read_text(encoding="utf-8") == "outside"
+
+
+def test_orphan_cleanup_ignores_names_outside_the_owner_pattern():
+    """A name the framework does not produce is never a cleanup candidate."""
+    stray_path = os.path.join(
+        session_meta.FOLDER_WORKSPACE_TASK, "orphan-stray.session.unknown"
+    )
+    with open(stray_path, "w", encoding="utf-8") as fd:
+        fd.write("stray")
+    old_time = time.time() - 30 * 86400
+    os.utime(stray_path, (old_time, old_time))
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=7
+    )
+
+    assert removed == []
+    assert os.path.exists(stray_path)
+
+
+def test_orphan_cleanup_retains_record_replaced_after_observation(monkeypatch):
+    """A record rewritten after the inventory pass must not be deleted."""
+    stats_path = _write_owner_record("orphan-replaced", 4249, "stats.jsonl")
+    original = session_meta._cleanable_session_ids
+
+    def replace_after_observation(session_ids, activity_probe):
+        """Rewrite the candidate before deletion revalidation."""
+        decisions = original(session_ids, activity_probe)
+        with open(stats_path, "w", encoding="utf-8") as fd:
+            fd.write("rewritten")
+        return decisions
+
+    monkeypatch.setattr(
+        session_meta, "_cleanable_session_ids", replace_after_observation
+    )
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=7
+    )
+
+    assert removed == []
+    assert os.path.exists(stats_path)
+
+
+def test_orphan_cleanup_observes_all_sessions_in_one_batch():
+    """Every orphan session is observed once, not once per record."""
+    for index in range(3):
+        _write_owner_record(f"orphan-batch-{index}", 4300 + index, "stats.jsonl")
+        _write_owner_record(f"orphan-batch-{index}", 4300 + index, "events")
+
+    class BatchProbe:
+        """Record batch calls and authorize every session."""
+
+        def __init__(self):
+            self.calls = []
+
+        def observe_many(self, session_ids, home=None):
+            """Return a stopped observation for each requested session."""
+            self.calls.append(tuple(session_ids))
+            return {
+                session_id: MagicMock(state=session_meta.ActivityState.STOPPED)
+                for session_id in session_ids
+            }
+
+        def can_clean(self, session_id):
+            """Fail the test if per-session observation is used."""
+            raise AssertionError("per-session observation must not be used")
+
+    probe = BatchProbe()
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=probe, retention_days=7
+    )
+
+    assert len(probe.calls) == 1
+    assert len(probe.calls[0]) == 3
+    assert len(removed) == 6
+
+
+def test_orphan_cleanup_removes_every_expired_record_of_one_session():
+    """All expired owner records of an orphan session are reclaimed together."""
+    stats_path = _write_owner_record("orphan-multi", 4400, "stats.jsonl")
+    events_path = _write_owner_record("orphan-multi", 4400, "events")
+    flag_path = _write_owner_record("orphan-multi", 4400, "agent2llm_interrupt.flag")
+
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=7
+    )
+
+    assert sorted(removed) == sorted([stats_path, events_path, flag_path])
+    for path in (stats_path, events_path, flag_path):
+        assert not os.path.exists(path)
+
+
+def test_orphan_cleanup_returns_empty_when_directory_has_no_orphan():
+    """An empty task directory is not an error and reports nothing removed."""
+    assert session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe(), retention_days=7
+    ) == []
+
+
+def test_orphan_cleanup_uses_configured_retention(monkeypatch):
+    """The configured retention days decide whether a record is expired."""
+    stats_path = _write_owner_record("orphan-config", 4500, "stats.jsonl", age_days=3)
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+
+    assert session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe()
+    ) == []
+    assert os.path.exists(stats_path)
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "1")
+    removed = session_meta.cleanup_orphan_session_files(
+        activity_probe=_stopped_probe()
+    )
+
+    assert removed == [stats_path]
+    assert not os.path.exists(stats_path)
