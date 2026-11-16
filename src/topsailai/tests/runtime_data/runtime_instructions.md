@@ -331,3 +331,95 @@ Only paths that actually exist are executed.
 - If the `json` flag is resolved after parameter validation, an unknown parameter combined with `json=1` must return text instead of JSON, and the structured-error case must fail.
 - If the forwarded `;`-separated token is split only on `=`, the flag is glued into the key value and the transport-agreement case must fail.
 - If `json` is tested with a plain truthiness check, `json=0` enables JSON and the disabled-flag case must fail.
+
+## `/agent.tokens` JSON Output
+
+`/agent.tokens` accepts the same `json` flag as the Runtime commands, so message
+counts are consumable by a program instead of only by a human reader.
+
+```text
+/agent.tokens
+/agent.tokens json=1
+```
+
+### Parameter Contract
+
+- `json` is the only accepted parameter. Any other parameter reports usage.
+- The flag is accepted as a keyword argument and as a forwarded positional
+  `json=1` token, so terminal dispatch and control-channel forwarding agree.
+- `json=0` and an absent flag both select text mode.
+- Text mode keeps the existing single-argument call into the token reporter, so
+  the pre-existing binding contract is unchanged.
+
+### JSON Output Contract
+
+```json
+{
+  "ok": true,
+  "model": "model-name",
+  "agent2llm": {"messages": 2, "estimated_tokens": 2500},
+  "user2agent": {"messages": 1, "estimated_tokens": 2500, "ephemeral": false},
+  "context": {
+    "model_maximum": 10000,
+    "completion_reserve": 1000,
+    "input_send_limit": 9000,
+    "agent2llm_usage_percent": 27.8,
+    "watermark": "NORMAL"
+  }
+}
+```
+
+- `messages` is the exact message count of that layer, which is the value this
+  contract exists to expose.
+- `estimated_tokens` is `null` when counting failed, never `0`, so a failure
+  cannot be mistaken for an empty context.
+- `ephemeral` is `true` when the session is unsaved.
+- `context` degrades to `{"model_maximum": null}` when no model limit is known.
+- No active Agent returns `{"ok": false, "error": "no_agent"}`.
+
+### `/agent.tokens` Cases
+
+#### Text mode is unchanged
+
+Given an active Agent with two Agent2LLM messages and one User2Agent message
+When the operator invokes `/agent.tokens`
+Then the report contains `Agent2LLM:\n  Messages: 2` and `User2Agent:\n  Messages: 1`
+
+#### JSON mode exposes both counts
+
+Given the same active Agent
+When the operator invokes `/agent.tokens json=1`
+Then the parsed document reports `agent2llm.messages` as 2 and
+`user2agent.messages` as 1
+
+#### Both transports agree
+
+Given the same active Agent
+When the operator invokes the keyword form and the forwarded positional form
+Then both reports are byte-identical
+
+#### Disabled flag equals absent flag
+
+Given the same active Agent
+When the operator invokes `/agent.tokens json=0`
+Then the report equals the report produced without the flag
+
+#### Unknown parameter reports usage
+
+Given the same active Agent
+When the operator invokes `/agent.tokens yaml=1`
+Then the report is `Usage: /agent.tokens [json=1]`
+And `/agent.tokens yaml=1;json=1` returns a JSON document with
+`error` equal to `unknown_parameter`
+
+### `/agent.tokens` Negative Controls
+
+- If the JSON branch serializes the raw runtime instead of the documented
+  fields, the JSON contract case must fail.
+- If a counting failure is reported as `0`, the unavailable-count case must fail.
+- If the flag is resolved after parameter validation, `yaml=1;json=1` returns
+  text and the structured-error case must fail.
+- If text mode always forwards the flag, the single-argument binding test must
+  fail.
+- If `json` is tested with a plain truthiness check, `json=0` enables JSON and
+  the disabled-flag case must fail.
