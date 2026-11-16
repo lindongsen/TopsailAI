@@ -491,3 +491,175 @@ class TestEndToEnd:
                 reaper_process.kill()
             reaper_process.wait()
         assert not record.exists()
+
+
+class TestDeletionOrderKeepsAuthorizationEvidence:
+    """The metadata record must be deleted last, or cleanup self-destructs.
+
+    ``SessionActivityProbe`` authorizes deletion only from a complete ``meta``
+    record, and ``_delete_owner_records`` re-checks that authorization before
+    every deletion. Deleting ``meta`` first made every later check fail, so the
+    statistics and stdout records survived forever while the run still reported
+    success.
+    """
+
+    def _write(self, directory, name):
+        """Create one empty owner record file."""
+        path = directory / name
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    def test_deletion_order_places_metadata_last(self, tmp_path):
+        """The ordering helper moves every metadata record to the end."""
+        names = [
+            "sad-abc.123.session.events",
+            "sad-abc.123.session.meta",
+            "sad-abc.123.session.sock",
+            "sad-abc.123.session.stats.jsonl",
+            "sad-abc.123.session.stdout",
+        ]
+        records = [self._write(tmp_path, name) for name in names]
+
+        ordered = reaper._deletion_order(records)
+
+        assert ordered[-1].name == "sad-abc.123.session.meta"
+        assert [path.name for path in ordered[:-1]] == [
+            "sad-abc.123.session.events",
+            "sad-abc.123.session.sock",
+            "sad-abc.123.session.stats.jsonl",
+            "sad-abc.123.session.stdout",
+        ]
+
+    def test_deletion_order_is_stable_without_metadata(self, tmp_path):
+        """Records without metadata keep their original relative order."""
+        names = [
+            "sad-abc.123.session.events",
+            "sad-abc.123.session.stats.jsonl",
+            "sad-abc.123.session.stdout",
+        ]
+        records = [self._write(tmp_path, name) for name in names]
+
+        assert reaper._deletion_order(records) == records
+
+    def test_every_record_is_deleted_when_metadata_is_present(self, tmp_path):
+        """A real probe must delete the whole set, not stop after the metadata.
+
+        This is the regression test for the original defect: with the metadata
+        sorted second, the probe refused every later deletion and the statistics
+        and stdout records survived.
+        """
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        session_id = "sad-order"
+        pid = 999999
+        (task_dir / f"{session_id}.{pid}.session.meta").write_text(json.dumps({
+            "session_id": session_id,
+            "pid": pid,
+            "hostname": socket.gethostname(),
+            "status": "completed",
+        }), encoding="utf-8")
+        for suffix in ("events", "sock", "stats.jsonl", "stdout"):
+            (task_dir / f"{session_id}.{pid}.session.{suffix}").write_text(
+                "record", encoding="utf-8"
+            )
+
+        from topsailai.context.session_activity import SessionActivityProbe
+
+        probe = SessionActivityProbe((task_dir,), lambda _pid: "stopped")
+        deleted, preserved = reaper._delete_owner_records(task_dir, session_id, probe)
+
+        assert preserved == []
+        assert len(deleted) == 5
+        assert reaper.find_owner_records(task_dir, session_id) == []
+
+    def test_preserved_records_are_reported_after_refusal(self, tmp_path):
+        """An unauthorized check reports every surviving record, not just one."""
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        session_id = "sad-refused"
+        for suffix in ("meta", "stats.jsonl", "stdout"):
+            (task_dir / f"{session_id}.123.session.{suffix}").write_text(
+                "record", encoding="utf-8"
+            )
+        probe = mock.Mock()
+        probe.can_clean.return_value = False
+
+        deleted, preserved = reaper._delete_owner_records(task_dir, session_id, probe)
+
+        assert deleted == []
+        assert len(preserved) == 3
+        assert len(reaper.find_owner_records(task_dir, session_id)) == 3
+
+
+class TestHonestReaperSummary:
+    """A run that preserves files must never report full success."""
+
+    def _prepare(self, tmp_path, session_id="sad-summary"):
+        """Create one complete owner record set for a stopped owner."""
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        (task_dir / f"{session_id}.999999.session.meta").write_text(json.dumps({
+            "session_id": session_id,
+            "pid": 999999,
+            "hostname": socket.gethostname(),
+            "status": "completed",
+        }), encoding="utf-8")
+        (task_dir / f"{session_id}.999999.session.stats.jsonl").write_text(
+            "record", encoding="utf-8"
+        )
+        return task_dir
+
+    def test_report_counts_deleted_and_preserved_files(self, tmp_path):
+        """The report separates fully reaped sessions from partial ones."""
+        self._prepare(tmp_path)
+        manager = mock.Mock()
+        manager.exists_session.return_value = True
+        manager.delete_session.return_value = True
+        report = {}
+        with mock.patch("topsailai.context.ctx_manager.get_session_manager",
+                        return_value=manager), \
+                mock.patch("topsailai.context.session_activity.SessionActivityProbe.can_clean",
+                           return_value=True):
+            reaped = reaper.reap_sessions(1, ["sad-summary"], tmp_path, 1, 0.01,
+                                          observer=lambda _: False, report=report)
+
+        assert reaped == ["sad-summary"]
+        assert report["reaped"] == ["sad-summary"]
+        assert report["partial"] == []
+        assert report["deleted_files"] == 2
+        assert report["preserved_files"] == 0
+
+    def test_partial_session_is_not_reported_as_reaped(self, tmp_path):
+        """A preserved file keeps the session out of the reaped list."""
+        self._prepare(tmp_path)
+        manager = mock.Mock()
+        manager.exists_session.return_value = True
+        manager.delete_session.return_value = True
+        report = {}
+        with mock.patch("topsailai.context.ctx_manager.get_session_manager",
+                        return_value=manager), \
+                mock.patch("topsailai.context.session_activity.SessionActivityProbe.can_clean",
+                           return_value=True), \
+                mock.patch.object(reaper, "_delete_owner_records",
+                                  return_value=([], [Path("kept")])):
+            reaped = reaper.reap_sessions(1, ["sad-summary"], tmp_path, 1, 0.01,
+                                          observer=lambda _: False, report=report)
+
+        assert reaped == []
+        assert report["partial"] == ["sad-summary"]
+        assert report["preserved_files"] == 1
+
+    def test_report_is_optional(self, tmp_path):
+        """Existing callers that pass no report keep the list contract."""
+        self._prepare(tmp_path)
+        manager = mock.Mock()
+        manager.exists_session.return_value = True
+        manager.delete_session.return_value = True
+        with mock.patch("topsailai.context.ctx_manager.get_session_manager",
+                        return_value=manager), \
+                mock.patch("topsailai.context.session_activity.SessionActivityProbe.can_clean",
+                           return_value=True):
+            reaped = reaper.reap_sessions(1, ["sad-summary"], tmp_path, 1, 0.01,
+                                          observer=lambda _: False)
+
+        assert reaped == ["sad-summary"]

@@ -219,12 +219,33 @@ def find_owner_records(task_dir, session_id):
     return records
 
 
+def _deletion_order(records):
+    """Order owner records so the authorization evidence is deleted last.
+
+    ``SessionActivityProbe`` authorizes cleanup only from a complete ``meta``
+    record, and ``_delete_owner_records`` re-checks that authorization before
+    every deletion. Deleting ``meta`` first would therefore make every later
+    check fail and leave the remaining records on disk forever. The sort is
+    stable, so the alphabetical order inside each group is preserved.
+    """
+    return sorted(records, key=lambda path: path.name.endswith(".session.meta"))
+
+
 def _delete_owner_records(task_dir, session_id, probe):
-    """Delete every owner record after a fresh STOPPED observation."""
+    """Delete every owner record, keeping the authorization evidence last.
+
+    Returns:
+        tuple: ``(deleted, preserved)`` paths. ``preserved`` holds every record
+        that survived, including the ones skipped after an unauthorized check,
+        so a caller can report what actually happened.
+    """
+    records = _deletion_order(find_owner_records(task_dir, session_id))
     deleted = []
-    for path in find_owner_records(task_dir, session_id):
+    preserved = []
+    for index, path in enumerate(records):
         if not probe.can_clean(session_id):
             logger.warning("preserved owner record %s: cleanup not authorized", path)
+            preserved.extend(records[index:])
             break
         try:
             path.unlink()
@@ -232,10 +253,11 @@ def _delete_owner_records(task_dir, session_id, probe):
             continue
         except OSError as error:
             logger.error("cannot delete owner record %s: %s", path, error)
+            preserved.append(path)
             continue
         logger.info("deleted owner record %s", path)
         deleted.append(path)
-    return deleted
+    return deleted, preserved
 
 
 def _delete_session_row(session_id):
@@ -257,8 +279,19 @@ def _delete_session_row(session_id):
 
 
 def reap_sessions(parent_pid, session_ids, home, timeout=DEFAULT_TIMEOUT,
-                  poll_interval=DEFAULT_POLL_INTERVAL, observer=None):
-    """Wait for the parent to exit, then delete each tracked session."""
+                  poll_interval=DEFAULT_POLL_INTERVAL, observer=None, report=None):
+    """Wait for the parent to exit, then delete each tracked session.
+
+    Args:
+        report: Optional mutable mapping that receives the honest outcome:
+            ``reaped`` sessions, ``partial`` sessions whose database row was
+            deleted but whose files were preserved, ``deleted_files`` and
+            ``preserved_files`` counts. The return value stays a list of fully
+            reaped session ids so existing callers keep their contract.
+
+    Returns:
+        list: Session ids whose database row and every owner record are gone.
+    """
     # Make the home absolute before any framework import: importing topsailai
     # re-reads TOPSAILAI_HOME and a relative value would be resolved twice.
     # Symbolic links stay unresolved so the spelling matches the folder
@@ -275,14 +308,33 @@ def reap_sessions(parent_pid, session_ids, home, timeout=DEFAULT_TIMEOUT,
     task_dir = home / "workspace" / "task"
     probe = SessionActivityProbe((task_dir,))
     reaped = []
+    partial = []
+    deleted_files = 0
+    preserved_files = 0
     for session_id in session_ids:
         if not probe.can_clean(session_id):
             logger.warning("preserved session %s: cleanup not authorized", session_id)
             continue
         if not _delete_session_row(session_id):
             continue
-        _delete_owner_records(task_dir, session_id, probe)
+        deleted, preserved = _delete_owner_records(task_dir, session_id, probe)
+        deleted_files += len(deleted)
+        preserved_files += len(preserved)
+        if preserved:
+            # The row is gone but files remain, so this session is not reaped.
+            # Reporting it as reaped is what hid the original defect.
+            logger.warning(
+                "partially reaped session %s: deleted %d file(s), preserved %d file(s)",
+                session_id, len(deleted), len(preserved),
+            )
+            partial.append(session_id)
+            continue
         reaped.append(session_id)
+    if report is not None:
+        report["reaped"] = list(reaped)
+        report["partial"] = list(partial)
+        report["deleted_files"] = deleted_files
+        report["preserved_files"] = preserved_files
     return reaped
 
 
@@ -359,10 +411,22 @@ def main(argv=None):
     _ensure_project_paths()
     timeout = _read_int_env(REAPER_TIMEOUT_ENV, DEFAULT_TIMEOUT)
     poll_interval = _read_float_env(REAPER_POLL_ENV, DEFAULT_POLL_INTERVAL)
+    report = {}
     reaped = reap_sessions(args.parent_pid, session_ids, home,
-                           timeout, poll_interval)
-    logger.info("session reaper finished: reaped=%d of %d",
-                len(reaped), len(session_ids))
+                           timeout, poll_interval, report=report)
+    # Report files, not attempts. A run that deleted the metadata and preserved
+    # the statistics used to print full success, which hid the residue defect.
+    logger.info(
+        "session reaper finished: reaped=%d of %d, partial=%d, "
+        "deleted_files=%d, preserved_files=%d",
+        len(reaped), len(session_ids), len(report.get("partial", ())),
+        report.get("deleted_files", 0), report.get("preserved_files", 0),
+    )
+    if report.get("preserved_files"):
+        logger.warning(
+            "session reaper preserved %d file(s); cleanup is incomplete",
+            report["preserved_files"],
+        )
     return 0
 
 
