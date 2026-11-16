@@ -35,10 +35,12 @@ STATUS_ERROR = "error"
 STATUS_INTERRUPTED = "interrupted"
 SESSION_META_CLEANUP_SLOW_SECONDS = 5
 
-# Diagnostic artifacts that share a session metadata basename. They are retained
-# on every exit path, so they are reclaimed only together with the metadata that
-# authorizes their removal.
-ARTIFACT_SUFFIXES = ("stdout", "events")
+# Artifacts that share a session metadata basename. They are retained on every
+# exit path, so they are reclaimed only together with the metadata that
+# authorizes their removal. `stats.jsonl` belongs here because it is an owner
+# record: leaving it behind creates a PID with no metadata, which makes the
+# whole session unauthorized forever.
+ARTIFACT_SUFFIXES = ("stdout", "events", "stats.jsonl")
 
 _META_LOCK = threading.RLock()
 

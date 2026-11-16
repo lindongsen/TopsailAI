@@ -2,6 +2,7 @@
 import json
 import os
 import socket
+import time
 from unittest.mock import Mock
 
 import psutil
@@ -415,3 +416,109 @@ def test_normalize_home_path_keeps_symlinks_and_collapses_parent_segments(tmp_pa
     assert normalize_home_path(str(link)) != str(real)
     assert normalize_home_path(f"{link}/../link_home") == str(link)
     assert normalize_home_path("") == ""
+
+
+def _age(path, seconds):
+    """Backdate one fixture artifact so retention gates can be exercised."""
+    stamp = time.time() - seconds
+    os.utime(path, (stamp, stamp))
+
+
+def test_expired_orphan_without_metadata_is_excluded(tmp_path):
+    """A dead PID that lost its metadata stops blocking the whole session."""
+    record(tmp_path, pid=123)
+    orphan = tmp_path / "a.b[1].456.session.stats.jsonl"
+    orphan.write_text("stats")
+    _age(orphan, 30 * 86400)
+
+    observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
+
+    assert observation.state == State.STOPPED
+
+
+def test_expired_orphan_without_stdout_is_excluded(tmp_path):
+    """A missing stdout artifact is the common orphan shape and stays excluded."""
+    record(tmp_path, pid=123)
+    (tmp_path / "a.b[1].456.session.events").write_text("events")
+
+    assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).can_clean("a.b[1]")
+
+
+def test_fresh_stdout_orphan_still_blocks_cleanup(tmp_path):
+    """An unexpired stdout artifact keeps the conservative unknown result."""
+    record(tmp_path, pid=123)
+    (tmp_path / "a.b[1].456.session.stdout").write_text("output")
+
+    observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
+
+    assert observation.state == State.UNKNOWN
+    assert observation.reason == "incomplete owner evidence"
+
+
+def test_expired_stdout_orphan_is_excluded(tmp_path):
+    """Once its stdout artifact expires, the orphan no longer blocks cleanup."""
+    record(tmp_path, pid=123)
+    stdout = tmp_path / "a.b[1].456.session.stdout"
+    stdout.write_text("output")
+    _age(stdout, 30 * 86400)
+
+    assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).can_clean("a.b[1]")
+
+
+def test_orphan_socket_file_still_blocks_cleanup(tmp_path):
+    """A leftover socket file is not proof of absence and keeps the session blocked."""
+    record(tmp_path, pid=123)
+    (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
+    (tmp_path / "a.b[1].456.session.sock").write_text("endpoint")
+
+    observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
+
+    assert observation.state == State.UNKNOWN
+
+
+def test_live_orphan_pid_still_blocks_cleanup(tmp_path):
+    """A live PID without metadata is never excluded, even with expired artifacts."""
+    record(tmp_path, pid=123)
+    orphan = tmp_path / "a.b[1].456.session.stats.jsonl"
+    orphan.write_text("stats")
+    _age(orphan, 30 * 86400)
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.RUNNING if pid == 456 else State.STOPPED,
+    )
+
+    assert not probe.can_clean("a.b[1]")
+
+
+def test_orphan_exclusion_requires_positive_retention(tmp_path):
+    """A disabled retention window keeps every orphan blocking cleanup."""
+    record(tmp_path, pid=123)
+    (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=0,
+    )
+
+    assert not probe.can_clean("a.b[1]")
+
+
+def test_only_orphans_authorize_cleanup(tmp_path):
+    """A session made entirely of expired orphans becomes cleanable."""
+    (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
+    (tmp_path / "a.b[1].789.session.events").write_text("events")
+
+    observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
+
+    assert observation.state == State.STOPPED
+
+
+def test_metadata_owner_is_never_excluded(tmp_path):
+    """A PID that still owns metadata keeps the strict metadata validation path."""
+    path = record(tmp_path, pid=123)
+    data = json.loads(path.read_text())
+    data["status"] = "running"
+    path.write_text(json.dumps(data))
+
+    observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
+
+    assert observation.state == State.UNKNOWN

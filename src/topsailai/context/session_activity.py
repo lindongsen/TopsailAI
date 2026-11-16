@@ -6,11 +6,14 @@ import os
 import re
 import socket
 import stat
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 import psutil
+
+from topsailai.utils import env_tool
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +124,19 @@ class SessionActivityProbe:
     """Authorize cleanup only from strict, host-local ownership evidence."""
 
     def __init__(self, task_dirs=(), process_observer=observe_process,
-                 endpoint_observer=observe_control_endpoint, hostname=None):
+                 endpoint_observer=observe_control_endpoint, hostname=None,
+                 stdout_retention_seconds=None):
         """Accept boundary-resolved roots and injectable liveness authorities."""
         self.task_dirs = tuple(Path(normalize_home_path(p)) for p in task_dirs)
         self.process_observer = process_observer
         self.endpoint_observer = endpoint_observer
         self.hostname = local_hostname() if hostname is None else hostname
+        if stdout_retention_seconds is None:
+            retention_days = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_SESSION_META_RETENTION_DAYS", default=7, formatter=int,
+            )
+            stdout_retention_seconds = retention_days * 86400 if retention_days > 0 else 0
+        self.stdout_retention_seconds = stdout_retention_seconds
 
     def observe(self, session_id, home=None):
         """Require consistent, nonempty owner evidence in an admitted local root."""
@@ -236,16 +246,52 @@ class SessionActivityProbe:
         grouped = {}
         for name, pid in owners:
             grouped.setdefault(pid, []).append(name)
-        states = [
-            self._observe_owner(root, session_id, pid, names)
-            for pid, names in grouped.items()
-        ]
+        states = []
+        for pid, names in grouped.items():
+            state = self._observe_owner(root, session_id, pid, names)
+            if state is None:
+                continue
+            states.append(state)
         if malformed:
             states.append(ActivityState.UNKNOWN)
         if ActivityState.RUNNING in states:
             return ActivityObservation(ActivityState.RUNNING, "live owner")
         state = ActivityState.UNKNOWN if ActivityState.UNKNOWN in states else ActivityState.STOPPED
         return ActivityObservation(state, "strict owner inventory")
+
+    def _exclude_expired_orphan(self, root, session_id, pid, names):
+        """Return ``None`` for a dead owner whose artifacts all expired.
+
+        A PID that lost its metadata still counts as an owner record, so it
+        would otherwise keep the whole session unauthorized forever. Such a
+        record is excluded only when every remaining gate proves it cannot be
+        live: no metadata, no socket file, a dead PID, and no unexpired stdout
+        artifact. Any other shape keeps the conservative ``UNKNOWN`` result.
+        """
+        if any(name.endswith(".session.meta") for name in names):
+            return ActivityState.UNKNOWN
+        socket_path = root / f"{session_id}.{pid}.session.sock"
+        try:
+            socket_path.lstat()
+            return ActivityState.UNKNOWN
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning("Cannot inspect session endpoint %s", socket_path, exc_info=True)
+            return ActivityState.UNKNOWN
+        if self.stdout_retention_seconds <= 0:
+            return ActivityState.UNKNOWN
+        now = time.time()
+        for name in names:
+            if not name.endswith(".session.stdout"):
+                continue
+            try:
+                if now - (root / name).stat().st_mtime <= self.stdout_retention_seconds:
+                    return ActivityState.UNKNOWN
+            except OSError:
+                logger.warning("Cannot inspect session artifact %s", name, exc_info=True)
+                return ActivityState.UNKNOWN
+        return None
 
     def _observe_owner(self, root, session_id, pid, names):
         """Protect live owners; authorize stopped only from stable local metadata."""
@@ -268,7 +314,7 @@ class SessionActivityProbe:
 
         metadata = [name for name in names if name.endswith(".session.meta")]
         if len(metadata) != 1:
-            return ActivityState.UNKNOWN
+            return self._exclude_expired_orphan(root, session_id, pid, names)
         path = root / metadata[0]
         try:
             first = path.lstat()

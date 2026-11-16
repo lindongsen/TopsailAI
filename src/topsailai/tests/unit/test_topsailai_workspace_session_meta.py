@@ -601,3 +601,45 @@ def test_remove_session_artifacts_is_idempotent_for_missing_files():
     path = session_meta.create_session_meta("artifact-missing")
 
     assert session_meta._remove_session_artifacts(path) == []
+
+
+def test_cleanup_reclaims_stats_with_authorized_metadata(monkeypatch):
+    """Stats is an owner record, so it must be reclaimed with its metadata."""
+    path = session_meta.create_session_meta("artifact-stats")
+    stats_path = _write_artifact(path, "stats.jsonl")
+    old_time = time.time() - 10 * 86400
+    for target in (path, stats_path):
+        os.utime(target, (old_time, old_time))
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(
+        activity_probe=MagicMock(can_clean=MagicMock(return_value=True))
+    )
+
+    assert not os.path.exists(path)
+    assert not os.path.exists(stats_path)
+
+
+def test_stats_removal_leaves_no_orphan_owner_record():
+    """Removing metadata and stats together must not create an orphan PID."""
+    from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+
+    path = session_meta.create_session_meta("artifact-no-orphan")
+    stats_path = _write_artifact(path, "stats.jsonl")
+
+    session_meta._remove_session_artifacts(path)
+    os.remove(path)
+
+    assert not os.path.exists(stats_path)
+    leftovers = [
+        name for name in os.listdir(FOLDER_WORKSPACE_TASK)
+        if name.startswith("artifact-no-orphan.")
+    ]
+    assert leftovers == []
+
+
+def test_stats_artifact_is_declared_for_reclamation():
+    """The artifact inventory must name stats so cleanup cannot leave it behind."""
+    assert "stats.jsonl" in session_meta.ARTIFACT_SUFFIXES
