@@ -24,6 +24,7 @@ import _import_topsailai
 from cli_topsailai.colors import Colors, colored
 from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.process_liveness import session_liveness
+from cli_topsailai.session_metrics import METRIC_FIELDS, session_metrics
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -139,6 +140,8 @@ def _session_to_dict(
         "total_completion_tokens": total_completion_tokens,
         "total_usage_tokens": total_usage_tokens,
         "total_cached_tokens": total_cached_tokens,
+        # Every execution metric, emitted without suppression.
+        **session_metrics(session),
         "create_time": create_time_str,
         # Computed metadata
         "status": "Running" if running else "Idle",
@@ -244,6 +247,15 @@ def _format_session(
     add_row("Completion Tokens", str(total_completion_tokens))
     add_row("Total Usage Tokens", str(total_prompt_tokens + total_completion_tokens))
     add_row("Cached Prompt Tokens", str(getattr(session, "total_cached_tokens", 0) or 0))
+
+    # Every execution metric, rendered from the shared field list so this card
+    # and the JSON payload can never disagree about which metrics exist.
+    metrics = session_metrics(session)
+    lines.append("")
+    for name, _attribute, _default in METRIC_FIELDS:
+        add_row(name, str(metrics[name]))
+    add_row("first_byte_avg_ms", str(metrics["first_byte_avg_ms"]))
+    add_row("model_name", metrics["model_name"] or "(none)")
 
     task_label = "Task"
     task_label_text = f"{task_label}:".ljust(label_width)

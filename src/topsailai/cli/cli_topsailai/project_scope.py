@@ -14,6 +14,7 @@ import select
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, List
@@ -300,12 +301,16 @@ def build_project_list(
 ) -> List[Dict[str, Any]]:
     """Build the list of recent sessions with a project workspace.
 
-    Runs ``topsailai_list_sessions --json --has-project --sort desc`` with an
-    optional session ID, the internal-category exclusion, and a limit, then
-    parses the JSON output. Sessions are then re-sorted by the modification
-    time of their most recent ``*.session.stdout`` file (oldest first, newest
-    last). When a session has no stdout file, its ``create_time`` is used as a
-    fallback.
+    Runs ``topsailai_list_sessions --json --has-project --order-by=-update_time``
+    with an optional session ID, the internal-category exclusion, and a limit,
+    then parses the JSON output. Because the limit is applied together with the
+    ordering, the page holds the most recently modified sessions rather than the
+    most recently created ones. The returned rows are then re-sorted for display
+    oldest-first, so the newest modification appears last.
+
+    The modification time is the stored ``update_time``. A row that carries no
+    ``update_time`` falls back to the newest ``*.session.stdout`` mtime and then
+    to ``create_time``, so one sort key never mixes unrelated clocks.
 
     Internal machinery sessions listed in ``_INTERNAL_SESSION_CATEGORIES`` are
     excluded from the default list, because the session agent driver exports the
@@ -334,8 +339,12 @@ def build_project_list(
         "topsailai_list_sessions",
         "--json",
         "--has-project",
-        "--sort",
-        "desc",
+        # Page selection must follow the modification time, not the creation
+        # time: with a limit, the ordering decides which rows are returned, so
+        # ordering by create_time silently drops recently modified sessions.
+        # The equals form is required because argparse rejects a separate value
+        # that begins with "-".
+        "--order-by=-update_time",
     ]
     if session_id:
         cmd.append(session_id)
@@ -387,15 +396,31 @@ def build_project_list(
     # One listing serves both the mtime sort and the running-status enrichment.
     stdout_index = _build_stdout_index(task_dir)
 
+    def _sort_timestamp(value: str) -> float:
+        """Return a comparable timestamp for an ISO string, or 0.0."""
+        if not value:
+            return 0.0
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return 0.0
+
     entries = []
     for session in sessions:
         session_id_value = session.get("session_id") or ""
         create_time_raw = session.get("create_time") or ""
-        mtime = _resolve_session_mtime(task_dir, session_id_value, index=stdout_index)
-        if mtime is not None:
-            modified_time_raw = datetime.fromtimestamp(mtime).isoformat()
+        update_time_raw = session.get("update_time") or ""
+        # The stored update_time is the authoritative modification time. The
+        # stdout mtime and create_time are fallbacks for a row that carries no
+        # update_time, so one sort key never mixes two unrelated clocks.
+        if update_time_raw:
+            modified_time_raw = update_time_raw
         else:
-            modified_time_raw = create_time_raw
+            mtime = _resolve_session_mtime(task_dir, session_id_value, index=stdout_index)
+            if mtime is not None:
+                modified_time_raw = datetime.fromtimestamp(mtime).isoformat()
+            else:
+                modified_time_raw = create_time_raw
         entries.append(
             {
                 "session_id": session_id_value,
@@ -404,27 +429,20 @@ def build_project_list(
                 "modified_time_raw": modified_time_raw,
                 "create_time_raw": create_time_raw,
                 "task": session.get("task") or "",
-                "_mtime": mtime if mtime is not None else 0.0,
-                "_fallback_time": create_time_raw,
+                "_sort_time": _sort_timestamp(modified_time_raw),
             }
         )
 
-    # Sort oldest-first by stdout mtime. Entries without a stdout file fall
-    # back to their create_time for stable ordering.
-    entries.sort(
-        key=lambda e: (
-            e["_mtime"] if e["_mtime"] else datetime.fromisoformat(
-                e["_fallback_time"]
-            ).timestamp() if e["_fallback_time"] else 0.0
-        )
-    )
+    # Display oldest-first, matching the workspace list convention. The page is
+    # fetched newest-first by update_time, so the most recently modified
+    # sessions are in the page while the oldest of them still appears on top.
+    entries.sort(key=lambda e: e["_sort_time"])
 
     # Assign visible row numbers after sorting and drop internal sort keys.
     for idx, entry in enumerate(entries, start=1):
         entry["no"] = idx
         entry["modified_time"] = _format_time(entry["modified_time_raw"])
-        entry.pop("_mtime", None)
-        entry.pop("_fallback_time", None)
+        entry.pop("_sort_time", None)
 
     _enrich_running_status(entries, index=stdout_index)
     return entries
@@ -908,6 +926,7 @@ def launch_agent_driver(
     *, spawn=None, emit_status: bool = True,
     prelaunch_check: Optional[Callable[[], Optional[int]]] = None,
     receipt: Optional[Dict[str, Any]] = None, child_stdout=None,
+    on_spawned: Optional[Callable[[], None]] = None,
 ) -> int:
     """Launch a resume driver with the selected model environment.
 
@@ -927,6 +946,11 @@ def launch_agent_driver(
         prelaunch_check: Optional late revalidation invoked after preparation
             and immediately before the child is spawned. It returns ``None`` to
             proceed or a status code to refuse the launch.
+        on_spawned: Optional callback invoked immediately after the child is
+            created and before the blocking wait. A foreground launch blocks
+            until the agent exits, so a caller that must observe the running
+            process has to start observing here instead of after this function
+            returns.
 
     Returns:
         ``0`` on success, ``4`` when preparation fails, ``5`` when the launch
@@ -1028,6 +1052,10 @@ def launch_agent_driver(
             return 5
         record(launcher_pid=getattr(child, "pid", None), startup_confirmed=False,
                spawn_confirmed=True)
+        if on_spawned is not None:
+            # The foreground wait below blocks until the agent exits, so the
+            # caller must be able to start observing the running process now.
+            on_spawned()
         try:
             code = child.wait()
         except KeyboardInterrupt:
@@ -1774,7 +1802,7 @@ def _new_session_pids(
 
 
 def _confirm_resumed_startup(
-    session_id: str, snapshot: List[str], *, code: int, mode: str,
+    session_id: str, snapshot: List[str], *, code: Optional[int], mode: str,
     background: bool, home: Optional[str] = None,
     timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -1790,7 +1818,15 @@ def _confirm_resumed_startup(
     child, so its exit status already reports the completed run and no channel
     survives it.
 
+    A foreground ``dtach`` or ``tmux`` resume blocks until the agent exits, so
+    this probe must run while that wait is still in progress. Probing after the
+    wait would always find the socket already removed by the agent's own exit
+    and would report a healthy run as unreachable.
+
     Args:
+        code: Launcher status, or ``None`` when the probe runs concurrently with
+            a launch whose status is not known yet. An unknown status is not a
+            failure, so the launch-failure short circuit is skipped.
         timeout: Explicit window in seconds. When omitted, the window is
             resolved from ``TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS`` at call
             time, which keeps the default configurable without mutating module
@@ -1805,7 +1841,7 @@ def _confirm_resumed_startup(
         socket_heartbeat_alive,
     )
 
-    if code != 0:
+    if code is not None and code != 0:
         return {
             "startup_confirmed": False,
             "startup_pid": None,
@@ -1974,19 +2010,73 @@ def resume_session_result(
             entrypoint_base=entrypoint_base, prelaunch_check=late_check,
             receipt=receipt, child_stdout=child_stdout,
         )
+        # A launcher exit code only reports what the wrapper did, so the resumed
+        # process must prove itself on its own control channel before the resume
+        # is reported as successful.
+        startup = _confirm_resumed_startup(
+            session_id, stdout_snapshot, code=code, mode=effective_mode,
+            background=True, home=home,
+        )
     else:
+        # A foreground launch blocks until the agent exits, so the control
+        # channel has to be probed while that wait is still in progress.
+        # Probing afterwards would always find the socket already removed by the
+        # agent's own exit and would report a healthy run as unreachable.
+        startup_holder: Dict[str, Any] = {}
+        probe = threading.Thread(
+            target=lambda: startup_holder.update(
+                _confirm_resumed_startup(
+                    session_id, stdout_snapshot, code=None,
+                    mode=effective_mode, background=False, home=home,
+                )
+            ),
+            name="resume-startup-confirm",
+            daemon=True,
+        )
+        probe_started = False
+
+        def _start_probe() -> None:
+            """Start the concurrent probe as soon as the child exists.
+
+            A failure to start the thread must not escape: this callback runs
+            after the child was spawned but before the blocking wait, so an
+            exception here would skip that wait and orphan the child. Leaving
+            ``probe_started`` false makes the caller fall back to confirming
+            after the launch instead.
+            """
+            nonlocal probe_started
+            try:
+                probe.start()
+            except Exception as exc:
+                print(
+                    f"{Colors.YELLOW}[WARN] Could not start the resume startup "
+                    f"probe ({exc}); confirming after the launch instead"
+                    f"{Colors.RESET}"
+                )
+                return
+            probe_started = True
+
         code = launch_agent_driver(
             workspace, selected_driver, session_id, agent_mode=effective_mode,
             spawn=spawn, emit_status=False, prelaunch_check=late_check,
             receipt=receipt, child_stdout=child_stdout,
+            on_spawned=_start_probe,
         )
-    # A launcher exit code only reports what the wrapper did, so the resumed
-    # process must prove itself on its own control channel before the resume is
-    # reported as successful.
-    startup = _confirm_resumed_startup(
-        session_id, stdout_snapshot, code=code, mode=effective_mode,
-        background=background, home=home,
-    )
+        if probe_started:
+            probe.join()
+            startup = startup_holder or {
+                "startup_confirmed": False,
+                "startup_pid": None,
+                "startup_reason": "launch_failed",
+            }
+        else:
+            # The child was never created, so there was nothing to observe while
+            # waiting. Confirm after the launch exactly as before, which keeps a
+            # spawn failure and a foreground ``raw`` run on their original paths.
+            startup = _confirm_resumed_startup(
+                session_id, stdout_snapshot, code=code, mode=effective_mode,
+                background=False, home=home,
+            )
     record_receipt(**startup)
     if not startup["startup_confirmed"]:
         # A launch that already failed keeps its own status, so the caller can

@@ -99,11 +99,20 @@ class DefaultSessionManager(SessionManager):
     def accumulate_session_metrics(self, session_id: str, turn_count: int = 0, tool_call_count: int = 0,
                                    tool_error_count: int = 0, llm_request_count: int = 0,
                                    llm_request_failure_count: int = 0, tool_duration_ms_sum: int = 0,
-                                   llm_request_duration_ms_sum: int = 0, summary_count: int = 0) -> bool:
+                                   llm_request_duration_ms_sum: int = 0, summary_count: int = 0,
+                                   response_content_errors: int = 0, first_byte_sum_ms: int = 0,
+                                   first_byte_count: int = 0, requests_per_minute_max: int = 0,
+                                   turn_failure_count: int = 0, turn_back_count: int = 0,
+                                   turn_interrupt_count: int = 0, max_prompt_tokens: int = 0,
+                                   model_name: str = "", heavy_task_warning_count: int = 0,
+                                   heavy_task_block_count: int = 0) -> bool:
         """Accumulate settled attempt execution metric deltas."""
         return self.storage.accumulate_session_metrics(
             session_id, turn_count, tool_call_count, tool_error_count, llm_request_count,
-            llm_request_failure_count, tool_duration_ms_sum, llm_request_duration_ms_sum, summary_count)
+            llm_request_failure_count, tool_duration_ms_sum, llm_request_duration_ms_sum,
+            summary_count, response_content_errors, first_byte_sum_ms, first_byte_count,
+            requests_per_minute_max, turn_failure_count, turn_back_count, turn_interrupt_count,
+            max_prompt_tokens, model_name, heavy_task_warning_count, heavy_task_block_count)
 
     def get_session_token_totals(self, session_id: str) -> tuple[int, int] | None:
         """Retrieve legacy prompt and cache totals."""

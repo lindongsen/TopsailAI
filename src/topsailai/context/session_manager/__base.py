@@ -44,6 +44,17 @@ class SessionData(object):
         tool_duration_ms_sum: int = 0,
         llm_request_duration_ms_sum: int = 0,
         summary_count: int = 0,
+        response_content_errors: int = 0,
+        first_byte_sum_ms: int = 0,
+        first_byte_count: int = 0,
+        requests_per_minute_max: int = 0,
+        turn_failure_count: int = 0,
+        turn_back_count: int = 0,
+        turn_interrupt_count: int = 0,
+        max_prompt_tokens: int = 0,
+        model_name: str = "",
+        heavy_task_warning_count: int = 0,
+        heavy_task_block_count: int = 0,
     ):
         """
         Initialize a SessionData instance.
@@ -75,6 +86,28 @@ class SessionData(object):
                 milliseconds. Defaults to 0.
             llm_request_duration_ms_sum (int, optional): Total LLM request duration
                 in milliseconds. Defaults to 0.
+            response_content_errors (int, optional): Responses whose content could
+                not be used. Defaults to 0.
+            first_byte_sum_ms (int, optional): Total first-byte latency in
+                milliseconds. Defaults to 0.
+            first_byte_count (int, optional): Requests that reported a first-byte
+                latency. Defaults to 0.
+            requests_per_minute_max (int, optional): Peak requests observed in one
+                minute. Defaults to 0.
+            turn_failure_count (int, optional): Settled turns that failed.
+                Defaults to 0.
+            turn_back_count (int, optional): Settled turns abandoned by a Back
+                request. Defaults to 0.
+            turn_interrupt_count (int, optional): Settled turns ended by an
+                interrupt. Defaults to 0.
+            max_prompt_tokens (int, optional): Largest prompt size observed at
+                settle. Defaults to 0.
+            model_name (str, optional): Most recent model name used by the
+                session. Defaults to an empty string.
+            heavy_task_warning_count (int, optional): Heavy-task advisory warnings
+                delivered. Defaults to 0.
+            heavy_task_block_count (int, optional): Heavy-task hard terminations
+                raised. Defaults to 0.
 
         Note:
             Additional attributes like session_name and create_time are
@@ -102,6 +135,17 @@ class SessionData(object):
         self.llm_request_failure_count = llm_request_failure_count
         self.tool_duration_ms_sum = tool_duration_ms_sum
         self.llm_request_duration_ms_sum = llm_request_duration_ms_sum
+        self.response_content_errors = response_content_errors
+        self.first_byte_sum_ms = first_byte_sum_ms
+        self.first_byte_count = first_byte_count
+        self.requests_per_minute_max = requests_per_minute_max
+        self.turn_failure_count = turn_failure_count
+        self.turn_back_count = turn_back_count
+        self.turn_interrupt_count = turn_interrupt_count
+        self.max_prompt_tokens = max_prompt_tokens
+        self.model_name = model_name
+        self.heavy_task_warning_count = heavy_task_warning_count
+        self.heavy_task_block_count = heavy_task_block_count
 
     @property
     def total_prompt_tokens(self):
@@ -180,7 +224,8 @@ class SessionStorageBase(object):
                 When provided, only sessions whose ID is in this list are returned.
                 When empty or None, all sessions are returned.
             order_by (str, optional): Field name to sort by. Supported fields include
-                ``session_id``, ``session_name``, ``task``, and ``create_time``.
+                ``session_id``, ``session_name``, ``task``, ``create_time``, and
+                ``update_time``.
                 Prefix the field name with ``-`` for descending order
                 (e.g., ``-created_at``). When not provided, the default order is
                 implementation-defined (typically ``create_time`` descending).

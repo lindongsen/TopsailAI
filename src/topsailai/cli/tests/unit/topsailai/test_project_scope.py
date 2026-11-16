@@ -82,8 +82,7 @@ class TestBuildProjectList(unittest.TestCase):
                 "topsailai_list_sessions",
                 "--json",
                 "--has-project",
-                "--sort",
-                "desc",
+                "--order-by=-update_time",
                 "--excluded-categories",
                 "agent_driver",
                 "--limit",
@@ -131,6 +130,122 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertEqual(entries[1]["session_id"], "newest")
         self.assertEqual(entries[0]["no"], 1)
         self.assertEqual(entries[1]["no"], 2)
+
+    @patch("cli_topsailai.project_scope._resolve_session_mtime")
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_update_time_decides_modified_time_and_order(self, mock_run, mock_mtime):
+        """The stored update_time wins over the stdout mtime and create_time."""
+        sessions = [
+            {
+                "session_id": "recently-modified",
+                "session_name": "recent",
+                "create_time": "2026-07-01T09:00:00",
+                "update_time": "2026-07-06T12:00:00",
+                "task": "recent task",
+                "project_workspace": "/work/recent",
+            },
+            {
+                "session_id": "stale-file",
+                "session_name": "stale",
+                "create_time": "2026-07-05T09:00:00",
+                "update_time": "2026-07-06T08:00:00",
+                "task": "stale task",
+                "project_workspace": "/work/stale",
+            },
+        ]
+        # A newer stdout file must not override the stored update_time.
+        mock_mtime.side_effect = lambda _task_dir, session_id, index=None: {
+            "recently-modified": 1000.0,
+            "stale-file": 9999999999.0,
+        }.get(session_id)
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps(sessions))
+
+        entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(
+            [entry["session_id"] for entry in entries],
+            ["stale-file", "recently-modified"],
+        )
+        self.assertEqual(entries[0]["modified_time_raw"], "2026-07-06T08:00:00")
+        self.assertEqual(entries[1]["modified_time_raw"], "2026-07-06T12:00:00")
+        self.assertEqual(entries[0]["modified_time"], "07-06 08:00")
+        self.assertEqual(entries[1]["modified_time"], "07-06 12:00")
+
+    @patch("cli_topsailai.project_scope._resolve_session_mtime")
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_update_time_does_not_consult_the_stdout_index(self, mock_run, mock_mtime):
+        """A row carrying update_time must not pay a stdout lookup at all."""
+        sessions = [
+            {
+                "session_id": "s-with-update",
+                "session_name": "named",
+                "create_time": "2026-07-01T09:00:00",
+                "update_time": "2026-07-06T12:00:00",
+                "task": "task",
+                "project_workspace": "/work/project",
+            },
+        ]
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps(sessions))
+
+        entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(entries[0]["modified_time_raw"], "2026-07-06T12:00:00")
+        mock_mtime.assert_not_called()
+
+    @patch("cli_topsailai.project_scope._resolve_session_mtime")
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_missing_update_time_falls_back_to_stdout_mtime(self, mock_run, mock_mtime):
+        """A row without update_time keeps the previous stdout-mtime behaviour."""
+        sessions = [
+            {
+                "session_id": "s-no-update",
+                "session_name": "named",
+                "create_time": "2026-07-01T09:00:00",
+                "update_time": "",
+                "task": "task",
+                "project_workspace": "/work/project",
+            },
+        ]
+        mock_mtime.return_value = 1783306800.0  # 2026-07-06 11:00:00
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps(sessions))
+
+        entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(entries[0]["modified_time_raw"], "2026-07-06T11:00:00")
+        mock_mtime.assert_called_once()
+
+    @patch("cli_topsailai.project_scope._resolve_session_mtime")
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_missing_update_time_and_stdout_falls_back_to_create_time(
+        self, mock_run, mock_mtime
+    ):
+        """The last fallback is create_time, so a row always has a timestamp."""
+        sessions = [
+            {
+                "session_id": "s-bare",
+                "session_name": "named",
+                "create_time": "2026-07-01T09:00:00",
+                "task": "task",
+                "project_workspace": "/work/project",
+            },
+        ]
+        mock_mtime.return_value = None
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps(sessions))
+
+        entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(entries[0]["modified_time_raw"], "2026-07-01T09:00:00")
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_page_is_requested_by_update_time_not_create_time(self, mock_run):
+        """Page selection must follow update_time, because the limit applies to it."""
+        mock_run.return_value = MockCompletedProcess(stdout="[]")
+
+        project_scope.build_project_list(limit=30)
+
+        call_args = mock_run.call_args[0][0]
+        self.assertIn("--order-by=-update_time", call_args)
+        self.assertNotIn("--sort", call_args)
 
     @patch("cli_topsailai.project_scope.subprocess.run")
     def test_build_project_list_passes_limit(self, mock_run):

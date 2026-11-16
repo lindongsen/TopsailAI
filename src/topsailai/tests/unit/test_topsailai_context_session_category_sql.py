@@ -440,6 +440,59 @@ def test_create_time_index_is_added_to_a_legacy_table(tmp_path):
     manager.engine.dispose()
 
 
+def test_update_time_index_exists_and_is_idempotent(tmp_path):
+    """Initialization adds the update_time index once and keeps it on reopen."""
+    path = tmp_path / "update_time_index.db"
+    manager = SessionSQLAlchemy(f"sqlite:///{path}")
+    with manager.engine.connect() as connection:
+        first = connection.execute(text(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_update_time'"
+        )).fetchall()
+    assert first == [("idx_session_update_time",)]
+    manager.engine.dispose()
+
+    reopened = SessionSQLAlchemy(f"sqlite:///{path}")
+    with reopened.engine.connect() as connection:
+        second = connection.execute(text(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_update_time'"
+        )).fetchall()
+        plan = connection.execute(text(
+            "EXPLAIN QUERY PLAN SELECT * FROM session ORDER BY update_time DESC LIMIT 10"
+        )).fetchall()
+    assert second == [("idx_session_update_time",)]
+    assert any("idx_session_update_time" in str(row) for row in plan)
+    reopened.engine.dispose()
+
+
+def test_update_time_index_is_added_to_a_legacy_table(tmp_path):
+    """A table created before the index existed gains it on initialization."""
+    path = tmp_path / "legacy_update_time_index.db"
+    engine = create_engine(f"sqlite:///{path}")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT NOT NULL, "
+            "create_time DATETIME NOT NULL, update_time DATETIME NOT NULL, "
+            "category TEXT NOT NULL DEFAULT '')"
+        ))
+        connection.execute(text(
+            "INSERT INTO session VALUES ('legacy', 'task', '2020-01-01 00:00:00', "
+            "'2020-01-01 00:00:00', '')"
+        ))
+    with engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_update_time'"
+        )).fetchall() == []
+    engine.dispose()
+
+    manager = SessionSQLAlchemy(f"sqlite:///{path}")
+    with manager.engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_update_time'"
+        )).fetchall() == [("idx_session_update_time",)]
+        assert connection.execute(text("SELECT count(*) FROM session")).scalar_one() == 1
+    manager.engine.dispose()
+
+
 def test_included_categories_keep_only_listed_categories():
     """Inclusion keeps the listed categories and drops every other row."""
     manager = SessionSQLAlchemy("sqlite:///:memory:")

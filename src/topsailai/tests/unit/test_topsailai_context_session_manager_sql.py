@@ -477,6 +477,67 @@ class TestSessionSQLAlchemy:
         assert sessions[1].session_id == "test_session_001"
         assert sessions[2].session_id == "test_session_000"
 
+    def test_list_sessions_order_by_update_time_asc(self, session_mgr):
+        """Listing orders by update_time ascending, not by create_time."""
+        for i in range(3):
+            session_mgr.create_session(SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}",
+            ))
+            time.sleep(0.01)
+
+        # Reverse the activity order so update_time disagrees with create_time.
+        session_mgr.update_session_name("test_session_002", "renamed first")
+        time.sleep(0.01)
+        session_mgr.update_session_name("test_session_000", "renamed last")
+
+        sessions = session_mgr.list_sessions(order_by="update_time")
+        assert len(sessions) == 3
+        assert sessions[0].session_id == "test_session_001"
+        assert sessions[1].session_id == "test_session_002"
+        assert sessions[2].session_id == "test_session_000"
+
+    def test_list_sessions_order_by_update_time_desc(self, session_mgr):
+        """Descending update_time returns the most recently active session first."""
+        for i in range(3):
+            session_mgr.create_session(SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}",
+            ))
+            time.sleep(0.01)
+
+        session_mgr.update_session_name("test_session_002", "renamed first")
+        time.sleep(0.01)
+        session_mgr.update_session_name("test_session_000", "renamed last")
+
+        sessions = session_mgr.list_sessions(order_by="-update_time")
+        assert len(sessions) == 3
+        assert sessions[0].session_id == "test_session_000"
+        assert sessions[1].session_id == "test_session_002"
+        assert sessions[2].session_id == "test_session_001"
+
+    def test_list_sessions_update_time_order_selects_the_page(self, session_mgr):
+        """The limit applies after update_time ordering, so the page holds the
+        most recently active sessions rather than the newest created ones."""
+        for i in range(4):
+            session_mgr.create_session(SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}",
+            ))
+            time.sleep(0.01)
+
+        # The oldest created session becomes the most recently active one.
+        session_mgr.update_session_name("test_session_000", "renamed last")
+
+        sessions = session_mgr.list_sessions(order_by="-update_time", limit=2)
+        assert [session.session_id for session in sessions] == [
+            "test_session_000",
+            "test_session_003",
+        ]
+
     def test_list_sessions_order_by_unsupported_field(self, session_mgr):
         """Test that ordering by an unsupported field raises ValueError."""
         session_data = SessionData(
@@ -1164,13 +1225,15 @@ class TestSessionUpdateTime:
             after = self._sqlite_snapshot(connection, before_columns)
             assert tuple(row for row in after[0] if row[1] != "update_time") == before[0]
             # The rebuild must preserve the pre-existing inventory; the listing
-            # index is added afterwards by initialization, so it is excluded here
-            # and asserted separately.
+            # indexes are added afterwards by initialization, so they are excluded
+            # here and asserted separately.
+            listing_indexes = {"idx_session_create_time", "idx_session_update_time"}
             preserved_indexes = tuple(
-                item for item in after[2] if item[0] != "idx_session_create_time"
+                item for item in after[2] if item[0] not in listing_indexes
             )
             assert preserved_indexes == before[2]
             assert any(item[0] == "idx_session_create_time" for item in after[2])
+            assert any(item[0] == "idx_session_update_time" for item in after[2])
             assert after[1] == before[1]
             assert after[3] == before[3]
             assert after[3]

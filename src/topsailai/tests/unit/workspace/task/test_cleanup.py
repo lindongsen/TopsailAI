@@ -204,3 +204,117 @@ def test_signal_handler_restores_default_for_uncaught_signal(restore_signal_hand
 
     assert not os.path.exists(file1)
     assert killed == [(os.getpid(), signal.SIGTERM)]
+
+
+def _write_session_stdout(tmpdir: str, pid: int, lines: list[str], session_id: str = "session") -> str:
+    """Create a session stdout file for *pid* holding *lines*."""
+    path = os.path.join(tmpdir, f"{session_id}.{pid}.session.stdout")
+    with open(path, "w", encoding="utf-8") as fp:
+        fp.write("".join(lines))
+    return path
+
+
+def _prompt_line(pid: int) -> str:
+    """Return the prompt line an immediately-exiting session writes."""
+    return f">>> Your Turn: (pid={pid})  Press 'CTRL D' or Enter 'EOF' for end\n"
+
+
+@pytest.fixture
+def counters(monkeypatch):
+    """Patch the session-counter lookup so no test touches a real database."""
+    state = {"empty": True, "seen": []}
+
+    def fake(session_id: str):
+        state["seen"].append(session_id)
+        return state["empty"]
+
+    monkeypatch.setattr(cleanup_module, "_session_is_empty_by_counters", fake)
+    return state
+
+
+def test_empty_session_stdout_is_removed_on_exit(isolated_cleanup_state, counters):
+    """A session with no recorded activity leaves no diagnostic value."""
+    counters["empty"] = True
+    path = _write_session_stdout(isolated_cleanup_state, os.getpid(), [_prompt_line(os.getpid())])
+
+    cleanup_task_folder()
+
+    assert not os.path.exists(path)
+
+
+def test_session_stdout_with_real_output_is_preserved(isolated_cleanup_state, counters):
+    """A stdout holding real output is the transcript and must survive."""
+    counters["empty"] = False
+    path = _write_session_stdout(isolated_cleanup_state, os.getpid(), [
+        _prompt_line(os.getpid()),
+        "user asked something\n",
+        "agent answered with real content\n",
+    ])
+
+    cleanup_task_folder()
+
+    assert os.path.exists(path)
+
+
+def test_blank_session_stdout_is_removed_on_exit(isolated_cleanup_state, counters):
+    """A completely empty stdout is also a shell with no diagnostic value."""
+    counters["empty"] = True
+    path = _write_session_stdout(isolated_cleanup_state, os.getpid(), [])
+
+    cleanup_task_folder()
+
+    assert not os.path.exists(path)
+
+
+def test_other_process_session_stdout_is_untouched(isolated_cleanup_state, counters):
+    """Cleanup is PID-scoped, so another process's stdout is never removed."""
+    counters["empty"] = True
+    foreign_pid = os.getpid() + 1
+    path = _write_session_stdout(isolated_cleanup_state, foreign_pid, [_prompt_line(foreign_pid)])
+
+    cleanup_task_folder()
+
+    assert os.path.exists(path)
+    assert counters["seen"] == []
+
+
+def test_task_stdout_is_never_removed(isolated_cleanup_state, counters):
+    """Task stdout belongs to a child task process and is out of scope."""
+    counters["empty"] = True
+    path = os.path.join(isolated_cleanup_state, f"session.{os.getpid()}.task.stdout")
+    with open(path, "w", encoding="utf-8") as fp:
+        fp.write("")
+
+    cleanup_task_folder()
+
+    assert os.path.exists(path)
+
+
+def test_active_session_stdout_survives_regardless_of_content(isolated_cleanup_state, counters):
+    """Counters are authoritative: content never decides whether a file is removed."""
+    counters["empty"] = False
+    path = _write_session_stdout(isolated_cleanup_state, os.getpid(), [_prompt_line(os.getpid())])
+
+    cleanup_task_folder()
+
+    assert os.path.exists(path)
+
+
+def test_unknown_counters_preserve_session_stdout(isolated_cleanup_state, monkeypatch):
+    """An unreadable session table must preserve the file instead of guessing."""
+    monkeypatch.setattr(cleanup_module, "_session_is_empty_by_counters", lambda _sid: None)
+    path = _write_session_stdout(isolated_cleanup_state, os.getpid(), [_prompt_line(os.getpid())])
+
+    cleanup_task_folder()
+
+    assert os.path.exists(path)
+
+
+def test_session_id_is_parsed_from_filename(isolated_cleanup_state, counters):
+    """The counter lookup must receive the session id, not the whole filename."""
+    counters["empty"] = True
+    _write_session_stdout(isolated_cleanup_state, os.getpid(), [_prompt_line(os.getpid())], session_id="20261116135951")
+
+    cleanup_task_folder()
+
+    assert counters["seen"] == ["20261116135951"]

@@ -54,6 +54,17 @@ class Session(Base):
         llm_request_failure_count (int): Failed LLM requests.
         tool_duration_ms_sum (int): Total tool duration in milliseconds.
         llm_request_duration_ms_sum (int): Total LLM request duration in milliseconds.
+        response_content_errors (int): Responses whose content could not be used.
+        first_byte_sum_ms (int): Total first-byte latency in milliseconds.
+        first_byte_count (int): Requests that reported a first-byte latency.
+        requests_per_minute_max (int): Peak requests observed in one minute.
+        turn_failure_count (int): Settled turns that failed.
+        turn_back_count (int): Settled turns abandoned by a Back request.
+        turn_interrupt_count (int): Settled turns ended by an interrupt.
+        max_prompt_tokens (int): Largest prompt size observed at settle.
+        model_name (str): Most recent model name used by the session.
+        heavy_task_warning_count (int): Heavy-task advisory warnings delivered.
+        heavy_task_block_count (int): Heavy-task hard terminations raised.
         create_time (datetime): Timestamp when the session was created.
     """
     __tablename__ = SessionStorageBase.tb_session
@@ -75,6 +86,17 @@ class Session(Base):
     llm_request_failure_count = Column(Integer, default=0)
     tool_duration_ms_sum = Column(Integer, default=0)
     llm_request_duration_ms_sum = Column(Integer, default=0)
+    response_content_errors = Column(Integer, default=0)
+    first_byte_sum_ms = Column(Integer, default=0)
+    first_byte_count = Column(Integer, default=0)
+    requests_per_minute_max = Column(Integer, default=0)
+    turn_failure_count = Column(Integer, default=0)
+    turn_back_count = Column(Integer, default=0)
+    turn_interrupt_count = Column(Integer, default=0)
+    max_prompt_tokens = Column(Integer, default=0)
+    model_name = Column(Text, nullable=True)
+    heavy_task_warning_count = Column(Integer, default=0)
+    heavy_task_block_count = Column(Integer, default=0)
     create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
     update_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
     category = Column(Text, nullable=False, default="", server_default="")
@@ -82,6 +104,9 @@ class Session(Base):
 # Default listing orders by create_time, so without this index every page query
 # scans the whole table before it can return the first row.
 SessionCreateTimeIndex = Index("idx_session_create_time", Session.create_time)
+# Listing by last activity orders by update_time, which needs its own index for
+# the same reason: without it the page query scans the whole table.
+SessionUpdateTimeIndex = Index("idx_session_update_time", Session.update_time)
 
 class SessionSQLAlchemy(SessionStorageBase):
     """
@@ -120,6 +145,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         # column migration because that migration asserts the index inventory is
         # unchanged across its table rebuild.
         SessionCreateTimeIndex.create(bind=self.engine, checkfirst=True)
+        SessionUpdateTimeIndex.create(bind=self.engine, checkfirst=True)
 
         self.chat_history = ChatHistorySQLAlchemy(conn)
         self.conn = conn
@@ -147,12 +173,20 @@ class SessionSQLAlchemy(SessionStorageBase):
                 "summary_count", "turn_count", "tool_call_count", "tool_error_count",
                 "llm_request_count", "llm_request_failure_count",
                 "tool_duration_ms_sum", "llm_request_duration_ms_sum",
+                "response_content_errors", "first_byte_sum_ms", "first_byte_count",
+                "requests_per_minute_max", "turn_failure_count", "turn_back_count",
+                "turn_interrupt_count", "max_prompt_tokens", "model_name",
+                "heavy_task_warning_count", "heavy_task_block_count",
             )
             numeric_columns = {
                 "total_tokens", "total_cached_tokens", "total_completion_tokens",
                 "summary_count", "turn_count", "tool_call_count", "tool_error_count",
                 "llm_request_count", "llm_request_failure_count",
                 "tool_duration_ms_sum", "llm_request_duration_ms_sum",
+                "response_content_errors", "first_byte_sum_ms", "first_byte_count",
+                "requests_per_minute_max", "turn_failure_count", "turn_back_count",
+                "turn_interrupt_count", "max_prompt_tokens",
+                "heavy_task_warning_count", "heavy_task_block_count",
             }
             for column_name in columns:
                 result = conn.execute(
@@ -525,6 +559,17 @@ class SessionSQLAlchemy(SessionStorageBase):
                     llm_request_failure_count=session.llm_request_failure_count or 0,
                     tool_duration_ms_sum=session.tool_duration_ms_sum or 0,
                     llm_request_duration_ms_sum=session.llm_request_duration_ms_sum or 0,
+                    response_content_errors=session.response_content_errors or 0,
+                    first_byte_sum_ms=session.first_byte_sum_ms or 0,
+                    first_byte_count=session.first_byte_count or 0,
+                    requests_per_minute_max=session.requests_per_minute_max or 0,
+                    turn_failure_count=session.turn_failure_count or 0,
+                    turn_back_count=session.turn_back_count or 0,
+                    turn_interrupt_count=session.turn_interrupt_count or 0,
+                    max_prompt_tokens=session.max_prompt_tokens or 0,
+                    model_name=session.model_name or "",
+                    heavy_task_warning_count=session.heavy_task_warning_count or 0,
+                    heavy_task_block_count=session.heavy_task_block_count or 0,
                 )
                 session_data.session_name = session.session_name
                 session_data.create_time = session.create_time
@@ -579,6 +624,7 @@ class SessionSQLAlchemy(SessionStorageBase):
             "session_name": Session.session_name,
             "task": Session.task,
             "create_time": Session.create_time,
+            "update_time": Session.update_time,
         }
 
         if order_by is None:
@@ -632,6 +678,17 @@ class SessionSQLAlchemy(SessionStorageBase):
                 llm_request_failure_count=session.llm_request_failure_count or 0,
                 tool_duration_ms_sum=session.tool_duration_ms_sum or 0,
                 llm_request_duration_ms_sum=session.llm_request_duration_ms_sum or 0,
+                response_content_errors=session.response_content_errors or 0,
+                first_byte_sum_ms=session.first_byte_sum_ms or 0,
+                first_byte_count=session.first_byte_count or 0,
+                requests_per_minute_max=session.requests_per_minute_max or 0,
+                turn_failure_count=session.turn_failure_count or 0,
+                turn_back_count=session.turn_back_count or 0,
+                turn_interrupt_count=session.turn_interrupt_count or 0,
+                max_prompt_tokens=session.max_prompt_tokens or 0,
+                model_name=session.model_name or "",
+                heavy_task_warning_count=session.heavy_task_warning_count or 0,
+                heavy_task_block_count=session.heavy_task_block_count or 0,
             )
             session_data.session_name = session.session_name
             session_data.create_time = session.create_time
@@ -883,8 +940,23 @@ class SessionSQLAlchemy(SessionStorageBase):
         tool_duration_ms_sum: int = 0,
         llm_request_duration_ms_sum: int = 0,
         summary_count: int = 0,
+        response_content_errors: int = 0,
+        first_byte_sum_ms: int = 0,
+        first_byte_count: int = 0,
+        requests_per_minute_max: int = 0,
+        turn_failure_count: int = 0,
+        turn_back_count: int = 0,
+        turn_interrupt_count: int = 0,
+        max_prompt_tokens: int = 0,
+        model_name: str = "",
+        heavy_task_warning_count: int = 0,
+        heavy_task_block_count: int = 0,
     ) -> bool:
-        """Atomically add one settled attempt's execution metric deltas."""
+        """Atomically add one settled attempt's execution metric deltas.
+
+        Additive counters are summed, peak counters keep the larger value, and
+        ``model_name`` is last-write so an empty value never erases a known name.
+        """
         if not session_id:
             return False
 
@@ -899,8 +971,33 @@ class SessionSQLAlchemy(SessionStorageBase):
             "llm_request_failure_count": max(0, int(llm_request_failure_count)),
             "tool_duration_ms_sum": max(0, int(tool_duration_ms_sum)),
             "llm_request_duration_ms_sum": max(0, int(llm_request_duration_ms_sum)),
+            "response_content_errors": max(0, int(response_content_errors)),
+            "first_byte_sum_ms": max(0, int(first_byte_sum_ms)),
+            "first_byte_count": max(0, int(first_byte_count)),
+            "turn_failure_count": max(0, int(turn_failure_count)),
+            "turn_back_count": max(0, int(turn_back_count)),
+            "turn_interrupt_count": max(0, int(turn_interrupt_count)),
+            "heavy_task_warning_count": max(0, int(heavy_task_warning_count)),
+            "heavy_task_block_count": max(0, int(heavy_task_block_count)),
         }
-        has_delta = int(any(deltas.values()))
+        # Peak counters must never regress, so they are compared instead of added.
+        maxima = {
+            "requests_per_minute_max": max(0, int(requests_per_minute_max)),
+            "max_prompt_tokens": max(0, int(max_prompt_tokens)),
+        }
+        model_value = str(model_name or "")
+        has_delta = int(any(deltas.values()) or any(maxima.values()) or bool(model_value))
+
+        additive_sql = "".join(
+            f"{name} = COALESCE({name}, 0) + :{name}, " for name in deltas
+        )
+        # ``CASE WHEN`` keeps the peak comparison portable; SQLite's two-argument
+        # ``MAX`` and PostgreSQL's ``GREATEST`` are not interchangeable.
+        maxima_sql = "".join(
+            f"{name} = CASE WHEN :{name} > COALESCE({name}, 0) "
+            f"THEN :{name} ELSE COALESCE({name}, 0) END, "
+            for name in maxima
+        )
 
         db_session = self.SessionLocal()
         original_busy_timeout = db_io_tool.apply_write_block(db_session)
@@ -908,19 +1005,17 @@ class SessionSQLAlchemy(SessionStorageBase):
             result = db_session.execute(
                 text(
                     "UPDATE session SET "
-                    "summary_count = COALESCE(summary_count, 0) + :summary_count, "
-                    "turn_count = turn_count + :turn_count, "
-                    "tool_call_count = tool_call_count + :tool_call_count, "
-                    "tool_error_count = tool_error_count + :tool_error_count, "
-                    "llm_request_count = llm_request_count + :llm_request_count, "
-                    "llm_request_failure_count = llm_request_failure_count + :llm_request_failure_count, "
-                    "tool_duration_ms_sum = tool_duration_ms_sum + :tool_duration_ms_sum, "
-                    "llm_request_duration_ms_sum = llm_request_duration_ms_sum + :llm_request_duration_ms_sum, "
+                    + additive_sql
+                    + maxima_sql
+                    + "model_name = CASE WHEN :model_name <> '' THEN :model_name "
+                    "ELSE model_name END, "
                     "update_time = CASE WHEN :has_delta = 1 THEN :update_time ELSE update_time END "
                     "WHERE session_id = :session_id"
                 ),
                 {
                     **deltas,
+                    **maxima,
+                    "model_name": model_value,
                     "has_delta": has_delta,
                     "update_time": datetime.now(),
                     "session_id": session_id,

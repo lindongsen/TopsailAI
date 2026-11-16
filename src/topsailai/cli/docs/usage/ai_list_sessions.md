@@ -21,12 +21,14 @@ List stored sessions with optional exact category filtering.
 | `--has-project` | Keep only sessions whose `project_workspace` is non-empty. |
 | `--since <iso>` | Inclusive lower bound on `create_time`, for example `2026-07-28T00:00:00`. |
 | `--until <iso>` | Inclusive upper bound on `create_time`, for example `2026-07-28T23:59:59`. |
-| `--json` | Emit the existing JSON array shape with an additive `category` field. |
+| `--sort <asc\|desc>` | Legacy ordering shortcut that always orders by `create_time`; `desc` means newest first. Default is `asc`. Ignored when `--order-by` is supplied. |
+| `--order-by <field>` | Order by a named field, prefixing it with `-` for descending. Accepted fields are `session_id`, `session_name`, `task`, `create_time`, and `update_time`. An unsupported field is rejected with `Error: Unsupported order_by field: <value>` and exit code `1`. Pass a descending value in the equals form, `--order-by=-update_time`, because a space-separated value that begins with `-` is parsed as an option instead of a value. |
+| `--json` | Emit the existing JSON array shape with an additive `category` field. Each record also carries `create_time` and `update_time` as `YYYY-MM-DDTHH:MM:SS` strings, where `update_time` is the stored modification time and is empty when the row has none. |
 | `--offset` / `--limit` | Apply pagination after every database predicate, so a page always contains the requested number of surviving rows. |
 
 Text output keeps `Total` as the displayed page size and adds `Matched Total` for filtered queries. `Matched Total` is the pre-pagination count of matching rows, including the category, project, and creation-time filters when those options are used.
 
-Every selection predicate runs in the database, so a filter never reads rows it discards. The default ordering is by creation time, which is indexed, so a page query does not scan the whole session table.
+Every selection predicate runs in the database, so a filter never reads rows it discards. The default ordering is by creation time, which is indexed, so a page query does not scan the whole session table. `--order-by` moves the ordering into the same database query, so ordering by `update_time` also pages in the database instead of sorting a fetched page in memory.
 
 `--category` and `--included-categories` intersect, and `--excluded-categories` is subtracted from the result, so the three options compose instead of overriding each other. `--has-project`, `--since`, and `--until` narrow the result further and combine with every category option.
 
