@@ -251,12 +251,7 @@ func DecodeQueryResult(query NamedContract, data json.RawMessage) (any, error) {
 }
 
 func validateQueryTarget(name string, target *Target) error {
-	switch name {
-	case QueryLaunchOptions, QueryHistoryMessages:
-		if target != nil {
-			return fmt.Errorf("%s query must not contain target", name)
-		}
-	case QueryModelCatalog, QuerySessionMessages, QuerySessionMetrics, QuerySessionDetail:
+	if QueryRequiresSessionTarget(name) {
 		if target == nil {
 			return fmt.Errorf("%s query requires a session target", name)
 		}
@@ -266,6 +261,10 @@ func validateQueryTarget(name string, target *Target) error {
 		if err := target.validate(false); err != nil {
 			return err
 		}
+		return nil
+	}
+	if target != nil {
+		return fmt.Errorf("%s query must not contain target", name)
 	}
 	return nil
 }

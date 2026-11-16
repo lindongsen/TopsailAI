@@ -102,11 +102,19 @@ func TestProviderTypedQueryConformance(t *testing.T) {
 		t.Run(query.Name, func(t *testing.T) {
 			request := requestFor(providercli.FunctionQuery)
 			request.Query = &providercli.NamedContract{Name: query.Name, Version: query.Version}
-			switch query.Name {
-			case providercli.QueryModelCatalog:
-				request.Target = &providercli.Target{ResourceKind: providercli.ResourceSession, ProviderResourceKey: target.key}
-			case providercli.QuerySessionMessages:
-				request.Target = &providercli.Target{ResourceKind: providercli.ResourceSession, ProviderResourceKey: providerSessionID()}
+			// The requirement is read from the registry rather than restated here.
+			// A hardcoded list silently skipped every query it did not name, so a
+			// newly registered session-scoped query was exercised with no target
+			// and the Provider's correct rejection looked like a Provider defect.
+			if providercli.QueryRequiresSessionTarget(query.Name) {
+				key := providerSessionID()
+				if query.Name == providercli.QueryModelCatalog {
+					// The catalog read keeps addressing the discovered row key, so
+					// row-key resolution stays covered; the other session reads
+					// address the provider session identifier.
+					key = target.key
+				}
+				request.Target = &providercli.Target{ResourceKind: providercli.ResourceSession, ProviderResourceKey: key}
 			}
 			response := invoke(t, runner, request)
 			if _, err := providercli.DecodeQueryResult(providercli.NamedContract{Name: query.Name, Version: query.Version}, response.QueryResult); err != nil {
