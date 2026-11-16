@@ -552,3 +552,74 @@ def test_metadata_owner_is_never_excluded(tmp_path):
     observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
 
     assert observation.state == State.UNKNOWN
+
+
+def test_unrelated_inventory_change_does_not_block_requested_sessions(tmp_path, monkeypatch):
+    """Another session's activity must not invalidate the requested batch."""
+    record(tmp_path, sid="first", pid=101)
+    record(tmp_path, sid="second", pid=202)
+    original = type(tmp_path).iterdir
+    calls = 0
+
+    def churning_iterdir(path):
+        """Publish an unrelated session record between the two snapshots."""
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            (tmp_path / "other.303.session.agent2llm_interrupt.fbt_waiting").write_text("x")
+        return original(path)
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", churning_iterdir)
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+
+    observations = probe.observe_many(("first", "second"))
+
+    assert observations["first"].state == State.STOPPED
+    assert observations["second"].state == State.STOPPED
+
+
+def test_requested_session_record_change_still_blocks_cleanup(tmp_path, monkeypatch):
+    """A new owner record of a requested session must still fail closed."""
+    record(tmp_path, sid="first", pid=101)
+    original = type(tmp_path).iterdir
+    calls = 0
+
+    def publishing_iterdir(path):
+        """Publish a second owner of the requested session between snapshots."""
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            record(tmp_path, sid="first", pid=404)
+        return original(path)
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", publishing_iterdir)
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+
+    observation = probe._observe_root_many(tmp_path, ("first",))["first"]
+
+    assert observation.state == State.UNKNOWN
+    assert observation.reason == "inventory changed"
+
+
+def test_one_changing_session_does_not_invalidate_its_neighbours(tmp_path, monkeypatch):
+    """A session whose own records changed must not block a stable neighbour."""
+    record(tmp_path, sid="stable", pid=101)
+    record(tmp_path, sid="changing", pid=202)
+    original = type(tmp_path).iterdir
+    calls = 0
+
+    def publishing_iterdir(path):
+        """Publish a second owner of one requested session between snapshots."""
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            record(tmp_path, sid="changing", pid=303)
+        return original(path)
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", publishing_iterdir)
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+
+    observations = probe.observe_many(("stable", "changing"))
+
+    assert observations["stable"].state == State.STOPPED
+    assert observations["changing"].state == State.UNKNOWN

@@ -192,7 +192,15 @@ class SessionActivityProbe:
         return self._observe_root_many(root, (session_id,))[session_id]
 
     def _observe_root_many(self, root, session_ids):
-        """Aggregate requested owners from one stable root inventory."""
+        """Aggregate requested owners from one stable root inventory.
+
+        Only the owner records of each requested session are compared before and
+        after probing, and the comparison is per session. Comparing the whole
+        directory would let unrelated session activity, such as another session
+        deleting its own interrupt marker, invalidate every requested session at
+        once; comparing the whole batch would still let one changing session
+        invalidate its stable neighbours.
+        """
         unknown = ActivityObservation(ActivityState.UNKNOWN, "inventory unreadable")
         try:
             before = tuple(sorted(path.name for path in root.iterdir()))
@@ -206,11 +214,14 @@ class SessionActivityProbe:
                 )
                 for session_id in session_ids
             }
-            if tuple(sorted(path.name for path in root.iterdir())) != before:
-                return {
-                    session_id: ActivityObservation(ActivityState.UNKNOWN, "inventory changed")
-                    for session_id in session_ids
-                }
+            after = tuple(sorted(path.name for path in root.iterdir()))
+            current, current_malformed = self._index_inventory(after, session_ids)
+            for session_id in session_ids:
+                if (current.get(session_id, ()) != owners.get(session_id, ())
+                        or (session_id in current_malformed) != (session_id in malformed)):
+                    observations[session_id] = ActivityObservation(
+                        ActivityState.UNKNOWN, "inventory changed",
+                    )
             return observations
         except (OSError, ValueError, OverflowError):
             logger.warning("Cannot inspect session inventory", exc_info=True)
