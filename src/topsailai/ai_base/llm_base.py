@@ -62,6 +62,7 @@ from .llm_control.exception import (
     LLMNullResponseError,
     ModelServiceError,
     LLMServiceSpecialResponseError,
+    LLMSevereRepetitionError,
     LLMProviderBadRequestError,
     LLMProviderConnectionError,
     LLMProviderInternalServerError,
@@ -634,6 +635,10 @@ class LLMModel(
                 for_response=for_response,
             )
 
+        # A new request starts a new content-verdict budget. Without this reset
+        # a verdict from a previous request would count toward the current one
+        # and could raise before the current request has been retried at all.
+        self.reset_repetition_verdict_count()
         operation_id = uuid4().hex
         _bind_llm_request_operation(operation_id)
         _bind_null_response_operation(operation_id)
@@ -919,6 +924,15 @@ class LLMModel(
                 retry_reason = "read_error"
                 print_error(f"!!! [{i}] ReadError, {e}")
                 continue
+            except LLMSevereRepetitionError as e:
+                # A repetition verdict is computed from the response content,
+                # so resending the identical request cannot change it. The
+                # consecutive-verdict fallback raises this specialized error
+                # once the content-verdict budget is spent; catch it before the
+                # generic ModelServiceError branch, which would otherwise treat
+                # it as retryable and keep resending the same request.
+                print_error(f"!!! [{i}] {LLM_KEYWORD_SERVICE}: {e}")
+                raise
             except ModelServiceError as e:
                 last_error = e
                 retry_reason = (

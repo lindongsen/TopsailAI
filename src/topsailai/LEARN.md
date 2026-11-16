@@ -479,3 +479,66 @@ indistinguishable from a probe that fails for product reasons, and the natural
 reaction is to "fix" working code. Three of my four failures were harness
 defects. The one real defect (the argv path) was found only after the harness was
 corrected, and it would have shipped had I trusted the earlier noise.
+
+## A counting helper that returns 0 on failure makes every threshold comparison silently true
+
+Trigger: session `wa-fc746aa24c8c` stopped summarizing. `count_tokens()` called
+`encoding.encode(text)` without `disallowed_special`, so a tool result containing
+the literal string `<|endoftext|>` (from a `strings` dump of a Go binary) raised
+`ValueError`, and the blanket `except Exception` returned `0`. The caller then
+compared `estimated_after_tokens(87914) >= current_tokens(0)`, which is always
+true, so summarization was skipped 276 times while the context grew from 22 to
+742 messages and 327k tokens.
+
+Action: count literal special-token text as ordinary text with
+`encoding.encode(text, disallowed_special=())`, and never let a counting failure
+masquerade as a real zero. A helper whose failure value is a valid measurement
+cannot be distinguished from a genuine measurement by any caller.
+
+Why this prevents recurrence: `0` is a legal token count, so every downstream
+comparison treats the failure as "the context is empty". The same zero also made
+`_check_dynamic_summary_feasibility()` compute `safe_input_tokens = 0 * 1.05 = 0`
+and pass the model-capacity guard vacuously, disabling the very guard that should
+have stopped an oversized request. The failure is silent in the worst way: the
+quantity trigger still logs "threshold exceeded", so the session looks like it is
+summarizing while it grows without bound. Two further traps made this hard to
+attribute: the operator's report pointed at a missing environment variable, and
+the earlier runtime override era had already raised the ceiling to `1000000`
+(`summary_safe_limit=961808`), yet all 118 skips in that window still reported
+`estimated_summary_not_smaller`, which proves no configuration value could fix
+it. Verify a suspected configuration cause by checking whether the symptom
+survives a period when the configuration was already generous.
+
+A second lesson: fixing the counter does not rescue a session that is already
+oversized. With `MODEL_MAX_CONTEXT_DEFAULT=256000`, `MAX_COMPLETION_TOKENS=30000`
+and an `8192` margin, `summary_safe_limit=217808`, while the real prompt was
+303018 tokens, so the corrected count now blocks with
+`summary_input_exceeds_safe_limit` instead of skipping. The fix restores correct
+diagnosis and prevents recurrence in new sessions; an already-overflowed session
+needs a restart or a genuinely larger model capacity, and that distinction must be
+stated rather than presented as a complete repair.
+
+## A failure value that is also a valid measurement needs a fallback, not just a fix
+
+Trigger: after fixing `count_tokens()` to accept literal special tokens, the same
+class of defect remained reachable through any other counting failure: an unknown
+encoding, an unavailable encoder, or an encoder that returns an empty result. Each
+of those still produced `0`, which every caller reads as "the context is empty".
+
+Action: make the contract "non-empty text never reports 0 tokens". When exact
+counting fails or yields an empty result for non-empty text, return a rough
+length-based estimate and log a warning; keep `0` reserved for genuinely empty
+text. Reuse the ratio the project already has (`CHARS_PER_TOKEN = 4.0` in the
+streaming progress estimator) instead of introducing a second heuristic.
+
+Why this prevents recurrence: fixing one known trigger only closes that trigger.
+The dangerous property is not "tiktoken rejects special tokens", it is "a failure
+is encoded as a value that is indistinguishable from a legitimate measurement".
+Any future failure path re-opens the same silent skip. A fallback converts an
+unknown into a conservative estimate, so thresholds and capacity guards keep
+working in the safe direction instead of silently passing. Two details matter:
+the fallback must be defined in `context/token.py` rather than imported from
+`workspace/print_tool.py`, because that module already imports `token.py` and the
+reverse import would be circular; and the two pre-existing tests that asserted
+`0` on failure had to be updated, because they encoded the old contract and would
+otherwise have blocked the fix.

@@ -2,7 +2,12 @@ import pytest
 import chardet
 from io import StringIO
 import sys
-from topsailai.utils.text_tool import safe_decode, check_repetition, print_repetition_report
+from topsailai.utils.text_tool import (
+    safe_decode,
+    check_repetition,
+    print_repetition_report,
+    is_structural_line,
+)
 
 
 def test_safe_decode_string_input():
@@ -405,6 +410,161 @@ class TestPrintRepetitionReport:
         }
         output = self._capture_print_output(print_repetition_report, result)
         assert "Analysis Started" in output
+
+class TestIsStructuralLine:
+    """Formatting scaffolding must be recognised so it never counts as repetition."""
+
+    def test_code_fence_is_structural(self):
+        """A bare fence and a language-tagged fence are both scaffolding."""
+        assert is_structural_line("```") is True
+        assert is_structural_line("```go") is True
+        assert is_structural_line("```python") is True
+
+    def test_table_separator_is_structural(self):
+        """Markdown table separator rows repeat by construction."""
+        assert is_structural_line("|---|---|") is True
+        assert is_structural_line("|---|---|---|") is True
+        assert is_structural_line("| :--- | ---: |") is True
+
+    def test_symbol_only_line_is_structural(self):
+        """Lines without any word character carry no model content."""
+        assert is_structural_line("}") is True
+        assert is_structural_line("},") is True
+        assert is_structural_line(")") is True
+        assert is_structural_line("//") is True
+
+    def test_short_word_line_is_not_structural(self):
+        """A single letter is content, not scaffolding."""
+        assert is_structural_line("A") is False
+        assert is_structural_line("B") is False
+
+    def test_code_line_is_not_structural(self):
+        """Real code lines must stay in the statistics."""
+        assert is_structural_line("if err != nil {") is False
+        assert is_structural_line("for _, c := range d.Capabilities {") is False
+
+    def test_prose_line_is_not_structural(self):
+        """Ordinary prose must stay in the statistics."""
+        assert is_structural_line("The endpoint was deleted.") is False
+
+    def test_table_row_with_text_is_not_structural(self):
+        """A table row carrying content is not a separator."""
+        assert is_structural_line("| C | line 83 | added a flag |") is False
+
+
+class TestStructuralExclusion:
+    """Structural lines must be excluded from both numerator and denominator."""
+
+    def test_formatted_report_is_not_severe(self):
+        """A well-formatted report with unique prose must not look repetitive.
+
+        This is the negative control for the false positive: the same content
+        is padded with the scaffolding that a Markdown report repeats by
+        construction, and the verdict must stay non-severe. The prose lines are
+        deliberately dissimilar, because near-identical sentences are genuine
+        fuzzy duplicates and must still be counted.
+        """
+        body = [
+            "The endpoint was deleted before its evidence was confirmed.",
+            "A stale lock blocked the reaper for several minutes.",
+            "Packaging failed because the provider file was missing.",
+            "The database schema drifted from the migration script.",
+            "Operators must verify the process before restarting it.",
+            "Cached tokens dominated the total request volume.",
+            "The summary retained only the largest messages.",
+            "A retry storm consumed sixty-seven minutes of wall time.",
+            "Watermark thresholds were derived from the model limit.",
+            "The control channel rejected a bare instruction name.",
+        ]
+        scaffolding = ["```go", "```", "|---|---|", "}", "},", ")"]
+        text = "\n".join(body + scaffolding * 20)
+
+        result = check_repetition(text)
+
+        assert result["structural_line_count"] == 120
+        assert result["total_lines"] == 10
+        assert result["has_severe_repetition"] is False
+
+    def test_genuine_repetition_is_still_severe(self):
+        """Real repetition must still be detected after the exclusion.
+
+        This is the positive control: excluding scaffolding must not blind the
+        detector to a model that actually repeats itself.
+        """
+        text = "\n".join(["The same sentence repeated over and over again."] * 40)
+
+        result = check_repetition(text)
+
+        assert result["structural_line_count"] == 0
+        assert result["has_severe_repetition"] is True
+
+    def test_structural_count_reported(self):
+        """The excluded count must be returned so the verdict is auditable."""
+        result = check_repetition("```\nreal content here\n```")
+
+        assert result["structural_line_count"] == 2
+        assert result["total_lines"] == 1
+
+    def test_no_content_reports_zero_structural(self):
+        """An empty document reports zero excluded lines."""
+        result = check_repetition("   \n\n  ")
+
+        assert result["status"] == "no_content"
+        assert result["structural_line_count"] == 0
+
+
+class TestOptimizationPreservesResult:
+    """The pruning bounds must not change the verdict or the matched index."""
+
+    def test_matched_index_is_first_occurrence(self):
+        """The reported match index must be the first occurrence of that line."""
+        text = "\n".join([
+            "alpha beta gamma delta",
+            "unrelated content here",
+            "alpha beta gamma delta",
+            "alpha beta gamma delta",
+        ])
+
+        result = check_repetition(text)
+
+        assert result["exact_duplicate_count"] == 2
+        assert result["fuzzy_duplicate_count"] == 0
+
+    def test_exact_duplicate_is_not_also_fuzzy(self):
+        """An exact duplicate must not be counted twice.
+
+        The original broke out of its inner loop on an exact match, so an exact
+        duplicate never also became a fuzzy duplicate. The dictionary-based
+        rewrite must preserve that.
+        """
+        text = "\n".join(["identical line", "identical line", "identical line"])
+
+        result = check_repetition(text)
+
+        assert result["exact_duplicate_count"] == 2
+        assert result["fuzzy_duplicate_count"] == 0
+        # repetition_rate is rounded to 4 decimals by the implementation.
+        assert result["repetition_rate"] == pytest.approx(2 / 3, abs=1e-4)
+
+    def test_length_bound_does_not_hide_a_match(self):
+        """A near-identical pair of equal length must still be found."""
+        text = "\n".join([
+            "the quick brown fox jumps over the lazy dog",
+            "the quick brown fox jumps over the lazy cat",
+        ])
+
+        result = check_repetition(text)
+
+        assert result["fuzzy_duplicate_count"] == 1
+        assert result["fuzzy_duplicates"][0]["matched_index"] == 0
+
+    def test_very_different_lengths_are_not_compared(self):
+        """A short line cannot be similar to a very long one, so it is skipped."""
+        text = "\n".join(["x", "a" * 400])
+
+        result = check_repetition(text)
+
+        assert result["fuzzy_duplicate_count"] == 0
 
 
 if __name__ == "__main__":

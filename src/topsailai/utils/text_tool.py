@@ -5,8 +5,42 @@
   Purpose: Text processing and encoding utilities
 '''
 
+import re
+from collections import Counter
 from difflib import SequenceMatcher
 import chardet
+
+
+# Formatting scaffolding that repeats by construction, not by model behaviour.
+# A Markdown report contains many identical code fences, table separator rows
+# and closing braces no matter what it says, so counting them as repetition
+# measures the document format instead of the model's output.
+_TABLE_SEPARATOR_RE = re.compile(r"[|\-: ]+")
+_SYMBOL_ONLY_RE = re.compile(r"[^\w]+")
+
+
+def is_structural_line(line: str) -> bool:
+    """Return whether a line is formatting scaffolding rather than content.
+
+    Structural lines are excluded from repetition statistics because their
+    duplication is decided by the document format, not by the model. Counting
+    them makes a well-formatted report look repetitive even when every sentence
+    is unique.
+
+    Args:
+        line: One stripped, non-empty line.
+
+    Returns:
+        bool: True for a code fence, a table separator row, or a line that
+            contains no word characters at all.
+    """
+    if line.startswith("```"):
+        return True
+    if "|" in line and _TABLE_SEPARATOR_RE.fullmatch(line):
+        return True
+    if _SYMBOL_ONLY_RE.fullmatch(line):
+        return True
+    return False
 
 
 def safe_decode(data):
@@ -56,8 +90,15 @@ def check_repetition(text: str, similarity_threshold: float = 0.8) -> dict:
 
     This function detects both exact duplicate lines and fuzzy duplicates
     (lines with high similarity) in the input text. It compares each line
-    against all previous lines to identify repetition patterns throughout
-    the entire text.
+    against the first occurrence of every distinct earlier line to identify
+    repetition patterns throughout the entire text.
+
+    Formatting scaffolding is excluded from the statistics: code fences, table
+    separator rows, and lines containing no word characters. Those lines repeat
+    because of the document format rather than the model's behaviour, so
+    counting them makes a well-formatted report look repetitive even when all
+    of its content is unique. The excluded count is reported separately so the
+    decision stays auditable.
 
     Args:
         text: The input text content to analyze
@@ -66,7 +107,9 @@ def check_repetition(text: str, similarity_threshold: float = 0.8) -> dict:
 
     Returns:
         dict: A dictionary containing repetition analysis results with keys:
-            - total_lines: Total number of non-empty lines
+            - total_lines: Number of non-empty content lines after excluding
+                structural lines
+            - structural_line_count: Number of excluded structural lines
             - exact_duplicate_count: Number of exactly duplicate lines
             - fuzzy_duplicate_count: Number of fuzzy duplicate lines
             - repetition_rate: Estimated repetition ratio (0-1)
@@ -81,13 +124,14 @@ def check_repetition(text: str, similarity_threshold: float = 0.8) -> dict:
         >>> print(result['repetition_rate'])
     """
     # Preprocess: split by lines and strip whitespace, filter out empty lines
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    raw_lines = [line.strip() for line in text.split('\n') if line.strip()]
 
     # Handle empty content case
-    if not lines:
+    if not raw_lines:
         return {
             "status": "no_content",
             "total_lines": 0,
+            "structural_line_count": 0,
             "exact_duplicate_count": 0,
             "fuzzy_duplicate_count": 0,
             "repetition_rate": 0.0,
@@ -96,36 +140,88 @@ def check_repetition(text: str, similarity_threshold: float = 0.8) -> dict:
             "has_severe_repetition": False
         }
 
+    # Formatting scaffolding repeats by construction, so it is excluded from
+    # both the duplicate count and the denominator. Counting it would measure
+    # the document format instead of the model's output.
+    lines = [line for line in raw_lines if not is_structural_line(line)]
+    structural_line_count = len(raw_lines) - len(lines)
+
     total_lines = len(lines)
     exact_duplicate_count = 0
     exact_duplicates = {}  # Track exact duplicate lines and their occurrence count
     fuzzy_duplicates = []  # Track fuzzy duplicate entries
-    processed_lines = []   # Store lines that have been processed
 
-    # Detection logic: compare each line against all previous lines
+    # Two changes remove the quadratic scan while preserving the original
+    # result exactly (verified against a faithful port of the original on a
+    # 1151-line report: identical exact count and identical fuzzy list).
+    #
+    # 1. Exact duplicates are counted with a dictionary. The original broke out
+    #    of its inner loop on an exact match, so an exact duplicate was never
+    #    also counted as fuzzy; the `continue` below preserves that.
+    # 2. Fuzzy matching only compares against the first occurrence of each
+    #    distinct line. The original kept the first index achieving the best
+    #    similarity, which is the index the first occurrence carries, so the
+    #    reported `matched_index` is unchanged.
+    first_index_by_line = {}
+    char_counts_by_line = {}
+
     for i, current_line in enumerate(lines):
-        current_line = lines[i]
-        is_exact_duplicate = False
+        if current_line in first_index_by_line:
+            exact_duplicate_count += 1
+            exact_duplicates[current_line] = exact_duplicates.get(current_line, 0) + 1
+            continue
+
         best_match = None
         best_similarity = 0.0
+        current_len = len(current_line)
+        current_chars = Counter(current_line)
 
-        # Compare against all previously processed lines
-        for j, prev_line in enumerate(processed_lines):
-            # A. Exact match detection
-            if current_line == prev_line:
-                exact_duplicate_count += 1
-                exact_duplicates[current_line] = exact_duplicates.get(current_line, 0) + 1
-                is_exact_duplicate = True
-                break  # Found exact match, no need to check further
+        # Compare against the first occurrence of every distinct previous line
+        for prev_line, prev_index in first_index_by_line.items():
+            prev_len = len(prev_line)
 
-            # B. Fuzzy match detection - find the best matching previous line
-            similarity_ratio = SequenceMatcher(None, current_line, prev_line).ratio()
+            # ratio() is 2*M/T with T = len(a)+len(b) and M <= min(len(a),len(b)),
+            # so this length bound is an exact upper bound computed in O(1).
+            length_bound = 2.0 * min(current_len, prev_len) / (current_len + prev_len)
+            if length_bound <= best_similarity:
+                continue
+            if length_bound <= similarity_threshold:
+                continue
+
+            # A tighter exact bound: every matched character pair must share a
+            # character, so M <= sum_c min(count_a[c], count_b[c]). This is
+            # still an upper bound on ratio() and costs O(alphabet), which
+            # rejects most candidates before any SequenceMatcher is built.
+            prev_chars = char_counts_by_line[prev_line]
+            if len(current_chars) <= len(prev_chars):
+                shared = sum(
+                    min(count, prev_chars.get(char, 0))
+                    for char, count in current_chars.items()
+                )
+            else:
+                shared = sum(
+                    min(count, current_chars.get(char, 0))
+                    for char, count in prev_chars.items()
+                )
+            char_bound = 2.0 * shared / (current_len + prev_len)
+            if char_bound <= best_similarity:
+                continue
+            if char_bound <= similarity_threshold:
+                continue
+
+            matcher = SequenceMatcher(None, current_line, prev_line)
+            # quick_ratio() is a cheaper upper bound on ratio(), so a candidate
+            # that cannot beat the current best is skipped without the full
+            # compare.
+            if matcher.quick_ratio() <= best_similarity:
+                continue
+            similarity_ratio = matcher.ratio()
             if similarity_ratio > best_similarity:
                 best_similarity = similarity_ratio
-                best_match = {"index": j, "line": prev_line}
+                best_match = {"index": prev_index, "line": prev_line}
 
         # If not an exact duplicate but has high similarity match
-        if not is_exact_duplicate and best_similarity > similarity_threshold:
+        if best_match is not None and best_similarity > similarity_threshold:
             fuzzy_duplicates.append({
                 "index": i,
                 "line": current_line,
@@ -134,10 +230,10 @@ def check_repetition(text: str, similarity_threshold: float = 0.8) -> dict:
                 "similarity": round(best_similarity, 4)
             })
 
-        # Add current line to processed lines
-        processed_lines.append(current_line)
+        first_index_by_line[current_line] = i
+        char_counts_by_line[current_line] = current_chars
 
-    # Calculate repetition rate: ratio of duplicate lines to total lines
+    # Calculate repetition rate: ratio of duplicate lines to content lines
     total_duplicates = exact_duplicate_count + len(fuzzy_duplicates)
     repetition_rate = total_duplicates / total_lines if total_lines > 0 else 0.0
 
@@ -147,6 +243,7 @@ def check_repetition(text: str, similarity_threshold: float = 0.8) -> dict:
     return {
         "status": "analyzed",
         "total_lines": total_lines,
+        "structural_line_count": structural_line_count,
         "exact_duplicate_count": exact_duplicate_count,
         "fuzzy_duplicate_count": len(fuzzy_duplicates),
         "repetition_rate": round(repetition_rate, 4),
@@ -172,12 +269,18 @@ def print_repetition_report(result: dict) -> None:
     repetition_rate = result["repetition_rate"]
     exact_duplicates = result["exact_duplicates"]
     fuzzy_duplicates = result["fuzzy_duplicates"]
+    structural_count = result.get("structural_line_count", 0)
 
     print(f"--- Analysis Started (Total Lines: {total_lines}) ---")
     print(f"\n[Statistics]")
     print(f"1. Exact duplicate lines: {exact_count}")
     print(f"2. Highly similar lines (fuzzy duplicates): {fuzzy_count}")
     print(f"3. Estimated repetition rate: {repetition_rate:.2%}")
+    # Excluded scaffolding is reported so the decision stays auditable: a low
+    # rate on a large excluded count means the document is heavily formatted,
+    # not that the model stopped repeating itself.
+    if structural_count:
+        print(f"4. Excluded structural lines: {structural_count}")
 
     # Display top 3 most frequent exact duplicates
     if exact_duplicates:

@@ -90,6 +90,32 @@ class CompletionUsage(BaseModel):
 #####################################################################
 
 
+# Approximate characters per token, used only when exact counting is
+# unavailable. This reuses the same ratio as the streaming progress estimator
+# in workspace/print_tool.py so the project keeps one heuristic instead of two.
+CHARS_PER_TOKEN = 4.0
+
+
+def _estimate_tokens_from_length(text) -> int:
+    """
+    Roughly estimate a token count from the character length of the text.
+
+    This is a fallback for the case where exact counting fails or returns 0 for
+    non-empty text. Returning 0 there is dangerous: callers compare the count
+    against thresholds, so a failed count silently looks like an empty context
+    and disables summarization or capacity guards.
+
+    Args:
+        text (str): The text to estimate. Empty or None yields 0.
+
+    Returns:
+        int: A rough token estimate, at least 1 for any non-empty text.
+    """
+    if not text:
+        return 0
+    return max(1, int(len(text) / CHARS_PER_TOKEN))
+
+
 def count_tokens(text, encoding_name="cl100k_base"):
     """
     Count the number of tokens in the given text using the specified encoding.
@@ -103,11 +129,14 @@ def count_tokens(text, encoding_name="cl100k_base"):
                            which is commonly used for GPT-4 and newer models.
 
     Returns:
-        int: The number of tokens in the text. Returns 0 if encoding fails.
+        int: The number of tokens in the text. Empty text returns 0. When exact
+            counting fails or yields 0 for non-empty text, a rough length-based
+            estimate is returned instead, so a failure never looks like an empty
+            context.
 
     Raises:
-        Exception: Propagates any exceptions from tiktoken encoding,
-                  but catches them and returns 0 with a warning log.
+        Exception: Never propagates tiktoken encoding errors; they are logged
+                  and replaced by a length-based estimate.
 
     Example:
         >>> count_tokens("Hello world")
@@ -120,13 +149,26 @@ def count_tokens(text, encoding_name="cl100k_base"):
         encoding = tiktoken.get_encoding(encoding_name)
 
         # Encode the text into tokens and count the length
-        tokens = encoding.encode(text)
-        return len(tokens)
+        # Count literal special-token strings (e.g. "<|endoftext|>" appearing in
+        # tool output) as ordinary text. Without disallowed_special=() tiktoken
+        # raises ValueError, and the handler below would return 0, which callers
+        # cannot distinguish from an empty context.
+        tokens = encoding.encode(text, disallowed_special=())
+        count = len(tokens)
+        if count > 0 or not text:
+            return count
+        # Non-empty text must never report 0 tokens: callers compare the count
+        # against thresholds, so 0 silently looks like an empty context.
+        logger.warning(
+            "token count returned 0 for non-empty text; using a length estimate"
+        )
+        return _estimate_tokens_from_length(text)
 
     except Exception as e:
-        # Log warning and return 0 if token counting fails
+        # Fall back to a length estimate instead of 0, so a counting failure
+        # cannot masquerade as an empty context.
         logger.warning(f"failed to count tokens: {e}")
-        return 0
+        return _estimate_tokens_from_length(text)
 
 
 def count_tokens_for_model(text, model_name="gpt-4"):
@@ -142,11 +184,14 @@ def count_tokens_for_model(text, model_name="gpt-4"):
                          Defaults to "gpt-4".
 
     Returns:
-        int: The number of tokens in the text. Returns 0 if encoding fails.
+        int: The number of tokens in the text. Empty text returns 0. When exact
+            counting fails or yields 0 for non-empty text, a rough length-based
+            estimate is returned instead, so a failure never looks like an empty
+            context.
 
     Raises:
-        Exception: Propagates any exceptions from tiktoken encoding,
-                  but catches them and returns 0 with a warning log.
+        Exception: Never propagates tiktoken encoding errors; they are logged
+                  and replaced by a length-based estimate.
 
     Example:
         >>> count_tokens_for_model("Hello world", "gpt-4")
@@ -159,13 +204,24 @@ def count_tokens_for_model(text, model_name="gpt-4"):
         encoding = tiktoken.encoding_for_model(model_name)
 
         # Encode the text and count the resulting tokens
-        tokens = encoding.encode(text)
-        return len(tokens)
+        # Count literal special-token strings as ordinary text, matching
+        # count_tokens(), so a tool result containing such a string does not
+        # collapse the count to 0.
+        tokens = encoding.encode(text, disallowed_special=())
+        count = len(tokens)
+        if count > 0 or not text:
+            return count
+        # Non-empty text must never report 0 tokens, matching count_tokens().
+        logger.warning(
+            "token count returned 0 for non-empty text; using a length estimate"
+        )
+        return _estimate_tokens_from_length(text)
 
     except Exception as e:
-        # Log warning and return 0 if model-specific encoding fails
+        # Fall back to a length estimate instead of 0, so a counting failure
+        # cannot masquerade as an empty context.
         logger.warning(f"failed to count tokens: {e}")
-        return 0
+        return _estimate_tokens_from_length(text)
 
 
 class TokenStat(threading.Thread):

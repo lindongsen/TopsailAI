@@ -45,6 +45,45 @@ from topsailai.workspace.agent.agent_constants import (
 )
 
 class HeavyTaskBase(object):
+    """Two-stage heavy-task guard driven by consecutive summaries in ONE turn.
+
+    THIS DESIGN IS INTENTIONAL AND MUST NOT BE CHANGED.
+
+    The counter measures how heavy a single User2Agent turn is, not how heavy
+    the whole session is. `reset_count()` is therefore called at the start of
+    every turn (see `hook_after_init_prompt`). That per-turn reset is a
+    deliberate part of the design, not a defect.
+
+    Stage 1 - soft (advisory):
+        When `continuous_summary_times > threshold_continuous_summary_times`
+        (default: more than 5, i.e. the 6th summary), `is_heavy_task()` returns
+        True and `hook_summarize_messages` appends a user-role message asking
+        the agent to analyse and split the task and to save each subtask's
+        results to files. The agent may ignore it.
+
+    Stage 2 - hard (terminating):
+        When `continuous_summary_times >= threshold_continuous_summary_times + 7`
+        (default: 12), `block_heavy_task()` raises `HeavyTaskError`. That error
+        is re-raised by `call_hooks_pre_chat` (never swallowed), caught in
+        `AgentBase.run`, and ends the run in `AgentChat.run` with
+        "Task terminated: ...".
+
+    Known limitations, recorded so they are not mistaken for defects:
+
+    1. A task that is heavy only because it spans many turns stays below both
+       thresholds, because the counter never accumulates across turns. Measured
+       example: 35 summaries over 9 turns, about 3.9 per turn, which never
+       reached the soft threshold of 5.
+    2. A skipped summary resets the counter to zero even when the context is
+       still full, because `dynamic_summary` being True means the watermark is
+       already at LOW or above. See the counter-update block in
+       `hook_summarize_messages`.
+    3. Only a successful summary increments the counter; skipped and
+       feasibility-rejected attempts are not counted.
+    4. The `+7` fatal offset is hardcoded, and the base threshold is read once
+       in `__init__`, so neither is runtime-tunable.
+    """
+
     def __init__(self):
         self.continuous_summary_times = 0
 
@@ -64,17 +103,20 @@ class HeavyTaskBase(object):
             self.prompt += env_prompt
 
     def is_heavy_task(self) -> bool:
+        """Stage 1 (soft): True once the per-turn summary count exceeds the threshold."""
         if self.continuous_summary_times > self.threshold_continuous_summary_times:
             return True
 
         return False
 
     def block_heavy_task(self):
+        """Stage 2 (hard): raise HeavyTaskError once the fatal offset is reached."""
         if self.continuous_summary_times >= (self.threshold_continuous_summary_times + 7):
             raise HeavyTaskError(self.prompt)
         return
 
     def reset_count(self):
+        """Reset the per-turn counter. Called at the start of every turn by design."""
         self.continuous_summary_times = 0
 
         return
@@ -298,12 +340,25 @@ class AgentChatBase(object):
                         f"send_limit={watermark.send_limit}"
                     )
 
+            # Heavy-task accounting for THIS turn only.
+            # A successful summary increments the per-turn counter.
+            # A skipped summary (or a dynamic watermark with no summary applied)
+            # resets it to zero: this is deliberate, because the counter measures
+            # consecutive summaries inside one turn. Note the side effect: when
+            # `dynamic_summary` is True the context is still full, so resetting
+            # here also erases a valid heavy-task signal.
             if _answer:
                 self.heavy_task.continuous_summary_times += 1
             elif dynamic_summary or need_processing_summary:
                 self.heavy_task.continuous_summary_times = 0
 
             # heavy task
+            # Stage 1 (soft): persist the summary, then append an advisory
+            # user-role message asking the agent to split the task.
+            # Stage 2 (hard): `block_heavy_task()` raises HeavyTaskError, which
+            # terminates the run. The summary is persisted first so the work is
+            # not lost when the hard stage fires.
+            # Both stages are intentional and must not be changed.
             if _answer and self.heavy_task.is_heavy_task():
                 # Persist the Agent2LLM summary to the User2Agent session
                 # before the fatal HeavyTaskError can terminate the run.

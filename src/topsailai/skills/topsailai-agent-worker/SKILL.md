@@ -344,6 +344,9 @@ operations include `call_instruction`, `hard_interrupt`, `soft_interrupt`,
 - `.env.local` holds user-specific overrides and secrets.
 - To change agent behavior: find the variable in `.env`, add the override to
   `.env.local`, then restart the agent.
+- To change a **running** agent without restarting it, see
+  `references/runtime-emergency-env-override.md`. That path is an emergency
+  mitigation only; it is not persisted and does not replace a real fix.
 
 ## Skill overview preloading (`flag_overview`)
 
@@ -422,4 +425,9 @@ Runtime logs live under `{TOPSAILAI_HOME}/log/` (default
 - **references/**: `model-usage-statistics.md` — per-model usage statistics
   reference: the two storage locations, file naming rules, every field, derived
   value formulas, retention and reading caveats.
+  `runtime-emergency-env-override.md` — operator procedure for changing one
+  running process's environment through the control channel: how to decide
+  whether to use it, the three pre-flight checks, how to verify inside the
+  process, which variables are hot-changeable, the masking and snapshot traps,
+  derived-limit chains, rollback, and the handover report.
 - **assets/**: none.

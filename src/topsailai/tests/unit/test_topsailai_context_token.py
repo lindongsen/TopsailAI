@@ -16,7 +16,31 @@ from topsailai.context.token import (
     count_tokens,
     count_tokens_for_model,
     TokenStat,
+    CHARS_PER_TOKEN,
+    _estimate_tokens_from_length,
 )
+
+
+class TestEstimateTokensFromLength(unittest.TestCase):
+    """Test cases for the length-based fallback estimator."""
+
+    def test_empty_text_estimates_zero(self):
+        """Empty or missing text estimates 0 tokens."""
+        self.assertEqual(_estimate_tokens_from_length(""), 0)
+        self.assertEqual(_estimate_tokens_from_length(None), 0)
+
+    def test_non_empty_text_never_estimates_zero(self):
+        """Any non-empty text estimates at least 1 token."""
+        self.assertGreaterEqual(_estimate_tokens_from_length("x"), 1)
+        self.assertGreaterEqual(_estimate_tokens_from_length("a" * 3), 1)
+
+    def test_estimate_uses_the_shared_chars_per_token_ratio(self):
+        """The estimate follows the project-wide characters-per-token ratio."""
+        text = "a" * 400
+        self.assertEqual(
+            _estimate_tokens_from_length(text),
+            max(1, int(len(text) / CHARS_PER_TOKEN)),
+        )
 
 
 class TestCountTokens(unittest.TestCase):
@@ -62,8 +86,17 @@ class TestCountTokens(unittest.TestCase):
         self.assertGreater(result, 0)
 
     def test_count_tokens_invalid_encoding(self):
-        """Test counting tokens with invalid encoding returns 0."""
+        """An invalid encoding must fall back to a length estimate, never 0.
+
+        Returning 0 for non-empty text makes callers believe the context is
+        empty, which silently disables summarization and capacity guards.
+        """
         result = count_tokens("test", encoding_name="invalid_encoding")
+        self.assertGreater(result, 0)
+
+    def test_count_tokens_invalid_encoding_empty_text_stays_zero(self):
+        """Empty text still counts as 0 even when the encoding is invalid."""
+        result = count_tokens("", encoding_name="invalid_encoding")
         self.assertEqual(result, 0)
 
     def test_count_tokens_multiline_text(self):
@@ -72,6 +105,54 @@ class TestCountTokens(unittest.TestCase):
         result = count_tokens(text)
         self.assertIsInstance(result, int)
         self.assertGreater(result, 5)
+
+    def test_count_tokens_literal_special_token_is_counted(self):
+        """A literal special-token string must be counted, not collapsed to 0.
+
+        Regression: tool output can contain "<|endoftext|>" verbatim (for
+        example a `strings` dump of a Go binary). tiktoken rejects it unless
+        disallowed_special=() is passed, and the old handler returned 0, which
+        made summarization believe the context was empty and skip forever.
+        """
+        text = "go stdlib dump <|endoftext|> crypto/subtle"
+        result = count_tokens(text)
+        self.assertIsInstance(result, int)
+        self.assertGreater(result, 0)
+
+    def test_count_tokens_literal_special_token_matches_plain_text(self):
+        """The special-token string must be counted as ordinary text."""
+        with_token = count_tokens("hello <|endoftext|> world")
+        without_token = count_tokens("hello  world")
+        self.assertGreater(with_token, without_token)
+
+    def test_count_tokens_never_returns_zero_for_non_empty_text(self):
+        """Non-empty text must never report 0 tokens, whatever the encoder does.
+
+        This is the safety net: a 0 count is indistinguishable from an empty
+        context, so callers would silently skip summarization and capacity
+        checks. When the encoder yields an empty result, a length estimate is
+        used instead.
+        """
+        with patch("topsailai.context.token.tiktoken.get_encoding") as mock_get:
+            mock_encoding = MagicMock()
+            mock_encoding.encode.return_value = []
+            mock_get.return_value = mock_encoding
+            result = count_tokens("some non-empty text")
+        self.assertGreater(result, 0)
+
+    def test_count_tokens_encoder_failure_uses_length_estimate(self):
+        """An encoder exception falls back to a length estimate, not 0."""
+        with patch("topsailai.context.token.tiktoken.get_encoding") as mock_get:
+            mock_get.side_effect = RuntimeError("encoder unavailable")
+            result = count_tokens("some non-empty text")
+        self.assertGreater(result, 0)
+
+    def test_count_tokens_encoder_failure_empty_text_stays_zero(self):
+        """An encoder exception on empty text still reports 0."""
+        with patch("topsailai.context.token.tiktoken.get_encoding") as mock_get:
+            mock_get.side_effect = RuntimeError("encoder unavailable")
+            result = count_tokens("")
+        self.assertEqual(result, 0)
 
 
 class TestCountTokensForModel(unittest.TestCase):
@@ -101,9 +182,20 @@ class TestCountTokensForModel(unittest.TestCase):
         self.assertEqual(result, 0)
 
     def test_count_tokens_for_model_invalid_model(self):
-        """Test counting tokens with invalid model returns 0."""
+        """An invalid model must fall back to a length estimate, never 0."""
         result = count_tokens_for_model("test", "invalid-model")
+        self.assertGreater(result, 0)
+
+    def test_count_tokens_for_model_invalid_model_empty_text_stays_zero(self):
+        """Empty text still counts as 0 even when the model is invalid."""
+        result = count_tokens_for_model("", "invalid-model")
         self.assertEqual(result, 0)
+
+    def test_count_tokens_for_model_literal_special_token_is_counted(self):
+        """A literal special-token string must be counted for a model encoding."""
+        result = count_tokens_for_model("hello <|endoftext|> world", "gpt-4")
+        self.assertIsInstance(result, int)
+        self.assertGreater(result, 0)
 
 
 class TestTokenStat(unittest.TestCase):
