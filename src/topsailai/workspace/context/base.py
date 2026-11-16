@@ -32,6 +32,7 @@ from topsailai.utils import (
     print_tool,
     message_tool,
 )
+from topsailai.utils.history_replay_message import history_replay_semantic_projection
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.workspace.llm_shell import LLMChat, get_llm_chat
 from topsailai.hooks.points.context.summary_adapter import (
@@ -576,13 +577,37 @@ class ContextRuntimeBase(object):
             return 0
         return min(candidates)
 
-    def _delete_persisted_opening_observation(self, session_id: str) -> int:
-        """Delete the persisted rows of the opening observation block.
+    def _delete_persisted_opening_observation(
+            self,
+            session_id: str,
+            removed_messages: list = None,
+    ) -> int:
+        """Delete the persisted rows of the messages released in memory.
 
         The span is recomputed on the raw records instead of being mapped from
-        the in-memory list. Span detection is shape-independent, so both sides
-        agree, and recomputing avoids a length-based slice that would delete the
-        wrong rows once the in-memory list no longer starts with the observation.
+        the in-memory list, because span detection is shape-independent and a
+        length-based slice would delete the wrong rows once the in-memory list no
+        longer starts with the observation.
+
+        Recomputing the span alone is NOT sufficient. This method runs after the
+        normal summary path has already deleted rows, so two observations that
+        were separated by a task and an assistant message can become contiguous.
+        The recomputed span then covers a later user-role observation that the
+        in-memory decision never selected, and deleting it would remove a tool
+        result from the conversation. The deletion is therefore bounded by
+        ``removed_messages``: each released message is matched to the first
+        unselected row inside the span by semantic projection, and only matched
+        rows are deleted. When no row matches, nothing is deleted, which is the
+        correct outcome because the normal path already removed that row.
+
+        Args:
+            session_id (str): Session whose persisted rows must be removed.
+            removed_messages (list, optional): Messages the in-memory release
+                actually removed. ``None`` falls back to the whole leading span,
+                which is only safe when no other deletion ran in between.
+
+        Returns:
+            int: Number of persisted rows removed.
         """
         raw_messages = ctx_manager.get_messages_by_session(session_id, for_raw=True) or []
         if not raw_messages:
@@ -591,7 +616,11 @@ class ContextRuntimeBase(object):
         start, end = self._opening_observation_span(raw_values)
         if start >= end:
             return 0
-        msg_ids = [raw_msg.msg_id for raw_msg in raw_messages[start:end]]
+
+        candidates = raw_messages[start:end]
+        if removed_messages is not None:
+            candidates = self._match_persisted_rows(candidates, removed_messages)
+        msg_ids = [raw_msg.msg_id for raw_msg in candidates]
         if not msg_ids:
             return 0
         ctx_manager.del_session_messages(session_id, msg_ids)
@@ -610,6 +639,40 @@ class ContextRuntimeBase(object):
             persisted=True,
         )
         return len(msg_ids)
+
+    def _match_persisted_rows(self, candidates: list, removed_messages: list) -> list:
+        """Return the persisted rows that correspond to the released messages.
+
+        Matching is by semantic projection, so the storage-only ``create_time``
+        field cannot prevent a match, and each row is selected at most once so a
+        repeated message cannot cause a double deletion.
+
+        Args:
+            candidates (list): Persisted records inside the recomputed span.
+            removed_messages (list): Messages the in-memory release removed.
+
+        Returns:
+            list: The matched persisted records, in the order of the released
+                messages.
+        """
+        matched = []
+        selected_ids = set()
+        for removed in removed_messages:
+            removed_dict = json_tool.safe_json_load(removed)
+            if not isinstance(removed_dict, dict):
+                continue
+            removed_projection = history_replay_semantic_projection(removed_dict)
+            for raw_msg in candidates:
+                if raw_msg.msg_id in selected_ids:
+                    continue
+                raw_dict = json_tool.safe_json_load(raw_msg.message)
+                if not isinstance(raw_dict, dict):
+                    continue
+                if history_replay_semantic_projection(raw_dict) == removed_projection:
+                    matched.append(raw_msg)
+                    selected_ids.add(raw_msg.msg_id)
+                    break
+        return matched
 
     def release_opening_observation_after_summary(
             self,
@@ -658,6 +721,7 @@ class ContextRuntimeBase(object):
         if block_tokens <= budget * ratio:
             return 0
 
+        released_messages = messages[start:end]
         del messages[start:end]
         removed = end - start
         # This release is rare, so it is reported as a warning instead of a
@@ -676,7 +740,13 @@ class ContextRuntimeBase(object):
             session_id=session_id,
         )
         if session_id:
-            self._delete_persisted_opening_observation(session_id)
+            # Pass the exact messages removed in memory so the persisted
+            # deletion cannot widen to a later observation that became
+            # contiguous after the normal summary path deleted the rows between.
+            self._delete_persisted_opening_observation(
+                session_id,
+                removed_messages=released_messages,
+            )
         return removed
 
     def _record_observation_release_event(

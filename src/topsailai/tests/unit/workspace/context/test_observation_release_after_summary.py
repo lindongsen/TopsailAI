@@ -357,7 +357,9 @@ class TestPersistedDeletion:
             messages, session_id="sess-1"
         )
 
-        runtime._delete_persisted_opening_observation.assert_called_once_with("sess-1")
+        runtime._delete_persisted_opening_observation.assert_called_once_with(
+            "sess-1", removed_messages=[OBSERVATION]
+        )
 
     def test_release_skips_deletion_without_session_id(self, monkeypatch):
         monkeypatch.setenv(
@@ -372,6 +374,107 @@ class TestPersistedDeletion:
         runtime.release_opening_observation_after_summary(messages)
 
         runtime._delete_persisted_opening_observation.assert_not_called()
+
+
+class TestPersistedRowMatching:
+    """The persisted deletion must be bounded by the messages removed in memory."""
+
+    def _raw(self, msg_id, message):
+        record = MagicMock()
+        record.msg_id = msg_id
+        record.message = json.dumps(message)
+        return record
+
+    def test_matches_by_semantic_projection_ignoring_create_time(self):
+        """A storage-only create_time must not prevent a match."""
+        runtime = _runtime()
+        stored = dict(OBSERVATION)
+        stored["create_time"] = 1794675567
+        candidates = [self._raw("id0", stored)]
+
+        matched = runtime._match_persisted_rows(candidates, [OBSERVATION])
+
+        assert [record.msg_id for record in matched] == ["id0"]
+
+    def test_no_match_returns_empty(self):
+        """A row the release never selected must not be matched."""
+        runtime = _runtime()
+        candidates = [self._raw("id0", TASK)]
+
+        assert runtime._match_persisted_rows(candidates, [OBSERVATION]) == []
+
+    def test_duplicate_message_selects_each_row_once(self):
+        """A repeated message must not cause a double deletion."""
+        runtime = _runtime()
+        candidates = [self._raw("id0", OBSERVATION), self._raw("id1", OBSERVATION)]
+
+        matched = runtime._match_persisted_rows(
+            candidates, [OBSERVATION, OBSERVATION]
+        )
+
+        assert [record.msg_id for record in matched] == ["id0", "id1"]
+
+    def test_one_released_message_selects_one_row(self):
+        """Two identical rows must not both be deleted for one release."""
+        runtime = _runtime()
+        candidates = [self._raw("id0", OBSERVATION), self._raw("id1", OBSERVATION)]
+
+        matched = runtime._match_persisted_rows(candidates, [OBSERVATION])
+
+        assert [record.msg_id for record in matched] == ["id0"]
+
+    def test_non_dict_released_message_is_skipped(self):
+        """A malformed released message must not match anything."""
+        runtime = _runtime()
+        candidates = [self._raw("id0", OBSERVATION)]
+
+        assert runtime._match_persisted_rows(candidates, ["not a dict"]) == []
+
+    def test_later_observation_survives_when_rows_become_contiguous(self):
+        """Regression: the recomputed span must not widen to a later observation.
+
+        The normal summary path deletes the rows between the two observations, so
+        they become contiguous. Without bounding by the released messages the
+        recomputed span covers the later user-role tool result and deletes it,
+        which strips a tool result out of the conversation.
+        """
+        runtime = _runtime()
+        raw = [
+            self._raw("id0", OBSERVATION),
+            self._raw("id1", TOOL_RESULT),
+            self._raw("id2", TASK),
+        ]
+        with patch(
+            "topsailai.workspace.context.base.ctx_manager.get_messages_by_session",
+            return_value=raw,
+        ), patch(
+            "topsailai.workspace.context.base.ctx_manager.del_session_messages"
+        ) as del_mock:
+            removed = runtime._delete_persisted_opening_observation(
+                "sess-1", removed_messages=[OBSERVATION]
+            )
+
+        assert removed == 1
+        del_mock.assert_called_once_with("sess-1", ["id0"])
+
+    def test_unbounded_call_falls_back_to_the_whole_span(self):
+        """Without released messages the whole leading span is deleted."""
+        runtime = _runtime()
+        raw = [
+            self._raw("id0", OBSERVATION),
+            self._raw("id1", TOOL_RESULT),
+            self._raw("id2", TASK),
+        ]
+        with patch(
+            "topsailai.workspace.context.base.ctx_manager.get_messages_by_session",
+            return_value=raw,
+        ), patch(
+            "topsailai.workspace.context.base.ctx_manager.del_session_messages"
+        ) as del_mock:
+            removed = runtime._delete_persisted_opening_observation("sess-1")
+
+        assert removed == 2
+        del_mock.assert_called_once_with("sess-1", ["id0", "id1"])
 
 
 # =============================================================================
