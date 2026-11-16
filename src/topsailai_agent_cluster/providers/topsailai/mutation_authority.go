@@ -125,12 +125,78 @@ func (p *provider) requireNonLiveRecord(ctx context.Context, requested *target) 
 	return resolved, nil
 }
 
-// requireResumableRecord revalidates that the record exists and is not live.
+// sessionAuthority resolves one provider session from the session registry.
 //
-// Resume exists for the case where the process is gone, so a live row is rejected:
-// resuming a session that is already running would start a second process for one
-// record, which is a different operation from the one the operator asked for.
+// Resume addresses a session by handle, and the registry is the only read that
+// lists every persisted session. The workspace list is a different view: it
+// reports rows this host can see and only rows that still have a workspace
+// record, so a session that exists in the registry but has no workspace row is
+// absent from it. Reading the workspace list here therefore reported a session
+// the provider can resume as not found.
+//
+// The registry is also the read the history query uses, so a row the operator saw
+// in history and a handle the operator typed resolve against one source and mint
+// one resource ID.
+//
+// Liveness is deliberately not decided here. The provider revalidates it twice in
+// the resume path and refuses a live target itself, so a cluster-side rejection
+// would duplicate that authority and would refuse exactly the sessions resume
+// exists for.
+func (p *provider) sessionAuthority(ctx context.Context, requested *target) (providerSessionTarget, error) {
+	key, err := validateSessionTarget(requested)
+	if err != nil {
+		return providerSessionTarget{}, err
+	}
+	var entries []historyEntry
+	if err := runJSON(ctx, p.runner, []string{"project", "list_sessions", "--json"}, maxHistoryBytes, &entries); err != nil {
+		return providerSessionTarget{}, err
+	}
+	var resolved *providerSessionTarget
+	for _, entry := range entries {
+		candidate, keyErr := historySessionKey(entry.SessionID)
+		if keyErr != nil {
+			return providerSessionTarget{}, keyErr
+		}
+		if candidate != key {
+			continue
+		}
+		if resolved != nil {
+			return providerSessionTarget{}, fmt.Errorf("%w: provider resource key matches duplicate session records", errInvalidRequest)
+		}
+		value := providerSessionTarget{SessionID: entry.SessionID}
+		resolved = &value
+	}
+	if resolved == nil {
+		return providerSessionTarget{}, fmt.Errorf("%w: provider session row was not found", errInvalidRequest)
+	}
+	return *resolved, nil
+}
+
+// requireResumableRecord revalidates that the record resume addresses still exists.
+//
+// Resume addresses a provider session by handle, so the authority is the provider
+// session registry rather than the workspace list. The two reads are not
+// interchangeable: the workspace list reports only rows this host can see and only
+// rows that still have a workspace record, while a persisted session with no
+// workspace row is absent from it even though the provider can resume it. The
+// registry is also the read the history query uses, so a row the operator saw in
+// history and a handle the operator typed resolve against one source.
+//
+// A session-scoped key therefore reads the registry and does not decide liveness.
+// The provider revalidates liveness twice in the resume path and refuses a live
+// target itself, so a cluster-side rejection would duplicate that authority and
+// would refuse exactly the sessions resume exists for.
+//
+// A row-scoped key names one workspace row, which the registry cannot describe, so
+// it keeps the workspace read and its live rejection.
 func (p *provider) requireResumableRecord(ctx context.Context, requested *target) (providerSessionTarget, error) {
+	key, err := validateSessionTarget(requested)
+	if err != nil {
+		return providerSessionTarget{}, err
+	}
+	if sessionScopedKey(key) {
+		return p.sessionAuthority(ctx, requested)
+	}
 	resolved, generation, err := p.workspaceAuthority(ctx, requested)
 	if err != nil {
 		return providerSessionTarget{}, err

@@ -18,6 +18,17 @@ const authorityCall = "workspace\x00list\x00--json\x00--local"
 // would report another host's session as missing.
 const inspectCall = "workspace\x00list\x00--json"
 
+// sessionAuthorityCall is the session registry read resume makes for a
+// session-scoped target. It is deliberately not authorityCall: the workspace list
+// cannot see a session that has no workspace row, so resume must read the registry
+// the history query reads.
+const sessionAuthorityCall = "project\x00list_sessions\x00--json"
+
+// registryDocument reports one session registry entry.
+func registryDocument(sessionID, status string) string {
+	return `[{"session_id":"` + sessionID + `","status":"` + status + `"}]`
+}
+
 // mutationRequest builds one execute request for a standard operation.
 func mutationRequest(operation string, target *target, payload string) request {
 	value := validRequest(functionExecute)
@@ -124,6 +135,18 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(dormantWorkspaceDocument())},
+			want:      []string{"workspace", "resume", "-s", "s-1", "--background", "--json"},
+		},
+		{
+			// A session-scoped target names the session, not one workspace row, so
+			// resume must read the session registry. The workspace list cannot see a
+			// session that has no workspace row, and reading it here is what reported
+			// a resumable session as not found.
+			name:      "agent resume by session handle",
+			operation: operationAgentResume,
+			target:    sessionScopedTarget(t, "s-1"),
+			payload:   `{}`,
+			answers:   map[string][]runnerAnswer{sessionAuthorityCall: answer(registryDocument("s-1", "Idle"))},
 			want:      []string{"workspace", "resume", "-s", "s-1", "--background", "--json"},
 		},
 		{
@@ -247,11 +270,32 @@ func TestMutationAuthorityRejectsBeforeRunningBusinessCommand(t *testing.T) {
 				`{"items":[{"session_id":"s-1","filename":"row","pid":42},{"session_id":"s-1","filename":"row","pid":42}]}`)},
 		},
 		{
-			name:      "resume of a live target",
+			// A row-scoped key names one workspace row, which the session registry
+			// cannot describe, so it keeps the workspace read and its live rejection.
+			name:      "resume of a live row target",
 			operation: operationAgentResume,
 			target:    liveSessionTarget(t, "7"),
 			payload:   `{}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
+		},
+		{
+			// A session-scoped key that the registry does not list cannot be resumed,
+			// and the rejection must happen before any business argv exists.
+			name:      "resume of a session absent from the registry",
+			operation: operationAgentResume,
+			target:    sessionScopedTarget(t, "s-1"),
+			payload:   `{}`,
+			answers:   map[string][]runnerAnswer{sessionAuthorityCall: answer(registryDocument("s-2", "Idle"))},
+		},
+		{
+			// Two registry entries for one session make the target ambiguous, so the
+			// request must be refused rather than resolved to the first match.
+			name:      "resume of a session listed twice",
+			operation: operationAgentResume,
+			target:    sessionScopedTarget(t, "s-1"),
+			payload:   `{}`,
+			answers: map[string][]runnerAnswer{sessionAuthorityCall: answer(
+				`[{"session_id":"s-1","status":"Idle"},{"session_id":"s-1","status":"Idle"}]`)},
 		},
 		{
 			name:      "stale launch profile revision",
@@ -586,5 +630,71 @@ func TestInterruptArgsSendsNoMessageDocumentWhenTheTextIsEmpty(t *testing.T) {
 		if got := argv[len(argv)-2]; got != "{}" {
 			t.Fatalf("payload %s document = %q, want {}", payload, got)
 		}
+	}
+}
+
+// TestResumeResolvesASessionThatOnlyTheRegistryLists pins the authority source.
+//
+// A persisted session can exist in the provider session registry with no workspace
+// row, because the workspace list reports only rows this host can see and only rows
+// that still have a workspace record. Reading the workspace list for resume therefore
+// reported a session the provider can resume as not found, and the operator saw
+// "provider session row was not found" for a row the history list had just shown.
+//
+// The registry is the read the history query uses, so a row the operator saw in
+// history and a handle the operator typed resolve against one source. This test
+// asserts both halves: the registry is read, and the workspace list is not.
+func TestResumeResolvesASessionThatOnlyTheRegistryLists(t *testing.T) {
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		sessionAuthorityCall: answer(registryDocument("s-1", "Idle")),
+		strings.Join([]string{"workspace", "resume", "-s", "s-1", "--background", "--json"}, "\x00"): answer(`{"ok":true}`),
+	}}
+	got := fixedProvider(runner).dispatch(context.Background(), mutationRequest(operationAgentResume, sessionScopedTarget(t, "s-1"), `{}`))
+	if !got.OK || got.Result == nil {
+		t.Fatalf("response=%+v", got)
+	}
+	for _, call := range runner.calls {
+		if strings.Join(call.args, "\x00") == authorityCall {
+			t.Fatalf("resume read the workspace list: %v", call.args)
+		}
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls=%v want the registry read and the resume argv", runner.calls)
+	}
+	if last := runner.calls[len(runner.calls)-1].args; !reflect.DeepEqual(last, []string{"workspace", "resume", "-s", "s-1", "--background", "--json"}) {
+		t.Fatalf("argv=%v", last)
+	}
+}
+
+// TestResumeDoesNotDecideLivenessForASessionHandle pins the authority split.
+//
+// The provider revalidates liveness twice in the resume path and refuses a live
+// target itself, so a cluster-side rejection would duplicate that authority and
+// would refuse exactly the sessions resume exists for. A session-scoped target
+// therefore reaches the provider even when the registry reports it as running, and
+// the provider's own refusal is what stops it.
+func TestResumeDoesNotDecideLivenessForASessionHandle(t *testing.T) {
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		sessionAuthorityCall: answer(registryDocument("s-1", "Running")),
+		strings.Join([]string{"workspace", "resume", "-s", "s-1", "--background", "--json"}, "\x00"): []runnerAnswer{{
+			stdout: `{"ok":false,"exit_code":4,"error_code":"resume_refused","response":{"startup_reason":"already_running"}}`,
+			err:    exitErrorFromProcess(t),
+		}},
+	}}
+	got := fixedProvider(runner).dispatch(context.Background(), mutationRequest(operationAgentResume, sessionScopedTarget(t, "s-1"), `{}`))
+	if got.Result == nil {
+		t.Fatalf("response=%+v", got)
+	}
+	if got.Result.ProviderOutcome != "failed" {
+		t.Fatalf("provider_outcome=%q want failed", got.Result.ProviderOutcome)
+	}
+	if !strings.Contains(got.Result.ProviderResponse, "resume_refused") {
+		t.Fatalf("provider_response=%q want the provider refusal document", got.Result.ProviderResponse)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls=%v want the registry read and the resume argv", runner.calls)
+	}
+	if last := runner.calls[len(runner.calls)-1].args; !reflect.DeepEqual(last, []string{"workspace", "resume", "-s", "s-1", "--background", "--json"}) {
+		t.Fatalf("argv=%v", last)
 	}
 }
