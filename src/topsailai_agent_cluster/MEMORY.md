@@ -386,3 +386,31 @@ follow and refresh must fail immediately as offline instead of being written, qu
 Persisted `connection_state` is an operational projection and must not create a second send path.
 A later authenticated reconnect installs a new fenced peer and restores request delivery through that
 new connection only.
+
+## Mutation authority stays host-scoped; cross-host work goes through resume
+
+Directed by the human on 2026-11-16, wording normalized, meaning preserved:
+
+> 方案 B：改文档，不改代码。
+
+The `--local` host scope is decided per read, not per phase. Five production reads exist and the split
+is three that pass `--local` and two that do not:
+
+| Read | `--local` | Why |
+|---|---|---|
+| `discover` (`read.go:78`) | yes | the inventory lists only what this host can control |
+| `resolveWorkspaceTarget` (`read.go:307`) | yes | follow, output and query address this host's output and state |
+| `workspaceAuthority` (`mutation_authority.go:48`) | yes | mutation authority stays on rows this host can confirm |
+| `inspect` (`read.go:104-125`) | no | a session recorded on another host must still be judged for liveness |
+| `sessionAuthority` (`mutation_authority.go:151`) | no | the session registry is not host-partitioned |
+
+`workspace.clean` and `agent.drive.stop` mutate or delete provider state, so they must stay confined to
+rows this host can verify. Cross-host work has one supported path: `agent.resume` with a session-scoped
+key, which reads the session registry and never passes `--local`. Do not widen `workspaceAuthority` to
+compensate, because that would extend a destructive operation's reach to every row in a shared task
+directory.
+
+The document `docs/agent-cluster-adapters.md` previously described the split by phase ("discovery uses
+`--local`, revalidation does not"), which was wrong because revalidation has two reads and only one
+omits it. The document now states the per-read rule, and `workspaceAuthority`'s own doc comment records
+the same reason at the site that implements it.
