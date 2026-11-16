@@ -133,6 +133,27 @@ func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiato
 	return true
 }
 
+// Detach forgets a connection whose transport failed.
+//
+// It clears only the connection, never the generation. The generation still
+// describes the last link the Server assigned, so a reconnect to the same
+// Server is fenced exactly as before. Attach accepts any generation while no
+// connection is installed, which is what lets the Endpoint adopt a different
+// Server whose fence starts lower: a fresh Server begins at 1, and an Endpoint
+// that still held the previous Server's generation would reject every new link
+// as superseded and reconnect forever.
+//
+// The connection argument is compared before clearing, so a read that fails on
+// a link that has already been replaced cannot erase the live one.
+func (c *EndpointClient) Detach(conn *websocket.Conn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if conn != nil && c.Conn != conn {
+		return
+	}
+	c.Conn = nil
+}
+
 // Ready reports whether the client has an authenticated active connection.
 func (c *EndpointClient) Ready() bool {
 	c.mu.Lock()
@@ -188,6 +209,11 @@ func (c *EndpointClient) SendHeartbeat(ctx context.Context) error {
 }
 
 // Read reads one server frame and rejects a generation change.
+//
+// A transport failure detaches the connection it was reading, because that link
+// is gone and there is nothing left to fence against. A generation mismatch is
+// different: the Server considers another link authoritative, so the connection
+// is kept and the bidirectional convergence rule decides which link survives.
 func (c *EndpointClient) Read(ctx context.Context) (Frame, error) {
 	c.mu.Lock()
 	conn, generation := c.Conn, c.Generation
@@ -197,6 +223,11 @@ func (c *EndpointClient) Read(ctx context.Context) (Frame, error) {
 	}
 	var frame Frame
 	if err := wsjson.Read(ctx, conn, &frame); err != nil {
+		// The context ending is a shutdown, not a transport failure, so the
+		// connection is left for Close to release.
+		if ctx.Err() == nil {
+			c.Detach(conn)
+		}
 		return Frame{}, err
 	}
 	if frame.ConnectionGeneration != "" && frame.ConnectionGeneration != strconv.FormatInt(generation, 10) {
