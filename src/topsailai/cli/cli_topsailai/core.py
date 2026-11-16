@@ -360,6 +360,16 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
         if reclaim_args and reclaim_args[0] == "--":
             reclaim_args = reclaim_args[1:]
         return run_workspace_reclaim_cli(reclaim_args)
+    if workspace_command == "delete-task-records":
+        from cli_topsailai.workspace_delete_task_records_cli import (
+            run_workspace_delete_task_records_cli,
+        )
+        record_args = list(getattr(args, "delete_task_records_args", []) or [])
+        if getattr(args, "delete_task_records_help", False):
+            record_args.insert(0, "--help")
+        if record_args and record_args[0] == "--":
+            record_args = record_args[1:]
+        return run_workspace_delete_task_records_cli(record_args)
     output_format = getattr(args, "format", None)
     if workspace_command == "list" and getattr(args, "json", False):
         output_format = "json"
@@ -1574,6 +1584,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         from cli_topsailai.workspace_reclaim_cli import run_workspace_reclaim_cli
 
         sys.exit(run_workspace_reclaim_cli(argv[2:]))
+    if argv[:2] == ["workspace", "delete-task-records"]:
+        from cli_topsailai.workspace_delete_task_records_cli import (
+            run_workspace_delete_task_records_cli,
+        )
+
+        sys.exit(run_workspace_delete_task_records_cli(argv[2:]))
 
     _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models", "runtime", "session"}
     _TOP_LEVEL_OPTIONS = {
@@ -1880,6 +1896,18 @@ def main(argv: Optional[List[str]] = None) -> None:
         "reclaim_args", nargs=argparse.REMAINDER,
     )
     workspace_reclaim_parser.set_defaults(func=_handle_workspace_subcommand)
+    workspace_delete_task_records_parser = workspace_subparsers.add_parser(
+        "delete-task-records",
+        help="delete expired task records and driver pidfiles",
+        add_help=False,
+    )
+    workspace_delete_task_records_parser.add_argument(
+        "-h", "--help", action="store_true", dest="delete_task_records_help",
+    )
+    workspace_delete_task_records_parser.add_argument(
+        "delete_task_records_args", nargs=argparse.REMAINDER,
+    )
+    workspace_delete_task_records_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_resume_parser = workspace_subparsers.add_parser(
         "resume", help="resume an exact persisted session", allow_abbrev=False,
     )

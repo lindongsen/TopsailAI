@@ -339,6 +339,59 @@ that no path would remove.
 Exit codes: `0` for a completed inspection or an empty inventory; `1` when the
 task directory cannot be read; `2` for a usage error.
 
+### Non-interactive task-record deletion
+
+```text
+topsailai workspace delete-task-records [--yes] [--dry-run]
+    [--kind {all,task,pidfile}] [--min-age-days DAYS]
+    [--allow-content] [--archive-dir PATH] [--verbose] [--json]
+```
+
+`workspace delete-task-records` reclaims two record families that no automatic
+path removes: `.task` files and `.driver.pid` files in
+`{TOPSAILAI_HOME}/workspace/task/`. Both are produced by CLI processes, so the
+CLI owns their cleanup. The command previews by default and deletes only with
+`--yes`, matching `workspace clean`.
+
+A `.task` file is not a diagnostic artifact. It is a JSON document carrying
+`session_messages`, so it can hold real conversation text that the database does
+not duplicate. The command therefore keeps any record that holds messages unless
+`--allow-content` is given, and it archives such a record before removing it.
+
+A record that no longer parses is not automatically empty. A writer interrupted
+mid-write leaves a truncated file that keeps its keys and its text but loses its
+closing structure, so the raw bytes are inspected for content markers. A
+truncated record that still holds conversation text is refused even when
+`--allow-content` is given, because the archive copy would be the only remaining
+copy of text the operator cannot read.
+
+`--kind` restricts the inventory to one family. `--min-age-days` overrides the
+default 7-day window and rejects negative values as a usage error.
+`--archive-dir` overrides the archive location, which defaults to
+`{TOPSAILAI_HOME}/workspace/task/task-record-archive`. `--verbose` lists every
+kept record with its own reason instead of grouping them by reason.
+
+A `.driver.pid` file names the process that owns a driver. It is reclaimable only
+when that process is provably gone. An unreadable pid protects nothing and is
+reclaimable, while an unreadable process table fails closed and authorizes no
+deletion.
+
+Every removal re-checks the file identity captured during inspection, so a record
+that changed in between is skipped rather than deleted. Each removal prints a
+`DELETED:` line.
+
+With `--json`, stdout contains exactly one receipt and every human diagnostic
+line goes to stderr. `response` carries `task_dir`, `min_age_days`,
+`allow_content`, `applied`, `records`, `record_count`, `reclaimable_records`,
+`reclaimable_record_count`, and `reclaimable_bytes`. Each entry in `records`
+carries `filename`, `kind`, `bytes`, `age_days`, `deletable`, `reason`,
+`message_count`, `empty`, and `content_hint`. `delivery_state` is `inspected` or
+`applied`.
+
+Exit codes: `0` for a preview, an empty inventory, or a complete deletion; `1`
+when the task directory cannot be read or at least one removal failed; `2` for a
+usage error.
+
 ### Workspace task list columns
 
 When the CLI starts, it prints the workspace task list built by scanning `{TOPSAILAI_HOME}/workspace/task/` for `.stdout` and `.stderr` log files produced by running sessions and their tasks. Each row represents a discovered log file and shows:
@@ -658,6 +711,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `workspace clean [-s ID1,ID2] [-p PID1,PID2] [--yes] [--json]` | List expired session files without prompting, and delete them only with `--yes`. `-s/--session` restricts the inventory to the named comma-separated sessions, and `-p/--pid` narrows it to the named session instances by owning PID; the two combine as an intersection. `--json` emits one receipt on stdout with diagnostics on stderr. See [Non-interactive clean](#non-interactive-clean). |
 | `workspace reclaim [-s ID1,ID2] [--dry-run] [--verbose] [--json]` | Report which session owner records the agent will reclaim at its next startup and why every other session is blocked. Read-only: it never deletes, so `--dry-run` is an explicit alias for the default. `-s/--session` restricts the report to the named comma-separated sessions, and `--verbose` lists every owner record with its own expiry verdict. `--json` emits one receipt on stdout with diagnostics on stderr. See [Non-interactive reclaim inspection](#non-interactive-reclaim-inspection). |
+| `workspace delete-task-records [--yes] [--dry-run] [--kind {all,task,pidfile}] [--min-age-days DAYS] [--allow-content] [--archive-dir PATH] [--verbose] [--json]` | Reclaim expired `.task` and `.driver.pid` records, which no automatic path removes. Previews by default and deletes only with `--yes`. A `.task` record holding conversation messages is kept unless `--allow-content` is given, and is archived before removal; a truncated record that still holds text is refused even then. `--json` emits one receipt on stdout with diagnostics on stderr. See [Non-interactive task-record deletion](#non-interactive-task-record-deletion). |
 | `docs list [--json]` | List all usage documentation files and exit. `--json` outputs a JSON array of document records instead of a table. |
 | `docs read <name> [--json]` | Read a specific usage documentation file and exit. `--json` outputs one structured result object instead of the raw content. |
 | `project add <path> [name]` | Add a project to the managed project list. |
