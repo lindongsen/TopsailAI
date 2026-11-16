@@ -1299,3 +1299,64 @@ earlier one allows it. A narrower earlier guard therefore removes capability whi
 protection, and the failure is attributed to the callee, which is the component that never ran. The
 symptom is a "not found" for something that exists, which sends the investigation to identity
 mapping and storage rather than to the guard that refused it.
+
+## A relative pathspec from a subdirectory silently returns an empty log
+
+Trigger: while checking whether the resume path had changed, the command
+`git log --oneline 7b57076a..HEAD -- providers/topsailai/` returned nothing and was
+reported to the human as "the resume path has zero changes". The conclusion was wrong.
+The repository root is `/TopsailAI` and the real path is
+`src/topsailai_agent_cluster/providers/topsailai/`, so the relative pathspec matched no
+file and git printed an empty log instead of an error.
+
+Action: run history queries from the repository root, or use a pathspec that is correct
+relative to the current directory. When a `git log` with a pathspec returns nothing,
+confirm the path resolves before treating the empty result as evidence: `git ls-files
+<path>` must list files, and `git rev-parse --show-toplevel` must name the root the
+pathspec is relative to.
+
+Why this prevents recurrence: an empty log is indistinguishable from "no changes", and
+both are plausible answers to the question being asked. The failure is silent in the
+direction that matters: it confirms the hypothesis instead of challenging it, so a wrong
+conclusion is reported with confidence. The same trap applies to `git diff` and
+`git show` with a pathspec, and to any tool whose "no output" means both "nothing found"
+and "nothing searched".
+
+## A whole-repository archive is not a project snapshot
+
+Trigger: the first clean snapshot was created with `git archive HEAD | tar -x -C
+.tmp/ac-clean-b33157dc` run from the repository root. The extracted tree contained
+`ASSETS`, `pyproject.toml` and `uv.lock`, which belong to a sibling project, and none of
+`internal`, `providers` or `src`. The build would have failed or, worse, built the wrong
+project.
+
+Action: when the project is a subdirectory of the repository, archive that subdirectory
+and strip the leading path components: `git archive HEAD src/topsailai_agent_cluster |
+tar -x -C <dest> --strip-components=2`. Then confirm the extracted tree contains the
+project's own files before building.
+
+Why this prevents recurrence: `git archive HEAD` from the root is the obvious command and
+it succeeds, so the mistake is invisible until a build fails on a missing file. The
+extracted tree looks like a valid project because it is a valid project, just not the one
+being packaged. Checking for a known project file such as `go.mod` or `internal/` is what
+distinguishes the two.
+
+## A package upgrade does not change a path that the configuration spells out
+
+Trigger: the provider package installs to a versioned directory,
+`/opt/agent-cluster/providers/topsailai/<version>/`. The site `node.conf` names that
+directory in `ADAPTERS.command`. Installing the new provider package therefore created a
+new directory while the running configuration still pointed at the previous one, so the
+Endpoint would have kept invoking the old binary with no error and no visible symptom.
+
+Action: before packaging, rewrite every configuration value that spells out a versioned
+path, and verify the packaged value by extracting the file from the `.deb` and reading it
+back rather than trusting the source file. After deployment, confirm two things per node:
+the provider directory contains only the new version, and `ADAPTERS.command` names that
+same directory.
+
+Why this prevents recurrence: the package manager owns the files it installs, not the
+configuration that refers to them, so a versioned install path and a configured path
+diverge silently on every upgrade. The failure is fail-open in the worst way: the old
+binary still works, so the Endpoint reports healthy while running the previous release,
+and the only evidence is a directory listing nobody checks.
