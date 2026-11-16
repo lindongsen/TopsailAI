@@ -351,6 +351,48 @@ class TestHookInstructionBase(unittest.TestCase):
         hook_inst.call_hook('/test', 'key=value')
         mock_func.assert_called_once_with(key='value')
 
+    def test_call_hook_malformed_named_parameters_do_not_escape(self):
+        """Degrade a `;`-separated token without `=` instead of raising.
+
+        `parse_str_to_dict` raises `ValueError` for such a token, and that call
+        sits outside the per-handler try/except, so an unguarded parse error
+        escapes `call_hook` and terminates the interactive session.
+        """
+        hook_inst = self._make_hook_instruction()
+        mock_func = _make_mock_callable()
+        hook_inst.hook_map = {'/test': [HookFunc("test", mock_func)]}
+
+        hook_inst.call_hook('/test', 'plain;json=1')
+
+        mock_func.assert_called_once_with('plain;json=1')
+
+    def test_call_hook_malformed_named_parameters_reach_the_handler(self):
+        """Deliver the malformed token to the handler so it can report usage."""
+        hook_inst = self._make_hook_instruction()
+        received = {}
+
+        def handler(*args, **kwargs):
+            received['args'] = args
+            received['kwargs'] = kwargs
+            return "handled"
+
+        hook_inst.hook_map = {'/test': [HookFunc("test", handler)]}
+
+        hook_inst.call_hook('/test', 'key=value;broken')
+
+        self.assertEqual(received['args'], ('key=value;broken',))
+        self.assertEqual(received['kwargs'], {})
+
+    def test_call_hook_valid_named_parameters_unchanged(self):
+        """Keep the valid named-parameter path byte-for-byte identical."""
+        hook_inst = self._make_hook_instruction()
+        mock_func = _make_mock_callable()
+        hook_inst.hook_map = {'/test': [HookFunc("test", mock_func)]}
+
+        hook_inst.call_hook('/test', 'key=value;other=2')
+
+        mock_func.assert_called_once_with(key='value', other='2')
+
     @patch('topsailai.utils.instruction_tool.json_tool')
     @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_with_space_separated_args(self, mock_format, mock_json):
