@@ -215,3 +215,20 @@ func TestStartFollowReportsCapacityAsRetryable(t *testing.T) {
 		t.Fatalf("end=%#v want %s", end, protocol.AdapterBusy)
 	}
 }
+
+// TestStartFollowReportsOutputLimitAsLocalBound proves a local byte budget ends the
+// stream with output_limit instead of provider_error. The provider wrote valid
+// frames and the Endpoint refused to buffer more of them, so reporting a provider
+// failure sent the operator to investigate a component that behaved correctly.
+func TestStartFollowReportsOutputLimitAsLocalBound(t *testing.T) {
+	executor := &followExecutor{followErr: fmt.Errorf("provider stream: %w", adapter.ErrOutputLimit)}
+	service, transport := newFollowService(t, executor)
+	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-limit", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r"}})
+	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
+	transport.mu.Lock()
+	end := transport.frames[len(transport.frames)-1].OutputEnd
+	transport.mu.Unlock()
+	if end == nil || end.ErrorCode != protocol.OutputLimit {
+		t.Fatalf("end=%#v want %s", end, protocol.OutputLimit)
+	}
+}

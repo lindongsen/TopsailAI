@@ -22,6 +22,21 @@ var ErrUnsupported = errors.New("adapter capability unsupported")
 // import an implementation to recognise the condition.
 var ErrBusy = errors.New("adapter capacity unavailable")
 
+// ErrOutputLimit reports that a streamed read stopped because a local byte budget
+// was exhausted, not because the provider failed.
+//
+// It is deliberately distinct from a provider failure. The provider wrote valid
+// frames and the Endpoint refused to buffer more of them, so the operator must be
+// told that the local bound was reached rather than sent to investigate a provider
+// that behaved correctly. A record count is not part of this condition: a live
+// follow is bounded by bytes and by its deadline, because a record count would
+// truncate a healthy stream whose only fault is being long.
+//
+// The sentinel lives here rather than in a concrete adapter package because the
+// Endpoint owns this contract and must not import an implementation to recognise
+// the condition.
+var ErrOutputLimit = errors.New("adapter output budget exhausted")
+
 // Descriptor identifies one configured adapter instance and its capabilities.
 type Descriptor struct {
 	AdapterID    string

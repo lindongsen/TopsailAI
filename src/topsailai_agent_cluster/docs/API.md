@@ -235,6 +235,11 @@ request with `too_many_follows` instead of queueing it, so a long follow cannot 
 heartbeats or inventory reports on the shared channel. Cancelling the request stops the stream; it
 does not stop the agent.
 
+A follow is bounded by bytes and by its deadline, never by a record count, because a record count
+truncates a healthy stream whose only fault is being long. When the local byte budget is exhausted the
+terminal record carries `output_limit`, which names the local bound instead of reporting a provider
+that behaved correctly as `provider_error`.
+
 ## Launch options
 
 | Method | Path | Purpose |

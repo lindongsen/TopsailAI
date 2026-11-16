@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/providercli"
 )
 
@@ -178,13 +179,15 @@ func (r *processRunner) scanStream(reader io.Reader, validator *providercli.Stre
 		maxLine = int64(maxInt())
 	}
 	scanner.Buffer(make([]byte, 64<<10), int(maxLine)+1)
-	var records int64
 	var total int64
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
 		total += int64(len(line)) + 1
 		if total > r.config.maxStdoutBytes {
-			return fmt.Errorf("provider stdout byte limit exceeded: %d", r.config.maxStdoutBytes)
+			// A byte budget is a local bound, so exhausting it must not be
+			// reported as a provider failure. The sentinel lets the Endpoint name
+			// the real cause instead of blaming a provider that behaved correctly.
+			return fmt.Errorf("provider stdout byte limit exceeded: %d: %w", r.config.maxStdoutBytes, adapter.ErrOutputLimit)
 		}
 		frame, err := providercli.DecodeStreamFrame(line)
 		if err != nil {
@@ -193,12 +196,12 @@ func (r *processRunner) scanStream(reader io.Reader, validator *providercli.Stre
 		if err := validator.Accept(frame); err != nil {
 			return err
 		}
-		if frame.Type == providercli.FrameRecord {
-			records++
-			if records > r.config.maxRecords {
-				return fmt.Errorf("provider stream record limit exceeded: %d", r.config.maxRecords)
-			}
-		}
+		// A record count is deliberately not accumulated here. A live follow is
+		// bounded by bytes and by its deadline, because a record count truncates a
+		// healthy stream whose only fault is being long: the REPL asks for 300
+		// trailing lines while this runner used to allow 128 records, so entering
+		// session scope ended the tail with a provider_error that named the wrong
+		// component. max_records stays in the request as a provider-side budget.
 		if err := accept(frame); err != nil {
 			return &callbackError{cause: err}
 		}
