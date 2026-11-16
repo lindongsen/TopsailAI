@@ -981,6 +981,13 @@ func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, fil
 	options.All = parsed.All
 	options.Full = options.Full || parsed.Full
 	options.Brief = parsed.Brief
+	// The standalone list reads live message counts for the rows it prints, using
+	// the command's own context so the read shares the command budget. A JSON
+	// caller is not enriched: the renderer returns the machine-readable document
+	// before the enrichment runs, because an automation caller that wants counts
+	// asks the metrics route directly instead of paying one provider read per row
+	// for a document it may only parse.
+	options.EnrichRows = tui.MetricsEnricher(ctx, api)
 	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, options)
 }
 

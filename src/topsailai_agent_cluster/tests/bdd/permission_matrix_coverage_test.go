@@ -44,6 +44,8 @@ var operationScenarioMarkers = map[string]string{
 	protocolOperationLaunchQuery:        "the launch options is read with the",
 	protocolOperationHistoryRead:        "the history is read with the",
 	protocolOperationMessagesRead:       "the messages is read with the",
+	protocolOperationMetricsRead:        "the metrics is read with the",
+	protocolOperationDetailRead:         "the detail is read with the",
 }
 
 // The production operation names the markers are keyed by.
@@ -69,6 +71,8 @@ const (
 	protocolOperationLaunchQuery        = endpoint.OperationLaunchQuery
 	protocolOperationHistoryRead        = endpoint.OperationHistoryRead
 	protocolOperationMessagesRead       = endpoint.OperationMessagesRead
+	protocolOperationMetricsRead        = endpoint.OperationMetricsRead
+	protocolOperationDetailRead         = endpoint.OperationDetailRead
 )
 
 // permissionMatrixFeatureFiles are the two feature files that together must

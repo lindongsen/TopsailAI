@@ -366,6 +366,44 @@ func handleUnary(request request, fault string, options mockOptions) response {
 				return failureResponse(request.RequestID, mockSessionNotFoundCode, "provider session does not exist", "not_applied")
 			}
 			base.QueryResult = sessionMessagesResult(sessionKey, options)
+		case querySessionMetrics:
+			// The counts are recorded because a scenario proves the provider was
+			// reached, and a read that answers without leaving a record is
+			// indistinguishable from a read the Cluster answered from its own
+			// cache.
+			recordInvocation(options, request, querySessionMetrics)
+			// A session the mock does not know is answered with the provider's own
+			// missing-session code instead of two invented counts. Answering every
+			// key made "this session does not exist" indistinguishable from "this
+			// session has no context yet", so the Cluster could never be shown to
+			// report a missing session.
+			sessionKey := "session:stable"
+			if request.Target != nil && request.Target.ProviderResourceKey != "" {
+				sessionKey = request.Target.ProviderResourceKey
+			}
+			if !mockKnownSession(sessionKey) {
+				return failureResponse(request.RequestID, mockSessionNotFoundCode, "provider session does not exist", "not_applied")
+			}
+			// The two counts differ so a scenario can prove the Cluster kept the
+			// inbound and outbound positions apart. Equal counts would let a
+			// swapped mapping pass while proving nothing.
+			base.QueryResult = json.RawMessage(`{"provider_session_id":"` + sessionKey + `","messages":{"inbound":7,"outbound":3},"observed_at_ms":1700000000000}`)
+		case querySessionDetail:
+			recordInvocation(options, request, querySessionDetail)
+			sessionKey := "session:stable"
+			if request.Target != nil && request.Target.ProviderResourceKey != "" {
+				sessionKey = request.Target.ProviderResourceKey
+			}
+			if !mockKnownSession(sessionKey) {
+				return failureResponse(request.RequestID, mockSessionNotFoundCode, "provider session does not exist", "not_applied")
+			}
+			// The metadata is a provider document with a field the Cluster does not
+			// model, so a scenario can prove the document was forwarded verbatim
+			// rather than re-encoded from the fields the Cluster knows. Runtime is
+			// deliberately absent, because it is a seam with no source yet and a
+			// mock that invented one would hide that the Cluster reports it as not
+			// reported.
+			base.QueryResult = json.RawMessage(`{"provider_session_id":"` + sessionKey + `","metadata":"{\"session_id\":\"` + sessionKey + `\",\"task\":\"fixture task\",\"unmodelled_field\":\"kept\"}","observed_at_ms":1700000000000}`)
 		default:
 			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
 		}
@@ -735,6 +773,8 @@ func mockDescriptor(fault string) descriptor {
 		{Name: queryHistoryMessages, Version: "v1"},
 		{Name: queryModelCatalog, Version: "v1"},
 		{Name: querySessionMessages, Version: "v1"},
+		{Name: querySessionMetrics, Version: "v1"},
+		{Name: querySessionDetail, Version: "v1"},
 	}
 	return descriptor{
 		ProviderType:       "mock",

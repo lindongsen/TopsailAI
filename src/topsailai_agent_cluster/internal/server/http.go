@@ -111,6 +111,8 @@ func (h *Handler) routes() http.Handler {
 	mux.HandleFunc("/api/v1/launch-options", h.launchOptions)
 	mux.HandleFunc("/api/v1/history", h.history)
 	mux.HandleFunc("/api/v1/messages", h.messages)
+	mux.HandleFunc("/api/v1/metrics", h.metrics)
+	mux.HandleFunc("/api/v1/detail", h.detail)
 	mux.HandleFunc("/api/v1/model-catalog", h.modelCatalog)
 	mux.HandleFunc("/api/v1/commands/", h.commandResource)
 	if h.Broker != nil {
@@ -237,6 +239,14 @@ func (h *Handler) outputFollow(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Request-ID", security.NewRequestID())
 	w.WriteHeader(http.StatusOK)
+	// The headers are flushed before the first record is awaited, because the
+	// caller's request does not return until they arrive. Without this flush the
+	// client blocks until the provider produces output, and the caller is the
+	// REPL prompt: the editor has not started reading keys yet, so "any key
+	// stops" waits for the provider instead of for the operator.
+	if flusher != nil {
+		flusher.Flush()
+	}
 	encoder := json.NewEncoder(w)
 	for event := range events {
 		record := map[string]any{"type": "chunk"}

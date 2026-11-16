@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from topsailai.utils import env_tool, json_tool
+from topsailai.workspace.plugin_instruction.base import arguments
 from topsailai.workspace.plugin_instruction.base.cache import get_ai_agent
 
 
@@ -78,22 +78,14 @@ def _format_history(snapshot) -> list[str]:
     return lines
 
 
-_JSON_PARAM = "json"
-_USAGE_UNKNOWN_PARAMETER = "unknown_parameter"
-_USAGE_TOO_MANY_ARGUMENTS = "too_many_arguments"
-_USAGE_MISSING_KEY = "missing_key"
+_JSON_PARAM = arguments.JSON_PARAM
+_USAGE_UNKNOWN_PARAMETER = arguments.USAGE_UNKNOWN_PARAMETER
+_USAGE_TOO_MANY_ARGUMENTS = arguments.USAGE_TOO_MANY_ARGUMENTS
+_USAGE_MISSING_KEY = arguments.USAGE_MISSING_KEY
 
 
-def _json_dump(payload: dict) -> str:
-    """Serialize one JSON response as a stable, human-readable string."""
-    return json_tool.safe_json_dump(payload, indent=2)
-
-
-def _error_response(error: str, usage: str, json_enabled: bool) -> str:
-    """Render one argument error as structured JSON or a plain usage line."""
-    if json_enabled:
-        return _json_dump({"ok": False, "error": error, "usage": usage})
-    return usage
+_json_dump = arguments.json_dump
+_error_response = arguments.error_response
 
 
 def _invalid_key(json_enabled: bool) -> str:
@@ -149,14 +141,6 @@ def _history_entry(snapshot) -> dict:
     }
 
 
-def _split_named_parameter(item: str) -> tuple[str, str] | None:
-    """Split one `name=value` token, returning None when it has no separator."""
-    if "=" not in item:
-        return None
-    name, value = item.split("=", 1)
-    return name.strip(), value.strip()
-
-
 def _normalize_arguments(
     args: tuple,
     kwargs: dict,
@@ -166,40 +150,16 @@ def _normalize_arguments(
 ) -> tuple[str | None, bool, str | None]:
     """Resolve the optional key and the `json` flag from either argument form.
 
-    Terminal dispatch delivers named parameters as keyword arguments, while the
-    control channel forwards them as positional `name=value` strings. Both forms
-    are accepted so one Instruction behaves identically on every transport.
-
     Returns:
         A `(key, json_enabled, error)` triple. `error` is a stable token when the
         arguments are unusable, and `None` otherwise.
     """
-    segments = []
-    for name, value in kwargs.items():
-        segments.append((name, value))
-    for item in args:
-        if not isinstance(item, str):
-            return None, False, _USAGE_UNKNOWN_PARAMETER
-        if not item.strip():
-            # An explicitly empty positional argument is an invalid key, not a
-            # missing one, so it must reach key validation unchanged.
-            segments.append((None, item))
-            continue
-        # One forwarded token may carry several `;`-separated named parameters.
-        for segment in item.split(";"):
-            if not segment.strip():
-                continue
-            pair = _split_named_parameter(segment)
-            if pair is None:
-                segments.append((None, segment.strip()))
-            else:
-                segments.append(pair)
+    segments, error = arguments.split_named_parameters(args, kwargs)
+    if error:
+        return None, False, error
 
     # Resolve the output format first so every later error uses that format.
-    json_enabled = False
-    for name, value in segments:
-        if name == _JSON_PARAM:
-            json_enabled = env_tool.is_true(value)
+    json_enabled = arguments.resolve_json_flag(segments)
 
     key = None
     positional = []

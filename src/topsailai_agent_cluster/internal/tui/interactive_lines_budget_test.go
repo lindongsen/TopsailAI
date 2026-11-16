@@ -97,7 +97,7 @@ func TestUnitStartupBudgetReachesTheEntryTail(t *testing.T) {
 			if _, diagnostics := runBudgetREPL(t, stub, testCase.input, 500); diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			follows := stub.followRequests()
+			follows := waitFollowRequests(t, stub, 1)
 			if len(follows) != 1 {
 				t.Fatalf("entry follow requests=%+v want exactly one", follows)
 			}
@@ -122,7 +122,7 @@ func TestUnitStartupBudgetKeepsThePerCommandOverride(t *testing.T) {
 	if _, diagnostics := runBudgetREPL(t, stub, lines, 500); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	follows := stub.followRequests()
+	follows := waitFollowRequests(t, stub, 1)
 	if len(follows) != 1 {
 		t.Fatalf("entry follow requests=%+v want exactly one", follows)
 	}
@@ -144,7 +144,7 @@ func TestUnitUnsetStartupBudgetUsesTheDefault(t *testing.T) {
 	if _, diagnostics := runBudgetREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", "exit"}, 0); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	follows := stub.followRequests()
+	follows := waitFollowRequests(t, stub, 1)
 	if len(follows) != 1 {
 		t.Fatalf("entry follow requests=%+v want exactly one", follows)
 	}

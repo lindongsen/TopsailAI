@@ -487,6 +487,19 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 new_messages,
                 summary_answer,
             )
+            # Post-step: the summary already consumed the opening observation, so
+            # removing it now cannot lose content. A skipped summarization never
+            # reaches this point, which is intentional because there is no
+            # summary to compensate for the removed content.
+            self.release_opening_observation_after_summary(
+                new_messages,
+                token_threshold=env_tool.EnvReaderInstance.get(
+                    "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD",
+                    default=128000,
+                    formatter=int,
+                ) or 0,
+                session_id=self.session_id or "",
+            )
             partial_apply_possible = True
             self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 

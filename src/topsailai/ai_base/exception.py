@@ -16,6 +16,16 @@ class ContextWindowLimitError(Exception):
     pass
 
 
+class SummaryWindowLimitError(Exception):
+    """Raised when recent LLM traffic is dominated by summary requests.
+
+    This is a bottom-line control-flow signal: it must not be swallowed by
+    generic catch-all handlers, because the whole point is to stop a turn that
+    keeps summarizing instead of making progress.
+    """
+    pass
+
+
 class HardInterruptError(Exception):
     """Raised when a hard interrupt is requested via the control channel.
 

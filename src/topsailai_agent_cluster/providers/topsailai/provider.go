@@ -25,15 +25,21 @@ type provider struct {
 	// platform is the host support detected at startup. A host that cannot stop a
 	// provider process neither advertises nor serves agent.stop.
 	platform platformCapabilities
+	// taskDir is the provider stdout directory resolved once at startup. It lets a
+	// row-scoped output read prove its target from filenames instead of paying for
+	// a full workspace discovery before the first byte. An empty value disables
+	// that shortcut, so every read falls back to discovery.
+	taskDir string
 }
 
 // newProvider builds one Provider from its immutable startup configuration.
 //
-// The catalog and the platform capabilities are parameters rather than process
-// reads, so the action surface and the operation surface are decided once at the
-// boundary and every later decision uses the same values.
-func newProvider(runner commandRunner, control controlCatalog, platform platformCapabilities) *provider {
-	return &provider{runner: runner, now: time.Now, control: control, platform: platform}
+// The catalog, the platform capabilities and the task directory are parameters
+// rather than process reads, so the action surface, the operation surface and the
+// output location are decided once at the boundary and every later decision uses
+// the same values.
+func newProvider(runner commandRunner, control controlCatalog, platform platformCapabilities, taskDir string) *provider {
+	return &provider{runner: runner, now: time.Now, control: control, platform: platform, taskDir: taskDir}
 }
 
 // dispatch handles only functions truthfully advertised by the descriptor.

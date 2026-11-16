@@ -90,6 +90,7 @@ class LLMChat(object):
             need_env_message: bool = True,
             tools: list = None,
             tool_choice: str = "auto",
+            is_summary_request: bool = False,
         ) -> str:
         """Send a message to the LLM and receive a response.
 
@@ -99,6 +100,9 @@ class LLMChat(object):
             need_env_message: Whether to refresh the environment message.
             tools: Ordered provider tool schemas to include in the request.
             tool_choice: Provider tool-selection mode.
+            is_summary_request: Explicit marker set by the context-summary
+                caller. It is forwarded unchanged so the summary-window guard
+                counts only requests that really are summaries.
 
         Returns:
             The LLM response message, or an empty value if no response.
@@ -115,6 +119,7 @@ class LLMChat(object):
             for_stream=True,
             tools=tools,
             tool_choice=tool_choice,
+            is_summary_request=is_summary_request,
         )
         if answer:
             answer = str(answer).strip()

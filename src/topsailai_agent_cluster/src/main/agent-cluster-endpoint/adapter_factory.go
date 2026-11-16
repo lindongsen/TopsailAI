@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"topsailai_agent_cluster/internal/adapter"
@@ -83,6 +84,14 @@ func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store) e
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}
+	// The process environment is read once here, at the boundary, and passed down
+	// as a value. Leaving it unset made every Provider CLI inherit the Endpoint's
+	// own environment implicitly, so a Provider that resolves its home from HOME
+	// silently depended on an inheritance it never declared: an Endpoint started
+	// with a scrubbed environment would make the Provider resolve a different home
+	// and report zero rows, with no error to explain it. Reading it here keeps one
+	// boundary read and makes the dependency explicit.
+	environment := os.Environ()
 	factory := func(ctx context.Context, local adapter.Config) (adapter.Adapter, error) {
 		// A display name is required by the adapter and is not part of the
 		// operator-facing adapter document, so the adapter ID is the fallback.
@@ -102,7 +111,7 @@ func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store) e
 		}
 		return genericcli.New(ctx, genericcli.Config{
 			AdapterID: local.AdapterID, DisplayName: displayName,
-			Executable: local.Command, Args: local.Args,
+			Executable: local.Command, Args: local.Args, Environment: environment,
 			Timeout:        time.Duration(local.TimeoutMS) * time.Millisecond,
 			MaxStdinBytes:  genericCLIMaxStdinBytes,
 			MaxStdoutBytes: genericCLIMaxStdoutBytes,

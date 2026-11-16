@@ -134,8 +134,20 @@ would require a future sandbox design and is outside this MVP.
 
 Each Adapter instance names one locally approved provider executable and fixed launch configuration. The generic
 CLI Adapter validates common fields, starts that executable directly with an argv array and no shell,
-supplies a minimal environment, applies bounded stdin/stdout/stderr, and terminates only the exact
-process group it created.
+passes the Endpoint process environment through explicitly, applies bounded stdin/stdout/stderr, and
+terminates only the exact process group it created.
+
+The environment is passed rather than narrowed to a whitelist, and the reason is the architecture
+rather than convenience. A Provider's own configuration is delivered through the process environment:
+the packaged launcher exports `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS` and
+`AGENT_CLUSTER_TOPSAILAI_EXECUTABLE` before the Endpoint starts, and the Provider reads them at its own
+process boundary. A whitelist would therefore have to name those variables inside the Endpoint, which
+is exactly the provider vocabulary the cluster contract forbids, and a whitelist of generic variables
+only would silently drop the configuration the operator exported. Narrowing the environment is also
+not a security boundary here: the Provider runs as the same operating-system identity as the Endpoint
+and is a locally trusted component, so it can already read anything that identity can read. The
+inheritance is made explicit in code so the dependency is visible instead of implicit, and the trust
+model below states what that does and does not protect.
 
 Provider business configuration and secrets are local provider startup configuration, not an arbitrary
 `settings` map copied into each request. The per-request protocol contains the adapter ID, function,
@@ -290,9 +302,26 @@ An empty qualifier leaves the name unchanged.
 Output reads always use the provider interface rather than opening provider files.
 The adapter invokes `runtime logs -s SESSION -p PID`; an `is_task=true` row adds
 `--is-task`. Snapshot and follow use the same selectors. Provider errors remain
-provider errors and are not bypassed by parsing file names or reading log paths in
-the cluster. Other provider operations continue to receive the clean session
-selector required by their public CLI contract.
+provider errors and are never bypassed by reading log paths in the cluster. Other
+provider operations continue to receive the clean session selector required by
+their public CLI contract.
+
+A row-scoped key can be resolved without a discovery subprocess, and the proof
+happens entirely inside the provider project. The provider key is a digest over
+`(session_id, provider_row_key, is_task)`, and `provider_row_key` is the stdout
+filename, so a filename determines the key completely. The provider therefore
+recomputes the digest for each stdout file in its own task directory and accepts
+the key only when exactly one file reproduces it. This is a proof, not a guess: a
+key whose file no longer exists matches nothing and falls back to discovery, and a
+key that matches two files is refused rather than resolved to the first. The
+cluster never parses a filename, never reads a log path and never learns the
+directory layout; it only receives the provider's answer.
+
+`is_task` is part of that identity rather than a display hint, because it selects
+the filename family: a task row reads `.task.stdout` and a session row reads
+`.session.stdout`. One session identifier can own both, so a wrong flag reads the
+wrong file. The provider derives the flag from the filename it proved, which is
+why the cluster contract needs no `is_task` field for this path.
 
 Workspace JSON items are documented with no, filename, session_name, session_id, is_task, pid, status, created_at and project_workspace. Provider metadata paths must not be exposed by default in cluster summaries. Status values and reliability require fixture validation; do not map a generic status directly to task success.
 

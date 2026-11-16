@@ -43,7 +43,7 @@ func TestUnitBtwAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	requests := actionFollowRequests(stub)
+	requests := waitActionFollowRequests(t, stub, 1)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
@@ -87,7 +87,7 @@ func TestUnitBtwAutoFollowUsesTheTenLineBudget(t *testing.T) {
 	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `btw {"text":"hi"}`, "quit"}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := actionFollowRequests(stub)
+	requests := waitActionFollowRequests(t, stub, 1)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
@@ -110,9 +110,7 @@ func TestUnitBtwAutoFollowStartsTheStreamOnTheNextPrompt(t *testing.T) {
 	}
 	// Two streams open: the entry transition's tail on the prompt after cd, and
 	// the injection's tail on the prompt after the injection.
-	if stub.followCount() != 2 {
-		t.Fatalf("streams opened=%d want=2 (entry and injection)", stub.followCount())
-	}
+	waitFollowCount(t, stub, 2)
 	stream := armedFollowSession(t, reader)
 	labelled, ok := stream.(followStopLabel)
 	if !ok {
@@ -193,7 +191,7 @@ func TestUnitBtwSubmitsWithoutConfirmation(t *testing.T) {
 	if strings.Contains(output, "Confirm") {
 		t.Fatalf("btw asked for confirmation: %q", output)
 	}
-	if requests := actionFollowRequests(stub); len(requests) != 1 {
+	if requests := waitActionFollowRequests(t, stub, 1); len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want the automatic tail", requests)
 	}
 }
@@ -217,7 +215,7 @@ func TestUnitBtwBareMultiLineSubmitsWithoutConfirmation(t *testing.T) {
 	if strings.Contains(output, "Confirm") {
 		t.Fatalf("bare btw asked for confirmation: %q", output)
 	}
-	if requests := actionFollowRequests(stub); len(requests) != 1 {
+	if requests := waitActionFollowRequests(t, stub, 1); len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want the automatic tail", requests)
 	}
 }
@@ -232,7 +230,7 @@ func TestUnitBtwAutoFollowKeepsTheExplicitLogsFollow(t *testing.T) {
 	}
 	// The entry transition opens the first tail, so the automatic and the explicit
 	// ones are the remaining two.
-	requests := stub.followRequests()
+	requests := waitFollowRequests(t, stub, 3)
 	if len(requests) != 3 {
 		t.Fatalf("follow requests=%+v, want the entry, the automatic and the explicit one", requests)
 	}

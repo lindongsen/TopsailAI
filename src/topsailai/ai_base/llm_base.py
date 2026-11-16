@@ -56,6 +56,7 @@ from .exception import (
     HardInterruptError,
     LLMBackToChatError,
     LLMRetryExhaustedError,
+    SummaryWindowLimitError,
 )
 from .llm_control.exception import (
     JsonError,
@@ -123,6 +124,9 @@ from .llm_control.null_response_recovery import (
 from .llm_control.retry_runtime_state import (
     bind_retry_runtime_operation as _bind_retry_runtime_operation,
     track_retry_runtime_state as _track_retry_runtime_state,
+)
+from .llm_control.summary_window_guard import (
+    get_agent_summary_window_guard as _get_agent_summary_window_guard,
 )
 from .llm_control.response_events import LLMResponseEventMixin
 
@@ -638,6 +642,7 @@ class LLMModel(
             tools=None,
             tool_choice="auto",
             retry_interaction_policy=None,
+            is_summary_request=False,
         ):
         """
         Main chat method with comprehensive error handling and retry logic.
@@ -654,6 +659,11 @@ class LLMModel(
             tools (list, optional): List of available tools.
             tool_choice (str, optional): Tool choice strategy.
             retry_interaction_policy: Per-run LLM retry interaction policy.
+            is_summary_request (bool, optional): Explicit marker set by the
+                caller that issues a context-summary request. It is the only
+                signal the summary-window guard counts, because the return
+                shape of a request is shared by unrelated callers and cannot
+                identify a summary request.
 
         Raises:
             LLMBackToChatError: If an interactive user abandons this turn.
@@ -724,6 +734,29 @@ class LLMModel(
             self._check_request_wall_clock_budget(
                 request_started_at, request_wall_clock_budget, total_attempt,
             )
+            # Bottom-line guard: stop a turn whose recent LLM traffic is
+            # dominated by summary requests. It is recorded once per provider
+            # attempt, inside the retry loop, because one logical request can
+            # resend itself many times: counting only the logical request would
+            # hide a summary request that retried twelve times and stalled for
+            # over an hour. The guard lives on the agent because the default
+            # summary processor builds an independent model that a per-model
+            # window would never observe. Only the explicit caller marker is
+            # counted; the return shape of a request is shared by unrelated
+            # callers such as multimodal recognition and session naming, so it
+            # cannot identify a summary request.
+            summary_guard = _get_agent_summary_window_guard(get_agent_object())
+            if summary_guard is not None:
+                exceeded, summary_count, window_size, max_summaries = (
+                    summary_guard.record(is_summary_request)
+                )
+                if exceeded:
+                    raise SummaryWindowLimitError(
+                        "Summary window limit reached: "
+                        f"{summary_count} summary requests in the last "
+                        f"{window_size} LLM requests exceeds the limit of "
+                        f"{max_summaries}."
+                    )
             if attempt_in_cycle == 1:
                 err_count_map = {}
                 if total_attempt > 1:
@@ -1027,7 +1060,12 @@ class LLMModel(
                 print_error(f"blocking chat {sec}s ...")
                 time.sleep(sec)
                 continue
-            except (HardInterruptError, LLMBackToChatError, LLMRetryExhaustedError):
+            except (
+                HardInterruptError,
+                LLMBackToChatError,
+                LLMRetryExhaustedError,
+                SummaryWindowLimitError,
+            ):
                 # These signals control a higher-level flow and must never
                 # be mistaken for retryable provider failures.
                 raise

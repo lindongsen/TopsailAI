@@ -31,6 +31,7 @@ from topsailai.workspace.print_tool import (
 )
 from topsailai.workspace.context.agent import ContextRuntimeUtils
 from topsailai.workspace.plugin_instruction.agent import get_tokens
+from topsailai.workspace.plugin_instruction.base import arguments
 
 
 class ContextRuntimeInstructions(ContextRuntimeUtils):
@@ -80,8 +81,29 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         # result
         return instructions
 
-    def agent_tokens(self) -> str:
-        """Report token usage for the two current message layers."""
+    def agent_tokens(self, *args, **kwargs) -> str:
+        """Report token usage for the two current message layers.
+
+        Usage::
+
+            /agent.tokens
+            /agent.tokens json=1
+        """
+        segments, error = arguments.split_named_parameters(args, kwargs)
+        if error:
+            return arguments.error_response(
+                error, "Usage: /agent.tokens [json=1]", False,
+            )
+        json_enabled = arguments.resolve_json_flag(segments)
+        for name, _value in segments:
+            if name != arguments.JSON_PARAM:
+                return arguments.error_response(
+                    arguments.USAGE_UNKNOWN_PARAMETER,
+                    "Usage: /agent.tokens [json=1]",
+                    json_enabled,
+                )
+        if json_enabled:
+            return get_tokens(self.ctx_runtime_data, json_enabled=True)
         return get_tokens(self.ctx_runtime_data)
 
     ##############################################################################

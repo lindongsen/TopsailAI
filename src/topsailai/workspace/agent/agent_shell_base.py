@@ -39,6 +39,7 @@ from topsailai.ai_base.exception import (
     HeavyTaskError,
     LLMBackToChatError,
     LLMRetryExhaustedError,
+    SummaryWindowLimitError,
 )
 from topsailai.ai_base.llm_control.exception import (
     LLMProviderConnectionError,
@@ -757,7 +758,11 @@ class AgentChat(AgentChatBase):
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
                 self.call_hooks_post_fail_run(agent_exception.AgentEndProcess())
-            except (ContextWindowLimitError, HeavyTaskError) as e:
+            except (
+                ContextWindowLimitError,
+                HeavyTaskError,
+                SummaryWindowLimitError,
+            ) as e:
                 logger.warning("%s caught in agent chat loop: %s", type(e).__name__, e)
                 self._terminal_failure = True
                 answer = f"Task terminated: {e}"

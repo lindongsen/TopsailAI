@@ -107,6 +107,34 @@ type SessionMessagesResult struct {
 	Truncated         bool                 `json:"truncated"`
 }
 
+// SessionMetricsPayload is the closed payload of a session-scoped metrics read.
+type SessionMetricsPayload struct{}
+
+// MessageCountsFact carries the two provider message counts before Endpoint mapping.
+type MessageCountsFact struct {
+	Inbound  int `json:"inbound"`
+	Outbound int `json:"outbound"`
+}
+
+// SessionMetricsResult carries one session's current message counts.
+type SessionMetricsResult struct {
+	ProviderSessionID string            `json:"provider_session_id"`
+	Messages          MessageCountsFact `json:"messages"`
+	ObservedAtMS      int64             `json:"observed_at_ms"`
+}
+
+// SessionDetailPayload is the closed payload of a session-scoped detail read.
+type SessionDetailPayload struct{}
+
+// SessionDetailResult carries one session's provider metadata and runtime document.
+type SessionDetailResult struct {
+	ProviderSessionID string `json:"provider_session_id"`
+	Metadata          string `json:"metadata"`
+	Runtime           string `json:"runtime,omitempty"`
+	ObservedAtMS      int64  `json:"observed_at_ms"`
+	MetadataTruncated bool   `json:"metadata_truncated,omitempty"`
+}
+
 // DecodeQueryPayload validates and decodes one query-specific request payload.
 func DecodeQueryPayload(query NamedContract, target *Target, payload json.RawMessage) (any, error) {
 	if isNullJSON(payload) {
@@ -152,6 +180,18 @@ func DecodeQueryPayload(query NamedContract, target *Target, payload json.RawMes
 			return nil, fmt.Errorf("max_tokens must be between 0 and %d", protocol.MaxMessagesMaxTokens)
 		}
 		return value, nil
+	case QuerySessionMetrics:
+		var value SessionMetricsPayload
+		if err := decodeStrict(payload, &value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	case QuerySessionDetail:
+		var value SessionDetailPayload
+		if err := decodeStrict(payload, &value); err != nil {
+			return nil, err
+		}
+		return value, nil
 	default:
 		return nil, errors.New("unsupported query")
 	}
@@ -193,6 +233,18 @@ func DecodeQueryResult(query NamedContract, data json.RawMessage) (any, error) {
 			return nil, err
 		}
 		return value, value.validate()
+	case QuerySessionMetrics:
+		var value SessionMetricsResult
+		if err := decodeStrict(data, &value); err != nil {
+			return nil, err
+		}
+		return value, value.validate()
+	case QuerySessionDetail:
+		var value SessionDetailResult
+		if err := decodeStrict(data, &value); err != nil {
+			return nil, err
+		}
+		return value, value.validate()
 	default:
 		return nil, fmt.Errorf("unsupported query %q", query.Name)
 	}
@@ -204,7 +256,7 @@ func validateQueryTarget(name string, target *Target) error {
 		if target != nil {
 			return fmt.Errorf("%s query must not contain target", name)
 		}
-	case QueryModelCatalog, QuerySessionMessages:
+	case QueryModelCatalog, QuerySessionMessages, QuerySessionMetrics, QuerySessionDetail:
 		if target == nil {
 			return fmt.Errorf("%s query requires a session target", name)
 		}
@@ -307,6 +359,45 @@ func (r SessionMessagesResult) validate() error {
 		if message.CreatedAtMS < 0 || message.WordCount < 0 || message.TokenCount < 0 {
 			return errors.New("message numeric fields must not be negative")
 		}
+	}
+	return nil
+}
+
+// validate rejects a metrics result that cannot be presented as a real count.
+// A negative or absurd count is refused rather than clamped, because a clamped
+// count would be presented as a measurement the provider never made.
+func (r SessionMetricsResult) validate() error {
+	if err := validateIdentifier("provider_session_id", r.ProviderSessionID, true); err != nil {
+		return err
+	}
+	if r.ObservedAtMS < 1 {
+		return errors.New("session metrics result has invalid observation time")
+	}
+	if r.Messages.Inbound < 0 || r.Messages.Outbound < 0 {
+		return errors.New("message counts must not be negative")
+	}
+	if r.Messages.Inbound > protocol.MaxMessageCount || r.Messages.Outbound > protocol.MaxMessageCount {
+		return fmt.Errorf("message counts exceed %d", protocol.MaxMessageCount)
+	}
+	return nil
+}
+
+// validate rejects a detail result whose documents are absent or oversized.
+// Metadata is required because a detail read that returns no record has not
+// answered the question, while Runtime is optional because it is a seam that no
+// provider fills yet.
+func (r SessionDetailResult) validate() error {
+	if err := validateIdentifier("provider_session_id", r.ProviderSessionID, true); err != nil {
+		return err
+	}
+	if r.ObservedAtMS < 1 {
+		return errors.New("session detail result has invalid observation time")
+	}
+	if r.Metadata == "" {
+		return errors.New("session detail metadata is required")
+	}
+	if len(r.Metadata) > protocol.MaxDetailBytes || len(r.Runtime) > protocol.MaxDetailBytes {
+		return fmt.Errorf("session detail document exceeds %d bytes", protocol.MaxDetailBytes)
 	}
 	return nil
 }

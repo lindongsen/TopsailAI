@@ -121,6 +121,13 @@ func renderListRows(out, errors io.Writer, loaded reportLoad, filter string, jso
 		return RenderJSON(out, rows)
 	}
 	assignRowNumbers(rows)
+	// The live observation is attached after row numbers are assigned and before
+	// anything is printed, so the enrichment sees exactly the rows this render
+	// will show. It runs before OnRows so a caller that stages the rows receives
+	// the same values the table prints.
+	if options.EnrichRows != nil {
+		options.EnrichRows(rows)
+	}
 	if options.OnRows != nil {
 		options.OnRows(append([]SessionRow(nil), rows...))
 	}

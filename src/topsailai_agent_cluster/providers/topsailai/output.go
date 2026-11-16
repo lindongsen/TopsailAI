@@ -19,7 +19,7 @@ func (p *provider) readOutput(ctx context.Context, requested *target, raw json.R
 	if err := decodeStrict(raw, &payload); err != nil || payload.MaxBytes < 0 || payload.MaxBytes > maxOutputBytes || payload.MaxLines < 0 || payload.MaxLines > 10000 {
 		return nil, fmt.Errorf("%w: invalid output payload", errInvalidRequest)
 	}
-	resolved, err := p.resolveWorkspaceTarget(ctx, requested)
+	resolved, err := p.resolveReadTarget(ctx, requested)
 	if err != nil {
 		return nil, err
 	}

@@ -40,6 +40,20 @@ Feature: Endpoint query permission matrix
     When the messages is read with the read output credential
     Then the messages read is refused with policy denied and exposes nothing
 
+  Scenario: The metrics read is authorized by the view scope
+    Given a real cluster whose endpoint policy separates view from read output
+    When the metrics is read with the view credential
+    Then the metrics read is allowed and reaches the provider
+    When the metrics is read with the read output credential
+    Then the metrics read is refused with policy denied and exposes nothing
+
+  Scenario: The detail read is authorized by the view scope
+    Given a real cluster whose endpoint policy separates view from read output
+    When the detail is read with the view credential
+    Then the detail read is allowed and reaches the provider
+    When the detail is read with the read output credential
+    Then the detail read is refused with policy denied and exposes nothing
+
   Scenario: The output snapshot read is authorized by the read output scope
     Given a real cluster whose endpoint policy separates view from read output
     When the output snapshot is read with the read output credential

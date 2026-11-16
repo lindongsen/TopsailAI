@@ -16,6 +16,7 @@ from topsailai.ai_base.constants import (
 from topsailai.ai_base.exception import (
     ContextWindowLimitError,
     HeavyTaskError,
+    SummaryWindowLimitError,
 )
 from topsailai.utils.print_tool import (
     print_step,
@@ -293,7 +294,11 @@ class PromptBase(object):
         for hook in self.hooks_pre_chat:
             try:
                 hook(self)
-            except (ContextWindowLimitError, HeavyTaskError):
+            except (
+                ContextWindowLimitError,
+                HeavyTaskError,
+                SummaryWindowLimitError,
+            ):
                 # Domain control-flow errors must terminate the agent loop gracefully.
                 raise
             except Exception as e:

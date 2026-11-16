@@ -11,6 +11,8 @@ var standardQueries = []StandardQuery{
 	{Name: QueryHistoryMessages, Version: "v1"},
 	{Name: QueryModelCatalog, Version: "v1"},
 	{Name: QuerySessionMessages, Version: "v1"},
+	{Name: QuerySessionMetrics, Version: "v1"},
+	{Name: QuerySessionDetail, Version: "v1"},
 }
 
 // StandardQueries returns a detached copy of the closed query registry.

@@ -23,9 +23,9 @@ import (
 // while proving nothing about authorization.
 func registerEndpointQueryPermissionSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a real cluster whose endpoint policy separates view from read output$`, startQueryMatrixCluster)
-	ctx.Step(`^the (model catalog|launch options|history|messages|output snapshot|output follow) is read with the (view|read output) credential$`, performQueryRead)
-	ctx.Step(`^the (model catalog|launch options|history|messages|output snapshot|output follow) read is allowed and reaches the provider$`, assertQueryAllowed)
-	ctx.Step(`^the (model catalog|launch options|history|messages|output snapshot|output follow) read is refused with policy denied and exposes nothing$`, assertQueryRefused)
+	ctx.Step(`^the (model catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) is read with the (view|read output) credential$`, performQueryRead)
+	ctx.Step(`^the (model catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is allowed and reaches the provider$`, assertQueryAllowed)
+	ctx.Step(`^the (model catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is refused with policy denied and exposes nothing$`, assertQueryRefused)
 }
 
 // queryModelCatalogOperation is the provider operation name the mock records for
@@ -35,12 +35,24 @@ func registerEndpointQueryPermissionSteps(ctx *godog.ScenarioContext) {
 // zero while the provider had in fact been invoked.
 const queryModelCatalogOperation = "model.catalog"
 
-// The six read operations under test, named as the feature file names them.
+// querySessionMetricsOperation and querySessionDetailOperation are the provider
+// query names the mock records for the two new reads. They are the wire names,
+// not the feature-file display names, for the same reason as the catalog
+// operation above: the display name is what a scenario says, while this is what
+// the provider writes into its invocation record.
+const (
+	querySessionMetricsOperation = "session.metrics"
+	querySessionDetailOperation  = "session.detail"
+)
+
+// The eight read operations under test, named as the feature file names them.
 const (
 	queryModelCatalog   = "model catalog"
 	queryLaunchOptions  = "launch options"
 	queryHistory        = "history"
 	queryMessages       = "messages"
+	queryMetrics        = "metrics"
+	queryDetail         = "detail"
 	queryOutputSnapshot = "output snapshot"
 	queryOutputFollow   = "output follow"
 )
@@ -93,6 +105,22 @@ type queryReadOutcome struct {
 	// the adapter answered, which is the only evidence available for the reads
 	// the fixture does not record.
 	observedAtMS int64
+	// inbound and outbound are the two message counts, kept as separate fields
+	// rather than one formatted string so an assertion can prove the two
+	// positions were not swapped. A formatted "7/3" would pass even if the
+	// adapter had written the counts in the wrong order.
+	inbound int
+	outbound int
+	// metadata is the provider session record the detail read returned. It is
+	// kept verbatim so an assertion can prove the document was forwarded rather
+	// than re-encoded from the fields the cluster models.
+	metadata string
+	// runtime is the reserved detail seam. It is expected to stay empty until a
+	// source is chosen, so an assertion can prove the cluster reports it as not
+	// reported instead of inventing one.
+	runtime string
+	// metadataTruncated records whether the provider document hit its bound.
+	metadataTruncated bool
 	// chunks counts streamed records, for the follow read.
 	chunks int
 	// elapsed is how long the read took, used to prove a refused follow started
@@ -197,6 +225,26 @@ func performQueryRead(operation, credential string) error {
 		outcome.payloadSize = len(result.Messages)
 		outcome.observedAtMS = result.ObservedAtMS
 		outcome.content = result.ProviderSessionID
+	case queryMetrics:
+		// The target is the provider session key, not the cluster resource ID,
+		// because a session with no live process has no cluster ID and metrics is
+		// exactly the read an operator wants for such a session.
+		result, err := api.GetMetrics(ctx, scopedEndpointID, messagesFixtureSession)
+		outcome.err = err
+		outcome.errorCode = result.ErrorCode
+		outcome.observedAtMS = result.ObservedAtMS
+		outcome.content = result.ProviderSessionID
+		outcome.inbound = result.Messages.Inbound
+		outcome.outbound = result.Messages.Outbound
+	case queryDetail:
+		result, err := api.GetDetail(ctx, scopedEndpointID, messagesFixtureSession)
+		outcome.err = err
+		outcome.errorCode = result.ErrorCode
+		outcome.observedAtMS = result.ObservedAtMS
+		outcome.content = result.ProviderSessionID
+		outcome.metadata = result.Metadata
+		outcome.runtime = result.Runtime
+		outcome.metadataTruncated = result.MetadataTruncated
 	case queryOutputSnapshot:
 		result, err := api.GetOutput(ctx, scopedEndpointID, queryMatrixResourceID, queryMatrixGeneration, 0, 0)
 		outcome.err = err
@@ -298,6 +346,56 @@ func assertQueryAllowed(operation string) error {
 		}
 		if outcome.observedAtMS == 0 {
 			return fmt.Errorf("allowed messages read carried no observation time, so the adapter did not answer")
+		}
+	case queryMetrics:
+		if outcome.content != messagesFixtureSession {
+			return fmt.Errorf("allowed metrics read answered for %q, want the requested session", outcome.content)
+		}
+		if outcome.observedAtMS == 0 {
+			return fmt.Errorf("allowed metrics read carried no observation time, so the adapter did not answer")
+		}
+		// The fixture reports inbound=7 and outbound=3 on purpose. Equal counts
+		// would let a swapped mapping pass, so the two positions are asserted
+		// separately and against different values.
+		if outcome.inbound != 7 || outcome.outbound != 3 {
+			return fmt.Errorf("allowed metrics read reported inbound=%d outbound=%d, want inbound=7 outbound=3", outcome.inbound, outcome.outbound)
+		}
+		count, err := queryMatrixInvocations(querySessionMetricsOperation)
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("the provider received %d session metrics invocations, want exactly one", count)
+		}
+	case queryDetail:
+		if outcome.content != messagesFixtureSession {
+			return fmt.Errorf("allowed detail read answered for %q, want the requested session", outcome.content)
+		}
+		if outcome.observedAtMS == 0 {
+			return fmt.Errorf("allowed detail read carried no observation time, so the adapter did not answer")
+		}
+		// The fixture metadata carries a field the cluster does not model. Its
+		// presence is the only evidence that the document was forwarded verbatim
+		// rather than re-encoded from the fields the cluster knows, because a
+		// re-encoded document would still contain every field the cluster models.
+		if !strings.Contains(outcome.metadata, "unmodelled_field") {
+			return fmt.Errorf("allowed detail read returned metadata %q, want the provider record verbatim", outcome.metadata)
+		}
+		if outcome.metadataTruncated {
+			return fmt.Errorf("allowed detail read reported a truncated metadata document")
+		}
+		// Runtime is a seam with no source yet. An empty value is the correct
+		// answer, and a non-empty one would mean the cluster invented a runtime
+		// observation nobody decided on.
+		if outcome.runtime != "" {
+			return fmt.Errorf("allowed detail read reported runtime %q, want the seam left empty", outcome.runtime)
+		}
+		count, err := queryMatrixInvocations(querySessionDetailOperation)
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("the provider received %d session detail invocations, want exactly one", count)
 		}
 	case queryOutputSnapshot:
 		// The marker is the one the harness provider actually emits. The previous

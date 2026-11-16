@@ -35,9 +35,7 @@ func TestUnitAutoFollowSkipsOnlyProvablyUnappliedResults(t *testing.T) {
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if got := len(actionFollowRequests(base)); got != tc.wantAction {
-				t.Fatalf("action follow count=%d, want %d", got, tc.wantAction)
-			}
+			assertActionFollowCount(t, base, tc.wantAction)
 		})
 		t.Run(tc.name+" btw", func(t *testing.T) {
 			base := newSendFollowStub()
@@ -46,9 +44,7 @@ func TestUnitAutoFollowSkipsOnlyProvablyUnappliedResults(t *testing.T) {
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if got := len(actionFollowRequests(base)); got != tc.wantAction {
-				t.Fatalf("action follow count=%d, want %d", got, tc.wantAction)
-			}
+			assertActionFollowCount(t, base, tc.wantAction)
 		})
 	}
 }

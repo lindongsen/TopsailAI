@@ -1,5 +1,6 @@
 """Unit tests for the `/agent.tokens` plugin instruction."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -156,3 +157,141 @@ def test_context_runtime_instructions_binds_canonical_runtime_data():
 
     assert result == "token report"
     mock_get_tokens.assert_called_once_with(runtime)
+
+
+def _json_runtime():
+    """Build one runtime whose token counts are stable across repeated calls."""
+    return SimpleNamespace(
+        ai_agent=_agent([
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "runtime"},
+        ]),
+        messages=[{"role": "user", "content": "persisted"}],
+        session_id="session-1",
+        del_session_message_by_ids=MagicMock(),
+        _get_current_tokens=MagicMock(return_value=2500),
+        _classify_context_watermark=MagicMock(return_value=_watermark()),
+    )
+
+
+def test_get_tokens_json_reports_both_layers_and_context():
+    """Expose message counts and capacity as one stable JSON document."""
+    report = get_tokens(_json_runtime(), json_enabled=True)
+    payload = json.loads(report)
+
+    assert payload["ok"] is True
+    assert payload["model"] == "test-model"
+    assert payload["agent2llm"] == {"messages": 2, "estimated_tokens": 2500}
+    assert payload["user2agent"] == {
+        "messages": 1, "estimated_tokens": 2500, "ephemeral": False,
+    }
+    assert payload["context"] == {
+        "model_maximum": 10000,
+        "completion_reserve": 1000,
+        "input_send_limit": 9000,
+        "agent2llm_usage_percent": 27.8,
+        "watermark": "NORMAL",
+    }
+
+
+def test_get_tokens_json_marks_ephemeral_session():
+    """Report an unsaved session without inventing a session identifier."""
+    runtime = SimpleNamespace(
+        ai_agent=_agent([]),
+        messages=[],
+        session_id="",
+        _get_current_tokens=MagicMock(return_value=0),
+        _classify_context_watermark=MagicMock(return_value=None),
+    )
+
+    payload = json.loads(get_tokens(runtime, json_enabled=True))
+
+    assert payload["user2agent"]["ephemeral"] is True
+    assert payload["user2agent"]["messages"] == 0
+    assert payload["context"] == {"model_maximum": None}
+
+
+def test_get_tokens_json_keeps_unavailable_counts_null():
+    """Never disguise a counting failure as a zero token count."""
+    runtime = SimpleNamespace(
+        ai_agent=_agent([{"role": "user", "content": "runtime"}]),
+        messages=[{"role": "user", "content": "session"}],
+        session_id="session-1",
+        _get_current_tokens=MagicMock(return_value=None),
+        _classify_context_watermark=MagicMock(),
+    )
+
+    payload = json.loads(get_tokens(runtime, json_enabled=True))
+
+    assert payload["agent2llm"]["estimated_tokens"] is None
+    assert payload["user2agent"]["estimated_tokens"] is None
+    assert payload["context"] == {"model_maximum": None}
+    runtime._classify_context_watermark.assert_not_called()
+
+
+@patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent", return_value=None)
+def test_get_tokens_json_reports_no_agent(mock_get_ai_agent):
+    """Return a structured diagnostic instead of a human sentence."""
+    payload = json.loads(get_tokens(json_enabled=True))
+
+    assert payload == {"ok": False, "error": "no_agent"}
+
+
+def test_agent_tokens_accepts_json_flag_from_both_transports():
+    """Accept the keyword form and the forwarded positional form identically."""
+    runtime = _json_runtime()
+    instructions = ContextRuntimeInstructions(runtime).instructions
+
+    keyword_report = instructions["agent.tokens"](json="1")
+    positional_report = instructions["agent.tokens"]("json=1")
+
+    assert json.loads(keyword_report)["ok"] is True
+    assert keyword_report == positional_report
+
+
+def test_agent_tokens_json_zero_equals_absent_flag():
+    """Treat `json=0` as text mode so the flag never changes output silently."""
+    runtime = _json_runtime()
+    instructions = ContextRuntimeInstructions(runtime).instructions
+
+    assert instructions["agent.tokens"]("json=0") == instructions["agent.tokens"]()
+
+
+def test_agent_tokens_rejects_unknown_parameter_in_both_formats():
+    """Report usage for an unknown parameter in the requested format."""
+    runtime = _json_runtime()
+    instructions = ContextRuntimeInstructions(runtime).instructions
+
+    assert instructions["agent.tokens"]("yaml=1") == "Usage: /agent.tokens [json=1]"
+    payload = json.loads(instructions["agent.tokens"]("yaml=1;json=1"))
+    assert payload["ok"] is False
+    assert payload["error"] == "unknown_parameter"
+    assert payload["usage"] == "Usage: /agent.tokens [json=1]"
+
+
+def test_agent_tokens_text_mode_still_calls_get_tokens_with_runtime_only():
+    """Keep the existing single-argument contract for text mode."""
+    runtime = MagicMock()
+    instructions = ContextRuntimeInstructions(runtime)
+
+    with patch(
+        "topsailai.workspace.context.instruction.get_tokens",
+        return_value="token report",
+    ) as mock_get_tokens:
+        assert instructions.instructions["agent.tokens"]() == "token report"
+
+    mock_get_tokens.assert_called_once_with(runtime)
+
+
+def test_agent_tokens_json_mode_forwards_the_flag():
+    """Forward the resolved flag so the report switches to JSON."""
+    runtime = MagicMock()
+    instructions = ContextRuntimeInstructions(runtime)
+
+    with patch(
+        "topsailai.workspace.context.instruction.get_tokens",
+        return_value="{}",
+    ) as mock_get_tokens:
+        assert instructions.instructions["agent.tokens"]("json=1") == "{}"
+
+    mock_get_tokens.assert_called_once_with(runtime, json_enabled=True)

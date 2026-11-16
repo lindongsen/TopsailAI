@@ -169,6 +169,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE` | `4096` | Non-negative token budget reserved for the future agent-layer summary during feasibility checks. Negative or invalid values fall back to `4096`; `0` disables the reserve. |
 | `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` | `64000` | Token threshold for triggering session-layer context summarization. Set to `0` to disable. |
 | `TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE` | `4096` | Non-negative token budget reserved for the future session-layer summary during feasibility checks. Negative or invalid values fall back to `4096`; `0` disables the reserve. |
+| `TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO` | `0.3` | Fraction of the usable input budget above which the opening user observation may be summarized away instead of being retained indefinitely. The budget is the smaller of the layer token summarize threshold and the model summary-safe input limit. Valid values are greater than `0` and at most `1`; `0` or below disables the release so the observation is always retained, and invalid values fall back to `0.3`. |
 | `TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD` | `3` | Consecutive duplicate tool-call threshold for triggering agent-layer summarization. Summarization triggers when the count exceeds this value, so the default `3` triggers at `4` or higher. Set to `0` or negative to disable. |
 | `TOPSAILAI_REALTIME_TOKEN_CALCULATION` | `0` | When `1`, token counts without an explicit message set are calculated from the current runtime messages; when `0`, cached counts are used. Token-threshold safety checks always count their explicit pending message set. |
 | `TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES` | `1` | Keep session messages after summarizing. `1` = enabled, `0` = disabled. |
@@ -186,6 +187,8 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_SEVERE_REPETITION_MAX_CONSECUTIVE` | `2` | Number of consecutive severe-repetition verdicts tolerated before the request stops instead of retrying. Positive integer; values below `1` are treated as `1`. |
 | `TOPSAILAI_HEAVY_TASK_THRESHOLD_CONTINUOUS_SUMMARY_TIMES` | `5` | Threshold of continuous summarizations before a heavy task alert is triggered. |
 | `TOPSAILAI_HEAVY_TASK_PROMPT` | `""` | Prompt used when a heavy task is detected. |
+| `TOPSAILAI_SUMMARY_WINDOW_SIZE` | `10` | Number of most recent LLM requests kept in the sliding window used by the summary guard. Positive integer; invalid or non-positive values fall back to `10`. |
+| `TOPSAILAI_SUMMARY_WINDOW_MAX_SUMMARIES` | `3` | Number of summary requests tolerated inside that window. The turn ends when the count is strictly greater than this value, so the default `3` ends the turn at `4`. Non-negative integer; `0` disables the guard, and negative or invalid values fall back to `3`. |
 
 ### Threshold Resolution
 

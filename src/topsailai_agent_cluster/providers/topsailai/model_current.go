@@ -22,6 +22,28 @@ const (
 	modelCurrentUnknown = "unknown"
 )
 
+// providerTargetNotFoundCode is the provider's own code for a control call whose
+// session it does not know. It is a provider protocol value, not a Cluster error
+// code, and it is distinct from providerSessionNotFoundCode because the two arrive
+// on different surfaces: this one comes from a control call, the other from a
+// session read.
+const providerTargetNotFoundCode = "target_not_found"
+
+// instructionEnvelope is the provider's control-call envelope.
+//
+// Every registered instruction answers through this one shape, so it is named once
+// instead of being redeclared at each call site. Response is a pointer because an
+// undelivered call carries no response at all, and that absence is different from a
+// response whose status is not ok.
+type instructionEnvelope struct {
+	OK        bool   `json:"ok"`
+	ErrorCode string `json:"error_code"`
+	Response  *struct {
+		Status string `json:"status"`
+		Result string `json:"result"`
+	} `json:"response"`
+}
+
 // currentModelName reads the model one session is using now.
 //
 // The provider exposes this as the registered `agent.llm` instruction, which returns
@@ -42,14 +64,7 @@ func (p *provider) currentModelName(ctx context.Context, sessionID string) strin
 	if err != nil {
 		return ""
 	}
-	var envelope struct {
-		OK        bool   `json:"ok"`
-		ErrorCode string `json:"error_code"`
-		Response  *struct {
-			Status string `json:"status"`
-			Result string `json:"result"`
-		} `json:"response"`
-	}
+	var envelope instructionEnvelope
 	if err := runJSON(ctx, p.runner, args, maxModelBytes, &envelope); err != nil {
 		return ""
 	}
@@ -92,6 +107,29 @@ func modelInstructionArgs(sessionID, instruction string, args []string) ([]strin
 	document, err := json.Marshal(map[string]any{
 		"instruction": instruction,
 		"args":        args,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode %s instruction: %w", instruction, err)
+	}
+	return []string{"runtime", "control", "call_instruction", "-s", sessionID, "-a", string(document), "--json"}, nil
+}
+
+// modelInstructionKwargs builds the provider argv for one instruction whose
+// parameters are named rather than positional.
+//
+// The provider forwards `args` as positional arguments and `kwargs` as keyword
+// arguments, so the two forms reach the instruction differently. A named
+// parameter must use this form: `agent.tokens` reads its `json` flag from the
+// named segments, and a positional spelling would depend on the instruction
+// accepting extra positional arguments at all.
+//
+// The argv shape is built here rather than at the call site for the same reason
+// as modelInstructionArgs: one spelling, so two call sites cannot drift in flag
+// order or in the payload envelope.
+func modelInstructionKwargs(sessionID, instruction string, kwargs map[string]string) ([]string, error) {
+	document, err := json.Marshal(map[string]any{
+		"instruction": instruction,
+		"kwargs":      kwargs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode %s instruction: %w", instruction, err)

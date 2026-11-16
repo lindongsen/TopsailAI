@@ -159,7 +159,7 @@ func TestUnitSendAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	requests := actionFollowRequests(stub)
+	requests := waitActionFollowRequests(t, stub, 1)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
@@ -198,7 +198,7 @@ func TestUnitSendAutoFollowUsesTheTenLineBudget(t *testing.T) {
 	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := actionFollowRequests(stub)
+	requests := waitActionFollowRequests(t, stub, 1)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
@@ -220,10 +220,9 @@ func TestUnitSendAutoFollowStartsTheStreamOnTheNextPrompt(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	// Two streams open: the entry transition's tail on the prompt after cd, and
-	// the send's tail on the prompt after the send.
-	if stub.followCount() != 2 {
-		t.Fatalf("streams opened=%d want=2 (entry and send)", stub.followCount())
-	}
+	// the send's tail on the prompt after the send. The opens run off the prompt
+	// path, so the count is waited for rather than read once.
+	waitFollowCount(t, stub, 2)
 	sessions, _ := reader.recorded()
 	if len(sessions) < 3 {
 		t.Fatalf("prompts=%d, want at least three", len(sessions))
@@ -313,7 +312,7 @@ func TestUnitSendAutoFollowKeepsTheExplicitLogsRead(t *testing.T) {
 	if got := requests[0].maxLines; got != 7 {
 		t.Fatalf("explicit read maxLines=%d want=7", got)
 	}
-	if got := len(actionFollowRequests(stub)); got != 1 {
+	if got := len(waitActionFollowRequests(t, stub, 1)); got != 1 {
 		t.Fatalf("action follow requests=%d, want the automatic tail only", got)
 	}
 }
@@ -397,7 +396,7 @@ func TestUnitSendAutoFollowSkipsEveryRejectedSend(t *testing.T) {
 func TestUnitSendAutoFollowReportsAStartFailureAsADiagnostic(t *testing.T) {
 	stub := newSendFollowStub()
 	stub.followErr = errors.New("transport unavailable")
-	output, diagnostics, reader := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"})
+	output, diagnostics, reader := runIdlePollingREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"})
 	if diagnostics != "" {
 		t.Fatalf("a failed automatic tail must not be an error: %q", diagnostics)
 	}
@@ -411,10 +410,11 @@ func TestUnitSendAutoFollowReportsAStartFailureAsADiagnostic(t *testing.T) {
 	if len(sessions) < 3 || sessions[2] == nil {
 		t.Fatalf("the prompt after the send did not carry the armed tail: %+v", sessions)
 	}
-	payload, err := sessions[2].Idle()
-	if err != nil {
-		t.Fatalf("Idle: %v", err)
-	}
+	// The open runs off the prompt path, so the failure is recorded by its own
+	// goroutine. The polling reader observes it the way the real editor does,
+	// because the REPL stops the session as soon as the read returns and a
+	// failure reported after that stop has no prompt left to report to.
+	payload := reader.payloadAt(2)
 	if !strings.Contains(string(payload), "follow failed: transport unavailable") {
 		t.Fatalf("missing start-failure diagnostic: %q", payload)
 	}
@@ -445,15 +445,25 @@ func TestUnitSendAutoFollowKeepsTheForcedCollection(t *testing.T) {
 	// opening a stream yet, the refresh runs, and the send's stream opens on the
 	// following prompt. The intent is therefore armed before the refresh, which is
 	// what keeps it bound to the generation the send validated.
-	want := []string{"follow", "refresh", "follow"}
-	got := stub.automaticSteps()
-	if len(got) != len(want) {
-		t.Fatalf("automatic steps=%v, want %v", got, want)
-	}
-	for index := range want {
-		if got[index] != want[index] {
-			t.Fatalf("automatic steps=%v, want %v", got, want)
+	//
+	// Only the count is asserted, not the order. The stream open runs off the
+	// prompt path, so the entry tail's open and the send's refresh are two
+	// independent goroutines and their relative order is not deterministic. The
+	// ordering claim that matters is that the intent was armed before the refresh,
+	// and that is proven by the announcement appearing in the output, not by the
+	// step sequence.
+	steps := waitAutomaticSteps(t, stub, 3)
+	follows, refreshes := 0, 0
+	for _, step := range steps {
+		switch step {
+		case "follow":
+			follows++
+		case "refresh":
+			refreshes++
 		}
+	}
+	if follows != 2 || refreshes != 1 {
+		t.Fatalf("automatic steps=%v, want two follows and one refresh", steps)
 	}
 	if !strings.Contains(output, "log.follow> res-1 (any key stops)") {
 		t.Fatalf("the tail was not armed before the refresh: %q", output)
@@ -484,9 +494,10 @@ func TestUnitSendAutoFollowIsCancelledWhenTheRefreshReplacesTheSession(t *testin
 	}
 	// Only the entry transition's tail opened; the send's intent was cancelled
 	// before its stream could start, so the replaced generation is never streamed.
-	if stub.followCount() != 1 {
-		t.Fatalf("streams opened=%d, want only the entry tail for a replaced session", stub.followCount())
-	}
+	// The open runs off the prompt path, so the count is settled rather than read
+	// once: a single read could see zero and a later read could see a second open
+	// that the cancellation was supposed to prevent.
+	settleFollowCount(t, stub, 1)
 	// The invalidated prompt is rendered before quit returns to workspace scope,
 	// so the operator sees that the selection can no longer be addressed.
 	if !strings.Contains(output, "session[host-one/provider-res-1!]>") {
@@ -537,7 +548,7 @@ func TestUnitSendAutoFollowInheritsTheSendPrefixAlias(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	if requests := actionFollowRequests(stub); len(requests) != 1 {
+	if requests := waitActionFollowRequests(t, stub, 1); len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
 	if len(stub.refreshCalls) != 1 || stub.refreshCalls[0] != "endpoint-1" {

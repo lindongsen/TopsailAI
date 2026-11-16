@@ -46,6 +46,8 @@ type Server struct {
 	pendingHistory      map[string]pendingHistoryRequest
 	pendingMessages     map[string]pendingMessagesRequest
 	pendingModelCatalog map[string]pendingModelCatalogRequest
+	pendingMetrics      map[string]pendingMetricsRequest
+	pendingDetail       map[string]pendingDetailRequest
 }
 
 // pendingOutputRequest tracks one output request so read-limit failures can be reported.
@@ -146,7 +148,7 @@ type Peer struct {
 
 // NewServer constructs a channel server.
 func NewServer(tlsConfig *tls.Config) *Server {
-	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingFollow: make(map[string]pendingFollowRequest), pendingHistory: make(map[string]pendingHistoryRequest), pendingMessages: make(map[string]pendingMessagesRequest), pendingModelCatalog: make(map[string]pendingModelCatalogRequest)}
+	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingFollow: make(map[string]pendingFollowRequest), pendingHistory: make(map[string]pendingHistoryRequest), pendingMessages: make(map[string]pendingMessagesRequest), pendingModelCatalog: make(map[string]pendingModelCatalogRequest), pendingMetrics: make(map[string]pendingMetricsRequest), pendingDetail: make(map[string]pendingDetailRequest)}
 }
 
 // Handler accepts Endpoint-initiated WebSocket upgrades and fences older peers.
@@ -295,6 +297,12 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		}
 		if frame.Type == FrameModelCatalogResponse {
 			s.deliverModelCatalog(peer, frame)
+		}
+		if frame.Type == FrameMetricsResponse {
+			s.deliverMetrics(peer, frame)
+		}
+		if frame.Type == FrameDetailResponse {
+			s.deliverDetail(peer, frame)
 		}
 		if frame.Type == FrameOutputResponse {
 			s.Mu.Lock()
@@ -666,6 +674,8 @@ func (s *Server) finishDisconnect(peer *Peer, observedAtMS int64) {
 	s.failPendingHistory(peer.EndpointID)
 	s.failPendingMessages(peer.EndpointID)
 	s.failPendingModelCatalog(peer.EndpointID)
+	s.failPendingMetrics(peer.EndpointID)
+	s.failPendingDetail(peer.EndpointID)
 	// A disconnected Endpoint can never answer a snapshot or a follow either, so
 	// those waiters are failed immediately instead of blocking until their own
 	// deadline.

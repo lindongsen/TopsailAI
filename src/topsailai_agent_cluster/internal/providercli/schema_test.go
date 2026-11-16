@@ -28,6 +28,10 @@ var requiredSchemaFiles = []string{
 	"model-catalog-result.schema.json",
 	"session-messages-request.schema.json",
 	"session-messages-result.schema.json",
+	"session-metrics-request.schema.json",
+	"session-metrics-result.schema.json",
+	"session-detail-request.schema.json",
+	"session-detail-result.schema.json",
 	"resolve-payload.schema.json",
 }
 
@@ -256,7 +260,7 @@ func TestTypedQuerySchemasUseEnvelopeCorrelation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, stem := range []string{"launch-options", "history-messages", "model-catalog", "session-messages"} {
+	for _, stem := range []string{"launch-options", "history-messages", "model-catalog", "session-messages", "session-metrics", "session-detail"} {
 		ref := stem + "-request.schema.json"
 		if !strings.Contains(string(encodedRequest), `"$ref":"`+ref+`"`) {
 			t.Errorf("request envelope does not reference %s", ref)

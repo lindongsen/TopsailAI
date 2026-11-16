@@ -14,15 +14,24 @@ import (
 	"topsailai_agent_cluster/internal/security"
 )
 
-// Policy identifiers for the three frame-level read queries that have no
-// protocol operation constant. They are policy names only and never appear on
-// the wire, because these queries travel as their own frame type rather than as
-// an immutable intent. A stable name is still required, because a policy file
-// has to be able to grant or refuse them.
+// Policy identifiers for the frame-level read queries that have no protocol
+// operation constant. They are policy names only and never appear on the wire,
+// because these queries travel as their own frame type rather than as an
+// immutable intent. A stable name is still required, because a policy file has
+// to be able to grant or refuse them.
 const (
 	OperationLaunchQuery  = "launch.query"
 	OperationHistoryRead  = "history.read"
 	OperationMessagesRead = "messages.read"
+	// OperationMetricsRead reads one session's current message counts. It is a
+	// live observation of a running session, so it is a separate permission from
+	// messages.read: an operator may be allowed to see how much context a session
+	// holds without being allowed to read the conversation itself.
+	OperationMetricsRead = "metrics.read"
+	// OperationDetailRead reads one session's provider metadata and runtime
+	// document. The metadata is the provider's own session record, so it is a
+	// separate permission from messages.read for the same reason.
+	OperationDetailRead = "detail.read"
 )
 
 // Directives accepted in one access policy file.
@@ -61,6 +70,8 @@ var scopeOperations = map[string][]string{
 		OperationLaunchQuery,
 		OperationHistoryRead,
 		OperationMessagesRead,
+		OperationMetricsRead,
+		OperationDetailRead,
 	},
 	security.ScopeReadOutput: {
 		protocol.OperationOutputRead,
@@ -492,6 +503,8 @@ var knownAccessOperations = map[string]struct{}{
 	OperationLaunchQuery:                 {},
 	OperationHistoryRead:                 {},
 	OperationMessagesRead:                {},
+	OperationMetricsRead:                 {},
+	OperationDetailRead:                  {},
 }
 
 // KnownAccessOperations returns the closed set of operations this build serves,

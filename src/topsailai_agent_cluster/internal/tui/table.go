@@ -40,6 +40,17 @@ type TableOptions struct {
 	// failed, which the default still shows.
 	All bool
 	OnRows func([]SessionRow)
+	// EnrichRows attaches live per-row observations to the rows about to be
+	// printed. It is a function rather than a flag so the renderer never learns
+	// which observation is being read, and it is nil by default so a surface that
+	// did not ask for live data pays nothing. Only the list render sets it: watch
+	// re-renders on a timer, so enriching there would multiply provider reads by
+	// the tick rate, and refresh is a collection command rather than a table read.
+	//
+	// The caller supplies the closure, so the caller owns the context and the
+	// budget. The renderer must not invent either, because a render is not the
+	// place that knows how long a live read may take.
+	EnrichRows func([]SessionRow)
 	// Location formats the DATA_STATUS success stamp; nil means the local timezone.
 	Location *time.Location
 	// HideSessionID drops the SESSION_ID column from the rendered layout. It is an
@@ -58,6 +69,7 @@ const (
 	columnNo         = "no"
 	columnState      = "state"
 	columnDrive      = "drive"
+	columnMessages   = "messages"
 	columnName       = "name"
 	columnID         = "id"
 	columnWorkspace  = "workspace"
@@ -103,6 +115,7 @@ var allColumns = []tableColumn{
 	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
 	{key: columnID, header: "SESSION_ID", cap: 36},
 	{key: columnDrive, header: "DRIVER", cap: 10},
+	{key: columnMessages, header: "MESSAGES", cap: 13},
 	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: workspaceColumnCap, grow: true, leftClip: true},
 	{key: columnEndpoint, header: "ENDPOINT", cap: 20},
 	{key: columnDataStatus, header: "DATA_STATUS", cap: 35, warn: true},
@@ -522,6 +535,7 @@ func tableCells(row SessionRow, location *time.Location) map[string]string {
 		columnNo:         strconv.Itoa(row.No),
 		columnState:      escapeCell(row.State),
 		columnDrive:      escapeCell(driveCell(row)),
+		columnMessages:   escapeCell(messagesCell(row)),
 		columnName:       escapeCell(providerSessionDisplayName(row.ProviderDisplayName, row.ProviderSessionQualifier)),
 		columnID:         escapeCell(row.ProviderSessionID),
 		columnWorkspace:  escapeCell(row.ProviderProjectWorkspace),
@@ -711,6 +725,26 @@ func driveCell(row SessionRow) string {
 		return "unknown"
 	}
 	return row.Drive.State
+}
+
+// messagesCell renders the two message counts as one "inbound/outbound" value.
+//
+// The order is the cluster's own: inbound first, because it is the count the
+// operator contributed, and outbound second, because it is what the agent spent
+// on the model. A provider's own print order never decides this, because the
+// column is a cluster surface and a second provider would print them differently.
+//
+// A nil observation renders as "-" rather than "0/0". The counts are a live
+// measurement of a running session, so an unmeasured session has no counts at
+// all, and printing zeroes would state a measurement nobody made. The two counts
+// are printed together because either one alone is misleading: a session with
+// many inbound and no outbound messages is waiting, while the reverse is not
+// possible.
+func messagesCell(row SessionRow) string {
+	if row.Messages == nil {
+		return "-"
+	}
+	return strconv.Itoa(row.Messages.Inbound) + "/" + strconv.Itoa(row.Messages.Outbound)
 }
 
 // dataStatus combines collection outcome and data freshness for table display.

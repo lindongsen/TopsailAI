@@ -546,6 +546,19 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                         ctx_manager.del_session_messages(self.session_id, [raw_msg.msg_id])
                 else:
                     logger.critical("BUG: how did it happend? null of messages from session: [%s]", self.session_id)
+                # Post-step: the summary already consumed the opening observation.
+                # The persisted rows must be removed before the reload below,
+                # otherwise the reload resurrects the observation and the release
+                # silently has no effect in production.
+                self.release_opening_observation_after_summary(
+                    raw_message_values,
+                    token_threshold=env_tool.EnvReaderInstance.get(
+                        "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
+                        default=0,
+                        formatter=int,
+                    ) or 0,
+                    session_id=self.session_id,
+                )
 
                 # reset messages
                 failed_stage = "session_reload"
@@ -596,6 +609,18 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                     summary_answer,
                 )
                 partial_apply_possible = True
+                # Post-step: the summary already consumed the opening observation,
+                # so removing it now cannot lose content. A skipped summarization
+                # never reaches this point, which is intentional because there is
+                # no summary to compensate for the removed content.
+                self.release_opening_observation_after_summary(
+                    new_messages,
+                    token_threshold=env_tool.EnvReaderInstance.get(
+                        "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
+                        default=0,
+                        formatter=int,
+                    ) or 0,
+                )
                 self.set_messages(new_messages)
 
             # Log message count and token usage after summarization

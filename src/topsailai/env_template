@@ -520,6 +520,14 @@ TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD=64000
 # Non-negative integer; negative or invalid values fall back to 4096, and 0 disables the reserve.
 TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE=4096
 
+# Fraction of the usable input budget above which the opening user observation
+# may be summarized away instead of being retained indefinitely.
+# The budget is the smaller of the layer token summarize threshold and the
+# model summary-safe input limit.
+# Valid values are greater than 0 and at most 1; 0 or below disables the
+# release so the observation is always retained; invalid values fall back to 0.3.
+TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO=0.3
+
 # Controls token calculation when no explicit messages are passed: 1 counts current runtime messages,
 # while 0 (default) uses cached TokenStat.current_tokens. Safety checks always count pending messages.
 TOPSAILAI_REALTIME_TOKEN_CALCULATION=0
@@ -586,6 +594,11 @@ TOPSAILAI_SEVERE_REPETITION_MAX_CONSECUTIVE=2
 # Heavy Task
 TOPSAILAI_HEAVY_TASK_THRESHOLD_CONTINUOUS_SUMMARY_TIMES=5
 TOPSAILAI_HEAVY_TASK_PROMPT=""
+
+# Summary window guard: terminate the turn when summary requests dominate the
+# most recent LLM requests. 0 for max summaries disables the guard.
+TOPSAILAI_SUMMARY_WINDOW_SIZE=10
+TOPSAILAI_SUMMARY_WINDOW_MAX_SUMMARIES=3
 
 
 # =============================================================================

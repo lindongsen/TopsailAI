@@ -33,6 +33,8 @@ const (
 	queryHistoryMessages = "history.messages"
 	queryModelCatalog    = "model.catalog"
 	querySessionMessages = "session.messages"
+	querySessionMetrics  = "session.metrics"
+	querySessionDetail   = "session.detail"
 
 	effectNotApplied   = "not_applied"
 	effectAcknowledged = "acknowledged"

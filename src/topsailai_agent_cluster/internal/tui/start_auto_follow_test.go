@@ -99,7 +99,7 @@ func TestUnitStartAutoFollowArmsOneLiveTailForTheLaunchedSession(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := stub.followRequests()
+	requests := waitFollowRequests(t, stub, 1)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
@@ -122,7 +122,7 @@ func TestUnitStartAutoFollowArmsAfterTheCollection(t *testing.T) {
 	if _, diagnostics, _ := runWatchREPL(t, stub, startAutoFollowInput, nil); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	steps := stub.automaticSteps()
+	steps := waitAutomaticSteps(t, stub, 2)
 	if len(steps) != 2 || steps[0] != "refresh" || steps[1] != "follow" {
 		t.Fatalf("automatic steps=%v, want refresh then follow", steps)
 	}
@@ -138,9 +138,7 @@ func TestUnitStartAutoFollowStartsTheStreamOnTheNextPrompt(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if stub.followCount() != 1 {
-		t.Fatalf("streams opened=%d want=1", stub.followCount())
-	}
+	waitFollowCount(t, stub, 1)
 	sessions, _ := reader.recorded()
 	if len(sessions) < 2 {
 		t.Fatalf("prompts=%d, want at least two", len(sessions))
@@ -168,7 +166,7 @@ func TestUnitStartAutoFollowIsBoundedByTheReplDefaults(t *testing.T) {
 	if _, diagnostics, _ := runWatchREPL(t, stub, startAutoFollowInput, nil); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := stub.followRequests()
+	requests := waitFollowRequests(t, stub, 1)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
@@ -315,7 +313,7 @@ func TestUnitStartAutoFollowKeepsTheExplicitLogf(t *testing.T) {
 	if _, diagnostics, _ := runWatchREPL(t, stub, lines, nil); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := stub.followRequests()
+	requests := waitFollowRequests(t, stub, 2)
 	if len(requests) != 2 {
 		t.Fatalf("follow requests=%+v, want the automatic tail and the explicit one", requests)
 	}
