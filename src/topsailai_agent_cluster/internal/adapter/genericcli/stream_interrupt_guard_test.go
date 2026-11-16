@@ -3,6 +3,7 @@ package genericcli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -34,6 +35,14 @@ func TestStreamHelperProcess(t *testing.T) {
 		fmt.Println(streamLine(providercli.FrameEnd, 3))
 	case "empty":
 		// Write nothing at all, so the stream ends before any frame arrives.
+	case "hold":
+		// Write a started frame and one record, then stay alive well past the
+		// deadline the caller sets. The stream is therefore still open when the
+		// deadline fires, which is the only way to reach the branch that decides
+		// whether a stopped stream is a cancellation or a provider fault.
+		fmt.Println(streamLine(providercli.FrameStarted, 1))
+		fmt.Println(streamLine(providercli.FrameRecord, 2))
+		time.Sleep(10 * time.Second)
 	}
 	os.Exit(0)
 }
@@ -110,6 +119,44 @@ func TestInvokeStreamInterruptsOnEmptyStream(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "stream ended before started frame") {
 		t.Fatalf("got error %v, want the ended-before-started message", err)
+	}
+}
+
+// TestInvokeStreamReportsADeadlineAsCancelled proves a stream stopped by the
+// deadline is reported as a cancellation, not as a provider fault.
+//
+// The deadline kills the process group, so the stream ends at EOF without a
+// terminal frame and the validator reports a truncated stream. That truncation is
+// the consequence of the stop. Reporting it as a provider fault told the operator
+// the provider had failed whenever a follow was held longer than the configured
+// timeout, which is the ordinary case for a live tail.
+func TestInvokeStreamReportsADeadlineAsCancelled(t *testing.T) {
+	request := followRequest()
+	request.DeadlineAtMS = time.Now().Add(300 * time.Millisecond).UnixMilli()
+	err := streamHelperRunner(t, "hold").invokeStream(context.Background(), request, func(providercli.StreamFrame) error { return nil })
+	if err == nil {
+		t.Fatalf("a stream held past its deadline returned nil, so a stopped stream looks successful")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got error %v, want it to wrap context.DeadlineExceeded so the caller classifies a stopped stream as cancelled", err)
+	}
+}
+
+// TestInvokeStreamKeepsAProviderFaultWhenNoDeadlineFired is the near-miss
+// baseline for the classification above: a stream that ends without a terminal
+// frame while the context is still live is a real provider fault and must keep
+// reporting the interrupted stream. Without this case a guard that reported every
+// truncated stream as cancelled would pass while hiding genuine provider faults.
+func TestInvokeStreamKeepsAProviderFaultWhenNoDeadlineFired(t *testing.T) {
+	err := streamHelperRunner(t, "no-end").invokeStream(context.Background(), followRequest(), func(providercli.StreamFrame) error { return nil })
+	if err == nil {
+		t.Fatalf("a stream that stopped without an end frame returned nil")
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		t.Fatalf("got error %v, want a provider fault because no deadline fired", err)
+	}
+	if !strings.Contains(err.Error(), "stream_interrupted") {
+		t.Fatalf("got error %v, want the stream_interrupted message", err)
 	}
 }
 

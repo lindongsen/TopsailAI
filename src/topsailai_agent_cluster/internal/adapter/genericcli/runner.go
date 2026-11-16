@@ -152,6 +152,16 @@ func (r *processRunner) invokeStream(parent context.Context, request providercli
 		}
 		return providerFailure("provider stream", scanErr, stderr)
 	}
+	// A deadline or cancellation kills the process group, so the stream ends at
+	// EOF without a terminal frame and Finish reports a truncated stream. That
+	// truncation is the consequence of the stop, not a provider fault, so the
+	// context error is returned instead: the caller classifies a stopped stream
+	// as cancelled and only a stream that ended on its own as a provider failure.
+	// Checking Finish first reported every timeout as provider_error, which made a
+	// follow held past the configured timeout look like a broken provider.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return providerFailure("provider stream", ctxErr, stderr)
+	}
 	if finishErr := validator.Finish(); finishErr != nil {
 		return providerFailure("provider stream", finishErr, stderr)
 	}
