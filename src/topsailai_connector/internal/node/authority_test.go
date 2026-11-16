@@ -147,21 +147,55 @@ func TestLoadAuthorityRejectsInvalidYAML(t *testing.T) {
 	}
 }
 
-// TestLoadAuthorityRejectsMissingScopeDirectory checks that a scope naming a
-// directory that does not exist refuses startup, because a scope the Node cannot
-// serve must not be advertised as served.
-func TestLoadAuthorityRejectsMissingScopeDirectory(t *testing.T) {
+// TestLoadAuthorityToleratesMissingScopeDirectory checks that a scope naming a
+// directory that does not exist no longer refuses startup, because a policy may
+// name a directory that has not been created yet and one absent directory must
+// not stop a Node that serves several.
+//
+// The property the old test protected is kept, not dropped: the scope must not be
+// advertised as served. It is asserted here as "defined, recorded, and refusing",
+// which is the same guarantee expressed against the new behaviour. A scope that
+// was silently skipped would pass a "startup succeeded" assertion and fail this
+// one.
+func TestLoadAuthorityToleratesMissingScopeDirectory(t *testing.T) {
 	base := t.TempDir()
+	absentPath := filepath.Join(base, "absent")
 	policyPath := filepath.Join(base, "policy.yaml")
 	writeFile(t, policyPath, "version: 1\n"+
 		"scopes:\n"+
 		"  project:\n"+
-		"    path: "+filepath.Join(base, "absent")+"\n")
+		"    path: "+absentPath+"\n"+
+		"grants:\n"+
+		"  - scope: project\n"+
+		"    permissions: [read, list, stat]\n")
 
 	authority, err := LoadAuthority(policyPath, nil, "")
-	if err == nil {
-		authority.Close()
-		t.Fatal("LoadAuthority() = nil error, want a failure for a missing scope directory")
+	if err != nil {
+		t.Fatalf("LoadAuthority() = %v, want nil for a missing scope directory", err)
+	}
+	defer authority.Close()
+
+	scope, ok := authority.Scope(security.Scope("project"))
+	if !ok {
+		t.Fatal("Scope(project) reported missing, want the scope recorded so the policy and the served state agree")
+	}
+	if !scope.Absent() {
+		t.Fatal("Absent() = false, want true for a scope whose directory does not exist")
+	}
+	if scope.ResolvedPath() != absentPath {
+		t.Fatalf("ResolvedPath() = %q, want %q so the startup report names the path the operator must create", scope.ResolvedPath(), absentPath)
+	}
+
+	// The grant still exists, so the scope is authorized; the operation then
+	// answers not_found because the directory does not.
+	opened, err := authority.Authorize(security.Scope("project"), security.PermissionRead)
+	if err != nil {
+		t.Fatalf("Authorize(project, read) = %v, want nil because the grant exists", err)
+	}
+	if _, _, err := opened.Read("anything.txt", 0, 0); err == nil {
+		t.Fatal("Read() = nil error, want not_found on a scope with no directory")
+	} else if code := CodeOf(err); code != protocol.CodeNotFound {
+		t.Fatalf("CodeOf(Read()) = %s, want not_found", code.Name())
 	}
 }
 
@@ -190,12 +224,18 @@ func TestLoadAuthorityRejectsScopePathThatIsAFile(t *testing.T) {
 // scope opened leaves no handle behind. The observable proof is that the
 // directory can be removed, which a leaked handle would prevent on Windows and
 // would hide on unix; the test therefore asserts the error and the removal.
+//
+// The second scope is a regular file rather than a missing directory, because a
+// missing directory no longer fails startup. The property under test is handle
+// cleanup on the failure path, so the failure has to be one that still fails.
 func TestLoadAuthorityClosesEarlierScopesOnFailure(t *testing.T) {
 	base := t.TempDir()
 	first := filepath.Join(base, "first")
 	if err := os.Mkdir(first, 0o755); err != nil {
 		t.Fatalf("mkdir %q: %v", first, err)
 	}
+	notADirectory := filepath.Join(base, "not-a-directory")
+	writeFile(t, notADirectory, "content")
 
 	// The scopes are sorted, so `aaa` opens before `zzz` and the failure
 	// happens after a handle exists.
@@ -205,7 +245,7 @@ func TestLoadAuthorityClosesEarlierScopesOnFailure(t *testing.T) {
 		"  aaa:\n"+
 		"    path: "+first+"\n"+
 		"  zzz:\n"+
-		"    path: "+filepath.Join(base, "absent")+"\n")
+		"    path: "+notADirectory+"\n")
 
 	authority, err := LoadAuthority(policyPath, nil, "")
 	if err == nil {
@@ -485,5 +525,110 @@ func TestAuthorityScopeReportsUndefined(t *testing.T) {
 	}
 	if scope != nil {
 		t.Fatal("Scope(absent) = non-nil, want nil")
+	}
+}
+
+// TestLoadAuthorityServesPresentScopesAlongsideAnAbsentOne checks that one absent
+// scope does not stop the scopes that do exist, because the whole point of
+// tolerating an absent directory is that a Node serving several scopes keeps
+// serving the ones it can.
+//
+// The absent scope is asserted to be recorded and refusing, so "the Node started"
+// is not mistaken for "the absent scope works".
+func TestLoadAuthorityServesPresentScopesAlongsideAnAbsentOne(t *testing.T) {
+	fixture := newAuthorityFixture(t)
+	absentPath := filepath.Join(fixture.base, "absent")
+	writeFile(t, fixture.policyPath, "version: 1\n"+
+		"scopes:\n"+
+		"  project:\n"+
+		"    path: "+fixture.project+"\n"+
+		"  absent:\n"+
+		"    path: "+absentPath+"\n"+
+		"grants:\n"+
+		"  - scope: project\n"+
+		"    permissions: [read, list, stat]\n"+
+		"  - scope: absent\n"+
+		"    permissions: [read, list, stat]\n")
+
+	authority, err := LoadAuthority(fixture.policyPath, nil, "")
+	if err != nil {
+		t.Fatalf("LoadAuthority() = %v, want nil with one absent scope", err)
+	}
+	defer authority.Close()
+
+	// The present scope still serves its file.
+	opened, err := authority.Authorize(security.Scope("project"), security.PermissionRead)
+	if err != nil {
+		t.Fatalf("Authorize(project, read) = %v, want nil", err)
+	}
+	content, _, err := opened.Read("inside.txt", 0, 0)
+	if err != nil {
+		t.Fatalf("Read(inside.txt) = %v, want nil", err)
+	}
+	if string(content) != "inside content" {
+		t.Fatalf("Read(inside.txt) = %q, want %q", content, "inside content")
+	}
+
+	// The absent scope is recorded, marked absent, and refuses.
+	absent, ok := authority.Scope(security.Scope("absent"))
+	if !ok {
+		t.Fatal("Scope(absent) reported missing, want it recorded")
+	}
+	if !absent.Absent() {
+		t.Fatal("Absent() = false, want true")
+	}
+	openedAbsent, err := authority.Authorize(security.Scope("absent"), security.PermissionRead)
+	if err != nil {
+		t.Fatalf("Authorize(absent, read) = %v, want nil because the grant exists", err)
+	}
+	if _, _, err := openedAbsent.Read("inside.txt", 0, 0); err == nil {
+		t.Fatal("Read() = nil error, want not_found on an absent scope")
+	} else if code := CodeOf(err); code != protocol.CodeNotFound {
+		t.Fatalf("CodeOf(Read()) = %s, want not_found", code.Name())
+	}
+}
+
+// TestAuthorizeRefusesAnAbsentScopeWithoutAGrant checks that the grant is checked
+// before the directory is consulted, so a caller without the permission gets
+// denied and learns nothing about whether the directory exists.
+//
+// The ordering is the property: if the absent scope answered not_found before the
+// grant check, a caller could tell "this scope has no directory" from "you may not
+// use this scope", which is a scope-state oracle.
+func TestAuthorizeRefusesAnAbsentScopeWithoutAGrant(t *testing.T) {
+	base := t.TempDir()
+	policyPath := filepath.Join(base, "policy.yaml")
+	writeFile(t, policyPath, "version: 1\n"+
+		"scopes:\n"+
+		"  absent:\n"+
+		"    path: "+filepath.Join(base, "absent")+"\n"+
+		"grants:\n"+
+		"  - scope: absent\n"+
+		"    permissions: [list]\n")
+
+	authority, err := LoadAuthority(policyPath, nil, "")
+	if err != nil {
+		t.Fatalf("LoadAuthority() = %v, want nil", err)
+	}
+	defer authority.Close()
+
+	// `read` is not granted, so the answer is denied even though the directory is
+	// also missing. The grant check runs first.
+	if _, err := authority.Authorize(security.Scope("absent"), security.PermissionRead); err == nil {
+		t.Fatal("Authorize(absent, read) = nil error, want denied")
+	} else if code := CodeOf(err); code != protocol.CodeDenied {
+		t.Fatalf("CodeOf(Authorize()) = %s, want denied", code.Name())
+	}
+
+	// `list` is granted, so the scope is returned and the operation answers
+	// not_found. The two answers differ because the two questions differ.
+	opened, err := authority.Authorize(security.Scope("absent"), security.PermissionList)
+	if err != nil {
+		t.Fatalf("Authorize(absent, list) = %v, want nil because the grant exists", err)
+	}
+	if _, err := opened.List(""); err == nil {
+		t.Fatal("List() = nil error, want not_found on an absent scope")
+	} else if code := CodeOf(err); code != protocol.CodeNotFound {
+		t.Fatalf("CodeOf(List()) = %s, want not_found", code.Name())
 	}
 }

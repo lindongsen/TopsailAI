@@ -465,3 +465,40 @@ the Node relays that classification rather than inventing a different one.
 **Expected:** `invalid_argument`. The `..` component is refused by the grammar
 before the fence is reached, so the refusal does not depend on how deep the path
 is.
+
+## Cross-operation consistency
+
+The three read operations answer different questions, but a condition that is not
+about the operation must produce the same code from all three. A disagreement is
+worse than a wrong code, because the codes carry opposite retry advice: `internal`
+is retryable and `not_found` is not.
+
+### TC-OP-57: A scope directory deleted while the Node runs is `not_found` for all three
+
+**Precondition:** A running Node with a scope over a directory that holds
+`inside.txt`.
+
+**Action:** Delete the scope directory, then run `file.read` on `inside.txt`,
+`file.stat` on `inside.txt` and `file.list` on the scope root.
+
+**Expected:** `not_found` for all three, and the Node stays alive. `file.list` must
+not report `internal`: the directory is gone, which is a caller-visible condition,
+not a Node defect. A caller that retried `internal` would retry forever, because
+the handle keeps the deleted inode and a directory recreated at the same path is
+not adopted until the Node restarts.
+
+**Platform note:** Unreachable on Windows, where a directory the Node holds open
+cannot be deleted or renamed. `-Recurse` empties it instead, and an emptied scope
+answers consistently already: a listing succeeds and returns nothing, and a read of
+a missing entry is `not_found`.
+
+### TC-OP-58: A genuine directory read failure stays `internal`
+
+**Precondition:** A directory that opens but cannot be read, which cannot be
+provoked portably.
+
+**Action:** Exercise the classifier directly with a non-`ErrNotExist` failure.
+
+**Expected:** `internal`. Only a missing directory becomes `not_found`; disguising a
+real I/O failure as `not_found` would tell a caller to give up on a condition a
+retry might fix.

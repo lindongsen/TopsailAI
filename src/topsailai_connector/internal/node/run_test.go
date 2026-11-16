@@ -2,12 +2,15 @@ package node
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"topsailai_connector/internal/protocol"
 	"topsailai_connector/internal/security"
 )
 
@@ -188,12 +191,18 @@ func TestOpenFailsWhenThePolicyIsMissing(t *testing.T) {
 // TestOpenFailsWhenAScopeCannotBeOpened checks that a scope the fence refuses
 // stops the process, because a Node that starts with a subset of its policy is a
 // Node whose operator believes a grant exists that does not.
+//
+// The refused scope is a regular file rather than a missing directory, because a
+// missing directory is now tolerated. The property under test is "a refused scope
+// stops the process", so the fixture must use a refusal that still refuses.
 func TestOpenFailsWhenAScopeCannotBeOpened(t *testing.T) {
 	config := newRuntimeFixture(t)
+	notADirectory := filepath.Join(config.ConfigDir, "..", "not-a-directory")
+	writeFile(t, notADirectory, "content")
 	writeFile(t, config.PolicyPath, "version: 1\n"+
 		"scopes:\n"+
 		"  project:\n"+
-		"    path: "+filepath.Join(config.ConfigDir, "absent")+"\n")
+		"    path: "+notADirectory+"\n")
 
 	runtime, err := Open(config, discardLogger())
 	if err == nil {
@@ -318,5 +327,96 @@ func TestRuntimeNewIdentityReportsGenerationOnce(t *testing.T) {
 	_, generated = second.NewIdentity()
 	if generated {
 		t.Fatal("second NewIdentity() reported generated = true, want false")
+	}
+}
+
+// TestRuntimeReportNamesAnAbsentScope checks that the startup report names a scope
+// whose directory does not exist, because a degraded scope that is reported as
+// ready is a scope the operator believes is live.
+//
+// The report must name the scope and its path, so the operator knows which
+// directory to create, and it must still hide the tunnel token.
+func TestRuntimeReportNamesAnAbsentScope(t *testing.T) {
+	config := newRuntimeFixture(t)
+	absentPath := filepath.Join(config.ConfigDir, "..", "absent")
+	writeFile(t, config.PolicyPath, "version: 1\n"+
+		"scopes:\n"+
+		"  project:\n"+
+		"    path: "+filepath.Join(config.ConfigDir, "..", "project")+"\n"+
+		"  absent:\n"+
+		"    path: "+absentPath+"\n"+
+		"grants:\n"+
+		"  - scope: project\n"+
+		"    permissions: [read, list, stat]\n"+
+		"  - scope: absent\n"+
+		"    permissions: [read, list, stat]\n")
+
+	var buffer bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buffer, nil))
+
+	runtime, err := Open(config, logger)
+	if err != nil {
+		t.Fatalf("Open() = %v, want nil with one absent scope", err)
+	}
+	defer runtime.Close()
+
+	runtime.Report()
+	report := buffer.String()
+
+	if !strings.Contains(report, "absent") {
+		t.Fatalf("Report() = %q, want it to name the absent scope", report)
+	}
+	if !strings.Contains(report, absentPath) {
+		t.Fatalf("Report() = %q, want it to name the path %q so the operator knows what to create", report, absentPath)
+	}
+	if !strings.Contains(report, "absent_scopes") {
+		t.Fatalf("Report() = %q, want the ready line to carry absent_scopes", report)
+	}
+	if strings.Contains(report, string(config.TunnelToken)) {
+		t.Fatalf("Report() = %q, want it to hide the tunnel token", report)
+	}
+}
+
+// TestOpenScopeToleratesAnAbsentDriveOnWindows checks that a scope naming a drive
+// letter with no volume behind it is accepted on Windows, because the operator may
+// configure a drive that is not mounted yet and the Node must still start.
+//
+// The test skips when the drive exists, because then it would be measuring a
+// present drive rather than an absent one. It also skips on other platforms,
+// because `E:\` is not an absolute path there and the absolute-path rule refuses
+// it, which is the correct answer for a path that is not a path on that platform.
+func TestOpenScopeToleratesAnAbsentDriveOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("an absent drive letter is a Windows-only case; on POSIX `E:\\` is not an absolute path")
+	}
+
+	// Pick a drive letter that has no volume behind it. The letters are tried in
+	// order and the first absent one is used, so the test does not depend on which
+	// letters this host happens to have.
+	var absentDrive string
+	for _, letter := range []string{"E:", "F:", "G:", "H:", "I:", "J:", "K:", "L:"} {
+		candidate := letter + `\`
+		if _, err := os.Lstat(candidate); err != nil && errors.Is(err, os.ErrNotExist) {
+			absentDrive = candidate
+			break
+		}
+	}
+	if absentDrive == "" {
+		t.Skip("every candidate drive letter exists on this host, so there is no absent drive to test")
+	}
+
+	scope, err := OpenScope("cdrive", absentDrive, nil, "")
+	if err != nil {
+		t.Fatalf("OpenScope(%q) = %v, want nil for an absent drive", absentDrive, err)
+	}
+	defer scope.Close()
+
+	if !scope.Absent() {
+		t.Fatalf("Absent() = false for %q, want true", absentDrive)
+	}
+	if _, _, err := scope.Read("anything.txt", 0, 0); err == nil {
+		t.Fatal("Read() = nil error, want not_found on an absent drive")
+	} else if code := CodeOf(err); code != protocol.CodeNotFound {
+		t.Fatalf("CodeOf(Read()) = %s, want not_found", code.Name())
 	}
 }

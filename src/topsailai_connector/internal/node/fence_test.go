@@ -84,6 +84,10 @@ func openFixtureScope(t *testing.T, root string) *Scope {
 // TestOpenScopeRejectsBadMappings checks the startup rules. Every one of them
 // fails startup rather than warning, because a scope accepted with a caveat is a
 // scope whose blast radius nobody measured.
+//
+// A path that does not exist is deliberately absent from this table: it is
+// tolerated and refuses every request instead of failing startup, and
+// TestOpenScopeToleratesAMissingDirectory covers it.
 func TestOpenScopeRejectsBadMappings(t *testing.T) {
 	root, _ := newScopeFixture(t)
 
@@ -96,7 +100,6 @@ func TestOpenScopeRejectsBadMappings(t *testing.T) {
 	}{
 		{name: "empty path", path: "", want: "empty"},
 		{name: "relative path", path: "scope", want: "relative"},
-		{name: "missing path", path: filepath.Join(root, "absent"), want: "stat"},
 		{name: "file not directory", path: filePath, want: "not a directory"},
 		{name: "filesystem root", path: filesystemRootPath(t), want: "filesystem root"},
 	}

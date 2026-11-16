@@ -10,13 +10,14 @@ import (
 )
 
 // Authority is the Node's whole permission state: the policy it loaded and one
-// open scope for every scope that policy defines.
+// scope for every scope that policy defines.
 //
-// The two halves are joined here on purpose. A policy that defines a scope the
-// fence could not open would be a policy promising access to a directory the Node
-// cannot serve, and a scope opened without a policy entry would be a directory
-// reachable without a grant. Neither is representable in an Authority, because an
-// Authority is only built by LoadAuthority and that fails as a whole.
+// The two halves are joined here on purpose. A scope opened without a policy
+// entry would be a directory reachable without a grant, which is not
+// representable in an Authority because an Authority is only built by
+// LoadAuthority. A policy entry whose directory does not exist is representable:
+// the scope is recorded with no handle and refuses every request, so the policy
+// and the served state cannot disagree about which scopes exist.
 //
 // The Node is the only authority for permissions. Nothing here consults the
 // Server, and there is no field a Server could set: the policy file is the only
@@ -26,13 +27,20 @@ type Authority struct {
 	scopes map[security.Scope]*Scope
 }
 
-// LoadAuthority loads the policy file and opens every scope it defines.
+// LoadAuthority loads the policy file and records every scope it defines.
 //
-// Every failure is fatal. A scope that cannot be opened refuses startup rather
-// than being skipped, because a Node that starts with a subset of its policy is a
-// Node whose operator believes a grant exists that does not. When a later scope
-// fails, the scopes already opened are closed before returning, so a failed start
-// leaves no handle behind.
+// A scope that cannot be opened refuses startup rather than being skipped,
+// because a Node that starts with a subset of its policy is a Node whose operator
+// believes a grant exists that does not. When a later scope fails, the scopes
+// already opened are closed before returning, so a failed start leaves no handle
+// behind.
+//
+// A scope whose directory does not exist is the one case that does not refuse
+// startup. It is recorded with no handle and refuses every request, so the scope
+// is still defined and still advertised: the operator sees a scope that serves
+// nothing rather than a scope that vanished. That is what lets a policy name a
+// directory that has not been created yet, and on Windows a drive letter with no
+// volume behind it.
 //
 // denyPaths are the Node's own files. Their identity is recorded per scope, so a
 // request is refused by identity rather than by name and a symlink or a different
@@ -160,15 +168,22 @@ func (a *Authority) Allows(scope security.Scope, permission security.Permission)
 // the returned scope, so a caller with the permission still cannot escape the
 // directory. A refusal carries CodeDenied for every cause, because the causes are
 // exactly what a caller may not probe for.
+//
+// A scope whose directory did not exist at startup is returned like any other.
+// It has no handle, so every operation on it answers not_found; the grant is
+// still checked first, so a caller without the permission gets denied and learns
+// nothing about the directory. Returning it rather than refusing it here is what
+// keeps the two questions separate: "may you use this scope" is answered by the
+// policy, and "does this path exist" is answered by the filesystem.
 func (a *Authority) Authorize(scope security.Scope, permission security.Permission) (*Scope, error) {
 	if !a.policy.Allows(scope, permission) {
 		return nil, newError(protocol.CodeDenied, "scope %q does not grant %q", scope, permission)
 	}
 	opened, ok := a.scopes[scope]
 	if !ok {
-		// A grant on a scope with no open handle is unreachable through
-		// LoadAuthority, which opens every defined scope. It is still refused
-		// rather than trusted, because a missing handle must never be read as
+		// A grant on a scope that is not in the map is unreachable through
+		// LoadAuthority, which records every defined scope. It is still refused
+		// rather than trusted, because a missing scope must never be read as
 		// "no fence needed".
 		return nil, newError(protocol.CodeDenied, "scope %q has no open handle", scope)
 	}

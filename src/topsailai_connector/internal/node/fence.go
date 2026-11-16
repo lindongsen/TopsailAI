@@ -77,11 +77,24 @@ type Entry struct {
 // keeps referencing the original directory in its new location, which is the
 // behaviour the fence wants: a scope means the directory that was validated, not
 // whatever now occupies that name.
+//
+// A scope whose directory did not exist at startup has no handle and absent set.
+// It is a defined scope that serves nothing: every operation on it answers
+// not_found, and the startup report names it so the operator sees a degraded
+// scope rather than a missing one. The absence is decided once, at startup, and
+// is not re-checked per request: a directory that appears later is adopted by the
+// next start, not by a running process, because a handle opened mid-flight would
+// be a fence configured after the policy was validated.
 type Scope struct {
 	name     string
 	root     *os.Root
 	resolved string
-	denied   []os.FileInfo
+	// absent reports that the scope directory did not exist at startup. It is
+	// the only state in which root is nil for a scope that was validated, and it
+	// is what makes every operation answer not_found instead of dereferencing a
+	// nil handle.
+	absent bool
+	denied []os.FileInfo
 	// deniedPrefixes are the deny-listed directories expressed as paths
 	// relative to the scope root, in slash form. A request whose path equals one
 	// of them or sits inside one is refused before it is opened.
@@ -113,6 +126,13 @@ func (s *Scope) ResolvedPath() string {
 	return s.resolved
 }
 
+// Absent reports whether the scope directory did not exist at startup. It is for
+// the startup report, so an operator learns that a scope serves nothing before a
+// caller discovers it.
+func (s *Scope) Absent() bool {
+	return s.absent
+}
+
 // Close releases the scope handle.
 func (s *Scope) Close() error {
 	if s.root == nil {
@@ -124,9 +144,12 @@ func (s *Scope) Close() error {
 // OpenScope validates a scope mapping and opens its handle.
 //
 // Every rule here fails startup rather than warning, because a scope that is
-// accepted with a caveat is a scope whose blast radius nobody measured. The
-// denyPaths are the Node's own files: their identity is recorded now, so a
-// request is refused by identity rather than by name and a symlink or a
+// accepted with a caveat is a scope whose blast radius nobody measured. The one
+// exception is a path that does not exist: that scope is returned with no handle
+// and refuses every request, because a policy may name a directory that has not
+// been created yet and one absent directory must not stop a Node that serves
+// several. The denyPaths are the Node's own files: their identity is recorded now,
+// so a request is refused by identity rather than by name and a symlink or a
 // different spelling cannot rename them.
 //
 // This entry point never permits a scope rooted at a filesystem root. The opt-in
@@ -148,9 +171,19 @@ func OpenScope(name string, path string, denyPaths []string, configDir string) (
 // Relaxing the overlap is safe only because the config directory is itself on the
 // deny list, so listing it is refused and its contents are never reported. The
 // deny list carries the protection once the startup refusal is gone.
+//
+// An absent path returns a Scope with no handle and absent set. Nothing is opened,
+// so there is nothing to close, and every operation on it answers not_found. The
+// scope is still returned rather than skipped, because a Node that starts with a
+// subset of its policy is a Node whose operator believes a grant exists that does
+// not.
 func openScope(name string, path string, denyPaths []string, configDir string, allowFilesystemRoot bool) (*Scope, error) {
-	if err := validateScopeMapping(name, path, configDir, allowFilesystemRoot); err != nil {
+	absent, err := validateScopeMapping(name, path, configDir, allowFilesystemRoot)
+	if err != nil {
 		return nil, err
+	}
+	if absent {
+		return &Scope{name: name, resolved: path, absent: true}, nil
 	}
 
 	resolved, err := filepath.EvalSymlinks(path)
@@ -263,9 +296,24 @@ func (s *Scope) isDeniedPath(path string) bool {
 }
 
 // validateScopeMapping checks the rules that do not need a handle: the name is
-// an identifier, the path is absolute, it exists, it is a directory, it is not a
-// symlink, it is not a filesystem root, and it does not overlap the Node's own
-// config directory.
+// an identifier, the path is absolute, it is a directory, it is not a symlink, it
+// is not a filesystem root, and it does not overlap the Node's own config
+// directory.
+//
+// The first result reports that the path does not exist. That is not a failure: a
+// policy may name a directory that has not been created yet, and on Windows a
+// drive letter may have no volume behind it. The scope is then defined but
+// unavailable, and every request on it is refused. Refusing startup instead would
+// let one absent directory stop a Node that serves several.
+//
+// The remaining rules are skipped for an absent path, and each skip is an
+// argument rather than a convenience. A path that does not exist is not a
+// symlink, is not a mount point and is not the home directory, because all three
+// exist. It cannot overlap the config directory either, because the config
+// directory is written before the authority is loaded and therefore exists. The
+// filesystem-root rule is skipped because a volume with no volume behind it has
+// no blast radius; when the volume appears, the next startup refuses it and the
+// operator must write the opt-in down.
 //
 // The config-directory rule is a startup refusal rather than a per-request deny
 // because the deny list protects the contents of the Node's own files while a
@@ -279,40 +327,46 @@ func (s *Scope) isDeniedPath(path string) bool {
 // directory. Every other rule still applies: the path must be absolute, real, a
 // directory and not a symlink, and the fence still refuses every path that leaves
 // the root.
-func validateScopeMapping(name string, path string, configDir string, allowFilesystemRoot bool) error {
+func validateScopeMapping(name string, path string, configDir string, allowFilesystemRoot bool) (bool, error) {
 	if err := validateScopeIdentifier(name); err != nil {
-		return err
+		return false, err
 	}
 	if path == "" {
-		return fmt.Errorf("scope %q: path is empty", name)
+		return false, fmt.Errorf("scope %q: path is empty", name)
 	}
 	if !filepath.IsAbs(path) {
-		return fmt.Errorf("scope %q: path %q is relative; a relative path resolves differently per launch", name, path)
+		return false, fmt.Errorf("scope %q: path %q is relative; a relative path resolves differently per launch", name, path)
 	}
 
 	info, err := os.Lstat(path)
 	if err != nil {
-		return fmt.Errorf("scope %q: stat %q: %w", name, path, err)
+		if errors.Is(err, os.ErrNotExist) {
+			// The directory is absent. The scope stays defined and refuses every
+			// request; the comment above states why each remaining rule is
+			// skipped rather than applied to a path that is not there.
+			return true, nil
+		}
+		return false, fmt.Errorf("scope %q: stat %q: %w", name, path, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("scope %q: path %q is a symlink; a scope root must be a real directory", name, path)
+		return false, fmt.Errorf("scope %q: path %q is a symlink; a scope root must be a real directory", name, path)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("scope %q: path %q is not a directory", name, path)
+		return false, fmt.Errorf("scope %q: path %q is not a directory", name, path)
 	}
 	if !allowFilesystemRoot && isFilesystemRoot(path) {
-		return fmt.Errorf("scope %q: path %q is a filesystem root; its blast radius is the whole machine", name, path)
+		return false, fmt.Errorf("scope %q: path %q is a filesystem root; its blast radius is the whole machine", name, path)
 	}
 	if isHomeDirectory(path) {
-		return fmt.Errorf("scope %q: path %q is the home directory; its blast radius is every file the user owns", name, path)
+		return false, fmt.Errorf("scope %q: path %q is the home directory; its blast radius is every file the user owns", name, path)
 	}
 	if isMountPoint(path) {
-		return fmt.Errorf("scope %q: path %q is a mount point; a scope that contains a bind mount is readable through the fence", name, path)
+		return false, fmt.Errorf("scope %q: path %q is a mount point; a scope that contains a bind mount is readable through the fence", name, path)
 	}
 	if !allowFilesystemRoot && overlapsConfigDir(path, configDir) {
-		return fmt.Errorf("scope %q: path %q overlaps the Node's config directory %q; a scope that can list its own credentials is a configuration mistake", name, path, configDir)
+		return false, fmt.Errorf("scope %q: path %q overlaps the Node's config directory %q; a scope that can list its own credentials is a configuration mistake", name, path, configDir)
 	}
-	return nil
+	return false, nil
 }
 
 // overlapsConfigDir reports whether a scope root and the Node's config directory
@@ -541,9 +595,22 @@ func (s *Scope) isDenied(info os.FileInfo) bool {
 // blocks inside open(2), before any type check could run, so a blocking open
 // would turn one request into a hang. Opening non-blocking lets the handle be
 // inspected and refused, which keeps the type check reachable.
+//
+// The grammar is checked before the scope's own state, so a malformed path is
+// invalid_argument whether or not the scope directory exists. A shape error is a
+// property of the request, and answering it differently because of a directory
+// that is missing would make the same request mean two things.
+//
+// An absent scope answers not_found for every path, including the root. The
+// answer is uniform on purpose: a scope whose directory is missing has no
+// entries, so there is nothing to distinguish, and a caller cannot use the
+// difference to learn which paths a policy would have allowed.
 func (s *Scope) openValidated(path string, allowRoot bool) (*os.File, os.FileInfo, error) {
 	if err := ValidateRelativePath(path, allowRoot); err != nil {
 		return nil, nil, newError(protocol.CodeInvalidArgument, "%v", err)
+	}
+	if s.absent {
+		return nil, nil, newError(protocol.CodeNotFound, "scope %q has no directory; path %q does not exist", s.name, path)
 	}
 	if s.isDeniedPath(path) {
 		return nil, nil, newError(protocol.CodeDenied, "path %q is inside one of the Node's own directories", path)
@@ -586,6 +653,34 @@ func classifyOpenError(err error) *Error {
 		return newError(protocol.CodeNotFound, "open: %v", err)
 	}
 	return newError(protocol.CodeDenied, "open refused: %v", err)
+}
+
+// classifyDirectoryReadError maps a failure to read an already-opened directory
+// to a code.
+//
+// It exists because opening a directory and reading it are two steps, and only
+// the first one went through classifyOpenError. A scope directory deleted while
+// the Node runs still opens: the os.Root handle references the deleted inode, so
+// the open succeeds and the failure appears at the read. Mapping that read
+// failure to internal unconditionally made the same condition answer not_found
+// for file.read and file.stat and internal for file.list, which is a wrong code
+// rather than a crash.
+//
+// The distinction matters to a caller because the two codes carry opposite retry
+// advice: CodeInternal is retryable and CodeNotFound is not. A caller that
+// followed the advice retried exactly the case that can never succeed, because
+// the handle keeps the deleted inode and a directory recreated at the same path
+// is not adopted until the Node restarts.
+//
+// A missing directory is not_found, matching what the other two operations
+// report for the same condition. Every other failure stays internal, because a
+// genuine I/O error while reading a directory is a Node defect and not a
+// caller-visible condition.
+func classifyDirectoryReadError(path string, err error) *Error {
+	if errors.Is(err, os.ErrNotExist) {
+		return newError(protocol.CodeNotFound, "list %q: %v", path, err)
+	}
+	return newError(protocol.CodeInternal, "list %q: %v", path, err)
 }
 
 // Read returns a byte range of one regular file.
@@ -647,7 +742,7 @@ func (s *Scope) List(path string) ([]Entry, error) {
 
 	names, err := file.Readdirnames(-1)
 	if err != nil {
-		return nil, newError(protocol.CodeInternal, "list %q: %v", path, err)
+		return nil, classifyDirectoryReadError(path, err)
 	}
 	sort.Strings(names)
 
@@ -731,6 +826,13 @@ func (s *Scope) statEntry(parent string, name string) (Entry, error) {
 func (s *Scope) Stat(path string) (Entry, error) {
 	if err := ValidateRelativePath(path, false); err != nil {
 		return Entry{}, newError(protocol.CodeInvalidArgument, "%v", err)
+	}
+	if s.absent {
+		// The scope directory is missing, so no path inside it exists. The
+		// answer is not_found rather than denied: the grant exists and the
+		// directory does not, and denied would send the operator looking for a
+		// policy problem that is not there.
+		return Entry{}, newError(protocol.CodeNotFound, "scope %q has no directory; path %q does not exist", s.name, path)
 	}
 	if s.isDeniedPath(path) {
 		return Entry{}, newError(protocol.CodeDenied, "path %q is inside one of the Node's own directories", path)

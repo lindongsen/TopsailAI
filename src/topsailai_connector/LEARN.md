@@ -350,3 +350,144 @@ AI reflection archive, not here.
   bundle resolves at start time on the target; an embedded policy is fixed at build
   time, so resolving would bake this host's filesystem into a binary meant for
   another machine.
+
+## A scope directory that does not exist is tolerated, not refused
+
+- **Superseded measurement.** An earlier version of this file recorded that a
+  policy naming a missing scope path refused startup as a whole, measured with 3,
+  20 and 200 missing scopes and with 50 valid scopes plus one missing one. That
+  was the behaviour at the time and it is no longer the behaviour. The human
+  required the opposite: a policy may name a directory that has not been created
+  yet, and on Windows a drive letter may have no volume behind it, so one absent
+  directory must not stop a Node that serves several.
+- The current rule: an absent scope path starts the Node. The scope stays defined,
+  keeps its grant, is reported at WARN with its path, appears in `absent_scopes` on
+  the ready line, and answers `not_found` for `file.read`, `file.list` and
+  `file.stat`. Measured on Linux with three absent scopes and on Windows with
+  `E:\`, `F:\` and an absent `C:\` subdirectory; the process stayed alive in every
+  case.
+- A scope path that exists but is a file (`is not a directory`), a symlink root, a
+  relative path, the home directory, a mount point and an existing filesystem root
+  are all still startup refusals. Only absence was relaxed, and the difference
+  matters: a file root makes every path inside it meaningless, while an absent
+  directory has nothing inside it to serve.
+- A path *inside* a valid scope that does not exist is a per-request `not_found`.
+  Measured with 1500 requests: all `not_found`, the Node alive, RSS oscillating
+  between 6772 and 8420 KB rather than climbing. A missing path is not a crash and
+  not a leak.
+- The identity file is written before the authority is loaded, so a Node that
+  refuses to start because of a bad scope still leaves an `identity` file behind.
+  Harmless, but it means "the Node never started" and "the Node has no identity"
+  are different states.
+- A tolerance that is only in the code is not a tolerance. The refusal was also
+  asserted by a unit test, a BDD scenario, a test-case document, an adversarial-case
+  document and an enforcement checklist, and every one of them had to be inverted
+  in the same change. A document that still says "Expected: Startup fails" is read
+  by the next person as the specification, and the code is then "fixed" back.
+
+## The same missing directory answered differently depending on the operation
+
+- `file.read` and `file.stat` on a scope whose directory was deleted underneath
+  the running Node answered `not_found`; `file.list` on the same scope answered
+  `internal`. `Read` and `Stat` reach the directory through `openValidated`, which
+  calls `classifyOpenError`; `List` opens the directory successfully — the
+  `os.Root` handle still references the deleted inode — and only fails at
+  `Readdirnames`, which mapped every failure to `CodeInternal`.
+- A caller that retries on `internal` and gives up on `not_found` therefore did
+  the opposite of the right thing, because retrying can never succeed: the handle
+  keeps the deleted inode, so a directory recreated at the same path is not
+  adopted. Measured before the fix: after delete and recreate, `read` still
+  returned `not_found` and `list` still returned `internal`.
+- The classification belongs in one place. Two mappings for one condition is how
+  the three operations drift apart, and the drift is invisible in review because
+  each function reads correctly on its own. The fix added
+  `classifyDirectoryReadError` immediately after `classifyOpenError`, so the two
+  sit side by side and a future change to one is visible next to the other. See
+  `issues/done/issue-list-reports-internal-for-a-deleted-scope-directory.md`.
+- Only a missing directory becomes `not_found`. Every other failure while reading
+  a directory stays `internal`, because a genuine I/O failure is a Node defect and
+  not a caller-visible condition. A classifier that returned `not_found` for
+  everything would tell a caller to give up on a condition a retry might fix.
+- A test that asserts only `err != nil` passes both before and after the fix. The
+  existing `TestListReportsAMissingDirectory` did exactly that, so it proved
+  nothing about the code. Assert the code, and assert that all three operations
+  agree, because agreement is the property that was broken.
+- Prove the test is not vacuous by mutating the fix: reverting `List` to the
+  hardcoded `internal` must fail the agreement test, and making the classifier
+  always return `not_found` must fail the genuine-failure test. Both mutations were
+  run and both failed as expected, then the file was restored and its md5 compared
+  with the backup.
+- The case is unreachable on Windows, where a directory the Node holds open cannot
+  be deleted or renamed. A test for it must skip when the deletion is refused,
+  rather than reporting a platform limitation as a defect in the fence.
+
+## Windows cannot delete a directory the Node holds open
+
+- The Linux case "delete the scope directory while the Node runs" is unreachable
+  on Windows. `Remove-Item -Recurse -Force` fails with "The process cannot access
+  the file because it is being used by another process", and so does
+  `Rename-Item`. The `os.Root` handle holds the directory open, so the directory
+  cannot be removed or renamed out from under the Node.
+- `-Recurse` still deletes the *contents* before failing on the directory itself,
+  so the reachable Windows state is an emptied scope rather than a deleted one.
+  Measured: `file.list` on the emptied root returned success with empty output,
+  and every missing path returned `not_found`. The Windows answer was already
+  consistent, which is why the `internal` defect was Linux-only in practice even
+  though the code path is platform-independent.
+- A platform difference that makes a case unreachable is not a passing test. The
+  Linux behaviour is the one a caller sees, so the defect was real; the Windows run
+  proves only that Windows cannot reach it, not that the code is correct. The fix
+  is therefore stated for all platforms, and the test skips on Windows instead of
+  being deleted.
+
+## A tolerance must invert every artifact that asserted the refusal
+
+- Turning a startup refusal into a tolerance is not a one-file change. The rule
+  lived in the code, in a unit test, in a BDD scenario, in a test-case document, in
+  an adversarial-case document and in an enforcement checklist. Each one asserted
+  the refusal, and each one had to be inverted in the same change.
+- The dangerous half is the documents. A test that still asserts the old refusal
+  fails loudly, but a case document that still says "Expected: Startup fails" is
+  read by the next person as the specification, and the code is then "fixed" back.
+  Grep the refusal message and the word "fails startup" across `docs/`, not only
+  across the source.
+- A test whose fixture encodes the now-legal state must be re-pointed, not deleted.
+  Two tests used a missing directory to prove handle cleanup on the failure path.
+  Deleting them because their setup became legal would drop the coverage the setup
+  existed to provide; pointing them at a regular file keeps the property and the
+  refusal.
+- Mutation-test the tolerance in both directions. Restoring the refusal must fail
+  the tolerance tests, and answering the wrong code must fail the code assertions.
+  A tolerance test that passes with the tolerance removed is measuring nothing.
+- A relaxed rule needs a stated boundary, or it becomes a hole. The filesystem-root
+  rule is skipped for an absent path because a volume with no volume behind it has
+  no blast radius, but the skip must be fail-closed across restarts: when the
+  volume appears, the next startup refuses it. Measured on Windows with `subst E:`,
+  which is the only way to create and remove a volume on demand.
+- An absent path makes several other rules vacuous rather than relaxed, and the
+  difference matters in review. A path that does not exist is not a symlink, is not
+  a mount point and is not the home directory, because all three exist. Writing
+  those as "relaxed" invites someone to relax them for a path that does exist.
+- `not_found` and `denied` answer different questions. An absent scope has a grant
+  and no directory, so `denied` would send the operator hunting for a policy
+  problem that is not there. Keep the grant check first so the answer still does
+  not disclose whether the directory exists.
+
+## A child process started over ssh dies with the session
+
+- `Start-Process` on Windows creates a child of the ssh session, and the child is
+  killed when the session ends. The Node logged `channel established` and then the
+  Server logged `connection reset by peer` seconds later, with no error on the Node
+  side. The run looked successful because the evidence was captured before the
+  disconnect.
+- Run the long-lived process in the foreground inside a tmux-held ssh session, so
+  the session stays open for as long as the process must live. A backgrounded
+  process plus a captured log is not evidence that the process survives.
+- Verify survival explicitly after the launching command returns: list the process
+  by id and start time on the remote host, and check the Server still sees the
+  channel. A log line saying `ready` proves it started, not that it is still there.
+- Distinguish your own processes from pre-existing ones by start time before
+  killing anything. The Windows host had two Nodes from two days earlier; a
+  `Get-Process connector-node | Stop-Process` would have killed someone else's
+  work.
+
