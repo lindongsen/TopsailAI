@@ -144,6 +144,7 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_ID` | `--endpoint-id` | empty | Endpoint identity announced to the Server |
 | `AGENT_CLUSTER_ENDPOINT_INSTANCE_ID` | `--instance-id` | `default` | Endpoint instance identity |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
+| `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES` | `--channel-addresses` | empty | Ordered comma-separated Server WSS addresses the Endpoint tries in turn; the first reachable one wins, and it takes precedence over `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` when both are set |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |

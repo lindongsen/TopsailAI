@@ -37,8 +37,11 @@ type EndpointClient struct {
 	// always has an address to dial, so a lost connection is recovered by
 	// dialing instead of waiting for the Server to dial again.
 	Bidirectional bool
-	Conn          *websocket.Conn
-	Generation    int64
+	// Addresses is the ordered list of Server addresses to try. When it is set,
+	// a dial walks it in order instead of using the single Address.
+	Addresses  []string
+	Conn       *websocket.Conn
+	Generation int64
 	// ServerIdentity names the Server database behind the active connection. It
 	// is recorded from the handshake so the Endpoint can tell a restarted Server
 	// from a different one.
@@ -55,6 +58,41 @@ func (c *EndpointClient) ServerDatabaseIdentity() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.ServerIdentity
+}
+
+// dialAttemptTimeout bounds one address attempt.
+//
+// Without a bound, an address that accepts no connection but never refuses one
+// would hold the attempt open until the caller's context expired, so the next
+// configured Server would never be tried. A bounded attempt is what makes
+// "try the next address" a real behaviour rather than a comment.
+const dialAttemptTimeout = 10 * time.Second
+
+// DialAll tries every configured address in order and returns the first success.
+//
+// Order is the contract: the operator expresses preference by position. A
+// failure on one address is not fatal, because the whole point of a list is that
+// another Server may still be reachable. The joined error is returned only when
+// every address failed, so a caller can tell "no Server is reachable" from "this
+// Server refused me".
+func (c *EndpointClient) DialAll(ctx context.Context, addresses []string) error {
+	if len(addresses) == 0 {
+		return errors.New("no channel address is configured")
+	}
+	failures := make([]error, 0, len(addresses))
+	for _, address := range addresses {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, dialAttemptTimeout)
+		err := c.Dial(attemptCtx, address)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		failures = append(failures, fmt.Errorf("%s: %w", address, err))
+	}
+	return errors.Join(failures...)
 }
 
 // Dial establishes the Endpoint-initiated WebSocket connection and handshake.
@@ -181,6 +219,7 @@ func (c *EndpointClient) Ready() bool {
 func (c *EndpointClient) Reconnect(ctx context.Context) error {
 	c.mu.Lock()
 	address := c.Address
+	addresses := append([]string(nil), c.Addresses...)
 	initiator := c.Initiator
 	bidirectional := c.Bidirectional
 	c.mu.Unlock()
@@ -191,6 +230,9 @@ func (c *EndpointClient) Reconnect(ctx context.Context) error {
 	// the two sides converge again on whichever link is installed last.
 	if initiator == InitiatorServer && !bidirectional {
 		return ErrAwaitingServerDial
+	}
+	if len(addresses) > 0 {
+		return c.DialAll(ctx, addresses)
 	}
 	if address == "" {
 		return errors.New("channel address is not configured")

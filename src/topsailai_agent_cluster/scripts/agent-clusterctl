@@ -251,7 +251,12 @@ function doctor() {
     if [ "${ROLE}" = "endpoint" ]; then
         [ -n "${ENDPOINT_ID:-}" ] || die "ENDPOINT_ID is required for the endpoint role"
         [ -n "${INSTANCE_ID:-}" ] || die "INSTANCE_ID is required for the endpoint role"
-        [ -n "${CHANNEL_ADDRESS:-}" ] || die "CHANNEL_ADDRESS is required for the endpoint role"
+        # Either spelling satisfies the requirement: one address, or an ordered
+        # list of them. Requiring the single value would make the multi-Server
+        # setting unusable from a packaged node, which is the deployment that
+        # needs it most.
+        [ -n "${CHANNEL_ADDRESS:-}" ] || [ -n "${CHANNEL_ADDRESSES:-}" ] ||
+            die "CHANNEL_ADDRESS or CHANNEL_ADDRESSES is required for the endpoint role"
         [ -n "${ADAPTERS:-}" ] || die "ADAPTERS is required for the endpoint role"
         # The bundle cannot carry the provider binary, so every adapter command
         # must already exist on this node. Failing here beats a runtime spawn error.
@@ -345,7 +350,10 @@ function start_node() {
     else
         args+=(--endpoint-id "${ENDPOINT_ID}")
         args+=(--instance-id "${INSTANCE_ID}")
-        args+=(--channel-address "${CHANNEL_ADDRESS}")
+        [ -n "${CHANNEL_ADDRESS:-}" ] && args+=(--channel-address "${CHANNEL_ADDRESS}")
+        # The list is forwarded only when set, so a single-address deployment
+        # keeps exactly the argument vector it had before.
+        [ -n "${CHANNEL_ADDRESSES:-}" ] && args+=(--channel-addresses "${CHANNEL_ADDRESSES}")
         # The allowlist is optional. Without it the endpoint refuses command.exec
         # rather than falling back to an unrestricted shell.
         [ -n "${COMMAND_ALLOWLIST_FILE:-}" ] && args+=(--command-allowlist-file "${COMMAND_ALLOWLIST_FILE}")

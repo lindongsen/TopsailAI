@@ -47,9 +47,17 @@ func main() {
 	bidirectional := cfg.ChannelDirection == config.DirectionBidirectional
 	listens := serverInitiated || bidirectional
 	dials := !serverInitiated
-	if dials && cfg.ChannelAddress == "" {
+	// A single address and an ordered list are two spellings of one setting. The
+	// list wins when both are present, because it is the more specific
+	// declaration, and folding them here keeps every later stage reading one
+	// value instead of two.
+	dialAddresses := cfg.ChannelAddresses
+	if len(dialAddresses) == 0 && cfg.ChannelAddress != "" {
+		dialAddresses = []string{cfg.ChannelAddress}
+	}
+	if dials && len(dialAddresses) == 0 {
 		if bidirectional {
-			logger.Error("endpoint channel address is required for the bidirectional direction", "error", "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS is empty")
+			logger.Error("endpoint channel address is required for the bidirectional direction", "error", "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS and AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES are empty")
 			_ = store.Close()
 			os.Exit(1)
 		}
@@ -89,7 +97,7 @@ func main() {
 	if hostnameErr != nil {
 		logger.Warn("resolve endpoint hostname", "error", hostnameErr)
 	}
-	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: clientTLS, Address: cfg.ChannelAddress, Bidirectional: bidirectional}
+	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: clientTLS, Address: cfg.ChannelAddress, Addresses: dialAddresses, Bidirectional: bidirectional}
 	if listens {
 		// The Endpoint accepts the Server connection, so it must verify the
 		// Server certificate itself and reject a revoked one.
@@ -110,7 +118,7 @@ func main() {
 		logger.Info("endpoint accepting server-initiated connections", "listen_address", cfg.EndpointChannelListen)
 	}
 	if dials {
-		if err := client.Dial(ctx, cfg.ChannelAddress); err != nil {
+		if err := client.DialAll(ctx, dialAddresses); err != nil {
 			logger.Error("connect endpoint channel; reconnecting", "error", err)
 		}
 	}

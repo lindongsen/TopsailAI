@@ -61,8 +61,16 @@ type Config struct {
 	// Provider CLI version for one adapter. An empty value disables activation
 	// entirely, which is the fail-closed default: an Endpoint that names no request
 	// file cannot be asked to swap the program it runs.
-	ReplaceRequestFile    string
-	ChannelAddress        string
+	ReplaceRequestFile string
+	ChannelAddress     string
+	// ChannelAddresses is the ordered list of Server addresses the Endpoint
+	// tries in turn. It exists because an Endpoint may be managed by one of
+	// several independent Servers: when the first is unreachable the Endpoint
+	// moves to the next instead of staying offline forever.
+	//
+	// Order is the contract. The first reachable address wins, so an operator
+	// expresses preference by position rather than by a separate priority field.
+	ChannelAddresses      []string
 	ChannelDirection      string
 	EndpointChannelListen string
 	EndpointDialAddresses map[string]string
@@ -168,6 +176,9 @@ func Load(args []string, role string) (Config, error) {
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS"); value != "" {
 			cfg.ChannelAddress = value
 		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES"); value != "" {
+			cfg.ChannelAddresses = splitList(value)
+		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR"); value != "" {
 			cfg.EndpointChannelListen = value
 		}
@@ -252,6 +263,10 @@ func Load(args []string, role string) (Config, error) {
 		flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
 		flags.StringVar(&cfg.ReplaceRequestFile, "replace-request-file", cfg.ReplaceRequestFile, "Endpoint-local request document that activates one Provider CLI version for one adapter")
 		flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Server WSS address the Endpoint dials")
+		flags.Func("channel-addresses", "ordered Server WSS addresses the Endpoint tries in turn", func(value string) error {
+			cfg.ChannelAddresses = splitList(value)
+			return nil
+		})
 		flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")
 		flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 		flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")

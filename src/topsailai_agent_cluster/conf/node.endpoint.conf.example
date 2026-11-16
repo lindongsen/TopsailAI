@@ -14,6 +14,10 @@ INSTANCE_ID=local-endpoint-1
 # Channel address the endpoint dials. Use the address the server is reachable at
 # from this node, not necessarily the address the server binds.
 CHANNEL_ADDRESS=wss://127.0.0.1:53943
+# Optional ordered list of Servers to try in turn. When the first is unreachable
+# the endpoint moves to the next instead of staying offline. Order is the
+# preference, and this list takes precedence over CHANNEL_ADDRESS above.
+# CHANNEL_ADDRESSES=wss://server-a:53943,wss://server-b:53943
 AUTH_TOKEN=replace-with-a-real-token
 
 # Server HTTP API the installed CLI dials. Use the address the server API is
