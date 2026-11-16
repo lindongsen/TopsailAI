@@ -331,9 +331,12 @@ def build_project_list(
         session_id: Optional exact session ID to retrieve.
 
     Returns:
-        List of session dictionaries with keys ``no``, ``session_id``,
-        ``session_name``, ``project_workspace``, ``modified_time``,
-        ``modified_time_raw``, ``task``, and ``status``.
+        List of session dictionaries. Each entry keeps every field that
+        ``topsailai_list_sessions --json`` emits (``category``,
+        ``create_time``, ``update_time``, ``pwd``, ``topsailai_home``, token
+        totals, ``cache_hit_rate`` and all execution metrics) and adds the
+        project-scope fields ``no``, ``modified_time``, ``modified_time_raw``
+        and ``status``.
     """
     cmd = [
         "topsailai_list_sessions",
@@ -407,8 +410,10 @@ def build_project_list(
 
     entries = []
     for session in sessions:
+        if not isinstance(session, dict):
+            continue
         session_id_value = session.get("session_id") or ""
-        create_time_raw = session.get("create_time") or ""
+        create_time_value = session.get("create_time") or ""
         update_time_raw = session.get("update_time") or ""
         # The stored update_time is the authoritative modification time. The
         # stdout mtime and create_time are fallbacks for a row that carries no
@@ -420,18 +425,24 @@ def build_project_list(
             if mtime is not None:
                 modified_time_raw = datetime.fromtimestamp(mtime).isoformat()
             else:
-                modified_time_raw = create_time_raw
-        entries.append(
+                modified_time_raw = create_time_value
+        # Start from the upstream record so every field that
+        # ``topsailai_list_sessions --json`` emits survives, then add the
+        # project-scope fields on top. Rebuilding the row from a fixed key list
+        # would silently drop category, timestamps, token totals and every
+        # execution metric from the JSON output.
+        entry = dict(session)
+        entry.update(
             {
                 "session_id": session_id_value,
                 "session_name": session.get("session_name") or "",
                 "project_workspace": session.get("project_workspace") or "",
                 "modified_time_raw": modified_time_raw,
-                "create_time_raw": create_time_raw,
                 "task": session.get("task") or "",
                 "_sort_time": _sort_timestamp(modified_time_raw),
             }
         )
+        entries.append(entry)
 
     # Display oldest-first, matching the workspace list convention. The page is
     # fetched newest-first by update_time, so the most recently modified

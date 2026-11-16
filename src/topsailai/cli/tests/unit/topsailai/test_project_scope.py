@@ -298,6 +298,57 @@ class TestBuildProjectList(unittest.TestCase):
         entries = project_scope.build_project_list(limit=10)
         self.assertEqual(entries, [])
 
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_json_keeps_every_upstream_field(self, mock_run):
+        """Every field from ``topsailai_list_sessions --json`` must survive.
+
+        The project-scope row adds display fields on top of the upstream
+        record; rebuilding it from a fixed key list would silently drop
+        category, timestamps, token totals and every execution metric.
+        """
+        upstream = {
+            "session_id": "s-full",
+            "session_name": "full session",
+            "category": "agent",
+            "create_time": "2026-07-06T10:00:00",
+            "update_time": "2026-07-06T11:00:00",
+            "task": "task full",
+            "project_workspace": "/work/full",
+            "pwd": "/work/full",
+            "topsailai_home": "/home/user/.topsailai",
+            "total_prompt_tokens": 120,
+            "total_completion_tokens": 30,
+            "total_usage_tokens": 150,
+            "total_cached_tokens": 60,
+            "cache_hit_rate": "50.0%",
+            "turn_total_count": 4,
+            "tool_call_count": 7,
+            "model_name": "gpt-test",
+        }
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps([upstream]))
+
+        entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        for key, value in upstream.items():
+            self.assertIn(key, entry, f"upstream field {key!r} was dropped")
+            self.assertEqual(entry[key], value, f"upstream field {key!r} changed")
+        # The project-scope display fields are additive, not replacements.
+        for key in ("no", "modified_time", "modified_time_raw", "status"):
+            self.assertIn(key, entry)
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_json_skips_non_dict_rows(self, mock_run):
+        """A malformed upstream row is skipped instead of crashing the list."""
+        mock_run.return_value = MockCompletedProcess(
+            stdout=json.dumps(["not-a-row", {"session_id": "s-ok"}])
+        )
+
+        entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual([entry["session_id"] for entry in entries], ["s-ok"])
+
 
 class TestRunningStatusDetection(unittest.TestCase):
     """Tests for concurrent running-status enrichment."""
