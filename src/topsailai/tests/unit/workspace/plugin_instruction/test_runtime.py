@@ -1,5 +1,6 @@
 """Unit tests for read-only Runtime Data Instructions."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -89,8 +90,8 @@ def test_runtime_get_returns_public_state(store):
 @pytest.mark.parametrize(
     "args, expected",
     [
-        ((), "Usage: /runtime.get <key>"),
-        (("llm.request.retrying", "extra"), "Usage: /runtime.get <key>"),
+        ((), "Usage: /runtime.get <key> [json=1]"),
+        (("llm.request.retrying", "extra"), "Usage: /runtime.get <key> [json=1]"),
         (("",), "Invalid runtime state key."),
         (("LLM.retrying",), "Invalid runtime state key."),
         (("llm\n.retrying",), "Invalid runtime state key."),
@@ -153,7 +154,9 @@ def test_runtime_history_is_bounded_public_and_filterable(store):
 def test_runtime_history_empty_and_argument_contract(store):
     """Return stable empty, usage, and invalid-key responses."""
     assert runtime.show_runtime_history() == "No runtime state history."
-    assert runtime.show_runtime_history("a.b", "extra") == "Usage: /runtime.history [key]"
+    assert runtime.show_runtime_history("a.b", "extra") == (
+        "Usage: /runtime.history [key] [json=1]"
+    )
     assert runtime.show_runtime_history("invalid") == "Invalid runtime state key."
 
 
@@ -213,5 +216,109 @@ def test_runtime_queries_are_read_only(store, monkeypatch):
 
 
 def test_runtime_root_rejects_arguments(store):
-    """Keep the root command argument-free."""
-    assert runtime.show_runtime("unexpected") == "Usage: /runtime"
+    """Keep the root command free of positional arguments."""
+    assert runtime.show_runtime("unexpected") == "Usage: /runtime [json=1]"
+
+
+def test_runtime_json_output_is_valid_and_allowlisted(store):
+    """Emit parseable JSON that keeps the text-mode allowlist and bounds."""
+    store.activate(
+        "llm.request.retrying",
+        "lease-token-sentinel",
+        _retry_value(
+            prompt="prompt-sentinel",
+            api_key="credential-sentinel",
+            nested={"text": "nested-sentinel"},
+        ),
+    )
+
+    payload = json.loads(runtime.show_runtime(json="1"))
+
+    assert payload["ok"] is True
+    assert len(payload["active"]) == 1
+    entry = payload["active"][0]
+    assert entry["key"] == "llm.request.retrying"
+    assert entry["revision"] == 1
+    assert entry["updated_at_ms"] == 100
+    assert entry["value"] == {
+        "phase": "fault_retrying",
+        "failed_attempts": 3,
+        "next_retry_number": 3,
+        "threshold": 3,
+        "last_error_category": "LLMNullResponseError",
+    }
+    for sentinel in (
+        "prompt-sentinel",
+        "credential-sentinel",
+        "nested-sentinel",
+        "lease-token-sentinel",
+        "owner_id",
+    ):
+        assert sentinel not in json.dumps(payload)
+
+
+def test_runtime_json_get_and_history_shapes(store):
+    """Return one active object and one bounded history list in JSON mode."""
+    lease = store.activate("llm.request.retrying", "request-1", _retry_value())
+    assert store.deactivate(lease, outcome="recovered") is True
+    store.activate("llm.request.retrying", "request-2", _retry_value(4))
+
+    active = json.loads(runtime.get_runtime("llm.request.retrying", json="1"))
+    assert active["ok"] is True
+    assert active["active"]["value"]["failed_attempts"] == 4
+
+    history = json.loads(runtime.show_runtime_history(json="1"))
+    assert history["ok"] is True
+    assert len(history["history"]) == 1
+    assert history["history"][0]["outcome"] == "recovered"
+    assert history["history"][0]["settled_at_ms"] == 101
+
+
+def test_runtime_json_accepts_forwarded_named_parameters(store):
+    """Accept the control-channel form where one token carries every parameter."""
+    store.activate("llm.request.retrying", "request-1", _retry_value())
+
+    forwarded = json.loads(runtime.get_runtime("key=llm.request.retrying;json=1"))
+    assert forwarded["ok"] is True
+    assert forwarded["active"]["key"] == "llm.request.retrying"
+
+    positional = json.loads(runtime.get_runtime("llm.request.retrying", "json=1"))
+    assert positional["ok"] is True
+
+
+def test_runtime_json_disabled_matches_text_output(store):
+    """Treat `json=0` exactly like an omitted flag."""
+    store.activate("llm.request.retrying", "request-1", _retry_value())
+
+    assert runtime.show_runtime(json="0") == runtime.show_runtime()
+    assert runtime.get_runtime("llm.request.retrying", json="0") == (
+        runtime.get_runtime("llm.request.retrying")
+    )
+    assert runtime.show_runtime_history(json="0") == runtime.show_runtime_history()
+
+
+@pytest.mark.parametrize(
+    "call, expected_error",
+    [
+        (lambda: runtime.get_runtime(json="1"), "missing_key"),
+        (lambda: runtime.get_runtime("BAD", json="1"), "invalid_key"),
+        (lambda: runtime.get_runtime("a.b", json="1"), "not_found"),
+        (lambda: runtime.show_runtime("yaml=1;json=1"), "unknown_parameter"),
+        (lambda: runtime.get_runtime("a.b", "c.d", json="1"), "too_many_arguments"),
+    ],
+)
+def test_runtime_json_reports_structured_errors(store, call, expected_error):
+    """Report machine-readable error tokens instead of human sentences."""
+    payload = json.loads(call())
+
+    assert payload["ok"] is False
+    assert payload["error"] == expected_error
+
+
+def test_runtime_json_reports_missing_agent(monkeypatch):
+    """Report the no-runtime contract as a structured error."""
+    monkeypatch.setattr(runtime, "get_ai_agent", lambda: None)
+
+    payload = json.loads(runtime.show_runtime(json="1"))
+
+    assert payload == {"ok": False, "error": "no_runtime"}
