@@ -103,9 +103,20 @@ failure, because only a capacity condition is provably unrelated to the target.
 `invalidateResumeRowBindings` (`internal/tui/interactive_history.go:615-627`) clears both tables
 because a resume changes the inventory, so pre-resume row numbers must not survive.
 
-## Remaining work
+## Resolution
 
-Rebuild and redeploy the Endpoint from current `staging` so the deployed binary contains `6e00bb89`,
-then re-run `resume 28`. Acceptance: the deployed binary timestamp is newer than 2026-11-16 08:00:17
-and the retry no longer reports `capacity exhausted`. Until then a capacity collision is reported
-accurately as `adapter_busy` but still fails instead of waiting.
+The remaining work was a redeploy, and it has happened. The deployed Endpoint is now
+`vcs.revision=b33157dcd2e4acc07214d93f78c32ae8b982b6fd`, built `2026-11-16 10:27:06 +0800` with
+`vcs.modified=true`, which is newer than the `2026-11-16 08:00:17` acceptance bound. `strings` on that
+binary reports three occurrences of `acquireWithin`, so a capacity collision now waits inside the
+caller's budget instead of failing.
+
+The classification this record asked for is also in place: `1bdee96a fix: distinguish adapter capacity
+from target observation failure` keeps `adapter.ErrBusy` distinguishable through
+`revalidateGeneration` (`internal/endpoint/executor.go:378-380`), so a busy adapter is reported as a
+retryable capacity condition rather than as a stale generation.
+
+The underlying design question was answered separately by
+`b33157dc fix: give operator reads their own adapter capacity class`: `Inspect` now uses `classRead`,
+so a resume preflight no longer competes with the periodic collection for the discovery slot. See
+`.task/plan_20261116T094500_operator-reads-own-capacity-class.md` (status `done`).
