@@ -180,7 +180,8 @@ class SessionStorageBase(object):
                 When provided, only sessions whose ID is in this list are returned.
                 When empty or None, all sessions are returned.
             order_by (str, optional): Field name to sort by. Supported fields include
-                ``session_id``, ``session_name``, ``task``, and ``create_time``.
+                ``session_id``, ``session_name``, ``task``, ``create_time``, and
+                ``update_time``.
                 Prefix the field name with ``-`` for descending order
                 (e.g., ``-created_at``). When not provided, the default order is
                 implementation-defined (typically ``create_time`` descending).

@@ -82,6 +82,9 @@ class Session(Base):
 # Default listing orders by create_time, so without this index every page query
 # scans the whole table before it can return the first row.
 SessionCreateTimeIndex = Index("idx_session_create_time", Session.create_time)
+# Listing by last activity orders by update_time, which needs its own index for
+# the same reason: without it the page query scans the whole table.
+SessionUpdateTimeIndex = Index("idx_session_update_time", Session.update_time)
 
 class SessionSQLAlchemy(SessionStorageBase):
     """
@@ -120,6 +123,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         # column migration because that migration asserts the index inventory is
         # unchanged across its table rebuild.
         SessionCreateTimeIndex.create(bind=self.engine, checkfirst=True)
+        SessionUpdateTimeIndex.create(bind=self.engine, checkfirst=True)
 
         self.chat_history = ChatHistorySQLAlchemy(conn)
         self.conn = conn
@@ -579,6 +583,7 @@ class SessionSQLAlchemy(SessionStorageBase):
             "session_name": Session.session_name,
             "task": Session.task,
             "create_time": Session.create_time,
+            "update_time": Session.update_time,
         }
 
         if order_by is None:
