@@ -243,16 +243,40 @@ This table describes help/documentation inspected on 2026-10-27, not successful 
 | Follow session stdout | topsailai runtime logs -s SESSION -p PID -n N --follow | Live tail of plain text lines; `--json` is rejected together with `--follow` |
 | Read session context | runtime control get_session_messages with exact selectors | Sensitive data; separate permission, bounded output and schema validation required |
 
-Host scope differs between discovery and revalidation, deliberately. Discovery
-passes `--local`, because the inventory lists only what this Endpoint can control.
-Revalidation does not, because resume authorizes on the absence of a live target:
+Host scope differs between reads, deliberately, and the difference is per read rather
+than per phase. Three reads pass `--local` and two do not:
+
+| Read | `--local` | Why |
+|---|---|---|
+| `discover` | yes | The inventory lists only what this Endpoint can control. |
+| `resolveWorkspaceTarget` | yes | `follow`, `output` and `query` act on this host's output and state. |
+| `workspaceAuthority` | yes | Mutation authority stays host-local; see below. |
+| `inspect` | no | Liveness must be answerable for a row recorded on another host. |
+| `sessionAuthority` | no | The session registry is not host-scoped. |
+
+`inspect` omits `--local` because resume authorizes on the absence of a live target:
 a session recorded on another host is absent from a `--local` read, so a local
-revalidation would report it as not found and admit the resume while claiming the
+inspection would report it as not found and admit the resume while claiming the
 target does not exist. A task directory shared between hosts is exactly the case
 where resuming another host's session is intended, and the provider applies no
 hostname filter to resume. Such a row reports `process_generation` as `null`,
 because this host cannot verify a process it cannot see, so it is found but not
 live and remains a valid resume candidate.
+
+`workspaceAuthority` keeps `--local` on purpose, and this is a policy decision
+recorded by the human on 2026-11-16. It is the revalidation read for a row-scoped
+resume, `agent.drive.stop`, `workspace.clean`, every `ctl.<action>` and every
+default mutation. Those operations change or delete provider state, so they are
+confined to rows this host can see and confirm. The consequence is explicit: a
+row-scoped target whose workspace row is recorded on another host is reported as
+not found, and `requireLiveGeneration` reports its liveness as unverified. Both are
+refusals rather than admissions, so the failure direction is safe.
+
+Cross-host work therefore has one supported path: `agent.resume` with a
+session-scoped key, which reads the session registry through `sessionAuthority` and
+never passes `--local`. An operator who needs to reach another host's session uses
+`resume -s <session_id>`; `clean` and `drive.stop` stay local by design and must not
+be widened to compensate.
 
 A workspace session identifier can now appear in several rows. The adapter maps
 each row independently with its provider-returned opaque row key plus the private
