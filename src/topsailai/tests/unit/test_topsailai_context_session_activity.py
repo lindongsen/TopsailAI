@@ -465,15 +465,45 @@ def test_expired_stdout_orphan_is_excluded(tmp_path):
     assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).can_clean("a.b[1]")
 
 
-def test_orphan_socket_file_still_blocks_cleanup(tmp_path):
-    """A leftover socket file is not proof of absence and keeps the session blocked."""
+def test_orphan_socket_file_with_dead_owner_is_excluded(tmp_path):
+    """A socket file no process listens on is residue, not liveness evidence."""
     record(tmp_path, pid=123)
     (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
     (tmp_path / "a.b[1].456.session.sock").write_text("endpoint")
 
     observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
 
-    assert observation.state == State.UNKNOWN
+    assert observation.state == State.STOPPED
+
+
+def test_orphan_with_connectable_endpoint_still_blocks_cleanup(tmp_path):
+    """A responding endpoint protects the session even when its PID looks dead."""
+    record(tmp_path, pid=123)
+    (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
+    (tmp_path / "a.b[1].456.session.sock").write_text("endpoint")
+    endpoint = Mock(return_value=True)
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, endpoint_observer=endpoint,
+    )
+
+    assert probe.observe("a.b[1]").state == State.RUNNING
+    assert not probe.can_clean("a.b[1]")
+
+
+def test_orphan_with_uncertain_endpoint_probe_still_blocks_cleanup(tmp_path):
+    """An unreadable endpoint keeps the conservative unknown result."""
+    record(tmp_path, pid=123)
+    (tmp_path / "a.b[1].456.session.stats.jsonl").write_text("stats")
+    (tmp_path / "a.b[1].456.session.sock").write_text("endpoint")
+    endpoint = Mock(side_effect=OSError("probe failed"))
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, endpoint_observer=endpoint,
+    )
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+    assert not probe.can_clean("a.b[1]")
 
 
 def test_live_orphan_pid_still_blocks_cleanup(tmp_path):
@@ -522,3 +552,74 @@ def test_metadata_owner_is_never_excluded(tmp_path):
     observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
 
     assert observation.state == State.UNKNOWN
+
+
+def test_unrelated_inventory_change_does_not_block_requested_sessions(tmp_path, monkeypatch):
+    """Another session's activity must not invalidate the requested batch."""
+    record(tmp_path, sid="first", pid=101)
+    record(tmp_path, sid="second", pid=202)
+    original = type(tmp_path).iterdir
+    calls = 0
+
+    def churning_iterdir(path):
+        """Publish an unrelated session record between the two snapshots."""
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            (tmp_path / "other.303.session.agent2llm_interrupt.fbt_waiting").write_text("x")
+        return original(path)
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", churning_iterdir)
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+
+    observations = probe.observe_many(("first", "second"))
+
+    assert observations["first"].state == State.STOPPED
+    assert observations["second"].state == State.STOPPED
+
+
+def test_requested_session_record_change_still_blocks_cleanup(tmp_path, monkeypatch):
+    """A new owner record of a requested session must still fail closed."""
+    record(tmp_path, sid="first", pid=101)
+    original = type(tmp_path).iterdir
+    calls = 0
+
+    def publishing_iterdir(path):
+        """Publish a second owner of the requested session between snapshots."""
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            record(tmp_path, sid="first", pid=404)
+        return original(path)
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", publishing_iterdir)
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+
+    observation = probe._observe_root_many(tmp_path, ("first",))["first"]
+
+    assert observation.state == State.UNKNOWN
+    assert observation.reason == "inventory changed"
+
+
+def test_one_changing_session_does_not_invalidate_its_neighbours(tmp_path, monkeypatch):
+    """A session whose own records changed must not block a stable neighbour."""
+    record(tmp_path, sid="stable", pid=101)
+    record(tmp_path, sid="changing", pid=202)
+    original = type(tmp_path).iterdir
+    calls = 0
+
+    def publishing_iterdir(path):
+        """Publish a second owner of one requested session between snapshots."""
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            record(tmp_path, sid="changing", pid=303)
+        return original(path)
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", publishing_iterdir)
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+
+    observations = probe.observe_many(("stable", "changing"))
+
+    assert observations["stable"].state == State.STOPPED
+    assert observations["changing"].state == State.UNKNOWN

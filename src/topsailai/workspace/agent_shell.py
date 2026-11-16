@@ -26,6 +26,7 @@ from topsailai.workspace.project_history import record_project_history
 from topsailai.workspace.session_meta import (
     create_session_meta,
     cleanup_session_meta_files,
+    cleanup_orphan_session_files,
 )
 from topsailai.context import ctx_manager
 from topsailai.context.session_category import load_session_category
@@ -312,6 +313,7 @@ def _get_agent_chat_impl(
         category=session_category,
     )
     cleanup_session_meta_files()
+    cleanup_orphan_session_files()
     # Hook Instruction
     ##########################################################################################
     hook_instruction.load_instructions(ctx_rt_instruction.instructions)
