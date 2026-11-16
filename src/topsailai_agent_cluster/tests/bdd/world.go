@@ -34,6 +34,11 @@ type Scenario struct {
 	holdDir           string
 	scenarioName      string
 	commandDone       chan struct{}
+	// rehomeLogOffset records how far the Endpoint log had grown before an action
+	// whose log evidence must be searched only in the bytes written afterwards.
+	// Without it a needle that already appeared earlier in the same process
+	// lifetime would satisfy the assertion before the event under test happened.
+	rehomeLogOffset int64
 }
 
 var activeScenario *Scenario

@@ -52,6 +52,11 @@ type Cluster struct {
 	// ChannelProxy sits between the Endpoint and the primary Server when a
 	// scenario must force a real reconnect. It stays nil otherwise.
 	ChannelProxy *ChannelProxy
+	// SecondaryLogPath is the file that receives the second Server's own log. It
+	// is the only evidence that the second Server received a receipt, because a
+	// settlement row is reachable by two independent paths and cannot attribute
+	// which one ran.
+	SecondaryLogPath string
 	// EndpointLogPath is the file that receives the Endpoint's own log when a
 	// scenario must assert on a reconnect or a superseded rejection.
 	EndpointLogPath string

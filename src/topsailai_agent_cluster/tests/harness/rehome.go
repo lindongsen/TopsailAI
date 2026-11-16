@@ -1,16 +1,21 @@
 package harness
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // ChannelProxy forwards raw TCP bytes to one channel listener and can sever
@@ -206,6 +211,11 @@ func (c *Cluster) StartSecondaryServerE(seed func(path string) error) error {
 			return fmt.Errorf("seed secondary server database: %w", err)
 		}
 	}
+	// The second Server writes its own log, because the only evidence that it
+	// received a receipt is its own rejection line. Without that log a scenario
+	// could only assert that a settlement row exists, which is reachable by two
+	// independent paths and therefore cannot attribute which one ran.
+	c.SecondaryLogPath = filepath.Join(c.Root, "server-secondary.log")
 	env := []string{
 		"AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=127.0.0.1:" + c.SecondaryAPI,
 		"AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + c.SecondaryChannel,
@@ -214,6 +224,8 @@ func (c *Cluster) StartSecondaryServerE(seed func(path string) error) error {
 		"AGENT_CLUSTER_TLS_CA_FILE=" + c.Certs.CA,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + c.Certs.ServerCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE=" + c.Certs.ServerKey,
+		"AGENT_CLUSTER_LOG_OUTPUT=file",
+		"AGENT_CLUSTER_LOG_PATH=" + c.SecondaryLogPath,
 	}
 	server, err := StartProcessE(c.ServerPath, env)
 	if err != nil {
@@ -383,4 +395,267 @@ func logTailOf(content string) string {
 		return content
 	}
 	return content[len(content)-limit:]
+}
+
+// EndpointLogOffset reports the current length of the Endpoint log.
+//
+// A scenario that waits for a log line after a restart must search only the bytes
+// written after that restart. The log is append-only for the life of the process
+// tree, so a needle such as "endpoint channel reconnected" may already be present
+// from an earlier reconnect, and a plain substring search would pass before the
+// event under test happened.
+func (c *Cluster) EndpointLogOffset() (int64, error) {
+	if c.EndpointLogPath == "" {
+		return 0, fmt.Errorf("cluster was not started with an Endpoint log file")
+	}
+	info, err := os.Stat(c.EndpointLogPath)
+	if err != nil {
+		return 0, fmt.Errorf("stat endpoint log: %w", err)
+	}
+	return info.Size(), nil
+}
+
+// WaitEndpointLogAfterE polls the Endpoint log for needle written after offset.
+//
+// It is the only honest way to assert on an event that can happen more than once
+// in one process lifetime. Searching the whole file would accept an occurrence
+// that predates the action under test.
+func (c *Cluster) WaitEndpointLogAfterE(offset int64, needle string, limit time.Duration) error {
+	if c.EndpointLogPath == "" {
+		return fmt.Errorf("cluster was not started with an Endpoint log file")
+	}
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		content, err := os.ReadFile(c.EndpointLogPath)
+		if err == nil && int64(len(content)) > offset && strings.Contains(string(content[offset:]), needle) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	content, _ := os.ReadFile(c.EndpointLogPath)
+	tail := ""
+	if int64(len(content)) > offset {
+		tail = logTailOf(string(content[offset:]))
+	}
+	return fmt.Errorf("endpoint log never contained %q after offset %d within %s; log tail:\n%s", needle, offset, limit, tail)
+}
+
+// SettledReceipts reads the Endpoint's own settlement decisions.
+//
+// The assertion target is the Endpoint database, not the log. A log line proves
+// that a decision was attempted; a row proves that it was persisted, which is
+// what decides whether the receipt is re-sent after the next reconnect. Asserting
+// only on the log would pass for a build that logs the decision and then fails to
+// write it.
+//
+// The driver is the same one the Endpoint uses, so the schema under test is the
+// real one rather than a copy. It is opened with the production busy timeout
+// because modernc.org/sqlite ignores a mode=ro query parameter and always opens
+// read-write; the helper therefore only reads, and the timeout keeps a concurrent
+// Endpoint write from failing the read with SQLITE_BUSY.
+func (c *Cluster) SettledReceipts() (map[string]string, error) {
+	if c.EndpointDB == "" {
+		return nil, fmt.Errorf("cluster has no Endpoint database path")
+	}
+	db, err := sql.Open("sqlite", c.EndpointDB+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("open endpoint database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	rows, err := db.QueryContext(context.Background(), `SELECT command_id, reason FROM receipt_settlement`)
+	if err != nil {
+		return nil, fmt.Errorf("read receipt settlement: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	settled := map[string]string{}
+	for rows.Next() {
+		var commandID, reason string
+		if err := rows.Scan(&commandID, &reason); err != nil {
+			return nil, fmt.Errorf("scan receipt settlement: %w", err)
+		}
+		settled[commandID] = reason
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate receipt settlement: %w", err)
+	}
+	return settled, nil
+}
+
+// WaitReceiptSettledE waits until the Endpoint has persisted a settlement for one
+// command and returns the recorded reason.
+//
+// The wait exists because settlement happens on the Endpoint's own channel loop
+// after a rejection arrives, so a scenario that read the table immediately would
+// race the decision it is asserting.
+func (c *Cluster) WaitReceiptSettledE(commandID string, limit time.Duration) (string, error) {
+	deadline := time.Now().Add(limit)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		settled, err := c.SettledReceipts()
+		if err != nil {
+			lastErr = err
+		} else if reason, ok := settled[commandID]; ok {
+			return reason, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("no settlement recorded for %q within %s: %w", commandID, limit, lastErr)
+	}
+	return "", fmt.Errorf("no settlement recorded for %q within %s", commandID, limit)
+}
+
+// AssertReceiptNotSettledE fails when the Endpoint has settled one command.
+//
+// It waits for the whole budget before failing, because the absence of a row is
+// only meaningful once the decision had time to happen. A check that returned
+// immediately would pass for a build that settles a moment later.
+func (c *Cluster) AssertReceiptNotSettledE(commandID string, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		settled, err := c.SettledReceipts()
+		if err != nil {
+			lastErr = err
+		} else if reason, ok := settled[commandID]; ok {
+			return fmt.Errorf("command %q was settled with reason %q, but this reason must never settle", commandID, reason)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("could not read receipt settlement for %q: %w", commandID, lastErr)
+	}
+	return nil
+}
+
+// RewriteStoredReceiptE rewrites the receipt the Server already holds for one
+// command, while the Server is stopped.
+//
+// It exists to produce the two states a re-home cannot produce on its own. The
+// Endpoint always submits revision 1, so a stale revision and a same-revision
+// conflict can only be created by changing what the Server already stored:
+//
+//   - a higher stored revision makes the Endpoint's revision 1 stale;
+//   - the same revision with different bytes makes it a conflict.
+//
+// The Server must be stopped first, because writing to a live SQLite file from a
+// second process would contend with the Server's own writes and could be lost.
+func (c *Cluster) RewriteStoredReceiptE(commandID string, revision int64, outcome string) error {
+	if c.ServerDB == "" {
+		return fmt.Errorf("cluster has no Server database path")
+	}
+	db, err := sql.Open("sqlite", c.ServerDB)
+	if err != nil {
+		return fmt.Errorf("open server database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	var existing []byte
+	err = db.QueryRowContext(context.Background(), `SELECT receipt_json FROM commands WHERE command_id=?`, commandID).Scan(&existing)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("command %q is not stored on the Server, so its receipt cannot be rewritten", commandID)
+	}
+	if err != nil {
+		return fmt.Errorf("read stored receipt for %q: %w", commandID, err)
+	}
+	var receipt map[string]any
+	if err := json.Unmarshal(existing, &receipt); err != nil {
+		return fmt.Errorf("decode stored receipt for %q: %w", commandID, err)
+	}
+	receipt["command_revision"] = revision
+	if outcome != "" {
+		receipt["outcome"] = outcome
+	}
+	rewritten, err := json.Marshal(receipt)
+	if err != nil {
+		return fmt.Errorf("encode rewritten receipt for %q: %w", commandID, err)
+	}
+	if _, err := db.ExecContext(context.Background(), `UPDATE commands SET receipt_json=? WHERE command_id=?`, rewritten, commandID); err != nil {
+		return fmt.Errorf("rewrite stored receipt for %q: %w", commandID, err)
+	}
+	return nil
+}
+
+// StoredReceiptRevisionE reads the revision the Server currently holds for one
+// command.
+//
+// A scenario uses it to prove the rewrite actually landed before it asserts on the
+// Endpoint's reaction, so a failed rewrite cannot be mistaken for a correct
+// rejection.
+func (c *Cluster) StoredReceiptRevisionE(commandID string) (int64, error) {
+	if c.ServerDB == "" {
+		return 0, fmt.Errorf("cluster has no Server database path")
+	}
+	db, err := sql.Open("sqlite", c.ServerDB+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return 0, fmt.Errorf("open server database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	var existing []byte
+	err = db.QueryRowContext(context.Background(), `SELECT receipt_json FROM commands WHERE command_id=?`, commandID).Scan(&existing)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("command %q is not stored on the Server", commandID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read stored receipt for %q: %w", commandID, err)
+	}
+	var receipt struct {
+		CommandRevision int64 `json:"command_revision"`
+	}
+	if err := json.Unmarshal(existing, &receipt); err != nil {
+		return 0, fmt.Errorf("decode stored receipt for %q: %w", commandID, err)
+	}
+	return receipt.CommandRevision, nil
+}
+
+// RecordedReceiptCountE counts the receipts the Endpoint would still re-send.
+//
+// It reads the Endpoint's own journal through the same query the resend path
+// uses, so a scenario can assert that a settlement actually shrank the resend set
+// rather than only that a row exists.
+func (c *Cluster) RecordedReceiptCountE() (int, error) {
+	if c.EndpointDB == "" {
+		return 0, fmt.Errorf("cluster has no Endpoint database path")
+	}
+	db, err := sql.Open("sqlite", c.EndpointDB+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return 0, fmt.Errorf("open endpoint database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	var count int
+	err = db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM command_journal WHERE phase='receipt_recorded' AND NOT EXISTS (SELECT 1 FROM receipt_settlement s WHERE s.command_id = command_journal.command_id)`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count recorded receipts: %w", err)
+	}
+	return count, nil
+}
+
+// SecondaryLog reads the second Server's own log.
+//
+// It is the only evidence that the second Server received a receipt. A settlement
+// row proves the Endpoint decided something, but it cannot prove the receipt was
+// never sent: the per-receipt rejection path settles the same row after the
+// Server has already refused it.
+func (c *Cluster) SecondaryLog() (string, error) {
+	if c.SecondaryLogPath == "" {
+		return "", fmt.Errorf("cluster was not started with a second Server log")
+	}
+	data, err := os.ReadFile(c.SecondaryLogPath)
+	if err != nil {
+		return "", fmt.Errorf("read secondary server log: %w", err)
+	}
+	return string(data), nil
+}
+
+// CountSecondaryLogOccurrences counts how often one needle appears in the second
+// Server's log.
+//
+// A scenario uses it to prove the second Server received no receipt for a
+// command: the Server logs one rejection line per receipt it refuses, so a count
+// of zero is the only evidence that the receipt was never sent at all.
+func (c *Cluster) CountSecondaryLogOccurrences(needle string) (int, error) {
+	log, err := c.SecondaryLog()
+	if err != nil {
+		return 0, err
+	}
+	return strings.Count(log, needle), nil
 }
