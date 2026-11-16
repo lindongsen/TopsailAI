@@ -396,13 +396,71 @@ func TestReadResultsEncodeEmptyCollectionsAsArrays(t *testing.T) {
 
 // TestMessageHelpersPreserveProviderPresentationSemantics proves the standalone
 // Provider keeps the old adapter's stored-body counts and step-record rendering.
+//
+// The body is asserted as the text it holds, not as a JSON string. The provider
+// stores `raw_text` as a JSON string, so marshalling it would print a quoted body
+// with every real newline escaped as \n, which collapses a multi-line answer onto
+// one line. That was the reported defect, so this assertion states the readable
+// form and would fail if the quoting came back.
 func TestMessageHelpersPreserveProviderPresentationSemantics(t *testing.T) {
 	stored := `{"raw_text":"hello","step_name":"task"}`
-	if got := unwrapContent(stored); got != "topsailai.task\n\"hello\"" {
+	if got := unwrapContent(stored); got != "topsailai.task\nhello" {
 		t.Fatalf("unwrapped=%q", got)
 	}
 	if got := tokenCount("hello world"); got <= 0 {
 		t.Fatalf("token count=%d", got)
+	}
+}
+
+// TestUnwrapContentKeepsStepBodyLineStructure proves a multi-line step body keeps
+// its real line breaks.
+//
+// The fixture carries three real newlines, because a single-line fixture cannot
+// express the failure mode: a quoted dump of one line is still one line, so the
+// assertion would pass while the defect was present. The escaped form is also
+// rejected explicitly, so a body that is quoted again fails with a message naming
+// the cause instead of only reporting a mismatch.
+func TestUnwrapContentKeepsStepBodyLineStructure(t *testing.T) {
+	stored := `{"raw_text":"first line\nsecond line\n\nfourth line","step_name":"final_answer"}`
+	got := unwrapContent(stored)
+	want := "topsailai.final_answer\nfirst line\nsecond line\n\nfourth line"
+	if got != want {
+		t.Fatalf("unwrapped=%q, want %q", got, want)
+	}
+	if strings.Contains(got, `\n`) {
+		t.Fatalf("unwrapped body still carries an escaped newline: %q", got)
+	}
+	if strings.HasPrefix(got, "topsailai.final_answer\n\"") {
+		t.Fatalf("unwrapped body is still a quoted JSON string: %q", got)
+	}
+}
+
+// TestUnwrapContentKeepsNonStringStepBody proves a step body that is not a string
+// keeps a faithful representation.
+//
+// Only a string has a plain-text form to prefer, so a structured body must keep
+// the JSON form rather than being flattened by fmt.Sprint, which would print a map
+// in Go syntax and lose the field names a reader needs.
+func TestUnwrapContentKeepsNonStringStepBody(t *testing.T) {
+	stored := `{"raw_text":{"kind":"note","count":2},"step_name":"observation"}`
+	got := unwrapContent(stored)
+	want := `topsailai.observation` + "\n" + `{"count":2,"kind":"note"}`
+	if got != want {
+		t.Fatalf("unwrapped=%q, want %q", got, want)
+	}
+}
+
+// TestUnwrapContentKeepsExtraStepFields proves a record with fields beyond the step
+// name and body still shows them.
+//
+// The extra fields are dumped as JSON, so this also proves the string body change
+// did not disturb the remaining record.
+func TestUnwrapContentKeepsExtraStepFields(t *testing.T) {
+	stored := `{"raw_text":"body text","step_name":"task","tool":"read_file"}`
+	got := unwrapContent(stored)
+	want := "topsailai.task\nbody text\n" + `{"tool":"read_file"}`
+	if got != want {
+		t.Fatalf("unwrapped=%q, want %q", got, want)
 	}
 }
 

@@ -527,6 +527,14 @@ func modelAvailability(entry modelEntry) (bool, string) {
 	}
 	return true, ""
 }
+
+// unwrapContent converts one stored conversation body into readable text.
+//
+// The provider stores a step record as a JSON object or array carrying a step name
+// and the step body, so the body is unwrapped here rather than in the renderer:
+// this record shape is provider detail, and the renderer must stay generic.
+//
+// A body that is not a step record is returned unchanged, so nothing is lost.
 func unwrapContent(content string) string {
 	if !strings.Contains(content, "step_name") {
 		return content
@@ -546,7 +554,7 @@ func unwrapContent(content string) string {
 		builder.WriteByte('\n')
 		delete(entry, "step_name")
 		if raw, present := entry["raw_text"]; present {
-			builder.WriteString(providerJSONDump(raw))
+			builder.WriteString(providerStepText(raw))
 			builder.WriteByte('\n')
 			delete(entry, "raw_text")
 		}
@@ -557,6 +565,20 @@ func unwrapContent(content string) string {
 		builder.WriteByte('\n')
 	}
 	return strings.TrimSpace(builder.String())
+}
+
+// providerStepText renders one step body as the text it holds.
+//
+// The provider stores the body as a JSON string, so marshalling it would produce a
+// quoted, escaped string: every real newline becomes the two characters \n and the
+// whole body collapses onto one line, which is unreadable for a multi-line answer.
+// A string is therefore written verbatim, and only a non-string value keeps the JSON
+// form, because such a value has no plain-text form to prefer.
+func providerStepText(value any) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return providerJSONDump(value)
 }
 
 func providerStepEntries(decoded any) ([]map[string]any, bool) {
