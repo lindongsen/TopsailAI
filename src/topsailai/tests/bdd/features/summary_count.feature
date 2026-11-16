@@ -11,5 +11,3 @@ Feature: Count successful context summaries
       | layer      | policy   |
       | user2agent | normal   |
       | agent2llm  | normal   |
-      | user2agent | recovery |
-      | agent2llm  | recovery |

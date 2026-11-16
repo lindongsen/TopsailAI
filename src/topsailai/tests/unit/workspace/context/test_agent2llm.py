@@ -238,9 +238,7 @@ class TestSummarizeMessagesForProcessing:
     def mock_agent2llm(self):
         """Create a mock ContextRuntimeAgent2LLM instance."""
         from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
-        from topsailai.workspace.context.summary_recovery import RecoveryConfig
         instance = ContextRuntimeAgent2LLM()
-        instance.summary_recovery_config = RecoveryConfig(enabled=False)
         instance.ai_agent = MagicMock()
         instance.messages = []
         return instance
@@ -543,9 +541,7 @@ class TestEdgeCases:
     def mock_agent2llm(self):
         """Create a mock ContextRuntimeAgent2LLM instance."""
         from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
-        from topsailai.workspace.context.summary_recovery import RecoveryConfig
         instance = ContextRuntimeAgent2LLM()
-        instance.summary_recovery_config = RecoveryConfig(enabled=False)
         instance.ai_agent = MagicMock()
         instance.messages = []
         return instance
@@ -632,9 +628,7 @@ class TestExceptionHandling:
     def mock_agent2llm(self):
         """Create a mock ContextRuntimeAgent2LLM instance."""
         from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
-        from topsailai.workspace.context.summary_recovery import RecoveryConfig
         instance = ContextRuntimeAgent2LLM()
-        instance.summary_recovery_config = RecoveryConfig(enabled=False)
         instance.ai_agent = MagicMock()
         instance.messages = []
         return instance
