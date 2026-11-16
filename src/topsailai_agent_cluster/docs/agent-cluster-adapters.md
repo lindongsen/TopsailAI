@@ -134,8 +134,20 @@ would require a future sandbox design and is outside this MVP.
 
 Each Adapter instance names one locally approved provider executable and fixed launch configuration. The generic
 CLI Adapter validates common fields, starts that executable directly with an argv array and no shell,
-supplies a minimal environment, applies bounded stdin/stdout/stderr, and terminates only the exact
-process group it created.
+passes the Endpoint process environment through explicitly, applies bounded stdin/stdout/stderr, and
+terminates only the exact process group it created.
+
+The environment is passed rather than narrowed to a whitelist, and the reason is the architecture
+rather than convenience. A Provider's own configuration is delivered through the process environment:
+the packaged launcher exports `AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS` and
+`AGENT_CLUSTER_TOPSAILAI_EXECUTABLE` before the Endpoint starts, and the Provider reads them at its own
+process boundary. A whitelist would therefore have to name those variables inside the Endpoint, which
+is exactly the provider vocabulary the cluster contract forbids, and a whitelist of generic variables
+only would silently drop the configuration the operator exported. Narrowing the environment is also
+not a security boundary here: the Provider runs as the same operating-system identity as the Endpoint
+and is a locally trusted component, so it can already read anything that identity can read. The
+inheritance is made explicit in code so the dependency is visible instead of implicit, and the trust
+model below states what that does and does not protect.
 
 Provider business configuration and secrets are local provider startup configuration, not an arbitrary
 `settings` map copied into each request. The per-request protocol contains the adapter ID, function,

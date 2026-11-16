@@ -713,8 +713,11 @@ CLI exit and is not killed by later invocation cleanup.
 
 ### Configuration and trust boundary
 
-The provider executable, fixed base arguments, working directory, minimal environment and protected
-provider configuration are Endpoint-local administrative settings. Each request carries only a
+The provider executable, fixed base arguments, working directory, process environment and protected
+provider configuration are Endpoint-local administrative settings. The environment is passed through
+explicitly rather than narrowed, because a Provider's own configuration arrives that way and because
+the Provider is a locally trusted component running as the Endpoint's own operating-system identity,
+so a whitelist would not be a security boundary. Each request carries only a
 adapter ID and its operation data. Provider-specific secrets use a protected local mechanism and are
 not echoed in responses, stderr, receipts or audit records.
 
