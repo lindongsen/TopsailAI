@@ -178,10 +178,9 @@ const followPendingBytes = 4 << 20
 // and terminate the stream with consumer_overflow, even though the operator's
 // terminal was keeping up.
 type followSession struct {
-	records <-chan protocol.OutputFollowRecord
-	cancel  context.CancelFunc
-	color   ColorPolicy
-	done    chan struct{}
+	cancel context.CancelFunc
+	color  ColorPolicy
+	done   chan struct{}
 	// request is the intent this stream was opened for, so a recovery snapshot
 	// addresses the session that was followed rather than whatever the selection
 	// happens to be when the stream ends.
@@ -215,43 +214,101 @@ type followSession struct {
 
 // newFollowSession starts one stream. The caller owns the parent context, so a
 // prompt that ends for any reason also ends the stream.
+//
+// The open runs in its own goroutine, because the caller is the REPL prompt and
+// it opens the stream before it starts reading keys. A synchronous open made the
+// terminal deaf for the whole provider startup window, so "any key stops" waited
+// for the provider instead of for the operator. The session is returned
+// immediately and the stream is attached when the request returns.
+//
+// A client without the streaming seam is still refused here, because that is a
+// capability decision rather than a network wait, and the caller must report it
+// before the prompt is drawn.
 func newFollowSession(parent context.Context, api InteractiveAPI, request followRequest, color ColorPolicy) (*followSession, error) {
 	follower, ok := api.(OutputFollower)
 	if !ok {
 		return nil, fmt.Errorf("follow is unavailable: the API client does not support streaming output")
 	}
 	ctx, cancel := context.WithCancel(parent)
-	records, err := follower.FollowOutput(ctx, request.EndpointID, request.ResourceID, request.ProviderGeneration, request.MaxBytes, request.MaxLines)
+	session := newFollowSessionWithOpen(cancel, color, request)
+	go session.open(ctx, follower)
+	return session, nil
+}
+
+// open performs the blocking request and hands the stream to the pump. It is the
+// only place the transport is opened, so every construction path shares one
+// ordering: the session exists first, the stream is attached second.
+//
+// A failure is recorded as a start failure rather than an interrupted stream,
+// because the operator never had a stream to interrupt. A failure caused by the
+// operator's own keypress is not reported at all: the session is already ended,
+// so the diagnostic would describe a stream nobody is waiting for.
+func (s *followSession) open(ctx context.Context, follower OutputFollower) {
+	records, err := follower.FollowOutput(ctx, s.request.EndpointID, s.request.ResourceID, s.request.ProviderGeneration, s.request.MaxBytes, s.request.MaxLines)
 	if err != nil {
-		cancel()
-		return nil, err
+		s.failStart(err)
+		return
 	}
-	return newFollowSessionWithRecords(records, cancel, color, request), nil
+	go s.pump(records)
+}
+
+// failStart records a stream that never opened. It is reported once, through the
+// same Idle seam the editor already polls, so the operator reads one diagnostic
+// line instead of a prompt that silently does nothing.
+//
+// The failure is carried as a rendered line and not as Idle's error, because an
+// Idle error ends the editor read. A tail that could not start is a diagnostic
+// about one automatic step, not a reason to destroy the operator's prompt, and
+// the synchronous open this replaced reported it the same way.
+func (s *followSession) failStart(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		// The operator stopped the prompt before the request returned, so there
+		// is no prompt left to report to.
+		return
+	}
+	s.pending = append(s.pending, []byte(renderFollowStatus("follow failed: "+sanitizeInlineText(err.Error()), ansiRed, s.color, false)+"\n")...)
+	s.ended = true
+	s.cond.Broadcast()
+}
+
+// newFollowSessionWithOpen builds a session whose stream is not attached yet. It
+// is the single construction path for an asynchronous open, so a session can
+// never exist without the pump that drains the transport between editor polls.
+func newFollowSessionWithOpen(cancel context.CancelFunc, color ColorPolicy, request followRequest) *followSession {
+	session := &followSession{cancel: cancel, color: color, done: make(chan struct{}), request: request}
+	session.cond = sync.NewCond(&session.mu)
+	return session
 }
 
 // newFollowSessionWithRecords starts the pump for an already opened stream. It is
-// the single construction path, so a session can never exist without a reader
-// that drains the transport between editor polls. The request is carried so a
-// recovery snapshot can address the session that was followed.
+// the construction path for a caller that owns the open, so a test can drive the
+// pump without a transport. The request is carried so a recovery snapshot can
+// address the session that was followed.
 func newFollowSessionWithRecords(records <-chan protocol.OutputFollowRecord, cancel context.CancelFunc, color ColorPolicy, request followRequest) *followSession {
-	session := &followSession{records: records, cancel: cancel, color: color, done: make(chan struct{}), request: request}
-	session.cond = sync.NewCond(&session.mu)
-	go session.pump()
+	session := newFollowSessionWithOpen(cancel, color, request)
+	go session.pump(records)
 	return session
 }
 
 // pump is the only reader of the record stream. It renders every record as it
 // arrives, so the transport never waits for the editor's poll tick.
 //
+// The stream is passed in rather than read from the session, because the open
+// runs in its own goroutine and the pump must not start before the channel
+// exists. A nil stream means the open failed, which is reported as a start
+// failure instead of an interrupted stream.
+//
 // Provider bytes and the terminal status line are counted separately, because
 // only provider bytes prove the operator saw output. A stream that ends with
 // nothing but its own status line showed the operator no output at all.
-func (s *followSession) pump() {
+func (s *followSession) pump(records <-chan protocol.OutputFollowRecord) {
 	for {
 		select {
 		case <-s.done:
 			return
-		case record, open := <-s.records:
+		case record, open := <-records:
 			if !open {
 				// A channel that closes without a terminal record is an
 				// interrupted stream, never a clean finish, so the message is red.
@@ -386,6 +443,13 @@ func emptyToNil(payload []byte) []byte {
 // because that is the operator's keypress. The distinction matters: a keypress
 // discards the bytes still pending, so the operator can stop a stream that had
 // already received records and still see nothing.
+//
+// The open runs off the prompt path, so a stop can arrive while the request is
+// still in flight. Cancelling the context releases that request, and this method
+// deliberately does not wait for it: waiting would put the transport back on the
+// prompt path, so a hung Server would delay the stop label exactly as the
+// synchronous open used to. A request that returns after the stop finds the
+// session already ended, so its pump exits at once and its records are dropped.
 func (s *followSession) Stop() {
 	s.stopOnce.Do(func() {
 		s.mu.Lock()

@@ -379,10 +379,9 @@ func TestStartFollowReportsStartFailure(t *testing.T) {
 	if session == nil {
 		t.Fatal("startFollow returned nil")
 	}
-	payload, err := session.Idle()
-	if err != nil {
-		t.Fatalf("Idle: %v", err)
-	}
+	// The open runs off the prompt path, so the failure is recorded by its own
+	// goroutine and the first poll can legitimately return nothing.
+	payload := waitFollowIdle(t, session)
 	if !strings.Contains(string(payload), "follow failed: transport unavailable") {
 		t.Fatalf("payload=%q", payload)
 	}

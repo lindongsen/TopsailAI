@@ -56,7 +56,7 @@ func TestUnitSessionEntryArmsOneLiveTail(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := stub.followRequests()
+	requests := waitFollowRequests(t, stub, 1)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
