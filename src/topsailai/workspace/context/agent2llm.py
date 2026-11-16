@@ -281,6 +281,39 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         Returns:
             str | None: The summarized text, or None if summarization fails.
         """
+        # ======================================================================
+        # WARNING: MESSAGE COMPARISON IS A TRAP. READ BEFORE COMPARING ANYTHING.
+        # ======================================================================
+        # The messages handled here come from two different shapes and they are
+        # NOT equal even when they describe the same logical message:
+        #
+        #   persisted shape (from the database)
+        #       {"role": ..., "content": ..., "create_time": "2026-11-16 15:35:01.123"}
+        #   runtime shape (self.messages / ai_agent.messages)
+        #       {"role": ..., "content": ...}
+        #
+        # The persistence layer injects "create_time" into every non-system
+        # message before writing it (context/chat_history_manager/__base.py,
+        # add_session_message). The runtime never creates that key. So a message
+        # loaded from storage at turn start carries it, while a message created
+        # during the current turn does not.
+        #
+        # Consequence: raw equality (==, or a key built from the whole dict)
+        # fails for exactly the newest message. That is the message a summarizer
+        # most needs to identify, so the failure looks like "the persisted
+        # context changed" rather than "the shapes differ".
+        #
+        # This is not hypothetical. The removed summary-recovery mechanism
+        # compared raw dicts here, always mismatched on the newest message, and
+        # raised "Summary recovery persisted context changed; originals
+        # retained" on every turn. It never once succeeded in production while
+        # its unit tests passed, because those tests built the persisted shape
+        # from the in-memory dict and therefore modelled both sides as equal.
+        #
+        # REQUIRED: compare semantic projections, never raw dicts. Use
+        # utils.history_replay_message.history_replay_semantic_projection on
+        # both sides. See utils/message_shape.py for the full shape reference.
+        # ======================================================================
         index = self.ai_agent.get_work_memory_first_position()
         if index is None:
             return None
