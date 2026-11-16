@@ -46,6 +46,7 @@ import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
+from cli_topsailai.session_metrics import METRIC_FIELDS, session_metrics
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_category import resolve_session_category
 
@@ -187,6 +188,17 @@ def _format_session(session, index, total_width, color_enabled):
     cache_hit_label = _color("Cache Hit Rate:".ljust(label_width), yellow, color_enabled)
     lines.append(f"{indent}{cache_hit_label} {_cache_hit_rate(total_cached_tokens, total_prompt_tokens)}")
 
+    # Every execution metric, rendered from the shared field list so this card
+    # and the JSON payload can never disagree about which metrics exist.
+    metrics = session_metrics(session)
+    for name, _attribute, _default in METRIC_FIELDS:
+        metric_label = _color(f"{name}:".ljust(label_width), yellow, color_enabled)
+        lines.append(f"{indent}{metric_label} {metrics[name]}")
+    avg_label = _color("first_byte_avg_ms:".ljust(label_width), yellow, color_enabled)
+    lines.append(f"{indent}{avg_label} {metrics['first_byte_avg_ms']}")
+    model_label = _color("model_name:".ljust(label_width), yellow, color_enabled)
+    lines.append(f"{indent}{model_label} {metrics['model_name'] or '(none)'}")
+
     if topsailai_home:
         home_label = _color("Home:".ljust(label_width), yellow, color_enabled)
         lines.append(f"{indent}{home_label} {topsailai_home}")
@@ -275,6 +287,8 @@ def _session_to_dict(session):
         "total_usage_tokens": total_prompt_tokens + total_completion_tokens,
         "total_cached_tokens": total_cached_tokens,
         "cache_hit_rate": _cache_hit_rate(total_cached_tokens, total_prompt_tokens),
+        # Every execution metric, emitted without suppression.
+        **session_metrics(session),
     }
 
 
