@@ -1123,3 +1123,179 @@ Why this prevents recurrence: the printed list and the resolver are two function
 leaves the other addressing rows the operator never saw. The failure is silent because the number is
 valid, just for a different machine. Sharing the slice makes the two views structurally identical,
 and the order requirement is the part that a later refactor is most likely to break.
+
+## A provider version directory is hardcoded in the site configuration
+
+Trigger: the Provider CLI package installs to a versioned path
+`/opt/agent-cluster/providers/topsailai/<version>/agent-cluster-provider-topsailai`, and
+`node.conf` names that exact path in `ADAPTERS.command`. Upgrading the Provider package alone
+therefore leaves the Endpoint invoking the previous binary, because the configuration still points
+at the old version directory. The binary package upgrade succeeds, the Endpoint starts normally,
+and nothing in the startup log looks wrong.
+
+Action: when upgrading a Provider CLI, rewrite `ADAPTERS.command` in every site configuration to
+the new version directory before building the config packages, and verify the packaged `node.conf`
+names the new path. After deployment, confirm on each node that the provider directory listing
+contains only the new version and that `ADAPTERS.command` resolves to it.
+
+Why this prevents recurrence: the version directory is a second source of truth for which binary is
+active, and it lives in configuration rather than in the package. A package upgrade and a
+configuration upgrade are two separate steps, and only the second one changes which executable runs.
+The failure is silent because the old binary is still a valid binary: it starts, it answers, and it
+reports a healthy descriptor. The only symptom is that behaviour which changed in the new version
+does not appear, which is indistinguishable from a feature that was never implemented.
+
+## A conffile prompt leaves a dependency package unconfigured
+
+Trigger: `dpkg -i` over a non-interactive SSH session stopped at
+`Configuration file '/opt/agent-cluster/conf/endpoint/node.conf' ... [default=N] ?` and then
+reported `end of file on stdin at conffile prompt`. The config package stayed unconfigured, so
+`agent-cluster-endpoint` failed with `dependency problems - leaving unconfigured` even though its
+own files had been unpacked successfully.
+
+Action: when installing a config package whose `node.conf` was deliberately regenerated from the
+live node, pass `--force-confnew` so the packaged file wins without a prompt. Then verify with
+`dpkg-query -W -f='${Package} ${Version} ${Status}'` that every package reports
+`install ok installed`, not merely a version string.
+
+Why this prevents recurrence: `dpkg-query -W` prints a version for an unpacked-but-unconfigured
+package, so a version check alone looks successful while the service cannot start. The dependency
+failure is reported against a different package than the one that prompted, which sends the
+investigation to the wrong package. Only the `Status` field distinguishes installed from
+unconfigured, and only `--force-confnew` removes the prompt that a non-interactive session cannot
+answer.
+
+## Two interfaces of one provider can use two identifier spaces
+
+Trigger: the cluster reported a provider session identifier (`sad-*`) and passed it to
+`topsailai workspace resume -s`, which resolves its target through the session database. The
+authority check that ran first read `workspace list`, which does contain that row, so the check
+passed and the command was issued. The command then failed with `session_not_found`, because the
+session database is keyed by a different identifier form and does not contain analysis sessions at
+all. Resume therefore worked for `wa-*` sessions and could never work for `sad-*` sessions.
+
+Action: when one provider exposes two interfaces that both accept "a session identifier", confirm
+that both resolve the identifier against the same store. Run the authority interface and the
+executing interface with the same identifier and compare the results. If the authority interface
+finds the row and the executing interface does not, the two interfaces disagree about identity and
+the authority check is not a preflight for the command.
+
+Why this prevents recurrence: the authority check looks like a complete preflight, so a passing
+check reads as proof that the command can succeed. The failure is also asymmetric, because some
+identifiers work and others do not, which reads as an intermittent provider fault rather than a
+systematic identity mismatch. The two interfaces are usually written at different times for
+different purposes, so nothing in either one names the other's store. Comparing them with one
+identifier is what turns "the target was validated" into "the target is addressable".
+
+## A resource kind that cannot support an operation must not be offered for it
+
+Trigger: the cluster reported 12 analysis sessions as `unknown` with an empty generation and offered
+them as resume candidates. Those sessions are driver sessions, absent from the session database by
+design, so resume could never succeed. Every attempt produced a provider error that looked like a
+fault rather than a refused capability, and the operator reported the whole command as unusable.
+
+Action: when a resource kind cannot support an operation, exclude it where the resource is reported
+or mark it unsupported there, not where the operation fails. A capability that is advertised must be
+reachable, and a resource that is listed must be usable for the operations the surface offers on it.
+Prefer omitting the resource from the operation's candidate set over listing it and refusing
+afterwards.
+
+Why this prevents recurrence: a listed-but-unusable resource produces a failure that is
+indistinguishable from a defect, so the investigation starts at the operation instead of at the
+capability declaration. The refusal is also correct in isolation, which makes the operation look
+broken rather than the offer being wrong. Declaring the capability where the resource is reported
+keeps the offer and the ability in one place.
+
+## A raw error count overstates the problem it appears to measure
+
+Trigger: the operator reported frequent provider errors, and the first measurement counted every
+`"level":"ERROR"` entry. That count was dominated by channel transport noise: 562 `broken pipe` and
+100 `connection reset by peer` in a single hour, emitted from `resend recorded receipt` and
+`publish inventory`. Only 25 of the 726 entries in that hour were a provider error. Reporting the raw
+count would have sent the investigation to the reconnect path instead of the provider seam.
+
+Action: before reporting an error rate, group the entries by the error value and by the emitting
+message, then separate transport failures from provider failures. A transport error is emitted by the
+channel and describes a link; a provider error is emitted by the adapter seam and describes a
+provider call. Report the two counts separately, and state which one the operator's symptom maps to.
+
+Why this prevents recurrence: every layer logs at ERROR, so one severity covers several unrelated
+failure domains. A reconnect storm produces thousands of entries and hides a handful of real provider
+failures, and the largest bucket is the one that gets investigated. Grouping by value and by emitter
+is what turns "there are many errors" into "these three errors are the provider problem".
+
+## A listing and the operation it offers must read the same authority
+
+Trigger: `history` listed 30 sessions and marked three of them `RESUMABLE=yes` with a
+`resume_resource_id`, while `resume` refused the same three with
+`provider session row was not found`. The cluster side was correct throughout: it minted the
+resource ID, and the Endpoint gate rejected only a live target. The refusal came from the
+provider's own pre-check, which read `workspace list --json --local` and therefore saw one row,
+while `history` read `project list_sessions --json` and saw thirty. The two commands read
+different sources: one scans `workspace/task/` for `.stdout` files and drops every row whose
+metadata says `completed`, the other reads the persisted session database.
+
+Action: when one surface offers an operation and another surface performs it, compare the two
+provider commands, not the two code paths. A listing is written to be informative, so it reads
+the most complete source available; an execution path is written to be strict, so it reads the
+narrowest source that proves the target. Both choices are locally correct and the pair is wrong.
+Then check the second-order case: a session interrupted before it wrote any output has no
+`.stdout` file at all, so it is invisible to the directory scan even with the completed rows
+included. Only a source that reads the persisted records can resolve it.
+
+Why this prevents recurrence: the error names the target as missing, which sends the
+investigation to the mapping, the inventory and the resource ID, all of which are correct. The
+row exists, the mapping exists, and the provider command that would perform the resume can
+already resolve it. The disagreement is between two reads, and neither read is in the failing
+call stack. Comparing the commands is what turns "the target was not found" into "the target was
+looked for in the wrong place".
+
+## A silently ignored flag makes a partial fix look complete
+
+Trigger: the natural fix for the authority mismatch above was to add `--all` to the existing
+`workspace list --json --local` argv. `--all` is registered on the parent `workspace` parser, not
+on the `list` subparser, and the top-level parser uses `parse_known_args`, so
+`workspace list --all --json --local` exits 0, writes nothing to stderr, and returns 1 row, while
+`workspace --all list --json --local` returns 8. The wrong placement is indistinguishable from
+the right one by exit status, stderr or any log line.
+
+Action: before trusting a flag, run both placements and compare the row count, not the exit
+code. When a flag is registered on a parent parser, the argv order is part of the contract, so
+pin the exact argv in a test rather than asserting that the flag appears somewhere in the slice.
+This is the same class as the recorded lesson about Go's `flag` parser stopping at the first
+positional argument, but the mechanism differs: Go rejects the misplaced flag, while Python's
+`parse_known_args` discards it. A rejection is visible; a discard is not.
+
+Why this prevents recurrence: a partial fix that changes nothing at runtime still passes a review
+that reads the diff, because the added token is correct in isolation. It also produces exactly
+the reported symptom, so the next investigation cannot tell "the fix did not work" from "the fix
+was never applied". Comparing row counts across both placements is the only evidence that
+separates the two.
+
+## A duplicated validation narrows reachability without adding safety
+
+Trigger: `resume` refused a session with `provider session row was not found`, while the provider's
+own resume path would have accepted it. The cluster's `requireResumableRecord`
+(`providers/topsailai/mutation_authority.go:133`) re-implemented the provider's existence and
+liveness decision, and it read a narrower source. It runs in `mutationArgs`
+(`providers/topsailai/mutation.go:161`) before any argv exists, so the provider CLI was never
+started and its correct validation never ran. The provider's `resume_session_result`
+(`cli/cli_topsailai/project_scope.py:1859`) already performs the existence check, the workspace
+check, the liveness check and a late recheck at the launch boundary, and its `session_liveness`
+returns `idle` when a session has no `.stdout` candidate, which is the correct answer for a session
+no process holds.
+
+Action: when a caller validates a precondition that the callee also validates, compare the two
+sources before keeping both. If the callee's check is at least as strong and runs in the same
+execution path, delete the caller's copy rather than widening it. Widening keeps two
+implementations of one decision, and the narrower one silently wins because it runs first. Then
+check what the caller's copy actually bought: here it bought a precise error code before spawning a
+process, which is a message-format benefit, not a safety property. Decide explicitly whether that
+benefit is worth the reachability it costs, and if it is kept, prove the two sources agree.
+
+Why this prevents recurrence: a duplicated guard looks like defence in depth, so review accepts it
+as strictly safer. It is not: the earlier guard decides, and the later guard only runs when the
+earlier one allows it. A narrower earlier guard therefore removes capability while appearing to add
+protection, and the failure is attributed to the callee, which is the component that never ran. The
+symptom is a "not found" for something that exists, which sends the investigation to identity
+mapping and storage rather than to the guard that refused it.
