@@ -103,6 +103,43 @@ const (
 	EffectUnknown      EffectCertainty = "unknown"
 )
 
+// ReceiptRejection names why a Server refused a receipt it could not apply.
+//
+// The vocabulary is closed and shared by both sides, because the Endpoint must
+// decide from the reason alone whether the receipt can be forgotten. A free-form
+// message would force the Endpoint to parse prose, and a reason it does not
+// recognise must leave the receipt pending rather than discard evidence.
+type ReceiptRejection string
+
+const (
+	// ReceiptRejectedUnknownCommand means the Server holds no intent matching the
+	// receipt's command ID and request hash. This is the normal outcome after an
+	// Endpoint is re-homed to a different Server, which never admitted the
+	// command. The receipt is settled because no future retry can make the Server
+	// recognise it.
+	ReceiptRejectedUnknownCommand ReceiptRejection = "unknown_command"
+	// ReceiptRejectedRevisionStale means the Server already stores a newer
+	// revision of the same receipt. The submitted revision is represented by that
+	// newer one, so the receipt is settled rather than retried forever.
+	ReceiptRejectedRevisionStale ReceiptRejection = "revision_stale"
+	// ReceiptRejectedRevisionConflict means the Server stores a different receipt
+	// at the same revision. This is a real integrity disagreement, not a
+	// re-homing artefact, so it is never settled: discarding it would erase the
+	// only evidence that two sides disagree about one command.
+	ReceiptRejectedRevisionConflict ReceiptRejection = "revision_conflict"
+)
+
+// Settles reports whether a rejection reason authorises the Endpoint to forget
+// the receipt.
+//
+// Only the two reasons that prove the receipt can never be applied settle. An
+// unrecognised reason returns false, so a newer Server that introduces a reason
+// this Endpoint does not understand keeps the receipt pending instead of
+// silently dropping it.
+func (r ReceiptRejection) Settles() bool {
+	return r == ReceiptRejectedUnknownCommand || r == ReceiptRejectedRevisionStale
+}
+
 // CommandStatus describes Server-side command lifecycle.
 type CommandStatus string
 

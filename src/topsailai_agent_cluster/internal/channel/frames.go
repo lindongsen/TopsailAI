@@ -37,6 +37,13 @@ const (
 	FrameReceipt = "receipt"
 	// FrameReceiptAck acknowledges a persisted receipt.
 	FrameReceiptAck = "receipt_ack"
+	// FrameReceiptRejected tells the Endpoint that the Server will never apply
+	// this receipt. It is a separate frame type from FrameReceiptAck because the
+	// two carry different terminal meanings: an acknowledgement says the receipt
+	// is stored, while a rejection says it cannot be stored and the Endpoint must
+	// decide whether to forget it. Folding them into one frame would force the
+	// Endpoint to infer the outcome from an empty field.
+	FrameReceiptRejected = "receipt_rejected"
 	// FrameOutputRequest requests a bounded provider output snapshot.
 	FrameOutputRequest  = "output_request"
 	FrameLaunchRequest  = "launch_request"
@@ -92,6 +99,11 @@ type Frame struct {
 	Hostname             string                           `json:"hostname,omitempty"`
 	RequestID            string                           `json:"request_id,omitempty"`
 	Reason               string                           `json:"reason,omitempty"`
+	// ReceiptRejection carries the closed reason vocabulary for
+	// FrameReceiptRejected. It is typed rather than folded into Reason so an
+	// unrecognised value stays distinguishable from an absent one: the Endpoint
+	// must keep the receipt pending when it cannot interpret the reason.
+	ReceiptRejection protocol.ReceiptRejection `json:"receipt_rejection,omitempty"`
 	SnapshotRevision     int64                            `json:"snapshot_revision,omitempty"`
 	Payload              any                              `json:"payload,omitempty"`
 	Intent               *protocol.ImmutableIntent        `json:"intent,omitempty"`

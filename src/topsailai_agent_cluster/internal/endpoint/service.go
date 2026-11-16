@@ -306,6 +306,36 @@ func (s *Service) waitForAttachedChannel(ctx context.Context) bool {
 	}
 }
 
+// settleRejectedReceipt records that the Server will never apply one receipt.
+//
+// Only a reason that proves the receipt can never be applied settles it. An
+// integrity conflict is kept pending on purpose: it is the only evidence that
+// the two sides disagree about one command, and discarding it would hide a real
+// defect behind a clean-looking resend set. An unrecognised reason is also kept,
+// so a newer Server cannot make this Endpoint silently drop evidence it does not
+// understand.
+func (s *Service) settleRejectedReceipt(ctx context.Context, frame channel.Frame) {
+	key := frame.FrameID
+	if key == "" {
+		key = frame.RequestID
+	}
+	if key == "" {
+		s.loggerWarn("receipt rejection without a command id", "reason", frame.ReceiptRejection)
+		return
+	}
+	if !frame.ReceiptRejection.Settles() {
+		s.loggerWarn("receipt rejection kept pending", "command_id", key, "reason", frame.ReceiptRejection)
+		return
+	}
+	if err := s.storage.SettleReceipt(ctx, key, frame.ReceiptRejection, time.Now().UnixMilli()); err != nil {
+		s.logError("settle rejected receipt", err)
+		return
+	}
+	s.receiptsMu.Lock()
+	delete(s.pendingReceipts, key)
+	s.receiptsMu.Unlock()
+}
+
 func (s *Service) resendPendingReceipts(ctx context.Context) {
 	receipts, err := s.storage.ListRecordedReceipts(ctx)
 	if err != nil {
@@ -447,6 +477,8 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.receiptsMu.Lock()
 			delete(s.pendingReceipts, key)
 			s.receiptsMu.Unlock()
+		case channel.FrameReceiptRejected:
+			s.settleRejectedReceipt(ctx, frame)
 		case channel.FrameInventoryRefresh:
 			s.publishRefresh(ctx, frame.RequestID)
 		case channel.FrameCommand:

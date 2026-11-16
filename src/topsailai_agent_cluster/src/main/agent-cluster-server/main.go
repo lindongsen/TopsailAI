@@ -154,7 +154,10 @@ func main() {
 		if runtime.DropAck {
 			ackSender = func(context.Context, string) error { return nil }
 		}
-		if err := serverapi.PersistReceiptAndAck(context.Background(), store, receipt, peer, time.Now(), ackSender); err != nil {
+		reject := func(ctx context.Context, endpointID string, reason protocol.ReceiptRejection) error {
+			return channelService.SendCommand(ctx, endpointID, channel.Frame{Type: channel.FrameReceiptRejected, ProtocolVersion: channel.ProtocolVersion, FrameID: receipt.CommandID, RequestID: receipt.CommandID, ReceiptRejection: reason})
+		}
+		if err := serverapi.PersistReceiptAndAck(context.Background(), store, receipt, peer, time.Now(), ackSender, reject); err != nil {
 			logger.Error("store command receipt", "command_id", receipt.CommandID, "endpoint_id", peer.EndpointID, "error", err)
 			return
 		}

@@ -33,7 +33,7 @@ func TestPersistReceiptAndAckPersistsBeforeAck(t *testing.T) {
 		}
 		return nil
 	}
-	if err := PersistReceiptAndAck(ctx, store, receipt, channel.Peer{EndpointID: "endpoint-1"}, time.UnixMilli(2), ack); err != nil {
+	if err := PersistReceiptAndAck(ctx, store, receipt, channel.Peer{EndpointID: "endpoint-1"}, time.UnixMilli(2), ack, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !acked {
@@ -55,7 +55,7 @@ func TestPersistReceiptAndAckDoesNotAckAfterPersistenceFailure(t *testing.T) {
 	err = PersistReceiptAndAck(ctx, store, receipt, channel.Peer{EndpointID: "endpoint-1"}, time.UnixMilli(2), func(context.Context, string) error {
 		called = true
 		return nil
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("persistence failure was accepted")
 	}
@@ -69,7 +69,7 @@ func testIntent(id string) protocol.ImmutableIntent {
 }
 
 func TestPersistReceiptAndAckValidatesDependenciesAndOrdersWork(t *testing.T) {
-	if err := PersistReceiptAndAck(context.Background(), nil, protocol.ExecutionReceipt{}, channel.Peer{}, time.Now(), func(context.Context, string) error { return nil }); err == nil {
+	if err := PersistReceiptAndAck(context.Background(), nil, protocol.ExecutionReceipt{}, channel.Peer{}, time.Now(), func(context.Context, string) error { return nil }, nil); err == nil {
 		t.Fatal("nil store accepted")
 	}
 	store, err := serverstorage.Open(context.Background(), filepath.Join(t.TempDir(), "server.db"))
@@ -85,8 +85,128 @@ func TestPersistReceiptAndAckValidatesDependenciesAndOrdersWork(t *testing.T) {
 	}
 	receipt := protocol.ExecutionReceipt{CommandID: "c1", RequestHash: "h1", Outcome: "finished", Phase: protocol.PhaseReceiptRecorded}
 	called := false
-	err = PersistReceiptAndAck(context.Background(), store, receipt, channel.Peer{EndpointID: "endpoint-1"}, time.UnixMilli(10), func(_ context.Context, endpoint string) error { called = endpoint == "endpoint-1"; return nil })
+	err = PersistReceiptAndAck(context.Background(), store, receipt, channel.Peer{EndpointID: "endpoint-1"}, time.UnixMilli(10), func(_ context.Context, endpoint string) error { called = endpoint == "endpoint-1"; return nil }, nil)
 	if err != nil || !called {
 		t.Fatalf("persist/ack err=%v called=%v", err, called)
+	}
+}
+
+// TestPersistReceiptAndAckRejectsAnUnknownCommand proves the re-home case is
+// reported to the Endpoint instead of only logged. Without the rejection frame
+// the Endpoint keeps the receipt pending and re-sends it on every reconnect,
+// because it reloads the pending set from its journal.
+func TestPersistReceiptAndAckRejectsAnUnknownCommand(t *testing.T) {
+	ctx := context.Background()
+	store, err := serverstorage.Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	acked := false
+	var gotReason protocol.ReceiptRejection
+	receipt := protocol.ExecutionReceipt{CommandID: "from-the-previous-server", RequestHash: "hash", CommandRevision: 1, Phase: protocol.PhaseReceiptRecorded, EffectCertainty: protocol.EffectAcknowledged, Outcome: "accepted"}
+	err = PersistReceiptAndAck(ctx, store, receipt, channel.Peer{EndpointID: "endpoint-1"}, time.UnixMilli(2), func(context.Context, string) error {
+		acked = true
+		return nil
+	}, func(_ context.Context, endpointID string, reason protocol.ReceiptRejection) error {
+		if endpointID != "endpoint-1" {
+			t.Fatalf("rejection addressed %q, want endpoint-1", endpointID)
+		}
+		gotReason = reason
+		return nil
+	})
+	if err == nil {
+		t.Fatal("an unknown command was accepted")
+	}
+	if acked {
+		t.Fatal("an unknown command was acknowledged")
+	}
+	if gotReason != protocol.ReceiptRejectedUnknownCommand {
+		t.Fatalf("rejection reason = %q, want %q", gotReason, protocol.ReceiptRejectedUnknownCommand)
+	}
+	if !gotReason.Settles() {
+		t.Fatal("an unknown command must authorise settlement")
+	}
+}
+
+// TestPersistReceiptAndAckRejectsAConflictingRevision proves an integrity
+// disagreement is reported with a reason that does not authorise settlement.
+// Settling it would erase the only evidence that two sides disagree.
+func TestPersistReceiptAndAckRejectsAConflictingRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := serverstorage.Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertEndpoint(ctx, protocol.Endpoint{EndpointID: "endpoint-1", InstanceID: "instance-1", DisplayName: "endpoint-1", ConnectionState: "online", ObservedAtMS: 1, CapabilityRevision: "v1"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdmitCommand(ctx, testIntent("conflict"), "hash", 1); err != nil {
+		t.Fatal(err)
+	}
+	stored := protocol.ExecutionReceipt{CommandID: "conflict", RequestHash: "hash", CommandRevision: 1, Phase: protocol.PhaseReceiptRecorded, EffectCertainty: protocol.EffectAcknowledged, Outcome: "accepted"}
+	if err := store.ApplyReceipt(ctx, stored, 2); err != nil {
+		t.Fatal(err)
+	}
+	conflicting := stored
+	conflicting.Outcome = "rejected"
+	var gotReason protocol.ReceiptRejection
+	err = PersistReceiptAndAck(ctx, store, conflicting, channel.Peer{EndpointID: "endpoint-1"}, time.UnixMilli(3), func(context.Context, string) error {
+		t.Fatal("a conflicting receipt was acknowledged")
+		return nil
+	}, func(_ context.Context, _ string, reason protocol.ReceiptRejection) error {
+		gotReason = reason
+		return nil
+	})
+	if err == nil {
+		t.Fatal("a conflicting receipt was accepted")
+	}
+	if gotReason != protocol.ReceiptRejectedRevisionConflict {
+		t.Fatalf("rejection reason = %q, want %q", gotReason, protocol.ReceiptRejectedRevisionConflict)
+	}
+	if gotReason.Settles() {
+		t.Fatal("a conflicting revision must never authorise settlement")
+	}
+}
+
+// TestPersistReceiptAndAckRejectsAStaleRevision proves an older revision is
+// reported as stale, which does authorise settlement because the Server already
+// represents a newer revision of the same receipt.
+func TestPersistReceiptAndAckRejectsAStaleRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := serverstorage.Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertEndpoint(ctx, protocol.Endpoint{EndpointID: "endpoint-1", InstanceID: "instance-1", DisplayName: "endpoint-1", ConnectionState: "online", ObservedAtMS: 1, CapabilityRevision: "v1"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdmitCommand(ctx, testIntent("stale"), "hash", 1); err != nil {
+		t.Fatal(err)
+	}
+	newer := protocol.ExecutionReceipt{CommandID: "stale", RequestHash: "hash", CommandRevision: 2, Phase: protocol.PhaseReceiptRecorded, EffectCertainty: protocol.EffectAcknowledged, Outcome: "accepted"}
+	if err := store.ApplyReceipt(ctx, newer, 2); err != nil {
+		t.Fatal(err)
+	}
+	older := newer
+	older.CommandRevision = 1
+	var gotReason protocol.ReceiptRejection
+	err = PersistReceiptAndAck(ctx, store, older, channel.Peer{EndpointID: "endpoint-1"}, time.UnixMilli(3), func(context.Context, string) error {
+		t.Fatal("a stale receipt was acknowledged")
+		return nil
+	}, func(_ context.Context, _ string, reason protocol.ReceiptRejection) error {
+		gotReason = reason
+		return nil
+	})
+	if err == nil {
+		t.Fatal("a stale receipt was accepted")
+	}
+	if gotReason != protocol.ReceiptRejectedRevisionStale {
+		t.Fatalf("rejection reason = %q, want %q", gotReason, protocol.ReceiptRejectedRevisionStale)
+	}
+	if !gotReason.Settles() {
+		t.Fatal("a stale revision must authorise settlement")
 	}
 }

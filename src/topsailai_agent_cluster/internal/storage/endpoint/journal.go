@@ -129,8 +129,13 @@ func (s *Store) ListAcceptedCommands(ctx context.Context) ([]JournalEntry, error
 }
 
 // ListRecordedReceipts returns durable receipts that still need transport acknowledgement.
+//
+// A receipt the current Server proved it can never apply is excluded, because
+// re-sending it on every reconnect is the loop this settlement exists to stop.
+// The journal row itself is untouched, so the evidence that the receipt existed
+// remains readable.
 func (s *Store) ListRecordedReceipts(ctx context.Context) ([]protocol.ExecutionReceipt, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT receipt_json FROM command_journal WHERE phase = ? AND receipt_json IS NOT NULL ORDER BY updated_at_ms ASC, command_id ASC`, protocol.PhaseReceiptRecorded)
+	rows, err := s.db.QueryContext(ctx, `SELECT receipt_json FROM command_journal WHERE phase = ? AND receipt_json IS NOT NULL AND NOT EXISTS (SELECT 1 FROM receipt_settlement WHERE receipt_settlement.command_id = command_journal.command_id) ORDER BY updated_at_ms ASC, command_id ASC`, protocol.PhaseReceiptRecorded)
 	if err != nil {
 		return nil, err
 	}
@@ -148,4 +153,38 @@ func (s *Store) ListRecordedReceipts(ctx context.Context) ([]protocol.ExecutionR
 		result = append(result, receipt)
 	}
 	return result, rows.Err()
+}
+
+// SettleReceipt records that a receipt must never be re-sent, because the
+// current Server proved it can never apply it.
+//
+// Settlement is durable rather than in-memory because the pending set is
+// reloaded from the journal on every reconnect. Clearing only the in-memory map
+// would let the next reconnect re-send exactly the receipts that were just
+// settled, which is the loop this method exists to end.
+//
+// The reason is stored so an operator can tell a re-homing artefact from an
+// integrity disagreement without reading logs.
+func (s *Store) SettleReceipt(ctx context.Context, commandID string, reason protocol.ReceiptRejection, nowMS int64) error {
+	if commandID == "" {
+		return errors.New("command id is required to settle a receipt")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO receipt_settlement(command_id, reason, settled_at_ms) VALUES(?,?,?) ON CONFLICT(command_id) DO UPDATE SET reason=excluded.reason, settled_at_ms=excluded.settled_at_ms`, commandID, string(reason), nowMS)
+	return err
+}
+
+// SettleAllRecordedReceipts settles every receipt still awaiting acknowledgement
+// and returns how many rows were settled.
+//
+// It exists for the re-home case, where the Endpoint learns in one step that the
+// Server it now talks to is not the one that admitted those commands. Settling
+// them individually would require one round trip per receipt, and the outcome is
+// already known: a Server that never admitted a command can never apply its
+// receipt.
+func (s *Store) SettleAllRecordedReceipts(ctx context.Context, reason protocol.ReceiptRejection, nowMS int64) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `INSERT INTO receipt_settlement(command_id, reason, settled_at_ms) SELECT command_id, ?, ? FROM command_journal WHERE phase = ? AND receipt_json IS NOT NULL AND NOT EXISTS (SELECT 1 FROM receipt_settlement WHERE receipt_settlement.command_id = command_journal.command_id)`, string(reason), nowMS, protocol.PhaseReceiptRecorded)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

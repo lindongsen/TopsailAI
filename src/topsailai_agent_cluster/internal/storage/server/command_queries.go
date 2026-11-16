@@ -86,6 +86,28 @@ func (s *Store) DispatchCommand(ctx context.Context, commandID string, nowMS int
 	return n == 1, err
 }
 
+// ReceiptRejectionError reports that a receipt can never be applied, together
+// with the closed reason the Endpoint needs in order to decide whether to forget
+// it.
+//
+// It is a typed error rather than a sentinel per case so the transport layer can
+// classify a failure without matching message text, and so the reason travels
+// with the error instead of being re-derived at the call site.
+type ReceiptRejectionError struct {
+	Reason  protocol.ReceiptRejection
+	Command string
+	Detail  string
+}
+
+// Error renders the rejection for logs. The message is diagnostic only; callers
+// must classify on Reason, never on this text.
+func (e *ReceiptRejectionError) Error() string {
+	if e.Detail == "" {
+		return fmt.Sprintf("receipt for command %q rejected: %s", e.Command, e.Reason)
+	}
+	return fmt.Sprintf("receipt for command %q rejected: %s (%s)", e.Command, e.Reason, e.Detail)
+}
+
 // ApplyReceipt persists a receipt and rejects stale revisions while accepting exact retries.
 func (s *Store) ApplyReceipt(ctx context.Context, receipt protocol.ExecutionReceipt, nowMS int64) error {
 	if receipt.EffectCertainty == protocol.EffectNotApplied && receipt.ErrorCode == "" {
@@ -98,7 +120,7 @@ func (s *Store) ApplyReceipt(ctx context.Context, receipt protocol.ExecutionRece
 	var existing []byte
 	err = s.db.QueryRowContext(ctx, `SELECT receipt_json FROM commands WHERE command_id=? AND request_hash=?`, receipt.CommandID, receipt.RequestHash).Scan(&existing)
 	if err == sql.ErrNoRows {
-		return fmt.Errorf("command %q does not match a stored intent", receipt.CommandID)
+		return &ReceiptRejectionError{Reason: protocol.ReceiptRejectedUnknownCommand, Command: receipt.CommandID}
 	}
 	if err != nil {
 		return err
@@ -109,13 +131,13 @@ func (s *Store) ApplyReceipt(ctx context.Context, receipt protocol.ExecutionRece
 			return fmt.Errorf("decode stored receipt: %w", err)
 		}
 		if receipt.CommandRevision < prior.CommandRevision {
-			return fmt.Errorf("receipt revision %d is older than stored revision %d", receipt.CommandRevision, prior.CommandRevision)
+			return &ReceiptRejectionError{Reason: protocol.ReceiptRejectedRevisionStale, Command: receipt.CommandID, Detail: fmt.Sprintf("submitted revision %d is older than stored revision %d", receipt.CommandRevision, prior.CommandRevision)}
 		}
 		if receipt.CommandRevision == prior.CommandRevision {
 			if string(existing) == string(data) {
 				return nil
 			}
-			return fmt.Errorf("receipt revision %d conflicts with stored receipt", receipt.CommandRevision)
+			return &ReceiptRejectionError{Reason: protocol.ReceiptRejectedRevisionConflict, Command: receipt.CommandID, Detail: fmt.Sprintf("revision %d differs from the stored receipt", receipt.CommandRevision)}
 		}
 	}
 	status := protocol.StatusFinished
