@@ -540,6 +540,106 @@ Transport bindings must preserve command IDs, target identity, revisions, the ca
 
 Use HTTP requests for queries and command admission, SSE for TUI state/command updates, and a separate demand-driven output subscription for selected sessions. Large output must not block command/heartbeat delivery; use bounded priority queues and independent output flow control, or a separate output connection if required by load testing.
 
+## Endpoint re-home across independent Servers
+
+An Endpoint can be moved from one Server to another. This is a re-home, not a failover: the two
+Servers are independent deployments with independent databases, so moving an Endpoint changes which
+Server manages it and does not preserve the previous Server's state. The words "HA" and "failover"
+must not be used for this capability, because both imply a continuity this design does not provide.
+
+Two deployment shapes are supported, and they are alternatives rather than a mix:
+
+| Shape | Who dials | Configuration |
+|---|---|---|
+| Endpoint-initiated | Endpoint dials the Server | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES` lists the Servers in preference order |
+| Server-initiated | Server dials the Endpoint | `AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES` maps each Endpoint to its address; the Endpoint configures no Server |
+
+An Endpoint always holds exactly one Server link. That is a structural property, not a convention:
+the client keeps one connection and closes the previous one when a new link is installed, and the
+acceptor keeps one active connection and closes the replaced one. A re-home therefore replaces the
+link rather than adding a second one.
+
+In the Endpoint-initiated shape the Endpoint walks the configured list in order and stops at the
+first Server that accepts the handshake. Each attempt has its own bounded timeout, because an address
+that accepts a TCP connection and then never answers would otherwise consume the whole attempt budget
+and the remaining addresses would never be tried. When every address fails, the error names each one,
+so an operator can tell which Servers were attempted instead of reading a single opaque failure.
+
+### Connection generation across a re-home
+
+The Server is the sole authority for the connection generation, and it allocates it from an in-memory
+counter that starts at zero in every Server process. The Endpoint keeps the highest generation it has
+seen and rejects a lower one, which is what stops a superseded link from being reinstalled.
+
+That rule alone would make a re-home impossible. An Endpoint that held generation 5 from Server A
+would reject generation 1 from Server B and close the new link as superseded, then retry forever
+while reporting a transport symptom. The fix is that a transport failure releases the dead connection
+while keeping the generation: a client with no live connection accepts whatever generation the Server
+proposes, because fencing exists to stop an old link from displacing a new one, and there is no old
+link once the transport is gone. A fenced frame is different and must not release the connection,
+because bidirectional convergence depends on keeping the link that won.
+
+The generation is deliberately not reset on every reconnect. Resetting it unconditionally would let a
+lower generation be adopted after a higher one, which is exactly the disagreement the fence prevents.
+
+### Command history does not cross Servers
+
+A re-home leaves the previous Server's command records behind. Three consequences follow, and all
+three are properties of the design rather than defects:
+
+- A command that was `executing` on Server A is unknown to Server B. Server A converges it to
+  `unconfirmed` with unknown effect certainty once its deadline passes. This is fail-closed and
+  correct, but it is counter-intuitive: the operator sees a command that simply disappeared from the
+  new Server's view.
+- A command must never be resent automatically. Endpoint deduplication is keyed on `command_id`, so it
+  protects a retry of the same intent and cannot protect a reissue. An operator who cannot see the
+  original command will naturally submit a new one, which carries a new `command_id` and will really
+  execute. For `agent.stop` and `workspace.clean` that is a destructive duplicate.
+- An operator must confirm that no command is in flight before moving an Endpoint. This is the only
+  control that prevents the duplicate above, because the Server cannot detect it.
+
+### Receipt settlement
+
+An Endpoint records a receipt for every command it executed and resends any receipt the Server has not
+acknowledged. After a re-home the new Server does not recognise those command identifiers, so it
+rejects them. A rejection is a terminal answer, not a retryable failure, and the Endpoint settles the
+receipt so it is never resent.
+
+Three rejection reasons exist and they are not interchangeable:
+
+| Reason | Meaning | Settlement |
+|---|---|---|
+| `unknown_command` | The Server has no stored intent for this identifier | Settled |
+| `revision_stale` | The Server already holds a newer revision of this receipt | Settled |
+| `revision_conflict` | The Server holds a different receipt at the same revision | Never settled |
+
+A conflicting revision is a real integrity disagreement, so settling it would silently discard the
+only evidence that two sides disagree. It stays pending and is logged.
+
+Settlement is durable. Clearing only the in-memory pending set would be ineffective, because the
+resend path reloads every recorded receipt from the journal on each reconnect, so a receipt that was
+forgotten in memory would come back on the next link.
+
+The Server also carries a durable identity, stored in its own database rather than generated per
+process. The Endpoint records the identity it last observed, so it can tell that it is talking to a
+different Server even after its own restart. A per-process identity would be wrong here: it changes on
+every Server restart, so the Endpoint would abandon receipts that the restarted Server still holds and
+could still apply. Storing the identity in the database makes "the same database" and "the same
+Server" the same fact. When the identity changes, the Endpoint settles every recorded receipt in one
+step; this is an efficiency measure, because per-receipt rejection reaches the same final state.
+
+### Inventory after a re-home
+
+Inventory converges without migration. Each Server stores the latest report it accepted, and a write
+is ordered by observation time before revision, so a re-homed Endpoint's next report is accepted even
+though its `snapshot_revision` counter restarted at one. The revision can therefore go backwards
+across a re-home, and any consumer that treats a smaller revision as older data may misjudge
+freshness. The stored document itself stays correct.
+
+The previous Server marks the Endpoint offline and, after its configured expiry, deletes the stale
+inventory projection. It keeps command records. This is the same retention rule that applies to any
+offline Endpoint and needs no special handling for a re-home.
+
 ## Authority and truth
 
 - Endpoint is authoritative for observations and command admission/execution at that endpoint.

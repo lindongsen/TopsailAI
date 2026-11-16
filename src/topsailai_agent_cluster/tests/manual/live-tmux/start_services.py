@@ -128,19 +128,26 @@ def wait_until_ready(children, planned, api_port: int, runtime: Path, timeout_se
     raise RuntimeError(f"services did not become ready within {timeout_seconds}s\n{tails}")
 
 
-def wait_for_exit_or_timeout(children, timeout_seconds: float) -> bool:
+def wait_for_exit_or_timeout(children, timeout_seconds: float, tolerate_child_exit: bool = False) -> bool:
     """Wait until a child exits or the bounded run time elapses.
 
     Returns True when a child exited, False when the timeout elapsed. A zero
     timeout keeps the original behaviour of waiting until interrupted.
+
+    tolerate_child_exit keeps the supervisor alive after a child exits. A
+    re-home scenario stops one Server on purpose, and that stop is the event
+    under test: tearing down the remaining children at that moment would destroy
+    the very thing the scenario is observing. The default stays strict, so every
+    existing scenario still treats an unexpected child exit as a failure.
     """
     deadline = None if timeout_seconds <= 0 else time.monotonic() + timeout_seconds
-    while all(child.poll() is None for child in children):
+    while True:
+        if not tolerate_child_exit and any(child.poll() is not None for child in children):
+            return True
         if deadline is not None and time.monotonic() >= deadline:
             print(f"timeout reached after {timeout_seconds}s", flush=True)
             return False
         time.sleep(0.2)
-    return True
 
 
 def main() -> int:
@@ -163,6 +170,10 @@ def main() -> int:
     parser.add_argument("--capabilities", type=Path, help="optional capability descriptor file the endpoint declares")
     parser.add_argument("--startup-timeout-seconds", type=float, default=30.0, help="how long to wait for the API port to accept a connection")
     parser.add_argument("--timeout-seconds", type=float, default=0.0, help="stop after this many seconds; zero waits until interrupted")
+    # A second Server is opt-in so every existing scenario keeps its exact
+    # single-Server topology. It is a genuinely independent Server with its own
+    # database and API port, which is what a re-home moves an Endpoint between.
+    parser.add_argument("--secondary-server", action="store_true", help="start a second independent Server for re-home scenarios")
     args = parser.parse_args()
     for value in (args.runtime, args.bin_dir, args.provider_home, args.project, args.provider):
         if not value.is_absolute():
@@ -177,6 +188,26 @@ def main() -> int:
     api_port = int(config["api_port"])
     channel_port = int(config["channel_port"])
     token = str(config["token"])
+    # The secondary Server gets its own ports and its own database file. Sharing
+    # either would make it a replica of the primary rather than an independent
+    # Server, and a re-home between replicas would prove nothing about the
+    # independent-Server case this feature exists for.
+    secondary_api_port = 0
+    secondary_channel_port = 0
+    if args.secondary_server:
+        secondary_api_port = available_port()
+        secondary_channel_port = available_port()
+        # The ports are persisted into the same configuration document the
+        # primary ports already live in, so a caller reads every port from one
+        # machine-readable file. Parsing them back out of the human-readable
+        # READY line is not an option: that line contains both "api_port=" and
+        # "secondary_api_port=", and any pattern matching the former also
+        # matches the tail of the latter.
+        config["secondary_api_port"] = secondary_api_port
+        config["secondary_channel_port"] = secondary_channel_port
+        config_path = args.runtime / CONFIG_NAME
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        config_path.chmod(0o600)
     certs = args.runtime / "cert"
     base = os.environ.copy()
     for key in list(base):
@@ -197,14 +228,35 @@ def main() -> int:
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "server.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "server.key"),
     }
+    # The secondary Server shares the CA and the Server certificate with the
+    # primary, because the Endpoint is configured with one CA and one client
+    # certificate. Sharing the certificate does not make the two Servers one
+    # deployment: identity is the database, and these are two databases.
+    secondary_env = base | {
+        "AGENT_CLUSTER_SERVER_API_LISTEN_ADDR": f"127.0.0.1:{secondary_api_port}",
+        "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR": f"127.0.0.1:{secondary_channel_port}",
+        "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "server-secondary.db"),
+        "AGENT_CLUSTER_SERVER_AUTH_TOKEN": token,
+        "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "server.pem"),
+        "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "server.key"),
+    }
+    # The Endpoint dials the primary Server first and the secondary Server second.
+    # The ordered list spelling is used only when a second Server exists, so the
+    # single-Server scenarios keep the exact configuration they had before and a
+    # regression in the list path cannot hide behind an unused variable.
     endpoint_env = base | {
-        "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS": f"wss://127.0.0.1:{channel_port}",
         "AGENT_CLUSTER_ENDPOINT_ID": "live-tmux-endpoint",
         "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "endpoint.db"),
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "client.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "client.key"),
         "AGENT_CLUSTER_ENDPOINT_ADAPTERS": json.dumps([adapter_document(args.provider, args.capabilities, args.provider_arg)]),
     }
+    if args.secondary_server:
+        endpoint_env["AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES"] = (
+            f"wss://127.0.0.1:{channel_port},wss://127.0.0.1:{secondary_channel_port}"
+        )
+    else:
+        endpoint_env["AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS"] = f"wss://127.0.0.1:{channel_port}"
     # A capability descriptor is optional so the same harness can prove the
     # zero-capability path, which is what an operator gets by copying the shipped
     # example configuration. When it is supplied it is embedded in the adapter
@@ -234,6 +286,11 @@ def main() -> int:
     planned = []
     if args.role in ("both", "server"):
         planned.append(("server", server, server_env))
+    # A second Server is optional and exists only for the re-home scenarios. It
+    # owns its own database and API port, so it is a genuinely independent
+    # Server rather than a replica, which is the whole point of a re-home.
+    if args.secondary_server:
+        planned.append(("server-secondary", server, secondary_env))
     if args.role in ("both", "endpoint"):
         planned.append(("endpoint", endpoint, endpoint_env))
     children: list[subprocess.Popen[bytes]] = []
@@ -251,9 +308,14 @@ def main() -> int:
             print(f"{name} pid {child.pid}", flush=True)
         wait_until_ready(children, planned, api_port, args.runtime, args.startup_timeout_seconds)
         (args.runtime / f"pids-{args.role}.json").write_text(json.dumps([child.pid for child in children]), encoding="utf-8")
-        print(f"READY role={args.role} endpoint=live-tmux-endpoint api_port={api_port}", flush=True)
+        secondary_note = f" secondary_api_port={secondary_api_port}" if secondary_api_port else ""
+        print(f"READY role={args.role} endpoint=live-tmux-endpoint api_port={api_port}{secondary_note}", flush=True)
         print(f"CLI {launch}", flush=True)
-        if wait_for_exit_or_timeout(children, args.timeout_seconds):
+        # A re-home scenario stops one Server on purpose, so the supervisor must
+        # survive that exit instead of tearing down the remaining children. The
+        # flag is derived from the same option that starts the second Server, so
+        # a single-Server scenario keeps the strict behaviour it always had.
+        if wait_for_exit_or_timeout(children, args.timeout_seconds, tolerate_child_exit=args.secondary_server):
             for name, child in zip((name for name, _, _ in planned), children):
                 if child.poll() is not None:
                     print(f"exited {name} pid {child.pid} code {child.returncode}", flush=True)
