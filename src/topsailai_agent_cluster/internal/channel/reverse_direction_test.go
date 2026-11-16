@@ -376,14 +376,14 @@ func TestAttachKeepsNewestGeneration(t *testing.T) {
 	defer func() { _ = other.Close() }()
 	// A lower generation must not replace the active link, because the Server
 	// already fenced it and the Endpoint would then talk over a dead connection.
-	if client.Attach(other.Conn, active-1, InitiatorServer) {
+	if client.Attach(other.Conn, active-1, InitiatorServer, "") {
 		t.Fatalf("older generation replaced the active link")
 	}
 	if client.Generation != active {
 		t.Fatalf("generation = %d, want %d", client.Generation, active)
 	}
 	// A higher generation is the newer link and must win.
-	if !client.Attach(other.Conn, active+1, InitiatorServer) {
+	if !client.Attach(other.Conn, active+1, InitiatorServer, "") {
 		t.Fatalf("newer generation rejected")
 	}
 	if client.Generation != active+1 || client.Initiator != InitiatorServer {

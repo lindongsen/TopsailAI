@@ -39,7 +39,22 @@ type EndpointClient struct {
 	Bidirectional bool
 	Conn          *websocket.Conn
 	Generation    int64
-	mu            sync.Mutex
+	// ServerIdentity names the Server database behind the active connection. It
+	// is recorded from the handshake so the Endpoint can tell a restarted Server
+	// from a different one.
+	ServerIdentity string
+	mu             sync.Mutex
+}
+
+// ServerDatabaseIdentity reports the Server database identity behind the active
+// connection, or an empty string when no connection is attached.
+//
+// It is read under the lock because a reconnect can replace the connection while
+// the Endpoint is deciding whether the Server changed.
+func (c *EndpointClient) ServerDatabaseIdentity() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ServerIdentity
 }
 
 // Dial establishes the Endpoint-initiated WebSocket connection and handshake.
@@ -89,7 +104,7 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 	c.mu.Unlock()
 	// A superseded connection must not confirm adoption, because the Server would
 	// then treat a link this Endpoint discarded as successfully established.
-	if !c.Attach(conn, generation, InitiatorEndpoint) {
+	if !c.Attach(conn, generation, InitiatorEndpoint, ack.ServerIdentity) {
 		_ = conn.Close(websocket.StatusNormalClosure, "superseded")
 		return errors.New("channel connection was superseded by a newer link")
 	}
@@ -115,7 +130,7 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 // It reports whether this connection became the active link. A superseded
 // connection returns false, so the caller never confirms an adoption that did not
 // happen.
-func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiator string) bool {
+func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiator, serverIdentity string) bool {
 	c.mu.Lock()
 	if c.Conn != nil && c.Generation > generation {
 		c.mu.Unlock()
@@ -126,6 +141,7 @@ func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiato
 	c.Conn = conn
 	c.Generation = generation
 	c.Initiator = initiator
+	c.ServerIdentity = serverIdentity
 	c.mu.Unlock()
 	if previous != nil && previous != conn {
 		_ = previous.Close(websocket.StatusNormalClosure, "replaced")

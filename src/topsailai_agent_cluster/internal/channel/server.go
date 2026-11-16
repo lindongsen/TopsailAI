@@ -31,6 +31,10 @@ type Server struct {
 	OnReject         func(error)
 	OnRejectReason   func(endpointID, certificateIdentity, reason, requestID string)
 	RevokedSerials   map[string]bool
+	// Identity names this Server database. It is reported in the handshake so an
+	// Endpoint can tell a restarted Server from a different one, which decides
+	// whether recorded receipts may be discarded.
+	Identity string
 	// SharedCertificate relaxes the certificate-to-Endpoint identity binding when
 	// every Endpoint presents the same Server certificate. It is opt-in because
 	// the binding is a real security property, not a formality.
@@ -192,7 +196,7 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	peer := s.installPeer(hello.EndpointID, hello.InstanceID, hello.Hostname, InitiatorEndpoint, conn)
-	ack := Frame{Type: FrameHelloAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), EndpointID: hello.EndpointID}
+	ack := Frame{Type: FrameHelloAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), EndpointID: hello.EndpointID, ServerIdentity: s.Identity}
 	if err := wsjson.Write(context.Background(), conn, ack); err != nil {
 		s.remove(peer)
 		return

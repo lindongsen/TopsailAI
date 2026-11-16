@@ -32,6 +32,14 @@ type ReadyChannel interface {
 	Ready() bool
 }
 
+// IdentityChannel reports the Server database identity behind the active
+// connection. The Endpoint compares it across reconnects to tell a restarted
+// Server from a different one, because only a different Server makes recorded
+// receipts permanently inapplicable.
+type IdentityChannel interface {
+	ServerDatabaseIdentity() string
+}
+
 // Heartbeater maintains channel liveness for a service lifetime.
 type Heartbeater interface {
 	RunHeartbeat(context.Context, time.Duration) error
@@ -281,6 +289,7 @@ func (s *Service) resendRecordedReceipts(ctx context.Context) {
 		s.loggerInfo("recorded receipt resend stopped before channel ready")
 		return
 	}
+	s.reconcileServerIdentity(ctx)
 	s.resendPendingReceipts(ctx)
 }
 
@@ -334,6 +343,42 @@ func (s *Service) settleRejectedReceipt(ctx context.Context, frame channel.Frame
 	s.receiptsMu.Lock()
 	delete(s.pendingReceipts, key)
 	s.receiptsMu.Unlock()
+}
+
+// reconcileServerIdentity settles recorded receipts when the Server behind the
+// connection is not the one that admitted them.
+//
+// It runs before every resend so the decision is made once per connection, not
+// once per receipt. A Server that never admitted a command can never apply its
+// receipt, so re-sending it would only produce a rejection that the Endpoint
+// already knows how to interpret.
+//
+// The settlement is skipped when either side has no identity, because an absent
+// identity cannot prove a change. Treating absence as a change would discard
+// receipts that the same Server still holds.
+func (s *Service) reconcileServerIdentity(ctx context.Context) {
+	identityChannel, ok := s.channel.(IdentityChannel)
+	if !ok {
+		return
+	}
+	identity := identityChannel.ServerDatabaseIdentity()
+	if identity == "" {
+		return
+	}
+	changed, err := s.storage.ObserveServerIdentity(ctx, identity, time.Now().UnixMilli())
+	if err != nil {
+		s.logError("observe server identity", err)
+		return
+	}
+	if !changed {
+		return
+	}
+	settled, err := s.storage.SettleAllRecordedReceipts(ctx, protocol.ReceiptRejectedUnknownCommand, time.Now().UnixMilli())
+	if err != nil {
+		s.logError("settle receipts after server change", err)
+		return
+	}
+	s.loggerInfo("server changed, settled recorded receipts", "settled", settled)
 }
 
 func (s *Service) resendPendingReceipts(ctx context.Context) {
@@ -440,6 +485,7 @@ func (s *Service) channelLoop(ctx context.Context) {
 				}
 				if reconnectErr := reconnecting.Reconnect(ctx); reconnectErr == nil {
 					s.loggerInfo("endpoint channel reconnected")
+					s.reconcileServerIdentity(ctx)
 					s.resendPendingReceipts(ctx)
 					s.sendPendingInventory(ctx)
 					break
@@ -451,6 +497,7 @@ func (s *Service) channelLoop(ctx context.Context) {
 					if !s.waitForAttachedChannel(ctx) {
 						return
 					}
+					s.reconcileServerIdentity(ctx)
 					s.resendPendingReceipts(ctx)
 					s.sendPendingInventory(ctx)
 					break

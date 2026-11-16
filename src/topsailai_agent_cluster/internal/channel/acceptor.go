@@ -116,7 +116,7 @@ func (a *EndpointAcceptor) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	// A superseded connection must not confirm adoption: the Server would then
 	// treat a link the Endpoint discarded as successfully established.
-	if !a.Client.Attach(conn, generation, InitiatorServer) {
+	if !a.Client.Attach(conn, generation, InitiatorServer, confirm.ServerIdentity) {
 		_ = conn.Close(websocket.StatusNormalClosure, "superseded")
 		return
 	}

@@ -57,6 +57,17 @@ func main() {
 		logger.Error("open server storage", "error", err)
 		os.Exit(1)
 	}
+	// The Server identity names this database, not this process. An Endpoint
+	// compares it across reconnects to tell a restarted Server from a different
+	// one, because only a different Server makes recorded receipts permanently
+	// inapplicable. Reading it here means the value is durable and survives a
+	// restart, so a restarted Server still receives the receipts it can apply.
+	serverIdentity, err := store.ServerIdentity(ctx)
+	if err != nil {
+		logger.Error("read server identity", "error", err)
+		_ = store.Close()
+		os.Exit(1)
+	}
 	if cfg.TLSCAFile == "" || cfg.TLSCertificateFile == "" || cfg.TLSKeyFile == "" {
 		logger.Error("mTLS channel configuration is required")
 		_ = store.Close()
@@ -86,6 +97,7 @@ func main() {
 		channelListenAddress = ""
 	}
 	channelService := channel.NewServer(tlsConfig)
+	channelService.Identity = serverIdentity
 	// A shared certificate cannot bind a connection to one Endpoint identity, so
 	// the Server skips that check only when the operator explicitly enabled it.
 	channelService.SharedCertificate = cfg.TLSSharedCertificate

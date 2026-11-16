@@ -44,3 +44,19 @@ CREATE TABLE IF NOT EXISTS commands (
 
 CREATE INDEX IF NOT EXISTS idx_commands_endpoint_status ON commands(endpoint_id, status);
 CREATE INDEX IF NOT EXISTS idx_endpoints_update ON endpoints(update_at_ms, endpoint_id);
+
+-- server_identity holds one durable identifier for this Server database.
+--
+-- It exists so an Endpoint can tell "the same Server restarted" from "a
+-- different Server now manages me". The distinction decides whether recorded
+-- receipts may be discarded: a restarted Server still holds the commands it
+-- admitted, so its receipts must be re-sent, while a different Server never
+-- admitted them and can never apply them.
+--
+-- The identity is durable rather than per-process for exactly that reason. A
+-- per-process value would change on every restart and would make the Endpoint
+-- abandon receipts the Server could still apply.
+CREATE TABLE IF NOT EXISTS server_identity (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    identity TEXT NOT NULL
+);

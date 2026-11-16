@@ -64,7 +64,7 @@ func (s *Server) DialEndpoint(ctx context.Context, endpointID, address string, t
 	// Installing here assigns the generation, and the confirm frame tells the
 	// Endpoint which generation to adopt.
 	peer := s.installPeer(endpointID, ack.InstanceID, ack.Hostname, InitiatorServer, conn)
-	confirm := Frame{Type: FrameHelloConfirm, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), EndpointID: endpointID}
+	confirm := Frame{Type: FrameHelloConfirm, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), EndpointID: endpointID, ServerIdentity: s.Identity}
 	if err := wsjson.Write(ctx, conn, confirm); err != nil {
 		s.remove(peer)
 		_ = conn.Close(websocket.StatusInternalError, "hello confirm failed")

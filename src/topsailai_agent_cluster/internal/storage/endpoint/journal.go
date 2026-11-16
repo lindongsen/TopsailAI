@@ -188,3 +188,39 @@ func (s *Store) SettleAllRecordedReceipts(ctx context.Context, reason protocol.R
 	}
 	return result.RowsAffected()
 }
+
+// ObserveServerIdentity records the Server database identity this Endpoint is
+// now talking to and reports whether it differs from the last one observed.
+//
+// The comparison is what makes a re-home detectable. A restarted Server keeps
+// its identity because the value lives in the Server database, so a restart
+// reports no change and its receipts are re-sent as usual. A different Server
+// reports a change, which is the only case where recorded receipts can never be
+// applied.
+//
+// An empty identity is never recorded and never reports a change. An older
+// Server that does not send the field must not be mistaken for a new Server,
+// because that would discard receipts the same Server still holds.
+func (s *Store) ObserveServerIdentity(ctx context.Context, identity string, nowMS int64) (bool, error) {
+	if identity == "" {
+		return false, nil
+	}
+	var previous string
+	err := s.db.QueryRowContext(ctx, `SELECT identity FROM server_identity_seen WHERE id = 1`).Scan(&previous)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// The first observation is not a change: there is no previous Server to
+		// differ from, so nothing may be discarded on the strength of it.
+		_, insertErr := s.db.ExecContext(ctx, `INSERT INTO server_identity_seen(id, identity, observed_at_ms) VALUES(1, ?, ?) ON CONFLICT(id) DO UPDATE SET identity=excluded.identity, observed_at_ms=excluded.observed_at_ms`, identity, nowMS)
+		return false, insertErr
+	case err != nil:
+		return false, err
+	}
+	if previous == identity {
+		return false, nil
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE server_identity_seen SET identity = ?, observed_at_ms = ? WHERE id = 1`, identity, nowMS); err != nil {
+		return false, err
+	}
+	return true, nil
+}

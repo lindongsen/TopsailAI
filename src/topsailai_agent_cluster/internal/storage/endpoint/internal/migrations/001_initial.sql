@@ -52,3 +52,18 @@ CREATE TABLE IF NOT EXISTS receipt_settlement (
     reason TEXT NOT NULL,
     settled_at_ms BIGINT NOT NULL
 );
+-- server_identity_seen records the Server database identity this Endpoint last
+-- talked to.
+--
+-- It exists so a re-home can be detected across an Endpoint restart. Without a
+-- durable record, a restarted Endpoint would treat its first connection as a
+-- first observation and could never tell that the Server behind it changed,
+-- which is exactly the case where recorded receipts must be discarded.
+--
+-- A row here is an observation, not a decision: the settlement decision is
+-- recorded separately in receipt_settlement.
+CREATE TABLE IF NOT EXISTS server_identity_seen (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    identity TEXT NOT NULL,
+    observed_at_ms BIGINT NOT NULL
+);

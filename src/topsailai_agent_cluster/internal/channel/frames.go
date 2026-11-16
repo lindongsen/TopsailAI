@@ -81,38 +81,47 @@ const (
 
 // Frame is the bounded JSON envelope exchanged over the persistent channel.
 type Frame struct {
-	LaunchQuery          *protocol.LaunchQuery            `json:"launch_query,omitempty"`
-	LaunchOptions        *protocol.LaunchOptions          `json:"launch_options,omitempty"`
-	HistoryQuery         *protocol.HistoryQuery           `json:"history_query,omitempty"`
-	HistoryResult        *protocol.HistoryResult          `json:"history_result,omitempty"`
-	MessagesQuery        *protocol.MessagesQuery          `json:"messages_query,omitempty"`
-	MessagesResult       *protocol.MessagesResult         `json:"messages_result,omitempty"`
-	ModelCatalogQuery    *protocol.ModelCatalogQuery      `json:"model_catalog_query,omitempty"`
-	ModelCatalog         *protocol.ModelCatalog           `json:"model_catalog,omitempty"`
-	Type                 string                           `json:"type"`
-	ProtocolVersion      string                           `json:"protocol_version"`
-	FrameID              string                           `json:"frame_id,omitempty"`
-	ConnectionGeneration string                           `json:"connection_generation"`
-	Initiator            string                           `json:"initiator,omitempty"`
-	EndpointID           string                           `json:"endpoint_id,omitempty"`
-	InstanceID           string                           `json:"instance_id,omitempty"`
-	Hostname             string                           `json:"hostname,omitempty"`
-	RequestID            string                           `json:"request_id,omitempty"`
-	Reason               string                           `json:"reason,omitempty"`
+	LaunchQuery          *protocol.LaunchQuery       `json:"launch_query,omitempty"`
+	LaunchOptions        *protocol.LaunchOptions     `json:"launch_options,omitempty"`
+	HistoryQuery         *protocol.HistoryQuery      `json:"history_query,omitempty"`
+	HistoryResult        *protocol.HistoryResult     `json:"history_result,omitempty"`
+	MessagesQuery        *protocol.MessagesQuery     `json:"messages_query,omitempty"`
+	MessagesResult       *protocol.MessagesResult    `json:"messages_result,omitempty"`
+	ModelCatalogQuery    *protocol.ModelCatalogQuery `json:"model_catalog_query,omitempty"`
+	ModelCatalog         *protocol.ModelCatalog      `json:"model_catalog,omitempty"`
+	Type                 string                      `json:"type"`
+	ProtocolVersion      string                      `json:"protocol_version"`
+	FrameID              string                      `json:"frame_id,omitempty"`
+	ConnectionGeneration string                      `json:"connection_generation"`
+	Initiator            string                      `json:"initiator,omitempty"`
+	EndpointID           string                      `json:"endpoint_id,omitempty"`
+	InstanceID           string                      `json:"instance_id,omitempty"`
+	// ServerIdentity names the Server database that admitted this connection's
+	// commands. The Endpoint compares it across reconnects to tell "the same
+	// Server restarted" from "a different Server now manages me", because only
+	// the second case makes recorded receipts permanently inapplicable.
+	//
+	// It is the database identity rather than a process identity: a restarted
+	// Server still holds the commands it admitted, so its receipts must still be
+	// re-sent.
+	ServerIdentity string `json:"server_identity,omitempty"`
+	Hostname       string `json:"hostname,omitempty"`
+	RequestID      string `json:"request_id,omitempty"`
+	Reason         string `json:"reason,omitempty"`
 	// ReceiptRejection carries the closed reason vocabulary for
 	// FrameReceiptRejected. It is typed rather than folded into Reason so an
 	// unrecognised value stays distinguishable from an absent one: the Endpoint
 	// must keep the receipt pending when it cannot interpret the reason.
-	ReceiptRejection protocol.ReceiptRejection `json:"receipt_rejection,omitempty"`
-	SnapshotRevision     int64                            `json:"snapshot_revision,omitempty"`
-	Payload              any                              `json:"payload,omitempty"`
-	Intent               *protocol.ImmutableIntent        `json:"intent,omitempty"`
-	Receipt              *protocol.ExecutionReceipt       `json:"receipt,omitempty"`
-	OutputRequest        *protocol.OutputSnapshotRequest  `json:"output_request,omitempty"`
-	OutputResponse       *protocol.OutputSnapshotResponse `json:"output_response,omitempty"`
-	OutputFollowRequest  *protocol.OutputFollowRequest    `json:"output_follow_request,omitempty"`
-	OutputChunk          *protocol.OutputChunk            `json:"output_chunk,omitempty"`
-	OutputEnd            *protocol.OutputEnd              `json:"output_end,omitempty"`
+	ReceiptRejection    protocol.ReceiptRejection        `json:"receipt_rejection,omitempty"`
+	SnapshotRevision    int64                            `json:"snapshot_revision,omitempty"`
+	Payload             any                              `json:"payload,omitempty"`
+	Intent              *protocol.ImmutableIntent        `json:"intent,omitempty"`
+	Receipt             *protocol.ExecutionReceipt       `json:"receipt,omitempty"`
+	OutputRequest       *protocol.OutputSnapshotRequest  `json:"output_request,omitempty"`
+	OutputResponse      *protocol.OutputSnapshotResponse `json:"output_response,omitempty"`
+	OutputFollowRequest *protocol.OutputFollowRequest    `json:"output_follow_request,omitempty"`
+	OutputChunk         *protocol.OutputChunk            `json:"output_chunk,omitempty"`
+	OutputEnd           *protocol.OutputEnd              `json:"output_end,omitempty"`
 	// EndpointToken is the caller's Endpoint credential, forwarded verbatim by
 	// the Server and consumed by the Endpoint policy check.
 	//
