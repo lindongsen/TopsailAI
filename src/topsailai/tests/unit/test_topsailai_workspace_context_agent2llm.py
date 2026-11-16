@@ -31,9 +31,6 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
 
         class TestableAgent2LLM(ContextRuntimeAgent2LLM):
             def __init__(self):
-                from topsailai.workspace.context.summary_recovery import RecoveryConfig
-                self.summary_recovery_config = RecoveryConfig(False)
-                self._summary_recovery_last_state = None
                 self.summary_count = 0
                 self._ai_agent = MagicMock()
                 self._ai_agent.runtime.token_stat.current_tokens = 0

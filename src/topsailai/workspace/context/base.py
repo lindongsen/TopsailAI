@@ -6,7 +6,6 @@ Purpose: Context runtime base module for managing chat sessions and message hand
 """
 
 import math
-import os
 import copy
 import random
 
@@ -41,7 +40,6 @@ from topsailai.hooks.points.context.summary_adapter import (
     classify_summary_generation_error as hook__classify_summary_generation_error,
 )
 from topsailai.workspace.context import summary_tool
-from topsailai.workspace.context.summary_recovery import RecoveryConfig, load_recovery_config
 
 
 CONTEXT_WATERMARK_NORMAL = "NORMAL"
@@ -88,17 +86,12 @@ class ContextRuntimeBase(object):
         self.ai_agent.messages: Agent chats to LLM.
     """
 
-    def __init__(self, summary_recovery_config: RecoveryConfig | None = None):
+    def __init__(self):
         """
         Initialize the ContextRuntimeBase instance.
 
         Sets up default values for session ID, messages list, and AI agent reference.
         """
-        self.summary_recovery_config = (
-            load_recovery_config(os.environ, logger)
-            if summary_recovery_config is None else summary_recovery_config
-        )
-        self._summary_recovery_last_state = None
         self.summary_count = 0
         self.session_id = ""
         self.messages = []

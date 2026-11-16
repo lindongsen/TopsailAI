@@ -495,7 +495,20 @@ class HookInstruction(HookBaseUtils):
 
             if not new_kwargs:
                 if '=' in kwargs:
-                    new_kwargs = format_tool.parse_str_to_dict(kwargs)
+                    try:
+                        new_kwargs = format_tool.parse_str_to_dict(kwargs)
+                    except ValueError as e:
+                        # A `;`-separated token without `=` cannot be a named
+                        # parameter. Degrade to positional arguments instead of
+                        # letting the parse error escape this dispatcher, where
+                        # no handler can catch it and the interactive session
+                        # would terminate.
+                        logger.warning(
+                            "malformed named parameters [%s]: %s; "
+                            "falling back to positional arguments",
+                            hook_name, e,
+                        )
+                        args = kwargs.split(' ')
                 elif ' ' in kwargs:
                     args = kwargs.split(' ')
                 else:

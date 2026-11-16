@@ -2,11 +2,10 @@
 
 from pytest_bdd import given, when, then, parsers, scenarios
 
-from tests.bdd.test_summary_observation_recovery import recovery_resources, provider_state
+from tests.bdd.support.summary_provider import summary_provider_resources as recovery_resources, provider_state
 from topsailai.context import ctx_manager
 from topsailai.context.session_manager.__base import SessionData
 from topsailai.context.session_manager.sql import SessionSQLAlchemy
-from topsailai.workspace.context.summary_recovery import RecoveryConfig
 
 scenarios("features/summary_count.feature")
 
@@ -21,7 +20,6 @@ def counter_case(recovery_resources, monkeypatch, tmp_path, layer, policy):
     monkeypatch.setattr(ctx_manager, "get_session_manager", lambda: storage)
     monkeypatch.setattr(ctx_manager, "get_managers_by_env", lambda: [storage.chat_history])
     owner.session_id = "counted"
-    owner.summary_recovery_config = RecoveryConfig(policy == "recovery")
     monkeypatch.setenv("TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES", "0")
     try:
         yield owner, server, storage, layer, policy
@@ -35,9 +33,8 @@ def apply_twice(counter_case):
     """Run real layer methods with actual HTTP generation and stored history."""
     owner, _, storage, layer, policy = counter_case
     for interval in range(2):
-        observation = {"role": "user", "content": {"step_name": "observation", "raw_text": "source constraints " * 50000}}
         task = {"role": "user", "content": {"step_name": "task", "raw_text": f"Continue work {interval}"}}
-        messages = [observation, task] if policy == "recovery" else [task, {"role": "assistant", "content": "work details " * 500}, {"role": "user", "content": f"Next {interval}"}]
+        messages = [task, {"role": "assistant", "content": "work details " * 500}, {"role": "user", "content": f"Next {interval}"}]
         for record in storage.get_messages_by_session("counted"):
             storage.chat_history.del_messages(record.msg_id, "counted")
         for message in messages:

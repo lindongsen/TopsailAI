@@ -19,12 +19,39 @@ These cases verify human-facing, read-only access to one current Agent's public 
 The first version provides:
 
 ```text
-/runtime
-/runtime.get <key>
-/runtime.history [key]
+/runtime [json=1]
+/runtime.get <key> [json=1]
+/runtime.history [key] [json=1]
 ```
 
 The command names are exact. They must be discoverable through the existing Instruction registry and must not shadow `/ctx.*`, `/session.*`, or `/agent.tokens`.
+
+### Parameter Contract
+
+`json=1` selects JSON output; `json=0` and an omitted flag both select text output. The flag is accepted in two forms because two transports deliver arguments differently:
+
+- Terminal dispatch delivers named parameters as keyword arguments.
+- The control channel forwards one `;`-separated token, so `key=llm.request.retrying;json=1` arrives as a single positional argument.
+
+Both forms must produce identical output. `;` is the only parameter separator; a space-separated form such as `key=x json=1` is not a valid named-parameter string. An unknown named parameter reports usage instead of being silently ignored.
+
+### JSON Output Contract
+
+JSON mode returns a string so terminal printing emits valid JSON. Every response carries `ok`:
+
+```text
+{"ok": true, "active": [{"key": ..., "revision": ..., "updated_at_ms": ..., "value": {...}}]}
+{"ok": true, "active": {"key": ..., "revision": ..., "updated_at_ms": ..., "value": {...}}}
+{"ok": true, "history": [{"key": ..., "outcome": ..., "revision": ..., "settled_at_ms": ..., "value": {...}}]}
+{"ok": false, "error": "no_runtime"}
+{"ok": false, "error": "not_found", "key": ...}
+{"ok": false, "error": "invalid_key"}
+{"ok": false, "error": "unknown_parameter", "usage": ...}
+{"ok": false, "error": "too_many_arguments", "usage": ...}
+{"ok": false, "error": "missing_key", "usage": ...}
+```
+
+`value` contains only the same approved diagnostic fields as text mode. JSON mode must not become a path around the display allowlist: `owner_id`, lease generation, and arbitrary payload fields stay absent.
 
 ## Required Gherkin-Style Behavior
 
@@ -70,6 +97,19 @@ Feature: Read-only inspection of Agent Runtime Data
     Given no current Agent is bound
     When any Runtime Instruction is invoked
     Then it returns a concise no-runtime response without raising
+
+  Scenario: Runtime returns machine-readable JSON on request
+    Given the current Agent has one public active state
+    When the operator invokes /runtime json=1
+    Then the output parses as JSON with ok true
+    And the value contains only approved diagnostic fields
+    And no lease token or owner identity appears
+
+  Scenario: Runtime JSON reports a structured error
+    Given no current Agent is bound
+    When the operator invokes /runtime json=1
+    Then the output parses as JSON with ok false
+    And the error token is no_runtime
 ```
 
 ## Registration Cases
@@ -178,6 +218,28 @@ No argument means all retained public history.
 
 Private settled records are omitted. Their existence is not disclosed through counts or not-found differences.
 
+## JSON Output Cases
+
+### JSON mode is parseable
+
+Every JSON response parses with a standard JSON parser and carries a boolean `ok`. Text mode output is never valid JSON and JSON mode output is never a Python repr.
+
+### JSON mode preserves the display allowlist
+
+`value` contains only the approved diagnostic fields. A payload carrying `prompt`, `response`, `api_key`, `exception`, or a nested object must not leak those fields, and `owner_id` and lease generation must stay absent. This case exists because JSON serialization is the obvious place to bypass a text-only allowlist.
+
+### JSON mode reports structured errors
+
+`no_runtime`, `not_found`, `invalid_key`, `unknown_parameter`, `too_many_arguments`, and `missing_key` are machine-readable tokens. A consumer must be able to distinguish "no Agent" from "no active state" without matching English sentences.
+
+### Both transports agree
+
+The keyword form and the single forwarded `;`-separated token produce identical JSON. A space-separated named-parameter string is not a supported form.
+
+### `json=0` equals an omitted flag
+
+`json=0` and an omitted flag produce byte-identical text output. A truthiness check must not treat the string `"0"` as enabled.
+
 ## Read-Only Enforcement
 
 ### No mutation methods are called
@@ -265,3 +327,7 @@ Only paths that actually exist are executed.
 - If current-Agent resolution falls back to process-global state, the no-Agent isolation test must fail.
 - If history output bypasses Store capacity, the bounded-history scenario must fail.
 - If settled active state remains visible, the lifecycle presentation test must fail.
+- If JSON mode serializes the raw snapshot instead of the allowlisted fields, the JSON allowlist case must fail.
+- If the `json` flag is resolved after parameter validation, an unknown parameter combined with `json=1` must return text instead of JSON, and the structured-error case must fail.
+- If the forwarded `;`-separated token is split only on `=`, the flag is glued into the key value and the transport-agreement case must fail.
+- If `json` is tested with a plain truthiness check, `json=0` enables JSON and the disabled-flag case must fail.
