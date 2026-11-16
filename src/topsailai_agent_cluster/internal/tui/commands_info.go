@@ -42,7 +42,8 @@ func (r CommandRunner) Info(ctx context.Context, out io.Writer, id string, jsonM
 	if jsonMode {
 		return RenderJSON(out, SessionInfo{EndpointID: endpoint.EndpointID, Session: session})
 	}
-	return RenderSessionInfo(out, endpoint, session)
+	sections := sessionDetailSections(ctx, r.API, endpoint.EndpointID, session.ProviderSessionID)
+	return renderSessionInfoWithSections(out, endpoint, session, sections)
 }
 
 // findInfoSession resolves one identifier to exactly one session.
