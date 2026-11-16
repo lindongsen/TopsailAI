@@ -595,6 +595,11 @@ TOPSAILAI_SEVERE_REPETITION_MAX_CONSECUTIVE=2
 TOPSAILAI_HEAVY_TASK_THRESHOLD_CONTINUOUS_SUMMARY_TIMES=5
 TOPSAILAI_HEAVY_TASK_PROMPT=""
 
+# Summary window guard: terminate the turn when summary requests dominate the
+# most recent LLM requests. 0 for max summaries disables the guard.
+TOPSAILAI_SUMMARY_WINDOW_SIZE=10
+TOPSAILAI_SUMMARY_WINDOW_MAX_SUMMARIES=3
+
 
 # =============================================================================
 # Feature Flags
