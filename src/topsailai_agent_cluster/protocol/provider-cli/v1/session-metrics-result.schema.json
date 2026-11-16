@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/session-metrics-result.schema.json",
+  "title": "session-metrics-result query_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provider_session_id",
+    "messages",
+    "observed_at_ms"
+  ],
+  "properties": {
+    "provider_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "messages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inbound",
+        "outbound"
+      ],
+      "properties": {
+        "inbound": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "outbound": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        }
+      }
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "description": "Validated after correlation with the v1 query in the common request envelope."
+}

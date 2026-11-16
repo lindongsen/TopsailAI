@@ -41,6 +41,16 @@ var queryFixtures = map[string]queryFixture{
 		payload: `{"max_chars":100,"max_tokens":100}`,
 		result:  `{"provider_session_id":"provider-session","messages":[],"message_count":0,"observed_at_ms":1,"truncated":false}`,
 	},
+	QuerySessionMetrics: {
+		target:  &Target{ResourceKind: ResourceSession, ProviderResourceKey: "provider-session"},
+		payload: `{}`,
+		result:  `{"provider_session_id":"provider-session","messages":{"inbound":2,"outbound":68},"observed_at_ms":1}`,
+	},
+	QuerySessionDetail: {
+		target:  &Target{ResourceKind: ResourceSession, ProviderResourceKey: "provider-session"},
+		payload: `{}`,
+		result:  `{"provider_session_id":"provider-session","metadata":"{\"session_id\":\"provider-session\"}","observed_at_ms":1}`,
+	},
 }
 
 // querySchemaStem converts a registered query name into the file-name stem its

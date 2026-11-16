@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/session-detail-result.schema.json",
+  "title": "session-detail-result query_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provider_session_id",
+    "metadata",
+    "observed_at_ms"
+  ],
+  "properties": {
+    "provider_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "metadata": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 524288
+    },
+    "runtime": {
+      "type": "string",
+      "maxLength": 524288
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "metadata_truncated": {
+      "type": "boolean"
+    }
+  },
+  "description": "Validated after correlation with the v1 query in the common request envelope. metadata and runtime are opaque provider documents, so the contract bounds their size and never their shape."
+}

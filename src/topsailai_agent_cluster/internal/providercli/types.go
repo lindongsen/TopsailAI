@@ -64,6 +64,10 @@ const (
 	QueryModelCatalog = "model.catalog"
 	// QuerySessionMessages reads the current provider session messages.
 	QuerySessionMessages = "session.messages"
+	// QuerySessionMetrics reads one session's current message counts.
+	QuerySessionMetrics = "session.metrics"
+	// QuerySessionDetail reads one session's provider metadata and runtime document.
+	QuerySessionDetail = "session.detail"
 )
 
 const (

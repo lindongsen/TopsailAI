@@ -266,7 +266,9 @@
             "launch.options",
             "history.messages",
             "model.catalog",
-            "session.messages"
+            "session.messages",
+            "session.metrics",
+            "session.detail"
           ]
         },
         "version": {
