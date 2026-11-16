@@ -98,6 +98,17 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         return deleted_list
 
 
+    def _get_summary_token_threshold(self) -> int:
+        """Return the Agent2LLM token summarize threshold, or 0 when disabled."""
+        threshold = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD",
+            default=128000,
+            formatter=int,
+        )
+        if not isinstance(threshold, int) or threshold <= 0:
+            return 0
+        return threshold
+
     @staticmethod
     def _get_agent2llm_summary_token_reserve() -> int:
         """Return the token budget reserved for a future Agent2LLM summary."""
@@ -110,6 +121,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if not isinstance(reserve, int) or reserve < 0:
             return default_reserve
         return reserve
+
 
     def _build_agent2llm_summary_partitions(
             self,
@@ -133,13 +145,18 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if need_session_messages:
             # Session retention is independent of intrinsic task retention, so
             # it may intentionally preserve a task even when the switch is off.
-            message_groups.append(self.messages)
+            # It must still honor the observation-release gate, otherwise the
+            # whole session re-adds the observation the head just released.
+            message_groups.append(self._drop_opening_observation(self.messages))
         if tail_offset_to_keep > 0:
             # The tail window is selected by message count, so it can start on
             # a tool observation whose owning assistant message falls into the
             # summarized middle. Providers reject such an orphan, so expand the
-            # window backwards to the owner, bounded by the head region.
-            tail_floor = max(len(head_portion), head_offset_to_keep)
+            # window backwards to the owner, bounded by the retained head and by
+            # a released observation, which the tail must not absorb back.
+            tail_floor = self._get_summary_preserved_prefix_length(
+                messages, head_portion, head_offset_to_keep
+            )
             tail_start = message_tool.expand_tail_start_for_tool_pairing(
                 messages,
                 len(messages) - tail_offset_to_keep,
@@ -149,7 +166,9 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         last_user_msg = self.last_user_message
         if last_user_msg:
-            message_groups.append([last_user_msg])
+            # The last user message may itself be the opening observation when
+            # no later human input exists, so it must obey the same gate.
+            message_groups.append(self._drop_opening_observation([last_user_msg]))
 
         for message_group in message_groups:
             for message in message_group:
@@ -438,12 +457,15 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
             # add session messages
             if need_session_messages:
+                # Session retention must honor the observation-release gate,
+                # otherwise it re-adds the observation the head just released.
+                session_messages = self._drop_opening_observation(self.messages)
                 if not new_messages:
                     # Note that they are different objects, so use '+=', DONOT use '='
-                    new_messages += self.messages
+                    new_messages += session_messages
                 else:
                     _len = len(new_messages)
-                    for msg in self.messages:
+                    for msg in session_messages:
                         if self._message_in_list(msg, new_messages[:_len]):
                             continue
                         new_messages.append(msg)
@@ -478,8 +500,11 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
 
             if last_user_msg:
-                if not self._message_in_list(last_user_msg, new_messages):
-                    new_messages.append(last_user_msg)
+                # The last user message may itself be the opening observation
+                # when no later human input exists, so it obeys the same gate.
+                if self._drop_opening_observation([last_user_msg]):
+                    if not self._message_in_list(last_user_msg, new_messages):
+                        new_messages.append(last_user_msg)
 
             self._log_summarize_message_identity_changes(
                 "summarize_messages_for_processing",

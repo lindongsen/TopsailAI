@@ -215,6 +215,17 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         return deleted_list
 
+    def _get_summary_token_threshold(self) -> int:
+        """Return the User2Agent token summarize threshold, or 0 when disabled."""
+        threshold = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
+            default=64000,
+            formatter=int,
+        )
+        if not isinstance(threshold, int) or threshold <= 0:
+            return 0
+        return threshold
+
     def _build_user2agent_summary_partitions(
             self,
             messages: list,
@@ -232,13 +243,21 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         preserved_indexes = set()
 
         head_portion = self._get_summary_head_messages(messages)
-        preserved_indexes.update(range(min(len(head_portion), len(messages))))
+        # The head is a subsequence, not necessarily a prefix: releasing the
+        # opening observation removes a span from the middle of the prefix, so a
+        # length-based range would preserve the wrong indexes and re-add it.
+        preserved_indexes.update(
+            self._map_head_messages_to_indexes(messages, head_portion)
+        )
         preserved_indexes.update(range(min(head_offset_to_keep, len(messages))))
         if tail_offset_to_keep > 0:
             # Expand the count-based tail window backwards so it never starts
             # on a tool observation whose owning assistant message would be
-            # summarized away. Bounded by the head region.
-            tail_floor = max(len(head_portion), head_offset_to_keep)
+            # summarized away. Bounded by the retained head and by a released
+            # observation, which the tail must not absorb back.
+            tail_floor = self._get_summary_preserved_prefix_length(
+                messages, head_portion, head_offset_to_keep
+            )
             tail_start = message_tool.expand_tail_start_for_tool_pairing(
                 messages,
                 len(messages) - tail_offset_to_keep,
@@ -246,9 +265,15 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             )
             preserved_indexes.update(range(max(tail_start, 0), len(messages)))
 
+        # The last user message may itself be the opening observation when no
+        # later human input exists, so it must obey the same release gate.
+        release_observation = self._should_release_opening_observation(messages)
+        obs_start, obs_end = self._opening_observation_span(messages)
         for index in range(len(messages) - 1, -1, -1):
             msg_dict = json_tool.json_load(messages[index])
             if msg_dict["role"] == ROLE_USER:
+                if release_observation and obs_start <= index < obs_end:
+                    break
                 preserved_indexes.add(index)
                 break
 
@@ -506,24 +531,38 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
                 failed_stage = "history_delete"
                 # Reuse the in-memory intrinsic-head policy instead of duplicating
-                # task/observation rules in the persistence branch. The helper
-                # always returns a prefix, so its length maps directly to the same
-                # ordered raw records and preserves their storage identifiers.
+                # task/observation rules in the persistence branch. The head is a
+                # subsequence rather than a prefix once the opening observation is
+                # released, so positions are recovered by identity; a length-based
+                # slice would keep the observation and delete the task instead.
                 raw_message_values = [raw_msg.message for raw_msg in raw_messages_from_session]
                 raw_head_messages = self._get_summary_head_messages(raw_message_values)
+                raw_head_indexes = self._map_head_messages_to_indexes(
+                    raw_message_values, raw_head_messages
+                )
                 raw_msg_ids_to_keep = [
-                    raw_msg.msg_id
-                    for raw_msg in raw_messages_from_session[:len(raw_head_messages)]
+                    raw_messages_from_session[index].msg_id
+                    for index in raw_head_indexes
                 ]
                 print_info(f"!!! [User2Agent] [Summarization] intrinsic_head_messages_to_keep(session_raw_messages)={len(raw_msg_ids_to_keep)}")
 
-                # keep last user message
+                # keep last user message. A released opening observation must
+                # not be resurrected here, otherwise it survives in storage and
+                # reloads on the next turn, silently defeating the gate.
+                release_observation = self._should_release_opening_observation(
+                    raw_message_values
+                )
+                obs_start, obs_end = self._opening_observation_span(raw_message_values)
                 last_user_raw_msg = None
-                for raw_msg in reversed(raw_messages_from_session):
+                for index in range(len(raw_messages_from_session) - 1, -1, -1):
+                    raw_msg = raw_messages_from_session[index]
                     msg_dict = json_tool.json_load(raw_msg.message)
-                    if msg_dict["role"] == ROLE_USER:
-                        last_user_raw_msg = raw_msg
+                    if msg_dict["role"] != ROLE_USER:
+                        continue
+                    if release_observation and obs_start <= index < obs_end:
                         break
+                    last_user_raw_msg = raw_msg
+                    break
 
                 # delete history messages. The preserved tail window is expanded
                 # backwards so a tool observation is never deleted together with
@@ -531,7 +570,9 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 # other way round), which would produce an orphan tool message.
                 raw_tail_start = len(raw_messages_from_session)
                 if tail_offset_to_keep > 0:
-                    raw_tail_floor = max(len(raw_head_messages), head_offset_to_keep)
+                    raw_tail_floor = self._get_summary_preserved_prefix_length(
+                        raw_message_values, raw_head_messages, head_offset_to_keep
+                    )
                     raw_tail_start = message_tool.expand_tail_start_for_tool_pairing(
                         raw_message_values,
                         len(raw_messages_from_session) - tail_offset_to_keep,
@@ -562,10 +603,13 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 new_messages = messages[:head_offset_to_keep]
                 # add tail_offset messages. The window is expanded backwards so it
                 # never starts on a tool observation whose owning assistant message
-                # would be summarized away. Bounded by the head region.
+                # would be summarized away. Bounded by the retained head and by a
+                # released observation, which the tail must not absorb back.
                 tail_messages = []
                 if tail_offset_to_keep > 0:
-                    tail_floor = max(len(keeping_messages), head_offset_to_keep)
+                    tail_floor = self._get_summary_preserved_prefix_length(
+                        messages, keeping_messages, head_offset_to_keep
+                    )
                     tail_start = message_tool.expand_tail_start_for_tool_pairing(
                         messages,
                         len(messages) - tail_offset_to_keep,
