@@ -246,12 +246,28 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		// ran, so a resume scenario would pass while proving nothing about
 		// authorization. The stopped row is therefore found but not live, which is
 		// exactly what a provider reports for a record whose process is gone.
-		observation := fixtureObservation(options)
-		if request.Target != nil && request.Target.ProviderResourceKey == "session:stopped" {
+		//
+		// A target the mock never published is reported as not found, which is what
+		// the real provider answers after its workspace scan matches no row. The
+		// earlier shape answered every unknown target as found and live, so a
+		// resume by handle for a session that does not exist was refused with
+		// target_still_active instead of target_not_found. That inverted the
+		// meaning of the refusal: the operator was told the session was running
+		// when the truth was that no such session existed.
+		key := ""
+		if request.Target != nil {
+			key = request.Target.ProviderResourceKey
+		}
+		if !mockKnownSession(key) {
+			base.Inspection = &inspectionResult{Found: false, Live: false}
+			break
+		}
+		if key == "session:stopped" {
 			stopped := stoppedObservation(options)
 			base.Inspection = &inspectionResult{Found: true, Live: false, Observation: &stopped}
 			break
 		}
+		observation := fixtureObservation(options)
 		base.Inspection = &inspectionResult{Found: true, Live: true, Observation: &observation}
 	case functionResolve:
 		// The mock's provider resource key IS the provider session identifier, which
@@ -300,7 +316,15 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		case queryLaunchOptions:
 			base.QueryResult = json.RawMessage(`{"profile":{"resource_kind":"launch_profile","provider_resource_key":"launch:mock","display_name":"Mock","revision":"launch-r1"},"projects":[{"name":"mock","path":"/work/mock"}]}`)
 		case queryHistoryMessages:
-			base.QueryResult = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"session:stable","provider_session_id":"session-1","resumable":true}],"observed_at_ms":1700000000000,"truncated":false}`)
+			// The row names the stopped session, not the live one, because a history
+			// row is joined to the inventory on provider_session_id and the mock
+			// publishes that identifier verbatim in its observations. A row that
+			// named a session the inventory never reports could not be joined, so
+			// every column stayed empty and a resume of that row addressed a live
+			// session through a handle minted from the row key, which the Endpoint
+			// then refused with target_still_active. The stopped session is the
+			// one a resume scenario needs: the record exists, no process holds it.
+			base.QueryResult = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"session:stopped","provider_session_id":"session:stopped","provider_display_name":"Stopped Session","resumable":true}],"observed_at_ms":1700000000000,"truncated":false}`)
 		case queryModelCatalog:
 			// The read is recorded because a scenario proves the provider was
 			// reached exactly once, and a read that answers without leaving a

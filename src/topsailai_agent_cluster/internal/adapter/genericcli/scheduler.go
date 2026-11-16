@@ -1,9 +1,11 @@
 package genericcli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"topsailai_agent_cluster/internal/providercli"
 )
@@ -67,6 +69,53 @@ func (s *scheduler) acquire(class invocationClass) (func(), error) {
 		})
 	}, nil
 }
+
+// acquireWithin reserves capacity, waiting inside the caller's own budget instead
+// of failing on the first refusal.
+//
+// acquire is deliberately non-blocking, because an unbounded queue would let a
+// caller believe its operation had already started. That reasoning does not apply
+// here: the caller already carries a deadline, and waiting inside a budget the
+// caller set is exactly what the budget is for. Without this wait a read that
+// collided with the collection cycle failed outright, which is why a resume, a
+// history read or a model read failed intermittently while the inventory was
+// being refreshed, and why one contended discovery marked the whole inventory
+// unavailable.
+//
+// The wait is bounded by ctx, so a caller that cannot get capacity in time still
+// fails, and it reports the context error so the caller can tell a busy adapter
+// from a broken provider.
+func (s *scheduler) acquireWithin(ctx context.Context, class invocationClass) (func(), error) {
+	release, err := s.acquire(class)
+	if err == nil {
+		return release, nil
+	}
+	if !errors.Is(err, ErrCapacity) {
+		return nil, err
+	}
+	ticker := time.NewTicker(capacityPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w: %w", err, ctx.Err())
+		case <-ticker.C:
+			release, retryErr := s.acquire(class)
+			if retryErr == nil {
+				return release, nil
+			}
+			if !errors.Is(retryErr, ErrCapacity) {
+				return nil, retryErr
+			}
+			err = retryErr
+		}
+	}
+}
+
+// capacityPollInterval is how often a caller waiting for capacity retries. It is
+// short enough that a collection cycle of a few tens of milliseconds is absorbed
+// without a visible delay, and long enough that a waiting caller does not spin.
+const capacityPollInterval = 10 * time.Millisecond
 
 // effectiveConcurrency narrows Endpoint and Adapter limits with Provider limits.
 func effectiveConcurrency(endpoint, configured, provider providercli.ConcurrencyLimits) (providercli.ConcurrencyLimits, error) {
