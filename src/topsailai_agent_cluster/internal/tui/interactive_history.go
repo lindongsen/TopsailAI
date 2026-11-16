@@ -81,15 +81,21 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 			return err
 		}
 	}
-	// The interactive history table hides SESSION_ID for the same reason the
-	// session list does: the operator selects a row by number, and the provider
-	// session ID is a long opaque value that only widens the table. The ID stays
-	// on the row, so it is still accepted as a selector and still named in the
-	// resume and cd diagnostics. The standalone history command keeps the column,
-	// because its output is parsed by scripts and tests.
+	// The interactive history table keeps SESSION_ID, unlike the session list.
+	//
+	// A session list row is addressed by number because the operator is choosing a
+	// live target from a table that is refreshed continuously. A history row is
+	// addressed by the provider session id, because the operator copies it into
+	// `resume -s <id>` and the row number is not durable: the history window is a
+	// bounded provider read, so a later refresh can renumber every row. Hiding the
+	// id therefore removed the only stable selector the operator could type, and
+	// left the row number as a selector that silently means a different session
+	// after the next read.
+	//
+	// The column is wide, but it is the value the operator came for. The standalone
+	// history command already prints it, so both surfaces now agree.
 	options := TableOptionsFor(out)
 	options.Color = color
-	options.HideSessionID = true
 	if err := RenderHistory(out, view, options); err != nil {
 		return err
 	}

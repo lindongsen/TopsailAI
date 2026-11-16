@@ -62,9 +62,10 @@ func historyScenarioStub(rows []protocol.HistoryRow, report protocol.InventoryRe
 // TestInteractiveHistoryRendersTableAndBindsRowNumbers proves the interactive
 // surface renders the history layout and queries exactly the named endpoint.
 //
-// The rows carry a distinguishing display name because the interactive table
-// hides SESSION_ID, so the provider session ID can no longer be used as the
-// marker that proves both rows were rendered.
+// The rows carry a distinguishing display name and a distinguishing provider
+// session ID, because the interactive table prints both: the name proves the row
+// was rendered, and the ID proves the operator can copy the value that
+// `resume -s` accepts.
 func TestInteractiveHistoryRendersTableAndBindsRowNumbers(t *testing.T) {
 	stub := historyScenarioStub([]protocol.HistoryRow{
 		{ProviderSessionID: "wa-live", ProviderDisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
@@ -80,13 +81,16 @@ func TestInteractiveHistoryRendersTableAndBindsRowNumbers(t *testing.T) {
 			t.Fatalf("history table missing %q: %q", want, output)
 		}
 	}
-	// The interactive history table hides SESSION_ID, so neither the header nor
-	// the provider session ID cell may be printed.
-	if strings.Contains(output, "SESSION_ID") {
-		t.Fatalf("interactive history table still prints the SESSION_ID header: %q", output)
+	// The interactive history table prints SESSION_ID, because the provider
+	// session ID is the only selector that survives a refresh of the bounded
+	// history window. Both the header and every row's ID must be present.
+	if !strings.Contains(output, "SESSION_ID") {
+		t.Fatalf("interactive history table is missing the SESSION_ID header: %q", output)
 	}
-	if strings.Contains(output, "wa-live") || strings.Contains(output, "wa-past") {
-		t.Fatalf("interactive history table still prints a provider session ID cell: %q", output)
+	for _, want := range []string{"wa-live", "wa-past"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("interactive history table is missing the provider session ID %q: %q", want, output)
+		}
 	}
 	if len(stub.historyCalls) != 1 || stub.historyCalls[0] != "endpoint-1" {
 		t.Fatalf("history calls=%v", stub.historyCalls)
