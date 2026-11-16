@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import multiprocessing
+import logging
 import json
 import os
 import selectors
@@ -18,6 +19,8 @@ from dataclasses import dataclass
 
 from cli_topsailai.agent_launch_command import launcher_command
 from cli_topsailai.paths import get_topsailai_home
+logger = logging.getLogger(__name__)
+
 
 _MAX_LOG_BYTES = 10 * 1024 * 1024
 _MAX_BACKUPS = 2
@@ -641,6 +644,63 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
         log.close()
         _remove_lease(log_path)
         _close_channel(ack_fd)
+        try:
+            _reclaim_expired_launch_logs(log_path.parent)
+        except Exception:  # noqa: BLE001 - cleanup must never mask the exit
+            logger.warning("launch log reclaim failed", exc_info=True)
+
+
+def _reclaim_expired_launch_logs(task_dir: Path, *, now: Optional[float] = None) -> list[str]:
+    """Remove expired launch logs this CLI produced, when its supervisor exits.
+
+    The launch log is a CLI artifact: the detached supervisor creates it and
+    relays the launcher console stream into it. Its lifecycle therefore belongs
+    to the CLI, so the sweep runs here, in the process that owns the artifact,
+    instead of in the agent core that merely runs inside the launcher.
+
+    Only launch logs are considered. Session records belong to the session
+    cleanup paths, and expanding this sweep to them would delete files this
+    process never created.
+
+    A log protected by a live supervisor lease, or still held open by a
+    process, is skipped. Both checks fail closed, so an unverifiable owner
+    keeps its log.
+
+    Args:
+        task_dir: Task directory that holds the launch logs.
+        now: Reference timestamp, defaulting to the current time.
+
+    Returns:
+        Paths actually removed, reported from the removal itself.
+    """
+    from cli_topsailai.cleaning import (
+        EXPIRED_AGE_SECONDS,
+        _deletion_block_reason,
+        _home_for_task_dir,
+        _launch_log_records,
+    )
+
+    reference = time.time() if now is None else now
+    directory = str(task_dir)
+    home = _home_for_task_dir(directory)
+    cache: dict = {}
+    removed: list[str] = []
+    for record in _launch_log_records(directory):
+        if reference - record["mtime"] <= EXPIRED_AGE_SECONDS:
+            continue
+        if _is_active_launch_log(Path(record["path"])):
+            continue
+        if _deletion_block_reason(record["path"], home=home, cache=cache) is not None:
+            continue
+        try:
+            _os.unlink(record["path"])
+        except OSError:
+            continue
+        removed.append(record["path"])
+        logger.info("DELETED: %s", record["path"])
+    if removed:
+        logger.info("Removed %d expired launch log(s) from %s", len(removed), directory)
+    return removed
 
 
 def _cancel_requested(cancel_fd: Any, callback: Optional[Callable[[], bool]],
