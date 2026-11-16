@@ -36,7 +36,8 @@ func interactiveInfo(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return numericTokenHint(token, err)
 	}
-	return RenderSessionInfo(out, endpoint, session)
+	sections := sessionDetailSections(ctx, api, endpoint.EndpointID, session.ProviderSessionID)
+	return renderSessionInfoWithSections(out, endpoint, session, sections)
 }
 
 // locateInfoSession finds the one session named by resourceID.
@@ -148,6 +149,17 @@ func infoRowTarget(row SessionRow) (string, string, error) {
 // identity, and an absent observation is reported as not_reported instead of being
 // omitted: an operator reading info must not conclude that no controller exists.
 func RenderSessionInfo(w io.Writer, endpoint protocol.Endpoint, session protocol.Session) error {
+	return renderSessionInfoWithSections(w, endpoint, session, nil)
+}
+
+// renderSessionInfoWithSections writes one session's detail plus the provider
+// sections the caller already read.
+//
+// The sections are passed in rather than read here, because this function has no
+// context and no API: it is a pure renderer, and a renderer that performed a
+// provider read would make every caller pay for a document it may not want. The
+// caller owns the read, its budget and its failure reporting.
+func renderSessionInfoWithSections(w io.Writer, endpoint protocol.Endpoint, session protocol.Session, sections []detailSection) error {
 	lines := []detailLine{
 		{"session_id", session.ClusterSessionID},
 		{"provider_session_id", session.ProviderSessionID},
@@ -172,7 +184,7 @@ func RenderSessionInfo(w io.Writer, endpoint protocol.Endpoint, session protocol
 			return err
 		}
 	}
-	return nil
+	return writeDetailSections(w, sections)
 }
 
 // providerPIDLabel renders the provider-reported session PID.
