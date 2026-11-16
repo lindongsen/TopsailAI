@@ -246,12 +246,28 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		// ran, so a resume scenario would pass while proving nothing about
 		// authorization. The stopped row is therefore found but not live, which is
 		// exactly what a provider reports for a record whose process is gone.
-		observation := fixtureObservation(options)
-		if request.Target != nil && request.Target.ProviderResourceKey == "session:stopped" {
+		//
+		// A target the mock never published is reported as not found, which is what
+		// the real provider answers after its workspace scan matches no row. The
+		// earlier shape answered every unknown target as found and live, so a
+		// resume by handle for a session that does not exist was refused with
+		// target_still_active instead of target_not_found. That inverted the
+		// meaning of the refusal: the operator was told the session was running
+		// when the truth was that no such session existed.
+		key := ""
+		if request.Target != nil {
+			key = request.Target.ProviderResourceKey
+		}
+		if !mockKnownSession(key) {
+			base.Inspection = &inspectionResult{Found: false, Live: false}
+			break
+		}
+		if key == "session:stopped" {
 			stopped := stoppedObservation(options)
 			base.Inspection = &inspectionResult{Found: true, Live: false, Observation: &stopped}
 			break
 		}
+		observation := fixtureObservation(options)
 		base.Inspection = &inspectionResult{Found: true, Live: true, Observation: &observation}
 	case functionResolve:
 		// The mock's provider resource key IS the provider session identifier, which
