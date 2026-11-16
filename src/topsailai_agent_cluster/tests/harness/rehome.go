@@ -1,9 +1,11 @@
 package harness
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -122,6 +124,68 @@ func (c *Cluster) SeverChannelE() error {
 	return nil
 }
 
+// AdvanceFenceE forces one real reconnect to the primary Server and proves the
+// primary Server's fence advanced.
+//
+// A re-home between two fresh Servers compares generation 1 against generation 1,
+// so the second Server is accepted even when the connection-layer fix is absent.
+// The scenario would then be green for the wrong reason. Severing the transport
+// makes the Endpoint reconnect to the same Server process, whose fence then reads
+// 2, so adopting a different Server's 1 is only possible if the Endpoint released
+// the dead connection.
+//
+// The precondition is observed rather than assumed: the Endpoint's own
+// "endpoint channel reconnected" line is the only evidence that a reconnect
+// happened. A scenario that cannot reach that state fails with an explicit
+// "cannot discriminate" message instead of reporting success.
+func (c *Cluster) AdvanceFenceE(limit time.Duration) error {
+	if c.ChannelProxy == nil {
+		return fmt.Errorf("cluster has no channel proxy, so the primary Server's fence cannot be advanced")
+	}
+	if c.EndpointLogPath == "" {
+		return fmt.Errorf("cluster was not started with an Endpoint log file, so the fence advance cannot be observed")
+	}
+	before, err := c.EndpointLog()
+	if err != nil {
+		return err
+	}
+	reconnectsBefore := strings.Count(before, "endpoint channel reconnected")
+	c.ChannelProxy.Sever()
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		content, readErr := c.EndpointLog()
+		if readErr == nil && strings.Count(content, "endpoint channel reconnected") > reconnectsBefore {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	content, _ := c.EndpointLog()
+	return fmt.Errorf("this run cannot discriminate: the Endpoint never reconnected to the primary Server within %s, so its fence did not advance; log tail:\n%s", limit, logTailOf(content))
+}
+
+// AssertNoSupersededRejectionE fails when the Endpoint rejected a link as
+// superseded.
+//
+// This is the discriminating assertion for the connection-layer fix. Without the
+// fix the Endpoint still holds the dead connection and its generation, so its
+// first attempt against a Server with a lower fence is rejected with
+// "channel connection was superseded by a newer link". With the fix the dead
+// connection is released, so no attempt is ever rejected for that reason.
+//
+// The final online state cannot discriminate, because the reconnect loop retries
+// and a retry receives a generation the Endpoint already holds. Only the absence
+// of the rejection symptom distinguishes the two builds.
+func (c *Cluster) AssertNoSupersededRejectionE() error {
+	content, err := c.EndpointLog()
+	if err != nil {
+		return err
+	}
+	if strings.Contains(content, "superseded by a newer link") {
+		return fmt.Errorf("the Endpoint rejected a link as superseded, so it still held the dead connection's generation; log tail:\n%s", logTailOf(content))
+	}
+	return nil
+}
+
 // StartSecondaryServerE starts the second independent Server.
 //
 // The second Server owns its own SQLite file and its own API and channel ports,
@@ -198,6 +262,82 @@ func (c *Cluster) RestartServerE() error {
 // SecondaryURL returns a secondary Server API URL for the cluster.
 func (c *Cluster) SecondaryURL(path string) string {
 	return "http://127.0.0.1:" + c.SecondaryAPI + path
+}
+
+// WaitSecondaryEndpointOnlineE waits until the second Server reports the
+// Endpoint online.
+//
+// The second Server is the only authority for whether the re-homed Endpoint
+// reached it, so the assertion reads that Server's own endpoint list rather than
+// inferring connectivity from the primary Server's state.
+func (c *Cluster) WaitSecondaryEndpointOnlineE(limit time.Duration) error {
+	if c.SecondaryAPI == "" {
+		return fmt.Errorf("cluster was not started with a second Server")
+	}
+	deadline := time.Now().Add(limit)
+	var last string
+	for time.Now().Before(deadline) {
+		state, err := c.endpointConnectionStateE(c.SecondaryURL("/api/v1/endpoints"))
+		if err == nil {
+			last = state
+			if state == "online" {
+				return nil
+			}
+		} else {
+			last = err.Error()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("the second Server never reported endpoint-1 online within %s; last observation: %s", limit, last)
+}
+
+// WaitSecondaryInventoryE waits until the second Server has accepted an
+// inventory report from the re-homed Endpoint.
+//
+// A connection that cannot serve inventory would look online and be useless, so
+// a re-home scenario must prove the Endpoint publishes through the new Server
+// rather than only that it connected.
+func (c *Cluster) WaitSecondaryInventoryE(limit time.Duration) error {
+	if c.SecondaryAPI == "" {
+		return fmt.Errorf("cluster was not started with a second Server")
+	}
+	return WaitInventoryForE(c.SecondaryURL("/api/v1/endpoints/endpoint-1/session-state"), "secret", "", limit)
+}
+
+// endpointConnectionStateE reads endpoint-1's connection state from one Server.
+func (c *Cluster) endpointConnectionStateE(url string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create endpoint list request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("read endpoint list: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read endpoint list body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("endpoint list status=%d body=%s", resp.StatusCode, body)
+	}
+	var envelope struct {
+		Data []struct {
+			EndpointID      string `json:"endpoint_id"`
+			ConnectionState string `json:"connection_state"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", fmt.Errorf("decode endpoint list: %w", err)
+	}
+	for _, item := range envelope.Data {
+		if item.EndpointID == "endpoint-1" {
+			return item.ConnectionState, nil
+		}
+	}
+	return "", fmt.Errorf("endpoint-1 is absent from the endpoint list")
 }
 
 // EndpointLog reads the Endpoint's own log file.
