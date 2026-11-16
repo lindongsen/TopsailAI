@@ -114,6 +114,64 @@ def _cleanup_pid_scoped_pipes(pid: int | None = None) -> None:
         logger.error("Failed to scan task folder for pid-scoped pipes: %s", exc)
 
 
+# Session counters that prove at least one turn actually ran. A session whose
+# counters are all zero never produced a transcript worth keeping.
+_ACTIVITY_COUNTERS = ("turn_count", "llm_request_count", "tool_call_count", "total_tokens")
+
+
+def _session_is_empty_by_counters(session_id: str) -> bool | None:
+    """Return whether *session_id* recorded no activity, or None when unknown.
+
+    The session table is the authority for emptiness: a session with no row
+    never reached its first turn, and a row whose counters are all zero never
+    completed one. ``None`` means the counters could not be read, so the caller
+    must preserve the file instead of guessing.
+    """
+    try:
+        from topsailai.context import ctx_manager
+
+        session = ctx_manager.get_session_manager().get_session(session_id)
+    except Exception as exc:
+        logger.error("Failed to read session counters for %s: %s", session_id, exc)
+        return None
+    if session is None:
+        return True
+    for name in _ACTIVITY_COUNTERS:
+        if getattr(session, name, 0) or 0:
+            return False
+    return True
+
+
+def _cleanup_empty_session_stdout(pid: int | None = None) -> None:
+    """Remove this process's session stdout files that recorded no activity.
+
+    A session that starts and exits immediately leaves a stdout file and no
+    session counters. Such a file has no diagnostic value, so it is removed on
+    exit. A file belonging to a session that ran at least one turn is
+    preserved, because it is the transcript the CLI reads after the process
+    ends.
+    """
+    if not os.path.isdir(FOLDER_WORKSPACE_TASK):
+        return
+    if pid is None:
+        pid = os.getpid()
+    suffix = f".{pid}.session.stdout"
+    try:
+        names = os.listdir(FOLDER_WORKSPACE_TASK)
+    except OSError as exc:
+        logger.error("Failed to scan task folder for session stdout: %s", exc)
+        return
+    for name in names:
+        if not name.endswith(suffix):
+            continue
+        session_id = name[: -len(suffix)]
+        if not session_id:
+            continue
+        if _session_is_empty_by_counters(session_id) is not True:
+            continue
+        delete_file(os.path.join(FOLDER_WORKSPACE_TASK, name))
+
+
 def cleanup_task_folder() -> None:
     """Remove all registered temporary files and PID-scoped pipes.
 
@@ -138,6 +196,7 @@ def cleanup_task_folder() -> None:
             logger.error("Error during cleanup function %s: %s", func, exc)
 
     _cleanup_pid_scoped_pipes()
+    _cleanup_empty_session_stdout()
 
 
 def print_session_meta_files_on_exit() -> None:
