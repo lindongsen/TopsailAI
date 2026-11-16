@@ -39,6 +39,18 @@ func operationNeedsLiveGeneration(operation string) bool {
 // the row that is addressed cannot disagree. A missing row, a duplicate row and an
 // unreadable generation are all rejections: an ambiguous selector must never be
 // resolved by picking one candidate.
+//
+// The read is host-scoped on purpose: it passes --local, so it sees only rows this
+// host can confirm. That confines mutation authority to what this Endpoint can
+// verify, which matters because this read is the revalidation for row-scoped
+// resume, agent.drive.stop, workspace.clean, every ctl.<action> and every default
+// mutation. A row recorded on another host is therefore reported as not found, and
+// its liveness as unverified; both are refusals rather than admissions.
+//
+// Cross-host work has one supported path: agent.resume with a session-scoped key,
+// which reads the session registry through sessionAuthority and never passes
+// --local. Do not widen this read to compensate, because that would extend a
+// destructive operation's reach to every row in a shared task directory.
 func (p *provider) workspaceAuthority(ctx context.Context, requested *target) (providerSessionTarget, string, error) {
 	key, err := validateSessionTarget(requested)
 	if err != nil {

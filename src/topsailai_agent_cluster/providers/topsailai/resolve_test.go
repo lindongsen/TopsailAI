@@ -199,23 +199,62 @@ func TestInspectReadsAcrossHosts(t *testing.T) {
 // TestDiscoverAndAuthorityStayLocal proves the cross-host read is limited to
 // inspect: discovery and the mutation authority read must keep --local, because
 // they address what this Endpoint can control.
+//
+// The two reads are asserted separately because they protect different boundaries.
+// Discovery decides what the inventory lists. The authority read decides what a
+// mutation may touch, so dropping --local there would widen a destructive operation
+// from "rows this host can see" to every row in a shared task directory. A test that
+// asserted only one of them would leave the other unpinned while its name claimed
+// both, which is what this test did before: it dispatched only discover and never
+// reached workspaceAuthority.
 func TestDiscoverAndAuthorityStayLocal(t *testing.T) {
-	document := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7}]}`
-	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{authorityCall: answer(document)}}
-	if response := fixedProvider(runner).dispatch(context.Background(), validRequest(functionDiscover)); !response.OK {
-		t.Fatalf("response=%+v", response)
-	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("discover made %d calls: %v", len(runner.calls), runner.calls)
-	}
-	found := false
-	for _, token := range runner.calls[0].args {
-		if token == "--local" {
-			found = true
+	t.Run("discover", func(t *testing.T) {
+		document := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7}]}`
+		runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+			authorityCall: answer(document),
+			// The unscoped read is answered as well, so a read that dropped
+			// --local still completes and the assertion below reports the
+			// consequence. Without this answer the fixture would fail first
+			// with "unexpected CLI call", which names the argv but not the
+			// behaviour that broke.
+			inspectCall: answer(document),
+		}}
+		if response := fixedProvider(runner).dispatch(context.Background(), validRequest(functionDiscover)); !response.OK {
+			t.Fatalf("response=%+v", response)
 		}
-	}
-	if !found {
-		t.Fatalf("discover dropped --local: %v", runner.calls[0].args)
+		if len(runner.calls) != 1 {
+			t.Fatalf("discover made %d calls: %v", len(runner.calls), runner.calls)
+		}
+		assertLocalAuthorityRead(t, "discover", runner.calls[0].args)
+	})
+
+	t.Run("mutation authority", func(t *testing.T) {
+		// workspace.clean is a non-live operation, so it routes through
+		// requireNonLiveRecord into workspaceAuthority. Reaching the read through
+		// the dispatch path proves it is reachable, not merely callable.
+		runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+			authorityCall: answer(dormantWorkspaceDocument()),
+			inspectCall:   answer(dormantWorkspaceDocument()),
+			strings.Join([]string{"workspace", "clean", "-s", "s-1", "-p", "42", "--yes", "--json"}, "\x00"): answer(`{"ok":true}`),
+		}}
+		value := mutationRequest(operationWorkspaceClean, sessionTarget(t), `{}`)
+		if response := fixedProvider(runner).dispatch(context.Background(), value); !response.OK {
+			t.Fatalf("response=%+v", response)
+		}
+		if len(runner.calls) == 0 {
+			t.Fatal("the mutation authority read was never made")
+		}
+		assertLocalAuthorityRead(t, "the mutation authority read", runner.calls[0].args)
+	})
+}
+
+// assertLocalAuthorityRead fails when a read is not exactly the host-scoped
+// workspace read, naming the consequence rather than only the missing token,
+// because the token alone does not say what breaks.
+func assertLocalAuthorityRead(t *testing.T, label string, args []string) {
+	t.Helper()
+	if got := strings.Join(args, "\x00"); got != authorityCall {
+		t.Fatalf("%s read %v, want the host-scoped %v: dropping --local widens its reach to rows recorded on another host", label, args, strings.Split(authorityCall, "\x00"))
 	}
 }
 
