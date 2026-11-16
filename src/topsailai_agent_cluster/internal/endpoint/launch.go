@@ -20,6 +20,7 @@ func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery
 	for _, instance := range instances {
 		descriptor, err := instance.Describe(ctx)
 		if err != nil {
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, "provider_error")
 			return result, err
 		}
 		if query.AdapterID != "" && descriptor.AdapterID != query.AdapterID {
@@ -36,6 +37,7 @@ func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery
 		if profileReader, ok := instance.(adapter.LaunchProfileHandler); ok {
 			launchHandler, err = profileReader.LaunchProfile(ctx)
 			if err != nil {
+				result.ErrorCode = readFailureCode(err, result.ErrorCode, "provider_error")
 				return result, err
 			}
 			if launchHandler.AdapterID != descriptor.AdapterID || launchHandler.LaunchProfileID == "" || launchHandler.Revision == "" {
@@ -48,7 +50,7 @@ func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery
 		}
 		projects, err := handler.Projects(ctx)
 		if err != nil {
-			result.ErrorCode = "project_query_failed"
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, "project_query_failed")
 			return result, err
 		}
 		data, err := json.Marshal(projects)

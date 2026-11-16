@@ -86,6 +86,11 @@ func (h *Handler) writeHistoryResultFailure(w http.ResponseWriter, r *http.Reque
 		// not an outage. Reporting it as either would send the operator to
 		// investigate a provider that was never invoked.
 		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation history.read is not permitted for this endpoint token")
+	case protocol.AdapterBusy:
+		// The adapter had no capacity within the caller's budget, so the provider
+		// was never invoked. This is transient and retryable, not a provider
+		// fault, so it must not share the provider default.
+		h.writeError(w, 503, protocol.AdapterBusy, "history read was not attempted: adapter capacity was unavailable, retry")
 	default:
 		h.writeError(w, 502, protocol.HistoryProviderError, "provider history read failed")
 	}

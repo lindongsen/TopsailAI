@@ -129,6 +129,11 @@ func TestModelCatalogAdapterFailureCodes(t *testing.T) {
 		// must not share their status. Reporting it as a provider failure would
 		// send the operator to investigate a provider that was never invoked.
 		{code: protocol.PolicyDenied, status: http.StatusForbidden},
+		// A capacity refusal means the provider was never invoked, so it is
+		// transient and retryable rather than a provider fault. Sharing the
+		// provider status would tell the operator to investigate a provider
+		// that was never called.
+		{code: protocol.AdapterBusy, status: http.StatusServiceUnavailable},
 	} {
 		h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: modelCatalogCodeRequester{code: item.code}}
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/model-catalog?endpoint_id=e&resource_id=s", nil)

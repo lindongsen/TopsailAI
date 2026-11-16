@@ -559,9 +559,36 @@ func rejectedReceipt(intent protocol.ImmutableIntent, hash, code string) protoco
 // capacity condition is provably unrelated to the target.
 func observationFailureCode(err error) string {
 	if errors.Is(err, adapter.ErrBusy) {
-		return "adapter_busy"
+		return protocol.AdapterBusy
 	}
 	return "target_observation_failed"
+}
+
+// readFailureCode names why a read-only provider call did not happen.
+//
+// A busy adapter and a broken provider are different facts and must not share one
+// code. Capacity is a transient collision with another invocation of the same
+// Adapter instance, so the same read may succeed unchanged once that invocation
+// finishes; reporting it as a provider failure told the operator to investigate a
+// provider that was never invoked. The provider code is kept for every other
+// error, because only a capacity condition is provably unrelated to the provider.
+//
+// A capacity condition outranks whatever the adapter reported, because the adapter
+// never reached the provider and so has no provider evidence to report. Otherwise
+// the adapter's own code is preserved and providerCode is only the fallback for an
+// adapter that reported nothing, which keeps the original precedence intact.
+//
+// Every read path calls this one helper rather than repeating the check, because
+// the defect this replaces existed precisely because one path was updated and its
+// siblings were not.
+func readFailureCode(err error, reported, providerCode string) string {
+	if errors.Is(err, adapter.ErrBusy) {
+		return protocol.AdapterBusy
+	}
+	if reported != "" {
+		return reported
+	}
+	return providerCode
 }
 
 func decodeReceipt(value string) (protocol.ExecutionReceipt, error) {

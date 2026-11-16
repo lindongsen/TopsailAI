@@ -30,9 +30,7 @@ func (e *Executor) History(ctx context.Context, query protocol.HistoryQuery) (pr
 		}
 		result, err := handler.History(ctx, query)
 		if err != nil {
-			if result.ErrorCode == "" {
-				result.ErrorCode = protocol.HistoryProviderError
-			}
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, protocol.HistoryProviderError)
 			return result, err
 		}
 		return result, nil
@@ -62,9 +60,7 @@ func (s *Service) historyFrame(ctx context.Context, frame channel.Frame) {
 		result, err = reader.History(queryCtx, *frame.HistoryQuery)
 		if err != nil {
 			s.logError("query adapter history", err)
-			if result.ErrorCode == "" {
-				result.ErrorCode = protocol.HistoryProviderError
-			}
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, protocol.HistoryProviderError)
 		}
 	}
 	if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameHistoryResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, HistoryResult: &result}); err != nil {

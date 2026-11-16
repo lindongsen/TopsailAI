@@ -98,6 +98,11 @@ func (h *Handler) writeMessagesResultFailure(w http.ResponseWriter, r *http.Requ
 		// not an outage. Reporting it as either would send the operator to
 		// investigate a provider that was never invoked.
 		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation messages.read is not permitted for this endpoint token")
+	case protocol.AdapterBusy:
+		// The adapter had no capacity within the caller's budget, so the provider
+		// was never invoked. This is transient and retryable, not a provider
+		// fault, so it must not share the provider default.
+		h.writeError(w, 503, protocol.AdapterBusy, "messages read was not attempted: adapter capacity was unavailable, retry")
 	default:
 		h.writeError(w, 502, protocol.MessagesProviderError, "provider messages read failed")
 	}

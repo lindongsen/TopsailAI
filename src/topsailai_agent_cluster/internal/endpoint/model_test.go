@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"topsailai_agent_cluster/internal/adapter"
@@ -53,6 +54,37 @@ func TestExecutorModelCatalogRouting(t *testing.T) {
 		if result.CurrentProfileID != "mp-1" {
 			t.Fatalf("current profile %q", result.CurrentProfileID)
 		}
+	}
+}
+
+// modelCatalogBusyAdapter reproduces a capacity refusal: the adapter never reached
+// the provider because another invocation of the same Adapter instance held the slot.
+type modelCatalogBusyAdapter struct{ timeoutAdapter }
+
+// ModelCatalog reports a capacity refusal instead of provider evidence.
+func (a modelCatalogBusyAdapter) ModelCatalog(context.Context, protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
+	return protocol.ModelCatalog{}, fmt.Errorf("%w: discovery", adapter.ErrBusy)
+}
+
+// TestExecutorModelCatalogBusyIsNotProviderFailure proves a capacity refusal is not
+// reported as a provider failure. The provider was never invoked, so the operator
+// must be told to retry rather than to investigate a provider that never ran.
+func TestExecutorModelCatalogBusyIsNotProviderFailure(t *testing.T) {
+	registry := adapter.NewRegistry()
+	registry.RegisterType("test", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+		return modelCatalogBusyAdapter{}, nil
+	})
+	registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "test"})
+	e := &Executor{registry: registry}
+	result, err := e.ModelCatalog(context.Background(), protocol.ModelCatalogQuery{})
+	if !errors.Is(err, adapter.ErrBusy) {
+		t.Fatalf("err=%v", err)
+	}
+	if result.ErrorCode != protocol.AdapterBusy {
+		t.Fatalf("busy code %q want %q", result.ErrorCode, protocol.AdapterBusy)
+	}
+	if result.ErrorCode == protocol.ModelCatalogProviderError {
+		t.Fatal("capacity refusal was reported as a provider failure")
 	}
 }
 

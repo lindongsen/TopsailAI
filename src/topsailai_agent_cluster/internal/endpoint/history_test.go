@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"topsailai_agent_cluster/internal/adapter"
@@ -59,6 +60,36 @@ func TestExecutorHistoryUnsupported(t *testing.T) {
 	}
 	if result.Rows != nil {
 		t.Fatal("unsupported capability returned rows")
+	}
+}
+
+// historyBusyAdapter reproduces a capacity refusal: the adapter never reached the
+// provider because another invocation of the same Adapter instance held the slot.
+type historyBusyAdapter struct{ timeoutAdapter }
+
+// History reports a capacity refusal instead of provider evidence.
+func (a historyBusyAdapter) History(context.Context, protocol.HistoryQuery) (protocol.HistoryResult, error) {
+	return protocol.HistoryResult{}, fmt.Errorf("%w: discovery", adapter.ErrBusy)
+}
+
+// TestExecutorHistoryBusyIsNotProviderFailure proves a capacity refusal is not
+// reported as a provider failure. The provider was never invoked, so telling the
+// operator that the provider failed sends them to investigate the wrong thing;
+// the same read may succeed unchanged once the competing invocation finishes.
+func TestExecutorHistoryBusyIsNotProviderFailure(t *testing.T) {
+	registry := adapter.NewRegistry()
+	registry.RegisterType("test", func(context.Context, adapter.Config) (adapter.Adapter, error) { return historyBusyAdapter{}, nil })
+	registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "test"})
+	e := &Executor{registry: registry}
+	result, err := e.History(context.Background(), protocol.HistoryQuery{})
+	if !errors.Is(err, adapter.ErrBusy) {
+		t.Fatalf("err=%v", err)
+	}
+	if result.ErrorCode != protocol.AdapterBusy {
+		t.Fatalf("busy code %q want %q", result.ErrorCode, protocol.AdapterBusy)
+	}
+	if result.ErrorCode == protocol.HistoryProviderError {
+		t.Fatal("capacity refusal was reported as a provider failure")
 	}
 }
 

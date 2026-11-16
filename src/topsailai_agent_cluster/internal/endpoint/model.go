@@ -32,9 +32,7 @@ func (e *Executor) ModelCatalog(ctx context.Context, query protocol.ModelCatalog
 		}
 		result, err := handler.ModelCatalog(ctx, query)
 		if err != nil {
-			if result.ErrorCode == "" {
-				result.ErrorCode = protocol.ModelCatalogProviderError
-			}
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, protocol.ModelCatalogProviderError)
 			return result, err
 		}
 		return result, nil
@@ -65,9 +63,7 @@ func (s *Service) modelCatalogFrame(ctx context.Context, frame channel.Frame) {
 		result, err = reader.ModelCatalog(queryCtx, *frame.ModelCatalogQuery)
 		if err != nil {
 			s.logError("query adapter model catalog", err)
-			if result.ErrorCode == "" {
-				result.ErrorCode = protocol.ModelCatalogProviderError
-			}
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, protocol.ModelCatalogProviderError)
 		}
 	}
 	if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameModelCatalogResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, ModelCatalog: &result}); err != nil {

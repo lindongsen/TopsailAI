@@ -30,9 +30,7 @@ func (e *Executor) Messages(ctx context.Context, query protocol.MessagesQuery) (
 		}
 		result, err := handler.Messages(ctx, query)
 		if err != nil {
-			if result.ErrorCode == "" {
-				result.ErrorCode = protocol.MessagesProviderError
-			}
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, protocol.MessagesProviderError)
 			return result, err
 		}
 		return result, nil
@@ -63,9 +61,7 @@ func (s *Service) messagesFrame(ctx context.Context, frame channel.Frame) {
 		result, err = reader.Messages(queryCtx, *frame.MessagesQuery)
 		if err != nil {
 			s.logError("query adapter messages", err)
-			if result.ErrorCode == "" {
-				result.ErrorCode = protocol.MessagesProviderError
-			}
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, protocol.MessagesProviderError)
 		}
 	}
 	if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameMessagesResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, MessagesResult: &result}); err != nil {

@@ -51,6 +51,21 @@ const (
 // two literals in two packages would drift.
 const PolicyDenied = "policy_denied"
 
+// AdapterBusy reports that an adapter could not obtain the capacity it needs
+// within the caller's budget, so the requested provider call never happened.
+//
+// It is deliberately distinct from a provider failure. A busy adapter says
+// nothing about the target and nothing about the provider: the same request may
+// succeed unchanged once the competing invocation finishes, so the operator must
+// be told to retry rather than to investigate a provider that was never invoked.
+// The Endpoint's own periodic collection is the usual competitor, which is why
+// this condition is transient rather than a fault.
+//
+// It lives here rather than in the Endpoint package because the Server must
+// recognise the code to report it as a transient condition instead of a provider
+// failure, and two literals in two packages would drift.
+const AdapterBusy = "adapter_busy"
+
 // Standard safety classes. The vocabulary is closed, because the value decides
 // whether an operator must confirm an operation and which scope a credential must
 // hold. A read-only listing advertised as mutating is a contract lie: it forces a
