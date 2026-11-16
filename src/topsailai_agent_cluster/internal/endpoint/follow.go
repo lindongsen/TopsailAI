@@ -101,6 +101,15 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 		// The adapter cannot stream. Reporting unsupported is honest; degrading
 		// the request into a snapshot would show a stream that never updates.
 		code = "unsupported"
+	case errors.Is(err, adapter.ErrBusy):
+		// A capacity refusal means the adapter was never invoked, so it proves
+		// nothing about the provider. Reporting it as provider_error sent the
+		// operator to investigate a provider that was never called, and the same
+		// follow may succeed unchanged once the competing invocation finishes.
+		// This case must precede the default, because the default is what
+		// misreported it.
+		code = protocol.AdapterBusy
+		s.logError("follow provider output", err)
 	default:
 		code = "provider_error"
 		s.logError("follow provider output", err)

@@ -424,11 +424,12 @@ type countingInspectAdapter struct {
 	inspections int
 	generation  string
 	found       bool
+	inspectErr  error
 }
 
 func (a *countingInspectAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
 	a.inspections++
-	return adapter.InspectResult{Found: a.found, ProviderGeneration: a.generation}, nil
+	return adapter.InspectResult{Found: a.found, ProviderGeneration: a.generation}, a.inspectErr
 }
 
 func (a *countingInspectAdapter) ReadOutput(context.Context, adapter.OutputRequest) (adapter.OutputResult, error) {
@@ -544,6 +545,7 @@ type countingExecuteAdapter struct {
 	executions  int
 	generation  string
 	found       bool
+	inspectErr  error
 }
 
 func (a *countingExecuteAdapter) Describe(context.Context) (adapter.Descriptor, error) {
@@ -555,7 +557,7 @@ func (a *countingExecuteAdapter) Describe(context.Context) (adapter.Descriptor, 
 
 func (a *countingExecuteAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
 	a.inspections++
-	return adapter.InspectResult{Found: a.found, ProviderGeneration: a.generation}, nil
+	return adapter.InspectResult{Found: a.found, ProviderGeneration: a.generation}, a.inspectErr
 }
 
 func (a *countingExecuteAdapter) Execute(_ context.Context, request adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
@@ -946,6 +948,131 @@ func TestWorkspaceCleanGenerationlessAdmission(t *testing.T) {
 			}
 			if calls != testCase.wantCalls || receipt.ErrorCode != testCase.wantCode {
 				t.Fatalf("calls=%d receipt=%#v, want calls=%d code=%q", calls, receipt, testCase.wantCalls, testCase.wantCode)
+			}
+		})
+	}
+}
+
+// TestRevalidationCapacityIsNotReportedAsMismatch proves a capacity refusal during
+// generation revalidation is reported as retryable instead of as a stale
+// generation. The adapter was never invoked, so the refusal proves nothing about
+// the target: reporting it as a mismatch told the operator the generation had
+// changed and sent them to re-inspect a session that was never the problem, while
+// the same intent may succeed unchanged once the competing invocation finishes.
+//
+// A genuine revalidation failure keeps each surface's own mismatch code, because
+// that vocabulary differs per surface and is already part of its contract. The
+// execution count is asserted so a rejected command can never be mistaken for one
+// that reached the provider.
+func TestRevalidationCapacityIsNotReportedAsMismatch(t *testing.T) {
+	cases := []struct {
+		name       string
+		inspectErr error
+		wantCode   string
+	}{
+		{
+			name:       "busy adapter is retryable",
+			inspectErr: fmt.Errorf("%w: discovery", adapter.ErrBusy),
+			wantCode:   protocol.AdapterBusy,
+		},
+		{
+			name:       "genuine revalidation failure keeps the mutating mismatch code",
+			inspectErr: errors.New("provider unavailable"),
+			wantCode:   "target_generation_mismatch",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			instance := &countingExecuteAdapter{generation: "g1", found: true, inspectErr: testCase.inspectErr}
+			registry := adapter.NewRegistry()
+			if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+				return instance, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, err := NewExecutor(store, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "send-" + testCase.name, EndpointID: "e1", Operation: protocol.OperationMessageSend, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, ProviderGeneration: "g1"}, Payload: []byte(`{"message":"hi"}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+			receipt, err := e.Execute(context.Background(), intent, "hash-"+testCase.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.ErrorCode != testCase.wantCode {
+				t.Fatalf("error code=%q, want %q", receipt.ErrorCode, testCase.wantCode)
+			}
+			if instance.executions != 0 {
+				t.Fatalf("provider executions=%d, want 0 because revalidation failed", instance.executions)
+			}
+		})
+	}
+}
+
+// TestReadOutputRevalidationCapacityIsNotReportedAsMismatch proves the read path
+// classifies a capacity refusal the same way the mutating path does. The two
+// surfaces keep different mismatch codes, so only the capacity classification is
+// shared; a second spelling of "capacity" would be a future divergence.
+func TestReadOutputRevalidationCapacityIsNotReportedAsMismatch(t *testing.T) {
+	cases := []struct {
+		name       string
+		inspectErr error
+		wantCode   string
+	}{
+		{
+			name:       "busy adapter is retryable",
+			inspectErr: fmt.Errorf("%w: discovery", adapter.ErrBusy),
+			wantCode:   protocol.AdapterBusy,
+		},
+		{
+			name:       "genuine revalidation failure keeps the read mismatch code",
+			inspectErr: errors.New("provider unavailable"),
+			wantCode:   "generation_mismatch",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			instance := &countingInspectAdapter{generation: "g1", found: true, inspectErr: testCase.inspectErr}
+			registry := adapter.NewRegistry()
+			if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+				return instance, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, err := NewExecutor(store, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, readErr := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, ProviderGeneration: "g1", MaxBytes: 4096})
+			if readErr == nil {
+				t.Fatal("expected a revalidation failure")
+			}
+			if response.ErrorCode != testCase.wantCode {
+				t.Fatalf("error code=%q, want %q", response.ErrorCode, testCase.wantCode)
 			}
 		})
 	}

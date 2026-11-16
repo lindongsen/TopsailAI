@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"topsailai_agent_cluster/internal/adapter"
@@ -16,14 +17,19 @@ import (
 // the caller's budgets instead of substituting its own.
 type followTestAdapter struct {
 	adapter.Adapter
-	chunks   []protocol.OutputChunk
-	err      error
-	received *protocol.OutputFollowRequest
+	chunks     []protocol.OutputChunk
+	err        error
+	inspectErr error
+	received   *protocol.OutputFollowRequest
 }
 
 // Inspect reports the resource as present at generation g1, which is the
-// generation every test in this file requests.
+// generation every test in this file requests. A configured inspectErr is
+// returned instead, so a test can prove how a failed revalidation is reported.
 func (a *followTestAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
+	if a.inspectErr != nil {
+		return adapter.InspectResult{}, a.inspectErr
+	}
 	return adapter.InspectResult{Found: true, ProviderGeneration: "g1"}, nil
 }
 
@@ -165,5 +171,35 @@ func TestFollowOutputPropagatesConsumerStop(t *testing.T) {
 	})
 	if !errors.Is(err, adapter.ErrFollowStopped) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// TestFollowOutputRevalidationCapacityPreservesCause proves a capacity refusal
+// during a follow's generation revalidation keeps its cause instead of being
+// flattened into a mismatch. The follow surface has no mismatch code of its own,
+// so a flattened error reached the end-frame default and was reported as
+// provider_error, which sent the operator to investigate a provider that was
+// never called.
+func TestFollowOutputRevalidationCapacityPreservesCause(t *testing.T) {
+	instance := &followTestAdapter{inspectErr: fmt.Errorf("%w: discovery", adapter.ErrBusy)}
+	executor, resourceID := newFollowExecutor(t, instance)
+	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, ProviderGeneration: "g1"}, func(protocol.OutputChunk) error { return nil })
+	if !errors.Is(err, adapter.ErrBusy) {
+		t.Fatalf("err=%v, want a capacity cause so the end frame can classify it", err)
+	}
+}
+
+// TestFollowOutputRevalidationFailureIsNotCapacity proves a genuine revalidation
+// failure is not misreported as capacity, so the two conditions stay
+// distinguishable in both directions.
+func TestFollowOutputRevalidationFailureIsNotCapacity(t *testing.T) {
+	instance := &followTestAdapter{inspectErr: errors.New("provider unavailable")}
+	executor, resourceID := newFollowExecutor(t, instance)
+	err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID, ProviderGeneration: "g1"}, func(protocol.OutputChunk) error { return nil })
+	if err == nil {
+		t.Fatal("expected a revalidation failure")
+	}
+	if errors.Is(err, adapter.ErrBusy) {
+		t.Fatalf("err=%v, want a non-capacity failure", err)
 	}
 }

@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -193,5 +194,24 @@ func TestRunFollowStampsObservationTime(t *testing.T) {
 	transport.mu.Unlock()
 	if chunk == nil || chunk.ObservedAtMS == 0 {
 		t.Fatalf("chunk=%#v want observation time", chunk)
+	}
+}
+
+// TestStartFollowReportsCapacityAsRetryable proves a capacity refusal ends the
+// stream with a retryable code instead of provider_error. The adapter was never
+// invoked, so the refusal proves nothing about the provider: reporting it as a
+// provider failure sent the operator to investigate a provider that was never
+// called, while the same follow may succeed unchanged once the competing
+// invocation finishes.
+func TestStartFollowReportsCapacityAsRetryable(t *testing.T) {
+	executor := &followExecutor{followErr: fmt.Errorf("%w: discovery", adapter.ErrBusy)}
+	service, transport := newFollowService(t, executor)
+	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-busy", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r"}})
+	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
+	transport.mu.Lock()
+	end := transport.frames[len(transport.frames)-1].OutputEnd
+	transport.mu.Unlock()
+	if end == nil || end.ErrorCode != protocol.AdapterBusy {
+		t.Fatalf("end=%#v want %s", end, protocol.AdapterBusy)
 	}
 }

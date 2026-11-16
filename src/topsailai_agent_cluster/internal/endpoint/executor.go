@@ -191,7 +191,7 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			// the comparison and reach the provider as if it were live.
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "generation_required"))
 		} else if err := e.revalidateGeneration(ctx, instance, adapterID, *intent.Target); err != nil {
-			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_generation_mismatch"))
+			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, revalidationFailureCode(err, "target_generation_mismatch")))
 		}
 	}
 	if e.PolicyHook != nil {
@@ -281,7 +281,7 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	// which costs seconds per read, so it is reserved for the cases the snapshot
 	// cannot answer: unknown data, stale data, or a resource absent from it.
 	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}); err != nil {
-		return protocol.OutputSnapshotResponse{ErrorCode: "generation_mismatch"}, err
+		return protocol.OutputSnapshotResponse{ErrorCode: revalidationFailureCode(err, "generation_mismatch")}, err
 	}
 	limit := request.MaxBytes
 	if limit <= 0 {
@@ -369,7 +369,18 @@ func (e *Executor) revalidateGeneration(ctx context.Context, instance adapter.Ad
 		}
 	}
 	inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: target})
-	if inspectErr != nil || !inspection.Found || inspection.ProviderGeneration != target.ProviderGeneration {
+	if inspectErr != nil {
+		// A capacity refusal means the adapter was never invoked, so it proves
+		// nothing about the target. Flattening it into the mismatch message
+		// reported a busy adapter as a stale generation and sent the operator to
+		// inspect a session that was never the problem. The cause is preserved so
+		// each caller can classify it, and errors.Is(err, adapter.ErrBusy) holds.
+		if errors.Is(inspectErr, adapter.ErrBusy) {
+			return fmt.Errorf("resource generation could not be revalidated: %w", inspectErr)
+		}
+		return fmt.Errorf("resource generation does not match")
+	}
+	if !inspection.Found || inspection.ProviderGeneration != target.ProviderGeneration {
 		return fmt.Errorf("resource generation does not match")
 	}
 	return nil
@@ -558,8 +569,8 @@ func rejectedReceipt(intent protocol.ImmutableIntent, hash, code string) protoco
 // problem. The provider-failure code is kept for every other error, because only a
 // capacity condition is provably unrelated to the target.
 func observationFailureCode(err error) string {
-	if errors.Is(err, adapter.ErrBusy) {
-		return protocol.AdapterBusy
+	if code, busy := capacityCode(err); busy {
+		return code
 	}
 	return "target_observation_failed"
 }
@@ -582,13 +593,43 @@ func observationFailureCode(err error) string {
 // the defect this replaces existed precisely because one path was updated and its
 // siblings were not.
 func readFailureCode(err error, reported, providerCode string) string {
-	if errors.Is(err, adapter.ErrBusy) {
-		return protocol.AdapterBusy
+	if code, busy := capacityCode(err); busy {
+		return code
 	}
 	if reported != "" {
 		return reported
 	}
 	return providerCode
+}
+
+// revalidationFailureCode names why a target generation could not be confirmed.
+//
+// A capacity refusal means the adapter was never invoked, so it proves nothing
+// about the target and must not be reported as a mismatch. Reporting it as one
+// told the operator the generation had changed, which sent them to re-inspect a
+// session that was never the problem, and the same intent may succeed unchanged
+// once the competing invocation finishes. A genuine mismatch keeps the caller's
+// own mismatch code, because that vocabulary differs per surface and is already
+// part of each surface's contract.
+func revalidationFailureCode(err error, mismatchCode string) string {
+	if code, busy := capacityCode(err); busy {
+		return code
+	}
+	return mismatchCode
+}
+
+// capacityCode reports the retryable capacity code when err is a capacity
+// refusal, so every surface classifies that one fact identically.
+//
+// It exists as one primitive rather than a repeated check because the defect it
+// replaces existed precisely because one path was updated and its siblings were
+// not. A second spelling of "capacity" is a future divergence, not a local
+// convenience.
+func capacityCode(err error) (string, bool) {
+	if errors.Is(err, adapter.ErrBusy) {
+		return protocol.AdapterBusy, true
+	}
+	return "", false
 }
 
 func decodeReceipt(value string) (protocol.ExecutionReceipt, error) {
