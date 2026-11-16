@@ -346,12 +346,90 @@ func TestOpenScopeRejectsAMalformedPathOnAnAbsentScope(t *testing.T) {
 // TestListReportsAMissingDirectory checks that listing a directory that does not
 // exist is reported rather than returning an empty list, because an empty list
 // reads as a directory with no entries.
+//
+// The code is asserted, not only the presence of an error: an error of any kind
+// satisfies "reported", while the caller acts on the code. A missing directory is
+// not_found, the same code Read and Stat report for a missing path.
 func TestListReportsAMissingDirectory(t *testing.T) {
 	root, _ := newScopeFixture(t)
 	scope := openFixtureScope(t, root)
 
-	if _, err := scope.List("absent"); err == nil {
+	_, err := scope.List("absent")
+	if err == nil {
 		t.Fatal("List() = nil error, want a missing-directory refusal")
+	}
+	if code := CodeOf(err); code != protocol.CodeNotFound {
+		t.Fatalf("CodeOf(List()) = %s, want not_found", code.Name())
+	}
+}
+
+// TestListReportsAVanishedDirectoryAsNotFound checks that a scope directory
+// deleted while the Node runs is reported as not_found, and that all three read
+// operations agree about it.
+//
+// Agreement is the property under test, not the individual codes. The two codes
+// carry opposite retry advice: internal is retryable and not_found is not. Before
+// this test existed, the same condition answered not_found for Read and Stat and
+// internal for List, so a caller that followed the advice retried exactly the case
+// that can never succeed. Retrying cannot succeed because the os.Root handle keeps
+// the deleted inode, and a directory recreated at the same path is not adopted
+// until the Node restarts.
+//
+// The case is unreachable on Windows, where a directory the Node holds open cannot
+// be deleted or renamed. The test skips when the deletion is refused rather than
+// reporting a platform limitation as a defect in the fence.
+func TestListReportsAVanishedDirectoryAsNotFound(t *testing.T) {
+	root, _ := newScopeFixture(t)
+	scope := openFixtureScope(t, root)
+
+	if err := os.RemoveAll(root); err != nil {
+		t.Skipf("cannot delete an open scope directory here: %v", err)
+	}
+	if _, err := os.Lstat(root); err == nil {
+		t.Skip("scope directory still exists after deletion")
+	}
+
+	_, _, readErr := scope.Read("inside.txt", 0, 0)
+	_, statErr := scope.Stat("inside.txt")
+	_, listErr := scope.List("")
+
+	for _, operation := range []struct {
+		name string
+		err  error
+	}{
+		{"Read", readErr},
+		{"Stat", statErr},
+		{"List", listErr},
+	} {
+		if operation.err == nil {
+			t.Fatalf("%s() = nil error, want not_found for a vanished directory", operation.name)
+		}
+		if code := CodeOf(operation.err); code != protocol.CodeNotFound {
+			t.Fatalf("CodeOf(%s()) = %s, want not_found", operation.name, code.Name())
+		}
+	}
+}
+
+// TestClassifyDirectoryReadErrorKeepsGenuineFailuresInternal checks that only a
+// missing directory becomes not_found.
+//
+// The classifier is exercised directly because a genuine I/O failure while
+// reading a directory cannot be provoked portably. The property matters: a real
+// I/O failure is a Node defect, so disguising it as not_found would tell a caller
+// to give up on a condition that a retry might fix.
+func TestClassifyDirectoryReadErrorKeepsGenuineFailuresInternal(t *testing.T) {
+	missing := classifyDirectoryReadError("", &os.PathError{
+		Op:   "readdirent",
+		Path: "scope/.",
+		Err:  os.ErrNotExist,
+	})
+	if missing.Code != protocol.CodeNotFound {
+		t.Fatalf("classifyDirectoryReadError(missing) = %s, want not_found", missing.Code.Name())
+	}
+
+	broken := classifyDirectoryReadError("", errors.New("readdirent: input/output error"))
+	if broken.Code != protocol.CodeInternal {
+		t.Fatalf("classifyDirectoryReadError(io failure) = %s, want internal", broken.Code.Name())
 	}
 }
 

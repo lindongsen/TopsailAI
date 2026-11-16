@@ -920,6 +920,33 @@ The path grammar is checked before the scope's own state, so a malformed path is
 of the request, and answering it differently because a directory is missing would
 make the same request mean two things.
 
+### A scope directory that vanishes while the Node runs
+
+Absence is decided at startup, so a directory deleted afterwards is not re-checked
+and the scope keeps its handle. The handle references the deleted inode, so the
+scope still opens and every request fails at the operation rather than at the open.
+
+The three read operations must agree about that failure. They did not: `file.read`
+and `file.stat` reported `not_found` while `file.list` reported `internal`, because
+opening a directory and reading it are two steps and only the open was classified.
+The disagreement is a wrong code rather than a crash, and it is worse than a wrong
+code usually is, because `internal` is retryable and `not_found` is not. A caller
+that followed the retry advice retried exactly the case that can never succeed:
+the handle keeps the deleted inode, so a directory recreated at the same path is
+not adopted until the Node restarts.
+
+The rule is therefore that a missing directory is `not_found` for all three
+operations, and every other failure while reading a directory stays `internal`,
+because a genuine I/O failure is a Node defect and not a caller-visible condition.
+The classification lives in one function so the three operations cannot drift apart
+again.
+
+The case is unreachable on Windows, where a directory the Node holds open cannot be
+deleted or renamed. `-Recurse` empties it instead, and an emptied scope already
+answers consistently: a listing succeeds and returns nothing, and a read of a
+missing entry is `not_found`. The rule is stated for all platforms anyway, because
+the code path is platform-independent and the Linux behaviour is the one a caller
+sees.
 
 ### Policy file
 
@@ -1319,6 +1346,11 @@ request path.
       file it may not read.
 - [ ] An `internal` error carries no detail string, because a detail string is
       where an absolute path or a secret fragment reaches a caller.
+- [ ] `file.read`, `file.stat` and `file.list` report the same code for the same
+      condition. A scope directory deleted while the Node runs is `not_found` for
+      all three, never `internal` for one of them, because `internal` is retryable
+      and `not_found` is not, so a disagreement tells a caller to retry exactly the
+      case that can never succeed.
 - [ ] `connector-node id` prints the pair and nothing else, and the Server has no
       endpoint that assigns, overrides or looks up a `node-id`.
 - [ ] The channel and the CLI API are served from one listener, and the CLI API

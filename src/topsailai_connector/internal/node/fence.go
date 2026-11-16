@@ -655,6 +655,34 @@ func classifyOpenError(err error) *Error {
 	return newError(protocol.CodeDenied, "open refused: %v", err)
 }
 
+// classifyDirectoryReadError maps a failure to read an already-opened directory
+// to a code.
+//
+// It exists because opening a directory and reading it are two steps, and only
+// the first one went through classifyOpenError. A scope directory deleted while
+// the Node runs still opens: the os.Root handle references the deleted inode, so
+// the open succeeds and the failure appears at the read. Mapping that read
+// failure to internal unconditionally made the same condition answer not_found
+// for file.read and file.stat and internal for file.list, which is a wrong code
+// rather than a crash.
+//
+// The distinction matters to a caller because the two codes carry opposite retry
+// advice: CodeInternal is retryable and CodeNotFound is not. A caller that
+// followed the advice retried exactly the case that can never succeed, because
+// the handle keeps the deleted inode and a directory recreated at the same path
+// is not adopted until the Node restarts.
+//
+// A missing directory is not_found, matching what the other two operations
+// report for the same condition. Every other failure stays internal, because a
+// genuine I/O error while reading a directory is a Node defect and not a
+// caller-visible condition.
+func classifyDirectoryReadError(path string, err error) *Error {
+	if errors.Is(err, os.ErrNotExist) {
+		return newError(protocol.CodeNotFound, "list %q: %v", path, err)
+	}
+	return newError(protocol.CodeInternal, "list %q: %v", path, err)
+}
+
 // Read returns a byte range of one regular file.
 //
 // A non-regular file is refused rather than read, because a fifo blocks forever
@@ -714,7 +742,7 @@ func (s *Scope) List(path string) ([]Entry, error) {
 
 	names, err := file.Readdirnames(-1)
 	if err != nil {
-		return nil, newError(protocol.CodeInternal, "list %q: %v", path, err)
+		return nil, classifyDirectoryReadError(path, err)
 	}
 	sort.Strings(names)
 

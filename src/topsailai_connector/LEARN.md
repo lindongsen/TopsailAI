@@ -385,23 +385,41 @@ AI reflection archive, not here.
   in the same change. A document that still says "Expected: Startup fails" is read
   by the next person as the specification, and the code is then "fixed" back.
 
-## The same missing directory answers differently depending on the operation
+## The same missing directory answered differently depending on the operation
 
 - `file.read` and `file.stat` on a scope whose directory was deleted underneath
-  the running Node answer `not_found`; `file.list` on the same scope answers
+  the running Node answered `not_found`; `file.list` on the same scope answered
   `internal`. `Read` and `Stat` reach the directory through `openValidated`, which
   calls `classifyOpenError`; `List` opens the directory successfully — the
   `os.Root` handle still references the deleted inode — and only fails at
-  `Readdirnames`, which maps every failure to `CodeInternal`.
-- A caller that retries on `internal` and gives up on `not_found` therefore does
+  `Readdirnames`, which mapped every failure to `CodeInternal`.
+- A caller that retries on `internal` and gives up on `not_found` therefore did
   the opposite of the right thing, because retrying can never succeed: the handle
   keeps the deleted inode, so a directory recreated at the same path is not
-  adopted. Measured: after delete and recreate, `read` still returned `not_found`
-  and `list` still returned `internal`.
+  adopted. Measured before the fix: after delete and recreate, `read` still
+  returned `not_found` and `list` still returned `internal`.
 - The classification belongs in one place. Two mappings for one condition is how
   the three operations drift apart, and the drift is invisible in review because
-  each function reads correctly on its own. See
-  `issues/issue-list-reports-internal-for-a-deleted-scope-directory.md`.
+  each function reads correctly on its own. The fix added
+  `classifyDirectoryReadError` immediately after `classifyOpenError`, so the two
+  sit side by side and a future change to one is visible next to the other. See
+  `issues/done/issue-list-reports-internal-for-a-deleted-scope-directory.md`.
+- Only a missing directory becomes `not_found`. Every other failure while reading
+  a directory stays `internal`, because a genuine I/O failure is a Node defect and
+  not a caller-visible condition. A classifier that returned `not_found` for
+  everything would tell a caller to give up on a condition a retry might fix.
+- A test that asserts only `err != nil` passes both before and after the fix. The
+  existing `TestListReportsAMissingDirectory` did exactly that, so it proved
+  nothing about the code. Assert the code, and assert that all three operations
+  agree, because agreement is the property that was broken.
+- Prove the test is not vacuous by mutating the fix: reverting `List` to the
+  hardcoded `internal` must fail the agreement test, and making the classifier
+  always return `not_found` must fail the genuine-failure test. Both mutations were
+  run and both failed as expected, then the file was restored and its md5 compared
+  with the backup.
+- The case is unreachable on Windows, where a directory the Node holds open cannot
+  be deleted or renamed. A test for it must skip when the deletion is refused,
+  rather than reporting a platform limitation as a defect in the fence.
 
 ## Windows cannot delete a directory the Node holds open
 
@@ -413,12 +431,14 @@ AI reflection archive, not here.
 - `-Recurse` still deletes the *contents* before failing on the directory itself,
   so the reachable Windows state is an emptied scope rather than a deleted one.
   Measured: `file.list` on the emptied root returned success with empty output,
-  and every missing path returned `not_found`. The Windows answer is already
-  consistent, which is why the `internal` defect is Linux-only in practice even
+  and every missing path returned `not_found`. The Windows answer was already
+  consistent, which is why the `internal` defect was Linux-only in practice even
   though the code path is platform-independent.
 - A platform difference that makes a case unreachable is not a passing test. The
-  Linux behaviour is the one a caller sees, so the defect is real; the Windows run
-  proves only that Windows cannot reach it, not that the code is correct.
+  Linux behaviour is the one a caller sees, so the defect was real; the Windows run
+  proves only that Windows cannot reach it, not that the code is correct. The fix
+  is therefore stated for all platforms, and the test skips on Windows instead of
+  being deleted.
 
 ## A tolerance must invert every artifact that asserted the refusal
 
@@ -470,3 +490,4 @@ AI reflection archive, not here.
   killing anything. The Windows host had two Nodes from two days earlier; a
   `Get-Process connector-node | Stop-Process` would have killed someone else's
   work.
+
