@@ -24,6 +24,9 @@ const (
 	maxModelBytes          = 1 << 20
 	maxMessages            = 1000
 	maxMessagesBytes       = 4 << 20
+	maxMetricsBytes        = 1 << 20
+	maxDetailBytes         = 512 << 10
+	maxMessageCount        = 10000000
 )
 
 type launchOptionsPayload struct {
@@ -129,6 +132,38 @@ type messagesResult struct {
 	Truncated         bool          `json:"truncated"`
 }
 
+// messageCountsFact carries the two provider message counts.
+//
+// The field names are the Cluster's positions, not the provider's layer names.
+// The provider reports `user2agent` and `agent2llm`; the adapter maps the first
+// onto inbound and the second onto outbound, so the wire contract never encodes
+// one provider's internal structure.
+type messageCountsFact struct {
+	Inbound  int `json:"inbound"`
+	Outbound int `json:"outbound"`
+}
+
+// metricsResult carries one session's current message counts.
+type metricsResult struct {
+	ProviderSessionID string            `json:"provider_session_id"`
+	Messages          messageCountsFact `json:"messages"`
+	ObservedAtMS      int64             `json:"observed_at_ms"`
+}
+
+// detailResult carries one session's provider metadata and runtime document.
+//
+// Metadata is the provider's own session record, forwarded verbatim. Runtime is
+// the reserved seam: this provider reports nothing for it today, so the field is
+// omitted rather than filled with a placeholder, and a consumer reads its absence
+// as "not reported" instead of "empty".
+type detailResult struct {
+	ProviderSessionID string `json:"provider_session_id"`
+	Metadata          string `json:"metadata"`
+	Runtime           string `json:"runtime,omitempty"`
+	ObservedAtMS      int64  `json:"observed_at_ms"`
+	MetadataTruncated bool   `json:"metadata_truncated,omitempty"`
+}
+
 func (p *provider) query(ctx context.Context, contract *namedContract, requested *target, payload json.RawMessage) (json.RawMessage, error) {
 	if contract == nil || contract.Version != queryVersion {
 		return nil, fmt.Errorf("%w: standard query v1 is required", errInvalidRequest)
@@ -144,6 +179,10 @@ func (p *provider) query(ctx context.Context, contract *namedContract, requested
 		value, err = p.models(ctx, requested, payload)
 	case querySessionMessages:
 		value, err = p.messages(ctx, requested, payload)
+	case querySessionMetrics:
+		value, err = p.metrics(ctx, requested, payload)
+	case querySessionDetail:
+		value, err = p.detail(ctx, requested, payload)
 	default:
 		return nil, errUnsupported
 	}
@@ -307,6 +346,136 @@ func (p *provider) messages(ctx context.Context, requested *target, raw json.Raw
 		result.Messages = append(result.Messages, messageFact{entry.Role, content, providerTimeMS(entry.CreateTime), utf8.RuneCountInString(entry.Content), tokenCount(entry.Content)})
 	}
 	return result, nil
+}
+
+// metrics reads one session's current message counts.
+//
+// The counts come from the provider's `agent.tokens` instruction, which reports
+// the two message layers a running session currently holds. It is a live control
+// call, so it needs a session whose process is running; a session with no live
+// process has no current context to measure, and that is reported as a provider
+// failure rather than as a count of zero.
+//
+// The instruction is invoked directly rather than through the operator-configured
+// control action catalog, for the same reason the current model is: a first-class
+// capability must not depend on someone having also written a catalog entry.
+//
+// The provider returns its report as a JSON string nested inside the control
+// envelope, so the document is decoded twice. The outer envelope says whether the
+// call was delivered; the inner document carries the counts.
+func (p *provider) metrics(ctx context.Context, requested *target, raw json.RawMessage) (metricsResult, error) {
+	sessionID, err := sessionQueryTarget(requested)
+	if err != nil {
+		return metricsResult{}, err
+	}
+	var payload struct{}
+	if err := decodeStrict(raw, &payload); err != nil {
+		return metricsResult{}, fmt.Errorf("%w: session.metrics payload", errInvalidRequest)
+	}
+	args, err := modelInstructionKwargs(sessionID, "agent.tokens", map[string]string{"json": "1"})
+	if err != nil {
+		return metricsResult{}, err
+	}
+	var envelope instructionEnvelope
+	if err := runJSON(ctx, p.runner, args, maxMetricsBytes, &envelope); err != nil {
+		return metricsResult{}, err
+	}
+	if envelope.ErrorCode == providerTargetNotFoundCode {
+		// A session the provider does not know is a normal outcome of a read, not
+		// a fault, so it keeps its own code and the Cluster maps it to a different
+		// answer than a provider failure.
+		return metricsResult{}, codedError{code: providerSessionNotFoundCode, message: "provider session does not exist"}
+	}
+	if !envelope.OK || envelope.ErrorCode != "" || envelope.Response == nil || envelope.Response.Status != "ok" {
+		return metricsResult{}, errorsNew("provider did not report message counts")
+	}
+	var report struct {
+		OK        bool `json:"ok"`
+		Agent2LLM struct {
+			Messages int `json:"messages"`
+		} `json:"agent2llm"`
+		User2Agent struct {
+			Messages int `json:"messages"`
+		} `json:"user2agent"`
+	}
+	if err := decodeJSONDocument([]byte(envelope.Response.Result), &report, false); err != nil {
+		return metricsResult{}, fmt.Errorf("decode agent.tokens report: %w", err)
+	}
+	if !report.OK {
+		return metricsResult{}, errorsNew("provider reported no active agent")
+	}
+	// The provider's own layer names are mapped onto the Cluster's two positions
+	// here and nowhere else. The human listed user2agent first, so inbound is the
+	// operator's side and outbound is the model's side.
+	counts := messageCountsFact{Inbound: report.User2Agent.Messages, Outbound: report.Agent2LLM.Messages}
+	if counts.Inbound < 0 || counts.Outbound < 0 || counts.Inbound > maxMessageCount || counts.Outbound > maxMessageCount {
+		return metricsResult{}, errorsNew("provider message count is out of range")
+	}
+	return metricsResult{ProviderSessionID: sessionID, Messages: counts, ObservedAtMS: p.now().UnixMilli()}, nil
+}
+
+// detail reads one session's provider metadata and runtime document.
+//
+// Metadata is the provider's own `session info --json` record, forwarded verbatim.
+// The Cluster deliberately does not model that record: it is provider detail, it
+// changes when the provider changes, and a Cluster type built from its fields
+// would have to change with it. Forwarding the document keeps the surface honest
+// and lets a second provider report a different record without a contract change.
+//
+// Runtime is the reserved seam. This provider reports nothing for it today, so the
+// field is left empty and the surface says it was not reported. Filling it later
+// is a provider change only.
+func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMessage) (detailResult, error) {
+	sessionID, err := sessionQueryTarget(requested)
+	if err != nil {
+		return detailResult{}, err
+	}
+	var payload struct{}
+	if err := decodeStrict(raw, &payload); err != nil {
+		return detailResult{}, fmt.Errorf("%w: session.detail payload", errInvalidRequest)
+	}
+	stdout, stderr, runErr := p.runner.Run(ctx, []string{"session", "info", sessionID, "--json"}, nil)
+	if len(stdout) > maxDetailBytes {
+		return detailResult{}, errorsNew("provider session record exceeds the detail bound")
+	}
+	// The provider prints its own not-found document on stdout and exits non-zero,
+	// so the document is inspected before the exit status. Reading the status first
+	// would report a missing session as a provider failure.
+	var probe struct {
+		ErrorCode string `json:"error_code"`
+	}
+	if len(stdout) > 0 {
+		if err := decodeJSONDocument(stdout, &probe, false); err != nil {
+			if runErr != nil {
+				return detailResult{}, fmt.Errorf("TopsailAI CLI failed: %w: %s", runErr, boundedText(stderr, 4096))
+			}
+			return detailResult{}, fmt.Errorf("decode TopsailAI CLI response: %w", err)
+		}
+	}
+	if probe.ErrorCode == providerSessionNotFoundCode {
+		return detailResult{}, codedError{code: providerSessionNotFoundCode, message: "provider session does not exist"}
+	}
+	if runErr != nil {
+		return detailResult{}, fmt.Errorf("TopsailAI CLI failed: %w: %s", runErr, boundedText(stderr, 4096))
+	}
+	if len(stdout) == 0 {
+		return detailResult{}, errorsNew("provider returned no session record")
+	}
+	return detailResult{ProviderSessionID: sessionID, Metadata: string(stdout), ObservedAtMS: p.now().UnixMilli()}, nil
+}
+
+// sessionQueryTarget extracts the provider session identifier from a session-scoped
+// query target.
+//
+// Both new reads address a session by the provider's own identifier, exactly as
+// session.messages does, because a session with no live process is absent from the
+// inventory and therefore has no Cluster resource ID. The key is validated here so
+// an empty or oversized identifier fails before any provider process starts.
+func sessionQueryTarget(requested *target) (string, error) {
+	if requested == nil || requested.ResourceKind != resourceSession || strings.TrimSpace(requested.ProviderResourceKey) == "" || len(requested.ProviderResourceKey) > maxProviderKeyLength {
+		return "", fmt.Errorf("%w: provider session ID target is required", errInvalidRequest)
+	}
+	return requested.ProviderResourceKey, nil
 }
 
 func historyResumability(status string) (bool, string) {

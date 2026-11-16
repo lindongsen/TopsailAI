@@ -452,3 +452,144 @@ func (r request) QueryName() string {
 	}
 	return r.Query.Name
 }
+
+// TestSessionMetricsReadsNamedInstructionArguments proves the message counts come
+// from the provider's named-argument form of `agent.tokens`.
+//
+// The provider forwards `args` as positional arguments and `kwargs` as keyword
+// arguments, so the two spellings reach the instruction differently. A live probe
+// proved the positional spelling is rejected with
+// `agent_tokens() takes 1 positional argument but 2 were given`, while the named
+// spelling returns the counts. The scripted runner fails on any unexpected argv,
+// so this test also pins the spelling: an implementation that emitted `args`
+// would not match the recorded key and would fail here instead of at runtime.
+func TestSessionMetricsReadsNamedInstructionArguments(t *testing.T) {
+	report := `{"ok":true,"agent2llm":{"messages":68},"user2agent":{"messages":2}}`
+	quoted, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := `{"ok":true,"response":{"status":"ok","result":` + string(quoted) + `}}`
+	key := "runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-a\x00" +
+		`{"instruction":"agent.tokens","kwargs":{"json":"1"}}` + "\x00--json"
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(envelope)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionMetrics, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
+	if !response.OK || len(response.QueryResult) == 0 {
+		t.Fatalf("response=%+v", response)
+	}
+	var result metricsResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	// The human listed user2agent first, so inbound is the operator side and
+	// outbound is the model side. The provider's own text output prints
+	// Agent2LLM first, which must not decide the Cluster's order.
+	if result.Messages.Inbound != 2 || result.Messages.Outbound != 68 {
+		t.Fatalf("messages=%+v, want inbound=2 outbound=68", result.Messages)
+	}
+	if result.ProviderSessionID != "s-1" {
+		t.Fatalf("provider_session_id=%q", result.ProviderSessionID)
+	}
+}
+
+// TestSessionMetricsMapsUnknownSessionToNotFound proves a session the provider
+// does not know is reported as a missing session rather than as a provider fault.
+//
+// The control surface answers an unknown session with its own `target_not_found`
+// code, which is a different value from the `session_not_found` code the session
+// registry uses. Both mean the same thing to an operator, so the adapter maps the
+// control code onto the registry code and a caller sees one answer.
+func TestSessionMetricsMapsUnknownSessionToNotFound(t *testing.T) {
+	key := "runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-a\x00" +
+		`{"instruction":"agent.tokens","kwargs":{"json":"1"}}` + "\x00--json"
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		key: answer(`{"ok":false,"error_code":"target_not_found"}`)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionMetrics, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
+	if response.OK || response.Error == nil {
+		t.Fatalf("response=%+v", response)
+	}
+	if response.Error.Code != providerSessionNotFoundCode {
+		t.Fatalf("code=%q, want %q", response.Error.Code, providerSessionNotFoundCode)
+	}
+}
+
+// TestSessionDetailForwardsProviderRecordVerbatim proves the metadata section is
+// the provider's own session record, unchanged.
+//
+// The Cluster deliberately does not model that record: it is provider detail and
+// it changes when the provider changes. Forwarding the document keeps the surface
+// honest, so this test compares the whole string rather than selected fields. A
+// Cluster type built from the provider's fields would pass a field-level check
+// while silently dropping every field it did not model.
+func TestSessionDetailForwardsProviderRecordVerbatim(t *testing.T) {
+	record := `{"session_id":"s-1","session_name":"demo","task":"work","status":"Idle","` +
+		`project_workspace":"/work/demo","create_time":"2026-11-15T09:12:23","total_tokens":1234}`
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		"session\x00info\x00s-1\x00--json": answer(record)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionDetail, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
+	if !response.OK || len(response.QueryResult) == 0 {
+		t.Fatalf("response=%+v", response)
+	}
+	var result detailResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Metadata != record {
+		t.Fatalf("metadata=%q, want the provider record verbatim", result.Metadata)
+	}
+	// Runtime is the reserved seam. This provider reports nothing for it, so an
+	// empty value is the correct answer and a placeholder would be a lie.
+	if result.Runtime != "" {
+		t.Fatalf("runtime=%q, want empty until a provider fills it", result.Runtime)
+	}
+}
+
+// TestSessionDetailReportsMissingSessionFromStdout proves the not-found document
+// is read before the exit status.
+//
+// The provider prints `{"error_code":"session_not_found"}` on stdout and exits
+// non-zero. Reading the exit status first would report a missing session as a
+// provider failure, which sends the operator to the wrong problem: the session
+// does not exist, and nothing about the provider is broken.
+func TestSessionDetailReportsMissingSessionFromStdout(t *testing.T) {
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		"session\x00info\x00s-1\x00--json": {{stdout: `{"error_code":"session_not_found"}`, err: errors.New("exit status 1")}}}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionDetail, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
+	if response.OK || response.Error == nil {
+		t.Fatalf("response=%+v", response)
+	}
+	if response.Error.Code != providerSessionNotFoundCode {
+		t.Fatalf("code=%q, want %q", response.Error.Code, providerSessionNotFoundCode)
+	}
+}
+
+// TestSessionReadsRejectAnUnscopedTarget proves both new reads refuse a target
+// that does not name a session.
+//
+// A session with no live process is absent from the inventory, so it has no
+// Cluster resource ID and both reads address it by the provider's own identifier.
+// An empty identifier must fail before any provider process starts, because a
+// provider call with no session would either fail slowly or, worse, answer about
+// whatever session the provider happens to consider current.
+func TestSessionReadsRejectAnUnscopedTarget(t *testing.T) {
+	for _, query := range []string{querySessionMetrics, querySessionDetail} {
+		t.Run(query, func(t *testing.T) {
+			r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{}}
+			response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+				query, &target{ResourceKind: resourceSession, ProviderResourceKey: "  "}, `{}`))
+			if response.OK || response.Error == nil {
+				t.Fatalf("response=%+v", response)
+			}
+			if response.Error.Code != "invalid_request" {
+				t.Fatalf("code=%q, want invalid_request", response.Error.Code)
+			}
+			if len(r.calls) != 0 {
+				t.Fatalf("provider was invoked with an unscoped target: %v", r.calls)
+			}
+		})
+	}
+}
