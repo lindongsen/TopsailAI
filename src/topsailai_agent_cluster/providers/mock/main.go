@@ -300,7 +300,15 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		case queryLaunchOptions:
 			base.QueryResult = json.RawMessage(`{"profile":{"resource_kind":"launch_profile","provider_resource_key":"launch:mock","display_name":"Mock","revision":"launch-r1"},"projects":[{"name":"mock","path":"/work/mock"}]}`)
 		case queryHistoryMessages:
-			base.QueryResult = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"session:stable","provider_session_id":"session-1","resumable":true}],"observed_at_ms":1700000000000,"truncated":false}`)
+			// The row names the stopped session, not the live one, because a history
+			// row is joined to the inventory on provider_session_id and the mock
+			// publishes that identifier verbatim in its observations. A row that
+			// named a session the inventory never reports could not be joined, so
+			// every column stayed empty and a resume of that row addressed a live
+			// session through a handle minted from the row key, which the Endpoint
+			// then refused with target_still_active. The stopped session is the
+			// one a resume scenario needs: the record exists, no process holds it.
+			base.QueryResult = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"session:stopped","provider_session_id":"session:stopped","provider_display_name":"Stopped Session","resumable":true}],"observed_at_ms":1700000000000,"truncated":false}`)
 		case queryModelCatalog:
 			// The read is recorded because a scenario proves the provider was
 			// reached exactly once, and a read that answers without leaving a
