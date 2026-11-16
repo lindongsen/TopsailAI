@@ -42,7 +42,20 @@ const adapterProviderType = "genericcli"
 
 // genericCLIConcurrency is the Endpoint-side concurrency ceiling for one Generic
 // CLI Adapter. It is a value rather than a constant because the type is a struct.
-var genericCLIConcurrency = providercli.ConcurrencyLimits{Total: 4, Discovery: 2, Mutation: 1, Follow: 2}
+//
+// Total is deliberately larger than the sum of the class limits. Each class owns
+// its own channel, so a class can only be refused by the shared total channel when
+// Total is smaller than the sum; keeping Total at or above the sum is what makes
+// "one class can never starve another" structural rather than probabilistic. The
+// sum here is Discovery 2 + Read 4 + Mutation 1 + Follow 2 = 9, so Total is 9.
+var genericCLIConcurrency = providercli.ConcurrencyLimits{Total: 9, Discovery: 2, Mutation: 1, Follow: 2}
+
+// genericCLIReadConcurrency bounds concurrent operator reads for one Adapter
+// instance. It is Endpoint-local scheduling policy rather than a Provider
+// capability, so it is not part of genericCLIConcurrency and not part of the wire
+// descriptor. Reads are separated from discovery so the Endpoint's own periodic
+// collection can never delay a command the operator is waiting for.
+const genericCLIReadConcurrency = 4
 
 // registerAdapter installs the single adapter implementation this Endpoint ships.
 //
@@ -89,6 +102,7 @@ func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store) e
 			MaxRecords:     genericCLIMaxRecords,
 			EndpointLimits: genericCLIConcurrency,
 			AdapterLimits:  genericCLIConcurrency,
+			ReadLimit:      genericCLIReadConcurrency,
 			Capabilities:   capabilities,
 			Mapper:         store,
 		})

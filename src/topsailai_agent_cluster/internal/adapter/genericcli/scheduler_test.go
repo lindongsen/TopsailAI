@@ -120,9 +120,13 @@ func TestEffectiveConcurrencyRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+// mustScheduler builds a scheduler with a read limit that matches the discovery
+// limit, so a test that holds one class slot cannot be refused by the read class
+// for an unrelated reason. Tests that need a different read limit call
+// newScheduler directly.
 func mustScheduler(t *testing.T, limits providercli.ConcurrencyLimits) *scheduler {
 	t.Helper()
-	scheduler, err := newScheduler(limits)
+	scheduler, err := newScheduler(limits, limits.Discovery)
 	if err != nil {
 		t.Fatalf("newScheduler: %v", err)
 	}
@@ -198,5 +202,43 @@ func TestAcquireWithinFailsWhenTheBudgetExpires(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("acquireWithin ignored the expired budget and kept waiting")
+	}
+}
+
+// TestReadCapacityIsIndependentOfMutationAndFollowCapacity proves the read class
+// is not merely renamed discovery: it is also independent of the other two
+// classes, so a long follow stream cannot delay an operator read either.
+func TestReadCapacityIsIndependentOfMutationAndFollowCapacity(t *testing.T) {
+	limits := providercli.ConcurrencyLimits{Total: 4, Discovery: 1, Mutation: 1, Follow: 1}
+	scheduler, err := newScheduler(limits, 1)
+	if err != nil {
+		t.Fatalf("newScheduler: %v", err)
+	}
+	heldMutation, err := scheduler.acquire(classMutation)
+	if err != nil {
+		t.Fatalf("acquire mutation: %v", err)
+	}
+	defer heldMutation()
+	heldFollow, err := scheduler.acquire(classFollow)
+	if err != nil {
+		t.Fatalf("acquire follow: %v", err)
+	}
+	defer heldFollow()
+	release, err := scheduler.acquire(classRead)
+	if err != nil {
+		t.Fatalf("a read was refused while mutation and follow were held: %v", err)
+	}
+	release()
+}
+
+// TestNewSchedulerRejectsANonPositiveReadLimit proves the read limit is validated
+// like every other limit, so a zero value cannot silently create an unbounded or
+// permanently refusing class.
+func TestNewSchedulerRejectsANonPositiveReadLimit(t *testing.T) {
+	limits := providercli.ConcurrencyLimits{Total: 4, Discovery: 1, Mutation: 1, Follow: 1}
+	for _, readLimit := range []int{0, -1} {
+		if _, err := newScheduler(limits, readLimit); err == nil {
+			t.Fatalf("read limit %d was accepted", readLimit)
+		}
 	}
 }

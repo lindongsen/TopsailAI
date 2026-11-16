@@ -3,6 +3,7 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -222,6 +223,24 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 		lastAttemptMS = item.result.LastAttemptAtMS
 	}
 	snapshot := endpointstorage.SourceSnapshot{AdapterID: binding.AdapterID, ProviderType: binding.ProviderType, DisplayName: binding.DisplayName, Version: binding.Version, Health: "healthy", Capabilities: binding.Capabilities, LastAttemptAtMS: lastAttemptMS}
+	if errors.Is(item.err, adapter.ErrBusy) {
+		// A capacity refusal is not a provider failure: the cycle simply did not
+		// run. Keeping the previous snapshot means a local scheduling collision
+		// never degrades a healthy inventory, which is what made every operator
+		// command refuse with "inventory is unavailable" while the Endpoint was
+		// merely busy with its own periodic collection.
+		if hadPrevious && previous.DataKnown {
+			return nil
+		}
+		// Nothing was observed yet, so the inventory is unknown rather than
+		// complete: publishing an empty complete report would claim the provider
+		// holds no sessions when it was never asked.
+		snapshot.CollectionStatus = protocol.CollectionUnknown
+		snapshot.ReportComplete = false
+		snapshot.ErrorMessage = "discovery skipped: adapter capacity unavailable"
+		c.sources[binding.AdapterID] = snapshot
+		return nil
+	}
 	if item.err != nil || !item.result.Complete || item.result.CollectionStatus != protocol.CollectionSucceeded {
 		snapshot.CollectionStatus = protocol.CollectionFailed
 		snapshot.ReportComplete = false

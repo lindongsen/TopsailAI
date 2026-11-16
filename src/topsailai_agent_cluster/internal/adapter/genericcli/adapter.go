@@ -34,9 +34,16 @@ type Config struct {
 	MaxRecords     int64
 	EndpointLimits providercli.ConcurrencyLimits
 	AdapterLimits  providercli.ConcurrencyLimits
-	Capabilities   protocol.CapabilityDescriptor
-	Mapper         adapter.ResourceMapper
-	Now            func() time.Time
+	// ReadLimit bounds concurrent operator reads (inspect, resolve, read output,
+	// query, describe) for this Adapter instance. It is Endpoint-local scheduling
+	// policy, not a Provider capability, so it is deliberately absent from
+	// providercli.ConcurrencyLimits and from the wire descriptor schema. Reads get
+	// their own class so the Endpoint's periodic collection can never delay a
+	// command the operator is waiting for.
+	ReadLimit    int
+	Capabilities protocol.CapabilityDescriptor
+	Mapper       adapter.ResourceMapper
+	Now          func() time.Time
 	// CommandRunner executes one allowlisted argv array on the Endpoint itself.
 	// It is a field rather than a package-level call so a test can observe the
 	// exact argv, directory and executable without running a real program.
@@ -79,6 +86,11 @@ func New(ctx context.Context, config Config) (*Adapter, error) {
 	return newWithRunner(ctx, config, runner)
 }
 
+// defaultReadLimit bounds concurrent operator reads when a caller does not set
+// Config.ReadLimit. It exists so a missing scheduling knob degrades to a working
+// Adapter instead of a startup failure.
+const defaultReadLimit = 4
+
 func newWithRunner(ctx context.Context, config Config, runner cliRunner) (*Adapter, error) {
 	if config.AdapterID == "" || config.DisplayName == "" || config.Mapper == nil || runner == nil {
 		return nil, errors.New("adapter ID, display name, resource mapper and runner are required")
@@ -89,7 +101,14 @@ func newWithRunner(ctx context.Context, config Config, runner cliRunner) (*Adapt
 	if config.CommandRunner == nil {
 		config.CommandRunner = commandexec.ExecRunner{}
 	}
-	bootstrap, err := newScheduler(config.AdapterLimits)
+	if config.ReadLimit < 1 {
+		// A caller that does not set ReadLimit still gets a working Adapter, so a
+		// missing scheduling knob can never stop the Endpoint from starting. The
+		// value matches the Endpoint's own read ceiling; a caller that wants a
+		// different bound sets it explicitly.
+		config.ReadLimit = defaultReadLimit
+	}
+	bootstrap, err := newScheduler(config.AdapterLimits, config.ReadLimit)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap scheduler: %w", err)
 	}
@@ -106,7 +125,7 @@ func newWithRunner(ctx context.Context, config Config, runner cliRunner) (*Adapt
 	if err != nil {
 		return nil, err
 	}
-	bounded, err := newScheduler(limits)
+	bounded, err := newScheduler(limits, config.ReadLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +180,7 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	if err != nil {
 		return adapter.InspectResult{}, err
 	}
-	response, err := a.call(ctx, classDiscovery, providercli.FunctionInspect, target, nil, nil, "", json.RawMessage(`{}`))
+	response, err := a.call(ctx, classRead, providercli.FunctionInspect, target, nil, nil, "", json.RawMessage(`{}`))
 	if err != nil {
 		return adapter.InspectResult{}, err
 	}
@@ -208,7 +227,7 @@ func (a *Adapter) ResolveProviderSessionHandle(ctx context.Context, handle strin
 	if err != nil {
 		return adapter.ResourceMapping{}, fmt.Errorf("encode resolve payload: %w", err)
 	}
-	response, err := a.call(ctx, classDiscovery, providercli.FunctionResolve, nil, nil, nil, "", payload)
+	response, err := a.call(ctx, classRead, providercli.FunctionResolve, nil, nil, nil, "", payload)
 	if err != nil {
 		return adapter.ResourceMapping{}, err
 	}
@@ -282,7 +301,7 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 		MaxBytes int `json:"max_bytes"`
 		MaxLines int `json:"max_lines"`
 	}{request.MaxBytes, request.MaxLines})
-	response, err := a.call(ctx, classDiscovery, providercli.FunctionReadOutput, target, nil, nil, "", payload)
+	response, err := a.call(ctx, classRead, providercli.FunctionReadOutput, target, nil, nil, "", payload)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}
@@ -450,7 +469,7 @@ func (a *Adapter) typedQuery(ctx context.Context, name string, target *providerc
 	if _, err := providercli.DecodeQueryPayload(query, target, payload); err != nil {
 		return nil, fmt.Errorf("validate provider query request: %w", err)
 	}
-	response, err := a.call(ctx, classDiscovery, providercli.FunctionQuery, target, nil, &query, "", payload)
+	response, err := a.call(ctx, classRead, providercli.FunctionQuery, target, nil, &query, "", payload)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +519,7 @@ func (a *Adapter) Watch(context.Context) (<-chan adapter.Event, error) {
 func (a *Adapter) Close() error { return nil }
 
 func (a *Adapter) describeProvider(ctx context.Context) (providercli.Descriptor, error) {
-	response, err := a.call(ctx, classDiscovery, providercli.FunctionDescribe, nil, nil, nil, "", json.RawMessage(`{}`))
+	response, err := a.call(ctx, classRead, providercli.FunctionDescribe, nil, nil, nil, "", json.RawMessage(`{}`))
 	if err != nil {
 		return providercli.Descriptor{}, err
 	}
@@ -518,9 +537,9 @@ func (a *Adapter) call(ctx context.Context, class invocationClass, function stri
 		return providercli.Response{}, adapter.ErrUnsupported
 	}
 	// Capacity is waited for inside the caller's budget rather than refused on the
-	// first collision: a read that arrived while the collection cycle held the one
-	// discovery slot used to fail outright, which made resume, history and model
-	// reads fail intermittently and marked the inventory unavailable.
+	// first collision. Each class owns its own slots, so a read never waits for the
+	// Endpoint's periodic collection: they are different classes and therefore
+	// different channels.
 	release, err := a.scheduler.acquireWithin(ctx, class)
 	if err != nil {
 		return providercli.Response{}, err

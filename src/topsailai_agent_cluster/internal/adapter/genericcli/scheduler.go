@@ -22,26 +22,52 @@ var ErrCapacity = fmt.Errorf("%w: provider adapter capacity exhausted", adapter.
 type invocationClass string
 
 const (
+	// classDiscovery is the Endpoint's own periodic inventory collection. It is
+	// the only class that may be skipped, because the next cycle retries.
 	classDiscovery invocationClass = "discovery"
-	classMutation  invocationClass = "mutation"
-	classFollow    invocationClass = "follow"
+	// classRead is operator work that reads provider state: inspect, resolve,
+	// read output, query and describe. It is separate from classDiscovery so the
+	// Endpoint's own reporting can never delay a command the operator is waiting
+	// for. Before this split every read shared the discovery slot, so a periodic
+	// collection cycle made resume, history and model reads fail or wait.
+	classRead     invocationClass = "read"
+	classMutation invocationClass = "mutation"
+	classFollow   invocationClass = "follow"
 )
 
 // scheduler bounds total and per-class Provider CLI processes for one Adapter.
+//
+// Each class owns its own channel, so a class can never consume another class's
+// capacity. The shared total channel is a second, coarser bound; it is safe only
+// while Total is at least the sum of the class limits, because otherwise a class
+// could be refused by the total channel while its own channel still had room.
+// That invariant is asserted against the production limits by
+// TestProductionConcurrencyLeavesNoClassStarved, not inside newScheduler, because
+// saturation tests deliberately construct a Total smaller than the class sum to
+// prove the total bound is enforced.
 type scheduler struct {
 	total   chan struct{}
 	classes map[invocationClass]chan struct{}
 }
 
 // newScheduler creates one independent per-Adapter scheduler.
-func newScheduler(limits providercli.ConcurrencyLimits) (*scheduler, error) {
+//
+// readLimit is Endpoint-local scheduling policy rather than a Provider capability,
+// so it is a separate argument instead of a field on providercli.ConcurrencyLimits.
+// The wire descriptor keeps its four fields and its closed schema, which means
+// adding this class requires no Provider CLI or protocol change.
+func newScheduler(limits providercli.ConcurrencyLimits, readLimit int) (*scheduler, error) {
 	if err := validateConcurrencyLimits(limits); err != nil {
 		return nil, err
+	}
+	if readLimit < 1 {
+		return nil, errors.New("read concurrency limit must be positive")
 	}
 	return &scheduler{
 		total: make(chan struct{}, limits.Total),
 		classes: map[invocationClass]chan struct{}{
 			classDiscovery: make(chan struct{}, limits.Discovery),
+			classRead:      make(chan struct{}, readLimit),
 			classMutation:  make(chan struct{}, limits.Mutation),
 			classFollow:    make(chan struct{}, limits.Follow),
 		},
@@ -81,10 +107,7 @@ func (s *scheduler) acquire(class invocationClass) (func(), error) {
 // caller believe its operation had already started. That reasoning does not apply
 // here: the caller already carries a deadline, and waiting inside a budget the
 // caller set is exactly what the budget is for. Without this wait a read that
-// collided with the collection cycle failed outright, which is why a resume, a
-// history read or a model read failed intermittently while the inventory was
-// being refreshed, and why one contended discovery marked the whole inventory
-// unavailable.
+// collided with another read of the same Adapter instance failed outright.
 //
 // The wait is bounded by ctx, so a caller that cannot get capacity in time still
 // fails, and it reports the context error so the caller can tell a busy adapter
