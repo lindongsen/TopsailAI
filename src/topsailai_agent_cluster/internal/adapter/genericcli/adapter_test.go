@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -467,6 +468,148 @@ func TestMessagesKeepsOtherProviderErrorsAsProviderFailures(t *testing.T) {
 	}
 	if result.ErrorCode == protocol.MessagesSessionNotFound {
 		t.Fatalf("messages error code = %q, want a provider failure", result.ErrorCode)
+	}
+}
+
+// TestMetricsMapsProviderCountsOntoTheTwoClusterPositions proves the two counts
+// reach the cluster fields the surface renders as data1/data2.
+//
+// The values are deliberately distinct and neither is zero, because a mapping
+// that swapped the two positions or hardcoded one of them would pass a test
+// whose fixture used equal or zero counts. The provider's own layer names are
+// asserted nowhere: the cluster contract names the roles, so this test would
+// still be correct for a provider that called its layers something else.
+func TestMetricsMapsProviderCountsOntoTheTwoClusterPositions(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			response.Descriptor.Queries = []providercli.NamedContract{{Name: providercli.QuerySessionMetrics, Version: "v1"}}
+			return response, nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: true,
+			QueryResult: json.RawMessage(`{"provider_session_id":"session-1","messages":{"inbound":7,"outbound":3},"observed_at_ms":99}`),
+		}, nil
+	}
+	binding := mustAdapter(t, provider)
+	result, err := binding.Metrics(context.Background(), protocol.SessionMetricsQuery{ProviderSessionID: "session-1"})
+	if err != nil {
+		t.Fatalf("metrics error = %v, want success", err)
+	}
+	if result.Messages.Inbound != 7 || result.Messages.Outbound != 3 {
+		t.Fatalf("metrics messages = %+v, want inbound=7 outbound=3", result.Messages)
+	}
+	if result.ProviderSessionID != "session-1" || result.ObservedAtMS != 99 {
+		t.Fatalf("metrics identity = %q observed=%d, want session-1 observed=99", result.ProviderSessionID, result.ObservedAtMS)
+	}
+	if result.ErrorCode != "" {
+		t.Fatalf("metrics error code = %q, want empty on success", result.ErrorCode)
+	}
+}
+
+// TestMetricsMapsProviderMissingSessionToClusterMissingSession proves a deleted
+// session is reported as absent rather than as a provider fault.
+//
+// The distinction decides what the operator does next: an absent session is a
+// row that no longer exists, while a provider fault is a machine to investigate.
+// Reporting one as the other sends the investigation to the wrong place.
+func TestMetricsMapsProviderMissingSessionToClusterMissingSession(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			response.Descriptor.Queries = []providercli.NamedContract{{Name: providercli.QuerySessionMetrics, Version: "v1"}}
+			return response, nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: false,
+			Error: &providercli.ProviderError{Code: "session_not_found", Message: "provider session does not exist", EffectCertainty: providercli.EffectNotApplied},
+		}, nil
+	}
+	binding := mustAdapter(t, provider)
+	result, err := binding.Metrics(context.Background(), protocol.SessionMetricsQuery{ProviderSessionID: "never-recorded"})
+	if err == nil {
+		t.Fatal("metrics error = nil, want a missing-session failure")
+	}
+	if result.ErrorCode != protocol.MetricsSessionNotFound {
+		t.Fatalf("metrics error code = %q, want %q", result.ErrorCode, protocol.MetricsSessionNotFound)
+	}
+	if result.ProviderSessionID != "never-recorded" {
+		t.Fatalf("metrics provider session id = %q, want the requested session", result.ProviderSessionID)
+	}
+}
+
+// TestDetailForwardsProviderMetadataVerbatimAndLeavesRuntimeEmpty proves the
+// provider record reaches the surface unchanged and the runtime seam stays empty.
+//
+// The metadata fixture carries a field the cluster does not model, because a
+// re-encoding adapter would drop exactly that field while still passing any
+// assertion that checked only the fields it knew about. Comparing the whole
+// document is the only assertion that distinguishes forwarding from rebuilding.
+//
+// The runtime assertion is the other half: an empty runtime must stay empty, so a
+// placeholder invented by the adapter would fail here instead of being presented
+// to the operator as an observation nobody made.
+func TestDetailForwardsProviderMetadataVerbatimAndLeavesRuntimeEmpty(t *testing.T) {
+	const providerRecord = `{"session_id":"s-1","task":"work","unmodelled_field":{"nested":true}}`
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			response.Descriptor.Queries = []providercli.NamedContract{{Name: providercli.QuerySessionDetail, Version: "v1"}}
+			return response, nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: true,
+			QueryResult: json.RawMessage(`{"provider_session_id":"s-1","metadata":` + strconv.Quote(providerRecord) + `,"observed_at_ms":42}`),
+		}, nil
+	}
+	binding := mustAdapter(t, provider)
+	result, err := binding.Detail(context.Background(), protocol.SessionDetailQuery{ProviderSessionID: "s-1"})
+	if err != nil {
+		t.Fatalf("detail error = %v, want success", err)
+	}
+	if result.Metadata != providerRecord {
+		t.Fatalf("detail metadata = %q, want the provider record verbatim", result.Metadata)
+	}
+	if result.Runtime != "" {
+		t.Fatalf("detail runtime = %q, want empty because the provider reported none", result.Runtime)
+	}
+	if result.ProviderSessionID != "s-1" || result.ObservedAtMS != 42 {
+		t.Fatalf("detail identity = %q observed=%d, want s-1 observed=42", result.ProviderSessionID, result.ObservedAtMS)
+	}
+}
+
+// TestDetailMapsProviderMissingSessionToClusterMissingSession proves detail uses
+// the same narrow mapping as metrics.
+//
+// Detail is the read an operator performs on a session that may have no live
+// process, so a missing record is a normal answer here rather than an error path
+// nobody exercises. It must still be reported as absent, not as a fault.
+func TestDetailMapsProviderMissingSessionToClusterMissingSession(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			response.Descriptor.Queries = []providercli.NamedContract{{Name: providercli.QuerySessionDetail, Version: "v1"}}
+			return response, nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: false,
+			Error: &providercli.ProviderError{Code: "session_not_found", Message: "provider session does not exist", EffectCertainty: providercli.EffectNotApplied},
+		}, nil
+	}
+	binding := mustAdapter(t, provider)
+	result, err := binding.Detail(context.Background(), protocol.SessionDetailQuery{ProviderSessionID: "never-recorded"})
+	if err == nil {
+		t.Fatal("detail error = nil, want a missing-session failure")
+	}
+	if result.ErrorCode != protocol.DetailSessionNotFound {
+		t.Fatalf("detail error code = %q, want %q", result.ErrorCode, protocol.DetailSessionNotFound)
+	}
+	if result.ProviderSessionID != "never-recorded" {
+		t.Fatalf("detail provider session id = %q, want the requested session", result.ProviderSessionID)
 	}
 }
 

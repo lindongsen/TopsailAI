@@ -48,3 +48,16 @@ const (
 // MaxMessageCount bounds one accepted message count. The bound exists so an
 // absurd provider value is rejected instead of being rendered as a real count.
 const MaxMessageCount = 10000000
+
+// SessionMetricsQuery addresses one session whose message counts are wanted.
+//
+// The target is the provider's own session identifier, not a cluster resource ID,
+// because a session with no live process is absent from the inventory and therefore
+// has no cluster ID. The counts are read on demand for the rows an operator is about
+// to see, so this query is never part of an inventory collection.
+//
+// The payload is closed: there is nothing to configure. A bound on the read would be
+// meaningless, because the provider reports two integers rather than a document.
+type SessionMetricsQuery struct {
+	ProviderSessionID string `json:"provider_session_id"`
+}

@@ -452,6 +452,69 @@ func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (p
 	return result, nil
 }
 
+// Metrics reads one session's current message counts.
+//
+// The counts are a live observation, so a provider that does not know the session
+// is reported as a missing session rather than as a provider failure. The two send
+// an operator to different places: one means the session is gone, the other means
+// the provider call broke.
+//
+// The provider's own layer names are mapped onto the cluster's two positions here
+// and nowhere else. The cluster contract names the roles in the conversation, so a
+// second provider maps its own vocabulary onto the same two fields.
+func (a *Adapter) Metrics(ctx context.Context, query protocol.SessionMetricsQuery) (protocol.SessionMetrics, error) {
+	target := &providercli.Target{ResourceKind: protocol.ResourceSession, ProviderResourceKey: query.ProviderSessionID}
+	payload, _ := json.Marshal(providercli.SessionMetricsPayload{})
+	value, err := a.typedQuery(ctx, providercli.QuerySessionMetrics, target, payload)
+	if err != nil {
+		var coded interface{ ErrorCode() string }
+		if errors.As(err, &coded) && coded.ErrorCode() == providerSessionNotFoundCode {
+			return protocol.SessionMetrics{ErrorCode: protocol.MetricsSessionNotFound, ProviderSessionID: query.ProviderSessionID}, err
+		}
+		return protocol.SessionMetrics{}, err
+	}
+	providerResult := value.(providercli.SessionMetricsResult)
+	return protocol.SessionMetrics{
+		ProviderSessionID: providerResult.ProviderSessionID,
+		Messages: protocol.MessageCounts{
+			Inbound:  providerResult.Messages.Inbound,
+			Outbound: providerResult.Messages.Outbound,
+		},
+		ObservedAtMS: providerResult.ObservedAtMS,
+	}, nil
+}
+
+// Detail reads one session's provider metadata and runtime document.
+//
+// Both documents are forwarded verbatim. The cluster does not model a provider's
+// session record, so translating it here would make this adapter the place where
+// every provider field has to be declared, and a provider that added a field would
+// need an adapter change to expose it.
+//
+// The runtime document is left as the provider reported it, which today is empty.
+// An empty value is the honest answer: the surface says it was not reported, and a
+// placeholder would claim an observation nobody made.
+func (a *Adapter) Detail(ctx context.Context, query protocol.SessionDetailQuery) (protocol.SessionDetail, error) {
+	target := &providercli.Target{ResourceKind: protocol.ResourceSession, ProviderResourceKey: query.ProviderSessionID}
+	payload, _ := json.Marshal(providercli.SessionDetailPayload{})
+	value, err := a.typedQuery(ctx, providercli.QuerySessionDetail, target, payload)
+	if err != nil {
+		var coded interface{ ErrorCode() string }
+		if errors.As(err, &coded) && coded.ErrorCode() == providerSessionNotFoundCode {
+			return protocol.SessionDetail{ErrorCode: protocol.DetailSessionNotFound, ProviderSessionID: query.ProviderSessionID}, err
+		}
+		return protocol.SessionDetail{}, err
+	}
+	providerResult := value.(providercli.SessionDetailResult)
+	return protocol.SessionDetail{
+		ProviderSessionID: providerResult.ProviderSessionID,
+		Metadata:          providerResult.Metadata,
+		Runtime:           providerResult.Runtime,
+		ObservedAtMS:      providerResult.ObservedAtMS,
+		MetadataTruncated: providerResult.MetadataTruncated,
+	}, nil
+}
+
 func (a *Adapter) launchOptions(ctx context.Context, includeProjects bool) (providercli.LaunchOptionsResult, error) {
 	payload, _ := json.Marshal(providercli.LaunchOptionsPayload{IncludeProjects: includeProjects})
 	value, err := a.typedQuery(ctx, providercli.QueryLaunchOptions, nil, payload)

@@ -47,3 +47,17 @@ const (
 // messages bound, because both carry a provider document of comparable size and
 // both travel the same channel.
 const MaxDetailBytes = 512 << 10
+
+// SessionDetailQuery addresses one session whose provider record is wanted.
+//
+// The target is the provider's own session identifier for the same reason as
+// SessionMetricsQuery: a session with no live process has no cluster resource ID,
+// and detail is exactly the read an operator wants for such a session.
+//
+// The payload is closed. A caller cannot ask for selected fields, because the
+// cluster does not model the provider's record and therefore cannot name a field to
+// select. Asking for the whole record is the only request that stays honest when the
+// provider adds or renames a field.
+type SessionDetailQuery struct {
+	ProviderSessionID string `json:"provider_session_id"`
+}
