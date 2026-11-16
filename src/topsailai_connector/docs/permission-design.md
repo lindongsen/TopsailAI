@@ -831,7 +831,14 @@ scope means.
 
 - The path is absolute. A relative path would resolve differently depending on the
   working directory, which is a different meaning per launch.
-- The path exists and is a directory.
+- The path exists and is a directory, **or** it does not exist at all. A path that
+  does not exist is tolerated: the scope stays defined, is reported as absent at
+  startup, and answers `not_found` for every request until the directory exists and
+  the Node restarts. A policy may name a directory that has not been created yet,
+  and on Windows a drive letter may have no volume behind it, so one absent
+  directory must not stop a Node that serves several. A path that exists and is not
+  a directory is still a startup failure, because a file root makes every path
+  inside it meaningless.
 - The path is not a symlink or a junction.
 - The path is not `/`, not the user's home directory, and not a mount root, because
   the blast radius of those is the whole machine. A filesystem root such as `C:\` is
@@ -861,6 +868,58 @@ deny list takes over. The config directory is then a deny entry, so the director
 itself and every path inside it are refused before they are opened, and a listing
 omits the entry rather than reporting its name and size. The deny list is what
 protects the credential in that case; the startup refusal is not available.
+
+### A scope whose directory does not exist
+
+A scope path that does not exist is the one mapping rule that is not a startup
+failure. The scope stays defined, keeps its grant, and refuses every request with
+`not_found` until the directory exists and the Node restarts.
+
+The reason is that a policy is written before the machine is ready. A directory may
+not have been created yet, and on Windows a drive letter may have no volume behind
+it, so refusing startup would let one absent directory stop a Node that serves
+several. The alternative, silently skipping the scope, is worse: the operator would
+believe a grant exists that does not.
+
+The remaining rules are skipped for an absent path, and each skip is an argument
+rather than a convenience:
+
+| Rule | Why it is skipped for an absent path |
+|---|---|
+| Not a symlink | A path that does not exist is not a symlink; a link exists |
+| Not a mount point | A mount point exists |
+| Not the home directory | The home directory exists |
+| Not a filesystem root | A volume with no volume behind it has no blast radius |
+| Does not overlap the config directory | The config directory is written before the authority is loaded, so it exists |
+
+The filesystem-root skip is fail-closed across restarts rather than a permanent
+exception. When the volume appears, the next startup sees a real filesystem root and
+refuses it unless the policy states `allow_filesystem_root: true`. A Node therefore
+cannot be started with an absent `E:\` and then silently serve the whole drive once
+it is mounted.
+
+Two consequences are stated rather than discovered:
+
+- **Absence is decided once, at startup.** It is not re-checked per request. A
+  directory that appears later is adopted by the next start, not by a running
+  process, because a handle opened mid-flight would be a fence configured after the
+  policy was validated.
+- **The startup report names every absent scope**, with its path and the effect, so
+  a degraded scope is visible before a caller discovers it. The ready line carries
+  `absent_scopes` for the same reason.
+
+The grant is still checked before the directory is consulted, so a caller without
+the permission receives `denied` and learns nothing about whether the directory
+exists. A caller with the permission receives `not_found`, which is the same answer
+an absent path inside a live scope gives. The two answers differ because the two
+questions differ: "may you use this scope" is answered by the policy, and "does this
+path exist" is answered by the filesystem.
+
+The path grammar is checked before the scope's own state, so a malformed path is
+`invalid_argument` whether or not the directory exists. A shape error is a property
+of the request, and answering it differently because a directory is missing would
+make the same request mean two things.
+
 
 ### Policy file
 
@@ -1200,6 +1259,24 @@ request path.
       credential files are not listable even though their contents are denied.
 - [ ] A scope rooted at a filesystem root is refused at startup unless the policy
       states `allow_filesystem_root: true`, and the opt-in is absent by default.
+- [ ] A scope whose path does not exist starts instead of refusing, is reported
+      absent at startup with its path, and answers `not_found` for `file.read`,
+      `file.list` and `file.stat`, so one absent directory cannot stop a Node that
+      serves several.
+- [ ] An absent scope keeps its grant, so a caller without the permission still
+      receives `denied` and cannot use the answer to learn whether the directory
+      exists.
+- [ ] An absent scope is decided once at startup and is not re-checked per
+      request, so a directory that appears later is adopted by the next start
+      rather than by a running process.
+- [ ] A path that does not exist is the only relaxed mapping rule: a relative
+      path, a symlink root, a file root, the home directory, a mount point, an
+      existing filesystem root and an existing config overlap are all still
+      refused.
+- [ ] A scope spelled as a drive letter with no volume behind it (`E:\`) starts,
+      and when the volume appears the next startup refuses it as a filesystem root
+      unless the policy states `allow_filesystem_root: true`, so the tolerance is
+      fail-closed across restarts rather than a permanent exception.
 - [ ] When the opt-in is set, the config directory is on the deny list, so the
       directory and everything inside it are refused and a listing omits it. The
       deny list, not the startup refusal, is what protects the credential in that

@@ -278,13 +278,68 @@ func TestOpenScopeRejectsARelativeMapping(t *testing.T) {
 	}
 }
 
-// TestOpenScopeRejectsAMissingDirectory checks that a scope mapped to a directory
-// that does not exist is refused, because a fence over nothing serves nothing and
-// the operator would believe the scope is live.
-func TestOpenScopeRejectsAMissingDirectory(t *testing.T) {
+// TestOpenScopeToleratesAMissingDirectory checks that a scope mapped to a
+// directory that does not exist is accepted rather than refused, because a policy
+// may name a directory that has not been created yet and one absent directory must
+// not stop a Node that serves several.
+//
+// The property the old test protected is kept, not dropped: the operator must not
+// be led to believe the scope is live. It is asserted here as "accepted, marked
+// absent, and refusing every operation", which is the same guarantee expressed
+// against the new behaviour. A scope that silently served an empty directory would
+// pass an "accepted" assertion and fail this one.
+func TestOpenScopeToleratesAMissingDirectory(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent")
-	if _, err := OpenScope("project", missing, nil, ""); err == nil {
-		t.Fatal("OpenScope() = nil error, want a refusal for a missing directory")
+
+	scope, err := OpenScope("project", missing, nil, "")
+	if err != nil {
+		t.Fatalf("OpenScope() = %v, want nil for a missing directory", err)
+	}
+	defer scope.Close()
+
+	if !scope.Absent() {
+		t.Fatal("Absent() = false, want true for a scope whose directory does not exist")
+	}
+	if scope.ResolvedPath() != missing {
+		t.Fatalf("ResolvedPath() = %q, want %q", scope.ResolvedPath(), missing)
+	}
+
+	// Every operation answers not_found, so a caller cannot tell an absent scope
+	// from an absent path inside a live one.
+	if _, _, err := scope.Read("anything.txt", 0, 0); err == nil {
+		t.Fatal("Read() = nil error, want not_found on an absent scope")
+	} else if code := CodeOf(err); code != protocol.CodeNotFound {
+		t.Fatalf("CodeOf(Read()) = %s, want not_found", code.Name())
+	}
+	if _, err := scope.List(""); err == nil {
+		t.Fatal("List() = nil error, want not_found on an absent scope")
+	} else if code := CodeOf(err); code != protocol.CodeNotFound {
+		t.Fatalf("CodeOf(List()) = %s, want not_found", code.Name())
+	}
+	if _, err := scope.Stat("anything.txt"); err == nil {
+		t.Fatal("Stat() = nil error, want not_found on an absent scope")
+	} else if code := CodeOf(err); code != protocol.CodeNotFound {
+		t.Fatalf("CodeOf(Stat()) = %s, want not_found", code.Name())
+	}
+}
+
+// TestOpenScopeRejectsAMalformedPathOnAnAbsentScope checks that the path grammar
+// is still enforced when the scope directory does not exist, because a shape error
+// is a property of the request and must not be answered differently because of a
+// directory that is missing.
+func TestOpenScopeRejectsAMalformedPathOnAnAbsentScope(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+
+	scope, err := OpenScope("project", missing, nil, "")
+	if err != nil {
+		t.Fatalf("OpenScope() = %v, want nil for a missing directory", err)
+	}
+	defer scope.Close()
+
+	if _, _, err := scope.Read("../escape.txt", 0, 0); err == nil {
+		t.Fatal("Read() = nil error, want invalid_argument for a traversal path")
+	} else if code := CodeOf(err); code != protocol.CodeInvalidArgument {
+		t.Fatalf("CodeOf(Read()) = %s, want invalid_argument", code.Name())
 	}
 }
 

@@ -456,10 +456,17 @@ followed at startup and the operator would not know what the scope means.
 
 ### AC-PATH-51: A scope root that does not exist
 
-**Action:** Start the Node with a scope at a missing path.
+**Action:** Start the Node with a scope at a missing path, then request
+`file.read`, `file.list` and `file.stat` on it.
 
-**Expected:** Startup fails. A scope that silently appears later is a scope nobody
-validated.
+**Expected:** Startup succeeds and every request returns `not_found`. The scope is
+reported absent at startup, so a scope that appears later is a scope the operator
+was told about rather than one nobody validated. Absence is decided once, at
+startup, and is not re-checked per request: a directory that appears later is
+adopted by the next start, not by a running process. A caller without the grant
+still receives `denied`, so the answer does not disclose whether the directory
+exists.
+
 
 ### AC-PATH-52: A scope root that is a file
 

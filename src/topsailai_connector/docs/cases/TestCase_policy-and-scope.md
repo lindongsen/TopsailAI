@@ -84,11 +84,18 @@ worse than a crash, and `allow_all` is exactly the key an operator would try.
 **Expected:** Startup fails. A relative path resolves differently per working
 directory.
 
-### TC-POL-12: A scope with a missing path fails startup
+### TC-POL-12: A scope with a missing path starts and refuses every request
 
-**Action:** Set `path: /does/not/exist`.
+**Action:** Set `path: /does/not/exist`, then start the Node and request
+`file.read`, `file.list` and `file.stat` on that scope.
 
-**Expected:** Startup fails.
+**Expected:** Startup succeeds. The startup log names the scope and its path at
+WARN, and the ready line lists it in `absent_scopes`. Every request on the scope
+returns `not_found`, and the process stays alive. A policy is written before the
+machine is ready, so one absent directory must not stop a Node that serves
+several; the scope stays defined so the operator does not believe a grant exists
+that does not.
+
 
 ### TC-POL-13: A scope path that is a file fails startup
 

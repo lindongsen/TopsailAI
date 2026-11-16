@@ -148,15 +148,34 @@ func (r *Runtime) Config() Config {
 // The report names the scopes and the identity, and never a secret: the identity
 // is printed through its redacted form and the configuration through its redacted
 // form, so a field added later cannot leak by being forgotten here.
+//
+// A scope whose directory did not exist at startup is named in a separate WARN
+// line with its path. The ready line still lists it, because the scope is defined
+// and advertised; the warning is what tells the operator that this scope serves
+// nothing until the directory exists and the Node is restarted. Without the
+// warning a degraded scope would look exactly like a working one until a caller
+// reported not_found.
 func (r *Runtime) Report() {
 	names := r.authority.ScopeNames()
 	scopes := make([]string, 0, len(names))
+	absent := make([]string, 0, len(names))
 	for _, name := range names {
 		scopes = append(scopes, string(name))
+		scope, ok := r.authority.Scope(name)
+		if !ok || !scope.Absent() {
+			continue
+		}
+		absent = append(absent, string(name))
+		r.logger.Warn("connector-node scope directory does not exist",
+			"scope", string(name),
+			"path", scope.ResolvedPath(),
+			"effect", "every request on this scope answers not_found until the directory exists and the node restarts",
+		)
 	}
 	r.logger.Info("connector-node ready",
 		"node_id", r.holder.Current().ID,
 		"scopes", scopes,
+		"absent_scopes", absent,
 		"config", r.config.Redacted(),
 	)
 }
