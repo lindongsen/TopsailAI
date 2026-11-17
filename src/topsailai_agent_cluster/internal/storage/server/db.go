@@ -30,6 +30,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	pragmas := url.Values{}
 	pragmas.Add("_pragma", "journal_mode(DELETE)")
 	pragmas.Add("_pragma", "synchronous(FULL)")
+	// foreign_keys is a per-connection setting, not a property of the database
+	// file, so it must travel in the DSN. The migration also sets it, but that
+	// only configures the single connection that ran the migration. When
+	// rollbackTransaction discards a poisoned connection with driver.ErrBadConn,
+	// the replacement connection would otherwise default to foreign_keys=0 and
+	// silently stop enforcing referential integrity.
+	pragmas.Add("_pragma", "foreign_keys(ON)")
 	pragmas.Add("_pragma", "busy_timeout(5000)")
 	db, err := sql.Open("sqlite", dsn+separator+pragmas.Encode())
 	if err != nil {
