@@ -6,6 +6,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: open
 ---
 
 # `point_entry` symlink admission and ordering-key gaps

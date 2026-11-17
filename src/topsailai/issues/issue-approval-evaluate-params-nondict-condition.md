@@ -7,6 +7,7 @@ ProjectCode: TOPSAILAI
 programming_language: python
 references:
   - /TopsailAI/src/topsailai/ai_base/tool_approval/matcher.py
+status: open
 ---
 
 # Issue: `_evaluate_params` raises on a non-dict parameter condition
