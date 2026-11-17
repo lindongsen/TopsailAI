@@ -77,7 +77,7 @@ attention, and yellow is the remaining uncertain middle:
 | Colour | States | Meaning |
 |---|---|---|
 | green | `running` | actively working |
-| dim | `stopped`, `completed`, `idle`, `unknown`, `unverified` | nothing running, nothing failed |
+| dim | `stopped`, `completed`, `idle`, `unknown`, `unverified`, `no sessions` | nothing running, nothing failed |
 | red | `failed`, `error`, `offline` | a definite negative |
 | yellow | `waiting_input`, `ready` | uncertain, needs a look |
 
@@ -94,6 +94,13 @@ the two never disagree about what an offline condition looks like.
 
 `unverified` is a colour key only and never a state: the SESSION_STATUS cell still renders the
 reported `unknown`, because the state vocabulary is a protocol contract.
+
+`no sessions` is a placeholder row, not a session state. It stands for an Endpoint that reported an
+empty inventory, so the row carries no session identity and cannot be addressed. It is dim rather than
+yellow because yellow means "uncertain, needs a look", while an empty inventory is a definite answer:
+colouring it yellow made a healthy Endpoint with nothing to show read as a condition the operator had
+to investigate. It stays outside the state vocabulary, so the SESSION_STATUS cell and the summary line
+print the placeholder text and never a state name.
 
 ## How a standard operation is defined
 
