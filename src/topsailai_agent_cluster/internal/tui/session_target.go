@@ -192,3 +192,163 @@ func sessionTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedG
 	}
 	return sessionTarget{}, fmt.Errorf("session %q was not found on endpoint %q; run list again", sessionID, endpointID)
 }
+
+// resolveReadTarget maps an operator token to one exact session identity for a
+// command that addresses persisted data rather than a live process.
+//
+// It is the read counterpart of resolveSessionTarget. The difference is one
+// decision: an empty provider generation is accepted, because a generation proves
+// which process a mutation would reach, while a read only needs to know which
+// record to read. That identity is already proven by the durable resource mapping
+// and re-proven by the provider, so requiring a generation here would refuse to
+// read exactly the rows an operator most needs to inspect: the ones the provider
+// listed but could not prove live.
+//
+// A non-empty generation must still match, so a replacement process can never
+// inherit an older row's identity. Every other check is unchanged: the endpoint
+// must be online, the report complete, and the session and its adapter fresh.
+func resolveReadTarget(ctx context.Context, api InteractiveAPI, state *interactiveState, command, token string) (sessionTarget, error) {
+	if token == "" {
+		// An empty token means the current scope already names the target, which only
+		// session scope does. The selected session is revalidated through the same
+		// selection check every scoped command uses, so a read cannot address a
+		// session the scope no longer proves.
+		if state.Scope.Kind != ScopeSession {
+			return sessionTarget{}, fmt.Errorf("%s requires a session in %s scope; use %s <number> for a session row", command, state.Scope.Kind, command)
+		}
+		_, _, session, err := findSelected(ctx, api, state)
+		if err != nil {
+			return sessionTarget{}, err
+		}
+		return sessionTarget{endpointID: state.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
+	}
+	var row SessionRow
+	var resolved bool
+	var err error
+	if state.Scope.Kind == ScopeEndpoint {
+		row, resolved, err = resolveReadSessionTokenInEndpoint(state, token, state.Scope.EndpointID)
+	} else {
+		row, resolved, err = resolveReadSessionToken(state, token)
+	}
+	if err != nil {
+		return sessionTarget{}, err
+	}
+	if resolved {
+		if row.ClusterSessionID == "" {
+			return sessionTarget{}, fmt.Errorf("row %d does not identify a session; choose a session row", row.No)
+		}
+		return validateReadTarget(ctx, api, row.EndpointID, row.ClusterSessionID, row.ProviderGeneration)
+	}
+	if state.Scope.Kind == ScopeEndpoint {
+		return resolveReadTargetInEndpoint(ctx, api, state.Scope.EndpointID, token)
+	}
+	return resolveReadTargetAcrossEndpoints(ctx, api, command, token)
+}
+
+// resolveReadTargetInEndpoint resolves one literal session identifier inside the
+// selected endpoint while preserving generationless rows.
+func resolveReadTargetInEndpoint(ctx context.Context, api InteractiveAPI, endpointID, token string) (sessionTarget, error) {
+	loaded, err := loadReports(ctx, api, endpointID)
+	if err != nil {
+		return sessionTarget{}, err
+	}
+	_, _, session, err := findSessionInEndpoint(loaded, endpointID, token)
+	if err != nil {
+		return sessionTarget{}, numericTokenHint(token, err)
+	}
+	return readTargetFromLoaded(loaded, endpointID, session.ClusterSessionID, session.ProviderGeneration)
+}
+
+// resolveReadTargetAcrossEndpoints resolves one literal session identifier in
+// workspace scope and refuses a match that is ambiguous across endpoints.
+func resolveReadTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI, command, token string) (sessionTarget, error) {
+	loaded, err := loadReports(ctx, api, "")
+	if err != nil {
+		return sessionTarget{}, err
+	}
+	matches := make([]sessionTarget, 0, 1)
+	unavailable := make([]string, 0, 1)
+	degraded := make([]string, 0, 1)
+	ambiguous := make([]error, 0, 1)
+	for _, endpoint := range loaded.endpoints {
+		// A degraded endpoint is reported by its known state, not as an inventory
+		// that failed to answer, because its inventory is removed by design.
+		if endpointDegraded(endpoint) {
+			degraded = append(degraded, endpoint.EndpointID)
+			continue
+		}
+		report, ok := loaded.reports[endpoint.EndpointID]
+		if !ok || !report.ReportComplete {
+			unavailable = append(unavailable, endpoint.EndpointID)
+			continue
+		}
+		_, _, session, findErr := findSessionInEndpoint(loaded, endpoint.EndpointID, token)
+		if findErr == nil {
+			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration})
+			continue
+		}
+		if strings.Contains(findErr.Error(), "multiple sessions match") {
+			ambiguous = append(ambiguous, findErr)
+		}
+	}
+	if len(ambiguous) > 0 {
+		return sessionTarget{}, ambiguous[0]
+	}
+	switch len(matches) {
+	case 1:
+		return readTargetFromLoaded(loaded, matches[0].endpointID, matches[0].sessionID, matches[0].generation)
+	case 0:
+		if len(degraded) > 0 {
+			return sessionTarget{}, numericTokenHint(token, degradedEndpointError(degraded))
+		}
+		if len(unavailable) > 0 {
+			return sessionTarget{}, numericTokenHint(token, unavailableInventoryError(unavailable))
+		}
+		return sessionTarget{}, numericTokenHint(token, fmt.Errorf("session %q was not found on any endpoint", token))
+	default:
+		return sessionTarget{}, fmt.Errorf("multiple sessions match %q; use %s <row> with a row from list", token, command)
+	}
+}
+
+// validateReadTarget reloads current inventory and proves the selected endpoint,
+// session row, freshness and generation still match before a read is dispatched.
+func validateReadTarget(ctx context.Context, api InteractiveAPI, endpointID, sessionID, generation string) (sessionTarget, error) {
+	loaded, err := loadReports(ctx, api, endpointID)
+	if err != nil {
+		return sessionTarget{}, err
+	}
+	return readTargetFromLoaded(loaded, endpointID, sessionID, generation)
+}
+
+// readTargetFromLoaded applies the normal endpoint and freshness checks while
+// allowing an empty generation. A non-empty generation must still match, so a
+// replacement process can never inherit an older row's identity.
+func readTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedGeneration string) (sessionTarget, error) {
+	endpoint, found := endpointByID(loaded, endpointID)
+	if !found {
+		return sessionTarget{}, fmt.Errorf("endpoint %q was not found; run list again", endpointID)
+	}
+	if err := validateEndpointOnline(endpoint); err != nil {
+		return sessionTarget{}, err
+	}
+	report, ok := loaded.reports[endpointID]
+	if !ok || !report.ReportComplete {
+		return sessionTarget{}, fmt.Errorf("endpoint %q inventory is unavailable", endpointID)
+	}
+	for _, session := range report.Sessions {
+		if session.ClusterSessionID != sessionID {
+			continue
+		}
+		if err := validateSessionFreshness(report, session); err != nil {
+			return sessionTarget{}, err
+		}
+		if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
+			return sessionTarget{}, err
+		}
+		if expectedGeneration != "" && session.ProviderGeneration != expectedGeneration {
+			return sessionTarget{}, fmt.Errorf("session %s generation changed; run list again", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, sessionID))
+		}
+		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
+	}
+	return sessionTarget{}, fmt.Errorf("session %q was not found on endpoint %q; run list again", sessionID, endpointID)
+}
