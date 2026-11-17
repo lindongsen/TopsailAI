@@ -1405,3 +1405,26 @@ commit. The rewrite is safe only when the commit is still the tip, which is a co
 that must be checked at the moment of the rewrite rather than assumed from an earlier
 observation. Leaving a prepared index entry behind is worse than the original mistake,
 because it converts a wrong attribution into a silent revert of someone else's work.
+
+## A clean status on your own edited file can mean a foreign commit already took it
+
+Trigger: after editing `internal/adapter/genericcli/adapter.go` to pass `requireGeneration=false`,
+`git status` listed every other file of the change but not that one. The natural reading was "the edit
+was lost", and the summary was about to claim a change that the diff did not contain. The edit was in
+fact already committed: another agent's unrelated commit `08d89ac2` had swept the file in, so HEAD
+contained the fix and the working tree had nothing left to show.
+
+Action: when a file you edited is absent from `git status`, do not conclude the edit was lost and do
+not re-apply it. Read the file to confirm the intended content is present, then run
+`git log -S '<a distinctive string from your change>' -- <path>` to find which commit carries it. If a
+foreign commit took it, verify the content is correct and report the attribution defect instead of
+re-committing. Then check the index separately with `git diff --cached -- <path>`, because a foreign
+staged change can revert the very line that HEAD already has correctly.
+
+Why this prevents recurrence: `git status` compares the working tree against the index, so it answers
+"is there anything left to commit", not "is my change present". In a shared workspace those two
+questions diverge in both directions: a foreign commit can absorb your edit, and a foreign staged
+change can revert it while the working tree still looks right. Re-applying a change that HEAD already
+contains produces a no-op diff that hides the real state, and trusting the index produces a commit
+that silently undoes your own fix. Reading the file plus `git log -S` is what distinguishes "lost",
+"already committed" and "staged for revert".
