@@ -3,6 +3,8 @@ package tui
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -144,6 +146,38 @@ func FindSession(id string, endpoints []protocol.Endpoint, reports map[string]pr
 	}
 	if matchedSession != nil {
 		return matchedEndpoint, matchedReport, matchedSession, nil
+	}
+	// A hostname is matched last, so every existing form keeps its precedence.
+	// The list renders the hostname in the ENDPOINT column, so an operator who
+	// copies that cell must be able to use it here; without this the identifier
+	// the table shows is not the identifier this lookup accepts, and the failure
+	// reads as "the endpoint does not exist" while the row is on screen.
+	//
+	// An ambiguous hostname is refused rather than resolved to the first match,
+	// because two machines can share a hostname and picking one would address a
+	// machine the operator did not name. The wording matches the history resolver
+	// so both surfaces describe the same condition the same way.
+	hostMatches := make([]protocol.Endpoint, 0, 2)
+	for _, endpoint := range endpoints {
+		if endpoint.Hostname != "" && endpoint.Hostname == id {
+			hostMatches = append(hostMatches, endpoint)
+		}
+	}
+	switch len(hostMatches) {
+	case 1:
+		report, ok := reports[hostMatches[0].EndpointID]
+		if !ok {
+			return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint %q has no committed inventory", hostMatches[0].EndpointID)
+		}
+		return hostMatches[0], report, nil, nil
+	case 0:
+	default:
+		sort.Slice(hostMatches, func(i, j int) bool { return hostMatches[i].EndpointID < hostMatches[j].EndpointID })
+		ids := make([]string, len(hostMatches))
+		for i, endpoint := range hostMatches {
+			ids[i] = endpoint.EndpointID
+		}
+		return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("hostname %q matches several endpoints (%s); pass the endpoint ID instead", id, strings.Join(ids, ", "))
 	}
 	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint or session %q was not found", id)
 }
