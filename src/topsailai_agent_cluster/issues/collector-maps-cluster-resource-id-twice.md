@@ -76,3 +76,67 @@ adapter contract. That decision does not belong inside a mechanical rename.
   `ClusterSessionID`'s place, which contradicts the field name and should be rejected.
 - Add a test that asserts the mapping table contains exactly one row per provider
   session after a collection cycle.
+
+## Resolution
+
+Fixed in `378b589f` and `c9e14015`.
+
+### The quoted code was already stale
+
+The issue quotes the collector calling `GetOrCreateResourceID` unconditionally.
+Commit `a46e4196` had already added a `LookupResourceID` guard, so the defect was
+reachable only in the fallback branch, not on every row as the issue implies.
+
+### The failing test asserted the defect as the remedy
+
+`TestCollectDoesNotReuseWrongKindMapping` asserted that a foreign Task resource ID
+is *remapped* into the Session namespace. That remap is the defect: it stores a
+mapping row whose `provider_resource_key` is `res_<32 hex>`, so the table can no
+longer distinguish a provider key from a Cluster ID. The test certified the bug,
+which is why it stayed green.
+
+Only this one test failed. Five other tests named during the investigation pass
+because their fixtures report bare provider keys such as `provider-session-1`,
+which do not match `protocol.IsClusterResourceID` and therefore take the normal
+minting branch.
+
+### Chosen shape
+
+A row whose value is Cluster-ID-shaped is withheld and the cycle is reported
+`partial` with `resource_mapping_failed`. The healthy rows observed in the same
+cycle are still published, because one unattributable row must not discard them.
+A cycle that withholds every row is downgraded to `failed` with `DataKnown=false`,
+because publishing `partial` with an empty list reads as "known, and there are no
+sessions" and would make existing rows disappear.
+
+`protocol.IsClusterResourceID` was reused rather than a new prefix check being
+written, because that helper is documented as the one place the prefix is spelled.
+
+### A second defect found by the test, not by review
+
+The success branch assigned freshness after `mapSessions` returned, overwriting the
+downgrade. An all-withheld cycle therefore published `partial` with
+`DataKnown=true` and an empty list. The assignment is now guarded by
+`CollectionStatus != CollectionFailed`.
+
+### Verification
+
+Each guard was disabled in turn and the matching test failed, then the guard was
+restored and the suite passed:
+
+| Disabled | Failure |
+|---|---|
+| `IsClusterResourceID` case | `1 mapping rows are keyed by a Cluster resource ID, want 0` |
+| all-withheld downgrade | `adapter collection status="partial", want "failed"` |
+| freshness guard | `adapter summary claims known data although every reported row was withheld` |
+
+`go test ./internal/endpoint/` passes, including in a clean checkout of the
+committed tree. `go vet` and `gofmt -l` are clean.
+
+### Concurrent work carried in the same commit
+
+`collector.go` also held another agent's uncommitted partial-discovery work
+(`LogCollectionFailure`, the `partial` branch in `apply`, the `mapSessions`
+extraction). `mapSessions` did not exist in HEAD, so the two changes are
+textually interleaved inside one function and cannot be separated by hunk. The
+human approved committing both together, and the commit message names both parts.
