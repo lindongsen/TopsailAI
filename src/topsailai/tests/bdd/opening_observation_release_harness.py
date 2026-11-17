@@ -27,6 +27,7 @@ from topsailai.context import ctx_manager
 from topsailai.context.session_manager.__base import SessionData
 from topsailai.context.session_manager.sql import SessionSQLAlchemy
 from topsailai.tests.mock.llm_mock_server import MockServerConfig, create_server
+from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
 from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
 
 SESSION_ID = "opening-observation"
@@ -58,6 +59,7 @@ class OpeningObservationReleaseScenario:
         self.warnings: list[str] = []
         self.events: list[tuple[str, dict]] = []
         self.summary_result: Any = None
+        self.agent_runtime: ContextRuntimeAgent2LLM | None = None
         self._configure_environment()
 
     def _configure_environment(self) -> None:
@@ -110,6 +112,12 @@ class OpeningObservationReleaseScenario:
         )
         self.monkeypatch.setenv(
             "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD", token_threshold
+        )
+        # The agent layer reads its own threshold, so it must be set too or the
+        # agent-layer scenario would measure a different budget than the
+        # user-facing one and the two could not be compared.
+        self.monkeypatch.setenv(
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD", token_threshold
         )
         self._start_server()
         self._start_storage()
@@ -252,11 +260,61 @@ class OpeningObservationReleaseScenario:
             messages=list(loaded), force=force
         )
 
+    def run_agent_summary(self, force: bool = True) -> None:
+        """Run the production agent-layer summarization path.
+
+        This exercises the ``agent2llm.py`` call site, which is a different
+        reconstruction than the user-facing one: it rebuilds
+        ``ai_agent.messages`` from the work-memory position instead of
+        ``self.messages``, and it reads its own token threshold. A scenario that
+        only drives the user-facing path cannot prove this call site runs.
+        """
+        assert self.storage is not None
+        assert self.owner is not None
+        loaded = self.storage.retrieve_messages(SESSION_ID)
+        self.owner.messages = list(loaded)
+        self.owner.ai_agent.messages = list(loaded)
+        self.agent_runtime = ContextRuntimeAgent2LLM()
+        self.agent_runtime.ai_agent = self.owner.ai_agent
+        self.agent_runtime.messages = list(loaded)
+        self.agent_runtime.session_id = SESSION_ID
+        self.summary_result = self.agent_runtime.summarize_messages_for_processing(
+            force=force
+        )
+
+    def run_in_memory_summary(self, force: bool = True) -> None:
+        """Run the user-facing path without a session, which is the memory branch.
+
+        With no ``session_id`` the reconstruction takes the ``else`` branch of
+        ``summarize_messages_for_processed`` and calls the release on
+        ``new_messages`` before ``set_messages``. That is the second
+        ``ctx_runtime.py`` call site, and it must not touch storage.
+        """
+        assert self.storage is not None
+        assert self.owner is not None
+        loaded = self.storage.retrieve_messages(SESSION_ID)
+        self.owner.messages = list(loaded)
+        self.owner.ai_agent.messages = list(loaded)
+        self.owner.session_id = ""
+        self.summary_result = self.owner.summarize_messages_for_processed(
+            messages=list(loaded), force=force
+        )
+
     def memory_step_names(self) -> list[str]:
         """Return the step name of each in-memory message, or ``plain``."""
         assert self.owner is not None
+        return self._step_names(self.owner.messages)
+
+    def agent_memory_step_names(self) -> list[str]:
+        """Return the step name of each agent-layer message, or ``plain``."""
+        assert self.owner is not None
+        return self._step_names(self.owner.ai_agent.messages)
+
+    @staticmethod
+    def _step_names(messages: list) -> list[str]:
+        """Return the step name of each message, or ``plain`` when absent."""
         names = []
-        for message in self.owner.messages:
+        for message in messages:
             content = message.get("content")
             if isinstance(content, dict) and "step_name" in content:
                 names.append(content["step_name"])
@@ -276,6 +334,10 @@ class OpeningObservationReleaseScenario:
     def observation_survives_in_memory(self) -> bool:
         """Return whether any in-memory message is still an observation."""
         return "observation" in self.memory_step_names()
+
+    def observation_survives_in_agent_memory(self) -> bool:
+        """Return whether any agent-layer message is still an observation."""
+        return "observation" in self.agent_memory_step_names()
 
     def observation_survives_in_storage(self) -> bool:
         """Return whether any persisted row is still an observation."""

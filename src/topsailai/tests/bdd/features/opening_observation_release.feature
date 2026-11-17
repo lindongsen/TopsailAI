@@ -49,3 +49,19 @@ Feature: Release the opening observation after summarization
     When the user-facing summarization completes
     Then a release warning names the removed count and the decision inputs
     And a release event records the decision inputs
+
+  Scenario: The agent-layer summarization also releases the observation
+    Given an opening observation release with ratio 0.3 and a token threshold of 1000
+    And a large startup observation
+    When the agent-layer summarization completes
+    Then the opening observation is gone from agent memory
+    And the opening observation is gone from storage
+    And the summary request reached the provider exactly once
+
+  Scenario: The in-memory branch releases the observation without a session
+    Given an opening observation release with ratio 0.3 and a token threshold of 1000
+    And a large startup observation
+    When the user-facing summarization completes without a session
+    Then the opening observation is gone from memory
+    And the opening observation is still in storage
+    And the summary request reached the provider exactly once

@@ -57,6 +57,18 @@ def when_summary_completes(release_case):
     release_case.run_summary(force=True)
 
 
+@when("the agent-layer summarization completes")
+def when_agent_summary_completes(release_case):
+    """Run the agent-layer path, which is a separate release call site."""
+    release_case.run_agent_summary(force=True)
+
+
+@when("the user-facing summarization completes without a session")
+def when_summary_completes_without_session(release_case):
+    """Run the in-memory branch, the second user-facing release call site."""
+    release_case.run_in_memory_summary(force=True)
+
+
 @when("the user-facing summarization is skipped")
 def when_summary_skipped(release_case):
     """Run the production path without force, which the budget check rejects."""
@@ -76,6 +88,14 @@ def then_still_in_memory(release_case):
     """A kept observation must remain in the in-memory result."""
     assert release_case.observation_survives_in_memory(), (
         release_case.memory_step_names()
+    )
+
+
+@then("the opening observation is gone from agent memory")
+def then_gone_from_agent_memory(release_case):
+    """The agent-layer result must no longer start with an observation."""
+    assert not release_case.observation_survives_in_agent_memory(), (
+        release_case.agent_memory_step_names()
     )
 
 
