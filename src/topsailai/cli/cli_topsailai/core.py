@@ -12,14 +12,16 @@ from datetime import datetime
 import json
 import os
 import re
+import select
 import signal
 import sys
 import shutil
 import socket
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Any, List, Optional, Tuple
+    from typing import Any, Callable, List, Optional, Tuple
 
 import cli_topsailai.state as state
 from cli_topsailai.colors import Colors
@@ -30,6 +32,7 @@ from cli_topsailai.constants import (
     REFRESH_ALL_COMMAND_SPELLINGS,
     REFRESH_COMMAND_SPELLINGS,
     SESSION_COMMAND_SPELLINGS,
+    WATCH_COMMAND_SPELLINGS,
 )
 from cli_topsailai.doc_scope import (
     build_doc_list,
@@ -68,6 +71,11 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 # cursor position and backspace boundaries.
 _RL_PROMPT_START_IGNORE = "\x01"
 _RL_PROMPT_END_IGNORE = "\x02"
+
+# Interval between automatic list refreshes in the workspace "watch" command.
+# The request names one interval, so it is a fixed constant instead of an
+# option that would add a second contract to document and test.
+WATCH_REFRESH_INTERVAL_SECONDS = 5
 
 
 def _make_readline_safe_prompt(prompt: str) -> str:
@@ -877,6 +885,70 @@ def _show_literal_session_history(session_id: str, task_dir: str) -> None:
     retrieve_session_history_via_control(target)
 
 
+def _stdin_has_pending_input() -> bool:
+    """Return True when stdin already holds input that has not been read.
+
+    The watch loop must stop as soon as the operator types anything, without
+    consuming the line, because the caller returns to the normal prompt which
+    reads that input itself. A stream that cannot be polled (no file
+    descriptor, or a platform where ``select`` rejects it) reports True so the
+    loop stops instead of running unattended forever.
+    """
+    try:
+        fileno = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError):
+        return True
+    try:
+        readable, _, _ = select.select([fileno], [], [], 0)
+    except (OSError, ValueError):
+        return True
+    return bool(readable)
+
+
+def _wait_for_watch_input(interval: float, *, poll_interval: float = 0.1) -> bool:
+    """Wait up to *interval* seconds, returning True as soon as input arrives.
+
+    The wait is polled in short slices so a typed key stops the loop promptly
+    instead of after a full interval. A closed or unpollable stdin also
+    reports True, so an unattended run cannot spin forever.
+    """
+    deadline = time.monotonic() + interval
+    while True:
+        if _stdin_has_pending_input():
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(poll_interval, remaining))
+
+
+def _watch_workspace_list(
+    refresh: Callable[[], None],
+    *,
+    interval: float = WATCH_REFRESH_INTERVAL_SECONDS,
+    wait: Callable[[float], bool] = _wait_for_watch_input,
+) -> None:
+    """Refresh the workspace task list every *interval* seconds until input.
+
+    Each cycle prints one hint line stating that the list is being watched, so
+    the operator can tell automatic refreshes from a frozen screen, and then
+    refreshes the list. Any typed input stops the loop and is left unread, so
+    the normal prompt consumes it as the next command.
+    """
+    while state.running:
+        print(
+            f"{Colors.DIM}[WATCH] Watching the workspace task list; "
+            f"refreshing every {interval:g}s. "
+            f"Press Enter or type a command to stop.{Colors.RESET}"
+        )
+        sys.stdout.flush()
+        refresh()
+        if wait(interval):
+            print(f"{Colors.DIM}[WATCH] Stopped watching.{Colors.RESET}")
+            sys.stdout.flush()
+            return
+
+
 def prompt_selection(
     files: List[dict], task_dir: str
 ) -> Tuple[str, Optional[Any]]:
@@ -993,6 +1065,24 @@ def prompt_selection(
                 # "/driver meta 3" are the same command. Launching requires the
                 # explicit "start" method.
                 return ("driver_" + method if method else "driver_meta", int(number))
+
+            # Workspace scope: "watch" refreshes the task list on a fixed
+            # interval until the operator types anything. It is a list-level
+            # command like /meta and /kill, so it is checked before the
+            # managed-project restricted block: that block would otherwise
+            # answer with its generic "In projects list" message instead of
+            # naming the scope which does accept this command.
+            if lower_input in WATCH_COMMAND_SPELLINGS:
+                if (
+                    state.current_scope != "workspace"
+                    or state.workspace_showing_managed_projects
+                ):
+                    print(
+                        f"{Colors.RED}[ERROR] /watch is only available in the "
+                        f"ordinary workspace task list.{Colors.RESET}"
+                    )
+                    continue
+                return ("watch_list", None)
 
             # Restricted command set when workspace is showing the managed
             # project list. Only r/recent, p/projects, q/quit/cd, and
@@ -1340,7 +1430,7 @@ def prompt_selection(
                         f"Please enter a number, /refresh (alias: /list, /l), r all, "
                         f"/session {{number}} (alias: /messages), "
                         f"/agent {{number|folder}}, /resume {{number}}, "
-                        f"{'/kill <number>, /meta <number>, /driver <number>, /driver start <number>, /driver status <number>, /driver stop <number>, /driver log <number>, /driver meta <number>, ' if state.current_scope == 'workspace' else ''}"
+                        f"{'/kill <number>, /meta <number>, /watch, /driver <number>, /driver start <number>, /driver status <number>, /driver stop <number>, /driver log <number>, /driver meta <number>, ' if state.current_scope == 'workspace' else ''}"
                         f"/clean, {'/send, ' if state.current_scope != 'workspace' else ''}/help, or 'q'.{Colors.RESET}"
                     )
                 _consecutive_unrecognized += 1
@@ -2142,14 +2232,22 @@ def main(argv: Optional[List[str]] = None) -> None:
     managed_project_entries: List[Dict[str, Any]] = []
     doc_entries: List[Dict[str, Any]] = []
 
-    def _refresh_workspace() -> None:
+    def _refresh_workspace(announce: bool = True) -> None:
+        """Re-scan the task directory and print the workspace task list.
+
+        ``announce`` controls the per-file "Found ..." progress lines and the
+        "Refreshing list..." banner. The watch command turns it off because it
+        prints its own hint line every cycle, and one progress line per file
+        every few seconds would bury the table it is meant to refresh.
+        """
         nonlocal log_files
         state.workspace_showing_managed_projects = False
-        print(f"{Colors.DIM}Refreshing list...{Colors.RESET}")
-        sys.stdout.flush()
+        if announce:
+            print(f"{Colors.DIM}Refreshing list...{Colors.RESET}")
+            sys.stdout.flush()
         log_files = discover_log_files(
             task_dir,
-            on_item=_print_refresh_item,
+            on_item=_print_refresh_item if announce else None,
             include_completed=state.workspace_show_completed,
         )
         enrich_files_with_session_names(log_files)
@@ -2281,6 +2379,14 @@ def main(argv: Optional[List[str]] = None) -> None:
                     _refresh_doc()
                 else:
                     _refresh_workspace()
+                continue
+
+            if action == "watch_list":
+                # The recognizer already rejected every scope that does not
+                # accept /watch, so this branch only runs in the ordinary
+                # workspace task list. The loop refreshes quietly because it
+                # prints its own hint line on every cycle.
+                _watch_workspace_list(lambda: _refresh_workspace(announce=False))
                 continue
 
             if action == "kill":

@@ -171,6 +171,7 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
 | `/kill <number>` | Send SIGTERM to the row's live session PID after y/N confirmation (ordinary workspace only). A row whose process is no longer alive has no signalable PID, even when its metadata PID is displayed. |
 | `/refresh` (alias `/list`, `/l`) | Re-scan the task directory and refresh the list. `r all`, `/refresh all`, `list all` or `l all` also includes rows whose metadata status is `completed`; a plain `r`, `/refresh`, `list` or `l` restores the default hidden view. |
+| `/watch` | Refresh the workspace task list every 5 seconds until any input arrives. Each cycle prints one `[WATCH]` hint line stating that the list is being watched. Ordinary workspace task list only; project, session, doc, runtime and managed-project views reject it. |
 | `/session <number\|session_id>` (alias `/messages`) | Retrieve full context messages for a session. A row without a session id (a temporary session displayed as `(temp)`) is served through its control channel when one exists; see [Workspace session history](#workspace-session-history). |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
 | `start [-f <folder>]` | Launch an agent in a project folder. Without `-f`, display the managed project list and launch in the row number you enter. With `-f`, launch in that folder directly and skip the list and the prompt. Workspace scope only. |
@@ -187,6 +188,36 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `q` | Quit the CLI. |
 
 Workspace scope rejects `/send` and its `send` alias. Select a numbered log to enter runtime scope, then use `/send [message]` for the watched session. Session-scope messaging remains available.
+
+### Watching the task list
+
+`/watch` (or `watch`) refreshes the ordinary workspace task list every 5 seconds
+until any input arrives. The interval is a fixed constant, not an option.
+
+Every cycle prints one hint line before the refreshed table:
+
+```text
+[WATCH] Watching the workspace task list; refreshing every 5s. Press Enter or type a command to stop.
+```
+
+The hint is printed on each cycle rather than once at the start, so a screen that
+has stopped changing is distinguishable from a watch that is still running.
+
+The watch loop refreshes quietly: it does not print the `Refreshing list...`
+banner or the per-file `Found ...` progress lines, because one progress line per
+file every 5 seconds would bury the table it is meant to refresh. The table
+content, sorting and columns are identical to a plain `/refresh`.
+
+Any typed input stops the loop and returns to the prompt, which then reads that
+input as the next command. Enter alone stops watching without running anything.
+The loop also stops when stdin cannot be polled, so an unattended run cannot spin
+forever. Ctrl+C keeps its existing meaning and exits the CLI.
+
+`/watch` is a list-level command like `/meta` and `/kill`, so it is accepted only
+in the ordinary workspace task list. Project, session, doc, runtime and
+managed-project views reject it with an error naming the ordinary workspace task
+list. The `all` mode set by `r all` persists across watch cycles, so watching
+after `r all` keeps completed rows visible until a plain `r` restores the default.
 
 ### Clean safety rules
 
