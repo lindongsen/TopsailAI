@@ -40,3 +40,23 @@ Context:
 ```
 
 The values depend on the active model and messages. The report must be printed exactly once; duplicate `/agent.tokens` registration was fixed in commit `3ee34ad`.
+
+## Direct-Read Facts: `/runtime.static-data`
+
+`/runtime.static-data [json=1]` reports facts that need no computation: session
+identity, model name and maximum tokens, both message-layer counts, available
+tool count, and total tool-call count. Token estimates and watermark levels are
+deliberately absent because they require computation and already belong to
+`/agent.tokens`.
+
+The command is registered only in `workspace/context/instruction.py`, not in
+`runtime.py`'s `INSTRUCTIONS` map. `HookInstruction` appends registrations, so a
+second registration would execute the handler twice and print the report twice —
+the same defect fixed for `/agent.tokens` in commit `3ee34ad`.
+
+Test it without an interactive session:
+
+```text
+topsailai_agent_call_instruction -i '/runtime.static-data'
+topsailai_agent_call_instruction -i '/runtime.static-data json=1'
+```

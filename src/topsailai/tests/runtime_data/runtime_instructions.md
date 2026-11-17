@@ -16,13 +16,17 @@ These cases verify human-facing, read-only access to one current Agent's public 
 
 ## Command Contract
 
-The first version provides:
+The Runtime family provides:
 
 ```text
 /runtime [json=1]
 /runtime.get <key> [json=1]
 /runtime.history [key] [json=1]
+/runtime.static-data [json=1]
 ```
+
+`/runtime.static-data` reports only directly readable facts and is specified in
+its own section below; it is not a variant of the Runtime Data Store queries.
 
 The command names are exact. They must be discoverable through the existing Instruction registry and must not shadow `/ctx.*`, `/session.*`, or `/agent.tokens`.
 
@@ -121,8 +125,12 @@ The Instruction registry maps exact names to callables:
 - `runtime`
 - `runtime.get`
 - `runtime.history`
+- `runtime.static-data`
 
 No duplicate alias is added for the same behavior unless separately approved.
+`runtime.static-data` is registered only in the context-bound instruction map,
+because the plugin map is appended to and a second registration would run the
+handler twice.
 
 ### Existing commands remain registered
 
@@ -423,3 +431,107 @@ And `/agent.tokens yaml=1;json=1` returns a JSON document with
   fail.
 - If `json` is tested with a plain truthiness check, `json=0` enables JSON and
   the disabled-flag case must fail.
+
+## `/runtime.static-data` Direct-Read Facts
+
+`/runtime.static-data` reports facts that are obtained by a direct read, with no
+computation. Message counts qualify; token estimates and watermark levels do not.
+
+```text
+/runtime.static-data
+/runtime.static-data json=1
+```
+
+### Why one entry instead of per-field commands
+
+A separate command per fact would duplicate the same reads across branches and
+let the branches drift apart. One entry builds the complete fact set exactly
+once, and both renderings consume that single payload, so text and JSON cannot
+disagree.
+
+### Admitted and excluded facts
+
+Admitted, because each is a plain attribute read or a `len()` call:
+
+- session identifier and whether the session is ephemeral
+- model name and model maximum tokens
+- Agent2LLM message count
+- User2Agent message count
+- available tool count
+- total tool-call count
+
+Excluded, because each requires computation or storage access:
+
+- estimated tokens and context watermark, which belong to `/agent.tokens`
+- tool-call error totals and success rate, which are scans over call records
+- active Runtime Data count, which deep-copies values in order to count them
+- session name, which requires a database read
+
+### JSON Output Contract
+
+```json
+{
+  "ok": true,
+  "session": {"id": "session-id", "ephemeral": false},
+  "model": {"name": "model-name", "max_tokens": 1000},
+  "agent2llm": {"messages": 2},
+  "user2agent": {"messages": 1},
+  "tools": {"available": 3},
+  "tool_calls": {"total": 7}
+}
+```
+
+Errors reuse the existing tokens: `no_runtime`, `unknown_parameter`, and
+`too_many_arguments`. `json=0` and an omitted flag both select text mode.
+
+### `/runtime.static-data` Cases
+
+#### Both layer counts are reported
+
+Given an active Agent with two Agent2LLM messages and one User2Agent message
+When the operator invokes `/runtime.static-data`
+Then the report contains `Agent2LLM:\n  Messages: 2` and `User2Agent:\n  Messages: 1`
+
+#### No derived value is computed
+
+Given a runtime whose token counter and watermark classifier raise on use
+When the operator invokes `/runtime.static-data` in either format
+Then neither helper is called
+
+#### Text and JSON share one payload
+
+Given the same active Agent
+When the operator invokes both formats
+Then every value in the text report equals the corresponding JSON field
+
+#### An absent collection reports zero
+
+Given the Agent exposes no message list or no tool list
+When the operator invokes `/runtime.static-data json=1`
+Then the corresponding count is `0` instead of an exception
+
+#### An unsaved session is marked ephemeral
+
+Given the session identifier is empty
+Then JSON reports `ephemeral` as `true` and text reports an unsaved-session label
+
+#### No Agent reports the shared no-runtime contract
+
+Given no current Agent is bound
+Then text returns `No active Agent runtime.` and JSON returns `no_runtime`
+
+#### Structured argument errors
+
+Given an unknown parameter or two positional arguments
+Then JSON reports `unknown_parameter` or `too_many_arguments` with the usage line
+
+### `/runtime.static-data` Negative Controls
+
+- If a token counter is added to the payload builder, the no-derived-value case
+  must fail.
+- If the text renderer recomputes a fact instead of reading the shared payload,
+  the shared-payload case must fail.
+- If the command is also added to the plugin map, the single-registration case
+  must fail because the handler runs twice.
+- If a missing collection raises instead of reporting `0`, the absent-collection
+  case must fail.
