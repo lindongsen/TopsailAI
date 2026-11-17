@@ -1428,3 +1428,28 @@ change can revert it while the working tree still looks right. Re-applying a cha
 contains produces a no-op diff that hides the real state, and trusting the index produces a commit
 that silently undoes your own fix. Reading the file plus `git log -S` is what distinguishes "lost",
 "already committed" and "staged for revert".
+
+## A test that indexes a shared request slice assumes an order the runtime does not guarantee
+
+Trigger: `make test-unit-cli` failed once with
+`TestUnitSendAutoFollowUsesTheTenLineBudget: automatic follow maxLines=300 want=10`, while the same
+test passed in isolation, passed 8 consecutive times with `-count=8`, and passed at HEAD in a detached
+worktree. The value 300 is the REPL default, not the 10 the send path passes
+(`internal/tui/interactive_ops.go:600`). The scenario runs `cd` then `send`, and both arm a tail:
+`cd` arms the REPL default at `interactive_ops.go:79`, `send` arms 10 at `:639`. The helper
+`actionFollowRequests` (`send_auto_logs_test.go:84-90`) returns `requests[1:]`, which assumes the `cd`
+tail is always recorded first. When the two asynchronous streams start in the opposite order, the
+assertion reads the `cd` tail and reports 300.
+
+Action: when a test filters a shared slice by position, ask what guarantees that position. Here nothing
+does: both tails are armed by separate goroutines, so the slice order is a scheduling outcome. Select
+the request by a property that identifies it, such as the armed intent's own budget or the step that
+armed it, instead of by index. When a test fails once and then passes repeatedly, do not close it as a
+flake: read the failing value and find which producer emits it, because a value that belongs to a
+different code path is the signature of a positional assumption rather than a timing accident.
+
+Why this prevents recurrence: a positional filter is invisible in review because the slice really does
+contain the expected request, just not always at that index. The failure is rare, so it is dismissed as
+noise, and the test keeps certifying the wrong element on every run where the order happens to match.
+Naming the producer of the unexpected value is what turns "flaky test" into "the test asserts a
+different object than it names".
