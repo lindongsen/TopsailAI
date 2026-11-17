@@ -1453,3 +1453,27 @@ contain the expected request, just not always at that index. The failure is rare
 noise, and the test keeps certifying the wrong element on every run where the order happens to match.
 Naming the producer of the unexpected value is what turns "flaky test" into "the test asserts a
 different object than it names".
+
+## Widening one command's scope breaks assertions that belong to another command
+
+Trigger: `logs` was made available in workspace scope by changing one line of the scope matrix. The
+change was correct and the `logs` tests were updated, but four tests still failed, and none of them
+was about `logs`: `TestSendIsUnavailableOutsideSessionScope`,
+`TestSendPrefixIsRejectedOutsideSessionScope`, `TestHelpOverviewKeepsScopeRestrictions` and
+`TestUnitCBatch2PrefetchedHelpQuit`. Every one of them embeds the rendered sentence
+`command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, ...`,
+which lists *every* workspace command. Adding `logs` therefore changed the refusal text of `send`.
+
+Action: before changing a command's availability, grep for the rendered availability sentence rather
+than for the command name. The string to search is `available commands`, because that phrase appears
+in the refusal of every command that is unavailable in some scope, so one command's availability is
+pinned inside other commands' tests. Update those copies in the same unit, and assert the sentence
+exactly rather than with `Contains` on the command name, because a `Contains` check on `logs` passes
+as soon as the help body mentions it while the refusal sentence still omits it.
+
+Why this prevents recurrence: the scope matrix is a single source of truth, so it looks like one edit
+with one consequence. The rendered sentence is a *derived* value that is copied into unrelated tests,
+so the blast radius is not the command that changed. The failures also read as unrelated: a `send`
+test failing while `logs` is being widened looks like a concurrent edit or a pre-existing defect, and
+the tempting response is to investigate `send`. Searching for the derived sentence instead of the
+command name is what turns "four mysterious failures" into "four stale copies of one string".
