@@ -20,10 +20,11 @@ from topsailai.ai_base.llm_control.exception import (
     LLMProviderPermissionDeniedError,
     LLMProviderReadError,
     LLMProviderTimeoutError,
+    LLMRequestTimeoutError,
 )
 from topsailai.workspace.agent.agent_shell_base import (
     AgentChat,
-    _resolve_recoverable_provider_error,
+    _resolve_recoverable_turn_error,
 )
 
 
@@ -357,13 +358,13 @@ def test_interactive_provider_failure_next_input_interruption_terminates(agent_c
     agent_chat.call_hooks_post_succ_run.assert_not_called()
 
 
-def test_resolve_recoverable_provider_error_returns_direct_provider_error():
+def test_resolve_recoverable_turn_error_returns_direct_provider_error():
     """A directly raised provider error resolves to itself."""
     provider_error = LLMProviderInternalServerError("internal server error")
-    assert _resolve_recoverable_provider_error(provider_error) is provider_error
+    assert _resolve_recoverable_turn_error(provider_error) is provider_error
 
 
-def test_resolve_recoverable_provider_error_unwraps_exhaustion_last_error():
+def test_resolve_recoverable_turn_error_unwraps_exhaustion_last_error():
     """Exhaustion resolves to the provider error retained in ``last_error``."""
     provider_error = LLMProviderTimeoutError("first byte timeout")
     exhausted = LLMRetryExhaustedError(
@@ -372,10 +373,10 @@ def test_resolve_recoverable_provider_error_unwraps_exhaustion_last_error():
         last_error=provider_error,
         retry_reason="timeout",
     )
-    assert _resolve_recoverable_provider_error(exhausted) is provider_error
+    assert _resolve_recoverable_turn_error(exhausted) is provider_error
 
 
-def test_resolve_recoverable_provider_error_unwraps_exhaustion_cause():
+def test_resolve_recoverable_turn_error_unwraps_exhaustion_cause():
     """Exhaustion resolves to the provider error chained as ``__cause__``."""
     provider_error = LLMProviderReadError("stream read failed")
     exhausted = LLMRetryExhaustedError(
@@ -385,7 +386,7 @@ def test_resolve_recoverable_provider_error_unwraps_exhaustion_cause():
         retry_reason="read_error",
     )
     exhausted.__cause__ = provider_error
-    assert _resolve_recoverable_provider_error(exhausted) is provider_error
+    assert _resolve_recoverable_turn_error(exhausted) is provider_error
 
 
 @pytest.mark.parametrize(
@@ -402,12 +403,12 @@ def test_resolve_recoverable_provider_error_unwraps_exhaustion_cause():
         ),
     ],
 )
-def test_resolve_recoverable_provider_error_rejects_non_recoverable(error):
+def test_resolve_recoverable_turn_error_rejects_non_recoverable(error):
     """Non-recoverable failures must resolve to ``None``."""
-    assert _resolve_recoverable_provider_error(error) is None
+    assert _resolve_recoverable_turn_error(error) is None
 
 
-def test_resolve_recoverable_provider_error_rejects_explicit_exit():
+def test_resolve_recoverable_turn_error_rejects_explicit_exit():
     """An explicit Exit choice must stay fatal even with a provider cause."""
     provider_error = LLMProviderInternalServerError("internal server error")
     exhausted = LLMRetryExhaustedError(
@@ -417,7 +418,7 @@ def test_resolve_recoverable_provider_error_rejects_explicit_exit():
         retry_reason="internal_server_error",
         explicit_exit=True,
     )
-    assert _resolve_recoverable_provider_error(exhausted) is None
+    assert _resolve_recoverable_turn_error(exhausted) is None
 
 
 def test_explicit_exit_defaults_to_false():
@@ -429,3 +430,108 @@ def test_explicit_exit_defaults_to_false():
         retry_reason="unknown",
     )
     assert exhausted.explicit_exit is False
+
+
+def test_resolve_recoverable_turn_error_returns_request_timeout():
+    """An expired request budget is recoverable: the session is still intact."""
+    request_error = LLMRequestTimeoutError(
+        "request exceeded its wall-clock budget after 26853.2s over 19 attempts"
+    )
+    assert _resolve_recoverable_turn_error(request_error) is request_error
+
+
+def test_interactive_request_timeout_abandons_turn_and_waits_for_next_message(
+    agent_chat,
+):
+    """An expired request budget must abandon the turn, not terminate the process.
+
+    The budget stops one unusable request. It says nothing about the session,
+    the messages or the user's intent, so the conversation must survive and wait
+    for the next message instead of exiting with a failure status.
+    """
+    request_error = LLMRequestTimeoutError(
+        "request exceeded its wall-clock budget after 26853.2s over 19 attempts"
+    )
+    agent_chat.ai_agent.run.side_effect = [request_error, "recovered answer"]
+    failure_hook = agent_chat.call_hooks_post_fail_run
+    success_hook = agent_chat.call_hooks_post_succ_run
+    built_turns = []
+
+    def build_message(*, message, curr_count):
+        """Record the turn accounting of every built message."""
+        built_turns.append((message, curr_count))
+        return message
+
+    patches = _run_patches(
+        runtime_input=MagicMock(),
+        input_messages=("next request",),
+    )
+    result, input_mock = _run_with_patches(
+        agent_chat,
+        patches,
+        message="failed request",
+        times=1,
+        need_interactive=True,
+        func_build_message=build_message,
+    )
+
+    assert result == "recovered answer"
+    assert agent_chat.ai_agent.run.call_count == 2
+    assert [item.args[1] for item in agent_chat.ai_agent.run.call_args_list] == [
+        "failed request",
+        "next request",
+    ]
+    # The abandoned turn must not consume the finite-turn budget.
+    assert built_turns == [("failed request", 1), ("next request", 1)]
+    input_mock.assert_called_once_with(hook=agent_chat.hook_instruction)
+    failure_hook.assert_called_once_with(request_error)
+    success_hook.assert_called_once_with()
+    assert agent_chat.interrupted is False
+    assert agent_chat.last_message == "recovered answer"
+
+
+def test_non_interactive_request_timeout_still_raises(agent_chat):
+    """Non-interactive callers must keep the original fail-fast contract."""
+    request_error = LLMRequestTimeoutError(
+        "request exceeded its wall-clock budget after 26853.2s over 19 attempts"
+    )
+    agent_chat.ai_agent.run.side_effect = request_error
+    patches = _run_patches(runtime_input=None, input_messages=())
+    with pytest.raises(LLMRequestTimeoutError):
+        _run_with_patches(
+            agent_chat,
+            patches,
+            message="failed request",
+            times=1,
+            need_interactive=False,
+        )
+
+    agent_chat.ai_agent.run.assert_called_once()
+    agent_chat.call_hooks_post_fail_run.assert_not_called()
+
+
+def test_worker_thread_request_timeout_still_raises(agent_chat):
+    """A worker thread must never read the main conversation's input."""
+    request_error = LLMRequestTimeoutError(
+        "request exceeded its wall-clock budget after 26853.2s over 19 attempts"
+    )
+    agent_chat.ai_agent.run.side_effect = request_error
+    patches = _run_patches(
+        runtime_input=MagicMock(),
+        input_messages=("next request",),
+    )
+    with patch(
+        "topsailai.workspace.agent.agent_shell_base.thread_tool.is_main_thread",
+        return_value=False,
+    ):
+        with pytest.raises(LLMRequestTimeoutError):
+            _run_with_patches(
+                agent_chat,
+                patches,
+                message="failed request",
+                times=1,
+                need_interactive=True,
+            )
+
+    agent_chat.ai_agent.run.assert_called_once()
+    agent_chat.call_hooks_post_fail_run.assert_not_called()

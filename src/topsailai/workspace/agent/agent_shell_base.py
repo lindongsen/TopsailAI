@@ -46,6 +46,7 @@ from topsailai.ai_base.llm_control.exception import (
     LLMProviderInternalServerError,
     LLMProviderReadError,
     LLMProviderTimeoutError,
+    LLMRequestTimeoutError,
 )
 from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
 from topsailai.hooks.points.workspace.after_attempt_settle_user2agent import (
@@ -86,9 +87,18 @@ RECOVERABLE_PROVIDER_ERRORS = (
     LLMProviderReadError,
 )
 
+# Request-level failures that are not provider failures but leave the
+# conversation just as intact. The wall-clock budget stops a request that has
+# spent its time, which makes that request unusable; it says nothing about the
+# session, the messages or the user's intent, so it must abandon the turn
+# instead of terminating the process.
+RECOVERABLE_REQUEST_ERRORS = (
+    LLMRequestTimeoutError,
+)
 
-def _resolve_recoverable_provider_error(error):
-    """Return the provider error that makes a turn recoverable, else ``None``.
+
+def _resolve_recoverable_turn_error(error):
+    """Return the error that makes a turn recoverable, else ``None``.
 
     A provider failure can reach the User2Agent loop in two shapes. When the
     failure is raised outside the bounded retry loop it arrives directly. When
@@ -98,19 +108,22 @@ def _resolve_recoverable_provider_error(error):
     condition, so resolve the underlying provider error before deciding whether
     the turn can be abandoned instead of terminating the process.
 
+    A request-level failure such as ``LLMRequestTimeoutError`` arrives directly
+    and is recoverable for the same reason: the request is unusable, but the
+    session, the messages and the user's intent are intact.
+
     An explicit Exit choice in the retry-exhaustion menu raises the same
     ``LLMRetryExhaustedError`` with the same ``last_error``, but it is a human
-    decision to stop rather than a recoverable provider failure, so it must
-    stay fatal.
+    decision to stop rather than a recoverable failure, so it must stay fatal.
 
     Args:
         error (BaseException): The exception caught by the turn loop.
 
     Returns:
-        BaseException | None: The recoverable provider error, or ``None`` when
-        the failure must stay fatal.
+        BaseException | None: The recoverable error, or ``None`` when the
+        failure must stay fatal.
     """
-    if isinstance(error, RECOVERABLE_PROVIDER_ERRORS):
+    if isinstance(error, RECOVERABLE_PROVIDER_ERRORS + RECOVERABLE_REQUEST_ERRORS):
         return error
     if not isinstance(error, LLMRetryExhaustedError):
         return None
@@ -703,20 +716,24 @@ class AgentChat(AgentChatBase):
                             task.tool_call_count = 0
                         task.executor = getattr(self.ai_agent, "agent_name", "") or ""
 
-            except (LLMBackToChatError, LLMRetryExhaustedError) + RECOVERABLE_PROVIDER_ERRORS as e:
-                # Back and a recoverable provider failure both abandon this
-                # User2Agent turn: the session, the messages and the user's
-                # intent stay intact, so the turn simply ends and the loop
-                # waits for the next user message instead of terminating the
-                # process. Retry stays inside LLMModel.chat and resends the
-                # same request, so it never reaches this branch.
+            except (
+                (LLMBackToChatError, LLMRetryExhaustedError)
+                + RECOVERABLE_PROVIDER_ERRORS
+                + RECOVERABLE_REQUEST_ERRORS
+            ) as e:
+                # Back, a recoverable provider failure and an expired request
+                # budget all abandon this User2Agent turn: the session, the
+                # messages and the user's intent stay intact, so the turn simply
+                # ends and the loop waits for the next user message instead of
+                # terminating the process. Retry stays inside LLMModel.chat and
+                # resends the same request, so it never reaches this branch.
                 if not isinstance(e, LLMBackToChatError):
                     # The bounded retry loop may already have consumed the
                     # provider failure and raised LLMRetryExhaustedError, so
-                    # resolve the underlying provider error before deciding.
-                    provider_error = _resolve_recoverable_provider_error(e)
+                    # resolve the underlying recoverable error before deciding.
+                    recoverable_error = _resolve_recoverable_turn_error(e)
                     if (
-                        provider_error is None
+                        recoverable_error is None
                         or not interactive_enabled
                         or not thread_tool.is_main_thread()
                     ):
@@ -726,8 +743,8 @@ class AgentChat(AgentChatBase):
                         # main conversation's input, so it also stays fatal.
                         raise
                     print_warning(
-                        "LLM provider failure aborted this turn: "
-                        f"[{type(provider_error).__name__}] {provider_error}"
+                        "LLM failure aborted this turn: "
+                        f"[{type(recoverable_error).__name__}] {recoverable_error}"
                     )
                 back_to_chat_requested = True
                 answer = ""
