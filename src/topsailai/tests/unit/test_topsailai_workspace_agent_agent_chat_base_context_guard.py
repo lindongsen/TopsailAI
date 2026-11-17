@@ -208,3 +208,229 @@ def test_missing_dynamic_configuration_preserves_fixed_threshold_behavior():
     runtime.summarize_messages_for_processed.assert_not_called()
     runtime.summarize_messages_for_processing.assert_called_once_with()
     assert runtime._classify_context_watermark.call_count == 1
+
+
+def test_low_skips_repeat_summarization_when_previous_summary_was_ineffective():
+    """A LOW checkpoint does not re-summarize after an ineffective summary.
+
+    LOW is entered by the safety coefficient rather than by the configured
+    thresholds, so it re-enters on every iteration. Without this guard the same
+    ineffective summary runs again and again, which is the reported waste.
+    """
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 594),
+            _watermark(CONTEXT_WATERMARK_LOW, 594),
+            _watermark(CONTEXT_WATERMARK_LOW, 591),
+        ]
+    )
+    hook = ai_agent.hooks_pre_chat[0]
+
+    hook(ai_agent)
+    assert runtime.summarize_messages_for_processing.call_count == 1
+
+    hook(ai_agent)
+    hook(ai_agent)
+
+    # The first summary reduced 600 -> 597, i.e. 0.005, far below 0.10, so the
+    # next two LOW checkpoints must not call the summarizers again.
+    assert runtime.summarize_messages_for_processing.call_count == 1
+    assert runtime.summarize_messages_for_processed.call_count == 1
+
+
+def test_low_keeps_summarizing_when_previous_summary_was_effective():
+    """An effective summary does not arm the skip, so LOW still summarizes."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_NORMAL, 300),
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_NORMAL, 300),
+        ]
+    )
+    hook = ai_agent.hooks_pre_chat[0]
+
+    hook(ai_agent)
+    hook(ai_agent)
+
+    # 600 -> 300 is a 0.5 reduction, well above the 0.10 requirement.
+    assert runtime.summarize_messages_for_processing.call_count == 2
+
+
+def test_high_stays_forced_after_an_ineffective_low_summary():
+    """HIGH must still force summarization even when LOW proved ineffective."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [
+            # Each hook call classifies twice: once before summarizing and once
+            # after, so three calls need six snapshots.
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_HIGH, 760),
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+        ]
+    )
+    hook = ai_agent.hooks_pre_chat[0]
+
+    hook(ai_agent)
+    hook(ai_agent)
+    assert runtime.summarize_messages_for_processing.call_count == 1
+
+    hook(ai_agent)
+
+    # The third checkpoint is HIGH, so the guard must not apply.
+    runtime.summarize_messages_for_processing.assert_called_with(force=True)
+    assert runtime.summarize_messages_for_processing.call_count == 2
+
+
+def test_hard_stays_forced_after_an_ineffective_low_summary():
+    """HARD must still force summarization even when LOW proved ineffective."""
+    from topsailai.ai_base.exception import ContextWindowLimitError
+
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [
+            # Each hook call classifies twice, so three calls need six snapshots.
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_HARD, 920),
+            _watermark(CONTEXT_WATERMARK_HARD, 910),
+        ]
+    )
+    hook = ai_agent.hooks_pre_chat[0]
+
+    hook(ai_agent)
+    hook(ai_agent)
+    assert runtime.summarize_messages_for_processing.call_count == 1
+
+    with pytest.raises(ContextWindowLimitError):
+        hook(ai_agent)
+
+    runtime.summarize_messages_for_processing.assert_called_with(force=True)
+    assert runtime.summarize_messages_for_processing.call_count == 2
+
+
+def test_effectiveness_guard_can_be_disabled_by_zero_ratio():
+    """A zero ratio restores the original unconditional LOW behaviour."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 594),
+        ]
+    )
+    hook = ai_agent.hooks_pre_chat[0]
+
+    with patch.object(
+        agent_chat,
+        "_get_summary_min_reduction_ratio",
+        return_value=0.0,
+    ):
+        hook(ai_agent)
+        hook(ai_agent)
+
+    assert runtime.summarize_messages_for_processing.call_count == 2
+
+
+def test_effectiveness_marker_is_cleared_at_turn_start():
+    """A new turn must not inherit the previous turn's skip decision."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [
+            # Each hook call classifies twice, so three calls need six snapshots.
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+        ]
+    )
+    hook = ai_agent.hooks_pre_chat[0]
+
+    hook(ai_agent)
+    hook(ai_agent)
+    assert runtime.summarize_messages_for_processing.call_count == 1
+
+    # Simulate the next turn: the marker is cleared, so LOW summarizes again.
+    agent_chat._reset_summary_effectiveness()
+    hook(ai_agent)
+
+    assert runtime.summarize_messages_for_processing.call_count == 2
+
+
+def test_invalid_effectiveness_ratio_falls_back_to_default():
+    """An unusable configured ratio falls back to 0.10 instead of disabling."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [_watermark(CONTEXT_WATERMARK_LOW, 600)]
+    )
+
+    with patch(
+        "topsailai.workspace.agent.agent_chat_base.env_tool.EnvReaderInstance.get",
+        return_value="not-a-number",
+    ):
+        assert agent_chat._get_summary_min_reduction_ratio() == 0.10
+
+
+def test_low_skip_records_a_bounded_event():
+    """The LOW skip must be observable as an event, not only as print and log."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+        ]
+    )
+    hook = ai_agent.hooks_pre_chat[0]
+
+    captured = []
+    with patch(
+        "topsailai.events.record_event",
+        side_effect=lambda *args, **kwargs: captured.append((args, kwargs)),
+    ):
+        hook(ai_agent)
+        hook(ai_agent)
+
+    assert len(captured) == 1
+    args, _kwargs = captured[0]
+    assert args[0] == "context.summary.skipped_ineffective_low"
+    payload = args[1]
+    assert payload["previous_reduction_ratio"] == 0.005
+    assert payload["required_ratio"] == 0.1
+    assert payload["current_tokens"] == 597
+    # The payload stays bounded: no message content, no rule objects.
+    assert set(payload) == {
+        "previous_reduction_ratio",
+        "required_ratio",
+        "current_tokens",
+        "session_id",
+    }
+
+
+def test_low_skip_survives_a_failing_event_recorder():
+    """A failing event recorder must not interrupt the summarization path."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [
+            _watermark(CONTEXT_WATERMARK_LOW, 600),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+            _watermark(CONTEXT_WATERMARK_LOW, 597),
+        ]
+    )
+    hook = ai_agent.hooks_pre_chat[0]
+
+    with patch(
+        "topsailai.events.record_event",
+        side_effect=RuntimeError("event backend unavailable"),
+    ):
+        hook(ai_agent)
+        hook(ai_agent)
+
+    # The skip still happened and the hook still returned normally.
+    assert runtime.summarize_messages_for_processing.call_count == 1
