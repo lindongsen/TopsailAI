@@ -9,6 +9,8 @@
   - TOOLS_INFO, dict, key is tool name, value is dict for spec.
 '''
 
+import sys
+
 from topsailai.logger import logger
 from topsailai.utils import (
     module_tool,
@@ -122,6 +124,53 @@ TOOLS_INFO = module_tool.get_function_map(
     hook_check=is_tool_enabled,
     need_module_log=False,
 )
+
+
+def _collect_package_tools_info(tools, tools_info, conn_char):
+    """Adopt TOOLS_INFO declared inside tool packages.
+
+    Module-level collection skips packages, so a schema declared in a file that
+    lives inside a package under ``topsailai.tools`` is invisible to
+    registration. Resolve each registered tool's defining module and reuse its
+    bare-name schema under the already-registered tool key, so the registry key
+    space is preserved instead of being re-prefixed by the package module name.
+
+    Args:
+        tools: Registered tool mapping, key is tool name, value is callable.
+        tools_info: Collected schema mapping, updated in place.
+        conn_char: Separator between module name and function name in a key.
+
+    Returns:
+        dict: The same ``tools_info`` mapping, extended with adopted schemas.
+    """
+    for tool_name, tool_func in tools.items():
+        if tool_name in tools_info:
+            continue
+        module_name = getattr(tool_func, "__module__", None)
+        if not module_name:
+            continue
+        module = sys.modules.get(module_name)
+        if module is None:
+            try:
+                module = __import__(module_name, None, None, [module_name.split(".")[-1]])
+            except Exception as e:
+                logger.warning("tool info module import failed: [%s], %s", module_name, e)
+                continue
+        declared = getattr(module, "TOOLS_INFO", None)
+        if not isinstance(declared, dict):
+            continue
+        # A registered key may be an alias, so try the bare key before __name__.
+        spec = declared.get(tool_name.split(conn_char, 1)[-1])
+        if spec is None:
+            spec = declared.get(getattr(tool_func, "__name__", ""))
+        if spec is None:
+            continue
+        tools_info[tool_name] = spec
+        logger.debug("tool info adopted from package module: [%s] <- [%s]", tool_name, module_name)
+    return tools_info
+
+
+TOOLS_INFO = _collect_package_tools_info(TOOLS, TOOLS_INFO, CONN_CHAR)
 
 
 TOOL_PROMPT = """

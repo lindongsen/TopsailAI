@@ -155,6 +155,156 @@ class TestToolsAndToolsInfo(unittest.TestCase):
             self.assertTrue(callable(func), f"Tool {name} is not callable")
 
 
+class TestCollectPackageToolsInfo(unittest.TestCase):
+    """Test cases for adopting TOOLS_INFO declared inside tool packages."""
+
+    def _make_tool(self, module_name, func_name):
+        """Build a callable whose __module__ and __name__ are controlled."""
+        def _tool():
+            """probe tool"""
+            return None
+        _tool.__module__ = module_name
+        _tool.__name__ = func_name
+        return _tool
+
+    def test_package_schema_is_adopted_under_registered_key(self):
+        """A schema declared in a package module is adopted under the registry key."""
+        from topsailai.tools.base import init as base_init
+        from topsailai.tools.file_tool_utils import file_read_line
+
+        spec = {
+            "type": "function",
+            "function": {
+                "name": "",
+                "description": "probe",
+                "parameters": {"type": "object", "properties": {"x": {"type": "string"}}},
+            },
+        }
+        original = getattr(file_read_line, "TOOLS_INFO", None)
+        file_read_line.TOOLS_INFO = {"read_file_with_context": spec}
+        try:
+            tools = {"file_tool-read_file_with_context": self._make_tool(
+                "topsailai.tools.file_tool_utils.file_read_line", "read_file_with_context")}
+            result = base_init._collect_package_tools_info(tools, {}, base_init.CONN_CHAR)
+        finally:
+            if original is None:
+                del file_read_line.TOOLS_INFO
+            else:
+                file_read_line.TOOLS_INFO = original
+
+        self.assertIn("file_tool-read_file_with_context", result)
+        self.assertEqual(result["file_tool-read_file_with_context"], spec)
+
+    def test_package_module_prefix_is_not_introduced(self):
+        """Adoption must not create a key prefixed by the package module name."""
+        from topsailai.tools.base import init as base_init
+        from topsailai.tools.file_tool_utils import file_read_line
+
+        original = getattr(file_read_line, "TOOLS_INFO", None)
+        file_read_line.TOOLS_INFO = {
+            "read_file_lines": {"type": "function", "function": {"name": "", "description": "p", "parameters": {"type": "object"}}}
+        }
+        try:
+            tools = {"file_tool-read_file_lines": self._make_tool(
+                "topsailai.tools.file_tool_utils.file_read_line", "read_file_lines")}
+            result = base_init._collect_package_tools_info(tools, {}, base_init.CONN_CHAR)
+        finally:
+            if original is None:
+                del file_read_line.TOOLS_INFO
+            else:
+                file_read_line.TOOLS_INFO = original
+
+        self.assertIn("file_tool-read_file_lines", result)
+        self.assertEqual([k for k in result if k.startswith("file_read_line-")], [])
+
+    def test_alias_key_is_resolved_before_function_name(self):
+        """A registered key that differs from __name__ still resolves its schema."""
+        from topsailai.tools.base import init as base_init
+        from topsailai.tools.file_tool_utils import file_write_code_block
+
+        spec = {"type": "function", "function": {"name": "", "description": "alias", "parameters": {"type": "object"}}}
+        original = getattr(file_write_code_block, "TOOLS_INFO", None)
+        file_write_code_block.TOOLS_INFO = {"overwrite_lines_in_file": spec}
+        try:
+            tools = {"file_tool-overwrite_lines_in_file": self._make_tool(
+                "topsailai.tools.file_tool_utils.file_write_code_block", "overwrite_code_block")}
+            result = base_init._collect_package_tools_info(tools, {}, base_init.CONN_CHAR)
+        finally:
+            if original is None:
+                del file_write_code_block.TOOLS_INFO
+            else:
+                file_write_code_block.TOOLS_INFO = original
+
+        self.assertIn("file_tool-overwrite_lines_in_file", result)
+        self.assertEqual(result["file_tool-overwrite_lines_in_file"], spec)
+
+    def test_existing_entry_is_not_overwritten(self):
+        """An already collected schema wins over a package declaration."""
+        from topsailai.tools.base import init as base_init
+        from topsailai.tools.file_tool_utils import file_read_line
+
+        original = getattr(file_read_line, "TOOLS_INFO", None)
+        file_read_line.TOOLS_INFO = {"read_file_lines": {"type": "function", "function": {"name": "", "description": "pkg", "parameters": {"type": "object"}}}}
+        existing = {"type": "function", "function": {"name": "", "description": "existing", "parameters": {"type": "object"}}}
+        try:
+            tools = {"file_tool-read_file_lines": self._make_tool(
+                "topsailai.tools.file_tool_utils.file_read_line", "read_file_lines")}
+            result = base_init._collect_package_tools_info(tools, {"file_tool-read_file_lines": existing}, base_init.CONN_CHAR)
+        finally:
+            if original is None:
+                del file_read_line.TOOLS_INFO
+            else:
+                file_read_line.TOOLS_INFO = original
+
+        self.assertEqual(result["file_tool-read_file_lines"], existing)
+
+    def test_module_without_tools_info_is_ignored(self):
+        """A module that declares no TOOLS_INFO contributes nothing."""
+        from topsailai.tools.base import init as base_init
+
+        tools = {"file_tool-read_file": self._make_tool("topsailai.tools.file_tool", "read_file")}
+        result = base_init._collect_package_tools_info(tools, {}, base_init.CONN_CHAR)
+        self.assertEqual(result, {})
+
+    def test_unresolvable_module_is_skipped(self):
+        """A tool whose module cannot be imported is skipped without raising."""
+        from topsailai.tools.base import init as base_init
+
+        tools = {"ghost_tool-ghost": self._make_tool("topsailai.tools.not_a_real_module", "ghost")}
+        result = base_init._collect_package_tools_info(tools, {}, base_init.CONN_CHAR)
+        self.assertEqual(result, {})
+
+    def test_production_registry_keeps_cmd_tool_schema(self):
+        """The only real TOOLS_INFO in the tree survives adoption."""
+        from topsailai.tools.base.init import TOOLS_INFO
+        self.assertIn("cmd_tool-exec_cmd", TOOLS_INFO)
+
+    def test_module_level_wiring_adopts_package_schema(self):
+        """Re-importing the registry module adopts a package-declared schema."""
+        import os
+        import subprocess
+        import sys
+
+        script = (
+            "import sys\n"
+            "sys.path.insert(0, '/TopsailAI/src')\n"
+            "sys.path.insert(0, '/TopsailAI/src/topsailai')\n"
+            "from topsailai.tools.file_tool_utils import file_read_line\n"
+            "file_read_line.TOOLS_INFO = {'read_file_with_context': {'type': 'function', 'function': {'name': '', 'description': 'wired', 'parameters': {'type': 'object'}}}}\n"
+            "sys.modules.pop('topsailai.tools.base.init', None)\n"
+            "sys.modules.pop('topsailai.tools.base', None)\n"
+            "from topsailai.tools.base import init as base_init\n"
+            "print('WIRED' if 'file_tool-read_file_with_context' in base_init.TOOLS_INFO else 'MISSING')\n"
+        )
+        env = dict(os.environ)
+        env["PYTHONPATH"] = "/TopsailAI/src/topsailai:/TopsailAI/src"
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, env=env, timeout=120,
+        )
+        self.assertIn("WIRED", completed.stdout, completed.stderr)
+
+
 class TestToolPrompt(unittest.TestCase):
     """Test cases for TOOL_PROMPT template."""
 

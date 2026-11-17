@@ -28,9 +28,14 @@ from topsailai.context.session_manager.__base import SessionData
 from topsailai.context.session_manager.sql import SessionSQLAlchemy
 from topsailai.tests.mock.llm_mock_server import MockServerConfig, create_server
 from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
+from topsailai.workspace.context.base import ContextRuntimeBase
 from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
 
 SESSION_ID = "opening-observation"
+
+# The release ratio variable, named once so a scenario can unset it to exercise
+# the built-in default instead of an explicit value.
+RELEASE_RATIO_ENV = "TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO"
 
 # A startup observation large enough to exceed the release ratio by a wide
 # margin, so the scenario does not depend on an exact token count.
@@ -39,8 +44,21 @@ LARGE_OBSERVATION_TEXT = "startup context " * 400
 # A startup observation far below the release ratio, which must stay pinned.
 SMALL_OBSERVATION_TEXT = "startup"
 
+# A startup observation whose measured block is exactly 304 tokens. Paired with a
+# 1000-token budget it sits on the inclusive boundary at ratio 0.304, which is the
+# only way to prove the comparison is ``<=`` and not ``<``.
+BOUNDARY_OBSERVATION_TEXT = "startup context " * 130
+
+# A startup observation whose measured block is 525 tokens: above 0.3 of a
+# 1000-token budget but below the 0.8 default, so it separates the two ratios.
+MID_OBSERVATION_TEXT = "startup context " * 250
+
+# The marker the mock provider returns, so a scenario can tell whether the
+# summary is already present in a list or in storage at a given moment.
+SUMMARY_MARKER = "SUMMARY TEXT"
+
 SUMMARY_REPLY = json.dumps(
-    [{"step_name": "final_answer", "raw_text": "SUMMARY TEXT"}]
+    [{"step_name": "final_answer", "raw_text": SUMMARY_MARKER}]
 )
 
 
@@ -60,6 +78,7 @@ class OpeningObservationReleaseScenario:
         self.events: list[tuple[str, dict]] = []
         self.summary_result: Any = None
         self.agent_runtime: ContextRuntimeAgent2LLM | None = None
+        self.release_calls: list[dict] = []
         self._configure_environment()
 
     def _configure_environment(self) -> None:
@@ -101,15 +120,20 @@ class OpeningObservationReleaseScenario:
 
     def start(
         self,
-        ratio: str = "0.3",
+        ratio: str | None = "0.3",
         token_threshold: str = "1000",
         observation_text: str = LARGE_OBSERVATION_TEXT,
         include_tool_observation: bool = False,
     ) -> None:
-        """Start the provider, the database and the production runtime."""
-        self.monkeypatch.setenv(
-            "TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO", ratio
-        )
+        """Start the provider, the database and the production runtime.
+
+        ``ratio=None`` leaves the release ratio variable unset, which is the only
+        way to exercise the built-in default instead of an explicit value.
+        """
+        if ratio is None:
+            self.monkeypatch.delenv(RELEASE_RATIO_ENV, raising=False)
+        else:
+            self.monkeypatch.setenv(RELEASE_RATIO_ENV, ratio)
         self.monkeypatch.setenv(
             "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD", token_threshold
         )
@@ -127,6 +151,9 @@ class OpeningObservationReleaseScenario:
             include_tool_observation=include_tool_observation,
         )
         self._capture_observability()
+        # The ordering is only observable at the instant the release runs, so the
+        # wrapper is installed for every scenario instead of being opt-in.
+        self.record_release_calls()
 
     def _start_server(self) -> None:
         """Start one loopback provider that answers the summary request."""
@@ -286,9 +313,10 @@ class OpeningObservationReleaseScenario:
         """Run the user-facing path without a session, which is the memory branch.
 
         With no ``session_id`` the reconstruction takes the ``else`` branch of
-        ``summarize_messages_for_processed`` and calls the release on
-        ``new_messages`` before ``set_messages``. That is the second
-        ``ctx_runtime.py`` call site, and it must not touch storage.
+        ``summarize_messages_for_processed``. Without a session ``self.messages``
+        *is* the session, so the summary must be applied to it before the
+        observation is released from it. That is the second ``ctx_runtime.py``
+        call site, and it must not touch storage.
         """
         assert self.storage is not None
         assert self.owner is not None
@@ -362,6 +390,86 @@ class OpeningObservationReleaseScenario:
             for event_type, payload in self.events
             if event_type == "context.summary.opening_observation_released"
         ]
+
+    def record_release_calls(self) -> None:
+        """Record the state observed at the moment the release is invoked.
+
+        The persist-before-delete ordering is not observable in the final state:
+        both orders converge on the same end result, so a final-state assertion
+        cannot distinguish them. It is only observable at the instant the release
+        runs, which is what this wrapper captures.
+
+        The wrapper targets ``ContextRuntimeBase`` because all three call sites
+        inherit the method from there. Patching a subclass would miss the agent
+        layer, whose release is inherited rather than defined locally.
+        """
+        original = ContextRuntimeBase.release_opening_observation_after_summary
+        scenario = self
+
+        def wrapper(runtime, messages, token_threshold=0, session_id=""):
+            """Record call-time state, then forward to the real release.
+
+            ``runtime`` is the context object, not the scenario, so every
+            observation is taken through the captured ``scenario``.
+            """
+            scenario.release_calls.append(
+                {
+                    "session_id": session_id,
+                    "summary_in_released_list": scenario._contains_summary(messages),
+                    "summary_in_storage": scenario._summary_in_storage(),
+                    "released_is_owner_messages": messages
+                    is getattr(runtime, "messages", None),
+                    "released_is_agent_messages": messages
+                    is getattr(getattr(runtime, "ai_agent", None), "messages", None),
+                }
+            )
+            return original(runtime, messages, token_threshold, session_id)
+
+        self.monkeypatch.setattr(
+            ContextRuntimeBase, "release_opening_observation_after_summary", wrapper
+        )
+
+    @staticmethod
+    def _contains_summary(messages: list) -> bool:
+        """Return whether the list already carries the summary marker."""
+        for message in messages:
+            text = message if isinstance(message, str) else json.dumps(message)
+            if SUMMARY_MARKER in text:
+                return True
+        return False
+
+    def _summary_in_storage(self) -> bool:
+        """Return whether the summary is already persisted."""
+        return any(SUMMARY_MARKER in text for text in self.persisted_texts())
+
+    def summary_in_memory(self) -> bool:
+        """Return whether the summary is present in the in-memory session."""
+        assert self.owner is not None
+        return self._contains_summary(self.owner.messages)
+
+    def summary_in_storage(self) -> bool:
+        """Return whether the summary is present in the persisted session."""
+        return self._summary_in_storage()
+
+    def fail_summary_write(self) -> None:
+        """Make the summary write report failure without raising.
+
+        ``add_session_message`` returns a bool, so a failed write is a ``False``
+        return rather than an exception. Patching the module-level function is
+        the only way to exercise the suppression guard through the real path.
+        """
+        self.monkeypatch.setattr(
+            ctx_manager, "add_session_message", lambda *args, **kwargs: False
+        )
+
+    def release_call_count(self) -> int:
+        """Return how many times the release was invoked."""
+        return len(self.release_calls)
+
+    def last_release_call(self) -> dict:
+        """Return the state recorded at the most recent release invocation."""
+        assert self.release_calls, "the release was never invoked"
+        return self.release_calls[-1]
 
     def provider_request_count(self) -> int:
         """Return how many requests actually reached the provider."""

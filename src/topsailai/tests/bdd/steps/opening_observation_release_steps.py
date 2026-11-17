@@ -4,7 +4,9 @@ import pytest
 from pytest_bdd import given, parsers, then, when
 
 from tests.bdd.opening_observation_release_harness import (
+    BOUNDARY_OBSERVATION_TEXT,
     LARGE_OBSERVATION_TEXT,
+    MID_OBSERVATION_TEXT,
     SMALL_OBSERVATION_TEXT,
     OpeningObservationReleaseScenario,
 )
@@ -190,3 +192,104 @@ def then_event_content(release_case):
     assert payload["session_id"] == "opening-observation"
     assert payload["block_tokens"] > 0
     assert persisted[0]["removed_messages"] == 1
+
+
+# ----------------------------------------------------------------------
+# Group A: persist-before-delete ordering, observed at call time.
+# ----------------------------------------------------------------------
+
+
+@given("the summary write will fail")
+def given_summary_write_fails(release_case):
+    """Make the summary write report failure without raising."""
+    release_case.fail_summary_write()
+
+
+@given("a boundary startup observation")
+def given_boundary_observation(release_case):
+    """Replace the seed with a block that sits on the inclusive boundary."""
+    release_case.reseed(observation_text=BOUNDARY_OBSERVATION_TEXT)
+
+
+@given("a mid-size startup observation")
+def given_mid_observation(release_case):
+    """Replace the seed with a block between the 0.3 and 0.8 thresholds."""
+    release_case.reseed(observation_text=MID_OBSERVATION_TEXT)
+
+
+@given(
+    parsers.parse(
+        "an opening observation release with the default ratio "
+        "and a token threshold of {threshold:d}"
+    ),
+    target_fixture="release_case",
+)
+def given_release_default_ratio(release_ctx, threshold):
+    """Start the runtime with the ratio variable absent.
+
+    Leaving the variable unset is the only way to exercise the built-in default;
+    setting it to the same value would pass even if the default were wrong.
+    """
+    release_ctx.start(ratio=None, token_threshold=str(threshold))
+    return release_ctx
+
+
+@then("the summary was already persisted when the release ran")
+def then_summary_persisted_before_release(release_case):
+    """The durable replacement must exist before the observation is deleted."""
+    call = release_case.last_release_call()
+    assert call["summary_in_storage"] is True, call
+
+
+@then("the summary was already present in the released list when the release ran")
+def then_summary_in_released_list(release_case):
+    """The list being released must already carry the summary."""
+    call = release_case.last_release_call()
+    assert call["summary_in_released_list"] is True, call
+
+
+@then("the release did not operate on the in-memory session list")
+def then_release_not_on_owner_messages(release_case):
+    """The persisted branch releases the reconstruction, not ``self.messages``."""
+    call = release_case.last_release_call()
+    assert call["released_is_owner_messages"] is False, call
+
+
+@then("the release operated on the in-memory session list")
+def then_release_on_owner_messages(release_case):
+    """Without a session, ``self.messages`` is the session being released."""
+    call = release_case.last_release_call()
+    assert call["released_is_owner_messages"] is True, call
+
+
+@then("the release ran exactly once")
+def then_release_once(release_case):
+    """One summary must produce exactly one release invocation."""
+    assert release_case.release_call_count() == 1, release_case.release_calls
+
+
+@then("the release was never invoked")
+def then_release_never(release_case):
+    """A suppressed release must not be invoked at all."""
+    assert release_case.release_call_count() == 0, release_case.release_calls
+
+
+@then("the release warning names the default ratio")
+def then_warning_default_ratio(release_case):
+    """The warning must report the ratio actually used, which is the default."""
+    warnings = release_case.release_warnings()
+    in_memory = [text for text in warnings if "from session" not in text]
+    assert len(in_memory) == 1, warnings
+    assert "ratio=0.8" in in_memory[0], in_memory[0]
+
+
+@then("the summary is present in the in-memory session")
+def then_summary_in_memory(release_case):
+    """The summary must have replaced the observation in the session list."""
+    assert release_case.summary_in_memory() is True, release_case.memory_step_names()
+
+
+@then("the summary is not in storage")
+def then_summary_not_in_storage(release_case):
+    """The no-session path must never write the summary to storage."""
+    assert release_case.summary_in_storage() is False, release_case.persisted_texts()
