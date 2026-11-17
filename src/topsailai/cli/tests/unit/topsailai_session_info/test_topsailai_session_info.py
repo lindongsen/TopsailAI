@@ -20,6 +20,7 @@ sys.path.insert(0, CLI_ROOT)
 
 import topsailai_session_info as si
 from cli_topsailai.agent_launch_process import _process_state
+from cli_topsailai.session_metrics import METRIC_FIELDS
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -241,6 +242,10 @@ class TestFormatSessionJson:
         output = si._format_session_json(session, str(tmp_path))
         parsed = json.loads(output)
 
+        # The metric block is merged in from the shared field list, so the
+        # expectation is derived from that list instead of being restated here.
+        # A new metric then appears in both the payload and this assertion at
+        # once, and the two cannot drift apart.
         expected_keys = {
             "session_id",
             "session_name",
@@ -258,6 +263,9 @@ class TestFormatSessionJson:
             "total_usage_tokens",
             "total_cached_tokens",
         }
+        expected_keys.update(name for name, _attribute, _default in METRIC_FIELDS)
+        # Derived values computed by session_metrics() itself.
+        expected_keys.update({"first_byte_avg_ms", "model_name"})
         assert set(parsed.keys()) == expected_keys
 
     def test_json_output_with_nonzero_token_totals(self, tmp_path: Path):
