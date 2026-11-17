@@ -91,6 +91,31 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 	if entry.Phase == protocol.PhaseInvocationStarted || entry.Phase == protocol.PhaseEndpointAdmitted {
 		return unknownReceipt(intent, requestHash, "invocation_recovery_unknown"), nil
 	}
+	// The policy check runs before the adapter is consulted and before any
+	// target check, so a refused caller cannot infer from the receipt code
+	// whether a resource exists on this machine or what generation it holds.
+	// This is the same rule the read path states and implements
+	// (internal/endpoint/history.go, internal/endpoint/accesspolicy_enforce.go):
+	// a refusal must reveal nothing beyond the fact that this token may not ask.
+	//
+	// It cannot run earlier than this point. RecordReceipt is an UPDATE on the
+	// journal row, so the row must exist before a refusal can be recorded; and
+	// it must stay after the two returns above, because a replayed command that
+	// already reached receipt_recorded or invocation_started must return its
+	// stored outcome rather than be re-decided as a refusal.
+	if e.PolicyHook != nil {
+		if policyErr := e.PolicyHook(ctx, intent); policyErr != nil {
+			// The refusal is logged where it is decided, not where the receipt is
+			// stored. recordEarlyRejection also records unsupported, profile and
+			// generation rejections, and reporting those as policy refusals would
+			// send an operator to a policy file that is correct. The message
+			// matches the read path's wording so one grep finds both, and the
+			// token is never logged because a log reader must not become a
+			// credential holder.
+			e.logPolicyRefusal(intent, policyErr)
+			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "policy_denied"))
+		}
+	}
 	if intent.ExecuteBeforeAtMS > 0 && e.now().UnixMilli() > intent.ExecuteBeforeAtMS {
 		receipt := unknownReceipt(intent, requestHash, "expired_before_execution")
 		receipt.EffectCertainty = protocol.EffectNotApplied
@@ -198,19 +223,6 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "generation_required"))
 		} else if err := e.revalidateGeneration(ctx, instance, adapterID, *intent.Target); err != nil {
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, revalidationFailureCode(err, "target_generation_mismatch")))
-		}
-	}
-	if e.PolicyHook != nil {
-		if policyErr := e.PolicyHook(ctx, intent); policyErr != nil {
-			// The refusal is logged where it is decided, not where the receipt is
-			// stored. recordEarlyRejection also records unsupported, profile and
-			// generation rejections, and reporting those as policy refusals would
-			// send an operator to a policy file that is correct. The message
-			// matches the read path's wording so one grep finds both, and the
-			// token is never logged because a log reader must not become a
-			// credential holder.
-			e.logPolicyRefusal(intent, policyErr)
-			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "policy_denied"))
 		}
 	}
 	if e.BeforeInvocation != nil {

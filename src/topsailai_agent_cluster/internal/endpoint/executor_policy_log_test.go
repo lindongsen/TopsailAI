@@ -113,12 +113,18 @@ func TestPermittedCommandLogsNoRefusal(t *testing.T) {
 // which is the tempting place because every rejection passes through it. An
 // unsupported operation is a capability fact, not a policy decision, and an
 // operator who reads it as a refusal would edit a policy file that is correct.
+//
+// The hook is permitted here on purpose. The policy check runs before the
+// capability check, so a refused caller is refused as a policy decision and
+// never reaches the unsupported rejection at all; that ordering is what stops a
+// refusal from revealing which operations this machine serves. This test
+// therefore proves the log site with a caller the policy allows, which is the
+// only case where an unsupported rejection can still happen.
 func TestNonPolicyRejectionLogsNoRefusal(t *testing.T) {
 	executor, _, _, resourceID := newPolicyTestExecutor(t)
 	// The fixture adapter advertises command.exec only, so this operation is
-	// rejected as unsupported before the policy hook is ever consulted.
+	// rejected as unsupported after the policy hook permits the caller.
 	executor.PolicyHook = func(context.Context, protocol.ImmutableIntent) error {
-		t.Fatal("the policy hook must not run for an unsupported operation")
 		return nil
 	}
 	intent := commandExecIntent("policy-unsupported", resourceID)
