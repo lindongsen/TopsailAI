@@ -673,3 +673,175 @@ change must be traced through every launcher, not only the module under test.
 Test the shipped script rather than a reimplementation of its logic, and keep a
 negative control that reproduces the old behavior, because a passing test proves
 nothing if it would also pass against the bug.
+
+## A projected field must be sourced from the evidence the pipeline already read
+
+### Trigger
+
+`topsailai workspace list --json` was suspected of calling
+`topsailai_list_sessions` or `topsailai_session_info` per row, and the request
+was to make the JSON "as complete as possible" by adding a `metadata` field.
+The first answer claimed the command did not call either tool. That was wrong:
+`strace -f -e trace=execve` showed one batched
+`topsailai_sessions_info --json <id>...` invocation on every run, because the
+cache is process-local and `_completed_session_meta` is never assigned anywhere,
+so the lookup is always cold.
+
+Tracing further showed two separate wastes. The lookup returns 35 fields per
+session but `_LookupResult` kept only `session_name` and `project_workspace`,
+discarding 28. Separately, the exact `.session.meta` record was already read for
+the `hostname` column and then thrown away during projection.
+
+### Action taken
+
+Split the two sources by meaning instead of merging them into one field. The 35
+lookup fields are merged flat into the item body, because they describe the
+session's live state; the on-disk record is exposed as `metafile`, because it is
+the static registration written at startup. The lookup's `status` is coarser and
+capitalized (`Running` covers the body's `input` state), so it is exposed as
+`status_raw` and never overwrites the finer-grained body `status`; the other
+three colliding keys keep their body values. When the lookup fails the merged
+fields are absent rather than `null`, while `metafile` keeps its always-present
+`null` contract because it comes from a different source. The record cache was
+added beside `_SESSION_INFO_CACHE` instead of widening it, because many tests
+construct `_LookupResult` positionally and set the cache with 2-tuples.
+
+Verified with `strace` for the call itself, a live run where 11/11 items carried
+48 fields with `status` and `status_raw` both present, 26 focused tests, and the
+full `tests/unit/topsailai/` suite (3603 passed).
+
+### Why this prevents recurrence
+
+Before adding a field to a projected output, trace what the pipeline already
+read and discarded: enrichment often loads the full record for one narrow
+column, so the complete data is free and a new query would be pure waste. But
+also verify the call actually happens instead of reasoning from the code's
+intent — a cache that is never populated makes a "cached" path run every time,
+and only an executed trace proves it. When two sources describe the same object,
+separate them by meaning rather than flattening them into one bag, and never let
+a coarser value overwrite a finer one: rename the coarse value instead, because
+overwriting silently destroys states the body already distinguishes. Finally,
+decide the absent case per source: "not observed" and "observed as empty" are
+different facts, so a failed lookup should omit its fields while a missing file
+should report `null`.
+
+## A parser that lives inside `main()` has no builder to test against
+
+### Trigger
+
+Two new tests called `core.build_parser().parse_args([...])` to assert that
+`--include-runtime` defaults to `False` and that the flag alone selects JSON.
+Both failed with `AttributeError: module 'cli_topsailai.core' has no attribute
+'build_parser'`, because `core.py` constructs its `ArgumentParser` inline inside
+`main()` and never exposes it.
+
+### Action taken
+
+Rewrote both tests to drive the real dispatch path, `core.main([...])` inside
+`pytest.raises(SystemExit)`, asserting `raised.value.code == 0` and inspecting
+the printed document or the patched printer. The "flag alone selects JSON" test
+also patches `_print_workspace_table` with a `Mock(side_effect=AssertionError)`
+so the assertion proves the table was never printed rather than merely that JSON
+appeared. Verified 24/24 in the new module and 3597 passed in the full suite.
+
+### Why this prevents recurrence
+
+A test must exercise the seam that actually exists. When a parser is built
+inline, the only public entry point is the function that builds it, so the test
+belongs at that boundary; inventing a `build_parser` helper to make the test
+convenient would add production API purely for testing. Also prefer a negative
+assertion (`table.call_count == 0`) over a positive one when the requirement is
+"this must not happen", because a positive assertion passes even when both
+outputs are produced.
+
+## A stale call-site assertion is a contract change, not a test bug
+
+### Trigger
+
+Adding `include_runtime` to `_print_workspace_json` broke five existing tests
+across four files with `expected call not found`. The first fix attempt used a
+scripted line-number edit that aborted on a wrong line number, and a later full
+run still failed on a sixth site in `test_workspace_local_filter.py` that the
+first sweep missed.
+
+### Action taken
+
+Swept the whole test tree with `grep -rn "local_only=" tests/` instead of fixing
+failures one at a time, then classified every hit by which function it patches:
+only assertions on `_print_workspace_json` gained `include_runtime=False`, while
+every `table` / `mock_table` / `mock_print_workspace` assertion was left
+untouched because `_print_workspace_table` did not change. Confirmed the
+classification by reading the decorator above each assertion.
+
+### Why this prevents recurrence
+
+When a function gains a keyword argument, every exact-call assertion on it is a
+contract that must be updated in the same change, and the reliable way to find
+them is a tree-wide search for the shared argument text, not a test run that
+reports one failure at a time. Classify each hit by the patched target before
+editing: adding the new keyword to a sibling function's assertion would encode a
+false contract and would pass only by accident. A scripted multi-file edit must
+assert on the exact expected line content and report which files it already
+changed, so a mid-run abort cannot leave the tree half-updated.
+
+## A replacement range must not repeat a line that survives outside it
+
+### Trigger
+
+Two edits in one task damaged files even though each targeted a small change.
+Replacing the constants block in `workspace_runtime.py` to change
+`DEFAULT_MAX_WORKERS` left a duplicated `DEFAULT_TIMEOUT = 2.0` line, and
+replacing the `_print_workspace_json` docstring left a duplicated closing `"""`.
+Both files were syntactically broken until `ast.parse` was run.
+
+### Action taken
+
+Removed the duplicated line in each file and re-verified with `ast.parse` plus
+`git diff --numstat`. The cause was identical in both cases: the replacement
+content included a line that also existed outside the replaced range, so the
+file ended up with two copies.
+
+### Why this prevents recurrence
+
+A range replacement is a substitution, not a merge. Any line that survives
+outside the range must not appear in the replacement content, because the tool
+does not diff the two — it deletes the range and inserts the text verbatim.
+Before writing, list the lines that will remain immediately before and after the
+range and confirm none of them is repeated in the new content. After writing,
+run a syntax check (`ast.parse` for Python) and `git diff --numstat`; a duplicate
+line is invisible in a summary but fatal to the parser.
+
+## A newly registered instruction is unreachable from processes that started before it
+
+### Trigger
+
+`workspace list --include-runtime` reported `rejected` / `control_rejected` for
+all 11 live sessions. The first explanation was that the instruction name was
+wrong or that the control channel could not reach context-bound instructions at
+all, and a harness built without `load_instructions` reproduced the same
+rejection, which appeared to confirm the second theory.
+
+### Action taken
+
+Traced the registration path: `ContextRuntimeInstructions.instructions` contains
+`runtime.static-data`, `agent_shell.py:319` appends that map to the hook map via
+`hook_instruction.load_instructions(...)`, and `CallInstructionHandler` resolves
+it through `exist_hook` plus `call_instruction`. The plugin `INSTRUCTIONS` dict
+deliberately omits the name, and a unit test pins that omission so the handler
+cannot run twice. Probing a live socket showed the answering process replying
+`unknown instruction: runtime.static-data` while answering `agent.tokens`,
+`runtime` and `ctx.history` on the same socket. Git history dated the instruction
+to `c40fcff4` at 15:38:08, while the live sessions started 2026-11-11 through
+2026-11-15. A harness that mirrored production wiring then returned `ok`.
+
+### Why this prevents recurrence
+
+A control-channel instruction is resolved by the answering process, so its
+availability is a property of that process's start time, not of the caller's
+source tree. `control_rejected` on a newly added instruction is therefore an
+upgrade-order fact, not a defect, and the way to prove it is to probe a sibling
+instruction on the same socket: if the sibling answers and the new one does not,
+the process predates the instruction. When reproducing such a rejection in a
+harness, mirror the real wiring including the registration call, because a
+harness that skips `load_instructions` fails for its own reason and will
+"confirm" any theory about the product.

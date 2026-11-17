@@ -58,6 +58,34 @@ class _SessionInfoCache:
 # Module-level cache shared across refreshes and threads.
 _SESSION_INFO_CACHE = _SessionInfoCache()
 
+# Complete lookup records, keyed by session id. Kept separate from
+# ``_SESSION_INFO_CACHE`` because that cache stores a two-tuple that many
+# callers and tests construct directly; widening it would change a shape that
+# the display path does not need. A record is stored only when the lookup
+# actually returned one, so an absent entry means "not resolved", never
+# "resolved to nothing".
+_SESSION_RECORD_CACHE: dict[str, dict] = {}
+_SESSION_RECORD_LOCK = threading.Lock()
+
+
+def get_cached_session_record(session_id: str) -> Optional[dict]:
+    """Return the complete cached lookup record for *session_id*, if any."""
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    with _SESSION_RECORD_LOCK:
+        record = _SESSION_RECORD_CACHE.get(session_id)
+    return dict(record) if isinstance(record, dict) else None
+
+
+def _store_session_record(session_id: str, record: Optional[dict]) -> None:
+    """Cache the complete lookup record for *session_id* when one exists."""
+    if not isinstance(session_id, str) or not session_id:
+        return
+    if not isinstance(record, dict) or not record:
+        return
+    with _SESSION_RECORD_LOCK:
+        _SESSION_RECORD_CACHE[session_id] = dict(record)
+
 
 def has_complete_cached_session_info(session_id: str) -> bool:
     """Return whether cached display metadata is complete for *session_id*."""
@@ -82,19 +110,27 @@ def has_complete_cached_session_info(session_id: str) -> bool:
 
 
 class _LookupResult:
-    """Internal result wrapper to distinguish success from transient failure."""
+    """Internal result wrapper to distinguish success from transient failure.
 
-    __slots__ = ("name", "project_workspace", "success")
+    ``record`` keeps the complete JSON record the lookup command returned, so a
+    caller that needs more than the display name and workspace does not have to
+    run the command again. It stays optional because the display path only ever
+    needs the two normalized fields.
+    """
+
+    __slots__ = ("name", "project_workspace", "success", "record")
 
     def __init__(
         self,
         name: Optional[str],
         project_workspace: Optional[str],
         success: bool,
+        record: Optional[dict] = None,
     ) -> None:
         self.name = name
         self.project_workspace = project_workspace
         self.success = success
+        self.record = record
 
 
 def _kill_process_group(process: "subprocess.Popen[str]") -> None:
@@ -159,7 +195,13 @@ def _run_lookup_command(cmd: List[str]) -> "subprocess.CompletedProcess[str]":
 
 
 def _parse_session_record(record: object) -> Optional[_LookupResult]:
-    """Convert one JSON session record into a normalized lookup result."""
+    """Convert one JSON session record into a normalized lookup result.
+
+    The complete record is retained on the result so a caller that needs the
+    full session description can use it without a second lookup. Only the two
+    display fields are normalized, because the display path must keep its
+    existing empty-value semantics.
+    """
     if not isinstance(record, dict):
         return None
 
@@ -171,7 +213,7 @@ def _parse_session_record(record: object) -> Optional[_LookupResult]:
     if not isinstance(project_workspace, str) or not project_workspace.strip():
         project_workspace = None
 
-    return _LookupResult(name, project_workspace, True)
+    return _LookupResult(name, project_workspace, True, dict(record))
 
 
 def _get_sessions_info(session_ids: List[str]) -> dict[str, _LookupResult]:
@@ -239,6 +281,11 @@ def _fetch_missing_session_info(session_ids: List[str]) -> None:
             _SESSION_INFO_CACHE.set(
                 session_id, (lookup.name, lookup.project_workspace)
             )
+        # The complete record is cached independently of the display cache, so
+        # a caller that needs the full session description can read it without
+        # repeating the lookup, and a record with no display fields is still
+        # available.
+        _store_session_record(session_id, lookup.record)
 
 
 def _completed_meta_snapshot(file_info: dict) -> Optional[Tuple[str, int, str, Optional[str]]]:
@@ -379,6 +426,13 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
         file_info["project_workspace"] = (
             project_workspace or workspace_lookup.get(session_id)
         )
+        # Expose the complete lookup record on the row so a JSON consumer gets
+        # the full session description from the same single batched call. The
+        # key is set only when a record exists, so "not resolved" stays
+        # distinguishable from "resolved to an empty record".
+        record = get_cached_session_record(session_id)
+        if record is not None:
+            file_info["_workspace_session_record"] = record
         # Fallback: consult the row's exact session metadata record only when
         # the primary lookup produced nothing, so a renamed session keeps its
         # primary name and a failed lookup still shows the recorded one.
