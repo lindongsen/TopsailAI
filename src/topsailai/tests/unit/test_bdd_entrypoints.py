@@ -31,7 +31,15 @@ def test_packaged_gate_is_explicit():
     """Select packaged acceptance rather than silently omitting it everywhere."""
     output = dry_run("test-bdd-packaged")
     assert '-m "packaged" tests/bdd' in output
-    assert output.index("dev-tools deb-build-cython-py3") < output.index('-m "packaged"')
+    # The build step must run before the packaged pytest step in the same
+    # command chain. Compare the recipe's own structure, not raw character
+    # offsets: `make -n` still executes recursive $(MAKE), so the sub-make
+    # transcript is appended after the outer recipe and any literal that only
+    # appears there would be compared at a meaningless position.
+    build_at = output.index("build-deb")
+    packaged_at = output.index('-m "packaged"')
+    assert build_at < packaged_at
+    assert "&&" in output[build_at:packaged_at]
     assert f'TOPSAILAI_PACKAGED_ROOT="{ROOT.parents[1]}/build/output/.deb/topsailai/TopsailAI/src"' in output
     assert "--basetemp=" in output
     assert "cache_dir=" in output
