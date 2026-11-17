@@ -149,5 +149,14 @@ tail = output[build_at + len("build-deb"):packaged_at]
 assert re.match(r"\s*&&", tail)
 ```
 
-This is recorded here rather than applied, because tightening the assertion is a
-separate logical unit from closing the stale-assertion issue.
+This stricter form has since been applied (commit "test: require the deb build to
+be chained before packaged scenarios"), together with `import re`. Mutation
+testing on the real dry-run output confirms the difference:
+
+| Mutation | Previous assertion | Applied assertion |
+|---|---|---|
+| `build-deb` removed | FAIL (caught) | FAIL (caught) |
+| `build-deb` moved after the pytest step | FAIL (caught) | FAIL (caught) |
+| `build-deb` followed by `;` instead of `&&` | **PASS (missed)** | **FAIL (caught)** |
+
+`tests/unit/test_bdd_entrypoints.py` -> 4 passed after the change.

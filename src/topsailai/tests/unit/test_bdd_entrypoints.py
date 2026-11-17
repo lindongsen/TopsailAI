@@ -1,6 +1,7 @@
 """Verify source and packaged acceptance boundaries. Author: DawsonLin."""
 
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -39,7 +40,13 @@ def test_packaged_gate_is_explicit():
     build_at = output.index("build-deb")
     packaged_at = output.index('-m "packaged"')
     assert build_at < packaged_at
-    assert "&&" in output[build_at:packaged_at]
+    # The build step itself must be chained with `&&`. A bare `;` would let a
+    # failed deb build fall through to the packaged scenarios, which is the
+    # silently-unverified acceptance this gate exists to prevent. Checking for
+    # any `&&` in the slice is not enough: the following `mkdir ... && cd ...`
+    # pair would satisfy it even when the build is not chained.
+    chained = re.match(r"\s*&&", output[build_at + len("build-deb"):packaged_at])
+    assert chained, "deb build must be chained with && before the packaged scenarios"
     assert f'TOPSAILAI_PACKAGED_ROOT="{ROOT.parents[1]}/build/output/.deb/topsailai/TopsailAI/src"' in output
     assert "--basetemp=" in output
     assert "cache_dir=" in output
