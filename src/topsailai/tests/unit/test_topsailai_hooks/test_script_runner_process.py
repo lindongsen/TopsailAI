@@ -596,11 +596,18 @@ def test_exited_leader_with_descendant_only_result_writer_retains_debt(
     runner = _runner(tmp_path)
     started = time.monotonic()
 
+    # The execution deadline is absolute and starts before the child is spawned,
+    # so the budget must absorb interpreter startup as well as the leader exit.
+    # Measured startup is ~26ms idle but ~38ms under parallel load, which left
+    # only 62ms of a 100ms budget and lost the leader exit. 200ms keeps a wide
+    # margin over startup while staying below the descendant's 0.3s sleep, so
+    # the leader still exits before the deadline and the descendant still holds
+    # the result descriptor past it.
     result = _execute(
         runner,
         entry,
         "descendant-result-only",
-        timeout=0.1,
+        timeout=0.2,
         extra_argv=("0.3",),
     )
 
