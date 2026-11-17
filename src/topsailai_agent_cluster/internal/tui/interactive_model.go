@@ -84,14 +84,24 @@ func interactiveModel(parent context.Context, api InteractiveAPI, state *interac
 // read is session-scoped and fanning out across sessions would multiply provider calls
 // and mix profiles that belong to different runtimes.
 //
+// The target is resolved through the read resolver and the generation is sent empty,
+// because listing a catalog is a read. A generation proves which process a mutation
+// would reach; a read only needs to know which record to read, and that identity is
+// already proven by the durable resource mapping and re-proven by the provider. The
+// standalone surface sends an empty generation for the same reason, so the two
+// surfaces agree about what a catalog read requires.
+//
 // The render is followed by one guided question, because the catalog exists to be
 // chosen from: making the operator retype "model <number>" after reading the table
 // costs a second command for one decision. The question is asked only when a table was
-// rendered, because a choice needs rows to choose between.
+// rendered and the target can actually be addressed, because a choice needs rows to
+// choose between and an offer must be reachable. An unverified session therefore gets
+// its catalog and a statement of why no profile can be applied, instead of a question
+// whose answer the Endpoint would refuse.
 func interactiveModelList(parent context.Context, api InteractiveAPI, state *interactiveState, token string, lines <-chan lineReadResult, out, trustedOut, diagnostics io.Writer, options InteractiveOptions) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	target, err := resolveSessionTarget(ctx, api, state, "model", token)
+	target, err := resolveReadTarget(ctx, api, state, "model", token)
 	if err != nil {
 		return err
 	}
@@ -99,7 +109,11 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 	if !ok {
 		return fmt.Errorf("model profiles are unavailable: this client cannot query model profiles")
 	}
-	catalog, err := querier.GetModelCatalog(ctx, target.endpointID, target.sessionID, target.generation)
+	// The generation is deliberately empty: a catalog read addresses the session
+	// record, not a live process, so requiring a generation would refuse to list
+	// profiles for exactly the sessions an operator may want to inspect before
+	// resuming them.
+	catalog, err := querier.GetModelCatalog(ctx, target.endpointID, target.sessionID, "")
 	if err != nil {
 		return err
 	}
@@ -139,6 +153,14 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 	}
 	for _, row := range view.Rows {
 		state.modelCatalog.Rows[row.No] = row
+	}
+	if target.generation == "" {
+		// The catalog was readable, but applying a profile is a mutation and a
+		// mutation needs a generation. Asking the guided question here would offer a
+		// choice the Endpoint refuses, so the refusal is stated now and names the one
+		// operation that does not need a generation.
+		_, err := fmt.Fprintf(out, "session %s is unverified: its profiles are listed but none can be applied, because no process holds the session; use resume to resume it\n", sessionIdentityLabel(target.displayName, target.providerSessionID, target.sessionID))
+		return err
 	}
 	return interactiveModelGuidedSelect(parent, api, state, target, lines, out, trustedOut, options)
 }
