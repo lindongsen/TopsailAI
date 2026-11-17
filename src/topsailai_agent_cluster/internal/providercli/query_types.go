@@ -225,7 +225,12 @@ func DecodeQueryPayload(query NamedContract, target *Target, payload json.RawMes
 		}
 		seen := make(map[string]struct{}, len(value.ProviderSessionIDs))
 		for _, sessionID := range value.ProviderSessionIDs {
-			if err := validateIdentifier("provider_session_id", sessionID, true); err != nil {
+			// The member is a provider-private identity, so it is validated with
+			// the same rule the single-session read applies to its target. A
+			// Cluster resource ID is refused here rather than forwarded, because
+			// the provider cannot resolve one: it would silently omit the member
+			// and the caller would read a caller error as an unmeasured session.
+			if err := validateProviderResourceKey("provider_session_id", sessionID, true); err != nil {
 				return nil, err
 			}
 			if _, duplicate := seen[sessionID]; duplicate {

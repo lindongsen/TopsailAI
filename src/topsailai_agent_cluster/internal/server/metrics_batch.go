@@ -94,6 +94,13 @@ func (h *Handler) writeMetricsBatchResultFailure(w http.ResponseWriter, r *http.
 		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation metrics.read is not permitted for this endpoint token")
 	case protocol.AdapterBusy:
 		h.writeError(w, 503, protocol.AdapterBusy, "metrics batch read was not attempted: adapter capacity was unavailable, retry")
+	case protocol.InvalidTarget:
+		// The caller named an identity this surface cannot accept, so the request
+		// was refused before any provider process started. This is a caller error,
+		// not a provider fault, so it must not share the provider default. The
+		// single-session route already classifies the same fact this way, and one
+		// fact must not have two answers depending on which route carried it.
+		h.writeError(w, http.StatusBadRequest, protocol.InvalidTarget, "provider_session_ids must be provider session IDs, not cluster resource IDs")
 	default:
 		h.writeError(w, 502, protocol.MetricsProviderError, "provider metrics batch read failed")
 	}

@@ -1,6 +1,7 @@
 package providercli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,21 @@ func TestClusterResourceIDsAreRejectedAtEveryProviderKeySite(t *testing.T) {
 			name: "model select payload",
 			validate: func() error {
 				return ModelSelectPayload{ProviderResourceKey: clusterID}.Validate()
+			},
+		},
+		{
+			// The batch read carries its members in the payload rather than in a
+			// target, so it is a separate site: a guard that only covered targets
+			// left this one accepting a Cluster identity while the single-session
+			// read refused it.
+			name: "metrics batch payload member",
+			validate: func() error {
+				payload, err := json.Marshal(SessionMetricsBatchPayload{ProviderSessionIDs: []string{clusterID}})
+				if err != nil {
+					return err
+				}
+				_, err = DecodeQueryPayload(NamedContract{Name: QuerySessionMetricsBatch, Version: "v1"}, nil, payload)
+				return err
 			},
 		},
 	}
