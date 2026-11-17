@@ -14,7 +14,7 @@ These tools will be called by the AI agent.
 ## Variables & Functions
 
 - TOOLS: required, dict, func_name=func_call
-- TOOLS_INFO: optional, dict, func_name={openai_tool_spec}; -> Do not set it unless necessary! (Currently no tool module sets it; runtime string-first tolerance is mandatory.)
+- TOOLS_INFO: optional, dict, func_name={openai_tool_spec}; -> Do not set it unless necessary! (Only `cmd_tool.py` sets it today; runtime string-first tolerance is mandatory regardless. A schema declared inside a package under `tools/` is adopted automatically under the registered tool key.)
 - PROMPT: optional, str, tool prompt; -> The usage of the tool should be included in the corresponding function comments, not here!
 - OBSERVATION: optional, str, content appended once to the first user observation message for enabled tools.
 - FLAG_TOOL_ENABLED: optional, bool, default True
