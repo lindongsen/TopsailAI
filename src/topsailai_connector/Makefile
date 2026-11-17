@@ -122,7 +122,7 @@ UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
 
-.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile package package-windows
+.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile package package-windows
 
 help:
 	@echo "Targets:"
@@ -135,12 +135,13 @@ help:
 	@echo "  test-server     Run the unit tests of the Server component only"
 	@echo "  test-node       Run the unit tests of the Node component only"
 	@echo "  test-shared     Run the unit tests of the shared packages only"
+	@echo "  test-race       Run the unit and integration suites under the race detector"
 	@echo "  coverage        Run the unit suite and report per-package coverage"
 	@echo "  coverage-html   Write an HTML coverage report to $(COVERAGE_HTML)"
 	@echo "  integration     Build the binaries, then run the integration suite"
 	@echo "  bdd             Run the Gherkin scenarios in tests/bdd/"
 	@echo "  e2e             Build the binaries, then drive real processes and a real bundle"
-	@echo "  check           vet, unit, coverage, integration, bdd and e2e in that order"
+	@echo "  check           vet, unit, coverage, race, integration, bdd and e2e in that order"
 	@echo "  fmt             Format every Go source file"
 	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
 	@echo "  test-windows-compile  Compile the windows test binaries and run vet for windows"
@@ -207,6 +208,32 @@ test-node:
 test-shared:
 	@mkdir -p $(TMP_DIR)
 	go test -count=1 -tags '$(UNIT_TAGS)' $(SHARED_PKGS) 2>&1 | tee $(TMP_DIR)/unit-test-shared.log
+
+# The race detector is a separate target rather than a flag on test-unit,
+# because it needs cgo and roughly doubles the run time, and because a data race
+# is invisible to an ordinary run: the Server keeps its routing registry behind a
+# mutex and the Node watches its identity file from a goroutine, so a plain
+# `go test` reports success whether or not those two are correct. `check` depends
+# on this target so a race cannot reach a commit.
+#
+# The integration suite is included because it is the only suite that drives the
+# listener and the dialer at the same time. It builds its own Node binary into a
+# temporary directory, so this target needs no `build` dependency and cannot
+# overwrite a binary an operator is using.
+#
+# What this target does not cover: the Node process the integration suite spawns
+# is built without `-race`, so only the in-process Server and Node code is
+# instrumented. A race inside the spawned binary would still be missed, and
+# closing that gap would mean building the test binary with `-race` as well.
+#
+# `-race` requires cgo, so this target needs a C toolchain. That is a real
+# requirement rather than a preference: a host without one cannot run the race
+# detector at all, and silently skipping it would restore the blind spot this
+# target exists to close.
+test-race:
+	@mkdir -p $(TMP_DIR)
+	go test -count=1 -race -tags '$(UNIT_TAGS)' ./... 2>&1 | tee $(TMP_DIR)/race-unit.log
+	go test -count=1 -race -tags '$(INTEGRATION_TAGS)' ./tests/integration/... 2>&1 | tee $(TMP_DIR)/race-integration.log
 
 # Coverage is reported per package rather than as one number, because a single
 # total hides the package that is actually untested. The profile is written to
@@ -380,7 +407,7 @@ package-zip:
 package-zip-windows:
 	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=0 PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
 
-check: vet test-unit coverage integration bdd e2e build-windows test-windows-compile
+check: vet test-unit coverage test-race integration bdd e2e build-windows test-windows-compile
 
 fmt:
 	go fmt ./...

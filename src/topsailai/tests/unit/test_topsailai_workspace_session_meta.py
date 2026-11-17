@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import socket
+import tempfile
 import time
 
 import pytest
@@ -715,11 +716,19 @@ def test_orphan_cleanup_retains_records_of_unauthorized_session():
     assert os.path.exists(stats_path)
 
 
-def test_orphan_cleanup_retains_socket_endpoint():
-    """A socket endpoint is owned by its channel, so cleanup never removes it."""
-    sock_path = os.path.join(
-        session_meta.FOLDER_WORKSPACE_TASK, "orphan-socket.4246.session.sock"
-    )
+def test_orphan_cleanup_retains_socket_endpoint(monkeypatch):
+    """A socket endpoint is owned by its channel, so cleanup never removes it.
+
+    The endpoint is bound in a short dedicated directory because ``sun_path``
+    is limited to 107 bytes: a runner basetemp can exceed that on its own, and
+    the failure would then be an environment limit rather than the cleanup
+    behaviour under test. The module folder is still redirected to that same
+    directory, so the real inventory scan and the real socket stay inside the
+    assertion boundary.
+    """
+    short_dir = tempfile.mkdtemp(prefix="sm-")
+    monkeypatch.setattr(session_meta, "FOLDER_WORKSPACE_TASK", short_dir)
+    sock_path = os.path.join(short_dir, "orphan-socket.4246.session.sock")
     endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         endpoint.bind(sock_path)
@@ -734,6 +743,8 @@ def test_orphan_cleanup_retains_socket_endpoint():
         assert os.path.exists(sock_path)
     finally:
         endpoint.close()
+        os.unlink(sock_path)
+        os.rmdir(short_dir)
 
 
 def test_orphan_cleanup_is_disabled_by_zero_retention():

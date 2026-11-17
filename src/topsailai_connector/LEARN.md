@@ -139,6 +139,31 @@ AI reflection archive, not here.
   nothing to merge. `cmd/connector-server` was the only such package. The fix is a
   test file, not an environment change: the missing tool is a symptom of a package
   nobody tested.
+- A suite that cannot observe a class of defect reports success for that class.
+  `make check` ran seven stages and none used `-race`, while the Server keeps a
+  routing registry behind a mutex and the Node publishes a regenerated identity
+  from a polling goroutine. Green meant "no race was observed by a build that
+  cannot observe one"; see `issues/done/issue-no-race-detection-in-check.md`.
+- Coverage and e2e are not substitutes for instrumentation. Coverage measures
+  which lines ran, not whether two goroutines touched one word, and an e2e script
+  observes only the answers, which a racy registry returns correctly until it
+  does not. Three reassuring signals (green check, 89.9% coverage, real-process
+  e2e) all pointed the same wrong way.
+- Prove the detector is active before trusting a green race run. `go tool nm` on a
+  `-race` test binary shows `racefuncenter`/`__tsan` symbols and the same binary
+  built without the flag shows none, and a throwaway module with a deliberate
+  unlocked counter must fail with `DATA RACE`. A race run that passes proves
+  nothing until one of those two checks has been done.
+- The race stage is a separate target, not a flag on `test-unit`. `-race` needs
+  cgo and roughly doubles the run time, and instrumenting `coverage` would change
+  the profile so the percentage stops being comparable with earlier runs. A
+  separate target also names the class of defect it covers, which is what the
+  original file lacked: nothing stated which classes the suite was responsible
+  for, so a new class had no place to be added.
+- The stage is incomplete in a way worth stating: the Node process the integration
+  suite spawns is built without `-race`, so only in-process code is instrumented.
+  A limitation written in the target's comment is reviewable; one discovered later
+  by someone trusting the target is not.
 
 ## A documented command is a claim that must be executed
 

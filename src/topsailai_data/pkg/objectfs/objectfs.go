@@ -253,49 +253,6 @@ func (f *ObjectFS) Stat(p string) (os.FileInfo, error) {
 	return objectInfo{name: path.Base(name), size: info.Size}, nil
 }
 
-// fileSize reports the byte length of one file without reading its content.
-//
-// The size comes from the underlying file information when the adapter stream
-// exposes it, so a large file is never loaded into memory just to report its
-// length and a folder is never mistaken for an empty file. A stream without
-// file information falls back to seeking to the end.
-func (f *ObjectFS) fileSize(name string) (int64, error) {
-	fd, err := f.Open(name)
-	if err != nil {
-		return 0, err
-	}
-	defer fd.Close()
-
-	if statter, ok := fd.(interface{ Stat() (os.FileInfo, error) }); ok {
-		info, statErr := statter.Stat()
-		if statErr != nil {
-			return 0, fmt.Errorf("objectfs: size %q: %w", name, statErr)
-		}
-		if info.IsDir() {
-			return 0, fmt.Errorf("objectfs: size %q: is a folder", name)
-		}
-		return info.Size(), nil
-	}
-
-	size, err := fd.Seek(0, io.SeekEnd)
-	if err != nil {
-		return 0, fmt.Errorf("objectfs: size %q: %w", name, err)
-	}
-	return size, nil
-}
-
-// isDir reports whether a path is a folder inside the object.
-//
-// Object storage keeps no folder entries, so a folder exists only when some
-// archived file lives below it.
-func (f *ObjectFS) isDir(name string) (bool, error) {
-	info, err := f.mgr.StatActualFile(f.ctx, f.id, name)
-	if err != nil {
-		return false, err
-	}
-	return info.IsDir, nil
-}
-
 // ReadDir lists the immediate entries of one folder inside the object.
 //
 // The listing comes from the adapter's names-only index so large file bodies

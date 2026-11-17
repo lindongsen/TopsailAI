@@ -89,8 +89,41 @@ class TestBuildCmdParameters:
 
         result = build_cmd_parameters('script.py', {'timeout': '60'})
 
-        # Note: timeout is returned as string from cmd_options.get()
-        assert result['timeout'] == '60'
+        # The parsed option is a string, but exec_cmd requires a number.
+        assert result['timeout'] == 60
+        assert isinstance(result['timeout'], int)
+
+    @pytest.mark.parametrize("raw", ["30", "60", "10"])
+    def test_build_cmd_parameters_coerces_string_timeout(self, raw):
+        """A documented timeout= option must reach exec_cmd as an int."""
+        from src.topsailai.utils.hook_tool import build_cmd_parameters
+
+        result = build_cmd_parameters('script.py', {'timeout': raw})
+
+        assert result['timeout'] == int(raw)
+        assert isinstance(result['timeout'], int)
+
+    @pytest.mark.parametrize("raw", ["abc", "0", "-5", "", "1.5"])
+    def test_build_cmd_parameters_rejects_invalid_timeout(self, raw):
+        """An unusable timeout falls back to the default instead of crashing."""
+        from src.topsailai.utils.hook_tool import build_cmd_parameters, DEFAULT_CMD_TIMEOUT
+
+        result = build_cmd_parameters('script.py', {'timeout': raw})
+
+        assert result['timeout'] == DEFAULT_CMD_TIMEOUT
+        assert isinstance(result['timeout'], int)
+
+    def test_build_cmd_parameters_timeout_from_parsed_env(self, monkeypatch):
+        """The real env parsing path yields an int, not the raw string."""
+        from src.topsailai.utils.hook_tool import build_cmd_parameters, get_hook_scripts_info
+
+        monkeypatch.setenv('TOPSAILAI_HOOK_SCRIPTS_PROBE', '/tmp/probe.py timeout=10')
+        parsed = get_hook_scripts_info('TOPSAILAI_HOOK_SCRIPTS_PROBE')
+
+        assert parsed['/tmp/probe.py']['timeout'] == '10'
+        result = build_cmd_parameters('/tmp/probe.py', parsed['/tmp/probe.py'])
+        assert result['timeout'] == 10
+        assert isinstance(result['timeout'], int)
 
     def test_build_cmd_parameters_with_env_keys(self):
         """Test building parameters with additional env keys."""

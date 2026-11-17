@@ -83,9 +83,15 @@ def build_cmd_parameters(script_file:str, cmd_options:dict) -> dict:
         >>> build_cmd_parameters("script.py", {"timeout": "60", "env_keys": "KEY1,KEY2"})
         {"cmd": "script.py", "timeout": 60, "env_keys": ["SESSION_ID", "TOPSAILAI_TASK_ID", "KEY1", "KEY2"]}
     """
+    timeout = format_tool.to_int(cmd_options.get("timeout"))
+    if timeout is None or timeout <= 0:
+        if cmd_options.get("timeout"):
+            logger.warning("hook script has invalid timeout: script=%s value=%r",
+                script_file, cmd_options.get("timeout"))
+        timeout = DEFAULT_CMD_TIMEOUT
     result = dict(
         cmd=script_file,
-        timeout=cmd_options.get("timeout") or DEFAULT_CMD_TIMEOUT,
+        timeout=timeout,
         env_keys=[
             "SESSION_ID",
             "TOPSAILAI_SESSION_ID",

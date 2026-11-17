@@ -71,7 +71,9 @@ def given_isolated_session_metadata(session_meta_model_ctx, bdd_tmp_path):
     agent = _FakeAgent("OldModel")
     instruction_cache.set_ai_agent(agent)
     session_id = "bdd-meta-model"
-    with patch.dict(os.environ, {"SESSION_ID": session_id}):
+    # get_session_id() prefers TOPSAILAI_SESSION_ID, so an inherited value would
+    # otherwise override the session this scenario creates and asserts on.
+    with patch.dict(os.environ, {"TOPSAILAI_SESSION_ID": session_id, "SESSION_ID": session_id}):
         meta_path = session_meta.create_session_meta(session_id, agent)
     assert meta_path is not None
     created = json.loads(Path(meta_path).read_text(encoding="utf-8"))
@@ -103,7 +105,15 @@ def when_operator_selects_registered_model(session_meta_model_ctx):
         file_input_completions=session_meta_model_ctx["completions_file"],
         instructions=agent_instruction.INSTRUCTIONS,
     )
-    with patch.dict(os.environ, {"SESSION_ID": session_meta_model_ctx["session_id"]}):
+    # Same precedence rule as the creation step: both spellings must agree, or
+    # the instruction writes metadata for the inherited session instead.
+    with patch.dict(
+        os.environ,
+        {
+            "TOPSAILAI_SESSION_ID": session_meta_model_ctx["session_id"],
+            "SESSION_ID": session_meta_model_ctx["session_id"],
+        },
+    ):
         session_meta_model_ctx["report"] = hook.call_instruction("/models", "ModelA")
 
 

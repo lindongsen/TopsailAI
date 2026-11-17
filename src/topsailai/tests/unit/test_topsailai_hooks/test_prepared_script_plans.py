@@ -123,6 +123,7 @@ def test_public_points_register_independently_and_execute_all_members(secure_tes
     from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
     from topsailai.hooks.configured_executor import ConfiguredHookExecutor
     from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
+    from topsailai.hooks.configuration import HookLimits
     sources, root, _ = secure_test_root
     module_folder = sources / "modules"
     script_folder = sources / "scripts"
@@ -135,7 +136,8 @@ def test_public_points_register_independently_and_execute_all_members(secure_tes
     scripts = [protocol_script(script_folder / name, name, trace) for name in ("z", "A")]
     other = protocol_script(sources / "other", "other")
     bad = script(sources / "bad")
-    runtime, scope = helpers._runtime(sources, root)
+    settings = HookSettings(limits=HookLimits(dispatch_timeout_ms=5000))
+    runtime, scope = helpers._runtime(sources, root, settings=settings)
     authorize(runtime, [module, *scripts, other])
     declarations = tuple(HookPointDeclaration(f"hook__test__before__{name}",
         EventDefinition(f"hook__test__before__{name}", 1), "before", "sync", "test")
@@ -147,7 +149,7 @@ def test_public_points_register_independently_and_execute_all_members(secure_tes
         ConfiguredHookPoint(declarations[1].name, declarations[1].definition,
             script=ConfiguredScript(other, platform_policy=POLICY)),
         ConfiguredHookPoint(declarations[2].name, declarations[2].definition,
-            script=ConfiguredScript(bad, platform_policy=POLICY))), HookSettings())
+            script=ConfiguredScript(bad, platform_policy=POLICY))), settings)
     from topsailai.hooks import script_runner
     decoded = []
     real_decode = script_runner.decode_script_result

@@ -10,6 +10,42 @@ import (
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 )
 
+// lockAcquireTimeout bounds one lock acquisition attempt in a contention test.
+//
+// A non-blocking acquisition returns immediately, so a bounded wait proves the
+// implementation never blocks. Without the bound, a regression that drops the
+// non-blocking flag hangs the whole test binary until the harness timeout
+// instead of failing the test that covers the contract.
+const lockAcquireTimeout = 5 * time.Second
+
+// acquireWithin runs one acquisition attempt and fails the test when it does
+// not return within lockAcquireTimeout.
+//
+// The attempt runs in its own goroutine so a blocking implementation cannot
+// stall the test. A timed-out attempt is reported as a contract violation
+// rather than a hang, which keeps the failure attributable to the lock test.
+func acquireWithin(t *testing.T, acquire func() (*Lock, error)) (*Lock, error) {
+	t.Helper()
+
+	type result struct {
+		lock *Lock
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		lock, err := acquire()
+		done <- result{lock: lock, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		return got.lock, got.err
+	case <-time.After(lockAcquireTimeout):
+		t.Fatalf("lock acquisition did not return within %s, so the lock blocks instead of failing with ErrObjectLocked", lockAcquireTimeout)
+		return nil, nil
+	}
+}
+
 func TestAcquireWriteLockAndRelease(t *testing.T) {
 	root := t.TempDir()
 	objectPath := filepath.Join(root, "obj")
@@ -65,7 +101,7 @@ func TestWriteLockContention(t *testing.T) {
 	}
 	defer first.Release()
 
-	second, err := AcquireWriteLock(objectPath)
+	second, err := acquireWithin(t, func() (*Lock, error) { return AcquireWriteLock(objectPath) })
 	if err == nil {
 		second.Release()
 		t.Fatal("expected second write lock to fail")
@@ -110,7 +146,7 @@ func TestWriteLockBlocksReadLock(t *testing.T) {
 	}
 	defer writeLock.Release()
 
-	readLock, err := AcquireReadLock(objectPath)
+	readLock, err := acquireWithin(t, func() (*Lock, error) { return AcquireReadLock(objectPath) })
 	if err == nil {
 		readLock.Release()
 		t.Fatal("expected read lock to fail while write lock is held")
@@ -133,7 +169,7 @@ func TestReadLockBlocksWriteLock(t *testing.T) {
 	}
 	defer readLock.Release()
 
-	writeLock, err := AcquireWriteLock(objectPath)
+	writeLock, err := acquireWithin(t, func() (*Lock, error) { return AcquireWriteLock(objectPath) })
 	if err == nil {
 		writeLock.Release()
 		t.Fatal("expected write lock to fail while read lock is held")
@@ -206,7 +242,7 @@ func TestLockReleasedAfterGoroutine(t *testing.T) {
 	}
 
 	// The main goroutine should not be able to acquire the lock now.
-	_, err := AcquireWriteLock(objectPath)
+	_, err := acquireWithin(t, func() (*Lock, error) { return AcquireWriteLock(objectPath) })
 	if err == nil {
 		close(release)
 		t.Fatal("expected lock contention with goroutine")

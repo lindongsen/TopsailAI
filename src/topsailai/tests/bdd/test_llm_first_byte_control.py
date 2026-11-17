@@ -93,6 +93,11 @@ def controlled_case(monkeypatch, tmp_path, request, phase, timeout):
     from topsailai.workspace.folder_utils import get_interrupt_flag_path, get_pause_flag_path
     from topsailai.workspace import folder_constants
     monkeypatch.setattr(folder_constants, "FOLDER_WORKSPACE_TASK", str(tmp_path))
+    # get_session_id() resolves TOPSAILAI_SESSION_ID before SESSION_ID, so both
+    # spellings must name the same session. Setting only SESSION_ID lets an
+    # inherited TOPSAILAI_SESSION_ID win, and the production code then writes
+    # its control markers under a different session than this test asserts.
+    monkeypatch.setenv("TOPSAILAI_SESSION_ID", "wire")
     monkeypatch.setenv("SESSION_ID", "wire")
     agent = SimpleNamespace(runtime=SimpleNamespace(llm_model=model))
     agent._get_interrupt_flag_path = lambda: get_interrupt_flag_path(str(tmp_path), "wire", os.getpid())
