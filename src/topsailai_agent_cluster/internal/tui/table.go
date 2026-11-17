@@ -515,11 +515,19 @@ func statusSummaryLabel(state string) string {
 // already the standard "unknown". It shares the dim colour with "unknown" and
 // "idle", so the row itself does not distinguish them; the summary subset label
 // and the refusal message carry that difference instead.
+//
+// stateNoSessions is not a session state either: it is the placeholder row for an
+// Endpoint that reported an empty inventory. It is dim rather than yellow because
+// yellow means "uncertain, needs a look", while an empty inventory is a definite
+// answer. Colouring it yellow made a healthy Endpoint with nothing to show read as
+// a condition the operator had to investigate, which is the opposite of what the
+// row means. It stays outside the state vocabulary, so the SESSION_STATUS cell and
+// the summary line still print the placeholder text and never a state name.
 func stateStyle(state string) string {
 	switch state {
 	case "running":
 		return ansiGreen
-	case "stopped", "completed", "idle", "unknown", "unverified":
+	case "stopped", "completed", "idle", "unknown", "unverified", stateNoSessions:
 		return ansiDim
 	case "failed", "error", "offline":
 		return ansiRed

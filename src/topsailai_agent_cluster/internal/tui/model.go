@@ -46,6 +46,14 @@ type SessionRow struct {
 	Messages *protocol.MessageCounts `json:"messages,omitempty"`
 }
 
+// stateNoSessions is the placeholder state of a row that stands for an Endpoint
+// with no sessions to show. It is not a session state: no session exists, so the
+// row carries no session identity and cannot be addressed. It is a named value
+// rather than a literal because the row is produced here and coloured in
+// table.go, and two spellings of one value would let the colour silently fall
+// back to the default the moment the text changed.
+const stateNoSessions = "no sessions"
+
 // ListRows converts endpoint reports into a deterministic session list.
 func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.InventoryReport, filter string) []SessionRow {
 	rows := make([]SessionRow, 0)
@@ -57,7 +65,7 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		endpointStale := endpoint.ConnectionState != "" && endpoint.ConnectionState != "online"
 		report, ok := reports[endpoint.EndpointID]
 		if !ok {
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: "no sessions", Stale: endpointStale, CollectionStatus: "unknown"})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: stateNoSessions, Stale: endpointStale, CollectionStatus: "unknown"})
 			continue
 		}
 		freshness := make(map[string]protocol.AdapterSummary, len(report.Adapters))
@@ -66,7 +74,7 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		}
 		if len(report.Sessions) == 0 {
 			lastSuccess := endpointLastSuccess(report)
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: "no sessions", Stale: endpointStale, CollectionStatus: report.CollectionStatus, LastSuccessAtMS: lastSuccess})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: stateNoSessions, Stale: endpointStale, CollectionStatus: report.CollectionStatus, LastSuccessAtMS: lastSuccess})
 		}
 		for _, session := range report.Sessions {
 			adapter := freshness[session.AdapterID]
