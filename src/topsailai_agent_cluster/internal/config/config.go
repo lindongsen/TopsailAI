@@ -50,7 +50,17 @@ type Config struct {
 	// stops existing. Collapsing them into one window would delete the record at
 	// the moment it became degraded, leaving no trace that the machine existed.
 	EndpointDegradedRetention time.Duration
-	CommandAllowlistFile      string
+	// WriteLivenessBudget bounds how long the Server may keep running while the
+	// database refuses every write. A zero value disables the watchdog, which is
+	// the right choice only when the operator prefers a blocked Server to a
+	// restarted one; a positive value ends the process instead of letting it serve
+	// reads while silently discarding every state change.
+	WriteLivenessBudget time.Duration
+	// WriteLivenessInterval is how often the watchdog probes the database. It is
+	// separate from the budget so a short probe interval can detect recovery
+	// quickly without shortening the tolerance for a transient lock.
+	WriteLivenessInterval time.Duration
+	CommandAllowlistFile  string
 	// EndpointAccessPolicyDir is the Endpoint-local directory holding one access
 	// policy file per caller token. An empty value, or a directory that holds no
 	// policy file, permits every caller, which keeps existing deployments
@@ -117,7 +127,7 @@ func Defaults(role string) Config {
 	if role == "agent-cluster-endpoint" {
 		databasePath = ".tmp/endpoint.sqlite"
 	}
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server", HeartbeatAckTimeout: 3 * time.Second, UnhealthyWindow: 30 * time.Second}
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, WriteLivenessBudget: 2 * time.Minute, WriteLivenessInterval: 5 * time.Second, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server", HeartbeatAckTimeout: 3 * time.Second, UnhealthyWindow: 30 * time.Second}
 }
 
 // Load parses command-line flags and applies environment configuration.
@@ -143,6 +153,25 @@ func Load(args []string, role string) (Config, error) {
 				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY: %w", err)
 			}
 			cfg.EndpointExpiry = parsed
+		}
+		// The write-liveness bounds are read here rather than inside the watchdog so
+		// the process boundary owns configuration, exactly as every other setting
+		// does. A malformed duration is rejected at startup instead of silently
+		// falling back to the default, because a watchdog that runs with an
+		// unintended budget is indistinguishable from one that is disabled.
+		if value := os.Getenv("AGENT_CLUSTER_SERVER_WRITE_LIVENESS_BUDGET"); value != "" {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_WRITE_LIVENESS_BUDGET: %w", err)
+			}
+			cfg.WriteLivenessBudget = parsed
+		}
+		if value := os.Getenv("AGENT_CLUSTER_SERVER_WRITE_LIVENESS_INTERVAL"); value != "" {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_WRITE_LIVENESS_INTERVAL: %w", err)
+			}
+			cfg.WriteLivenessInterval = parsed
 		}
 		if value := os.Getenv("AGENT_CLUSTER_SERVER_COMMAND_RETENTION"); value != "" {
 			parsed, err := time.ParseDuration(value)
@@ -272,6 +301,8 @@ func Load(args []string, role string) (Config, error) {
 		flags.DurationVar(&cfg.EndpointExpiry, "endpoint-expiry", cfg.EndpointExpiry, "retention window for offline Endpoint records")
 		flags.DurationVar(&cfg.CommandRetention, "command-retention", cfg.CommandRetention, "retention window for terminal command records")
 		flags.DurationVar(&cfg.EndpointDegradedRetention, "endpoint-degraded-retention", cfg.EndpointDegradedRetention, "retention window for degraded Endpoint records")
+		flags.DurationVar(&cfg.WriteLivenessBudget, "write-liveness-budget", cfg.WriteLivenessBudget, "how long the Server may run while the database refuses every write; zero disables the watchdog")
+		flags.DurationVar(&cfg.WriteLivenessInterval, "write-liveness-interval", cfg.WriteLivenessInterval, "how often the write-liveness watchdog probes the database")
 		flags.Func("endpoint-dial-addresses", "comma-separated endpoint_id=wss://address pairs the Server dials", func(value string) error {
 			addresses, err := ParseDialAddresses(value)
 			if err != nil {
@@ -387,6 +418,18 @@ func (c Config) Validate() error {
 	}
 	if c.UnhealthyWindow <= 0 {
 		return fmt.Errorf("unhealthy window must be positive")
+	}
+	// A negative write-liveness budget is a configuration mistake, not a request to
+	// disable the watchdog: zero is the documented way to disable it. Accepting a
+	// negative value would make the watchdog fire on the first probe, which looks
+	// like a database fault rather than the misconfiguration it is.
+	if c.WriteLivenessBudget < 0 {
+		return fmt.Errorf("write liveness budget must not be negative")
+	}
+	// A non-positive interval would make the watchdog probe in a tight loop, which
+	// turns a diagnostic into a load source on the very database it is watching.
+	if c.WriteLivenessInterval <= 0 {
+		return fmt.Errorf("write liveness interval must be positive")
 	}
 	switch c.ChannelDirection {
 	case DirectionEndpointInitiated, DirectionServerInitiated, DirectionBidirectional:

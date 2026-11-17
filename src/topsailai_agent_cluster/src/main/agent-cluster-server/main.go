@@ -231,11 +231,36 @@ func main() {
 		defer close(expiryDone)
 		runEndpointExpiry(ctx, logger, store, cfg.EndpointExpiry, cfg.CommandRetention, cfg.EndpointDegradedRetention)
 	}()
+	// The write-liveness watchdog is the only component allowed to end the process
+	// on its own. It exists because a measured outage ran for two hours and
+	// fifty-six minutes while every write failed and reads kept working, so the API
+	// answered and the process looked healthy while every state change was
+	// discarded. A Server that cannot persist anything is not serving its purpose,
+	// and continuing to run hides that from the operator and from a supervisor that
+	// only checks liveness.
+	//
+	// It exits from this goroutine rather than signalling the main flow, because the
+	// main flow is blocked in service.Run and would only observe the condition after
+	// a graceful shutdown that may never come. The coding requirement is explicit
+	// that a lost write must terminate the process from any thread, so the log is
+	// flushed by the logger's own synchronous write and the process ends here.
+	writeLivenessDone := make(chan struct{})
+	go func() {
+		defer close(writeLivenessDone)
+		err := runWriteLiveness(ctx, logger, store, cfg.WriteLivenessInterval, cfg.WriteLivenessBudget)
+		if err == nil {
+			return
+		}
+		logger.Error("server cannot persist state", "error", err, "budget", cfg.WriteLivenessBudget.String())
+		_ = service.Close()
+		os.Exit(1)
+	}()
 	logger.Info("server service starting", "api_listen_address", cfg.APIListenAddress, "channel_listen_address", channelListenAddress, "channel_direction", cfg.ChannelDirection, "database_path", cfg.DatabasePath, "endpoint_expiry", cfg.EndpointExpiry.String())
 	runErr := service.Run(ctx)
 	stop()
 	<-livenessDone
 	<-expiryDone
+	<-writeLivenessDone
 	if runErr != nil {
 		// Run returns nil on a graceful shutdown and the listen error when a port
 		// cannot be bound, so a non-zero exit is what lets a supervisor or launcher
