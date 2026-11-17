@@ -470,9 +470,9 @@ TOPSAILAI_CONTEXT_ONE_MESSAGE_MAX_KB=30
 # Set to 0 to disable truncation (all session messages are kept).
 TOPSAILAI_SESSION_HEAD_TAIL_OFFSET=0
 
-# Archive/link large context messages. Enabled by default. Set to 0 to disable.
+# Archive/link large context messages. Disabled by default. Set to 1 to enable.
 # Native tool calls always disable archiving to preserve tool-call pairing.
-TOPSAILAI_ARCHIVE_MESSAGE_ENABLED=1
+TOPSAILAI_ARCHIVE_MESSAGE_ENABLED=0
 
 # Chat History Managers
 # Format: Manager classes separated by semicolons (';')

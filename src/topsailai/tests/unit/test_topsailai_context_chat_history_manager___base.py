@@ -9,8 +9,12 @@ Created: 2025-10-29
 """
 
 import json
+import os
 import unittest
 from unittest.mock import patch, MagicMock
+
+import pytest
+
 from topsailai.context.chat_history_manager.__base import (
     ChatHistoryMessageData,
     MessageStorageBase,
@@ -18,6 +22,20 @@ from topsailai.context.chat_history_manager.__base import (
     ChatHistoryBase,
 )
 from topsailai.ai_base.constants import ROLE_SYSTEM, ROLE_USER
+
+
+@pytest.fixture(autouse=True)
+def enable_archive_messages():
+    """Enable archive messages for every test in this module.
+
+    The link_messages tests assert archiving behavior, which is disabled by
+    default in production. Each test must declare the precondition it depends
+    on instead of inheriting it from the default value. Tests that verify the
+    disabled path patch is_archive_message_enabled directly, so this fixture
+    does not weaken them.
+    """
+    os.environ["TOPSAILAI_ARCHIVE_MESSAGE_ENABLED"] = "1"
+    yield
 
 
 class TestChatHistoryMessageData(unittest.TestCase):

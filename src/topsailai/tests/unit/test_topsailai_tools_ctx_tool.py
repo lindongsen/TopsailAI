@@ -10,12 +10,27 @@ from unittest.mock import patch, MagicMock
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, '/root/ai/TopsailAI/src/topsailai')
 
 from topsailai.tools.ctx_tool import (
     retrieve_msg,
     TOOLS,
 )
+
+
+@pytest.fixture(autouse=True)
+def enable_archive_messages():
+    """Enable archive messages for every test in this module.
+
+    These tests exercise archiving-enabled behavior: retrieve_msg lookups and
+    the FLAG_TOOL_ENABLED registry flag. Archiving is disabled by default in
+    production, so each test must declare the precondition it depends on
+    instead of inheriting it from the default value.
+    """
+    os.environ["TOPSAILAI_ARCHIVE_MESSAGE_ENABLED"] = "1"
+    yield
 
 
 class TestRetrieveMsgWithNoAgent(unittest.TestCase):
