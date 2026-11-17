@@ -180,7 +180,7 @@ def is_use_tool_calls() -> bool:
 
 def is_archive_message_enabled() -> bool:
     """Return whether archive/link-message logic is enabled."""
-    return is_true(os.getenv("TOPSAILAI_ARCHIVE_MESSAGE_ENABLED", "1"))
+    return is_true(os.getenv("TOPSAILAI_ARCHIVE_MESSAGE_ENABLED", "0"))
 
 
 def get_history_load_max_entries(default: int = 100) -> int:

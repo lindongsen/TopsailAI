@@ -53,6 +53,20 @@ func (s *followStub) startCount() int {
 	return s.started
 }
 
+// followRequests returns the recorded requests so a test can assert the exact
+// target and generation a stream was opened with. It satisfies followRecorder,
+// which lets a test reuse waitFollowRequests instead of inventing a wait loop.
+func (s *followStub) followRequests() []outputRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]outputRequest(nil), s.requests...)
+}
+
+// followCount reports how many streams were opened, for followRecorder.
+func (s *followStub) followCount() int {
+	return s.startCount()
+}
+
 // TestRenderFollowRecordSanitizesProviderLines proves a streamed line cannot
 // carry a terminal control sequence into the operator's terminal, because the
 // body is provider data no matter how it arrives.

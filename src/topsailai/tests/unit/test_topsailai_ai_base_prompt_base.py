@@ -1374,7 +1374,10 @@ class TestPromptBase(unittest.TestCase):
         threshold = ThresholdContextHistory()
         messages = [{"role": "user", "content": f"message {i}"} for i in range(100)]
 
-        with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "1"}):
+        # Enable archiving so native tool calls are the only reason for False;
+        # otherwise the disabled-by-default archive switch would mask it.
+        with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "1",
+                           "TOPSAILAI_ARCHIVE_MESSAGE_ENABLED": "1"}):
             self.assertFalse(threshold.is_exceeded(messages))
 
     @patch("topsailai.ai_base.prompt_base.count_tokens")
@@ -1387,7 +1390,10 @@ class TestPromptBase(unittest.TestCase):
         messages = [{"role": "user", "content": f"message {i}"} for i in range(100)]
         mock_count_tokens.return_value = 110000  # exceeds 0.8 * 128000
 
-        with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "0"}):
+        # Archiving is disabled by default, so this test must enable it
+        # explicitly to reach the threshold evaluation it asserts.
+        with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "0",
+                           "TOPSAILAI_ARCHIVE_MESSAGE_ENABLED": "1"}):
             self.assertTrue(threshold.is_exceeded(messages))
 
 

@@ -112,7 +112,7 @@ def get_available_completions() -> List[str]:
         # spelling cannot be accepted without being discoverable.
         completions.extend("/" + alias for alias in RUNTIME_COMMAND_ALIASES)
     if cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects:
-        completions.extend(["/kill", "/driver", "/driver start", "/driver status", "/driver stop", "/driver log", "/driver meta", "/start"])
+        completions.extend(["/kill", "/watch", "/driver", "/driver start", "/driver status", "/driver stop", "/driver log", "/driver meta", "/start"])
 
     if (cli_state.current_scope == "runtime" or
             (cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects)):

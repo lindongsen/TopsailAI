@@ -9,6 +9,7 @@ from unittest.mock import patch
 from topsailai.utils.env_tool import (
     is_debug_mode,
     is_use_tool_calls,
+    is_archive_message_enabled,
     is_chat_multi_line,
     is_input_pipe_enabled,
     get_input_pipe_timeout,
@@ -85,6 +86,36 @@ class TestUseToolCalls:
         """Test tool calls are enabled for any non-zero value"""
         with patch.dict(os.environ, {"USE_TOOL_CALLS": "true"}):
             assert is_use_tool_calls() is True
+
+
+class TestArchiveMessageEnabled:
+    """Test is_archive_message_enabled function"""
+
+    def test_archive_message_disabled_default(self):
+        """Test archiving is disabled when the variable is unset"""
+        with patch.dict(os.environ, {}, clear=True):
+            assert is_archive_message_enabled() is False
+
+    def test_archive_message_disabled_explicit_0(self):
+        """Test archiving is disabled when the variable is 0"""
+        with patch.dict(os.environ, {"TOPSAILAI_ARCHIVE_MESSAGE_ENABLED": "0"}):
+            assert is_archive_message_enabled() is False
+
+    def test_archive_message_disabled_empty_value(self):
+        """Test an empty value disables archiving, matching the unset default"""
+        with patch.dict(os.environ, {"TOPSAILAI_ARCHIVE_MESSAGE_ENABLED": ""}):
+            assert is_archive_message_enabled() is False
+
+    def test_archive_message_enabled_1(self):
+        """Test archiving is enabled when the variable is 1"""
+        with patch.dict(os.environ, {"TOPSAILAI_ARCHIVE_MESSAGE_ENABLED": "1"}):
+            assert is_archive_message_enabled() is True
+
+    def test_archive_message_enabled_truthy_values(self):
+        """Test archiving is enabled for every accepted truthy spelling"""
+        for value in ("true", "TRUE", "yes", "on", "enabled", " 1 "):
+            with patch.dict(os.environ, {"TOPSAILAI_ARCHIVE_MESSAGE_ENABLED": value}):
+                assert is_archive_message_enabled() is True, value
 
 
 class TestChatMultiLine:

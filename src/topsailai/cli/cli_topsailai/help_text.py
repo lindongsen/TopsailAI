@@ -76,7 +76,7 @@ def print_scopes() -> None:
         (
             "workspace",
             "The default task-watcher scope. It lists discovered session and task log files so you can monitor and manage work across the current TopsailAI home.",
-            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, terminate a displayed PID with /kill <number> after confirmation, launch agents, use /driver <number> (alias /driver meta <number>) to read driver metadata, /driver start <number> to start a session driver, or /driver status <number>, /driver stop <number> and /driver log <number> for session drivers, enter project or doc scope, and show help.",
+            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, auto-refresh the list every 5 seconds with /watch until you type anything, terminate a displayed PID with /kill <number> after confirmation, launch agents, use /driver <number> (alias /driver meta <number>) to read driver metadata, /driver start <number> to start a session driver, or /driver status <number>, /driver stop <number> and /driver log <number> for session drivers, enter project or doc scope, and show help.",
         ),
         (
             "runtime",
@@ -219,6 +219,12 @@ def print_help(
             "desc": "Re-scan the task directory and refresh the file list. In workspace scope, r all or /refresh all also shows rows whose session metadata records status=completed.",
             "example": "Example: r all",
             "scopes": ["workspace", "project", "doc"],
+        },
+        {
+            "cmd": "/watch",
+            "desc": "Refresh the workspace task list every 5 seconds and print one watching hint per cycle; ordinary workspace task list only. Any typed input stops watching and returns to the prompt.",
+            "example": "Example: /watch",
+            "scopes": ["workspace"],
         },
         {
             "cmd": "/session <number>",

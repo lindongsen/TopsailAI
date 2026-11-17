@@ -153,7 +153,7 @@ Key logic:
 
 ## Archive Message Switch
 
-Added `TOPSAILAI_ARCHIVE_MESSAGE_ENABLED` (default `1`) to let operators disable archive/link-message processing independently, while native tool calls continue to force archiving off to preserve tool-call pairing; session message persistence remains unchanged.
+Added `TOPSAILAI_ARCHIVE_MESSAGE_ENABLED` (default `0`) to let operators disable archive/link-message processing independently, while native tool calls continue to force archiving off to preserve tool-call pairing; session message persistence remains unchanged.
 
 ## Dynamic Model Context Window Guard
 

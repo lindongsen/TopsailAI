@@ -76,6 +76,10 @@ MANAGED_PROJECT_SPELLINGS = _command_spellings("p", MANAGED_PROJECT_ALIASES)
 # Every accepted spelling of the project-scope recent-history command.
 PROJECT_RECENT_SPELLINGS = _command_spellings("r", PROJECT_RECENT_ALIASES)
 
+# Every accepted spelling of the workspace task-list watch command. "watch"
+# takes no argument, so the declaration carries no aliases.
+WATCH_COMMAND_SPELLINGS = _command_spellings("watch", ())
+
 # Runtime command aliases, declared once so recognition, completion and help
 # cannot drift apart. The key is the bare alias token and the value is the
 # canonical command token it expands to. The leading "/" is optional in runtime

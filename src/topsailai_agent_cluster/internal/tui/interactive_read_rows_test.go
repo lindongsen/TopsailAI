@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -200,5 +201,53 @@ func TestLogsReadsUnverifiedRow(t *testing.T) {
 	}
 	if !strings.Contains(output, "log") {
 		t.Fatalf("snapshot content missing from output: %q", output)
+	}
+}
+
+// TestLogsFollowStreamsUnverifiedRow proves the streaming read is widened by the
+// same rule as the snapshot read. The snapshot case above covers logs without a
+// flag, so without this test the follow path could keep a generation gate that
+// nobody exercised: the operator would read one snapshot and then be refused the
+// live tail for exactly the session that needs watching.
+//
+// The assertion checks the generation the client actually sent, because an empty
+// generation is the whole point. A test that only asserted "a stream opened"
+// would pass even if the client had substituted the empty generation with a
+// placeholder that the Endpoint would reject.
+func TestLogsFollowStreamsUnverifiedRow(t *testing.T) {
+	stub := &followStub{interactiveStub: *readRowsStub(), blockOpen: true}
+	// runWatchREPL supplies the keypress-capable reader, because startFollow
+	// returns nil without one and the stream would never open. Using runScope
+	// here would silently exercise the degradation path instead of the tail.
+	_, diagnostics, _ := runWatchREPL(t, stub, []string{"cd host-one/endpoint-1", "list", "logs -f 1", "quit"}, nil)
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	requests := waitFollowRequests(t, stub, 1)
+	request := requests[0]
+	if request.resourceID != "res-unverified" {
+		t.Fatalf("resource=%q want res-unverified", request.resourceID)
+	}
+	if request.generation != "" {
+		t.Fatalf("generation=%q want empty for an unverified row", request.generation)
+	}
+}
+
+// TestLogsHelpStatesUnverifiedRowsAreReadable proves the help body advertises the
+// rule the command actually implements. The read widening is invisible from the
+// command name, so an operator who sees an unverified row has no way to discover
+// that logs can read it; messages already states the same rule for its own
+// surface, and the two read surfaces must not disagree about what is readable.
+func TestLogsHelpStatesUnverifiedRowsAreReadable(t *testing.T) {
+	var out bytes.Buffer
+	if err := PrintCommandHelp(&out, "logs"); err != nil {
+		t.Fatalf("PrintCommandHelp: %v", err)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "unverified") {
+		t.Fatalf("logs help never mentions an unverified row: %q", rendered)
+	}
+	if !strings.Contains(rendered, "empty generation") {
+		t.Fatalf("logs help does not state the empty generation: %q", rendered)
 	}
 }
