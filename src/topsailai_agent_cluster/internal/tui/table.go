@@ -29,8 +29,8 @@ type TableOptions struct {
 	// value is printed in full when the terminal has room for it. It is set only
 	// by a real terminal boundary: a redirected stream and an unknown width keep
 	// the capped layout, because their width is not a budget that can be spent.
-	Grow   bool
-	Color  ColorPolicy
+	Grow  bool
+	Color ColorPolicy
 	Clean bool
 	// All includes endpoints that are not online. The default omits them, because
 	// an offline endpoint cannot report: querying it produces a failure that
@@ -38,7 +38,7 @@ type TableOptions struct {
 	// from that failure reads as a session observation it never made. Clean stays
 	// a separate decision, because it also hides an online endpoint whose fetch
 	// failed, which the default still shows.
-	All bool
+	All    bool
 	OnRows func([]SessionRow)
 	// EnrichRows attaches live per-row observations to the rows about to be
 	// printed. It is a function rather than a flag so the renderer never learns
