@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -156,12 +157,15 @@ func TestRunHeartbeatKeepsAcknowledgedServerHealthy(t *testing.T) {
 	}()
 
 	// Six beats span three unhealthy windows, so a rule that counted beats
-	// instead of acknowledged time would fire here.
-	heartbeatCtx, stopHeartbeat := context.WithTimeout(ctx, 600*time.Millisecond)
+	// instead of acknowledged time would fire here. Readiness is asserted while
+	// the loop is still running: the loop context is also the write context, so
+	// letting it expire tears the connection down and the assertion would race
+	// that shutdown instead of measuring the healthy path.
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
 	defer stopHeartbeat()
-	if err := client.RunHeartbeat(heartbeatCtx, 50*time.Millisecond); err != nil && heartbeatCtx.Err() == nil {
-		t.Fatalf("RunHeartbeat returned %v while the server was answering", err)
-	}
+	loopDone := make(chan error, 1)
+	go func() { loopDone <- client.RunHeartbeat(heartbeatCtx, 50*time.Millisecond) }()
+	time.Sleep(300 * time.Millisecond)
 
 	mu.Lock()
 	count := unhealthy
@@ -171,6 +175,10 @@ func TestRunHeartbeatKeepsAcknowledgedServerHealthy(t *testing.T) {
 	}
 	if !client.Ready() {
 		t.Fatal("the endpoint must stay ready while the server answers")
+	}
+	stopHeartbeat()
+	if err := <-loopDone; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunHeartbeat returned %v while the server was answering", err)
 	}
 }
 

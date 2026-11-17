@@ -360,3 +360,76 @@ the fallback cost, not merely a separate defect.
   Endpoint `channelLoop` should not run these reads inline.
 
 No code was changed for this re-measurement.
+
+## Review of the fix in `09d31dbf`
+
+Reviewed commit `09d31dbf feat: report message counts in the inventory so list reads only persisted data`
+(ancestor of `staging` HEAD `318b6213`). 30 files, +558 / -1624.
+
+### What the change does, verified by reading the diff
+
+- Discovery now runs `workspace list --json --local --include-runtime`
+  (`providers/topsailai/read.go:130`), so counts ride in the periodic report.
+- `rowMessageCounts(item)` (`providers/topsailai/query.go`) is shared by discovery and the on-demand
+  read, so the two paths cannot disagree.
+- `sessionAttributes.Messages` -> `protocol.Session.Messages` -> `SessionRow.Messages` -> cell.
+- Absence stays absent and renders `-`; a measured zero renders `0/0` (`internal/tui/table.go:747`).
+- All six `EnrichRows` call sites removed; `MetricsEnricher`, `CachedMetricsEnricher`, `MetricsCache`,
+  `metrics.go`, `metrics_batch.go` and their tests deleted.
+- Byte bound raised from 1 MiB to `maxMetricsBatchBytes` (4 MiB) because the document is now the same
+  one the metrics read used.
+
+This matches the human's standing rule recorded in `MEMORY.md`: `list` renders only the Server's
+persisted inventory and never triggers a provider read.
+
+### Verified clean
+
+- `go build ./...` and `go vet ./...` pass in the project module and in `providers/topsailai`.
+- No dangling references to the deleted symbols; only one historical comment in
+  `src/main/agent-cluster-cli/refresh_test.go:225`.
+- `--include-runtime` genuinely changes provider output: without it every row is `"runtime": null`,
+  with it rows carry `runtime.state` and `runtime.data`.
+- The provider CLI silently accepts an unknown flag, so a provider older than `--include-runtime`
+  degrades to absent counts instead of failing the collection. The version-skew claim holds.
+- Server channel decode is lenient (`json.Unmarshal`, `internal/channel/server.go:748`), so the new
+  `messages` field is not rejected.
+- `make test-unit-server` and `make test-unit-endpoint` pass.
+
+### Measured cost of the trade
+
+Discovery without the flag 0.60-0.64 s, with the flag 0.90-0.93 s: about +0.30 s (+48%) per
+collection cycle. The cost moved from per-render to per-cycle, which is the correct trade under the
+rule, but the number is not recorded in the docs.
+
+### Blocking findings
+
+1. **The inventory -> row link is untested.** Deleting `Messages: session.Messages`
+   (`internal/tui/model.go:91`) leaves the whole `internal/tui` suite green (37 s run, `ok`). The
+   existing tests build `SessionRow` literals directly (`table_messages_test.go:72`), so they prove
+   the cell renders a value that was handed to it, never that `ListRows` carries it from inventory.
+2. **The discovery -> report link is untested.** Replacing the attach with `_ = counts`
+   (`providers/topsailai/read.go:251`) leaves the whole provider suite green (`ok`, 0.5 s), i.e. the
+   feature can be silently disabled. The provider tests only changed the expected call string to
+   include `--include-runtime`; none asserts that counts appear in the observation.
+3. **`MEMORY.md` states a consequence that no test enforces.** It requires "a new `list` read surface
+   must be proven to issue zero Endpoint requests by counting provider invocations". No such test
+   exists.
+
+### Non-blocking findings
+
+- `GetMetrics` and `GetMetricsBatch` now have no production caller; only
+  `tests/bdd/steps_endpoint_query_permission.go:232` uses `GetMetrics`. No CLI or TUI command exposes
+  them, so the doc comment "an operator who explicitly asks for the counts right now" describes a
+  surface that does not exist. Either add it or state the routes are retained for external callers.
+- Live verification is impossible: `agent-cluster-endpoint` (22:59) and `agent-cluster-server`
+  (23:26) predate the fix (23:42), and the endpoint binary contains no `include-runtime` string. No
+  live latency claim can be made from this build.
+- `make test-unit` fails in `internal/channel` (`TestFollowDeliversAFullTailToASlowConsumer`,
+  `follow_end_termination_test.go:229`). Proven pre-existing: reproduced 1 failure in 5 runs in a
+  detached worktree at `47e62683`, which predates the fix, with different tests failing there
+  (`TestRunHeartbeatKeepsAcknowledgedServerHealthy`, `TestRequestFollowOverflowSendsCancelFrame`).
+  The fix does not touch `internal/channel`.
+- `make test-unit-cli` failed once in `internal/tui` at `send_auto_logs_test.go:206`
+  (`TestUnitSendAutoFollowUsesTheTenLineBudget`, `maxLines=300 want=10`). Not reproducible: 30
+  isolated runs pass in both trees, and 4 full-suite runs at HEAD pass. The change does not touch the
+  send/follow path. Load-dependent, tracked by the existing `LEARN.md:1435` entry.
