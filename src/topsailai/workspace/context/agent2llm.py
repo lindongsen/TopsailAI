@@ -517,7 +517,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 _token_count_after,
             )
 
-            print_info(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]")
+            print_info(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}], tokens=[{_token_count_after}]")
         except HOOK__SUMMARY_CONTROL_EXCEPTIONS:
             raise
         except Exception:
