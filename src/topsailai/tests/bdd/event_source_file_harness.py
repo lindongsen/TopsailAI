@@ -34,6 +34,7 @@ class EventSourceFileHarness:
         directory: Path,
         session_id: str = "bdd-event-file",
         enabled: bool = True,
+        stream_chunks: tuple[str, ...] | None = None,
     ):
         """Start the provider, point the collector at a scenario-owned file."""
         self.monkeypatch = monkeypatch
@@ -50,7 +51,12 @@ class EventSourceFileHarness:
         self.approval_instance_id = None
         self.model = None
 
-        self.server = create_server(MockServerConfig(port=0, reply="bdd reply"))
+        # A streaming request is rejected by the mock provider unless the
+        # scenario supplies chunks, so the default stays non-streaming and
+        # only a scenario that drives a streaming path opts in.
+        self.server = create_server(
+            MockServerConfig(port=0, reply="bdd reply", stream_chunks=stream_chunks)
+        )
         self.server_thread = threading.Thread(
             target=self.server.serve_forever,
             name="bdd-event-source-file-server",

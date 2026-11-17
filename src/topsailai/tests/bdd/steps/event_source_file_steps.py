@@ -77,6 +77,15 @@ def exactly_one_record(events_file_state, event_type):
     ]
 
 
+@then(parsers.parse('the events file holds exactly two "{event_type}" records'))
+def exactly_two_records(events_file_state, event_type):
+    """Assert the file holds exactly two records of the requested type."""
+    records = events_file_state.of_type(event_type)
+    assert len(records) == 2, [
+        (record["event_type"], record["payload"]) for record in events_file_state.events()
+    ]
+
+
 @then("both LLM request records share one operation id")
 def llm_operation_ids_match(events_file_state):
     """Assert the start and end records belong to the same logical request."""
@@ -275,3 +284,92 @@ def thought_warning_fields(events_file_state):
     assert record["patterns"] == ["TODO"], record
     assert record["step_type"] == "thought", record
     assert record["hit_count"] == 1, record
+
+
+@given(
+    "an events file owned by this scenario with summary observation enabled",
+    target_fixture="events_file_state",
+)
+def events_file_summary_enabled(bdd_tmp_path, monkeypatch):
+    """Use a harness that can run a real summary cycle and record its hooks."""
+    harness = ExtendedEventSourceHarness(
+        monkeypatch,
+        bdd_tmp_path,
+        summary_events_enabled=True,
+        stream_chunks=("bdd summary reply",),
+    )
+    try:
+        yield harness
+    finally:
+        harness.close()
+
+
+@given(
+    "an events file owned by this scenario with summary observation enabled but events disabled",
+    target_fixture="events_file_state",
+)
+def events_file_summary_enabled_events_disabled(bdd_tmp_path, monkeypatch):
+    """Use the summary harness with event recording switched off."""
+    harness = ExtendedEventSourceHarness(
+        monkeypatch,
+        bdd_tmp_path,
+        enabled=False,
+        summary_events_enabled=True,
+        stream_chunks=("bdd summary reply",),
+    )
+    try:
+        yield harness
+    finally:
+        harness.close()
+
+
+@when("a real summary cycle completes")
+def real_summary_cycle(events_file_state):
+    """Drive one real User2Agent summary through the real Hook Points."""
+    events_file_state.run_summary()
+
+
+@then("the summary observation records report the before and success outcomes")
+def summary_observation_outcomes(events_file_state):
+    """Assert the two checkpoints report the generation and application outcomes."""
+    records = events_file_state.of_type("summary.hook.observed")
+    outcomes = [record["payload"]["outcome"] for record in records]
+    assert outcomes == ["before", "success"], outcomes
+    points = [record["payload"]["point_name"] for record in records]
+    assert points == [
+        "hook__context__before__summary_generate_user2agent",
+        "hook__context__after__summary_apply_user2agent",
+    ], points
+
+
+@then("the summary observation records share one operation id")
+def summary_observation_operation_id(events_file_state):
+    """Assert both checkpoints belong to the same summary operation."""
+    records = events_file_state.of_type("summary.hook.observed")
+    operation_ids = {record["payload"]["operation_id"] for record in records}
+    assert len(operation_ids) == 1, operation_ids
+
+
+@then("the summary observation records come from the summary observer")
+def summary_observation_source(events_file_state):
+    """Assert the bundled summary observer produced the records."""
+    records = events_file_state.of_type("summary.hook.observed")
+    sources = {record.get("source") for record in records}
+    assert sources == {"hooks.summary_events_observer"}, sources
+
+
+@then("the summary observation payload carries only metadata")
+def summary_observation_metadata_only(events_file_state):
+    """Assert the payload is bounded metadata and never carries prompt text."""
+    records = events_file_state.of_type("summary.hook.observed")
+    for record in records:
+        payload = record["payload"]
+        assert set(payload) == {
+            "schema_version",
+            "operation_id",
+            "point_name",
+            "outcome",
+        }, payload
+        text = json.dumps(payload)
+        assert "bdd summary context" not in text, text
+        assert "bdd latest user request" not in text, text
