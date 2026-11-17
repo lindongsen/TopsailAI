@@ -132,7 +132,15 @@ def _logical_name(path, kind):
 
 
 def _eligible(path, kind):
-    """Select Module files or directly executable Script files."""
+    """Select Module files or directly executable Script files.
+
+    A symbolic link is rejected as a whole-point failure rather than skipped.
+    Following one would admit a resource that resolves outside the selected
+    tree, and silently skipping it would hide a deployment mistake instead of
+    reporting it.
+    """
+    if path.is_symlink():
+        raise ValueError(f"Hook resource must not be a symbolic link: {path}")
     if not path.exists():
         raise FileNotFoundError(path)
     if not path.is_file():

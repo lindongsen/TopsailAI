@@ -350,8 +350,8 @@ def test_source_module_and_init_exclusion_unchanged(tmp_path):
     assert output.read_text() == "ok"
 
 
-def test_symlink_child_is_admitted_and_escape_is_not_rejected(tmp_path):
-    """Characterize current admission: symlink children are followed, including escapes."""
+def test_symlink_child_is_rejected_including_escape(tmp_path):
+    """A symlink child rejects the whole point instead of being followed."""
     from topsailai.hooks.point_entry import _eligible
 
     inside = tmp_path / "inside"
@@ -366,15 +366,17 @@ def test_symlink_child_is_admitted_and_escape_is_not_rejected(tmp_path):
     escape.mkdir()
     link_escape = escape / "link_escape.py"
     link_escape.symlink_to(target_outside)
-    assert _eligible(link_inside, "module") is True
-    assert _eligible(link_escape, "module") is True
+    for link in (link_inside, link_escape):
+        with pytest.raises(ValueError, match="must not be a symbolic link"):
+            _eligible(link, "module")
     points = decode_points({NAME: {"modules": str(escape)}})
     result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
-    assert [(item.handler.kind, item.handler.name) for item in entries(result)] == [("module", "link_escape.py")]
+    assert result.status == "unavailable"
+    assert not result.handlers
 
 
-def test_symlink_to_directory_is_skipped(tmp_path):
-    """Characterize current admission: a symlink to a directory is not eligible."""
+def test_symlink_to_directory_is_rejected(tmp_path):
+    """A symlink to a directory rejects the point rather than being skipped."""
     from topsailai.hooks.point_entry import _eligible
 
     parent = tmp_path / "dirlink"
@@ -382,11 +384,12 @@ def test_symlink_to_directory_is_skipped(tmp_path):
     (parent / "sub").mkdir()
     link = parent / "link_dir"
     link.symlink_to(parent / "sub")
-    assert _eligible(link, "module") is False
+    with pytest.raises(ValueError, match="must not be a symbolic link"):
+        _eligible(link, "module")
 
 
 def test_broken_symlink_reports_discovery_failure(tmp_path, caplog):
-    """Characterize current admission: a dangling symlink fails the whole point."""
+    """A dangling symlink fails the whole point as a symlink, not as missing."""
     parent = tmp_path / "broken"
     parent.mkdir()
     (parent / "dangling.py").symlink_to(parent / "missing.py")

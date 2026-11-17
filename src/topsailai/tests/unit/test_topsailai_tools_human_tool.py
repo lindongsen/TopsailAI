@@ -161,6 +161,24 @@ class TestConfigHelpers(unittest.TestCase):
         """Max answer length parsed from env."""
         self.assertEqual(human_tool._get_max_answer_length(), 12345)
 
+    def test_max_answer_length_unusable_values_share_one_fallback(self):
+        """Every unusable spelling yields the same documented fallback."""
+        for value in ('0', '-5', 'abc', '', '   '):
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH': value}, clear=False):
+                    self.assertEqual(
+                        human_tool._get_max_answer_length(),
+                        human_tool._MAX_ANSWER_LENGTH_FALLBACK,
+                    )
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_max_answer_length_unset_uses_documented_default(self):
+        """An unset variable yields the documented default, not the fallback."""
+        self.assertEqual(
+            human_tool._get_max_answer_length(),
+            human_tool._MAX_ANSWER_LENGTH_DEFAULT,
+        )
+
     @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_PROMPT_TEMPLATE': '{question} :: {options}'}, clear=False)
     def test_prompt_template_read_from_env(self):
         """Prompt template read and stripped from env."""
@@ -231,6 +249,38 @@ class TestPromptRendering(unittest.TestCase):
         self.assertIn('own opinion', prompt)
         self.assertIn('[0..1]', prompt)
         self.assertIn("'/cancel'", prompt)
+
+    @patch('topsailai.tools.human_tool._get_prompt_template', return_value='Q={question} A={answer}')
+    def test_unknown_placeholder_template_falls_back_instead_of_raising(self, _mock_template):
+        """An unknown placeholder must degrade to built-in rendering, never raise."""
+        prompt = human_tool._build_prompt('q', None, None)
+        self.assertIn('[Blocked Task] q', prompt)
+
+    @patch('topsailai.tools.human_tool._get_prompt_template', return_value='Q={question} {oops')
+    def test_unbalanced_brace_template_falls_back_instead_of_raising(self, _mock_template):
+        """A stray brace must degrade to built-in rendering, never raise."""
+        prompt = human_tool._build_prompt('q', None, None)
+        self.assertIn('[Blocked Task] q', prompt)
+
+    @patch('topsailai.tools.human_tool._get_prompt_template', return_value='   ')
+    def test_blank_rendering_template_falls_back(self, _mock_template):
+        """A template rendering only whitespace must not yield an empty prompt."""
+        prompt = human_tool._build_prompt('q', None, None)
+        self.assertIn('[Blocked Task] q', prompt)
+
+    @patch('topsailai.tools.human_tool._get_prompt_template', return_value='Q={question}')
+    def test_usable_template_still_wins_over_builtin_rendering(self, _mock_template):
+        """A usable template keeps taking precedence over the built-in rendering."""
+        self.assertEqual(human_tool._build_prompt('q', None, None), 'Q=q')
+
+    @patch('topsailai.tools.human_tool._get_prompt_template', return_value='Q={question} A={answer}')
+    @patch('topsailai.tools.human_tool._has_usable_input_source', return_value=False)
+    def test_ask_decision_never_raises_on_malformed_template(self, _mock_src, _mock_template):
+        """The documented 'never an exception' contract holds for a bad template."""
+        result = human_tool.ask_decision('q', default='dflt')
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result['status'], 'unavailable')
+        self.assertEqual(result['answer'], 'dflt')
 
 
     @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: 'custom', None))

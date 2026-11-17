@@ -5,7 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
-status: open
+status: open  # findings 1+2 resolved; finding 3 carried forward
 references:
   - /TopsailAI/src/topsailai/tools/human_tool.py
   - /TopsailAI/src/topsailai/utils/env_tool.py
@@ -199,7 +199,7 @@ thread-local runtime input branch before consulting `TOPSAILAI_INTERACTIVE_MODE`
 No test asserted the old wording (`grep -rn "only honored when an interactive TTY"` over `*.py` and
 `*.md`, excluding `issues/` and `.tmp`, returned nothing), so the correction breaks no expectation.
 
-### Remaining open scope: code findings only
+### Remaining open scope: code findings only (findings 1 and 2 resolved 2026-11-18; finding 3 open)
 
 Two findings in this issue are code defects, not documentation defects, and both were re-verified
 live on 2026-11-17:
@@ -215,3 +215,75 @@ The thread-scoped sub-agent detection finding also remains open: `KEY_AGENT_DEEP
 so a nested agent started in a new thread begins at depth `0` and the guard does not fire.
 
 This issue therefore stays open for the code findings above. The documentation portion is closed.
+
+## Resolution of code findings 1 and 2 (2026-11-18)
+
+Findings 1 and 2 are fixed and verified. Finding 3 remains open, so this issue stays open.
+
+### Finding 1: `_build_prompt` no longer raises on an unusable template
+
+`tools/human_tool.py::_build_prompt` now renders the configured template inside a guard that
+catches `KeyError`, `IndexError`, `ValueError` and `AttributeError`, logs a warning, and falls
+through to the built-in rendering. A template that renders only whitespace also falls through
+with a warning, so the Human never receives an empty prompt.
+
+The placement matters: `_build_prompt` is called before the sub-agent and input-source guards,
+deliberately, so a decision the Human can never see is still echoed to stdout. That is exactly
+why an unguarded raise escaped `ask_decision` entirely instead of degrading.
+
+Measured before and after:
+
+| Template | Before | After |
+|---|---|---|
+| `Q={question} A={answer}` | `KeyError: 'answer'` | `status=unavailable`, no raise |
+| `Q={question} {oops` | `ValueError: expected '}' before end of string` | `status=unavailable`, no raise |
+| `Q={question}` | renders `Q=proceed?` | renders `Q=proceed?` (unchanged) |
+| `"   "` | empty prompt | falls back to `[Blocked Task] q?` |
+
+### Finding 2: one fallback for every unusable answer-length value
+
+`_get_max_answer_length` previously returned `2000` for a non-positive value and `8000` for a
+non-numeric one. Both constants were introduced together in `eb5f6337` and never touched, so the
+divergence is original rather than a regression. It now returns one documented fallback
+(`_MAX_ANSWER_LENGTH_FALLBACK = 8000`) for every unusable spelling, and the documented default
+(`_MAX_ANSWER_LENGTH_DEFAULT = 30000`) when the variable is unset.
+
+Measured after the fix: `"0"`, `"-5"`, `"abc"`, `""` and `"   "` all yield `8000`; `"30000"`
+yields `30000`; `"12345"` yields `12345`.
+
+No test encoded either old fallback value, so unifying them broke no expectation.
+
+### Verification
+
+`tests/unit/test_topsailai_tools_human_tool.py` -> **82 passed** (75 pre-existing plus 7 new).
+
+Seven regression tests were added: four covering the template guard (unknown placeholder, stray
+brace, whitespace-only rendering, and a usable template still winning), one asserting the
+`ask_decision` "never an exception" contract end to end, and two covering the answer-length
+fallback and default.
+
+Negative controls, each applied alone to the fixed file:
+
+| Reverted change | Result |
+|---|---|
+| `_build_prompt` guard | 4 tests FAILED, including `test_ask_decision_never_raises_on_malformed_template` |
+| `_get_max_answer_length` unification | `test_max_answer_length_unusable_values_share_one_fallback` FAILED |
+
+The positive control `test_usable_template_still_wins_over_builtin_rendering` passed in both
+negative-control runs, which proves the guard does not swallow usable templates.
+
+`docs/Environment_Variables.md` now records both fallbacks in the two affected rows, without
+code, file paths, or implementation narrative.
+
+### Finding 3 remains open
+
+The thread-scoped sub-agent guard is unchanged. `KEY_AGENT_DEEP` is thread-local, so a nested
+agent started in a new thread begins at depth `0`; a probe confirmed a new thread reaches depth
+`1` after one agent run and `_is_sub_agent_context()` still returns `False`. Fixing this means
+changing thread-local depth semantics or propagating depth across threads, which is a design
+decision rather than a mechanical repair, so it is carried forward separately.
+
+### Commits
+
+- `685aafba` fix: degrade unusable human decision prompt templates and unify the answer length fallback
+- `96ff7e9b` docs: record human decision template and answer length fallbacks
