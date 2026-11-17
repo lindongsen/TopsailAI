@@ -506,7 +506,30 @@ func runtimeMessageCounts(items []workspaceItem, sessionID string) (messageCount
 // An error means the row was not measured, never that it has no messages. The
 // caller must therefore leave the counts absent rather than substitute a zero.
 func rowMessageCounts(item workspaceItem) (messageCountsFact, error) {
-	if item.Runtime == nil || item.Runtime.State != "ok" || item.Runtime.Data == nil {
+	// Three conditions reach this point and they are not the same failure, so they
+	// must not share one message. A row the provider never described has no runtime
+	// record at all; a row whose process refused has a State other than "ok" and
+	// carries the provider's own reason in ErrorCode; a row the provider called "ok"
+	// but published nothing has a State of "ok" and no Data. Collapsing them into
+	// "provider did not report runtime message counts" was true of all three and
+	// therefore named none of them, so an operator reading the log could not tell a
+	// refused control channel from a provider that simply had not collected the row.
+	//
+	// The provider's reason is interpolated rather than replaced by a Cluster
+	// sentence, because it is the only text that says why the read was refused. It
+	// is bounded provider text, not a payload, so it is safe to surface.
+	if item.Runtime == nil {
+		return messageCountsFact{}, errorsNew("provider did not report runtime message counts")
+	}
+	if item.Runtime.State != "ok" {
+		if item.Runtime.ErrorCode != "" {
+			return messageCountsFact{}, errorsNew(fmt.Sprintf(
+				"provider runtime state %q refused the read: %s", item.Runtime.State, item.Runtime.ErrorCode))
+		}
+		return messageCountsFact{}, errorsNew(fmt.Sprintf(
+			"provider runtime state %q refused the read without a reason", item.Runtime.State))
+	}
+	if item.Runtime.Data == nil {
 		return messageCountsFact{}, errorsNew("provider did not report runtime message counts")
 	}
 	report := item.Runtime.Data

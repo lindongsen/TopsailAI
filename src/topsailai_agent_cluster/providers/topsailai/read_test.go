@@ -620,8 +620,17 @@ func TestSessionMetricsRejectsNonOKStateWithData(t *testing.T) {
 	if response.OK || response.Error == nil {
 		t.Fatalf("response=%+v, want a provider failure", response)
 	}
-	if response.Error.Message != "provider did not report runtime message counts" {
-		t.Fatalf("message=%q, want the runtime-record failure rather than the agent failure",
+	// The intent of this test is that the state is the authority, so a non-ok state
+	// must not be reported as the agent failure. It previously pinned the exact
+	// generic sentence, which locked in the defect that sentence carried: it was true
+	// of every non-ok state and therefore named none of them. The assertion now
+	// checks the intent instead of the wording, and additionally requires the
+	// provider's own reason, so a future change cannot quietly drop it again.
+	if strings.Contains(response.Error.Message, "no active agent") {
+		t.Fatalf("message=%q reports the agent failure for a row whose process answered", response.Error.Message)
+	}
+	if !strings.Contains(response.Error.Message, "no_data") {
+		t.Fatalf("message=%q does not name the provider's reason, so the two failures can collapse into one",
 			response.Error.Message)
 	}
 }
