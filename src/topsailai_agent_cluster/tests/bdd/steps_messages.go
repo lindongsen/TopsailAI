@@ -50,14 +50,23 @@ const messagesFixtureSession = "session:stable"
 // scenario pass while proving nothing: the adapter returns a non-record body
 // unchanged, so the assertion could not distinguish "unwrapped" from "never
 // needed unwrapping".
-const messagesStepRecord = `{"step_name":"task","raw_text":"the operator wrote this"}`
+//
+// Every value below is deliberately different from the mock provider's default
+// answer, which is the prose "topsailai.task" plus "the operator wrote this".
+// The default already contains both strings, so a fixture that reused them made
+// the scenario pass even when the configured body never arrived: breaking the
+// argv channel in providerFaultArgs left the scenario green, because the mock
+// fell back to a default that happened to equal the expectation. A distinctive
+// step name and text make the fallback visible, so the assertion now proves the
+// configured record reached the provider instead of proving the default did.
+const messagesStepRecord = `{"step_name":"bddtask","raw_text":"the operator wrote this bdd record"}`
 
 // messagesStepLabel is the label the adapter emits for the step record above. It
 // is the provider's own prefix followed by the step name.
-const messagesStepLabel = "topsailai.task"
+const messagesStepLabel = "topsailai.bddtask"
 
 // messagesStepText is the operator text carried inside the record.
-const messagesStepText = "the operator wrote this"
+const messagesStepText = "the operator wrote this bdd record"
 
 // messagesRule is the separator drawn above and below every header. Asserting it
 // proves the block structure exists rather than only the header text.
