@@ -156,3 +156,54 @@ Print the resolved tool before trusting a failure:
 
 If either command is not found, fix `PATH` and rerun before attributing the
 failure to the code.
+
+## Session Identity Must Be Unset or Consistent Before Running BDD
+
+### Rule
+
+Before running BDD, `TOPSAILAI_SESSION_ID` and `SESSION_ID` MUST either both be
+unset or both name the same session. A scenario that needs a specific session
+must set both spellings, never only `SESSION_ID`.
+
+### Why
+
+`get_session_id()` resolves `TOPSAILAI_SESSION_ID` before `SESSION_ID`. A test
+that sets only `SESSION_ID` therefore loses to any inherited
+`TOPSAILAI_SESSION_ID`, and the production code then operates on a different
+session than the scenario asserts on.
+
+Three BDD failures in the full sweep were caused only by this leak. The tmux
+global environment carried a real session id, so every run started inside tmux
+inherited it:
+
+- Two first-byte control scenarios reported
+  `{'error': 'not_waiting', 'status': 'error'}`. The control marker was written
+  under the inherited session while the scenario staged its retry under `wire`,
+  so the handler correctly found nothing to consume.
+- One session-metadata scenario failed because the model name was written to the
+  inherited session's metadata file instead of the scenario's own file.
+
+The causal proof is a controlled pair: at pristine `cc33f901` the same three
+scenarios fail when the id is exported and all five pass when it is unset. After
+setting both spellings in the scenarios, all five pass even with the id
+exported.
+
+### Scope / Applies to
+
+Any BDD run started from tmux, from a shell that previously launched an agent, or
+from any environment that exports a session id. Scenarios that create their own
+session and then assert on session-scoped files or control markers are the ones
+that break.
+
+### How to verify
+
+Print the effective identity before trusting a failure:
+
+- `env | grep -E '^(TOPSAILAI_SESSION_ID|SESSION_ID)='` must show either nothing
+  or two identical values.
+- A scenario that pins a session must set both `TOPSAILAI_SESSION_ID` and
+  `SESSION_ID`; `tests/bdd/steps/control_pause_steps.py` already does this and is
+  the pattern to copy.
+
+If the two spellings disagree, unset them or make them agree and rerun before
+attributing the failure to the code.
