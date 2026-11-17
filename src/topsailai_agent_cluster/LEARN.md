@@ -1497,3 +1497,29 @@ Why this prevents recurrence: the failure line and the edit target are two diffe
 that happen to live in the same file, and the failure line is the one that is conveniently already
 in the terminal. Reading the row by its content makes the identity of the row the thing being
 matched, so an offset guess cannot silently address a neighbouring row.
+
+## A liveness timer must never share a goroutine with the work it is timing
+
+Trigger: an Endpoint running a long Provider command declared the Server unhealthy and tore the link
+down while the Server answered every heartbeat on time. `channelLoop` is the only reader of the
+connection and ran every business handler inline, so a command bounded only by its own 120s deadline
+sat in front of the heartbeat acknowledgement. The acknowledgement wait is 3s and the unhealthy window
+is 30s, so any command longer than 30s guaranteed the unhealthy decision. The Server meanwhile showed
+the Endpoint as `online` throughout, because its own `LastSeen` kept advancing.
+
+Action: dispatch business handlers outside the read loop and keep the loop to pure in-memory
+bookkeeping, so the acknowledgement path never queues behind a command. Verify the concurrency
+premises before moving work off the loop rather than after: the websocket library documents that every
+method except `Reader` and `Read` is safe to call concurrently, the executor guards its lock map and
+serializes per target, the store runs one connection so journal writes are serialized, and the adapter
+scheduler already bounds concurrency per class. Reuse the pattern the codebase already had for
+`startFollow` instead of inventing a second one, and track the goroutine with the service wait group so
+shutdown still waits for in-flight work.
+
+Why this prevents recurrence: a liveness timer measures whether the peer is alive, so it must never
+measure how long local work takes. Sharing one goroutine silently redefines the measurement, and the
+symptom appears on the wrong side: the Endpoint reports the Server dead while the Server reports the
+Endpoint alive, so each side's evidence contradicts the other and neither log alone explains it. The
+same shape exists in the other direction, where the Server's `readLoop` calls `OnFrame` and `OnReceipt`
+inline and both write SQLite, so a slow inventory commit delays the acknowledgement the Server owes the
+Endpoint. Any single-reader loop that also performs durable work has this defect.

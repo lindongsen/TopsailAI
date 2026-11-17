@@ -492,6 +492,32 @@ func (s *Service) inventoryRetryLoop(ctx context.Context) {
 	}
 }
 
+// dispatchBusiness runs one business handler outside the channel read loop.
+//
+// The read loop is the only reader of the connection, so anything it runs inline
+// delays every other frame on that connection, including the heartbeat
+// acknowledgement. A Provider CLI invocation is bounded only by its own deadline,
+// which the shipped configuration sets to 120s, and that is far longer than the
+// 3s acknowledgement wait and the 30s unhealthy window. Running a command inline
+// therefore made a healthy Endpoint declare the Server unhealthy and tear the
+// link down while the Server was answering every heartbeat on time.
+//
+// Liveness and business work are independent concerns and must not share a
+// goroutine: the heartbeat measures whether the Server is alive, so it must never
+// measure how long a provider command takes.
+//
+// The goroutine is tracked by the service wait group so shutdown still waits for
+// in-flight work. Adding to the group here is safe because this loop holds its own
+// count until it returns, so the counter can never reach zero while an Add is in
+// progress.
+func (s *Service) dispatchBusiness(ctx context.Context, frame channel.Frame, handler func(context.Context, channel.Frame)) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		handler(ctx, frame)
+	}()
+}
+
 func (s *Service) channelLoop(ctx context.Context) {
 	defer s.wg.Done()
 	for {
@@ -567,27 +593,29 @@ func (s *Service) channelLoop(ctx context.Context) {
 			delete(s.pendingReceipts, key)
 			s.receiptsMu.Unlock()
 		case channel.FrameReceiptRejected:
-			s.settleRejectedReceipt(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.settleRejectedReceipt)
 		case channel.FrameInventoryRefresh:
-			s.publishRefresh(ctx, frame.RequestID)
+			s.dispatchBusiness(ctx, frame, func(ctx context.Context, frame channel.Frame) {
+				s.publishRefresh(ctx, frame.RequestID)
+			})
 		case channel.FrameCommand:
-			s.executeFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.executeFrame)
 		case channel.FrameLaunchRequest:
-			s.launchFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.launchFrame)
 		case channel.FrameHistoryRequest:
-			s.historyFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.historyFrame)
 		case channel.FrameMessagesRequest:
-			s.messagesFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.messagesFrame)
 		case channel.FrameMetricsRequest:
-			s.metricsFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.metricsFrame)
 		case channel.FrameMetricsBatchRequest:
-			s.metricsBatchFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.metricsBatchFrame)
 		case channel.FrameDetailRequest:
-			s.detailFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.detailFrame)
 		case channel.FrameModelCatalogRequest:
-			s.modelCatalogFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.modelCatalogFrame)
 		case channel.FrameOutputRequest:
-			s.outputFrame(ctx, frame)
+			s.dispatchBusiness(ctx, frame, s.outputFrame)
 		case channel.FrameOutputFollowRequest:
 			s.startFollow(ctx, frame)
 		case channel.FrameOutputFollowCancel:
