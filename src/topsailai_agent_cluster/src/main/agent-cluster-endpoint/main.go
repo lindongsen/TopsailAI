@@ -263,6 +263,12 @@ func main() {
 		}
 	})
 	if err == nil {
+		// The executor logs a policy refusal where the decision is made, so the
+		// command path leaves the same audit trace the read path already leaves.
+		// Without this the refusal was durable in the journal and invisible in the
+		// log, which made a refused write indistinguishable from an attempt that
+		// never happened.
+		executor.Logger = logger
 		executor.PolicyHook = func(hookCtx context.Context, intent protocol.ImmutableIntent) error {
 			// The access policy decides whether the caller behind this command may
 			// exercise this operation on this machine. It runs before the

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,11 @@ type Executor struct {
 	// that point would be indistinguishable from a crash mid-invocation and would
 	// surface as a false "unknown" effect for a command that was never applied.
 	PolicyHook func(context.Context, protocol.ImmutableIntent) error
+	// Logger receives the policy refusal line. It is optional, because the
+	// executor is constructed without one on every existing path; a nil logger
+	// means the refusal is recorded in the journal only, which is the previous
+	// behaviour rather than a crash.
+	Logger *slog.Logger
 }
 
 // NewExecutor constructs an Endpoint command executor.
@@ -196,6 +202,14 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 	}
 	if e.PolicyHook != nil {
 		if policyErr := e.PolicyHook(ctx, intent); policyErr != nil {
+			// The refusal is logged where it is decided, not where the receipt is
+			// stored. recordEarlyRejection also records unsupported, profile and
+			// generation rejections, and reporting those as policy refusals would
+			// send an operator to a policy file that is correct. The message
+			// matches the read path's wording so one grep finds both, and the
+			// token is never logged because a log reader must not become a
+			// credential holder.
+			e.logPolicyRefusal(intent, policyErr)
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "policy_denied"))
 		}
 	}
@@ -574,6 +588,25 @@ func (e *Executor) recordEarlyRejection(ctx context.Context, intent protocol.Imm
 		return protocol.ExecutionReceipt{}, err
 	}
 	return receipt, nil
+}
+
+// logPolicyRefusal emits the audit line for a refused command.
+//
+// The read path logs its refusal where the decision is made, so the two paths
+// must log in the same place and with the same message: an operator greps one
+// phrase and finds every refused attempt on the machine. Logging inside
+// recordEarlyRejection instead would report unsupported operations, missing
+// profiles and generation mismatches as policy refusals, which is a different
+// decision and would send the operator to a policy file that is correct.
+//
+// The token is deliberately absent. It is a secret, and a log that records it
+// turns every log reader into a credential holder; the command ID is enough to
+// correlate the refusal with the caller's own record and with the stored receipt.
+func (e *Executor) logPolicyRefusal(intent protocol.ImmutableIntent, err error) {
+	if e.Logger == nil {
+		return
+	}
+	e.Logger.Warn("endpoint access policy refused operation", "operation", intent.Operation, "command_id", intent.CommandID, "error", err.Error())
 }
 
 func rejectedReceipt(intent protocol.ImmutableIntent, hash, code string) protocol.ExecutionReceipt {
