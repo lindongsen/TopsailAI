@@ -722,6 +722,14 @@ class TestEvaluateParamsDetail:
             ({"cmd": "git reset"}, [{"param": "cmd", "op": "exists"}], "and"),
             ({"cmd": "git reset"}, [{"op": "contains", "value": "git"}], "and"),
             ({"cmd": "git reset"}, [{"param": "cmd", "op": "contains", "value": "git"}], "weird"),
+            # Non-mapping elements: the boolean evaluator must agree with the
+            # detail evaluator instead of raising AttributeError.
+            ({"cmd": "ls"}, [{"param": "cmd", "op": "exists"}, "bad"], "and"),
+            ({"cmd": "ls"}, [{"param": "cmd", "op": "exists"}, "bad"], "or"),
+            ({"cmd": "ls"}, ["bad"], "and"),
+            ({"cmd": "ls"}, ["bad"], "or"),
+            ({"cmd": "ls"}, ["bad", {"param": "cmd", "op": "exists"}], "or"),
+            ({"cmd": "ls"}, ["bad", {"param": "cmd", "op": "exists"}], "and"),
         ]
         for tool_args, params, logic in cases:
             simple = _evaluate_params(tool_args, params, logic)
@@ -735,6 +743,19 @@ class TestEvaluateParamsDetail:
         assert conditions[0].op == "invalid"
         assert conditions[0].error
         assert conditions[0].matched is False
+
+    def test_non_mapping_condition_does_not_raise(self):
+        """A non-mapping element must not raise AttributeError."""
+        assert _evaluate_params({"cmd": "ls"}, ["bad"], "and") is False
+        assert _evaluate_params({"cmd": "ls"}, ["bad"], "or") is False
+        assert _evaluate_params({"cmd": "ls"}, ["bad", {"param": "cmd", "op": "exists"}], "or") is True
+
+    def test_non_mapping_condition_logs_a_warning(self, caplog):
+        """The tolerated misconfiguration must stay diagnosable."""
+        with caplog.at_level("WARNING", logger="topsailai.ai_base.tool_approval.matcher"):
+            _evaluate_params({"cmd": "ls"}, ["bad"], "and")
+        assert "Skipping invalid approval rule condition" in caplog.text
+        assert "bad" in caplog.text
 
     def test_condition_without_param_is_skipped(self):
         matched, conditions = _evaluate_params_detail(
