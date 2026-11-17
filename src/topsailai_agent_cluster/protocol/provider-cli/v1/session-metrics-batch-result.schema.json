@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/session-metrics-batch-result.schema.json",
+  "title": "session-metrics-batch-result query_result",
+  "description": "One entry per session the provider could measure. A session the provider could not measure is absent rather than present with zero counts, because a zero is a measured zero and an unmeasured session must not be presented as empty.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "results",
+    "observed_at_ms"
+  ],
+  "properties": {
+    "results": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider_session_id",
+          "messages",
+          "observed_at_ms"
+        ],
+        "properties": {
+          "provider_session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "messages": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "inbound",
+              "outbound"
+            ],
+            "properties": {
+              "inbound": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000000
+              },
+              "outbound": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000000
+              }
+            }
+          },
+          "observed_at_ms": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

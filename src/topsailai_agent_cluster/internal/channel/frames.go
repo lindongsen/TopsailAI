@@ -62,6 +62,15 @@ const (
 	FrameMetricsRequest = "metrics_request"
 	// FrameMetricsResponse returns one session's current message counts.
 	FrameMetricsResponse = "metrics_response"
+	// FrameMetricsBatchRequest requests message counts for a bounded set of
+	// sessions on one Endpoint. It exists because the provider cost of a count
+	// read is dominated by a fixed scan that does not depend on how many rows are
+	// asked for, so one read for a set is far cheaper than one read per row.
+	FrameMetricsBatchRequest = "metrics_batch_request"
+	// FrameMetricsBatchResponse returns message counts for a bounded set of
+	// sessions. A requested session the provider could not measure is absent from
+	// the result rather than reported as zero.
+	FrameMetricsBatchResponse = "metrics_batch_response"
 	// FrameDetailRequest requests one session's provider metadata and runtime
 	// document. It is a read-only query, so it carries no generation requirement.
 	FrameDetailRequest = "detail_request"
@@ -103,25 +112,27 @@ const (
 
 // Frame is the bounded JSON envelope exchanged over the persistent channel.
 type Frame struct {
-	LaunchQuery          *protocol.LaunchQuery         `json:"launch_query,omitempty"`
-	LaunchOptions        *protocol.LaunchOptions       `json:"launch_options,omitempty"`
-	HistoryQuery         *protocol.HistoryQuery        `json:"history_query,omitempty"`
-	HistoryResult        *protocol.HistoryResult       `json:"history_result,omitempty"`
-	MessagesQuery        *protocol.MessagesQuery       `json:"messages_query,omitempty"`
-	MessagesResult       *protocol.MessagesResult      `json:"messages_result,omitempty"`
-	MetricsQuery         *protocol.SessionMetricsQuery `json:"metrics_query,omitempty"`
-	MetricsResult        *protocol.SessionMetrics      `json:"metrics_result,omitempty"`
-	DetailQuery          *protocol.SessionDetailQuery  `json:"detail_query,omitempty"`
-	DetailResult         *protocol.SessionDetail       `json:"detail_result,omitempty"`
-	ModelCatalogQuery    *protocol.ModelCatalogQuery   `json:"model_catalog_query,omitempty"`
-	ModelCatalog         *protocol.ModelCatalog        `json:"model_catalog,omitempty"`
-	Type                 string                        `json:"type"`
-	ProtocolVersion      string                        `json:"protocol_version"`
-	FrameID              string                        `json:"frame_id,omitempty"`
-	ConnectionGeneration string                        `json:"connection_generation"`
-	Initiator            string                        `json:"initiator,omitempty"`
-	EndpointID           string                        `json:"endpoint_id,omitempty"`
-	InstanceID           string                        `json:"instance_id,omitempty"`
+	LaunchQuery          *protocol.LaunchQuery              `json:"launch_query,omitempty"`
+	LaunchOptions        *protocol.LaunchOptions            `json:"launch_options,omitempty"`
+	HistoryQuery         *protocol.HistoryQuery             `json:"history_query,omitempty"`
+	HistoryResult        *protocol.HistoryResult            `json:"history_result,omitempty"`
+	MessagesQuery        *protocol.MessagesQuery            `json:"messages_query,omitempty"`
+	MessagesResult       *protocol.MessagesResult           `json:"messages_result,omitempty"`
+	MetricsQuery         *protocol.SessionMetricsQuery      `json:"metrics_query,omitempty"`
+	MetricsResult        *protocol.SessionMetrics           `json:"metrics_result,omitempty"`
+	MetricsBatchQuery    *protocol.SessionMetricsBatchQuery `json:"metrics_batch_query,omitempty"`
+	MetricsBatchResult   *protocol.SessionMetricsBatch      `json:"metrics_batch_result,omitempty"`
+	DetailQuery          *protocol.SessionDetailQuery       `json:"detail_query,omitempty"`
+	DetailResult         *protocol.SessionDetail            `json:"detail_result,omitempty"`
+	ModelCatalogQuery    *protocol.ModelCatalogQuery        `json:"model_catalog_query,omitempty"`
+	ModelCatalog         *protocol.ModelCatalog             `json:"model_catalog,omitempty"`
+	Type                 string                             `json:"type"`
+	ProtocolVersion      string                             `json:"protocol_version"`
+	FrameID              string                             `json:"frame_id,omitempty"`
+	ConnectionGeneration string                             `json:"connection_generation"`
+	Initiator            string                             `json:"initiator,omitempty"`
+	EndpointID           string                             `json:"endpoint_id,omitempty"`
+	InstanceID           string                             `json:"instance_id,omitempty"`
 	// ServerIdentity names the Server database that admitted this connection's
 	// commands. The Endpoint compares it across reconnects to tell "the same
 	// Server restarted" from "a different Server now manages me", because only

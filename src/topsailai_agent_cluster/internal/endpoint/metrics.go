@@ -19,6 +19,16 @@ import (
 // like a defect in the count rather than a slow provider.
 const metricsBudget = 10 * time.Second
 
+// metricsBatchBudget bounds one set read of message counts.
+//
+// It is shorter than metricsBudget on purpose. A set read replaces many
+// single-session reads, so it must not be allowed to consume the time of all the
+// reads it replaced; a caller that waits 10 seconds for a table would rather see
+// the column degrade than wait longer than the single-session path ever did. The
+// budget stays above the provider's own measured cost for a whole table, so a
+// healthy provider is never cut off.
+const metricsBatchBudget = 8 * time.Second
+
 // detailBudget bounds one provider session-record read. It matches the messages
 // budget for the same reason.
 const detailBudget = 10 * time.Second
@@ -139,5 +149,70 @@ func (s *Service) detailFrame(ctx context.Context, frame channel.Frame) {
 	}
 	if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameDetailResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, DetailResult: &result}); err != nil {
 		s.logError("publish detail result", err)
+	}
+}
+
+// MetricsBatch reads the current message counts of a bounded set of sessions in
+// one adapter call.
+//
+// The set is the unit of the read because reaching a provider costs a fixed
+// amount that does not depend on how many sessions are asked about. A caller that
+// renders a table therefore asks once for the table instead of once per row.
+//
+// An Endpoint with no batch-capable adapter reports the capability as absent
+// rather than falling back to per-session reads here. The fallback belongs to the
+// caller, because only the caller knows whether it can afford one read per row;
+// an Endpoint that silently degraded would hide the cost it was asked to avoid.
+func (e *Executor) MetricsBatch(ctx context.Context, query protocol.SessionMetricsBatchQuery) (protocol.SessionMetricsBatch, error) {
+	instances, release := e.registry.AcquireAll()
+	defer release()
+	for _, instance := range instances {
+		handler, ok := instance.(adapter.MetricsBatchHandler)
+		if !ok {
+			continue
+		}
+		result, err := handler.MetricsBatch(ctx, query)
+		if err != nil {
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, protocol.MetricsProviderError)
+			return result, err
+		}
+		return result, nil
+	}
+	return protocol.SessionMetricsBatch{ErrorCode: protocol.MetricsUnsupported}, adapter.ErrUnsupported
+}
+
+// metricsBatchFrame answers one bounded read-only set query on the authenticated
+// channel.
+//
+// It reuses the single-session permission rather than declaring a second one,
+// because a set read is the same capability at a different granularity. A caller
+// allowed to measure one session is allowed to measure the sessions it can see,
+// and a policy file that already grants the read needs no new entry.
+func (s *Service) metricsBatchFrame(ctx context.Context, frame channel.Frame) {
+	// The policy check runs before the adapter is consulted, so a refused caller
+	// cannot infer whether this Endpoint can measure a session at all.
+	if err := s.permitOperation(frame, OperationMetricsRead); err != nil {
+		result := protocol.SessionMetricsBatch{ErrorCode: s.refuseFrame(ctx, frame, OperationMetricsRead, err)}
+		if sendErr := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameMetricsBatchResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, MetricsBatchResult: &result}); sendErr != nil {
+			s.logError("publish metrics batch refusal", sendErr)
+		}
+		return
+	}
+	result := protocol.SessionMetricsBatch{ErrorCode: protocol.MetricsUnsupported}
+	reader, ok := s.executor.(interface {
+		MetricsBatch(context.Context, protocol.SessionMetricsBatchQuery) (protocol.SessionMetricsBatch, error)
+	})
+	if ok && frame.MetricsBatchQuery != nil {
+		queryCtx, cancel := context.WithTimeout(ctx, metricsBatchBudget)
+		defer cancel()
+		var err error
+		result, err = reader.MetricsBatch(queryCtx, *frame.MetricsBatchQuery)
+		if err != nil {
+			s.logError("query adapter metrics batch", err)
+			result.ErrorCode = readFailureCode(err, result.ErrorCode, protocol.MetricsProviderError)
+		}
+	}
+	if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameMetricsBatchResponse, ProtocolVersion: channel.ProtocolVersion, RequestID: frame.RequestID, MetricsBatchResult: &result}); err != nil {
+		s.logError("publish metrics batch result", err)
 	}
 }

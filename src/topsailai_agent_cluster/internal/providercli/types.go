@@ -66,6 +66,14 @@ const (
 	QuerySessionMessages = "session.messages"
 	// QuerySessionMetrics reads one session's current message counts.
 	QuerySessionMetrics = "session.metrics"
+	// QuerySessionMetricsBatch reads the current message counts of a bounded set
+	// of sessions in one provider call.
+	//
+	// It exists beside QuerySessionMetrics rather than replacing it, because the
+	// single-session read is a published contract and a legitimate request. The
+	// two are implemented by one internal function, so they cannot drift into two
+	// behaviours.
+	QuerySessionMetricsBatch = "session.metrics.batch"
 	// QuerySessionDetail reads one session's provider metadata and runtime document.
 	QuerySessionDetail = "session.detail"
 )

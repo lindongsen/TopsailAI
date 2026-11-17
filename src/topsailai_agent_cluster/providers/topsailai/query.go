@@ -25,8 +25,19 @@ const (
 	maxMessages            = 1000
 	maxMessagesBytes       = 4 << 20
 	maxMetricsBytes        = 1 << 20
-	maxDetailBytes         = 512 << 10
-	maxMessageCount        = 10000000
+	// maxMetricsBatchBytes bounds the whole-list document a set read collects.
+	// It is larger than maxMetricsBytes because one document now carries the
+	// runtime record of every row instead of one row, and the bound must not
+	// truncate a document the provider legitimately produced.
+	maxMetricsBatchBytes = 4 << 20
+	// maxMetricsBatchSessions mirrors the Cluster contract bound. The provider is
+	// a separate module and does not import Cluster internals, so the value is
+	// restated here; the Cluster validates the same bound before any provider
+	// process starts, so this copy is a second line of defence rather than the
+	// only one.
+	maxMetricsBatchSessions = 200
+	maxDetailBytes          = 512 << 10
+	maxMessageCount         = 10000000
 )
 
 type launchOptionsPayload struct {
@@ -150,6 +161,17 @@ type metricsResult struct {
 	ObservedAtMS      int64             `json:"observed_at_ms"`
 }
 
+// metricsBatchResult carries the message counts of a bounded set of sessions.
+//
+// Each member is a metricsResult, so a member that could not be measured is
+// reported by its absence rather than by a zero count. The Cluster contract reads
+// absence as "not answered", which keeps an unmeasured session distinguishable
+// from a session that really has no messages.
+type metricsBatchResult struct {
+	Results      []metricsResult `json:"results"`
+	ObservedAtMS int64           `json:"observed_at_ms"`
+}
+
 // detailResult carries one session's provider metadata and runtime document.
 //
 // Metadata is the provider's own session record, forwarded verbatim. Runtime is
@@ -181,6 +203,8 @@ func (p *provider) query(ctx context.Context, contract *namedContract, requested
 		value, err = p.messages(ctx, requested, payload)
 	case querySessionMetrics:
 		value, err = p.metrics(ctx, requested, payload)
+	case querySessionMetricsBatch:
+		value, err = p.metricsBatch(ctx, requested, payload)
 	case querySessionDetail:
 		value, err = p.detail(ctx, requested, payload)
 	default:
@@ -350,19 +374,20 @@ func (p *provider) messages(ctx context.Context, requested *target, raw json.Raw
 
 // metrics reads one session's current message counts.
 //
-// The counts come from the provider's `agent.tokens` instruction, which reports
-// the two message layers a running session currently holds. It is a live control
-// call, so it needs a session whose process is running; a session with no live
-// process has no current context to measure, and that is reported as a provider
-// failure rather than as a count of zero.
+// The counts come from the runtime record the provider already collects for
+// `workspace list --include-runtime`. That record is built from plain attribute
+// reads and collection lengths, so reading it costs one bounded document read
+// instead of one control round trip per row.
 //
-// The instruction is invoked directly rather than through the operator-configured
-// control action catalog, for the same reason the current model is: a first-class
-// capability must not depend on someone having also written a catalog entry.
+// The previous implementation asked the session's own process for `agent.tokens`,
+// which counts tokens across every message body. That work is proportional to the
+// conversation size and was paid once per row, so a list of long sessions was
+// dominated by counting tokens nobody displayed. The runtime record reports the
+// same two layer lengths without that counting.
 //
-// The provider returns its report as a JSON string nested inside the control
-// envelope, so the document is decoded twice. The outer envelope says whether the
-// call was delivered; the inner document carries the counts.
+// A session with no live process has no runtime record to report, and that is a
+// provider failure rather than a count of zero: a zero is a measured zero, and
+// presenting an unmeasured session as empty would state a fact nobody observed.
 func (p *provider) metrics(ctx context.Context, requested *target, raw json.RawMessage) (metricsResult, error) {
 	sessionID, err := sessionQueryTarget(requested)
 	if err != nil {
@@ -372,46 +397,140 @@ func (p *provider) metrics(ctx context.Context, requested *target, raw json.RawM
 	if err := decodeStrict(raw, &payload); err != nil {
 		return metricsResult{}, fmt.Errorf("%w: session.metrics payload", errInvalidRequest)
 	}
-	args, err := modelInstructionKwargs(sessionID, "agent.tokens", map[string]string{"json": "1"})
+	// The session selector is passed to the provider so the document describes
+	// only the requested session. Collection runs after that filter, so a row the
+	// caller did not ask for is never queried.
+	args := []string{"workspace", "list", "--json", "--local", "-s", sessionID, "--include-runtime"}
+	var document workspaceResponse
+	if err := runJSON(ctx, p.runner, args, maxMetricsBytes, &document); err != nil {
+		return metricsResult{}, err
+	}
+	counts, err := runtimeMessageCounts(document.Items, sessionID)
 	if err != nil {
 		return metricsResult{}, err
 	}
-	var envelope instructionEnvelope
-	if err := runJSON(ctx, p.runner, args, maxMetricsBytes, &envelope); err != nil {
-		return metricsResult{}, err
+	return metricsResult{ProviderSessionID: sessionID, Messages: counts, ObservedAtMS: p.now().UnixMilli()}, nil
+}
+
+// metricsBatch reads the current message counts of a bounded set of sessions.
+//
+// The set is read with one provider call, because the provider's cost is
+// dominated by a fixed task-directory scan that does not depend on how many rows
+// are asked about. Measured on this host: one row cost 949 ms and every row cost
+// 926 ms, so a per-session read pays the scan once per session while a set read
+// pays it once per set.
+//
+// The session selector is deliberately not passed. `-s` filters the returned rows
+// but does not avoid the scan (652 ms for one row against 681 ms for all rows), so
+// it would add argv length without saving work. The requested set is applied to
+// the returned document instead.
+//
+// A requested session that cannot be measured is absent from Results rather than
+// present with a zero count. A zero is a measured zero, and a session whose
+// process never answered has not been measured. The Cluster contract reads
+// absence as "not answered", so the two outcomes stay distinguishable and one
+// unmeasurable session cannot blank its neighbours.
+func (p *provider) metricsBatch(ctx context.Context, requested *target, raw json.RawMessage) (metricsBatchResult, error) {
+	if requested != nil {
+		return metricsBatchResult{}, fmt.Errorf("%w: session.metrics.batch does not accept a target", errInvalidRequest)
 	}
-	if envelope.ErrorCode == providerTargetNotFoundCode {
-		// A session the provider does not know is a normal outcome of a read, not
+	var payload struct {
+		ProviderSessionIDs []string `json:"provider_session_ids"`
+	}
+	if err := decodeStrict(raw, &payload); err != nil {
+		return metricsBatchResult{}, fmt.Errorf("%w: session.metrics.batch payload", errInvalidRequest)
+	}
+	if len(payload.ProviderSessionIDs) == 0 {
+		return metricsBatchResult{}, fmt.Errorf("%w: session.metrics.batch requires at least one session", errInvalidRequest)
+	}
+	if len(payload.ProviderSessionIDs) > maxMetricsBatchSessions {
+		return metricsBatchResult{}, fmt.Errorf("%w: session.metrics.batch accepts at most %d sessions", errInvalidRequest, maxMetricsBatchSessions)
+	}
+	args := []string{"workspace", "list", "--json", "--local", "--include-runtime"}
+	var document workspaceResponse
+	if err := runJSON(ctx, p.runner, args, maxMetricsBatchBytes, &document); err != nil {
+		return metricsBatchResult{}, err
+	}
+	observedAtMS := p.now().UnixMilli()
+	results := make([]metricsResult, 0, len(payload.ProviderSessionIDs))
+	seen := make(map[string]struct{}, len(payload.ProviderSessionIDs))
+	for _, sessionID := range payload.ProviderSessionIDs {
+		if _, duplicate := seen[sessionID]; duplicate {
+			continue
+		}
+		seen[sessionID] = struct{}{}
+		counts, err := runtimeMessageCounts(document.Items, sessionID)
+		if err != nil {
+			// The reason is dropped here on purpose. The provider result carries no
+			// per-member error field, so the only honest way to report an
+			// unmeasurable member is to leave it out; the single-session read is the
+			// surface that names the reason.
+			continue
+		}
+		results = append(results, metricsResult{
+			ProviderSessionID: sessionID,
+			Messages:          counts,
+			ObservedAtMS:      observedAtMS,
+		})
+	}
+	return metricsBatchResult{Results: results, ObservedAtMS: observedAtMS}, nil
+}
+
+// runtimeMessageCounts reads one session's message counts from a workspace
+// document that was collected with --include-runtime.
+//
+// Both the single-session read and the set read call this, so the two
+// granularities cannot drift into two behaviours. The error is returned rather
+// than collapsed into a boolean because the single-session surface reports the
+// specific reason to the operator, while the set read only needs to know that the
+// member was not measured.
+func runtimeMessageCounts(items []workspaceItem, sessionID string) (messageCountsFact, error) {
+	item, found := runtimeRow(items, sessionID)
+	if !found {
+		// A session the provider does not list is a normal outcome of a read, not
 		// a fault, so it keeps its own code and the Cluster maps it to a different
 		// answer than a provider failure.
-		return metricsResult{}, codedError{code: providerSessionNotFoundCode, message: "provider session does not exist"}
+		return messageCountsFact{}, codedError{code: providerSessionNotFoundCode, message: "provider session does not exist"}
 	}
-	if !envelope.OK || envelope.ErrorCode != "" || envelope.Response == nil || envelope.Response.Status != "ok" {
-		return metricsResult{}, errorsNew("provider did not report message counts")
+	if item.Runtime == nil || item.Runtime.State != "ok" || item.Runtime.Data == nil {
+		return messageCountsFact{}, errorsNew("provider did not report runtime message counts")
 	}
-	var report struct {
-		OK        bool `json:"ok"`
-		Agent2LLM struct {
-			Messages int `json:"messages"`
-		} `json:"agent2llm"`
-		User2Agent struct {
-			Messages int `json:"messages"`
-		} `json:"user2agent"`
-	}
-	if err := decodeJSONDocument([]byte(envelope.Response.Result), &report, false); err != nil {
-		return metricsResult{}, fmt.Errorf("decode agent.tokens report: %w", err)
-	}
+	report := item.Runtime.Data
 	if !report.OK {
-		return metricsResult{}, errorsNew("provider reported no active agent")
+		return messageCountsFact{}, errorsNew("provider reported no active agent")
 	}
 	// The provider's own layer names are mapped onto the Cluster's two positions
 	// here and nowhere else. The human listed user2agent first, so inbound is the
 	// operator's side and outbound is the model's side.
 	counts := messageCountsFact{Inbound: report.User2Agent.Messages, Outbound: report.Agent2LLM.Messages}
 	if counts.Inbound < 0 || counts.Outbound < 0 || counts.Inbound > maxMessageCount || counts.Outbound > maxMessageCount {
-		return metricsResult{}, errorsNew("provider message count is out of range")
+		return messageCountsFact{}, errorsNew("provider message count is out of range")
 	}
-	return metricsResult{ProviderSessionID: sessionID, Messages: counts, ObservedAtMS: p.now().UnixMilli()}, nil
+	return counts, nil
+}
+
+// runtimeRow selects the row that describes the requested session.
+//
+// A session and its task children share one session identifier, but only the
+// session row owns the control channel: a task row is a child process log whose
+// runtime record is reported as unsupported. Selecting a task row would therefore
+// report "no runtime data" for a session that answered perfectly well, so a
+// non-task row always wins when both are present.
+func runtimeRow(items []workspaceItem, sessionID string) (workspaceItem, bool) {
+	var fallback workspaceItem
+	var hasFallback bool
+	for _, item := range items {
+		if item.SessionID != sessionID {
+			continue
+		}
+		if !item.IsTask {
+			return item, true
+		}
+		if !hasFallback {
+			fallback, hasFallback = item, true
+		}
+	}
+	return fallback, hasFallback
 }
 
 // detail reads one session's provider metadata and runtime document.

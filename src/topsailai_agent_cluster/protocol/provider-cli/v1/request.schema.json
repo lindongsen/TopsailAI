@@ -774,6 +774,7 @@
             "model.catalog",
             "session.messages",
             "session.metrics",
+            "session.metrics.batch",
             "session.detail"
           ]
         },

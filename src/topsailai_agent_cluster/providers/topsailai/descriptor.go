@@ -35,6 +35,7 @@ func topsailaiDescriptor(control controlCatalog, platform platformCapabilities) 
 			{Name: queryModelCatalog, Version: queryVersion},
 			{Name: querySessionMessages, Version: queryVersion},
 			{Name: querySessionMetrics, Version: queryVersion},
+			{Name: querySessionMetricsBatch, Version: queryVersion},
 			{Name: querySessionDetail, Version: queryVersion},
 		},
 		ControlActions: control.contracts(),

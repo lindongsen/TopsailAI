@@ -51,6 +51,10 @@ var queryFixtures = map[string]queryFixture{
 		payload: `{}`,
 		result:  `{"provider_session_id":"provider-session","metadata":"{\"session_id\":\"provider-session\"}","observed_at_ms":1}`,
 	},
+	QuerySessionMetricsBatch: {
+		payload: `{"provider_session_ids":["provider-session"]}`,
+		result:  `{"results":[{"provider_session_id":"provider-session","messages":{"inbound":2,"outbound":68},"observed_at_ms":1}],"observed_at_ms":1}`,
+	},
 }
 
 // querySchemaStem converts a registered query name into the file-name stem its

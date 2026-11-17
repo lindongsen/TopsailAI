@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/session-metrics-batch-request.schema.json",
+  "title": "session-metrics-batch-request payload",
+  "description": "The query name and v1 contract version are carried once by the common request envelope. The payload carries the bounded set of sessions, because a target names one resource and this request names many.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provider_session_ids"
+  ],
+  "properties": {
+    "provider_session_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^\\S(?:.*\\S)?$"
+      }
+    }
+  }
+}

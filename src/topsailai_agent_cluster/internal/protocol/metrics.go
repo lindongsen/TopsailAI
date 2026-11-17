@@ -61,3 +61,47 @@ const MaxMessageCount = 10000000
 type SessionMetricsQuery struct {
 	ProviderSessionID string `json:"provider_session_id"`
 }
+
+// SessionMetricsBatchQuery addresses a bounded set of sessions whose message
+// counts are wanted in one read.
+//
+// The set is the unit of the read, not the session. Reaching a provider costs a
+// fixed amount that does not depend on how many sessions are asked about, so a
+// per-session read pays that cost once per session while a set read pays it once
+// per set. An operator surface that renders a table therefore asks about the
+// whole table at once.
+//
+// The set travels in the payload rather than in a target, because a target names
+// one resource and this request names many. It is bounded by
+// MaxMetricsBatchSessions so one request cannot turn into an unbounded provider
+// document.
+type SessionMetricsBatchQuery struct {
+	ProviderSessionIDs []string `json:"provider_session_ids"`
+}
+
+// SessionMetricsBatch carries the message counts of a bounded set of sessions.
+//
+// Each member is a SessionMetrics, so a member carries its own error code. That
+// is the contract, not a convenience: one session in a set may be gone while its
+// neighbours are measurable, and a set read that failed as a whole would turn one
+// missing session into an empty column. The top-level ErrorCode is therefore
+// reserved for a failure that applies to the whole request, such as an
+// unsupported adapter, a refused caller or an unreachable Endpoint.
+//
+// A member that is absent from Results was not answered at all. That is distinct
+// from a member present with an error code, which means the provider was asked
+// and could not measure it. A caller renders both as unmeasured, but only the
+// second proves the provider was reached.
+type SessionMetricsBatch struct {
+	Results      []SessionMetrics `json:"results"`
+	ObservedAtMS int64            `json:"observed_at_ms"`
+	ErrorCode    string           `json:"error_code,omitempty"`
+}
+
+// MaxMetricsBatchSessions bounds one accepted batch request.
+//
+// The bound exists because the request is a caller-supplied collection: without
+// it a single request could ask about every session a provider has ever recorded
+// and force the provider to build an unbounded document. It is set above the
+// largest table an operator surface renders, so a normal render is never split.
+const MaxMetricsBatchSessions = 200

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -511,26 +512,20 @@ func (r request) QueryName() string {
 	return r.Query.Name
 }
 
-// TestSessionMetricsReadsNamedInstructionArguments proves the message counts come
-// from the provider's named-argument form of `agent.tokens`.
+// TestSessionMetricsReadsRuntimeDocument proves the counts come from the runtime
+// record the provider already collects, not from a per-row control call.
 //
-// The provider forwards `args` as positional arguments and `kwargs` as keyword
-// arguments, so the two spellings reach the instruction differently. A live probe
-// proved the positional spelling is rejected with
-// `agent_tokens() takes 1 positional argument but 2 were given`, while the named
-// spelling returns the counts. The scripted runner fails on any unexpected argv,
-// so this test also pins the spelling: an implementation that emitted `args`
-// would not match the recorded key and would fail here instead of at runtime.
-func TestSessionMetricsReadsNamedInstructionArguments(t *testing.T) {
-	report := `{"ok":true,"agent2llm":{"messages":68},"user2agent":{"messages":2}}`
-	quoted, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	envelope := `{"ok":true,"response":{"status":"ok","result":` + string(quoted) + `}}`
-	key := "runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-a\x00" +
-		`{"instruction":"agent.tokens","kwargs":{"json":"1"}}` + "\x00--json"
-	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(envelope)}}
+// The scripted runner fails on any unexpected argv, so this test also pins the
+// spelling: an implementation that still asked for `agent.tokens` would not match
+// the recorded key and would fail here instead of at runtime. The session selector
+// is part of the pinned argv because collection runs after that filter, and a
+// missing selector would make one row's read probe every row.
+func TestSessionMetricsReadsRuntimeDocument(t *testing.T) {
+	document := `{"items":[{"session_id":"s-1","filename":"s-1.42.session.stdout","is_task":false,` +
+		`"runtime":{"state":"ok","error_code":"","pid":42,"data":{"ok":true,` +
+		`"agent2llm":{"messages":68},"user2agent":{"messages":2}}}}],"total":1}`
+	key := "workspace\x00list\x00--json\x00--local\x00-s\x00s-1\x00--include-runtime"
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(document)}}
 	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
 		querySessionMetrics, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
 	if !response.OK || len(response.QueryResult) == 0 {
@@ -552,17 +547,15 @@ func TestSessionMetricsReadsNamedInstructionArguments(t *testing.T) {
 }
 
 // TestSessionMetricsMapsUnknownSessionToNotFound proves a session the provider
-// does not know is reported as a missing session rather than as a provider fault.
+// does not list is reported as a missing session rather than as a provider fault.
 //
-// The control surface answers an unknown session with its own `target_not_found`
-// code, which is a different value from the `session_not_found` code the session
-// registry uses. Both mean the same thing to an operator, so the adapter maps the
-// control code onto the registry code and a caller sees one answer.
+// The provider answers an unknown selector with an empty document rather than an
+// error, so absence from the document is the only evidence available. It must map
+// onto the registry's own code so a caller sees one answer for one condition.
 func TestSessionMetricsMapsUnknownSessionToNotFound(t *testing.T) {
-	key := "runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-a\x00" +
-		`{"instruction":"agent.tokens","kwargs":{"json":"1"}}` + "\x00--json"
+	key := "workspace\x00list\x00--json\x00--local\x00-s\x00s-1\x00--include-runtime"
 	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
-		key: answer(`{"ok":false,"error_code":"target_not_found"}`)}}
+		key: answer(`{"items":[],"total":0}`)}}
 	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
 		querySessionMetrics, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
 	if response.OK || response.Error == nil {
@@ -570,6 +563,264 @@ func TestSessionMetricsMapsUnknownSessionToNotFound(t *testing.T) {
 	}
 	if response.Error.Code != providerSessionNotFoundCode {
 		t.Fatalf("code=%q, want %q", response.Error.Code, providerSessionNotFoundCode)
+	}
+}
+
+// TestSessionMetricsRejectsUnmeasuredRuntime proves a row whose process did not
+// answer is a provider failure, never a zero count.
+//
+// A rejected or unavailable runtime record carries no data, and reporting it as
+// zero would claim the session holds no messages. That is a different statement
+// from "nobody measured this session", and only the second one is true here.
+func TestSessionMetricsRejectsUnmeasuredRuntime(t *testing.T) {
+	cases := map[string]string{
+		"rejected":    `{"state":"rejected","error_code":"control_rejected","pid":42,"data":null}`,
+		"unavailable": `{"state":"unavailable","error_code":"endpoint_missing","pid":42,"data":null}`,
+		"absent":      `null`,
+		"no agent":    `{"state":"ok","error_code":"","pid":42,"data":{"ok":false}}`,
+	}
+	for name, runtime := range cases {
+		t.Run(name, func(t *testing.T) {
+			document := `{"items":[{"session_id":"s-1","filename":"s-1.42.session.stdout",` +
+				`"is_task":false,"runtime":` + runtime + `}],"total":1}`
+			key := "workspace\x00list\x00--json\x00--local\x00-s\x00s-1\x00--include-runtime"
+			r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(document)}}
+			response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+				querySessionMetrics, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
+			if response.OK || response.Error == nil {
+				t.Fatalf("response=%+v, want a provider failure", response)
+			}
+			if response.Error.Code == providerSessionNotFoundCode {
+				t.Fatalf("an unmeasured session must not be reported as missing")
+			}
+		})
+	}
+}
+
+// TestSessionMetricsRejectsNonOKStateWithData proves a non-ok state is refused
+// even when the record still carries a payload.
+//
+// The provider reports an instruction that answered with its own failure as
+// `state=unavailable` while keeping the raw payload for diagnosis
+// (workspace_runtime.py:126-127). That payload has `ok=false`, so a reader that
+// checked only the payload would report "no active agent" for a session whose
+// process answered perfectly well. The state is the authority, and this test
+// pins the message so the two failures cannot collapse into one.
+func TestSessionMetricsRejectsNonOKStateWithData(t *testing.T) {
+	document := `{"items":[{"session_id":"s-1","filename":"s-1.42.session.stdout",` +
+		`"is_task":false,"runtime":{"state":"unavailable","error_code":"no_data","pid":42,` +
+		`"data":{"ok":false,"error":"no_data"}}}],"total":1}`
+	key := "workspace\x00list\x00--json\x00--local\x00-s\x00s-1\x00--include-runtime"
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(document)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionMetrics, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
+	if response.OK || response.Error == nil {
+		t.Fatalf("response=%+v, want a provider failure", response)
+	}
+	if response.Error.Message != "provider did not report runtime message counts" {
+		t.Fatalf("message=%q, want the runtime-record failure rather than the agent failure",
+			response.Error.Message)
+	}
+}
+
+// TestSessionMetricsPrefersSessionRowOverTaskRow proves a task row never shadows
+// the session row that actually owns the control channel.
+//
+// A session and its task children share one session identifier, but a task row is
+// a child process log whose runtime record is reported as unsupported. Selecting
+// it would report "no runtime data" for a session that answered perfectly well.
+func TestSessionMetricsPrefersSessionRowOverTaskRow(t *testing.T) {
+	document := `{"items":[` +
+		`{"session_id":"s-1","filename":"s-1.42.task.stdout","is_task":true,` +
+		`"runtime":{"state":"unavailable","error_code":"unsupported_row","pid":42,"data":null}},` +
+		`{"session_id":"s-1","filename":"s-1.42.session.stdout","is_task":false,` +
+		`"runtime":{"state":"ok","error_code":"","pid":42,"data":{"ok":true,` +
+		`"agent2llm":{"messages":7},"user2agent":{"messages":3}}}}],"total":2}`
+	key := "workspace\x00list\x00--json\x00--local\x00-s\x00s-1\x00--include-runtime"
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(document)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionMetrics, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
+	if !response.OK || len(response.QueryResult) == 0 {
+		t.Fatalf("response=%+v", response)
+	}
+	var result metricsResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Messages.Inbound != 3 || result.Messages.Outbound != 7 {
+		t.Fatalf("messages=%+v, want inbound=3 outbound=7", result.Messages)
+	}
+}
+
+// TestSessionMetricsBatchReadsEverySessionInOneCall proves a set read costs one
+// provider call regardless of how many sessions are asked about.
+//
+// The scripted runner fails on any unexpected argv and records every call, so the
+// call count is the assertion. A per-session implementation would issue one call
+// per session and fail here, which is the whole point of the batch: the provider's
+// cost is a fixed task-directory scan, so paying it once per set instead of once
+// per session is the only real saving.
+//
+// The argv is pinned without `-s` on purpose. The selector filters returned rows
+// but does not avoid the scan (measured 652 ms for one row against 681 ms for all
+// rows), so passing it would add argv length without saving work.
+func TestSessionMetricsBatchReadsEverySessionInOneCall(t *testing.T) {
+	document := `{"items":[` +
+		`{"session_id":"s-1","filename":"s-1.42.session.stdout","is_task":false,` +
+		`"runtime":{"state":"ok","error_code":"","pid":42,"data":{"ok":true,` +
+		`"agent2llm":{"messages":68},"user2agent":{"messages":2}}}},` +
+		`{"session_id":"s-2","filename":"s-2.43.session.stdout","is_task":false,` +
+		`"runtime":{"state":"ok","error_code":"","pid":43,"data":{"ok":true,` +
+		`"agent2llm":{"messages":7},"user2agent":{"messages":3}}}}],"total":2}`
+	key := "workspace\x00list\x00--json\x00--local\x00--include-runtime"
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(document)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionMetricsBatch, nil, `{"provider_session_ids":["s-1","s-2"]}`))
+	if !response.OK || len(response.QueryResult) == 0 {
+		t.Fatalf("response=%+v", response)
+	}
+	if len(r.calls) != 1 {
+		t.Fatalf("provider calls=%d, want exactly 1 for a set read", len(r.calls))
+	}
+	var result metricsBatchResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("results=%d, want 2", len(result.Results))
+	}
+	// The human listed user2agent first, so inbound is the operator side and
+	// outbound is the model side, exactly as the single-session read maps them.
+	bySession := map[string]messageCountsFact{}
+	for _, member := range result.Results {
+		bySession[member.ProviderSessionID] = member.Messages
+	}
+	if got := bySession["s-1"]; got.Inbound != 2 || got.Outbound != 68 {
+		t.Fatalf("s-1 messages=%+v, want inbound=2 outbound=68", got)
+	}
+	if got := bySession["s-2"]; got.Inbound != 3 || got.Outbound != 7 {
+		t.Fatalf("s-2 messages=%+v, want inbound=3 outbound=7", got)
+	}
+	if result.ObservedAtMS != 1700000000123 {
+		t.Fatalf("observed_at_ms=%d", result.ObservedAtMS)
+	}
+}
+
+// TestSessionMetricsBatchOmitsUnmeasuredSessions proves an unmeasurable member is
+// absent from the result rather than present with a zero count.
+//
+// A zero is a measured zero. A session whose process never answered has not been
+// measured, so filling it with zeros would state a fact the provider never
+// observed. Absence is the contract's way of saying "not answered", and this test
+// pins that the two outcomes stay distinguishable while the measurable neighbours
+// are still reported.
+func TestSessionMetricsBatchOmitsUnmeasuredSessions(t *testing.T) {
+	document := `{"items":[` +
+		`{"session_id":"s-1","filename":"s-1.42.session.stdout","is_task":false,` +
+		`"runtime":{"state":"ok","error_code":"","pid":42,"data":{"ok":true,` +
+		`"agent2llm":{"messages":68},"user2agent":{"messages":2}}}},` +
+		`{"session_id":"s-2","filename":"s-2.43.session.stdout","is_task":false,` +
+		`"runtime":{"state":"rejected","error_code":"control_rejected","pid":43,"data":null}}],"total":2}`
+	key := "workspace\x00list\x00--json\x00--local\x00--include-runtime"
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(document)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionMetricsBatch, nil, `{"provider_session_ids":["s-1","s-2","s-3"]}`))
+	if !response.OK || len(response.QueryResult) == 0 {
+		t.Fatalf("response=%+v", response)
+	}
+	var result metricsBatchResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("results=%+v, want only the measurable session", result.Results)
+	}
+	if result.Results[0].ProviderSessionID != "s-1" {
+		t.Fatalf("reported session=%q, want s-1", result.Results[0].ProviderSessionID)
+	}
+}
+
+// TestSessionMetricsBatchRejectsTarget proves the set read refuses a target.
+//
+// A target names one resource and this request names many, so accepting both
+// would leave the provider deciding which one wins. The refusal keeps one
+// addressing form per request, exactly as launch.options refuses a target.
+func TestSessionMetricsBatchRejectsTarget(t *testing.T) {
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionMetricsBatch, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"},
+		`{"provider_session_ids":["s-1"]}`))
+	if response.OK || response.Error == nil {
+		t.Fatalf("response=%+v, want a refusal", response)
+	}
+	if response.Error.Code != "invalid_request" {
+		t.Fatalf("code=%q, want invalid_request", response.Error.Code)
+	}
+	if len(r.calls) != 0 {
+		t.Fatalf("provider calls=%d, want none before the payload is accepted", len(r.calls))
+	}
+}
+
+// TestSessionMetricsBatchRejectsEmptyAndOversizedSets proves the set is bounded
+// before any provider process starts.
+//
+// The set is caller-supplied, so without a bound one request could ask about every
+// session the provider has ever recorded and force an unbounded document. Both
+// refusals must happen before the provider is invoked, which the call count proves.
+func TestSessionMetricsBatchRejectsEmptyAndOversizedSets(t *testing.T) {
+	oversized := make([]string, maxMetricsBatchSessions+1)
+	for index := range oversized {
+		oversized[index] = "s-" + strconv.Itoa(index)
+	}
+	oversizedPayload, err := json.Marshal(map[string][]string{"provider_session_ids": oversized})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"empty":     `{"provider_session_ids":[]}`,
+		"oversized": string(oversizedPayload),
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{}}
+			response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+				querySessionMetricsBatch, nil, payload))
+			if response.OK || response.Error == nil {
+				t.Fatalf("response=%+v, want a refusal", response)
+			}
+			if response.Error.Code != "invalid_request" {
+				t.Fatalf("code=%q, want invalid_request", response.Error.Code)
+			}
+			if len(r.calls) != 0 {
+				t.Fatalf("provider calls=%d, want none for a refused set", len(r.calls))
+			}
+		})
+	}
+}
+
+// TestSessionMetricsBatchDeduplicatesRepeatedSessions proves a repeated identifier
+// is reported once.
+//
+// The Cluster contract rejects duplicates in a result, so a provider that echoed a
+// repeated request member would produce a document the Cluster refuses. Collapsing
+// the repeat keeps the result valid without silently dropping a distinct session.
+func TestSessionMetricsBatchDeduplicatesRepeatedSessions(t *testing.T) {
+	document := `{"items":[{"session_id":"s-1","filename":"s-1.42.session.stdout","is_task":false,` +
+		`"runtime":{"state":"ok","error_code":"","pid":42,"data":{"ok":true,` +
+		`"agent2llm":{"messages":68},"user2agent":{"messages":2}}}}],"total":1}`
+	key := "workspace\x00list\x00--json\x00--local\x00--include-runtime"
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(document)}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionMetricsBatch, nil, `{"provider_session_ids":["s-1","s-1"]}`))
+	if !response.OK || len(response.QueryResult) == 0 {
+		t.Fatalf("response=%+v", response)
+	}
+	var result metricsBatchResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("results=%+v, want one member for a repeated identifier", result.Results)
 	}
 }
 

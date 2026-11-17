@@ -47,6 +47,7 @@ type Server struct {
 	pendingMessages     map[string]pendingMessagesRequest
 	pendingModelCatalog map[string]pendingModelCatalogRequest
 	pendingMetrics      map[string]pendingMetricsRequest
+	pendingMetricsBatch map[string]pendingMetricsBatchRequest
 	pendingDetail       map[string]pendingDetailRequest
 }
 
@@ -300,6 +301,9 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		}
 		if frame.Type == FrameMetricsResponse {
 			s.deliverMetrics(peer, frame)
+		}
+		if frame.Type == FrameMetricsBatchResponse {
+			s.deliverMetricsBatch(peer, frame)
 		}
 		if frame.Type == FrameDetailResponse {
 			s.deliverDetail(peer, frame)
@@ -719,6 +723,7 @@ func (s *Server) finishDisconnect(peer *Peer, observedAtMS int64) {
 	s.failPendingMessages(peer.EndpointID)
 	s.failPendingModelCatalog(peer.EndpointID)
 	s.failPendingMetrics(peer.EndpointID)
+	s.failPendingMetricsBatch(peer.EndpointID)
 	s.failPendingDetail(peer.EndpointID)
 	// A disconnected Endpoint can never answer a snapshot or a follow either, so
 	// those waiters are failed immediately instead of blocking until their own

@@ -63,48 +63,39 @@ func MetricsEnricher(ctx context.Context, api CommandAPI) func([]SessionRow) {
 // instead of failing the command, because the table is built from committed
 // inventory and a live count is an addition to it, not a precondition.
 func enrichMessages(parent context.Context, api CommandAPI, rows []SessionRow) {
-	reader, ok := api.(metricsReader)
-	if !ok {
-		return
-	}
-	targets := make([]int, 0, len(rows))
-	for index := range rows {
-		if len(targets) == maxMetricsRows {
-			break
+	if _, ok := api.(metricsReader); !ok {
+		if _, batchOK := api.(metricsBatchReader); !batchOK {
+			return
 		}
-		// A row with no provider session identifier cannot be addressed by the
-		// provider, so it stays unmeasured rather than being queried with an
-		// empty target.
-		if rows[index].ProviderSessionID == "" {
-			continue
-		}
-		targets = append(targets, index)
 	}
+	targets := collectMetricsTargets(rows, maxMetricsRows)
 	if len(targets) == 0 {
 		return
 	}
-	slots := make(chan struct{}, metricsWorkers)
-	var wait sync.WaitGroup
-	for _, index := range targets {
-		wait.Add(1)
-		go func(index int) {
-			defer wait.Done()
-			slots <- struct{}{}
-			defer func() { <-slots }()
-			ctx, cancel := context.WithTimeout(parent, metricsRowBudget)
-			defer cancel()
-			metrics, err := reader.GetMetrics(ctx, rows[index].EndpointID, rows[index].ProviderSessionID)
-			// A provider that reports an error code has not measured the session,
-			// so the row keeps no counts. Presenting the zero value would state a
-			// measurement nobody made.
-			if err != nil || metrics.ErrorCode != "" {
-				return
-			}
-			counts := metrics.Messages
-			rows[index].Messages = &counts
-		}(index)
+	for index, counts := range readMetrics(parent, api, targets) {
+		applied := counts
+		rows[index].Messages = &applied
 	}
-	wait.Wait()
+}
+
+// collectMetricsTargets returns the rows a render may measure, in table order.
+//
+// A row with no provider session identifier cannot be addressed by the provider, so
+// it stays unmeasured rather than being queried with an empty target. The limit
+// bounds how many rows one render asks about, so a very long table cannot turn one
+// command into an unbounded provider read.
+func collectMetricsTargets(rows []SessionRow, limit int) []metricsTarget {
+	targets := make([]metricsTarget, 0, len(rows))
+	for index := range rows {
+		if len(targets) == limit {
+			break
+		}
+		if rows[index].ProviderSessionID == "" {
+			continue
+		}
+		targets = append(targets, metricsTarget{index: index, endpointID: rows[index].EndpointID, sessionID: rows[index].ProviderSessionID})
+	}
+	return targets
 }
 
 // metricsCacheTTL bounds how long one remembered message count stays usable.
@@ -229,13 +220,14 @@ func CachedMetricsEnricher(ctx context.Context, api CommandAPI, cache *MetricsCa
 // The read budget applies per miss, not per render, so a slow provider costs one
 // cell rather than the whole tick.
 func enrichMessagesCached(parent context.Context, api CommandAPI, cache *MetricsCache, rows []SessionRow) {
-	reader, ok := api.(metricsReader)
-	if !ok {
-		return
+	if _, ok := api.(metricsReader); !ok {
+		if _, batchOK := api.(metricsBatchReader); !batchOK {
+			return
+		}
 	}
 	now := time.Now()
 	keep := make(map[string]bool, len(rows))
-	misses := make([]int, 0, len(rows))
+	misses := make([]metricsTarget, 0, len(rows))
 	for index := range rows {
 		// A row with no provider session identifier cannot be addressed by the
 		// provider, so it stays unmeasured and is never cached.
@@ -254,33 +246,20 @@ func enrichMessagesCached(parent context.Context, api CommandAPI, cache *Metrics
 		if len(misses) == maxMetricsRows {
 			continue
 		}
-		misses = append(misses, index)
+		misses = append(misses, metricsTarget{index: index, endpointID: rows[index].EndpointID, sessionID: rows[index].ProviderSessionID})
 	}
 	cache.retain(keep)
 	if len(misses) == 0 {
 		return
 	}
-	slots := make(chan struct{}, metricsWorkers)
-	var wait sync.WaitGroup
-	for _, index := range misses {
-		wait.Add(1)
-		go func(index int) {
-			defer wait.Done()
-			slots <- struct{}{}
-			defer func() { <-slots }()
-			ctx, cancel := context.WithTimeout(parent, metricsRowBudget)
-			defer cancel()
-			metrics, err := reader.GetMetrics(ctx, rows[index].EndpointID, rows[index].ProviderSessionID)
-			// A provider that reports an error code has not measured the session,
-			// so the row keeps no counts and nothing is cached. Caching the
-			// failure would present it as a measurement for the whole TTL.
-			if err != nil || metrics.ErrorCode != "" {
-				return
-			}
-			counts := metrics.Messages
-			rows[index].Messages = &counts
-			cache.store(metricsCacheKey(rows[index].EndpointID, rows[index].ProviderSessionID), counts, time.Now())
-		}(index)
+	// The misses are resolved as a set per Endpoint, so a tick that expires every
+	// entry costs one provider read per Endpoint instead of one per row. That is
+	// what makes a periodic surface affordable at all: the TTL bounds how often the
+	// set is read, and the set bounds how many reads one expiry costs.
+	measured := readMetrics(parent, api, misses)
+	for index, counts := range measured {
+		applied := counts
+		rows[index].Messages = &applied
+		cache.store(metricsCacheKey(rows[index].EndpointID, rows[index].ProviderSessionID), applied, time.Now())
 	}
-	wait.Wait()
 }

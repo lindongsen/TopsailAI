@@ -580,6 +580,8 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.messagesFrame(ctx, frame)
 		case channel.FrameMetricsRequest:
 			s.metricsFrame(ctx, frame)
+		case channel.FrameMetricsBatchRequest:
+			s.metricsBatchFrame(ctx, frame)
 		case channel.FrameDetailRequest:
 			s.detailFrame(ctx, frame)
 		case channel.FrameModelCatalogRequest:
