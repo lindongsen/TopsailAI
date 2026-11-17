@@ -225,9 +225,17 @@ func (r CommandRunner) RenderSessionSnapshot(ctx context.Context, out io.Writer,
 	if err != nil {
 		return err
 	}
+	// An error code is a failure, not content. It is returned as an error so the
+	// process exits non-zero and the operator learns what failed. Writing it to
+	// stdout and returning nil made a failed read indistinguishable from a
+	// successful one whose body happened to be the code word, which is the shape
+	// the coding requirement forbids: a caller must never be able to mistake a
+	// failure for success. Every producer of this field sets it only on a failure
+	// path (invalid_target, unknown_resource, unknown_adapter, generation_mismatch,
+	// unsupported, provider_error, policy_denied), so no legitimate result is
+	// converted into an error here.
 	if snapshot.ErrorCode != "" {
-		_, err = fmt.Fprintln(out, sanitizeTerminal([]byte(snapshot.ErrorCode)))
-		return err
+		return fmt.Errorf("output snapshot failed: %s", snapshot.ErrorCode)
 	}
 	RenderSnapshotStyled(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated, maxLines, color)
 	return nil
