@@ -23,38 +23,16 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	if state.Invalidated {
 		return state.requireUsable()
 	}
-	endpointID := state.Scope.EndpointID
-	if endpointID == "" {
-		return fmt.Errorf("no endpoint selected; use cd <number> to enter an endpoint row, or cd <hostname>/<endpoint-id>")
-	}
-	resourceID := state.Scope.ClusterSessionID
 	target, maxLines, follow, err := parseLogsArgs(rest, maxLines)
 	if err != nil {
 		return err
 	}
-	if target != "" {
-		resourceID = target
-		// logs is a read, so it resolves through the read resolver: an unverified
-		// session is still readable, and refusing it here would make the output of
-		// exactly the session an operator needs to inspect unreachable. A
-		// placeholder row still carries no session identity, so it is rejected with
-		// the same message the strict resolver uses.
-		row, resolved, err := resolveReadSessionTokenInEndpoint(state, target, endpointID)
-		if err != nil {
-			return err
-		}
-		if resolved {
-			if row.ClusterSessionID == "" {
-				return fmt.Errorf("row %d does not identify a session; choose a session row", row.No)
-			}
-			resourceID = row.ClusterSessionID
-		}
-	}
-	if resourceID == "" {
-		return fmt.Errorf("no session selected; use cd <number> to select a session row, or cd <hostname>/<endpoint-id>/<session>")
-	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
+	endpointID, resourceID, err := logsTarget(ctx, api, state, target)
+	if err != nil {
+		return err
+	}
 	loaded, err := loadReports(ctx, api, endpointID)
 	if err != nil {
 		return err
@@ -69,7 +47,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	}
 	_, _, session, err := findSessionInEndpoint(loaded, endpointID, resourceID)
 	if err != nil {
-		return numericTokenHint(strings.TrimSpace(rest), err)
+		return numericTokenHint(target, err)
 	}
 	if follow {
 		// The stream is armed for the next prompt rather than started here,
@@ -79,6 +57,75 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		return armFollowStream(api, state, endpointID, session.ClusterSessionID, session.ProviderGeneration, maxBytes, maxLines, trustedOut)
 	}
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.ClusterSessionID, maxBytes, maxLines, false, color)
+}
+
+// logsTarget resolves the endpoint and session an output read must address.
+//
+// Session and endpoint scope keep their existing behaviour: the pinned selection
+// is the default, and an explicit token must belong to the current endpoint, so a
+// number rendered for another table is refused instead of being silently
+// retargeted.
+//
+// Workspace scope has no pinned endpoint, so the token must name one. A row number
+// resolves against the rendered table, whose rows already carry their own endpoint,
+// because the workspace table numbers every endpoint's sessions in one sequence.
+// A literal cluster resource ID or provider session ID then resolves across every
+// endpoint through FindSession, which rejects a token matching sessions on several
+// endpoints instead of picking one: the operator asked for one machine's output,
+// and a silent choice would read the wrong machine's session.
+//
+// logs is a read, so both paths use the read resolvers. An unverified session is
+// still readable, and refusing it here would make the output of exactly the session
+// an operator needs to inspect unreachable. A placeholder row still carries no
+// session identity, so it is rejected with the same message the strict resolver
+// uses.
+func logsTarget(ctx context.Context, api InteractiveAPI, state *interactiveState, token string) (string, string, error) {
+	if state.Scope.Kind != ScopeWorkspace {
+		endpointID := state.Scope.EndpointID
+		resourceID := state.Scope.ClusterSessionID
+		if token != "" {
+			resourceID = token
+			row, resolved, err := resolveReadSessionTokenInEndpoint(state, token, endpointID)
+			if err != nil {
+				return "", "", err
+			}
+			if resolved {
+				if row.ClusterSessionID == "" {
+					return "", "", fmt.Errorf("row %d does not identify a session; choose a session row", row.No)
+				}
+				resourceID = row.ClusterSessionID
+			}
+		}
+		if resourceID == "" {
+			return "", "", fmt.Errorf("no session selected; use cd <number> to select a session row, or cd <hostname>/<endpoint-id>/<session>")
+		}
+		return endpointID, resourceID, nil
+	}
+	if token == "" {
+		return "", "", fmt.Errorf("logs requires a session in workspace scope; use logs <number> for a session row or logs <session-id>")
+	}
+	row, resolved, err := resolveReadSessionToken(state, token)
+	if err != nil {
+		return "", "", err
+	}
+	if resolved {
+		if row.ClusterSessionID == "" {
+			return "", "", fmt.Errorf("row %d does not identify a session; choose a session row", row.No)
+		}
+		return row.EndpointID, row.ClusterSessionID, nil
+	}
+	loaded, err := loadReports(ctx, api, "")
+	if err != nil {
+		return "", "", err
+	}
+	endpoint, _, session, err := FindSession(token, loaded.endpoints, loaded.reports)
+	if err != nil {
+		return "", "", numericTokenHint(token, err)
+	}
+	if session == nil {
+		return "", "", fmt.Errorf("%q names an endpoint, not a session; logs needs a session", token)
+	}
+	return endpoint.EndpointID, session.ClusterSessionID, nil
 }
 
 // armFollowStream arms one follow intent for the next prompt and names the

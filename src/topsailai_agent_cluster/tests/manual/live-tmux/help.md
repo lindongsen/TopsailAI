@@ -11,7 +11,7 @@ In workspace, endpoint and session respectively type `help` then Enter. Expect `
 
 | Scope | Commands in display order |
 | --- | --- |
-| workspace | list, endpoints, cd, show, info, start, resume, stop, clean, drive, status, refresh, watch, history, messages, model, help, quit, exit |
+| workspace | list, endpoints, cd, show, info, start, resume, stop, clean, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit |
 | endpoint | list, cd, show, info, start, resume, stop, clean, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit |
 | session | list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, model, help, quit, exit |
 
