@@ -215,6 +215,16 @@ func (h *Handler) admitCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	intent.IssuerID = identity
+	// An unknown Endpoint is a routing failure, not a storage failure. Every read
+	// path answers it with endpoint_not_found, so admission must answer it the same
+	// way; otherwise one condition has two status codes and the caller is told that
+	// a constraint failed when the real problem is a mistyped identifier. The
+	// foreign key on the command table stays as defence in depth, but it must never
+	// be the only guard, because it depends on a connection setting rather than on
+	// an explicit decision.
+	if !h.requireRegisteredEndpoint(w, r, intent.EndpointID) {
+		return
+	}
 	// Admission decides reachability only. Whether this caller may exercise this
 	// operation on that machine is the Endpoint's decision, so the Server forwards
 	// the intent and never refuses it on permission grounds. A Server-side refusal
