@@ -103,10 +103,11 @@ func TestHelpOverviewDerivesAvailabilityFromMatrix(t *testing.T) {
 	workspace := groupCommandNames(scopeGroup(t, overview, "workspace"))
 	endpoint := groupCommandNames(scopeGroup(t, overview, "endpoint"))
 	session := groupCommandNames(scopeGroup(t, overview, "session"))
-	for _, name := range []string{"send", "logs"} {
-		if containsName(workspace, name) {
-			t.Fatalf("workspace group must not list %q: %v", name, workspace)
-		}
+	if containsName(workspace, "send") {
+		t.Fatalf("workspace group must not list send: %v", workspace)
+	}
+	if !containsName(workspace, "logs") {
+		t.Fatalf("workspace group must list logs: %v", workspace)
 	}
 	if containsName(endpoint, "send") {
 		t.Fatalf("endpoint group must not list send: %v", endpoint)
@@ -135,7 +136,7 @@ func TestHelpCommandReportsAvailableScopes(t *testing.T) {
 		want   string
 	}{
 		{"send", "Available in: session"},
-		{"logs", "Available in: endpoint, session"},
+		{"logs", "Available in: workspace, endpoint, session"},
 		{"list", "Available in: workspace, endpoint, session"},
 		{"cd", "Available in: workspace, endpoint, session"},
 	}
@@ -275,7 +276,7 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 
 func TestHelpOverviewKeepsScopeRestrictions(t *testing.T) {
 	output, diagnostics := runScope(t, scopeStub(), "send {}\nquit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, clean, drive, status, refresh, watch, history, messages, model, help, quit, exit`) {
+	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, clean, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit`) {
 		t.Fatalf("scope restriction lost: %q", diagnostics)
 	}
 	if strings.Contains(output, "admitted") {

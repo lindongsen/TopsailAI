@@ -46,7 +46,13 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "interrupt", Session: true},
 	{Name: "ctl", Session: true},
 	{Name: "drive", Workspace: true, Endpoint: true, Session: true},
-	{Name: "logs", Endpoint: true, Session: true},
+	// logs reads persisted provider output, so it needs neither a live generation
+	// nor a proven absence. Workspace scope is included because the rendered table
+	// numbers every endpoint's sessions in one sequence and each row carries its own
+	// endpoint, so a row number already names one machine; a literal session ID is
+	// resolved across the fleet and an ambiguous one is refused rather than guessed.
+	// Requiring a cd first only added a step that could not change the answer.
+	{Name: "logs", Workspace: true, Endpoint: true, Session: true},
 	{Name: "send", Session: true},
 	{Name: "status", Workspace: true, Endpoint: true, Session: true},
 	{Name: "refresh", Workspace: true, Endpoint: true, Session: true},

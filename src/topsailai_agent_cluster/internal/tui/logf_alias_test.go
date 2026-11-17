@@ -175,13 +175,27 @@ func TestLogfAliasIsDocumentedInLogsHelp(t *testing.T) {
 	}
 }
 
-// TestLogfAliasInheritsLogsScope proves the shorthand is unavailable wherever
-// "logs" is unavailable, because it is a form of that command rather than a
-// command of its own.
+// TestLogfAliasInheritsLogsScope proves the shorthand is available wherever
+// "logs" is available, because it is a form of that command rather than a command
+// of its own. Workspace scope is included: the shorthand is rewritten to
+// "logs -f" before scope resolution, so it inherits the widened rule without a
+// second registration.
+//
+// The stub must implement the streaming seam and the REPL must be driven through
+// the keypress-capable reader, because armFollowStream only arms the intent: a
+// plain reader never opens the stream, so the test would pass while proving
+// nothing about which session the shorthand addressed.
 func TestLogfAliasInheritsLogsScope(t *testing.T) {
-	stub := scopeStub()
-	_, diagnostics := runScope(t, stub, logsFollowAlias+"\nquit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, `command "logs" is unavailable in workspace scope`) {
-		t.Fatalf("diagnostics=%q", diagnostics)
+	stub := &followStub{interactiveStub: *scopeStub(), blockOpen: true}
+	_, diagnostics, _ := runWatchREPL(t, stub, []string{logsFollowAlias + " 1", "quit"}, nil)
+	if strings.Contains(diagnostics, `command "logs" is unavailable in workspace scope`) {
+		t.Fatalf("logf must be available in workspace scope: %q", diagnostics)
+	}
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	requests := waitFollowRequests(t, stub, 1)
+	if requests[0].endpointID != "endpoint-1" || requests[0].resourceID != "res-1" {
+		t.Fatalf("logf addressed %s/%s, want endpoint-1/res-1", requests[0].endpointID, requests[0].resourceID)
 	}
 }

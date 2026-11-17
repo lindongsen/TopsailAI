@@ -97,7 +97,7 @@ func TestSendIsUnavailableOutsideSessionScope(t *testing.T) {
 		{
 			name:  "workspace",
 			input: "send {\"text\":\"hi\"}\nexit\n",
-			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, clean, drive, status, refresh, watch, history, messages, model, help, quit, exit\n",
+			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, clean, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit\n",
 		},
 		{
 			name:  "endpoint",
@@ -131,12 +131,119 @@ func TestSendWorksInSessionScope(t *testing.T) {
 	}
 }
 
-func TestLogsIsUnavailableInWorkspaceScope(t *testing.T) {
-	_, diagnostics := runScope(t, scopeStub(), "logs\nexit\n", ColorPolicy{})
-	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, clean, drive, status, refresh, watch, history, messages, model, help, quit, exit\n"
-	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
+// TestLogsIsAvailableInWorkspaceScope proves the read needs no cd first: the
+// workspace table numbers every endpoint's sessions in one sequence and each row
+// carries its own endpoint, so a row number already names one machine.
+//
+// The assertion reads the recorded request rather than the rendered output,
+// because the stub returns an empty snapshot: a text assertion would pass on the
+// echoed command line and prove nothing about which session was addressed.
+func TestLogsIsAvailableInWorkspaceScope(t *testing.T) {
+	stub := scopeStub()
+	_, diagnostics := runScope(t, stub, "logs 1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if len(stub.outputRequests) != 1 {
+		t.Fatalf("output requests = %d, want 1", len(stub.outputRequests))
+	}
+	request := stub.outputRequests[0]
+	if request.endpointID != "endpoint-1" || request.resourceID != "res-1" {
+		t.Fatalf("workspace logs addressed %s/%s, want endpoint-1/res-1", request.endpointID, request.resourceID)
+	}
 }
 
+// TestLogsRequiresTargetInWorkspaceScope proves a bare logs still demands an
+// explicit target there, so it can never fall back to a stale pinned selection.
+func TestLogsRequiresTargetInWorkspaceScope(t *testing.T) {
+	_, diagnostics := runScope(t, scopeStub(), "logs\nexit\n", ColorPolicy{})
+	assertActionableError(t, diagnostics, "error: logs requires a session in workspace scope; use logs <number> for a session row or logs <session-id>")
+}
+
+// TestLogsResolvesProviderSessionIDInWorkspaceScope proves a literal provider
+// session ID is resolved across every endpoint, so the identifier an operator
+// copies from the table works without entering the endpoint first.
+func TestLogsResolvesProviderSessionIDInWorkspaceScope(t *testing.T) {
+	stub := scopeStub()
+	_, diagnostics := runScope(t, stub, "logs provider-res-1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if len(stub.outputRequests) != 1 {
+		t.Fatalf("output requests = %d, want 1", len(stub.outputRequests))
+	}
+	request := stub.outputRequests[0]
+	if request.endpointID != "endpoint-1" || request.resourceID != "res-1" {
+		t.Fatalf("provider session ID resolved to %s/%s, want endpoint-1/res-1", request.endpointID, request.resourceID)
+	}
+}
+
+// TestLogsRejectsAmbiguousProviderSessionIDInWorkspaceScope proves a token that
+// names sessions on several endpoints is refused instead of guessed, because a
+// silent choice would read the wrong machine's output.
+func TestLogsRejectsAmbiguousProviderSessionIDInWorkspaceScope(t *testing.T) {
+	stub := scopeStub()
+	shared := scopeInventory("res-2", "generation-2")
+	shared.Sessions[0].ProviderSessionID = "provider-res-1"
+	stub.reports["endpoint-2"] = shared
+	_, diagnostics := runScope(t, stub, "logs provider-res-1\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "multiple sessions match provider session ID") {
+		t.Fatalf("ambiguous token was not refused: %q", diagnostics)
+	}
+	if len(stub.outputRequests) != 0 {
+		t.Fatalf("ambiguous token still issued %d output requests", len(stub.outputRequests))
+	}
+}
+
+// TestLogsRejectsEndpointTokenInWorkspaceScope proves an endpoint identifier is
+// refused with the real reason, because logs addresses a session and never an
+// endpoint.
+func TestLogsRejectsEndpointTokenInWorkspaceScope(t *testing.T) {
+	_, diagnostics := runScope(t, scopeStub(), "logs endpoint-1\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "names an endpoint, not a session") {
+		t.Fatalf("endpoint token was not refused with the real reason: %q", diagnostics)
+	}
+}
+
+// TestLogsFollowIsAvailableInWorkspaceScope proves the follow form works without
+// entering an endpoint. The stub must implement the streaming seam and the REPL
+// must be driven through the keypress-capable reader, because armFollowStream only
+// arms the intent: a plain reader never opens the stream, so the test would pass
+// while proving nothing about which session was addressed.
+func TestLogsFollowIsAvailableInWorkspaceScope(t *testing.T) {
+	stub := &followStub{interactiveStub: *scopeStub(), blockOpen: true}
+	_, diagnostics, _ := runWatchREPL(t, stub, []string{"logs -f 1", "quit"}, nil)
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	requests := waitFollowRequests(t, stub, 1)
+	if requests[0].endpointID != "endpoint-1" || requests[0].resourceID != "res-1" {
+		t.Fatalf("logs -f addressed %s/%s, want endpoint-1/res-1", requests[0].endpointID, requests[0].resourceID)
+	}
+}
+
+// TestLogsHonoursLineBudgetInWorkspaceScope proves the -n argument keeps working
+// after the scope is widened, because the user asked for the same arguments to
+// behave the same way. A test that only proved the command was accepted would
+// pass even if the budget were dropped on the workspace path, and the operator
+// would silently receive the default number of lines instead of the requested
+// one.
+func TestLogsHonoursLineBudgetInWorkspaceScope(t *testing.T) {
+	stub := scopeStub()
+	_, diagnostics := runScope(t, stub, "logs -n 7 1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if len(stub.outputRequests) != 1 {
+		t.Fatalf("output requests = %d, want 1", len(stub.outputRequests))
+	}
+	if got := stub.outputRequests[0].maxLines; got != 7 {
+		t.Fatalf("maxLines = %d, want 7", got)
+	}
+}
+
+// TestLogsRequiresSessionInEndpointScope proves endpoint scope still needs a
+// session, because the endpoint alone does not name one.
 func TestLogsRequiresSessionInEndpointScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "cd host-one/endpoint-1\nlogs\nexit\n", ColorPolicy{})
 	want := "error: no session selected; use cd <number> to select a session row, or cd <hostname>/<endpoint-id>/<session>\n"
@@ -343,7 +450,7 @@ func TestCompletableCommandsAddOnlyMultiCharacterAliases(t *testing.T) {
 		kind ScopeKind
 		want string
 	}{
-		{ScopeWorkspace, "list, endpoints, cd, show, info, start, resume, stop, clean, drive, status, refresh, watch, history, messages, model, help, quit, exit"},
+		{ScopeWorkspace, "list, endpoints, cd, show, info, start, resume, stop, clean, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit"},
 		{ScopeEndpoint, "list, cd, show, info, start, resume, stop, clean, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit"},
 		{ScopeSession, "list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, model, help, quit, exit, control"},
 	} {
@@ -369,7 +476,7 @@ func TestAvailableCommandsUseStableOrder(t *testing.T) {
 		kind ScopeKind
 		want string
 	}{
-		{kind: ScopeWorkspace, want: "list, endpoints, cd, show, info, start, resume, stop, clean, drive, status, refresh, watch, history, messages, model, help, quit, exit"},
+		{kind: ScopeWorkspace, want: "list, endpoints, cd, show, info, start, resume, stop, clean, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit"},
 		{kind: ScopeEndpoint, want: "list, cd, show, info, start, resume, stop, clean, drive, logs, status, refresh, watch, history, messages, model, help, quit, exit"},
 		{kind: ScopeSession, want: "list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, messages, model, help, quit, exit"},
 	}

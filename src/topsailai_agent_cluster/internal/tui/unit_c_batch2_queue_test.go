@@ -241,6 +241,8 @@ func unitC19MainHelp() string {
 		"  stop [session]                        stop a session by row number or session ID\n" +
 		"  clean <row|session>                   delete provider-owned expired artifacts for one exact session after confirmation\n" +
 		"  drive [start|stop|status] [session]   manage a session driver by row number or session ID; drive stop leaves the agent running\n" +
+		"  logs [-n <lines>] [-f|--follow] [session]\n" +
+		"                                        show one session's output by row number or session ID; -n <lines> bounds the trailing lines and -f streams until a key is pressed\n" +
 		"  status [command-id]                   show command result\n" +
 		"  refresh [endpoint] [-a|--all]         refresh inventories\n" +
 		unitC19WatchHelpLine() +
