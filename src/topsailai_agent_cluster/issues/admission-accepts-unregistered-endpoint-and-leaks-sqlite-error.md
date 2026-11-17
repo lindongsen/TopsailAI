@@ -72,3 +72,65 @@ Add a test that admits a command for an unregistered Endpoint and asserts the re
 This is a separate defect from the missing DSN pragma. The pragma fix restores referential
 integrity; this issue is about which layer answers the refusal and how it is reported. They were
 kept as separate logical units so each change stays reviewable on its own.
+
+## Resolution
+
+Fixed in `a4831c3e`.
+
+`admitCommand` (`internal/server/commands.go:225`) now calls `requireRegisteredEndpoint` immediately
+after the issuer check and before the intent is hashed or persisted. An unknown Endpoint is refused
+with `404 endpoint_not_found`, the same code every read path returns, so one condition has one status
+code and the caller can handle "no such machine" with a single branch. The foreign key on the command
+table remains as defence in depth; it is no longer the only guard.
+
+The raw SQLite text no longer reaches the caller on this path. The tests assert the body does not
+contain `FOREIGN KEY` or `constraint failed`, so a future regression that removes the guard fails on
+the message as well as on the status code.
+
+### Tests
+
+`internal/server/commands_admission_endpoint_test.go`:
+
+- `TestCommandAdmissionRefusesUnregisteredEndpoint` asserts `404` with `endpoint_not_found` and
+  asserts the body carries no storage-layer detail.
+- `TestCommandAdmissionRefusesUnregisteredEndpointWithoutWriting` asserts no command row is stored
+  for a refused admission.
+- `TestCommandAdmissionStillAcceptsRegisteredEndpoint` is the paired positive case, so the two
+  negative tests cannot pass by admission being disabled altogether.
+
+### Verification
+
+```
+go test ./internal/server/ -run 'TestCommandAdmission' -v
+--- PASS: TestCommandAdmissionRefusesUnregisteredEndpoint (0.07s)
+--- PASS: TestCommandAdmissionRefusesUnregisteredEndpointWithoutWriting (0.05s)
+--- PASS: TestCommandAdmissionStillAcceptsRegisteredEndpoint (0.10s)
+--- PASS: TestCommandAdmissionForwardsRegardlessOfDeclaredPermission (0.08s)
+--- PASS: TestCommandAdmissionForwardsUndeclaredControlOperation (0.09s)
+--- PASS: TestCommandAdmissionKeepsStandardOperationAdmissible (0.06s)
+--- PASS: TestCommandAdmissionStillRejectsIssuerMismatch (0.07s)
+--- PASS: TestCommandAdmissionIsIdempotentAndConflicts (0.06s)
+ok  topsailai_agent_cluster/internal/server  0.595s
+```
+
+Full package: `ok topsailai_agent_cluster/internal/server 2.889s`. `go vet` clean, `gofmt -l` clean.
+
+### Deliberate breakage
+
+Removing the guard reproduced exactly the defect this issue describes, which proves the tests can
+distinguish the two behaviours rather than passing by construction:
+
+```
+status=400 want=404 body={"code":"admission_failed","data":null,
+  "message":"constraint failed: FOREIGN KEY constraint failed (787)",...}
+--- FAIL: TestCommandAdmissionRefusesUnregisteredEndpoint (0.08s)
+--- FAIL: TestCommandAdmissionRefusesUnregisteredEndpointWithoutWriting (0.05s)
+```
+
+Both failures name the behaviour. The guard was restored and the suite re-run green before commit.
+
+### Limitation
+
+The refusal is now explicit, but the foreign key is still the only protection for any future write
+path that forgets the check. That is the intended defence-in-depth arrangement, not a gap in this
+fix.
