@@ -91,6 +91,18 @@ func New(ctx context.Context, config Config) (*Adapter, error) {
 // Adapter instead of a startup failure.
 const defaultReadLimit = 4
 
+// followAdmissionBudget bounds how long a follow waits for a follow slot before it
+// is refused. A follow's own context carries no deadline, because the stream must
+// stay open for as long as the operator watches, so this budget is the only bound on
+// admission.
+//
+// It is short on purpose. A follow slot is held for the whole life of a stream, so a
+// slot that is busy now is usually busy for minutes rather than milliseconds: waiting
+// longer would only delay the refusal. Five seconds is long enough to absorb a slot
+// released by a stream that is just finishing, and short enough that the operator
+// learns the truth while still looking at the screen.
+const followAdmissionBudget = 5 * time.Second
+
 func newWithRunner(ctx context.Context, config Config, runner cliRunner) (*Adapter, error) {
 	if config.AdapterID == "" || config.DisplayName == "" || config.Mapper == nil || runner == nil {
 		return nil, errors.New("adapter ID, display name, resource mapper and runner are required")
@@ -292,8 +304,14 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 }
 
 // ReadOutput reads one bounded Provider output snapshot.
+//
+// The target generation is not required, because a read addresses identity rather
+// than liveness: the mapping proves which provider row to read, and the Provider
+// refuses an ambiguous or absent row itself. Requiring a generation here made an
+// unverified session's output unreadable, which is the session an operator most
+// needs to inspect.
 func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest) (adapter.OutputResult, error) {
-	target, err := a.providerTarget(ctx, request.Target, true)
+	target, err := a.providerTarget(ctx, request.Target, false)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}
@@ -331,7 +349,7 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 		MaxBytes int `json:"max_bytes"`
 		MaxLines int `json:"max_lines"`
 	}{request.MaxBytes, request.MaxLines})
-	release, err := a.scheduler.acquireWithin(ctx, classFollow)
+	release, err := a.scheduler.acquireWithinBudget(ctx, classFollow, followAdmissionBudget)
 	if err != nil {
 		return err
 	}

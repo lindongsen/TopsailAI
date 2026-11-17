@@ -242,3 +242,81 @@ func TestNewSchedulerRejectsANonPositiveReadLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestAcquireWithinBudgetRefusesAfterBudget proves a follow that cannot get a slot
+// is refused instead of waiting without limit.
+//
+// The negative assertion is the load-bearing one. The Endpoint classifies a follow
+// failure by checking context.DeadlineExceeded before adapter.ErrBusy, so an error
+// that carried the deadline sentinel would be reported to the operator as
+// "cancelled" and a capacity refusal would read as a stream that ended. The budget
+// expiry must therefore wrap ErrCapacity and nothing else.
+func TestAcquireWithinBudgetRefusesAfterBudget(t *testing.T) {
+	scheduler := mustScheduler(t, providercli.ConcurrencyLimits{Total: 4, Discovery: 1, Mutation: 1, Follow: 1})
+	held, err := scheduler.acquire(classFollow)
+	if err != nil {
+		t.Fatalf("acquire follow: %v", err)
+	}
+	defer held()
+	started := time.Now()
+	_, err = scheduler.acquireWithinBudget(context.Background(), classFollow, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("a follow was admitted while the only follow slot was held")
+	}
+	if !errors.Is(err, ErrCapacity) {
+		t.Fatalf("error = %v, want it to wrap ErrCapacity", err)
+	}
+	if !errors.Is(err, adapter.ErrBusy) {
+		t.Fatalf("error = %v, want it to wrap adapter.ErrBusy so the Endpoint reports adapter_busy", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v must not wrap context.DeadlineExceeded, because the Endpoint checks that before ErrBusy and would report cancelled", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v must not wrap context.Canceled", err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("refusal took %s, want it bounded by the budget", elapsed)
+	}
+}
+
+// TestAcquireWithinBudgetReportsParentCancellation proves a cancelled parent is
+// still reported as cancellation rather than as a capacity refusal, so an operator
+// who stopped watching is not told the adapter was busy.
+func TestAcquireWithinBudgetReportsParentCancellation(t *testing.T) {
+	scheduler := mustScheduler(t, providercli.ConcurrencyLimits{Total: 4, Discovery: 1, Mutation: 1, Follow: 1})
+	held, err := scheduler.acquire(classFollow)
+	if err != nil {
+		t.Fatalf("acquire follow: %v", err)
+	}
+	defer held()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = scheduler.acquireWithinBudget(ctx, classFollow, time.Minute)
+	if err == nil {
+		t.Fatal("a cancelled parent still admitted a follow")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+// TestAcquireWithinBudgetAdmitsWhenSlotFrees proves the budget is a wait rather
+// than an immediate refusal, so a follow that collides with a stream that is just
+// finishing still starts.
+func TestAcquireWithinBudgetAdmitsWhenSlotFrees(t *testing.T) {
+	scheduler := mustScheduler(t, providercli.ConcurrencyLimits{Total: 4, Discovery: 1, Mutation: 1, Follow: 1})
+	held, err := scheduler.acquire(classFollow)
+	if err != nil {
+		t.Fatalf("acquire follow: %v", err)
+	}
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		held()
+	}()
+	release, err := scheduler.acquireWithinBudget(context.Background(), classFollow, 5*time.Second)
+	if err != nil {
+		t.Fatalf("a follow was refused although the slot was released inside the budget: %v", err)
+	}
+	release()
+}

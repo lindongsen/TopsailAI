@@ -139,6 +139,52 @@ func (s *scheduler) acquireWithin(ctx context.Context, class invocationClass) (f
 	}
 }
 
+// acquireWithinBudget reserves capacity, waiting at most budget for a slot.
+//
+// It exists for a follow, which is the one invocation whose admission the operator
+// is waiting on. acquireWithin bounds the wait by the caller's context, and a
+// follow's context carries no deadline because the stream itself must stay open for
+// as long as the operator watches. Without a separate budget a follow that cannot
+// get a slot waits without limit while the operator already believes the stream is
+// live.
+//
+// The budget expiry deliberately does not wrap the context error. The Endpoint
+// classifies a follow failure by checking context.Canceled and
+// context.DeadlineExceeded before adapter.ErrBusy, so an error carrying either
+// sentinel would be reported as cancelled and the operator would read a capacity
+// refusal as a stream that ended. A budget expiry therefore wraps only ErrCapacity,
+// which the Endpoint maps to adapter_busy.
+func (s *scheduler) acquireWithinBudget(ctx context.Context, class invocationClass, budget time.Duration) (func(), error) {
+	release, err := s.acquire(class)
+	if err == nil {
+		return release, nil
+	}
+	if !errors.Is(err, ErrCapacity) {
+		return nil, err
+	}
+	ticker := time.NewTicker(capacityPollInterval)
+	defer ticker.Stop()
+	budgetTimer := time.NewTimer(budget)
+	defer budgetTimer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w: %w", err, ctx.Err())
+		case <-budgetTimer.C:
+			return nil, fmt.Errorf("%w: %s after %s", ErrCapacity, class, budget)
+		case <-ticker.C:
+			release, retryErr := s.acquire(class)
+			if retryErr == nil {
+				return release, nil
+			}
+			if !errors.Is(retryErr, ErrCapacity) {
+				return nil, retryErr
+			}
+			err = retryErr
+		}
+	}
+}
+
 // capacityPollInterval is how often a caller waiting for capacity retries. It is
 // short enough that a collection cycle of a few tens of milliseconds is absorbed
 // without a visible delay, and long enough that a waiting caller does not spin.
