@@ -29,11 +29,12 @@ Generated test artifacts must remain under `.tmp/bdd`.
 | `store-layout.feature` | Fresh-store initialization, unmarked non-empty root rejection, hashed metadata with a separate tags file, relative data references, and no classify tag inheritance. |
 | `stat.feature` | Read and write counting, list/search not changing counters, frozen statistics while deleted, `stat top` ranking, `--with-stat` attachment, and invalid `stat top` options. |
 | `binary-recovery.feature` | Byte-exact binary round trip through `put` and `get`, `recover --from` with an external archive, and overlap rejection preserving deleted status. |
+| `encoding-fidelity.feature` | UTF-8 content beyond the encoding detection sample: box-drawing characters at and after the boundary, CJK text, every read subcommand, a stray invalid byte, non-UTF-8 detection, and a read-modify-write round trip. |
 | `non_smoke.feature` | Tag selection sanity check for the non-smoke subset. |
 
 ## Scenario and step counts
 
-The suite currently runs 119 scenarios and 794 steps, all passing. Counts are
+The suite currently runs 129 scenarios and 850 steps, all passing. Counts are
 recorded from an executed run, not estimated.
 
 ## Adding a scenario

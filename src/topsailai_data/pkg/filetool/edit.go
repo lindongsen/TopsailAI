@@ -168,27 +168,6 @@ func hasLineEnding(text string) bool {
 	return strings.HasSuffix(text, "\n") || strings.HasSuffix(text, "\r")
 }
 
-// trailingLineEnding returns the terminator to append to new content.
-//
-// The terminator of the first line after the replaced range is preferred so the
-// file keeps a consistent style. When the range reaches the end of the file the
-// terminator of the last replaced line is reused; a file without any terminator
-// falls back to "\n" so blocks stay separated.
-func trailingLineEnding(lines []string, endIdx int) string {
-	if endIdx < len(lines) {
-		if ending := lineEndingOf(lines[endIdx]); ending != "" {
-			return ending
-		}
-		return "\n"
-	}
-	if endIdx > 0 && endIdx-1 < len(lines) {
-		if ending := lineEndingOf(lines[endIdx-1]); ending != "" {
-			return ending
-		}
-	}
-	return ""
-}
-
 // lineEndingOf returns the trailing line terminator of one line.
 func lineEndingOf(line string) string {
 	if strings.HasSuffix(line, "\r\n") {

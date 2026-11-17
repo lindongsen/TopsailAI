@@ -64,15 +64,6 @@ func overwriteAt(path, content string, seek int64, fs FS) error {
 	return writeAt(path, content, seek, false, fs)
 }
 
-// resolvePosition converts a seek value into a byte position within content.
-//
-// A negative seek counts from the end. Insert mode adds one so Seek -1 appends
-// after the last byte; overwrite mode does not. The result is clamped to the
-// content length.
-func resolvePosition(seek int64, length int, insert bool) int {
-	return int(resolvePosition64(seek, int64(length), insert))
-}
-
 // resolvePosition64 converts a seek value into a byte position without
 // narrowing large file sizes to int.
 func resolvePosition64(seek, length int64, insert bool) int64 {
@@ -105,30 +96,6 @@ func writeAt(path, content string, seek int64, insert bool, fs FS) error {
 	}
 	return target.WriteAt(path, strings.NewReader(content), seek, insert, 0o644)
 }
-
-// updateText performs a lock-protected read-modify-write on a file.
-//
-// The callback receives the current content and whether the file exists, and
-// returns the replacement content. Parent folders are created before the update
-// so a write into a new folder succeeds. The read and the write happen inside
-// one custody scope, so a cooperating process cannot interleave its own update
-// and silently discard this one.
-func updateText(path string, fs FS, fn func(existing string, exists bool) (string, error)) error {
-	target := resolveFS(fs)
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := target.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	return target.UpdateFile(path, func(existing []byte, exists bool) ([]byte, error) {
-		updated, err := fn(string(existing), exists)
-		if err != nil {
-			return nil, err
-		}
-		return []byte(updated), nil
-	})
-}
-
 // writeText writes content to a file, creating parent folders as needed.
 func writeText(path, content string, fs FS) error {
 	target := resolveFS(fs)
