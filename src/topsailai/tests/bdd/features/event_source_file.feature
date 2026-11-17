@@ -75,3 +75,17 @@ Feature: Recorded events reach the on-disk events file
     When a real thought evaluation matches the configured pattern
     Then the events file holds exactly one "thought.line_pattern.warning" record
     And the thought warning record reports the matched pattern
+
+  Scenario: A real summary cycle writes summary hook observations
+    Given an events file owned by this scenario with summary observation enabled
+    When a real summary cycle completes
+    Then the events file holds exactly two "summary.hook.observed" records
+    And the summary observation records report the before and success outcomes
+    And the summary observation records share one operation id
+    And the summary observation records come from the summary observer
+    And the summary observation payload carries only metadata
+
+  Scenario: Disabling events writes no summary observation
+    Given an events file owned by this scenario with summary observation enabled but events disabled
+    When a real summary cycle completes
+    Then no events file was written
