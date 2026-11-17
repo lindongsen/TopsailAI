@@ -232,3 +232,61 @@ func TestStartFollowReportsOutputLimitAsLocalBound(t *testing.T) {
 		t.Fatalf("end=%#v want %s", end, protocol.OutputLimit)
 	}
 }
+
+// TestCancelFollowReleasesSlot proves a cancel frame from the Server stops the
+// follow and releases its concurrency slot.
+//
+// This is the property the operator depends on: stopping `logf` in the REPL must
+// free the Endpoint's follow capacity immediately. Without the cancel the follow
+// would keep its slot until the adapter deadline expired, which is two minutes in
+// the deployed configuration, so two abandoned follows were enough to make the
+// next follow wait for capacity it could not see.
+func TestCancelFollowReleasesSlot(t *testing.T) {
+	executor := &followExecutor{block: true, started: make(chan struct{})}
+	service, transport := newFollowService(t, executor)
+	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-cancel", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r"}})
+	<-executor.started
+	service.cancelFollow("req-cancel")
+	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
+	transport.mu.Lock()
+	end := transport.frames[len(transport.frames)-1].OutputEnd
+	transport.mu.Unlock()
+	if end == nil || end.ErrorCode != "cancelled" {
+		t.Fatalf("end=%#v want cancelled", end)
+	}
+	// The slot must be free again, so a later follow is admitted rather than
+	// refused. Asserting the slot directly is what distinguishes "the stream
+	// stopped" from "the capacity came back", and only the second one is the
+	// defect being fixed.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(service.followSlots) == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if held := len(service.followSlots); held != 0 {
+		t.Fatalf("follow slots still held=%d want 0", held)
+	}
+	service.followMu.Lock()
+	active := len(service.activeFollows)
+	service.followMu.Unlock()
+	if active != 0 {
+		t.Fatalf("active follows=%d want 0", active)
+	}
+}
+
+// TestCancelFollowIgnoresUnknownRequest proves a cancel for a follow that already
+// finished is a no-op. The Server sends the cancel only when it believes the
+// Endpoint is still streaming, so this race is a correct sequence and must not be
+// reported as a failure.
+func TestCancelFollowIgnoresUnknownRequest(t *testing.T) {
+	service, _ := newFollowService(t, &followExecutor{})
+	service.cancelFollow("never-started")
+	service.followMu.Lock()
+	active := len(service.activeFollows)
+	service.followMu.Unlock()
+	if active != 0 {
+		t.Fatalf("active follows=%d want 0", active)
+	}
+}

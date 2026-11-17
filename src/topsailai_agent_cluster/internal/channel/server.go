@@ -379,7 +379,13 @@ func (s *Server) deliverFollow(peer *Peer, frame Frame) {
 		if !ok {
 			return
 		}
+		// The Endpoint is still streaming into a queue nobody will read, so it
+		// must be told to stop. Without this the follow would keep one of the
+		// Endpoint's follow slots until the adapter deadline expired. The
+		// terminal event is delivered first, because the consumer is waiting for
+		// it and the cancel send is bounded but not instantaneous.
 		deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "consumer_overflow", ObservedAtMS: time.Now().UnixMilli()})
+		s.cancelEndpointFollow(released.endpointID, frame.RequestID)
 	}
 }
 
@@ -420,6 +426,34 @@ func (s *Server) releaseFollow(requestID string) (pendingFollowRequest, bool) {
 	}
 	return pending, ok
 }
+
+// cancelEndpointFollow tells the Endpoint to stop one follow whose consumer has
+// gone away.
+//
+// It is called only when the Server abandons a follow while the Endpoint may
+// still be streaming: the caller's context was cancelled, or the consumer fell so
+// far behind that the stream was terminated. The Endpoint's own terminal frame
+// needs no cancel, because that stream has already finished.
+//
+// The send is best-effort and bounded. A follow whose Endpoint is offline has
+// nothing to cancel, and a transport failure here must not delay the terminal
+// event the consumer is waiting for, so the error is deliberately not returned.
+// The Endpoint also treats an unknown request ID as a no-op, so a cancel that
+// races the Endpoint's own exit is harmless.
+func (s *Server) cancelEndpointFollow(endpointID, requestID string) {
+	if endpointID == "" || requestID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), followCancelTimeout)
+	defer cancel()
+	_ = s.SendCommand(ctx, endpointID, Frame{Type: FrameOutputFollowCancel, ProtocolVersion: ProtocolVersion, RequestID: requestID})
+}
+
+// followCancelTimeout bounds how long a cancel frame may take to reach an
+// Endpoint. It is short because the frame carries no payload and the caller is
+// already returning to the operator; a cancel that cannot be delivered in this
+// window is not worth delaying the terminal event for.
+const followCancelTimeout = 2 * time.Second
 
 // failPendingFollow reports a transport failure to every follow for one Endpoint,
 // so a disconnected Endpoint never leaves a consumer waiting for chunks that can
@@ -512,9 +546,12 @@ func (s *Server) RequestOutput(ctx context.Context, endpointID string, request p
 // the stream as interrupted rather than complete, because a silent stop would
 // present a partial stream as a finished one.
 //
-// Cancelling ctx releases the pending entry and terminates the stream with a
-// cancelled end event, so an operator who stops watching never leaves a provider
-// child streaming into a queue nobody reads.
+// Cancelling ctx releases the pending entry, sends a cancel frame to the
+// Endpoint and terminates the stream with a cancelled end event, so an operator
+// who stops watching does not leave a provider child streaming into a queue
+// nobody reads. The cancel frame is what makes that true: releasing the pending
+// entry alone stops delivery here but leaves the Endpoint streaming until its
+// adapter deadline expires.
 func (s *Server) RequestFollow(ctx context.Context, endpointID string, request protocol.OutputFollowRequest) (<-chan FollowEvent, error) {
 	requestID := security.NewRequestID()
 	// The queue is sized from the requested tail, because the Endpoint delivers
@@ -540,7 +577,14 @@ func (s *Server) RequestFollow(ctx context.Context, endpointID string, request p
 			if !ok {
 				return
 			}
+			// The Endpoint is still streaming, so it must be told to stop.
+			// Releasing the pending entry only stops delivery here; the Endpoint
+			// keeps the follow goroutine, its concurrency slot and the provider
+			// child until its adapter deadline expires. The terminal event is
+			// delivered first, because the consumer is waiting for it and the
+			// cancel send is bounded but not instantaneous.
 			deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "cancelled", ObservedAtMS: time.Now().UnixMilli()})
+			s.cancelEndpointFollow(released.endpointID, requestID)
 		case <-done:
 		}
 	}()

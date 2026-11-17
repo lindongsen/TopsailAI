@@ -258,8 +258,11 @@ func (h *Handler) outputFollow(w http.ResponseWriter, r *http.Request) {
 			record["truncated"] = event.Chunk.Truncated
 		}
 		if err := encoder.Encode(record); err != nil {
-			// The client stopped reading. Returning releases the follow through
-			// the request context, so the provider child is not left streaming.
+			// The client stopped reading. Returning cancels the request context,
+			// which releases the follow at the Server and makes the Server send
+			// output_follow_cancel to the Endpoint. The Endpoint then cancels the
+			// stream and releases its follow slot, so the provider child is not
+			// left streaming into a queue nobody reads.
 			return
 		}
 		if flusher != nil {

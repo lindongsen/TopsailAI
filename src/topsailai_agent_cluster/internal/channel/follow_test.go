@@ -317,3 +317,144 @@ func TestDisconnectFailsPendingOutput(t *testing.T) {
 		t.Fatal("disconnect did not fail the pending output request")
 	}
 }
+
+// TestRequestFollowCancellationSendsCancelFrame proves cancelling the caller
+// context tells the Endpoint to stop the follow.
+//
+// The existing cancellation test asserts only that the Server releases its own
+// pending entry and reports "cancelled" to the consumer. Both were already true
+// while the Endpoint kept streaming, so that test certified the Server half of a
+// two-sided property. This test asserts the frame that reaches the Endpoint,
+// which is the half that was missing.
+func TestRequestFollowCancellationSendsCancelFrame(t *testing.T) {
+	server := NewServer(nil)
+	client, ctx, _ := dialFollowEndpoint(t, server)
+	followRequested := make(chan string, 1)
+	cancelReceived := make(chan Frame, 1)
+	go func() {
+		frame, err := client.Read(ctx)
+		if err != nil {
+			return
+		}
+		followRequested <- frame.RequestID
+		// The Endpoint stays silent, as a provider with nothing to say would, so
+		// the only frame it can receive next is the cancel.
+		cancel, err := client.Read(ctx)
+		if err != nil {
+			return
+		}
+		cancelReceived <- cancel
+	}()
+	followCtx, cancel := context.WithCancel(ctx)
+	events, err := server.RequestFollow(followCtx, "endpoint-1", followRequest("res-1"))
+	if err != nil {
+		t.Fatalf("request follow: %v", err)
+	}
+	var requestID string
+	select {
+	case requestID = <-followRequested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("endpoint did not receive the follow request")
+	}
+	cancel()
+	select {
+	case event, ok := <-events:
+		if !ok {
+			t.Fatal("event channel closed without a terminal end event")
+		}
+		if event.End == nil || event.End.ErrorCode != "cancelled" {
+			t.Fatalf("event=%+v", event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancellation did not terminate the stream")
+	}
+	select {
+	case frame := <-cancelReceived:
+		if frame.Type != FrameOutputFollowCancel {
+			t.Fatalf("frame type=%q want %q", frame.Type, FrameOutputFollowCancel)
+		}
+		if frame.RequestID != requestID {
+			t.Fatalf("cancel request id=%q want %q", frame.RequestID, requestID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("endpoint never received the cancel frame")
+	}
+}
+
+// TestRequestFollowOverflowSendsCancelFrame proves a consumer that falls too far
+// behind also tells the Endpoint to stop. The overflow path abandons the stream
+// while the Endpoint is still producing, so it needs the same cancel as an
+// explicit cancellation.
+func TestRequestFollowOverflowSendsCancelFrame(t *testing.T) {
+	server := NewServer(nil)
+	client, ctx, _ := dialFollowEndpoint(t, server)
+	followRequested := make(chan string, 1)
+	cancelReceived := make(chan Frame, 1)
+	go func() {
+		frame, err := client.Read(ctx)
+		if err != nil {
+			return
+		}
+		followRequested <- frame.RequestID
+		cancel, err := client.Read(ctx)
+		if err != nil {
+			return
+		}
+		cancelReceived <- cancel
+	}()
+	// A one-line tail gives the smallest queue, so a second chunk overflows it
+	// without the test having to fill a large buffer.
+	request := followRequest("res-1")
+	request.MaxLines = 1
+	events, err := server.RequestFollow(ctx, "endpoint-1", request)
+	if err != nil {
+		t.Fatalf("request follow: %v", err)
+	}
+	var requestID string
+	select {
+	case requestID = <-followRequested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("endpoint did not receive the follow request")
+	}
+	// Fill the queue past its capacity without draining it, which is exactly the
+	// stalled-consumer case.
+	for i := 0; i < followQueueCapacity(request.MaxLines)+2; i++ {
+		chunk := protocol.OutputChunk{Lines: []string{"line"}, ObservedAtMS: 1000}
+		if err := client.SendFrame(ctx, Frame{Type: FrameOutputChunk, ProtocolVersion: ProtocolVersion, RequestID: requestID, OutputChunk: &chunk}); err != nil {
+			t.Fatalf("send chunk: %v", err)
+		}
+	}
+	select {
+	case frame := <-cancelReceived:
+		if frame.Type != FrameOutputFollowCancel {
+			t.Fatalf("frame type=%q want %q", frame.Type, FrameOutputFollowCancel)
+		}
+		if frame.RequestID != requestID {
+			t.Fatalf("cancel request id=%q want %q", frame.RequestID, requestID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("endpoint never received the cancel frame after overflow")
+	}
+	// Read until the terminal event, because the overflow path discards queued
+	// chunks to make room for it, so the first event read may still be a chunk.
+	// The channel is never closed by the Server, so ranging over it would block
+	// forever.
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatal("event channel closed without a terminal end event")
+			}
+			if event.End == nil {
+				continue
+			}
+			if event.End.ErrorCode != "consumer_overflow" {
+				t.Fatalf("end code=%q want consumer_overflow", event.End.ErrorCode)
+			}
+			return
+		case <-deadline:
+			t.Fatal("overflow did not terminate the stream")
+		}
+	}
+}
