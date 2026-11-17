@@ -309,6 +309,58 @@ history is not an error:
 The query is forwarded through the existing Endpoint channel, bound to the exact connection
 generation and request ID, and waits at most 10 seconds.
 
+## Session message counts
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/metrics` | Read one session's live message counts |
+| POST | `/api/v1/metrics/batch` | Read a bounded set of sessions' message counts in one call |
+
+Both routes are live provider reads, not stored projections. They never serve persisted inventory and
+never cache a result, so a count describes the session at the moment the provider answered. A count is
+an observation of how much context a running session currently holds, which is why a session with no
+live process has no counts to report.
+
+`GET /api/v1/metrics` requires `endpoint_id` and `session_id`. The response `data` carries
+`provider_session_id`, `messages` (`inbound` and `outbound`) and `observed_at_ms`.
+
+`POST /api/v1/metrics/batch` takes a JSON body with `endpoint_id` and `provider_session_ids`. It is a
+POST rather than a GET because the set is caller-supplied and can name many sessions, which does not
+fit a query string without an arbitrary length limit; the route changes no state. The set is scoped to
+one Endpoint, because a set spanning Endpoints would be several reads wearing one request, which is
+the cost the route exists to remove. The set is bounded by 200 identifiers.
+
+The batch answer is a partial success by design. Each member of `results` is a `SessionMetrics`, so a
+member carries its own `error_code`. A member the provider could not measure is either absent from
+`results` or present with an `error_code`; both mean "not measured", and neither is a count of zero. A
+zero is a measured zero, so a caller must render an unmeasured member as unmeasured rather than as
+`0/0`. The top-level `error_code` is reserved for a failure that applies to the whole request.
+
+Reaching a provider costs a fixed amount that does not depend on how many sessions are asked about, so
+a table costs one read per Endpoint instead of one read per row. That is the reason the batch route
+exists, and it is why a caller should prefer it whenever it is about to render more than one row.
+
+Reading counts requires the `metrics.read` operation permission on the Endpoint access policy. The
+check runs at the Endpoint, so the Server forwards the caller token without interpreting it.
+
+Failure outcomes keep their own status, because an unsupported adapter is not an outage and an
+unmeasured member is not a failed request:
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid_target` | `endpoint_id` or the session identifiers are missing, or the set exceeds the accepted bound |
+| 403 | `policy_denied` | The Endpoint token does not hold the `metrics.read` permission |
+| 404 | `endpoint_not_found` | The endpoint identifier is not registered |
+| 501 | `metrics_unsupported` | No configured adapter can read message counts |
+| 502 | `provider_error` | The provider call failed |
+| 503 | `unavailable` | The Server has no metrics query channel configured |
+| 503 | `endpoint_unavailable` | The endpoint is registered but has no live connection |
+| 503 | `adapter_busy` | Adapter capacity was unavailable, so the read was not attempted |
+
+Both routes are forwarded through the existing Endpoint channel, bound to the exact connection
+generation and request ID, and wait at most 10 seconds. The Endpoint bounds one batch read at 8
+seconds and the channel at 9, so the innermost component is always the one that reports the failure.
+
 ## Events and manifest
 
 | Method | Path | Purpose |

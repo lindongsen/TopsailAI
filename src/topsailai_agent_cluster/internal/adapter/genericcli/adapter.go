@@ -502,6 +502,55 @@ func (a *Adapter) Metrics(ctx context.Context, query protocol.SessionMetricsQuer
 	}, nil
 }
 
+// MetricsBatch reads the current message counts of a bounded set of sessions in
+// one provider call.
+//
+// The set is the unit of the read, because reaching a provider costs a fixed
+// amount that does not depend on how many sessions are asked about. A per-session
+// read therefore pays that cost once per session, while this call pays it once for
+// the whole set.
+//
+// A member the provider could not measure is omitted from the result rather than
+// reported with zero counts. The Endpoint renders an omitted member as unmeasured,
+// which is the honest answer: a zero is a measured zero, and a session whose
+// process is gone has no current context to measure.
+//
+// The provider's own layer names are mapped onto the cluster's two positions here
+// and nowhere else, exactly as the single-session read does. Both reads share this
+// mapping so the two wire contracts cannot report different numbers for one
+// session.
+func (a *Adapter) MetricsBatch(ctx context.Context, query protocol.SessionMetricsBatchQuery) (protocol.SessionMetricsBatch, error) {
+	payload, err := json.Marshal(providercli.SessionMetricsBatchPayload{ProviderSessionIDs: query.ProviderSessionIDs})
+	if err != nil {
+		return protocol.SessionMetricsBatch{}, fmt.Errorf("encode session.metrics.batch payload: %w", err)
+	}
+	value, err := a.typedQuery(ctx, providercli.QuerySessionMetricsBatch, nil, payload)
+	if err != nil {
+		return protocol.SessionMetricsBatch{}, err
+	}
+	providerResult := value.(providercli.SessionMetricsBatchResult)
+	result := protocol.SessionMetricsBatch{
+		Results:      make([]protocol.SessionMetrics, 0, len(providerResult.Results)),
+		ObservedAtMS: providerResult.ObservedAtMS,
+	}
+	for _, member := range providerResult.Results {
+		result.Results = append(result.Results, protocol.SessionMetrics{
+			ProviderSessionID: member.ProviderSessionID,
+			Messages: protocol.MessageCounts{
+				Inbound:  member.Messages.Inbound,
+				Outbound: member.Messages.Outbound,
+			},
+			ObservedAtMS: member.ObservedAtMS,
+		})
+	}
+	return result, nil
+}
+
+// The Endpoint asks any registered adapter that implements MetricsBatchHandler to
+// answer a set read. This assertion fails the build if the method is ever removed,
+// so the capability cannot silently disappear again.
+var _ adapter.MetricsBatchHandler = (*Adapter)(nil)
+
 // Detail reads one session's provider metadata and runtime document.
 //
 // Both documents are forwarded verbatim. The cluster does not model a provider's

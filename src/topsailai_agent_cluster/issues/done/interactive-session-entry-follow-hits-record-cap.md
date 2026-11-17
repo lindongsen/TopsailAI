@@ -130,3 +130,22 @@ budget and the deadline, or must keep a cap that is reported as its own terminal
 code with snapshot recovery. Both halves are likely required: the cap must not
 truncate a healthy stream, and an exhausted cap must not be called a provider
 failure.
+
+## Resolution
+
+Resolved in `b9abd540`. `scanStream` (`internal/adapter/genericcli/runner.go:174-205`) no
+longer accumulates a record count, so a live follow is bounded by bytes and by its
+deadline only. The comment at the site records why: a record count truncates a healthy
+stream whose only fault is being long, and the REPL asks for 300 trailing lines while the
+runner used to allow 128.
+
+The second defect of the same class was fixed with it. The cumulative byte budget now
+returns `adapter.ErrOutputLimit` instead of a bare error, so the Endpoint names a local
+bound rather than blaming the provider.
+
+`max_records` stays in the request as a provider-side budget, and
+`internal/providerconformance/runner.go` keeps its own limit for conformance, which is a
+separate site and was not changed.
+
+Verified by `internal/adapter/genericcli/stream_lifecycle_guard_test.go`, which asserts a
+stream carrying more records than `max_records` is accepted.

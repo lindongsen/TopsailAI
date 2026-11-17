@@ -210,3 +210,68 @@ func TestEndpointIgnoresServerEndpointDegradedRetention(t *testing.T) {
 		t.Fatalf("Endpoint parsed Server degraded retention: %v", err)
 	}
 }
+
+func TestEndpointHeartbeatLivenessConfiguration(t *testing.T) {
+	defaults := Defaults("agent-cluster-endpoint")
+	if defaults.HeartbeatAckTimeout != 3*time.Second {
+		t.Fatalf("default heartbeat acknowledgement timeout = %s, want 3s", defaults.HeartbeatAckTimeout)
+	}
+	if defaults.UnhealthyWindow != 30*time.Second {
+		t.Fatalf("default unhealthy window = %s, want 30s", defaults.UnhealthyWindow)
+	}
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT", "7s")
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW", "45s")
+	cfg, err := Load([]string{"--heartbeat-ack-timeout", "2s", "--unhealthy-window", "90s"}, "agent-cluster-endpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HeartbeatAckTimeout != 2*time.Second {
+		t.Fatalf("flag did not override the acknowledgement timeout: %s", cfg.HeartbeatAckTimeout)
+	}
+	if cfg.UnhealthyWindow != 90*time.Second {
+		t.Fatalf("flag did not override the unhealthy window: %s", cfg.UnhealthyWindow)
+	}
+}
+
+func TestEndpointHeartbeatLivenessRejectsNonPositiveValues(t *testing.T) {
+	// A non-positive bound would disable the Endpoint's only liveness judgement,
+	// and a disabled judgement looks exactly like a healthy Server. Each case is
+	// rejected at load time so the failure is visible at startup.
+	cases := []struct {
+		name     string
+		variable string
+		value    string
+	}{
+		{"ack timeout zero", "AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT", "0s"},
+		{"ack timeout negative", "AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT", "-1s"},
+		{"ack timeout malformed", "AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT", "invalid"},
+		{"unhealthy window zero", "AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW", "0s"},
+		{"unhealthy window negative", "AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW", "-1s"},
+		{"unhealthy window malformed", "AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW", "invalid"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv(testCase.variable, testCase.value)
+			if _, err := Load(nil, "agent-cluster-endpoint"); err == nil {
+				t.Fatalf("accepted %s=%q", testCase.variable, testCase.value)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsNonPositiveHeartbeatBounds(t *testing.T) {
+	// Validate is the last gate before service initialization, so it must reject
+	// the same values Load rejects. A caller that builds a Config directly would
+	// otherwise start an Endpoint with the liveness rule silently disabled.
+	base := Defaults("agent-cluster-endpoint")
+	zeroAck := base
+	zeroAck.HeartbeatAckTimeout = 0
+	if err := zeroAck.Validate(); err == nil {
+		t.Fatal("Validate accepted a zero acknowledgement timeout")
+	}
+	zeroWindow := base
+	zeroWindow.UnhealthyWindow = 0
+	if err := zeroWindow.Validate(); err == nil {
+		t.Fatal("Validate accepted a zero unhealthy window")
+	}
+}

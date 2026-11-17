@@ -134,7 +134,20 @@ is an allowlist over `finished`, `rejected`, `failed`, `expired` and `cancelled_
 status added later is retained until it is reviewed. `unconfirmed` is never purged by age: delivery
 happened and the exit was never confirmed, so the row is the only evidence of an unknown effect and is
 retained until an explicit reconciliation resolves it. Executing and other in-flight records are never
-purged by age either. Archive/reconcile explicitly rather than deleting uncertain records.
+purged by age either.
+
+That guarantee is scoped to age-based purge. Endpoint expiry is a separate retention decision with a
+separate owner: once a degraded Endpoint reaches its deletion deadline
+(`AGENT_CLUSTER_SERVER_ENDPOINT_DEGRADED_RETENTION`), the Endpoint record and every command beneath it
+are removed, including `unconfirmed` rows. The Endpoint record cannot outlive its own retention window,
+so the lifecycle decision takes precedence over the command-evidence decision. This is intended
+behaviour, not a defect.
+
+Because that deletion destroys unknown-effect evidence, it must be observable. Every removed command is
+logged individually at Info with `command_id`, `endpoint_id`, `status` and `effect_certainty`, and the
+sweep completion line reports the total as `deleted_commands`. An operator investigating an unknown
+effect can therefore tell from the log that the evidence existed and was removed by endpoint expiry,
+rather than finding it silently absent.
 
 Purging a command row does not weaken deduplication. The immutable deadline, not the stored row, is
 what prevents a replayed expired command from executing: admission re-inserts the row and immediately

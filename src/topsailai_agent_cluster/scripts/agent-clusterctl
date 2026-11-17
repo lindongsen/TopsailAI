@@ -279,7 +279,11 @@ function doctor() {
     echo "log        : ${LOG_PATH}"
     if [ "${ROLE}" = "endpoint" ]; then
         echo "endpoint   : ${ENDPOINT_ID} (${INSTANCE_ID})"
-        echo "channel    : ${CHANNEL_ADDRESS}"
+        # Either spelling may be configured, so neither may be expanded
+        # unguarded: under `set -u` an unset CHANNEL_ADDRESS aborts the launcher
+        # after it has already stopped the previous process, which leaves the
+        # node down instead of restarted.
+        echo "channel    : ${CHANNEL_ADDRESS:-${CHANNEL_ADDRESSES:-}}"
         echo "allowlist  : ${COMMAND_ALLOWLIST_FILE:-<disabled>}"
         # Printed because an absent policy directory is not fail-closed: it means
         # every caller is permitted, which an operator must be able to see before

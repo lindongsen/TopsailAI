@@ -23,19 +23,50 @@ type workspaceResponse struct {
 }
 
 type workspaceItem struct {
-	SessionID         string           `json:"session_id"`
-	ProviderRowKey    string           `json:"filename"`
-	SessionName       string           `json:"session_name"`
-	SessionQualifier  string           `json:"session_qualifier"`
-	IsTask            bool             `json:"is_task"`
-	ProcessGeneration json.RawMessage  `json:"process_generation"`
-	State             string           `json:"state"`
-	Status            string           `json:"status"`
-	AgentID           string           `json:"agent_id"`
-	PID               int64            `json:"pid"`
-	ProjectWorkspace  string           `json:"project_workspace"`
-	Pwd               string           `json:"pwd"`
-	Driver            *workspaceDriver `json:"driver"`
+	SessionID         string            `json:"session_id"`
+	ProviderRowKey    string            `json:"filename"`
+	SessionName       string            `json:"session_name"`
+	SessionQualifier  string            `json:"session_qualifier"`
+	IsTask            bool              `json:"is_task"`
+	ProcessGeneration json.RawMessage   `json:"process_generation"`
+	State             string            `json:"state"`
+	Status            string            `json:"status"`
+	AgentID           string            `json:"agent_id"`
+	PID               int64             `json:"pid"`
+	ProjectWorkspace  string            `json:"project_workspace"`
+	Pwd               string            `json:"pwd"`
+	Driver            *workspaceDriver  `json:"driver"`
+	Runtime           *workspaceRuntime `json:"runtime"`
+}
+
+// workspaceRuntime is one row's runtime record as the provider collected it.
+//
+// The record is an envelope, not the facts themselves: State says whether the
+// row's process answered at all, and Data carries the answer. A row that was
+// never asked, or whose process refused, has a State other than "ok" and no
+// Data, so a reader must check State before trusting Data. Treating a missing
+// Data as zero counts would state a measurement nobody made.
+type workspaceRuntime struct {
+	State     string        `json:"state"`
+	ErrorCode string        `json:"error_code"`
+	PID       int64         `json:"pid"`
+	Data      *runtimeFacts `json:"data"`
+}
+
+// runtimeFacts is the directly readable fact set the provider publishes.
+//
+// Only the two message layers are modelled here, because they are the only
+// fields this provider reads. The provider's document carries more, and adding a
+// field here is a deliberate act rather than an automatic consequence of the
+// provider growing.
+type runtimeFacts struct {
+	OK        bool `json:"ok"`
+	Agent2LLM struct {
+		Messages int `json:"messages"`
+	} `json:"agent2llm"`
+	User2Agent struct {
+		Messages int `json:"messages"`
+	} `json:"user2agent"`
 }
 
 type workspaceDriver struct {

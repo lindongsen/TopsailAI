@@ -74,6 +74,16 @@ type Config struct {
 	ChannelDirection      string
 	EndpointChannelListen string
 	EndpointDialAddresses map[string]string
+	// HeartbeatAckTimeout bounds how long one Endpoint heartbeat waits for the
+	// Server's acknowledgement. A heartbeat that is not acknowledged is counted
+	// as a failure, because sending alone only proves the local socket accepts
+	// bytes, which stays true for a Server that has stopped reading.
+	HeartbeatAckTimeout time.Duration
+	// UnhealthyWindow is how long consecutive unacknowledged heartbeats must
+	// accumulate before the Endpoint declares the Server unhealthy and closes the
+	// connection. Closing makes the read fail, which lets the existing reconnect
+	// path walk the configured address list from the first entry.
+	UnhealthyWindow time.Duration
 	// TLSSharedCertificate means every Endpoint presents the same Server
 	// certificate, so the certificate no longer proves which Endpoint is
 	// connecting. It is opt-in because that binding is a real security property.
@@ -107,7 +117,7 @@ func Defaults(role string) Config {
 	if role == "agent-cluster-endpoint" {
 		databasePath = ".tmp/endpoint.sqlite"
 	}
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server", HeartbeatAckTimeout: 3 * time.Second, UnhealthyWindow: 30 * time.Second}
 }
 
 // Load parses command-line flags and applies environment configuration.
@@ -181,6 +191,20 @@ func Load(args []string, role string) (Config, error) {
 		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR"); value != "" {
 			cfg.EndpointChannelListen = value
+		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT"); value != "" {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT: %w", err)
+			}
+			cfg.HeartbeatAckTimeout = parsed
+		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW"); value != "" {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW: %w", err)
+			}
+			cfg.UnhealthyWindow = parsed
 		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ID"); value != "" {
 			cfg.EndpointID = value
@@ -268,6 +292,8 @@ func Load(args []string, role string) (Config, error) {
 			return nil
 		})
 		flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")
+		flags.DurationVar(&cfg.HeartbeatAckTimeout, "heartbeat-ack-timeout", cfg.HeartbeatAckTimeout, "how long one Endpoint heartbeat waits for the Server acknowledgement")
+		flags.DurationVar(&cfg.UnhealthyWindow, "unhealthy-window", cfg.UnhealthyWindow, "how long consecutive unacknowledged heartbeats accumulate before the Server is declared unhealthy")
 		flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 		flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")
 	}
@@ -351,6 +377,16 @@ func (c Config) Validate() error {
 	}
 	if c.EndpointDegradedRetention <= 0 {
 		return fmt.Errorf("endpoint degraded retention must be positive")
+	}
+	// A non-positive heartbeat bound would disable the Endpoint's only liveness
+	// judgement, and a disabled judgement is indistinguishable from a healthy
+	// Server. Rejecting it at startup keeps that failure visible instead of
+	// letting the Endpoint stay attached to an unresponsive Server forever.
+	if c.HeartbeatAckTimeout <= 0 {
+		return fmt.Errorf("heartbeat acknowledgement timeout must be positive")
+	}
+	if c.UnhealthyWindow <= 0 {
+		return fmt.Errorf("unhealthy window must be positive")
 	}
 	switch c.ChannelDirection {
 	case DirectionEndpointInitiated, DirectionServerInitiated, DirectionBidirectional:

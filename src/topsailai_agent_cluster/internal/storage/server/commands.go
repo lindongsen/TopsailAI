@@ -156,6 +156,16 @@ func (s *Store) CancelCommand(ctx context.Context, commandID string, nowMS int64
 // an operator investigating an unknown effect still needs the row. It is
 // retained until an explicit reconciliation resolves it.
 //
+// This guarantee is scoped to age-based purge only. Endpoint expiry is a
+// different decision with a different owner: when a degraded endpoint reaches its
+// deletion deadline, ExpireDegradedEndpoints removes every command beneath it,
+// including unconfirmed rows, because the endpoint record cannot outlive its own
+// retention window. That deletion is intended, and it is made auditable by
+// logging each removed row with its endpoint, status and effect certainty. Do not
+// read this comment as a promise that an unconfirmed row survives every deletion
+// path; it survives age-based purge, and endpoint expiry is the documented
+// exception.
+//
 // Deleting a row removes the duplicate-detection evidence for that command ID,
 // and that is safe because the immutable deadline, not the stored row, is what
 // prevents a replayed expired command from executing: admission re-inserts the

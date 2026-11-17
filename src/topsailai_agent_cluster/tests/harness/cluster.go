@@ -84,6 +84,12 @@ type ClusterOptions struct {
 	// between two fresh Servers compares generation 1 against generation 1 and
 	// passes even when the connection-layer fix is absent.
 	ChannelProxy bool
+	// SecondaryChannelProxy routes the Endpoint's second dial through a proxy so
+	// a scenario can make the second Server stop answering without closing its
+	// sockets. A fallback-back scenario needs exactly that: the Endpoint must
+	// decide the second Server is unhealthy while the process is still alive, and
+	// a stopped process would only prove that a closed socket is noticed.
+	SecondaryChannelProxy bool
 	// EndpointLogFile sends the Endpoint's own log to a file so a scenario can
 	// assert on a reconnect or on the absence of a superseded rejection. The log
 	// is the only place either event is observable.
@@ -512,11 +518,21 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if options.NoEndpointDialAddress && options.ChannelDirection != "server-initiated" {
 		return nil, fmt.Errorf("NoEndpointDialAddress requires the server-initiated direction, because an Endpoint that dials needs an address")
 	}
+	// The second address is the second Server unless a scenario needs to make that
+	// Server stop answering without closing its sockets. A proxy in front of it
+	// keeps the process alive and the fence intact while every byte is discarded,
+	// which is the only shape that proves the Endpoint decided the Server was
+	// unhealthy rather than merely noticing a closed socket.
+	secondaryAddress := "wss://127.0.0.1:" + cluster.SecondaryChannel
+	if options.SecondaryChannelProxy {
+		cluster.SecondaryChannelProxy = StartChannelProxy(t, "127.0.0.1:"+cluster.SecondaryChannel)
+		secondaryAddress = cluster.SecondaryChannelProxy.Address()
+	}
 	addressVariable := ""
 	if !options.NoEndpointDialAddress {
 		addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=" + primaryAddress
 		if options.SecondServer {
-			addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES=" + primaryAddress + ",wss://127.0.0.1:" + cluster.SecondaryChannel
+			addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES=" + primaryAddress + "," + secondaryAddress
 		}
 		if options.UnreachableFirstAddress {
 			// A dead address first is what proves the walk continues past a failure.
@@ -1023,8 +1039,40 @@ func (c *Cluster) runTUIInteractiveWithReader(stdin io.Reader, termType string, 
 //
 // The client configuration is appended last so a scenario can override a default
 // rather than being silently shadowed by it.
+//
+// HOME is replaced with a private directory for the same reason. The CLI reads
+// $HOME/.topsailai/.topsailai_agent_cluster.env at startup and only fills keys the
+// process environment leaves unset, so an operator's installed configuration wins
+// over the URL this harness sets. On a machine that has been deployed, that file
+// selects a Server profile pointing at the real Server, and every CLI scenario
+// then talks to production instead of the test Server. The symptom is a cascade of
+// unrelated failures whose output contains real session names, which reads like a
+// product defect rather than a test isolation defect.
+//
+// A blocklist of the four profile keys would not be a fix: the file may carry any
+// key the CLI reads, and a new credential key would silently start leaking again.
+// Replacing HOME removes the file from the CLI's search path entirely, so no key
+// can leak regardless of what the file contains.
 func (c *Cluster) cliEnvironment() []string {
-	env := append(os.Environ(),
+	home := filepath.Join(c.Root, "cli-home")
+	// A failure here is not fatal: the CLI treats an absent per-user file as "no
+	// configuration", so an uncreatable directory still isolates the child. It is
+	// created so the CLI's own history file has somewhere to live.
+	_ = os.MkdirAll(home, 0o700)
+	env := make([]string, 0, len(os.Environ())+6)
+	for _, entry := range os.Environ() {
+		// The inherited HOME is dropped rather than left in place. The appended
+		// value below is what actually takes effect, because a later duplicate wins
+		// in the child's environment; dropping the inherited entry keeps the child
+		// environment free of two contradictory values, so a reader of the process
+		// environment cannot see the operator's home and believe it is in force.
+		if strings.HasPrefix(entry, "HOME=") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	env = append(env,
+		"HOME="+home,
 		"AGENT_CLUSTER_CLI_SERVER_URL="+c.URL(""),
 		"AGENT_CLUSTER_CLI_SERVER_TOKEN=secret",
 		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,

@@ -45,6 +45,17 @@ type Heartbeater interface {
 	RunHeartbeat(context.Context, time.Duration) error
 }
 
+// HeartbeatAcknowledger records that the Server answered one heartbeat.
+//
+// It is a separate optional interface because only the transport can observe an
+// acknowledgement, and the channel loop is the only reader of the connection. A
+// service whose channel cannot report acknowledgements keeps its previous
+// behaviour instead of failing to compile, which keeps the seam honest: an
+// unacknowledged heartbeat is a transport fact, not a service decision.
+type HeartbeatAcknowledger interface {
+	AcknowledgeHeartbeat()
+}
+
 // ReportCollector collects the latest complete Endpoint inventory.
 type ReportCollector interface {
 	Collect(context.Context, int64) (protocol.InventoryReport, error)
@@ -402,10 +413,33 @@ func (s *Service) resendPendingReceipts(ctx context.Context) {
 	}
 }
 
+// heartbeatLoop keeps liveness reporting alive for the whole service lifetime.
+//
+// The loop restarts after a heartbeat stops instead of returning, because a
+// stopped heartbeat is not a reason to stop watching the Server. A tick that
+// lands while the connection is detached makes SendHeartbeat report offline,
+// and the reconnect backoff is longer than one heartbeat interval, so a single
+// such tick is expected during every re-home. Ending the goroutine there would
+// silence liveness reporting for the rest of the process lifetime, which is
+// exactly the state in which a hung Server must still be detected.
 func (s *Service) heartbeatLoop(ctx context.Context) {
 	defer s.wg.Done()
-	if err := s.heartbeat.RunHeartbeat(ctx, s.heartbeatInterval); err != nil && ctx.Err() == nil {
-		s.logError("run heartbeat", err)
+	for {
+		err := s.heartbeat.RunHeartbeat(ctx, s.heartbeatInterval)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			s.logError("run heartbeat", err)
+		}
+		// The delay is the heartbeat interval rather than a fixed constant, so a
+		// detached connection is retried at the same cadence as a healthy one and
+		// the loop cannot spin while no connection exists.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(s.heartbeatInterval):
+		}
 	}
 }
 
@@ -514,6 +548,14 @@ func (s *Service) channelLoop(ctx context.Context) {
 			continue
 		}
 		switch frame.Type {
+		case channel.FrameHeartbeatAck:
+			// The acknowledgement is the only evidence that the Server is alive
+			// rather than merely reachable. It is recorded here because this loop
+			// is the single reader of the connection, so the heartbeat sender
+			// cannot read it without consuming other frames.
+			if acknowledger, ok := s.channel.(HeartbeatAcknowledger); ok {
+				acknowledger.AcknowledgeHeartbeat()
+			}
 		case channel.FrameInventoryAck:
 			s.acknowledgeInventory(frame.SnapshotRevision)
 		case channel.FrameReceiptAck:
@@ -538,6 +580,8 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.messagesFrame(ctx, frame)
 		case channel.FrameMetricsRequest:
 			s.metricsFrame(ctx, frame)
+		case channel.FrameMetricsBatchRequest:
+			s.metricsBatchFrame(ctx, frame)
 		case channel.FrameDetailRequest:
 			s.detailFrame(ctx, frame)
 		case channel.FrameModelCatalogRequest:

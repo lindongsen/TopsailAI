@@ -112,8 +112,13 @@ func expireEndpointRecords(ctx context.Context, logger *slog.Logger, store endpo
 		}
 		return
 	}
-	for _, commandID := range result.DeletedCommandIDs {
-		logger.Info("deleted expired endpoint command", "command_id", commandID, "degraded_retention", degradedRetention.String())
+	for _, command := range result.DeletedCommands {
+		logger.Info("deleted expired endpoint command",
+			"command_id", command.CommandID,
+			"endpoint_id", command.EndpointID,
+			"status", command.Status,
+			"effect_certainty", command.EffectCertainty,
+			"degraded_retention", degradedRetention.String())
 	}
 	for _, endpointID := range result.InventoryEndpointIDs {
 		logger.Info("expired degraded endpoint inventory", "endpoint_id", endpointID, "degraded_retention", degradedRetention.String())
@@ -121,5 +126,5 @@ func expireEndpointRecords(ctx context.Context, logger *slog.Logger, store endpo
 	for _, endpointID := range result.DeletedEndpointIDs {
 		logger.Info("expired degraded endpoint metadata", "endpoint_id", endpointID, "degraded_retention", degradedRetention.String())
 	}
-	logger.Info("retention sweep complete", "retention", retention.String(), "cutoff_at_ms", cutoff.UnixMilli(), "command_retention", commandRetention.String(), "command_cutoff_at_ms", commandCutoff.UnixMilli(), "degraded_retention", degradedRetention.String(), "converged_commands", convergedCommands, "purged_commands", purgedCommands, "degraded_endpoints", len(degraded.DegradedEndpointIDs), "deleted_degraded_inventory", len(degraded.InventoryEndpointIDs), "deleted_commands", len(result.DeletedCommandIDs), "deleted_inventory", len(result.InventoryEndpointIDs), "deleted_metadata", len(result.DeletedEndpointIDs))
+	logger.Info("retention sweep complete", "retention", retention.String(), "cutoff_at_ms", cutoff.UnixMilli(), "command_retention", commandRetention.String(), "command_cutoff_at_ms", commandCutoff.UnixMilli(), "degraded_retention", degradedRetention.String(), "converged_commands", convergedCommands, "purged_commands", purgedCommands, "degraded_endpoints", len(degraded.DegradedEndpointIDs), "deleted_degraded_inventory", len(degraded.InventoryEndpointIDs), "deleted_commands", len(result.DeletedCommands), "deleted_inventory", len(result.InventoryEndpointIDs), "deleted_metadata", len(result.DeletedEndpointIDs))
 }

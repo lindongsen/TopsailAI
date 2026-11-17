@@ -171,6 +171,21 @@ func layoutColumns(options TableOptions) []tableColumn {
 	return kept
 }
 
+// layoutPrintsColumn reports whether one render actually prints a column.
+//
+// It asks the layout rather than the flags, because a flag is an input and the
+// layout is the decision. A caller that skips work for a column the layout drops
+// therefore stays correct when a new flag or a new column set changes what is
+// printed, instead of encoding the current flag combination a second time.
+func layoutPrintsColumn(options TableOptions, key string) bool {
+	for _, column := range layoutColumns(options) {
+		if column.key == key {
+			return true
+		}
+	}
+	return false
+}
+
 // layoutHeaders lists the headers of one rendered layout, so a caller that needs
 // the printed headers never has to rebuild the layout itself.
 func layoutHeaders(options TableOptions) []string {

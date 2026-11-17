@@ -110,6 +110,17 @@ type SessionMessagesResult struct {
 // SessionMetricsPayload is the closed payload of a session-scoped metrics read.
 type SessionMetricsPayload struct{}
 
+// SessionMetricsBatchPayload carries the bounded set of sessions one batch read
+// addresses.
+//
+// The set is in the payload rather than in a target because a target names one
+// resource and this request names many. It is a caller-supplied collection, so it
+// is bounded by protocol.MaxMetricsBatchSessions before any provider process
+// starts.
+type SessionMetricsBatchPayload struct {
+	ProviderSessionIDs []string `json:"provider_session_ids"`
+}
+
 // MessageCountsFact carries the two provider message counts before Endpoint mapping.
 type MessageCountsFact struct {
 	Inbound  int `json:"inbound"`
@@ -121,6 +132,18 @@ type SessionMetricsResult struct {
 	ProviderSessionID string            `json:"provider_session_id"`
 	Messages          MessageCountsFact `json:"messages"`
 	ObservedAtMS      int64             `json:"observed_at_ms"`
+}
+
+// SessionMetricsBatchResult carries the message counts of a bounded set of
+// sessions.
+//
+// Each member is a SessionMetricsResult, so a member that could not be measured
+// is reported by its own absence rather than by a zero count. A zero is a
+// measured zero, and a set read that filled an unmeasured member with zeros would
+// state a fact the provider never observed.
+type SessionMetricsBatchResult struct {
+	Results      []SessionMetricsResult `json:"results"`
+	ObservedAtMS int64                  `json:"observed_at_ms"`
 }
 
 // SessionDetailPayload is the closed payload of a session-scoped detail read.
@@ -186,6 +209,31 @@ func DecodeQueryPayload(query NamedContract, target *Target, payload json.RawMes
 			return nil, err
 		}
 		return value, nil
+	case QuerySessionMetricsBatch:
+		var value SessionMetricsBatchPayload
+		if err := decodeStrict(payload, &value); err != nil {
+			return nil, err
+		}
+		// The set is validated here, before any provider process starts, so an
+		// oversized or empty request fails at the contract boundary instead of
+		// becoming an unbounded provider document.
+		if len(value.ProviderSessionIDs) == 0 {
+			return nil, errors.New("session.metrics.batch requires at least one provider_session_id")
+		}
+		if len(value.ProviderSessionIDs) > protocol.MaxMetricsBatchSessions {
+			return nil, fmt.Errorf("session.metrics.batch accepts at most %d sessions", protocol.MaxMetricsBatchSessions)
+		}
+		seen := make(map[string]struct{}, len(value.ProviderSessionIDs))
+		for _, sessionID := range value.ProviderSessionIDs {
+			if err := validateIdentifier("provider_session_id", sessionID, true); err != nil {
+				return nil, err
+			}
+			if _, duplicate := seen[sessionID]; duplicate {
+				return nil, fmt.Errorf("session.metrics.batch contains duplicate provider_session_id %q", sessionID)
+			}
+			seen[sessionID] = struct{}{}
+		}
+		return value, nil
 	case QuerySessionDetail:
 		var value SessionDetailPayload
 		if err := decodeStrict(payload, &value); err != nil {
@@ -235,6 +283,12 @@ func DecodeQueryResult(query NamedContract, data json.RawMessage) (any, error) {
 		return value, value.validate()
 	case QuerySessionMetrics:
 		var value SessionMetricsResult
+		if err := decodeStrict(data, &value); err != nil {
+			return nil, err
+		}
+		return value, value.validate()
+	case QuerySessionMetricsBatch:
+		var value SessionMetricsBatchResult
 		if err := decodeStrict(data, &value); err != nil {
 			return nil, err
 		}
@@ -377,6 +431,39 @@ func (r SessionMetricsResult) validate() error {
 	}
 	if r.Messages.Inbound > protocol.MaxMessageCount || r.Messages.Outbound > protocol.MaxMessageCount {
 		return fmt.Errorf("message counts exceed %d", protocol.MaxMessageCount)
+	}
+	return nil
+}
+
+// validate rejects a batch result that cannot be presented as real counts.
+//
+// Every member is validated with the same rule a single-session read uses, so a
+// batch cannot accept a count the single read would refuse. The member count is
+// bounded by the same limit the request is bounded by, because a provider that
+// answered more sessions than were asked about has not answered the question.
+//
+// A duplicate member is refused rather than collapsed: two entries for one
+// session would leave the caller choosing which one is the measurement, and that
+// choice belongs to the provider that made it.
+func (r SessionMetricsBatchResult) validate() error {
+	if r.Results == nil {
+		return errors.New("session metrics batch results are required")
+	}
+	if r.ObservedAtMS < 1 {
+		return errors.New("session metrics batch result has invalid observation time")
+	}
+	if len(r.Results) > protocol.MaxMetricsBatchSessions {
+		return fmt.Errorf("session metrics batch exceeds %d results", protocol.MaxMetricsBatchSessions)
+	}
+	seen := make(map[string]struct{}, len(r.Results))
+	for _, result := range r.Results {
+		if err := result.validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seen[result.ProviderSessionID]; duplicate {
+			return fmt.Errorf("session metrics batch contains duplicate provider_session_id %q", result.ProviderSessionID)
+		}
+		seen[result.ProviderSessionID] = struct{}{}
 	}
 	return nil
 }

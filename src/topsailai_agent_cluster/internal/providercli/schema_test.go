@@ -30,6 +30,8 @@ var requiredSchemaFiles = []string{
 	"session-messages-result.schema.json",
 	"session-metrics-request.schema.json",
 	"session-metrics-result.schema.json",
+	"session-metrics-batch-request.schema.json",
+	"session-metrics-batch-result.schema.json",
 	"session-detail-request.schema.json",
 	"session-detail-result.schema.json",
 	"resolve-payload.schema.json",

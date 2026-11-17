@@ -31,6 +31,7 @@ from topsailai.workspace.print_tool import (
 )
 from topsailai.workspace.context.agent import ContextRuntimeUtils
 from topsailai.workspace.plugin_instruction.agent import get_tokens
+from topsailai.workspace.plugin_instruction.runtime import static_data as get_static_data
 from topsailai.workspace.plugin_instruction.base import arguments
 
 
@@ -66,6 +67,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             "ctx.search": self.ctx_search,
             "ctx.btw": self.ctx_btw,
             "agent.tokens": self.agent_tokens,
+            "runtime.static-data": self.runtime_static_data,
         }
 
         # session metadata
@@ -105,6 +107,19 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         if json_enabled:
             return get_tokens(self.ctx_runtime_data, json_enabled=True)
         return get_tokens(self.ctx_runtime_data)
+
+    def runtime_static_data(self, *args, **kwargs) -> str:
+        """Report directly readable facts for the two current message layers.
+
+        Usage::
+
+            /runtime.static-data
+            /runtime.static-data json=1
+
+        Argument parsing stays in the plugin handler so this binding only
+        supplies the context-bound runtime data and cannot drift from it.
+        """
+        return get_static_data(self.ctx_runtime_data, *args, **kwargs)
 
     ##############################################################################
     # Session metadata

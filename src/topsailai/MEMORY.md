@@ -131,3 +131,28 @@ Action: every code path that adds, removes, replaces, or reorders conversation m
 3. **Event record.** Call `topsailai.events.record_event()` with a stable dotted event type and a bounded payload. Event recording is best-effort: wrap it in `try/except`, log the failure, and never let observability interrupt the business path.
 
 Why this prevents recurrence: a message-list mutation is the hardest class of change to reconstruct after the fact, because the removed content is gone and the surviving list looks normal. Without a print the operator sees the conversation silently shrink; without a log there is no record of the decision inputs; without an event there is no machine-readable audit trail across sessions. The channel choice matters as much as the presence of output: `print_step()` is disabled in ordinary runs and `print_info()` is filtered at `WARNING`, so a rare destructive change reported through either one is effectively silent. Use `print_warning()` for the rare case so the removal is visible by default, and keep the event type stable so downstream consumers can count occurrences over time.
+
+## Session cleanup authorization is fail-closed by design and must not be loosened
+
+Trigger: the reaper reported `reaped=0 of 51` while 39 metadata files were past the
+7-day retention, and an issue was filed describing four "blockers": exact hostname
+match, per-`session_id` aggregation, `len(metadata) != 1`, and falsy `session_id`
+exclusion. The Human reviewed it and decided on 2026-11-17: "这个issue不解决，逻辑都是对的".
+
+Action: treat all four gates as intended safety behavior, not defects. Do not add
+`running` to `_CLEANABLE_OWNER_STATUSES`, do not relax the hostname comparison, do
+not switch authorization from per-`session_id` to per-PID, and do not make
+unparsable records reclaimable, unless the Human explicitly authorizes a specific
+change. Every deletion path already funnels through `can_clean` with no bypass:
+`_remove_cleanable_meta` and `_remove_orphan_records` both check
+`decisions.get(session_id)` plus a re-captured file identity, and
+`driver_reaper._delete_owner_records` re-runs `can_clean` per file. 44 unit tests in
+`tests/unit/test_topsailai_context_session_activity.py` pin this behavior.
+
+Why this prevents recurrence: the gates exist because a wrong deletion destroys a
+live session's evidence, which is unrecoverable, while a skipped deletion only
+wastes disk. The asymmetry is deliberate, so "cleanup reclaims nothing" is a
+capacity symptom to be solved by retention policy, cross-host ownership, or manual
+operator action — never by weakening the authorization predicate. Recording the
+decision stops a future agent from reading the same measurements as a bug report
+and "fixing" a correct guard into a data-loss path.

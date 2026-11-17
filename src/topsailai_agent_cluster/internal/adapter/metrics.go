@@ -25,3 +25,25 @@ import (
 type MetricsHandler interface {
 	Metrics(context.Context, protocol.SessionMetricsQuery) (protocol.SessionMetrics, error)
 }
+
+// MetricsBatchHandler optionally reads the current message counts of a bounded
+// set of sessions in one call.
+//
+// It is a separate optional interface rather than a method on MetricsHandler,
+// because the two capabilities have different costs and an adapter may honestly
+// support one without the other. An adapter that can measure one session but
+// cannot batch is still useful: the Endpoint falls back to the single-session
+// read for every row, which is slower but correct. Requiring both would make such
+// an adapter report no metrics capability at all, which would be a worse answer
+// than a slow one.
+//
+// The set is the unit of the read. Reaching a provider costs a fixed amount that
+// does not depend on how many sessions are asked about, so an adapter that can
+// answer a set pays that cost once instead of once per member.
+//
+// A member the adapter could not measure is reported by its own error code, not
+// by a zero count, for the same reason the single-session read does: a zero is a
+// measured zero.
+type MetricsBatchHandler interface {
+	MetricsBatch(context.Context, protocol.SessionMetricsBatchQuery) (protocol.SessionMetricsBatch, error)
+}

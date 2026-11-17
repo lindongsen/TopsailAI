@@ -46,13 +46,31 @@ type EndpointClient struct {
 	// and refused, so an operator cannot distinguish "the first Server is down"
 	// from "the first Server was never configured".
 	OnAttemptFailure func(address string, err error)
-	Conn             *websocket.Conn
-	Generation       int64
+	// OnServerUnhealthy is called once when consecutive unacknowledged
+	// heartbeats reach UnhealthyWindow, before the connection is closed. It
+	// exists because the decision is otherwise invisible: the operator would see
+	// a reconnect and could not tell a Server that stopped answering from a
+	// Server that was restarted.
+	OnServerUnhealthy func(unacknowledged time.Duration)
+	Conn              *websocket.Conn
+	Generation        int64
 	// ServerIdentity names the Server database behind the active connection. It
 	// is recorded from the handshake so the Endpoint can tell a restarted Server
 	// from a different one.
 	ServerIdentity string
-	mu             sync.Mutex
+	// HeartbeatAckTimeout bounds how long one heartbeat may wait for the
+	// Server's acknowledgement before that heartbeat counts as a failure.
+	HeartbeatAckTimeout time.Duration
+	// UnhealthyWindow is how long consecutive unacknowledged heartbeats must
+	// accumulate before the Server is declared unhealthy. It is a duration
+	// rather than a count so the rule reads as the operator's own statement: a
+	// Server that stops answering for this long is offline.
+	UnhealthyWindow time.Duration
+	// heartbeatAck receives one value per acknowledged heartbeat. It is buffered
+	// so the channel loop never blocks on it, and it is drained before each send
+	// so a stale acknowledgement cannot satisfy the next wait.
+	heartbeatAck chan struct{}
+	mu           sync.Mutex
 }
 
 // ServerDatabaseIdentity reports the Server database identity behind the active
@@ -73,6 +91,18 @@ func (c *EndpointClient) ServerDatabaseIdentity() string {
 // configured Server would never be tried. A bounded attempt is what makes
 // "try the next address" a real behaviour rather than a comment.
 const dialAttemptTimeout = 10 * time.Second
+
+// defaultHeartbeatAckTimeout bounds how long one heartbeat waits for the
+// Server's acknowledgement. It is shorter than the heartbeat interval so a
+// single late reply is decided before the next beat is due, which keeps the
+// failure count aligned with elapsed time instead of letting a backlog build.
+const defaultHeartbeatAckTimeout = 3 * time.Second
+
+// defaultUnhealthyWindow is how long consecutive unacknowledged heartbeats must
+// accumulate before the Server is declared unhealthy. It is deliberately longer
+// than one heartbeat: a Server under load can answer late, and tearing the link
+// down on a single late reply would turn ordinary load into a re-home.
+const defaultUnhealthyWindow = 30 * time.Second
 
 // DialAll tries every configured address in order and returns the first success.
 //
@@ -310,23 +340,137 @@ func (c *EndpointClient) Read(ctx context.Context) (Frame, error) {
 	return frame, nil
 }
 
+// heartbeatAckChannel returns the acknowledgement channel, allocating it on
+// first use.
+//
+// Lazy allocation exists because the channel is an implementation detail of the
+// heartbeat, not something every caller must remember to construct. A nil
+// channel would make every heartbeat look unacknowledged, which would declare a
+// healthy Server unhealthy after one window, so the channel must never be nil
+// when the heartbeat runs. Allocation is guarded by the same mutex that protects
+// the connection, so two goroutines cannot create two different channels.
+func (c *EndpointClient) heartbeatAckChannel() chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.heartbeatAck == nil {
+		c.heartbeatAck = make(chan struct{}, 1)
+	}
+	return c.heartbeatAck
+}
+
+// AcknowledgeHeartbeat records that the Server answered one heartbeat.
+//
+// It is called from the channel loop, which is the only reader of the
+// connection. The heartbeat sender must never read the connection itself,
+// because two concurrent readers on one WebSocket consume each other's frames.
+// The send is non-blocking: a duplicate acknowledgement is harmless, and a
+// blocked channel loop would stall every other frame.
+func (c *EndpointClient) AcknowledgeHeartbeat() {
+	select {
+	case c.heartbeatAckChannel() <- struct{}{}:
+	default:
+	}
+}
+
 // RunHeartbeat maintains application liveness until the context is cancelled.
+//
+// A heartbeat is only evidence that the Server is alive when the Server answers
+// it. Sending alone proves the local socket still accepts bytes, which stays
+// true for a Server that has stopped reading, so an unacknowledged heartbeat is
+// counted as a failure instead of being treated as success.
+//
+// Consecutive failures accumulate until UnhealthyWindow is reached, and only
+// then is the Server declared unhealthy. A single missed acknowledgement is not
+// enough: a busy Server can answer late, and tearing the link down on one late
+// reply would turn ordinary load into a re-home. When the window is reached the
+// connection is closed, which makes the channel loop's read fail and lets the
+// existing reconnect path walk the configured address list from the first
+// entry. That is what returns the Endpoint to a preferred Server without any
+// second reconnect mechanism.
 func (c *EndpointClient) RunHeartbeat(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		return errors.New("heartbeat interval must be positive")
 	}
+	ackTimeout := c.HeartbeatAckTimeout
+	if ackTimeout <= 0 {
+		ackTimeout = defaultHeartbeatAckTimeout
+	}
+	unhealthyWindow := c.UnhealthyWindow
+	if unhealthyWindow <= 0 {
+		unhealthyWindow = defaultUnhealthyWindow
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var unacknowledged time.Duration
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			// A stale acknowledgement from a previous heartbeat must not satisfy
+			// this one, so the buffer is drained before the frame is sent.
+			c.drainHeartbeatAcks()
 			if err := c.SendHeartbeat(ctx); err != nil {
 				return err
 			}
+			if c.awaitHeartbeatAck(ctx, ackTimeout) {
+				unacknowledged = 0
+				continue
+			}
+			unacknowledged += interval
+			if unacknowledged < unhealthyWindow {
+				continue
+			}
+			c.markServerUnhealthy(unacknowledged)
+			return nil
 		}
 	}
+}
+
+// awaitHeartbeatAck waits for one acknowledgement within limit.
+func (c *EndpointClient) awaitHeartbeatAck(ctx context.Context, limit time.Duration) bool {
+	ack := c.heartbeatAckChannel()
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-ack:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// drainHeartbeatAcks discards acknowledgements left over from earlier beats.
+func (c *EndpointClient) drainHeartbeatAcks() {
+	ack := c.heartbeatAckChannel()
+	for {
+		select {
+		case <-ack:
+		default:
+			return
+		}
+	}
+}
+
+// markServerUnhealthy closes the active connection so the read fails.
+//
+// Closing is the whole mechanism: the channel loop already treats a read error
+// as transport loss and reconnects through the ordered address list. Reporting
+// the decision here and reconnecting here would create a second reconnect path
+// that could race the first one.
+func (c *EndpointClient) markServerUnhealthy(unacknowledged time.Duration) {
+	c.mu.Lock()
+	conn := c.Conn
+	c.mu.Unlock()
+	if c.OnServerUnhealthy != nil {
+		c.OnServerUnhealthy(unacknowledged)
+	}
+	if conn == nil {
+		return
+	}
+	_ = conn.CloseNow()
 }
 
 // Close closes the active channel.

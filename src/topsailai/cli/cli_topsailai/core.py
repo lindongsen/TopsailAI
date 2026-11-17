@@ -379,7 +379,14 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
             record_args = record_args[1:]
         return run_workspace_delete_task_records_cli(record_args)
     output_format = getattr(args, "format", None)
+    include_runtime = bool(getattr(args, "include_runtime", False))
     if workspace_command == "list" and getattr(args, "json", False):
+        output_format = "json"
+    # Runtime data has no table representation, so asking for it selects the
+    # JSON document instead of being rejected or silently dropped. The flag is
+    # therefore a request for the data, not a modifier of an already-chosen
+    # format.
+    if workspace_command == "list" and include_runtime:
         output_format = "json"
     include_completed = bool(getattr(args, "all", False))
     local_only = bool(getattr(args, "local", False))
@@ -390,14 +397,15 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     except SessionSelectorError as error:
         print(
             f"{Colors.RED}[ERROR] Invalid session selector: {error}. "
-            f"Usage: topsailai workspace list [-s ID1,ID2] [--local] [--json]{Colors.RESET}",
+            f"Usage: topsailai workspace list [-s ID1,ID2] [--local] [--json] "
+            f"[--include-runtime]{Colors.RESET}",
             file=sys.stderr,
         )
         return 2
     if output_format == "json":
         _print_workspace_json(
             include_completed=include_completed, session_ids=session_ids,
-            local_only=local_only,
+            local_only=local_only, include_runtime=include_runtime,
         )
     else:
         _print_workspace_table(
@@ -1481,8 +1489,14 @@ def _print_workspace_table(
         print(f"  {task_dir}")
 
 
-def _workspace_json_item(file_info: dict, index: int) -> dict:
-    """Build one stable JSON item with optional process-generation evidence."""
+def _workspace_json_item(file_info: dict, index: int,
+                         runtime: Optional[dict] = None) -> dict:
+    """Build one stable JSON item with optional process-generation evidence.
+
+    ``runtime`` is the row's collected runtime record, or ``None`` when the
+    caller did not ask for it. The key is always present so the item schema
+    never changes shape between invocations.
+    """
     from cli_topsailai.agent_launch_process import _process_identity
     from cli_topsailai.log_files import is_process_holding_file
 
@@ -1538,7 +1552,16 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
     json_session_id = file_info.get("session_id")
     if json_session_id == TEMP_SESSION_MARKER:
         json_session_id = ""
-    return {
+    # The exact session metadata file is already read and identity-validated by
+    # the hostname enrichment, so exposing it costs no extra I/O, subprocess or
+    # directory scan. A row without a usable record reports ``null`` rather than
+    # an empty object, so a consumer can tell "no record" from "record with no
+    # fields", and the key is always present so the item schema never changes
+    # shape between row kinds.
+    metafile = file_info.get("_workspace_session_meta_data")
+    if not isinstance(metafile, dict):
+        metafile = None
+    item = {
         "no": index,
         "filename": file_info.get("filename", ""),
         "session_name": file_info.get("session_name"),
@@ -1553,20 +1576,41 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
         "created_at": created_at,
         "project_workspace": file_info.get("project_workspace"),
         "hostname": hostname,
+        "metafile": metafile,
+        "runtime": runtime,
     }
+    # The lookup record describes the same session's live state and is already
+    # in memory, so it is merged into the item body instead of being nested.
+    # The keys the body already owns are skipped: three of them carry identical
+    # values, while the lookup's ``status`` is coarser and capitalized, so it is
+    # exposed as ``status_raw`` rather than overwriting the finer-grained body
+    # value. When the lookup failed there is no record, so these fields stay
+    # absent instead of reporting a misleading ``null``.
+    record = file_info.get("_workspace_session_record")
+    if isinstance(record, dict):
+        for key, value in record.items():
+            if key not in item:
+                item[key] = value
+        if "status" in record:
+            item["status_raw"] = record["status"]
+    return item
 
 
 def _print_workspace_json(
     include_completed: bool = False,
     session_ids: Optional[List[str]] = None,
     local_only: bool = False,
+    include_runtime: bool = False,
 ) -> None:
     """Print the workspace task list as one JSON document.
 
     ``session_ids`` restricts the document to the named sessions, so ``items``
     and ``total`` describe the same filtered subset the table would show.
     ``local_only`` keeps only rows produced on this host, and ``total`` counts
-    that retained subset.
+    that retained subset. ``include_runtime`` collects each retained row's
+    runtime data through its control channel; collection happens after every
+    filter so a row that is not printed is never queried. Collection is best
+    effort, so a failure leaves ``runtime`` null instead of failing the document.
     """
     from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
@@ -1585,8 +1629,22 @@ def _print_workspace_json(
         # The filter runs after enrichment so it reads the same resolved
         # hostname the JSON item reports, never a partially populated row.
         log_files = filter_workspace_rows_by_hostname(log_files, socket.gethostname())
+    runtime_by_filename = {}
+    if include_runtime:
+        # Collection runs after filtering so a row the caller excluded is never
+        # queried. It is best effort: runtime data is an optional enrichment, so
+        # any failure here leaves every row's ``runtime`` null instead of
+        # breaking the document the caller actually asked for.
+        try:
+            from cli_topsailai.workspace_runtime import collect_workspace_runtime
+
+            runtime_by_filename = collect_workspace_runtime(log_files, task_dir)
+        except Exception:
+            runtime_by_filename = {}
     items = [
-        _workspace_json_item(file_info, index)
+        _workspace_json_item(
+            file_info, index, runtime_by_filename.get(file_info.get("filename")),
+        )
         for index, file_info in enumerate(log_files, start=1)
     ]
     payload = {
@@ -1927,6 +1985,15 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="store_true",
         dest="local",
         help="only show rows produced on this host",
+    )
+    workspace_list_parser.add_argument(
+        "--include-runtime",
+        action="store_true",
+        dest="include_runtime",
+        help=(
+            "collect each row's runtime data through its control channel and "
+            "add it to the JSON document; implies JSON output"
+        ),
     )
     workspace_list_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_subparsers.add_parser(

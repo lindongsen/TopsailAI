@@ -12,6 +12,7 @@ var standardQueries = []StandardQuery{
 	{Name: QueryModelCatalog, Version: "v1"},
 	{Name: QuerySessionMessages, Version: "v1"},
 	{Name: QuerySessionMetrics, Version: "v1"},
+	{Name: QuerySessionMetricsBatch, Version: "v1"},
 	{Name: QuerySessionDetail, Version: "v1"},
 }
 
@@ -45,6 +46,12 @@ func QueryRequiresSessionTarget(name string) bool {
 	switch name {
 	case QueryModelCatalog, QuerySessionMessages, QuerySessionMetrics, QuerySessionDetail:
 		return true
+	case QuerySessionMetricsBatch:
+		// The batch query addresses a set, not one resource, so it carries no
+		// target: the set travels in the payload. It is named here rather than
+		// left to the default so a reader cannot mistake its absence from the
+		// list above for an omission.
+		return false
 	default:
 		return false
 	}

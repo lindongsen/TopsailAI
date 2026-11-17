@@ -257,6 +257,114 @@ def show_runtime_history(*args, **kwargs) -> str:
     return "\n".join(lines)
 
 
+_STATIC_DATA_USAGE = "Usage: /runtime.static-data [json=1]"
+
+
+def _count_items(value: Any) -> int:
+    """Return the length of a directly readable collection, or `0`."""
+    if value is None:
+        return 0
+    try:
+        return len(value)
+    except TypeError:
+        return 0
+
+
+def _read_attr(obj: Any, name: str, default: Any = None) -> Any:
+    """Read one plain attribute without invoking any computation."""
+    if obj is None:
+        return default
+    value = getattr(obj, name, default)
+    return default if value is None else value
+
+
+def _format_count(value: Any) -> str:
+    """Render one directly read numeric fact without assuming its type."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return str(value)
+    return f"{value:,}"
+
+
+def _static_data_payload(ctx_runtime_data=None) -> dict | None:
+    """Build the directly readable fact set exactly once.
+
+    Only plain attribute reads and `len()` are allowed here. Token counting,
+    watermark classification and every other derived value belong to
+    `/agent.tokens`; adding one here would silently make this entry expensive.
+
+    Returns:
+        The shared payload, or `None` when no Agent is bound.
+    """
+    agent = getattr(ctx_runtime_data, "ai_agent", None) or get_ai_agent()
+    if not agent:
+        return None
+
+    session_id = _read_attr(ctx_runtime_data, "session_id", "")
+    llm_model = _read_attr(agent, "llm_model")
+    tool_stat = _read_attr(_read_attr(agent, "runtime"), "tool_stat")
+
+    return {
+        "ok": True,
+        "session": {"id": session_id, "ephemeral": not session_id},
+        "model": {
+            "name": _read_attr(llm_model, "model_name", "unavailable"),
+            "max_tokens": _read_attr(llm_model, "max_tokens", 0),
+        },
+        "agent2llm": {"messages": _count_items(_read_attr(agent, "messages"))},
+        "user2agent": {
+            "messages": _count_items(_read_attr(ctx_runtime_data, "messages")),
+        },
+        "tools": {"available": _count_items(_read_attr(agent, "available_tools"))},
+        "tool_calls": {"total": _read_attr(tool_stat, "total_calls", 0)},
+    }
+
+
+def _format_static_data(payload: dict) -> str:
+    """Render the shared static-data payload as human-readable text."""
+    session = payload["session"]
+    model = payload["model"]
+    lines = [
+        f"Session: {session['id'] or '(ephemeral/unsaved session)'}",
+        f"Model: {model['name']}",
+        f"Model maximum tokens: {_format_count(model['max_tokens'])}",
+        "",
+        "Agent2LLM:",
+        f"  Messages: {payload['agent2llm']['messages']}",
+        "",
+        "User2Agent:",
+        f"  Messages: {payload['user2agent']['messages']}",
+        "",
+        "Tools:",
+        f"  Available: {payload['tools']['available']}",
+        f"  Total calls: {payload['tool_calls']['total']}",
+    ]
+    return "\n".join(lines)
+
+
+def static_data(ctx_runtime_data=None, *args, **kwargs) -> str:
+    """Report directly readable facts without computing any derived value.
+
+    Usage::
+
+        /runtime.static-data
+        /runtime.static-data json=1
+
+    The text and JSON renderings both consume `_static_data_payload()`, so the
+    two formats cannot disagree and no fact is derived twice.
+    """
+    _, json_enabled, error = _normalize_arguments(
+        args, kwargs, allow_key=False, key_required=False,
+    )
+    if error:
+        return _error_response(error, _STATIC_DATA_USAGE, json_enabled)
+    payload = _static_data_payload(ctx_runtime_data)
+    if payload is None:
+        return _no_runtime(json_enabled)
+    if json_enabled:
+        return _json_dump(payload)
+    return _format_static_data(payload)
+
+
 INSTRUCTIONS = {
     "runtime": show_runtime,
     "get": get_runtime,

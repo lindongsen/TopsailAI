@@ -457,6 +457,36 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
         self.assertEqual(result, "Summarized content")
         mock_summary.assert_called_once()
 
+    def test_summarize_prints_message_count_and_tokens(self):
+        """The post-summarization console line must report the token count too."""
+        messages = self._budget_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.test_instance,
+                '_get_current_tokens',
+                side_effect=[70000, 1000, 5000],
+            ):
+                with patch(
+                    'topsailai.workspace.context.agent2llm.print_info'
+                ) as mock_print_info:
+                    result = self.test_instance.summarize_messages_for_processing(
+                        head_offset_to_keep=0,
+                    )
+
+        self.assertEqual(result, "Summarized content")
+        printed = [call.args[0] for call in mock_print_info.call_args_list]
+        new_context_lines = [
+            line for line in printed if "New context messages for processing" in line
+        ]
+        self.assertEqual(len(new_context_lines), 1)
+        self.assertIn("msg_len=[", new_context_lines[0])
+        self.assertIn("tokens=[5000]", new_context_lines[0])
+
     def test_summary_budget_above_threshold_skips_without_mutation(self):
         """P plus R above T must skip before calling the summary LLM."""
         messages = self._budget_messages()

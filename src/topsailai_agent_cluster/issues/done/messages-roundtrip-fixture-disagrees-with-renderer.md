@@ -76,3 +76,27 @@ go test -count=1 -tags "integration testhooks" \
   -run 'TestMessagesRoundTripMaxChars|TestMessagesRoundTripStandaloneCLI' ./tests/integration/
 # both FAIL at HEAD, before any change from the time-rendering unit
 ```
+
+## Resolution
+
+Both defects are fixed in `14d7bfde`.
+
+The fixture now applies the provider's per-message character bound:
+`truncateFixtureContent` (`tests/fixtures/topsailai_fixture/main.go:189`) is called at
+`main.go:142`, so the fixture and the renderer agree about `max_chars`.
+
+The role assertion was corrected to the value the renderer actually emits.
+
+Verified on 2026-11-17 with the operator profile variables cleared, because the harness
+does not clear them and a profile in the operator's home directory overrides the injected
+Server URL:
+
+```text
+AGENT_CLUSTER_CLI_SERVER_PROFILE= AGENT_CLUSTER_CLI_SERVER_PROFILES= \
+AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS= \
+go test -tags='integration testhooks' ./tests/integration -run 'TestMessagesRoundTrip' -count=1
+ok  topsailai_agent_cluster/tests/integration  15.892s
+```
+
+The profile-inheritance defect is a separate problem and is recorded in
+`cli-tests-inherit-operator-server-profile.md`.

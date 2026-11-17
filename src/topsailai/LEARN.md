@@ -605,3 +605,51 @@ requires starting an agent without a session id. The negative control is what ma
 the guard real: reverting only the moved call makes the ordering assertion fail
 with the intended message, which proves the test observes the order rather than
 merely the presence of both calls.
+
+## Adding a positional parameter to a function that tests replace with a fixed-arity double breaks every one of them
+
+Trigger: enabling session tee output at the CLI launch boundary was first
+implemented by adding `enable_session_tee` as a third positional parameter of
+`_prepare_environment`. Eight existing tests replace that function with a
+two-argument double (`lambda folder, session_id: ((), {}, {}, {})` or
+`def fail_after_mutation(folder, _session_id)`), so they all failed with
+`takes 2 positional arguments but 3 were given`. The new test file passed, which
+made the change look correct.
+
+Action: when a function is a known patch target, do not change its arity. Keep
+the signature byte-identical and put the new behaviour in a separate helper
+called right after it. Here the tee export became `_enable_session_tee()`, called
+after `_prepare_environment` on both the background and foreground paths, and all
+eight tests passed again with no edit to their doubles.
+
+Why this prevents recurrence: a test double encodes the callee's arity, so
+widening the signature silently invalidates every double even though the
+production call site was updated correctly. The failure surfaces only in the
+files that patch the function, which are usually not the files the author is
+looking at. Grep for the function name across the test tree before changing its
+signature, and prefer a new helper over a new parameter when the function is
+already a seam. The negative control matters: the new tests passed both before
+and after the fix, so only the pre-existing suite could reveal the regression.
+
+## A pre-existing failure must be attributed with the same environment on both trees
+
+Trigger: the full CLI unit suite reported two failures after the tee change.
+Running the same two tests in an isolated pristine worktree with an explicit
+`PYTHONPATH` made them pass, which looked like proof that the change was
+harmless. But the original failing run had no `PYTHONPATH` set, so the two runs
+differed in two variables at once.
+
+Action: reproduce the failure with the *same* environment on both trees before
+attributing it. The controlled matrix here was four runs: pristine with explicit
+`PYTHONPATH` (2 passed), current with explicit `PYTHONPATH` (2 passed), pristine
+without it (2 failed), current without it (2 failed). Only the last pair proves
+the failure is pre-existing, because it holds the environment constant and varies
+only the tree.
+
+Why this prevents recurrence: a pristine run that passes is not evidence of
+anything unless it reproduces the original conditions. Changing the tree and the
+environment together produces a result that cannot be attributed to either. The
+underlying defect was the truncated-`PYTHONPATH` problem already recorded in this
+file: a spawned child cannot import `topsailai`, so it dies before writing its
+pidfile. Both failures share that single cause, which is why they appear and
+disappear together.

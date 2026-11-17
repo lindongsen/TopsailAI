@@ -101,11 +101,26 @@ func (s *Store) BackfillOfflineSince(ctx context.Context) (int64, error) {
 	return updated, nil
 }
 
+// DeletedCommand identifies one command row removed by endpoint expiry, together
+// with the facts an operator needs to judge what evidence was destroyed.
+//
+// The cascade removes every command beneath an expired endpoint, including
+// unconfirmed rows whose external effect is unknown. That is the intended
+// lifecycle decision, so the deletion must be observable. A bare command ID is
+// not enough: it does not say which machine lost the row, nor whether the lost
+// row was the only evidence of an unknown effect.
+type DeletedCommand struct {
+	CommandID       string
+	EndpointID      string
+	Status          string
+	EffectCertainty string
+}
+
 // EndpointExpiryResult identifies every stale Server projection removed.
 type EndpointExpiryResult struct {
 	InventoryEndpointIDs []string
 	DeletedEndpointIDs   []string
-	DeletedCommandIDs    []string
+	DeletedCommands      []DeletedCommand
 }
 
 // EndpointDegradeResult identifies every Endpoint moved into the degraded state.
@@ -183,12 +198,12 @@ func (s *Store) ExpireDegradedEndpoints(ctx context.Context, cutoffMS int64) (En
 	if cutoffMS <= 0 {
 		return EndpointExpiryResult{}, fmt.Errorf("endpoint expiry cutoff must be positive")
 	}
-	var commandIDs []string
+	var deletedCommands []DeletedCommand
 	var inventoryIDs []string
 	var endpointIDs []string
 	err := s.withTransaction(ctx, "endpoint expiry", func(conn *sql.Conn) error {
 		var err error
-		commandIDs, err = queryReturningIDs(ctx, conn, `DELETE FROM commands WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ?) RETURNING command_id`, cutoffMS)
+		deletedCommands, err = queryDeletedCommands(ctx, conn, `DELETE FROM commands WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ?) RETURNING command_id, endpoint_id, status, effect_certainty`, cutoffMS)
 		if err != nil {
 			return fmt.Errorf("delete expired endpoint commands: %w", err)
 		}
@@ -205,10 +220,12 @@ func (s *Store) ExpireDegradedEndpoints(ctx context.Context, cutoffMS int64) (En
 	if err != nil {
 		return EndpointExpiryResult{}, err
 	}
-	sort.Strings(commandIDs)
+	sort.Slice(deletedCommands, func(i, j int) bool {
+		return deletedCommands[i].CommandID < deletedCommands[j].CommandID
+	})
 	sort.Strings(inventoryIDs)
 	sort.Strings(endpointIDs)
-	return EndpointExpiryResult{InventoryEndpointIDs: inventoryIDs, DeletedEndpointIDs: endpointIDs, DeletedCommandIDs: commandIDs}, nil
+	return EndpointExpiryResult{InventoryEndpointIDs: inventoryIDs, DeletedEndpointIDs: endpointIDs, DeletedCommands: deletedCommands}, nil
 }
 
 // queryReturningIDs executes one statement that returns a single identity column
@@ -234,4 +251,33 @@ func queryReturningIDs(ctx context.Context, tx interface {
 		return nil, err
 	}
 	return ids, nil
+}
+
+// queryDeletedCommands executes one DELETE ... RETURNING statement that returns
+// the audit facts of every removed command row.
+//
+// It is separate from queryReturningIDs because a command deletion must be
+// logged with more than its identity: the endpoint that lost the row, the status
+// it held and its effect certainty are what let an operator tell a routine
+// cleanup from the destruction of the only evidence of an unknown effect.
+func queryDeletedCommands(ctx context.Context, tx interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, query string, args ...any) ([]DeletedCommand, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var deleted []DeletedCommand
+	for rows.Next() {
+		var row DeletedCommand
+		if err := rows.Scan(&row.CommandID, &row.EndpointID, &row.Status, &row.EffectCertainty); err != nil {
+			return nil, err
+		}
+		deleted = append(deleted, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return deleted, nil
 }

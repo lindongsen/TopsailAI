@@ -413,6 +413,38 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			// inbound and outbound positions apart. Equal counts would let a
 			// swapped mapping pass while proving nothing.
 			base.QueryResult = json.RawMessage(`{"provider_session_id":"` + sessionKey + `","messages":{"inbound":7,"outbound":3},"observed_at_ms":1700000000000}`)
+		case querySessionMetricsBatch:
+			// The set read is recorded once, not once per member, because the
+			// property under test is that one provider call answers the whole set.
+			// A per-member record would make a per-session implementation look
+			// identical from the Cluster's side.
+			recordInvocation(options, request, querySessionMetricsBatch)
+			var batchPayload struct {
+				ProviderSessionIDs []string `json:"provider_session_ids"`
+			}
+			if err := json.Unmarshal(request.Payload, &batchPayload); err != nil {
+				return failureResponse(request.RequestID, "invalid_request", err.Error(), "not_applied")
+			}
+			if len(batchPayload.ProviderSessionIDs) == 0 {
+				return failureResponse(request.RequestID, "invalid_request", "session.metrics.batch requires at least one session", "not_applied")
+			}
+			// A member the mock does not know is omitted rather than filled with
+			// zeros, so a scenario can prove the Cluster distinguishes "not
+			// measured" from "measured zero". The two counts differ so a swapped
+			// inbound/outbound mapping cannot pass.
+			members := make([]string, 0, len(batchPayload.ProviderSessionIDs))
+			seen := make(map[string]struct{}, len(batchPayload.ProviderSessionIDs))
+			for _, sessionKey := range batchPayload.ProviderSessionIDs {
+				if _, duplicate := seen[sessionKey]; duplicate {
+					continue
+				}
+				seen[sessionKey] = struct{}{}
+				if !mockKnownSession(sessionKey) {
+					continue
+				}
+				members = append(members, `{"provider_session_id":"`+sessionKey+`","messages":{"inbound":7,"outbound":3},"observed_at_ms":1700000000000}`)
+			}
+			base.QueryResult = json.RawMessage(`{"results":[` + strings.Join(members, ",") + `],"observed_at_ms":1700000000000}`)
 		case querySessionDetail:
 			recordInvocation(options, request, querySessionDetail)
 			sessionKey := "session:stable"
@@ -877,6 +909,7 @@ func mockDescriptor(fault string) descriptor {
 		{Name: queryModelCatalog, Version: "v1"},
 		{Name: querySessionMessages, Version: "v1"},
 		{Name: querySessionMetrics, Version: "v1"},
+		{Name: querySessionMetricsBatch, Version: "v1"},
 		{Name: querySessionDetail, Version: "v1"},
 	}
 	return descriptor{
