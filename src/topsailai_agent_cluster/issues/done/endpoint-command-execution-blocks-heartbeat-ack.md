@@ -77,3 +77,53 @@ The Server has the symmetric shape. `internal/channel/server.go` `readLoop` call
 `OnReceipt` inline, and both write SQLite, so a slow inventory commit delays the heartbeat
 acknowledgement the Server owes the Endpoint. That direction is not fixed here and needs its own
 logical unit.
+
+## Resolution
+
+Fixed on 2026-11-17 in commit `cd197c1a`.
+
+### What changed
+
+`internal/endpoint/service.go` gained `dispatchBusiness`
+(`internal/endpoint/service.go:513`), which runs one business handler outside the
+channel read loop. Every request frame that can block now goes through it, so the
+read loop performs only non-blocking work and keeps recording heartbeat
+acknowledgements while a slow handler runs.
+
+The pattern is the one `startFollow` already used, so the fix reuses an existing
+convention rather than introducing a second one. `dispatchBusiness` appears 13
+times in `service.go`, covering the request frames the issue counted plus the ones
+added since.
+
+### Why the read loop must stay non-blocking
+
+The heartbeat acknowledgement is received by the same loop that dispatches business
+frames. A handler that blocks the loop therefore delays the acknowledgement, and
+`awaitHeartbeatAck` waits 3 seconds with a 30-second cumulative budget before
+`markServerUnhealthy` closes the connection. The largest single blocker was
+`FrameInventoryRefresh`, whose collector budget is 30 seconds
+(`src/main/agent-cluster-endpoint/main.go:194`), three times the metrics budget the
+issue originally focused on.
+
+### Evidence
+
+`internal/endpoint/channel_loop_independence_test.go` holds one command open and
+requires the loop to keep recording acknowledgements:
+
+- Before the fix: `read loop consumed 0 of 3 heartbeat acknowledgements while a command was running`.
+- After the fix: the same scenario passes, and `-race` reports no race in the new tests.
+
+### The mechanism was real but never observed
+
+The issue's rationale is operator latency plus a latent risk, not observed
+disconnects. The Endpoint logs contain zero `heartbeat acknowledgement timed out`
+and zero `server unhealthy` entries; the 226 reconnects recorded were transport
+failures (`failed to read frame header` 38, `use of closed network connection` 8).
+The fix is therefore justified by the mechanism and by the measured blocking, not
+by an event that never happened.
+
+### Remaining work
+
+The Server has the symmetric shape, recorded separately in
+`issues/server-read-loop-blocks-heartbeat-ack.md` and fixed by the bounded
+per-peer business queue (`businessQueueDepth = 16`).

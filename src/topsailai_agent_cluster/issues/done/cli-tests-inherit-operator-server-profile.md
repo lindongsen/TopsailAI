@@ -133,3 +133,42 @@ defect.
 - `src/main/agent-cluster-cli/local_env.go`
 - `src/main/agent-cluster-cli/cli_environment.go`
 - `src/main/agent-cluster-cli/main.go`
+
+## Resolution
+
+Fixed on 2026-11-17 in commit `9c6c36ae`.
+
+### What changed
+
+`tests/harness/cluster.go` `cliEnvironment()` now replaces `HOME` with a private
+directory under the cluster root (`filepath.Join(c.Root, "cli-home")`) instead of
+inheriting the operator's home. The inherited `HOME=` entry is dropped rather than
+left in place, so the child environment never carries two contradictory values.
+
+This is direction B from the issue's candidate list, and it was chosen over the
+blocklist for the reason the issue itself states: a blocklist of the four profile
+keys would silently start leaking again the moment the CLI reads a fifth key.
+Replacing `HOME` removes the per-user configuration file from the CLI's search
+path entirely, so no key can leak regardless of what the file contains.
+
+The directory is created with mode `0700` so the CLI's own history file has
+somewhere to live. A failure to create it is deliberately not fatal: the CLI treats
+an absent per-user file as "no configuration", so an uncreatable directory still
+isolates the child.
+
+### Why the symptom was a cascade rather than one failure
+
+The CLI reads `$HOME/.topsailai/.topsailai_agent_cluster.env` at startup and only
+fills keys the process environment leaves unset. On a deployed machine that file
+selects a Server profile pointing at the real Server, so every CLI scenario talked
+to production instead of the test Server. The failures therefore appeared across
+unrelated scenarios and their output contained real session names, which reads like
+a product defect rather than a test isolation defect.
+
+### Verification
+
+The harness now produces a child environment whose `HOME` is the private directory,
+and the affected scenarios pass on a host whose home directory contains a profile
+file. The comment at `tests/harness/cluster.go:1043-1057` records the reasoning at
+the site that implements it, so a future reader cannot remove the replacement
+without reading why it exists.
