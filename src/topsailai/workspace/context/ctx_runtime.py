@@ -502,7 +502,19 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 # add answer to session
                 summary_answer = llm_chat.prompt_ctl.messages[-1]
                 partial_apply_possible = True
-                ctx_manager.add_session_message(self.session_id, summary_answer)
+                # The observation release below deletes persisted rows, so the
+                # replacement summary must be durable first. A failed write is
+                # therefore recorded and used to suppress that deletion instead
+                # of being ignored, otherwise the observation would be removed
+                # with nothing persisted to stand in for it.
+                summary_persisted = ctx_manager.add_session_message(
+                    self.session_id, summary_answer,
+                )
+                if not summary_persisted:
+                    logger.warning(
+                        "summary not persisted, opening observation release suppressed: session_id=%s",
+                        self.session_id,
+                    )
 
                 failed_stage = "history_delete"
                 # Reuse the in-memory intrinsic-head policy instead of duplicating
@@ -549,16 +561,19 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 # Post-step: the summary already consumed the opening observation.
                 # The persisted rows must be removed before the reload below,
                 # otherwise the reload resurrects the observation and the release
-                # silently has no effect in production.
-                self.release_opening_observation_after_summary(
-                    raw_message_values,
-                    token_threshold=env_tool.EnvReaderInstance.get(
-                        "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
-                        default=0,
-                        formatter=int,
-                    ) or 0,
-                    session_id=self.session_id,
-                )
+                # silently has no effect in production. The release is skipped
+                # entirely when the summary write failed, because removing the
+                # observation without a durable replacement would lose content.
+                if summary_persisted:
+                    self.release_opening_observation_after_summary(
+                        raw_message_values,
+                        token_threshold=env_tool.EnvReaderInstance.get(
+                            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
+                            default=0,
+                            formatter=int,
+                        ) or 0,
+                        session_id=self.session_id,
+                    )
 
                 # reset messages
                 failed_stage = "session_reload"
@@ -609,19 +624,24 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                     summary_answer,
                 )
                 partial_apply_possible = True
+                # The in-memory session is self.messages, so the summary must be
+                # applied to it before the observation is removed. Releasing the
+                # local list first would delete the observation while the session
+                # still held the pre-summary content, which is the same
+                # delete-before-replace inversion the persisted branch forbids.
+                self.set_messages(new_messages)
                 # Post-step: the summary already consumed the opening observation,
                 # so removing it now cannot lose content. A skipped summarization
                 # never reaches this point, which is intentional because there is
                 # no summary to compensate for the removed content.
                 self.release_opening_observation_after_summary(
-                    new_messages,
+                    self.messages,
                     token_threshold=env_tool.EnvReaderInstance.get(
                         "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
                         default=0,
                         formatter=int,
                     ) or 0,
                 )
-                self.set_messages(new_messages)
 
             # Log message count and token usage after summarization
             _token_count_after = self._get_current_tokens(self.messages)

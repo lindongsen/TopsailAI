@@ -525,8 +525,8 @@ TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE=4096
 # The budget is the smaller of the layer token summarize threshold and the
 # model summary-safe input limit.
 # Valid values are greater than 0 and at most 1; 0 or below disables the
-# release so the observation is always retained; invalid values fall back to 0.3.
-TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO=0.3
+# release so the observation is always retained; invalid values fall back to 0.8.
+TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO=0.8
 
 # Controls token calculation when no explicit messages are passed: 1 counts current runtime messages,
 # while 0 (default) uses cached TokenStat.current_tokens. Safety checks always count pending messages.

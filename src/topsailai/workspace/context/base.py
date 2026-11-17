@@ -447,7 +447,7 @@ class ContextRuntimeBase(object):
         A value of ``0`` or below disables the release, which preserves the
         historical behavior of pinning the opening observation indefinitely.
         """
-        default_ratio = 0.3
+        default_ratio = 0.8
         ratio = env_tool.EnvReaderInstance.get(
             "TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO",
             default=default_ratio,
