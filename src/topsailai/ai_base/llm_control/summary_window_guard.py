@@ -7,8 +7,12 @@ Purpose: Bottom-line guard that terminates a turn when recent LLM traffic is
 '''
 
 from collections import deque
+import logging
 
 from topsailai.utils.env_tool import EnvReaderInstance
+
+
+logger = logging.getLogger(__name__)
 
 
 # Default number of most recent LLM requests kept in the sliding window.
@@ -209,6 +213,21 @@ def get_agent_summary_window_guard(agent):
     # would call a mock ``record()`` whose return value cannot be unpacked and
     # would break every caller that supplies a mock agent.
     if not isinstance(guard, SummaryWindowGuard):
+        # An attribute that exists but is not a guard is replaced, so a caller
+        # that installed its own duck-typed guard or an instrumented wrapper
+        # loses it. That replacement is intentional for test doubles, but it
+        # must not be silent: without this record the discarded object leaves
+        # no trace and a missing window becomes impossible to diagnose.
+        if guard is not None:
+            logger.warning(
+                "[summary_window_guard] replaced a non-guard attribute: "
+                "attribute=%s, existing_type=%s, agent_type=%s, "
+                "replacement_type=%s",
+                GUARD_ATTRIBUTE_NAME,
+                type(guard).__name__,
+                type(agent).__name__,
+                SummaryWindowGuard.__name__,
+            )
         guard = SummaryWindowGuard()
         setattr(agent, GUARD_ATTRIBUTE_NAME, guard)
     return guard
