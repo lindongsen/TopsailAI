@@ -368,7 +368,15 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 	return a.runner.invokeStream(ctx, providerRequest, func(frame providercli.StreamFrame) error {
 		if frame.Type != providercli.FrameRecord {
 			if frame.Type == providercli.FrameEnd && frame.Error != nil {
-				return fmt.Errorf("provider stream ended: %s", frame.Error.Message)
+				// The Provider's own code is preserved instead of being flattened
+				// into a message. The Endpoint classifies a stream failure by
+				// matching sentinel errors, so a flattened message made every
+				// provider-reported condition indistinguishable: a provider that
+				// reported `cancelled` was reported to the operator as
+				// `provider_error`, which sent the investigation to a provider
+				// that had behaved correctly. The code is the only field that
+				// carries the classification, so it must survive this boundary.
+				return &adapter.StreamError{Code: frame.Error.Code, Message: frame.Error.Message}
 			}
 			return nil
 		}

@@ -37,6 +37,41 @@ var ErrBusy = errors.New("adapter capacity unavailable")
 // the condition.
 var ErrOutputLimit = errors.New("adapter output budget exhausted")
 
+// StreamError carries the Provider's own error code across the adapter boundary.
+//
+// It exists because a flattened message destroys the classification. The
+// Endpoint decides how to report a stream failure by matching sentinel errors,
+// so an adapter that reduced every Provider failure to one formatted string made
+// all of them indistinguishable: a Provider that correctly reported `cancelled`
+// was reported to the operator as `provider_error`, which sent the investigation
+// to a Provider that had behaved correctly. The code is the only field that
+// carries the classification, so it must survive the boundary instead of being
+// folded into prose.
+//
+// It lives in this contract package rather than in a concrete adapter package
+// because the Endpoint owns this contract and must not import an implementation
+// to recognise the condition. That is the same reason ErrBusy and ErrOutputLimit
+// live here.
+//
+// Code is the Provider's own vocabulary, not a Cluster code. A caller must map
+// the values it recognises onto Cluster codes and must not forward an unknown
+// value as if it were part of the closed Cluster vocabulary.
+type StreamError struct {
+	Code    string
+	Message string
+}
+
+// Error renders the Provider's message, prefixed with its code when one exists.
+//
+// The code is included because a message alone cannot be classified by a reader
+// of the log, and the two fields are recorded separately by the caller anyway.
+func (e *StreamError) Error() string {
+	if e.Code == "" {
+		return e.Message
+	}
+	return e.Code + ": " + e.Message
+}
+
 // Descriptor identifies one configured adapter instance and its capabilities.
 type Descriptor struct {
 	AdapterID    string

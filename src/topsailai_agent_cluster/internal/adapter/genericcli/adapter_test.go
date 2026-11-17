@@ -154,6 +154,42 @@ func TestFollowRejectsUndeclaredFunctionWithoutInvocation(t *testing.T) {
 	}
 }
 
+// TestFollowPreservesProviderErrorCode proves a Provider-reported stream failure
+// keeps its own code across the adapter boundary.
+//
+// The Endpoint classifies a stream failure by matching sentinel errors, so an
+// adapter that reduced every Provider failure to one formatted string made all of
+// them indistinguishable: a Provider that correctly reported `cancelled` was
+// reported to the operator as `provider_error`, which sent the investigation to a
+// Provider that had behaved correctly. This test fails when the code is folded
+// back into a message, because the extracted code is then absent.
+func TestFollowPreservesProviderErrorCode(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		return describeResponseWithFunctions(request, providercli.FunctionFollowOutput), nil
+	}
+	binding := mustAdapter(t, provider)
+	binding.config.Mapper.(*fakeMapper).mappings["session-id"] = adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "native", ResourceID: "session-id"}
+	provider.stream = []providercli.StreamFrame{{
+		Version:   binding.version,
+		RequestID: "ignored",
+		Type:      providercli.FrameEnd,
+		Sequence:  2,
+		Error:     &providercli.ProviderError{Code: "cancelled", Message: "provider stopped the stream"},
+	}}
+	err := binding.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: "session-id", ProviderGeneration: "g", MaxBytes: 10}, func(protocol.OutputChunk) error { return nil })
+	var streamErr *adapter.StreamError
+	if !errors.As(err, &streamErr) {
+		t.Fatalf("follow error = %v, want a StreamError carrying the provider code", err)
+	}
+	if streamErr.Code != "cancelled" {
+		t.Fatalf("stream error code = %q, want cancelled", streamErr.Code)
+	}
+	if streamErr.Message != "provider stopped the stream" {
+		t.Fatalf("stream error message = %q, want the provider message", streamErr.Message)
+	}
+}
+
 func TestFollowReturnsConsumerStopUnchanged(t *testing.T) {
 	provider := newFakeProvider(t)
 	provider.invoke = func(request providercli.Request) (providercli.Response, error) {

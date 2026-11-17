@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -31,6 +32,12 @@ type Server struct {
 	OnReject         func(error)
 	OnRejectReason   func(endpointID, certificateIdentity, reason, requestID string)
 	RevokedSerials   map[string]bool
+	// Logger records follow stream terminations. A follow can end for reasons
+	// that never reach the operator as an error, such as a slow consumer or a
+	// capacity refusal, so without a log the only evidence that a stream was
+	// cut short is the operator's own report. It is optional so a Server built
+	// without logging still works.
+	Logger *slog.Logger
 	// Identity names this Server database. It is reported in the handshake so an
 	// Endpoint can tell a restarted Server from a different one, which decides
 	// whether recorded receipts may be discarded.
@@ -368,8 +375,16 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 			}
 			s.Mu.Unlock()
 		}
+		// A follow frame is fully handled here and must not reach the business
+		// queue. A follow tail is one frame per record, so a 300-line tail offers
+		// 300 frames to a queue that holds 16, and the overflow branch closes the
+		// whole connection. That turned an ordinary tail into an endpoint_offline
+		// failure on a healthy Endpoint. Queueing it bought nothing either: the
+		// worker's OnFrame hook ignores every frame that is not an inventory
+		// report.
 		if frame.Type == FrameOutputChunk || frame.Type == FrameOutputEnd {
 			s.deliverFollow(peer, frame)
+			continue
 		}
 		// Everything that can block on persistence or on a network write is
 		// handed to the peer's worker. The read loop must reach the next
@@ -505,6 +520,16 @@ func (s *Server) deliverFollow(peer *Peer, frame Frame) {
 		// Endpoint's follow slots until the adapter deadline expired. The
 		// terminal event is delivered first, because the consumer is waiting for
 		// it and the cancel send is bounded but not instantaneous.
+		//
+		// This is logged because the operator sees a truncated tail with no
+		// error of their own making: the provider was healthy and the Server
+		// simply could not keep up. Without the line the only explanation
+		// available is the terminal code, which names the symptom but not the
+		// Endpoint or the stream it belonged to.
+		if s.Logger != nil {
+			s.Logger.Warn("output follow terminated by slow consumer",
+				"endpoint_id", released.endpointID, "request_id", frame.RequestID, "error_code", "consumer_overflow")
+		}
 		deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "consumer_overflow", ObservedAtMS: time.Now().UnixMilli()})
 		s.cancelEndpointFollow(released.endpointID, frame.RequestID)
 	}
@@ -592,6 +617,14 @@ func (s *Server) failPendingFollow(endpointID string) {
 		released, ok := s.releaseFollow(requestID)
 		if !ok {
 			continue
+		}
+		// The Endpoint's own terminal frame is best-effort, so a disconnect is
+		// the only place the Server can state why a stream ended. Without this
+		// line the operator sees endpoint_offline on a follow and has no record
+		// of which stream it was or when the link went away.
+		if s.Logger != nil {
+			s.Logger.Warn("output follow terminated by endpoint disconnect",
+				"endpoint_id", endpointID, "request_id", requestID, "error_code", "endpoint_offline")
 		}
 		deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "endpoint_offline", ObservedAtMS: time.Now().UnixMilli()})
 	}
@@ -683,7 +716,15 @@ func (s *Server) RequestFollow(ctx context.Context, endpointID string, request p
 	s.Mu.Lock()
 	if len(s.pendingFollow) >= maxPendingFollow {
 		s.Mu.Unlock()
-		return nil, errors.New("follow capacity exceeded")
+		// A capacity refusal is the Server's own limit, so it is logged here
+		// rather than left to the caller. The operator sees too_many_follows and
+		// cannot tell whether a previous stream leaked or the fleet is simply
+		// busy, and the count is the only evidence that distinguishes the two.
+		if s.Logger != nil {
+			s.Logger.Warn("output follow refused by capacity",
+				"endpoint_id", endpointID, "pending_follows", len(s.pendingFollow), "max_pending_follows", maxPendingFollow)
+		}
+		return nil, ErrFollowCapacity
 	}
 	s.pendingFollow[requestID] = pendingFollowRequest{endpointID: endpointID, events: events, done: done}
 	s.Mu.Unlock()
