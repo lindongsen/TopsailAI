@@ -81,8 +81,28 @@ func TestExpireDegradedEndpointsDeletesCommandEvidence(t *testing.T) {
 	if len(result.DeletedEndpointIDs) != 1 || result.DeletedEndpointIDs[0] != "gone" {
 		t.Fatalf("expiry result = %+v, want gone deleted", result)
 	}
-	if len(result.DeletedCommandIDs) != 2 {
-		t.Fatalf("deleted command ids = %v, want both commands", result.DeletedCommandIDs)
+	if len(result.DeletedCommands) != 2 {
+		t.Fatalf("deleted commands = %v, want both commands", result.DeletedCommands)
+	}
+	// The cascade removes unknown-effect evidence by design, so the result must
+	// carry the facts that make each removal auditable rather than a bare ID.
+	byID := map[string]DeletedCommand{}
+	for _, command := range result.DeletedCommands {
+		byID[command.CommandID] = command
+	}
+	unconfirmed, ok := byID["cmd-unconfirmed"]
+	if !ok {
+		t.Fatalf("unconfirmed command missing from %v", result.DeletedCommands)
+	}
+	if unconfirmed.EndpointID != "gone" || unconfirmed.Status != string(protocol.StatusUnconfirmed) || unconfirmed.EffectCertainty != string(protocol.EffectNotApplied) {
+		t.Fatalf("unconfirmed audit facts = %+v, want endpoint gone status unconfirmed", unconfirmed)
+	}
+	finished, ok := byID["cmd-finished"]
+	if !ok {
+		t.Fatalf("finished command missing from %v", result.DeletedCommands)
+	}
+	if finished.EndpointID != "gone" || finished.Status != string(protocol.StatusFinished) {
+		t.Fatalf("finished audit facts = %+v, want endpoint gone status finished", finished)
 	}
 	assertCommandCount(t, store, "cmd-unconfirmed", 0)
 	assertCommandCount(t, store, "cmd-finished", 0)

@@ -28,7 +28,7 @@ type expiryStoreStub struct {
 	degradedInventoryID []string
 	inventoryIDs        []string
 	deletedIDs          []string
-	deletedCommandIDs   []string
+	deletedCommands     []serverstorage.DeletedCommand
 	cancel              context.CancelFunc
 	cancelCall          int
 	expireErr           error
@@ -79,7 +79,7 @@ func (s *expiryStoreStub) ExpireDegradedEndpoints(_ context.Context, cutoffMS in
 	if s.expireErr != nil {
 		return serverstorage.EndpointExpiryResult{}, s.expireErr
 	}
-	return serverstorage.EndpointExpiryResult{InventoryEndpointIDs: s.inventoryIDs, DeletedEndpointIDs: s.deletedIDs, DeletedCommandIDs: s.deletedCommandIDs}, nil
+	return serverstorage.EndpointExpiryResult{InventoryEndpointIDs: s.inventoryIDs, DeletedEndpointIDs: s.deletedIDs, DeletedCommands: s.deletedCommands}, nil
 }
 
 // PurgeExpiredCommands records one command purge invocation.
@@ -382,7 +382,10 @@ func TestExpireEndpointRecordsLogsDegradedAndDeletedCounts(t *testing.T) {
 		degradedIDs:         []string{"stale-1"},
 		degradedInventoryID: []string{"stale-1"},
 		deletedIDs:          []string{"gone-1"},
-		deletedCommandIDs:   []string{"cmd-1", "cmd-2"},
+		deletedCommands: []serverstorage.DeletedCommand{
+			{CommandID: "cmd-1", EndpointID: "gone-1", Status: "unconfirmed", EffectCertainty: "unknown"},
+			{CommandID: "cmd-2", EndpointID: "gone-1", Status: "finished", EffectCertainty: "acknowledged"},
+		},
 	}
 	expireEndpointRecords(context.Background(), logger, stub, time.Hour, 24*time.Hour, 720*time.Hour, time.UnixMilli(10_000_000))
 
@@ -395,6 +398,17 @@ func TestExpireEndpointRecordsLogsDegradedAndDeletedCounts(t *testing.T) {
 	for _, line := range []string{"degraded offline endpoint", "deleted degraded endpoint inventory", "deleted expired endpoint command", "expired degraded endpoint metadata"} {
 		if !strings.Contains(logged, line) {
 			t.Fatalf("per-row line %q missing from %q", line, logged)
+		}
+	}
+	// The cascade destroys unknown-effect evidence by design, so each removed row
+	// must be logged with the facts that make the loss auditable: which endpoint
+	// lost it, what status it held and whether its effect was known.
+	for _, field := range []string{
+		"command_id=cmd-1", "endpoint_id=gone-1", "status=unconfirmed", "effect_certainty=unknown",
+		"command_id=cmd-2", "status=finished", "effect_certainty=acknowledged",
+	} {
+		if !strings.Contains(logged, field) {
+			t.Fatalf("audit field %q missing from %q", field, logged)
 		}
 	}
 }

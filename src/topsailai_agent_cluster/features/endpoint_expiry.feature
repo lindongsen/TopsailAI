@@ -58,7 +58,18 @@ Feature: offline endpoint degradation and expiry lifecycle
     And the inventory for "uncertain-1" is not found
     And command "cmd-uncertain-1" is still readable through the command API
 
-  Scenario: deleting a degraded endpoint removes its command evidence
+  # Endpoint expiry is a lifecycle decision with its own owner, and it outranks
+  # command-evidence retention: an endpoint record cannot outlive its own
+  # retention window, so every command beneath it is removed, including an
+  # unconfirmed row whose external effect is unknown. This is intended behaviour.
+  #
+  # The safety property is preserved by observability rather than by refusing the
+  # delete: the Server logs one line per removed command carrying its endpoint,
+  # status and effect certainty, so an operator investigating an unknown effect
+  # can tell the evidence existed and was removed by endpoint expiry instead of
+  # finding it silently absent. The age-based purge keeps its own, different
+  # guarantee, which the scenario above asserts.
+  Scenario: endpoint expiry removes command evidence including an unconfirmed row
     Given a real cluster whose server database holds a degraded endpoint "cascaded-1" with an unconfirmed command and a past deletion deadline and an endpoint retention of "1s"
     When the server completes at least one expiry sweep
     Then endpoint "cascaded-1" is absent from the endpoint list
