@@ -464,6 +464,11 @@ func ParseAccessRule(data []byte, source string) (AccessRule, []string, error) {
 	if (rule.AllowAll || rule.DenyAll) && (len(rule.Endpoints) > 0 || len(rule.Scopes) > 0 || len(rule.Permissions) > 0) {
 		return AccessRule{}, nil, fmt.Errorf("%s: %q and %q may not be combined with declarations, because the effective policy would depend on line order", source, accessPolicyAllowAllDirective, accessPolicyDenyAllDirective)
 	}
+	// The warnings travel inside the rule as well as in the second return value,
+	// because the rule is what survives into the policy in force. A caller that
+	// only keeps the rule would otherwise lose every warning, which is exactly how
+	// the documented "accept but warn" contract became "accept" only.
+	rule.Warnings = warnings
 	return rule, warnings, nil
 }
 

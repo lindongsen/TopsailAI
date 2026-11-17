@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -239,6 +240,11 @@ func main() {
 				logger.Error("reload endpoint access policy", "error", reloadErr)
 				return
 			}
+			// The reload path logs the warnings before the token count, because a
+			// reload is the moment an operator expects feedback on the file they
+			// just edited. Logging the count first would put the reassuring line
+			// ahead of the diagnostic that explains why one line grants nothing.
+			logAccessPolicyWarnings(logger, "reload endpoint access policy warning", accessPolicy.Policy)
 			logger.Info("reloaded endpoint access policy", "tokens", accessPolicy.Policy.Len())
 		})
 		if watchErr != nil {
@@ -248,6 +254,7 @@ func main() {
 			os.Exit(1)
 		}
 		defer stopPolicyReload()
+		logAccessPolicyWarnings(logger, "load endpoint access policy warning", accessPolicy.Policy)
 		logger.Info("loaded endpoint access policy", "path", cfg.EndpointAccessPolicyDir, "tokens", accessPolicy.Policy.Len())
 	}
 	executor, err := endpointservice.NewExecutor(store, registry, func() {
@@ -354,5 +361,25 @@ func main() {
 	}
 	if err := service.Close(); err != nil {
 		logger.Error("close endpoint service", "error", err)
+	}
+}
+
+// logAccessPolicyWarnings emits every load-time warning the policy carries.
+//
+// The warning is the only signal that a policy file was accepted while granting
+// nothing for one of its lines, so it must be emitted at both load sites: the
+// startup load and the SIGHUP reload. A reload is the moment an operator expects
+// feedback on a file they just edited, so staying silent there would hide the
+// mistake exactly when it was introduced.
+//
+// The event name distinguishes the two sites, and each warning already carries
+// its own file path and line number, so one log line identifies the file, the
+// line and the reason without the operator correlating two records.
+func logAccessPolicyWarnings(logger *slog.Logger, event string, policy *endpointservice.AccessPolicy) {
+	if policy == nil {
+		return
+	}
+	for _, warning := range policy.Warnings() {
+		logger.Warn(event, "warning", warning)
 	}
 }
