@@ -27,6 +27,7 @@ var fieldHelp = []string{
 	"SESSION_NAME: session display name; empty when the provider did not report one.",
 	"SESSION_ID: provider-native session ID; empty when the provider did not report one. The interactive table hides this column because the value is long and opaque, so select a session by its row number or name; the standalone list command still prints it, and logs, stop, drive and the standalone show command still accept it as a selector.",
 	"DRIVER: controller state reported by the provider: running, unverified, stale, exited, failed, none, or unknown; a dash means the provider reported no driver observation, which is not proof that no controller exists. A controller injects input on the operator's behalf; it is not the agent, so stopping it leaves the agent running. The column is a read projection of the persisted inventory and never probes the provider. When colour is enabled, a verified running controller is shown in bold green in this cell only, so it stands out without recolouring the row: the row colour still reports the session state, and only a verified running controller is emphasised, so unverified, stale, exited, failed, none and unknown stay distinguishable.",
+	"MESSAGES: inbound/outbound message counts for the session, read live from the provider rather than carried in the persisted inventory; a dash means the counts were never measured, which is not the same as zero. Inbound is printed first because it is the count the operator contributed, and outbound second because it is what the agent spent on the model; the two are printed together because either one alone is misleading, since many inbound with no outbound means the session is waiting for a reply while the reverse cannot happen. watch caches a count for 30s so a tick reuses a recent measurement instead of reading the provider once per row per tick, so a count shown there can be up to 30s old; list and refresh read it uncached.",
 	"PROJECT_WORKSPACE: workspace the session is working on, as reported by the provider; empty when the provider did not report one. It is descriptive report data only and never selects a route, capability, or permission.",
 	"ENDPOINT: endpoint hostname, falling back to its display name or ID.",
 	"DATA_STATUS: collection result plus freshness qualifiers; base values are ok, failed, partial, unknown, or unrecognized, optionally followed by /stale, /unknown, or /unknown+stale; a trailing parenthesised local-time stamp such as ok (11:58:36) reports the latest successful collection, not the failure start time, and is omitted when no success has been recorded.",
@@ -546,6 +547,23 @@ func printInteractiveStartHelp(out io.Writer, entry commandHelp) error {
 	return err
 }
 
+// rendersSessionTable reports whether a command prints the session table, and so
+// must explain the columns it prints. Every command that renders the table is
+// listed here rather than only list, because an operator who runs help watch is
+// asking about the table they are looking at, and a field list reachable only
+// through help list leaves that question unanswered. The set is explicit instead
+// of a prefix or scope test so a new table command has to be added deliberately,
+// and a command that prints no table never inherits a field list that describes
+// columns it does not show.
+func rendersSessionTable(target string) bool {
+	switch target {
+	case "list", "refresh", "watch":
+		return true
+	default:
+		return false
+	}
+}
+
 // printCommandDetail renders one canonical command. The heading is the spelling
 // the operator asked for, while target stays canonical so the scope line and the
 // field list are looked up by the command that actually owns them. The scope line
@@ -581,7 +599,7 @@ func printCommandDetail(out io.Writer, heading, target string, entry commandHelp
 			}
 		}
 	}
-	if target == "list" {
+	if rendersSessionTable(target) {
 		if _, err := fmt.Fprintln(out, "Fields:"); err != nil {
 			return err
 		}

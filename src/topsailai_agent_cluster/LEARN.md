@@ -1477,3 +1477,23 @@ so the blast radius is not the command that changed. The failures also read as u
 test failing while `logs` is being widened looks like a concurrent edit or a pre-existing defect, and
 the tempting response is to investigate `send`. Searching for the derived sentence instead of the
 command name is what turns "four mysterious failures" into "four stale copies of one string".
+
+## A failure message's line number is the assertion site, not the row to edit
+
+Trigger: updating the `list` digest pin in `unit_c_start_parse_test.go`, the failure reported
+`unit_c_start_parse_test.go:195`. The pin table's rows sit above that line, and the `list` row was
+assumed to be at 186 without reading the region. Line 186 was the `start` row, so the overwrite
+replaced the `start` digest with the new `list` digest and left the old `list` row in place. The
+table then held two `list` rows and no `start` row, which still compiled and still passed the
+`list` case, so only the `start` case would have failed later.
+
+Action: a line number printed by a test failure identifies the assertion that failed, never the
+fixture row that needs editing. Locate the row with `grep -n` on its own content, such as the
+command name or the old digest, and print the region before replacing it. When a table row is
+replaced, re-read the whole table afterwards and confirm the row count and the order are unchanged,
+because a duplicated row and a missing row are both invisible to a build.
+
+Why this prevents recurrence: the failure line and the edit target are two different coordinates
+that happen to live in the same file, and the failure line is the one that is conveniently already
+in the terminal. Reading the row by its content makes the identity of the row the thing being
+matched, so an offset guess cannot silently address a neighbouring row.
