@@ -33,6 +33,45 @@ var fieldHelp = []string{
 	"DATA_STATUS: collection result plus freshness qualifiers; base values are ok, failed, partial, unknown, or unrecognized, optionally followed by /stale, /unknown, or /unknown+stale; a trailing parenthesised local-time stamp such as ok (11:58:36) reports the latest successful collection, not the failure start time, and is omitted when no success has been recorded.",
 }
 
+// historyFieldHelp documents the history table, which is a different layout from
+// the session table: a history row has no generation and no data-status stamp, so
+// it must not inherit the session field list. It is kept separate rather than
+// merged into fieldHelp because a merged list would describe columns the command
+// does not print, which is the same defect as documenting none of them.
+var historyFieldHelp = []string{
+	"NO: display row number for this history render; use cd <no> to enter that session. History row numbers are a separate namespace from list row numbers, and a history render replaces the list row numbers, so a number typed after history addresses the history table.",
+	"PROVIDER_STATUS: the provider's own status string for the session, printed as reported and never translated into a cluster state; empty when the provider did not report one. It is provider vocabulary, so it is evidence rather than a cluster lifecycle value.",
+	"SESSION_NAME: session display name as reported by the provider; empty when the provider did not report one.",
+	"SESSION_ID: provider-native session ID; empty when the provider did not report one. The interactive table hides this column because the value is long and opaque, so select a row by its number or name; the standalone history command still prints it.",
+	"PROJECT_WORKSPACE: workspace the session was working on, as reported by the provider; empty when the provider did not report one. It is descriptive report data only and never selects a route, capability, or permission.",
+	"LIVE: whether the inventory join resolved this history row to a live resource. yes means the row is joined and a process still holds it; no means it is joined and no process holds it, which is the normal state of a finished session; unverified means the inventory reported the session but the Endpoint could not confirm a process holds it, so the row exists and can be resumed but cannot be entered; unjoined means the inventory could not be read at all; ambiguous means the inventory was read and contradicted itself. unjoined and ambiguous are reported separately because they tell the operator different things, and neither is proof that the session is stopped.",
+	"RESUMABLE: the adapter verdict on whether this row can be resumed, with the standard reason when it cannot. yes means resume is offered; no means it is refused without a stated reason; no (<reason>) names the blocking reason, such as a live target or an unsupported resource kind. A row that is not resumable is coloured red as a whole row, because the verdict is the row's own state; a resumable row keeps the normal row colour.",
+}
+
+// endpointFieldHelp documents the endpoint table. It is a third layout: an
+// endpoint row describes a machine rather than a session, so it shares no column
+// with either session table.
+var endpointFieldHelp = []string{
+	"ENDPOINT_ID: the endpoint's stable cluster identity; this is the value other commands accept as an endpoint selector, and it never changes when the machine is renamed.",
+	"HOSTNAME: the hostname the endpoint reported; a dash means it reported none, so the endpoint is still addressable by ENDPOINT_ID.",
+	"DISPLAY_NAME: the operator-facing name the endpoint reported; a dash means it reported none. It is descriptive only and never a selector.",
+	"CONNECTION_STATE: the endpoint's channel state as the Server last observed it, such as online, degraded, offline, or unknown; a dash means no state was recorded. It describes the link, not the agents on that machine, so an offline endpoint says nothing about whether its sessions are still running.",
+	"OBSERVED_AT: local clock time of the last observation, as HH:MM:SS; a dash means nothing has been observed yet. It is a time of day without a date, so it answers how fresh the row is rather than when in history it happened.",
+	"CAPABILITY_REVISION: the revision of the effective capability set the endpoint advertised; a dash means it advertised none. A changed revision means the endpoint's served operations changed, so a command admitted against an older revision may be refused.",
+	"EXPIRES_AT: when a degraded endpoint's retained inventory will be deleted, as a local date and time; a dash means the row is not degraded, so no expiry applies. Only a degraded endpoint has an expiry, because only a degraded endpoint has inventory that is already considered stale.",
+}
+
+// modelFieldHelp documents the model catalog table, which is a fourth layout: a
+// model profile row describes a selectable preset rather than a session or a
+// machine.
+var modelFieldHelp = []string{
+	"NO: display row number for this catalog render; use it as the profile selector, as in model <no>. Model profile numbers are a separate namespace from list and history row numbers, and a catalog render replaces both, so a number typed after model addresses the catalog.",
+	"MODEL: the model profile's display name as the provider reported it; empty when the provider did not report one. It is a selector as well as a label, so a name that matches more than one profile is ambiguous and must be replaced by a row number or MODEL_PROFILE_ID.",
+	"CURRENT: whether this profile is the one the session is using now: yes, no, or unknown. unknown is a real answer rather than a failure, because the provider may report the catalog without reporting which profile is in use, so unknown must not be read as no.",
+	"AVAILABLE: whether the profile can be selected: yes means it is offered; no means it is refused without a stated reason; no (<reason>) names the blocking reason. An unavailable profile stays in the table because the operator asked which profiles exist, and selecting it is refused with that reason rather than silently omitted.",
+	"MODEL_PROFILE_ID: the profile's stable cluster identity; empty when the provider did not report one. The interactive table hides this column because the value is long and opaque, so select a profile by its row number or name; the standalone model command still prints it, and it is the selector that stays valid across catalog renders.",
+}
+
 var commandHelpCatalog = map[string]commandHelp{
 	"list":      {"list [endpoint] [--clean] [-a|--all] [--full] [--brief]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter; naming an offline endpoint explicitly still renders it, because the operator asked for that exact machine", "--clean: omit an online endpoint that failed to report; diagnostics still go to stderr", "-a, --all: include endpoints that are not online; the default omits them because an offline endpoint cannot report, so querying it can only produce a failure that describes the endpoint rather than a defect", "--full: disable truncation; a narrow terminal wraps long cells instead of clipping them", "--brief: print only the identifying columns NO, SESSION_NAME and ENDPOINT", "lf: shorthand for list --full", "lb: shorthand for list --brief"}, []string{"list", "list endpoint-1", "list --clean", "list --all", "list -a", "list --full", "list --brief", "lf", "lb"}},
 	"cd":        {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: latest displayed row number, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a bare ASCII number is shorthand for cd <number> in workspace and endpoint scope; leading zeros are accepted and the number is temporary; a valid replacement list that fails during loading, rendering, or diagnostics invalidates the previous row numbers; invalid syntax or an invalid scoped filter preserves them", "failed-endpoint placeholders are displayed but cannot be selected; session scope rejects the explicit cd <number> form, and a bare number typed there is message text offered as a send", "after a valid replacement begins, a load, render, or diagnostic failure leaves no selectable row bindings; invalid syntax or an invalid scoped filter is rejected before replacement begins and preserves the previous bindings", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel; a degraded endpoint is dropped from that choice and refused by name, because its inventory is already deleted, while an offline endpoint stays enterable because navigation sends no frame and its retained inventory is still readable", "entering session scope immediately starts the same live tail as logs -f for the selected session, using the generation the transition validated, so the operator reads output as it is written instead of a snapshot that stops at the moment it was read; any key stops the tail", "when the client cannot stream or the input mode cannot observe a keypress, entering a session renders one bounded output snapshot instead and says so, because a live tail that cannot be stopped is worse than a snapshot; a failed read is reported as a diagnostic and does not change the selected session"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
@@ -547,20 +586,32 @@ func printInteractiveStartHelp(out io.Writer, entry commandHelp) error {
 	return err
 }
 
-// rendersSessionTable reports whether a command prints the session table, and so
-// must explain the columns it prints. Every command that renders the table is
-// listed here rather than only list, because an operator who runs help watch is
-// asking about the table they are looking at, and a field list reachable only
-// through help list leaves that question unanswered. The set is explicit instead
-// of a prefix or scope test so a new table command has to be added deliberately,
-// and a command that prints no table never inherits a field list that describes
-// columns it does not show.
-func rendersSessionTable(target string) bool {
+// tableFieldHelp returns the field list a command must print, or nil when the
+// command prints no table. Every command that renders a table is listed here
+// rather than only list, because an operator who runs help watch is asking about
+// the table they are looking at, and a field list reachable only through help list
+// leaves that question unanswered. The set is explicit instead of a prefix or
+// scope test so a new table command has to be added deliberately, and a command
+// that prints no table never inherits a field list that describes columns it does
+// not show.
+//
+// The two tables get separate lists because they are separate layouts: a history
+// row has no generation and no data-status stamp, so lending it the session list
+// would document columns it never prints. Returning the list rather than a boolean
+// keeps the choice of layout and the choice of documentation in one place, so a
+// command cannot be gated on one table while documented with the other.
+func tableFieldHelp(target string) []string {
 	switch target {
 	case "list", "refresh", "watch":
-		return true
+		return fieldHelp
+	case "history":
+		return historyFieldHelp
+	case "endpoints":
+		return endpointFieldHelp
+	case "model":
+		return modelFieldHelp
 	default:
-		return false
+		return nil
 	}
 }
 
@@ -599,11 +650,11 @@ func printCommandDetail(out io.Writer, heading, target string, entry commandHelp
 			}
 		}
 	}
-	if rendersSessionTable(target) {
+	if fields := tableFieldHelp(target); len(fields) > 0 {
 		if _, err := fmt.Fprintln(out, "Fields:"); err != nil {
 			return err
 		}
-		for _, field := range fieldHelp {
+		for _, field := range fields {
 			if _, err := fmt.Fprintf(out, "  %s\n", field); err != nil {
 				return err
 			}
