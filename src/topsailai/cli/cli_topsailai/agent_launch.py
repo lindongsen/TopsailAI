@@ -12,6 +12,7 @@ from cli_topsailai.core import _detect_agent_mode
 from cli_topsailai.project_scope import (
     _LAUNCH_ENV_KEYS,
     _PROJECT_WORKSPACE_ENV_KEY,
+    _SESSION_TEE_ENV_KEY,
     _apply_selected_model_environment,
     _wrap_command_for_agent_mode,
 )
@@ -52,6 +53,18 @@ def _prepare_environment(folder: str, session_id: str):
     return keys, original, model_original, forwarded
 
 
+def _enable_session_tee() -> None:
+    """Export the session tee switch for the child this launch is about to start.
+
+    A worker that dies before it can report anything still leaves a stdout file
+    behind. The switch is exported here, at the launch boundary, because that is
+    the only layer that knows a launch is happening; core defaults stay
+    untouched so unrelated agent entry points are unaffected. An operator who
+    already exported the variable keeps that value.
+    """
+    os.environ.setdefault(_SESSION_TEE_ENV_KEY, "1")
+
+
 def _stop_owned_child(child) -> bool:
     """Terminate and reap the directly owned child after interruption."""
     try:
@@ -84,7 +97,8 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
                             receipt: dict | None = None,
                             child_stdout=None,
                             non_interactive: bool = False,
-                            task: str | None = None) -> int:
+                            task: str | None = None,
+                            enable_session_tee: bool = True) -> int:
     """Launch an agent and make restoration failure observable.
 
     When *session_id* is supplied the launch resumes that persisted identity
@@ -128,6 +142,8 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
             launch_kwargs["non_interactive"] = True
         if task is not None:
             launch_kwargs["task"] = task
+        if not enable_session_tee:
+            launch_kwargs["enable_session_tee"] = False
         result = _launch_configured_agent_impl(folder, **launch_kwargs)
     finally:
         try:
@@ -158,6 +174,7 @@ def _launch_configured_agent_impl(
     child_stdout=None,
     non_interactive: bool = False,
     task: str | None = None,
+    enable_session_tee: bool = True,
 ) -> int:
     """Launch one configured agent and return its boundary status."""
     if spawn is None:
@@ -216,6 +233,8 @@ def _launch_configured_agent_impl(
 
             try:
                 _prepare_environment(folder, session_id)
+                if enable_session_tee:
+                    _enable_session_tee()
             except (RuntimeError, ValueError, OSError) as error:
                 print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
                 return 4
@@ -284,6 +303,8 @@ def _launch_configured_agent_impl(
                                    non_interactive=non_interactive, task=task)
         try:
             forwarded = _prepare_environment(folder, session_id)[3]
+            if enable_session_tee:
+                _enable_session_tee()
             if effective_mode == "raw":
                 argv = command
                 kwargs = {"cwd": folder, "env": os.environ.copy()}

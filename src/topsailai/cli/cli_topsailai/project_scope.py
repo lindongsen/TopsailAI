@@ -76,9 +76,13 @@ _IDENTITY_ENV_KEYS = ("TOPSAILAI_SESSION_ID", "SESSION_ID")
 # project workspace lock.
 _PROJECT_WORKSPACE_ENV_KEY = "TOPSAILAI_PROJECT_WORKSPACE"
 
+# Session tee output. A launch enables it by default so a worker that dies
+# early still leaves a stdout file behind; an explicit caller value wins.
+_SESSION_TEE_ENV_KEY = "TOPSAILAI_ENABLE_SESSION_TEE_OUT"
+
 # Environment keys mutated for one launch and restored immediately afterward.
 _LAUNCH_ENV_KEYS = (
-    "TOPSAILAI_PWD", "PWD", _PROJECT_WORKSPACE_ENV_KEY
+    "TOPSAILAI_PWD", "PWD", _PROJECT_WORKSPACE_ENV_KEY, _SESSION_TEE_ENV_KEY
 ) + _IDENTITY_ENV_KEYS
 
 # Bounds for the single authoritative session lookup: the capture must never
@@ -938,6 +942,7 @@ def launch_agent_driver(
     prelaunch_check: Optional[Callable[[], Optional[int]]] = None,
     receipt: Optional[Dict[str, Any]] = None, child_stdout=None,
     on_spawned: Optional[Callable[[], None]] = None,
+    enable_session_tee: bool = True,
 ) -> int:
     """Launch a resume driver with the selected model environment.
 
@@ -997,6 +1002,8 @@ def launch_agent_driver(
             os.environ[_PROJECT_WORKSPACE_ENV_KEY] = target_folder
             os.environ["TOPSAILAI_SESSION_ID"] = session_id
             os.environ["SESSION_ID"] = session_id
+            if enable_session_tee:
+                os.environ.setdefault(_SESSION_TEE_ENV_KEY, "1")
             model_environment = _apply_selected_model_environment(target_folder)
             if model_environment is None:
                 return 4
