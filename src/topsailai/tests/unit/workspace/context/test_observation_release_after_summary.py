@@ -60,11 +60,11 @@ def _patch_budget(runtime, budget):
 class TestReleaseRatio:
     """The ratio must be environment-configurable with a safe default."""
 
-    def test_default_ratio_is_0_3(self, monkeypatch):
+    def test_default_ratio_is_0_8(self, monkeypatch):
         monkeypatch.delenv(
             "TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO", raising=False
         )
-        assert _runtime()._get_observation_release_ratio() == 0.3
+        assert _runtime()._get_observation_release_ratio() == 0.8
 
     def test_custom_ratio_is_used(self, monkeypatch):
         monkeypatch.setenv(
@@ -86,13 +86,13 @@ class TestReleaseRatio:
         monkeypatch.setenv(
             "TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO", "1.5"
         )
-        assert _runtime()._get_observation_release_ratio() == 0.3
+        assert _runtime()._get_observation_release_ratio() == 0.8
 
     def test_non_numeric_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv(
             "TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO", "abc"
         )
-        assert _runtime()._get_observation_release_ratio() == 0.3
+        assert _runtime()._get_observation_release_ratio() == 0.8
 
     def test_one_is_allowed(self, monkeypatch):
         monkeypatch.setenv("TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RELEASE_RATIO", "1")
@@ -522,6 +522,101 @@ class TestCallSites:
         no_answer_index = source.index("NO ANSWER")
         release_index = source.index("release_opening_observation_after_summary")
         assert no_answer_index < release_index
+
+    def test_persisted_branch_writes_summary_before_release(self):
+        """The summary must be durable before the observation rows are deleted."""
+        import inspect
+        from topsailai.workspace.context import ctx_runtime
+
+        source = inspect.getsource(ctx_runtime)
+        write_index = source.index("ctx_manager.add_session_message(")
+        release_index = source.index(
+            "release_opening_observation_after_summary", write_index
+        )
+        assert write_index < release_index
+
+    def test_persisted_branch_guards_release_on_write_result(self):
+        """A failed summary write must suppress the persisted deletion."""
+        import inspect
+        from topsailai.workspace.context import ctx_runtime
+
+        source = inspect.getsource(ctx_runtime)
+        assert "summary_persisted = ctx_manager.add_session_message(" in source
+        guard_index = source.index("if summary_persisted:")
+        release_index = source.index(
+            "release_opening_observation_after_summary", guard_index
+        )
+        assert guard_index < release_index
+
+    def test_agent_layer_never_deletes_persisted_rows(self):
+        """The ephemeral agent-layer summary has no durable replacement."""
+        import inspect
+        from topsailai.workspace.context import agent2llm
+
+        source = inspect.getsource(agent2llm)
+        release_index = source.index("release_opening_observation_after_summary")
+        call_block = source[release_index:release_index + 600]
+        assert 'session_id=""' in call_block
+        assert "session_id=self.session_id" not in call_block
+
+    def test_in_memory_branch_applies_summary_before_release(self):
+        """Without a session the in-memory list is the session, so order matters.
+
+        The summary must be applied to ``self.messages`` before the observation
+        is removed from it. Releasing the local reconstruction first would delete
+        the observation while the session still held the pre-summary content.
+        """
+        import inspect
+        from topsailai.workspace.context import ctx_runtime
+
+        source = inspect.getsource(ctx_runtime)
+        # Locate the in-memory branch, which is the only one that calls
+        # set_messages after a release candidate.
+        release_index = source.rindex("release_opening_observation_after_summary")
+        set_index = source.rindex("self.set_messages(new_messages)")
+        assert set_index < release_index, (
+            "the in-memory branch must apply the summary to self.messages "
+            "before releasing the observation"
+        )
+        # The release must operate on the session list, not the local one.
+        call_block = source[release_index:release_index + 400]
+        assert "self.messages," in call_block
+        assert "new_messages," not in call_block
+
+
+class TestInMemoryOrdering:
+    """The no-session branch must replace the content before deleting it."""
+
+    def _runtime_with_messages(self, messages):
+        """Build a runtime whose in-memory session holds ``messages``."""
+        runtime = _runtime()
+        runtime.messages = list(messages)
+        runtime._get_current_tokens = MagicMock(return_value=10_000)
+        runtime._get_observation_release_budget = MagicMock(return_value=1000)
+        runtime._get_observation_release_ratio = MagicMock(return_value=0.8)
+        runtime._record_observation_release_event = MagicMock()
+        return runtime
+
+    def test_release_removes_observation_from_the_session_list(self):
+        """The release must mutate the session list it is given."""
+        runtime = self._runtime_with_messages([OBSERVATION, TASK, ASSISTANT])
+        removed = runtime.release_opening_observation_after_summary(
+            runtime.messages, token_threshold=1000,
+        )
+        assert removed == 1
+        assert runtime.messages == [TASK, ASSISTANT]
+
+    def test_summary_survives_when_release_runs_after_set_messages(self):
+        """Applying the summary first keeps it while the observation goes."""
+        runtime = self._runtime_with_messages([OBSERVATION, TASK, ASSISTANT])
+        summary = {"role": "assistant", "content": "SUMMARY TEXT"}
+        new_messages = [TASK, summary]
+        runtime.set_messages(new_messages)
+        runtime.release_opening_observation_after_summary(
+            runtime.messages, token_threshold=1000,
+        )
+        assert summary in runtime.messages
+        assert OBSERVATION not in runtime.messages
 
 
 # =============================================================================

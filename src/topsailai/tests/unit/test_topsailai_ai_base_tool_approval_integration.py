@@ -3,7 +3,6 @@ Integration tests for the tool approval module.
 """
 
 import threading
-import time
 
 import pytest
 
@@ -134,13 +133,21 @@ class TestIntegration:
             return f"ran {cmd}"
 
         def deny_later():
-            time.sleep(0.05)
+            # Best effort only: the assertion runs on the main thread, because
+            # pytest discards an exception raised inside a worker thread.
+            if not transport.request_ready.wait(timeout=1):
+                return
             instance = transport.instances[0]
             transport.resolve(instance.id, "deny")
 
         threading.Thread(target=deny_later).start()
-        with pytest.raises(ToolApprovalDeniedError):
+        with pytest.raises(ToolApprovalDeniedError) as caught:
             exec_tool_func(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+
+        # A policy timeout under policy=deny raises the same exception with the
+        # same "status: denied" text, so only decision_by proves a human refused.
+        assert transport.instances[0].decision_by == "user"
+        assert "status: denied" in str(caught.value)
 
     def test_params_logic_or(self, monkeypatch):
         monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")

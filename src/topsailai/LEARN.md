@@ -571,6 +571,41 @@ pass with it unset, and after the fix all pass even with it exported. A test tha
 only asserts "the scenario passes" cannot distinguish a correct fix from a
 scenario that never exercised the leak.
 
+## A persist-before-delete rule must be applied to every branch that owns a session
+
+Trigger: the opening-observation release deleted the observation after a summary
+replaced it. The persisted branch was fixed first: the summary write result was
+captured and the release was suppressed when the write failed. The no-`session_id`
+branch was left untouched, and it carried the same inversion in memory — the
+release ran on the local `new_messages` reconstruction **before**
+`set_messages(new_messages)` applied the summary to `self.messages`. Without a
+session, `self.messages` **is** the session, so the observation was deleted while
+the session still held the pre-summary content. The user found it by asking about
+the no-session case; the fix was one moved call plus changing the release argument
+from `new_messages` to `self.messages`.
+
+Action: when a rule says "replace the content before removing the old content",
+enumerate every branch that owns the content and apply the rule to each one. Here
+there were three owners: the persisted session (`ctx_manager` rows), the in-memory
+session (`self.messages` when no `session_id` exists), and the agent layer
+(`ai_agent.messages`). Check each owner's actual ordering rather than assuming a
+fix in one branch covers the others, and verify the agent layer separately because
+it may already be correct for a different reason — it appends the summary to
+`new_messages` and releases that same list before assigning it, so its order was
+never broken.
+
+Why this prevents recurrence: the two branches look symmetric in the source, which
+is exactly why the second one was missed. The persisted branch has an obvious
+durable artifact to check (the database write), so the defect is visible there;
+the in-memory branch has no write to inspect, so "the summary is in `new_messages`"
+reads as sufficient even though `new_messages` is not yet the session. A test that
+only exercises the persisted branch passes while the no-session path silently
+loses content, and the no-session path is the harder one to reproduce because it
+requires starting an agent without a session id. The negative control is what makes
+the guard real: reverting only the moved call makes the ordering assertion fail
+with the intended message, which proves the test observes the order rather than
+merely the presence of both calls.
+
 ## Adding a positional parameter to a function that tests replace with a fixed-arity double breaks every one of them
 
 Trigger: enabling session tee output at the CLI launch boundary was first

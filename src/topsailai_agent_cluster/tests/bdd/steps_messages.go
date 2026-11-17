@@ -176,7 +176,14 @@ func assertMessagesCounts() error {
 	return nil
 }
 
-// assertMessagesUnwrapped proves the step record was unwrapped in the adapter.
+// assertMessagesUnwrapped proves the unwrapped body reaches the terminal intact.
+//
+// The provider unwraps its own step record, so by the time the Cluster sees the
+// body it is already prose. What this scenario proves is the rest of the path: the
+// Cluster forwards that text without re-encoding it into JSON and without dropping
+// it, and the terminal shows the step label and the operator text instead of the
+// record keys. The unwrapping itself is covered by the provider's own unit tests,
+// because a mock provider cannot prove behaviour that belongs to the real one.
 //
 // The record keys must be absent as whole tokens, because a substring match on a
 // short key can be satisfied by unrelated text. The step label and the operator
@@ -185,14 +192,14 @@ func assertMessagesCounts() error {
 func assertMessagesUnwrapped() error {
 	text := interactiveOutput()
 	if !strings.Contains(text, messagesStepLabel) {
-		return fmt.Errorf("the step label %q is missing, so the record was not unwrapped: %s", messagesStepLabel, text)
+		return fmt.Errorf("the step label %q is missing, so the unwrapped body did not reach the terminal: %s", messagesStepLabel, text)
 	}
 	if !strings.Contains(text, messagesStepText) {
-		return fmt.Errorf("the operator text is missing, so unwrapping lost the body: %s", text)
+		return fmt.Errorf("the operator text is missing, so the body was lost on the way to the terminal: %s", text)
 	}
 	for _, key := range []string{"raw_text", "step_name"} {
 		if containsToken(text, key) {
-			return fmt.Errorf("the record key %q reached the terminal, so the body was printed as JSON: %s", key, text)
+			return fmt.Errorf("the record key %q reached the terminal, so the body was re-encoded as JSON: %s", key, text)
 		}
 	}
 	return nil

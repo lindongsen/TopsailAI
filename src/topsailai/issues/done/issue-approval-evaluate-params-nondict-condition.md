@@ -7,6 +7,7 @@ ProjectCode: TOPSAILAI
 programming_language: python
 references:
   - /TopsailAI/src/topsailai/ai_base/tool_approval/matcher.py
+status: resolved
 ---
 
 # Issue: `_evaluate_params` raises on a non-dict parameter condition
@@ -121,3 +122,61 @@ only invalid elements.
    configuration error is reported once at load time rather than per call.
 
 No code change was made in this analysis pass.
+
+## Resolution (2026-11-17)
+
+Fixed in `ai_base/tool_approval/matcher.py::_evaluate_params()`.
+
+The guard treats a non-mapping element as a condition that does not hold, which
+is what `_evaluate_params_detail()` already does by appending `False` to its
+result list. The issue's own "skip" proposal was not used because skipping
+changes the boolean outcome and breaks the parity contract.
+
+```python
+for condition in params:
+    if not isinstance(condition, dict):
+        logger.warning("Skipping invalid approval rule condition: %r", condition)
+        if logic == "and":
+            return False
+        continue
+```
+
+Under `and` a non-mapping element fails the rule immediately, preserving the
+existing short-circuit behaviour. Under `or` it contributes nothing, which is
+equivalent to appending `False` and then applying `any`.
+
+### Verification
+
+Ten-case parity probe across `and`, `or`, all-invalid, mixed, and the invalid
+`logic` fallback: **0 mismatches**, and no case raises.
+
+| logic | params | boolean | detail |
+|---|---|---|---|
+| and | valid + `"bad"` | False | False |
+| or | valid + `"bad"` | True | True |
+| and | `["bad"]` | False | False |
+| or | `["bad"]` | False | False |
+| or | `["bad", valid]` | True | True |
+| and | `["bad", valid]` | False | False |
+
+Tests: `tests/unit/test_topsailai_ai_base_tool_approval_matcher.py` **100 passed**;
+with the integration and decorator suites **124 passed**.
+
+Negative control: removing only the guard makes the three new or extended tests
+fail with `AttributeError: 'str' object has no attribute 'get'` at
+`matcher.py:218`, proving the tests observe the defect rather than the fix.
+
+### Tests added
+
+- Six non-mapping cases appended to `test_boolean_parity_with_evaluate_params`,
+  restoring the parity case that was removed when the defect was first found.
+- `test_non_mapping_condition_does_not_raise` — the three boolean outcomes.
+- `test_non_mapping_condition_logs_a_warning` — the tolerated misconfiguration
+  stays diagnosable through `caplog`.
+
+### Not done
+
+`_parse_rule()` still accepts a non-mapping `params` element. Rejecting it at
+load time would report the configuration error once instead of per call, but it
+changes what a malformed rule file is allowed to contain, so it is left as a
+separate decision rather than folded into this fix.

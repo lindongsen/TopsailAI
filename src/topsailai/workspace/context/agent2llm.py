@@ -491,6 +491,12 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             # removing it now cannot lose content. A skipped summarization never
             # reaches this point, which is intentional because there is no
             # summary to compensate for the removed content.
+            #
+            # The agent-layer summary is ephemeral and is never persisted, so this
+            # call must not delete the persisted rows: doing so would remove the
+            # observation from storage with no durable replacement, and the next
+            # reload would resurrect it anyway. Persisted deletion belongs to the
+            # User2Agent layer, which writes its summary to the session first.
             self.release_opening_observation_after_summary(
                 new_messages,
                 token_threshold=env_tool.EnvReaderInstance.get(
@@ -498,7 +504,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                     default=128000,
                     formatter=int,
                 ) or 0,
-                session_id=self.session_id or "",
+                session_id="",
             )
             partial_apply_possible = True
             self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages

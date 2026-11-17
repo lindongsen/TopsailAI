@@ -5,6 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: open
 ---
 
 # TOOLS_INFO Declared Inside A Tool Package Is Silently Never Registered

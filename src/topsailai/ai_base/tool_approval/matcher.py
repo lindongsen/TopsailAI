@@ -199,7 +199,14 @@ def _evaluate_condition(actual: Any, op: str, expected: Any) -> bool:
 
 
 def _evaluate_params(tool_args: dict[str, Any], params: list[dict[str, Any]], logic: str) -> bool:
-    """Evaluate all parameter conditions for a rule using the given logic."""
+    """
+    Evaluate all parameter conditions for a rule using the given logic.
+
+    A non-mapping element is treated as a condition that does not hold instead
+    of raising, matching :func:`_evaluate_params_detail`. Under ``and`` that
+    fails the rule immediately; under ``or`` it contributes nothing, which is
+    exactly what appending ``False`` to the detail evaluator's result list does.
+    """
     if not params:
         return True
 
@@ -208,6 +215,12 @@ def _evaluate_params(tool_args: dict[str, Any], params: list[dict[str, Any]], lo
         logic = "and"
 
     for condition in params:
+        if not isinstance(condition, dict):
+            logger.warning("Skipping invalid approval rule condition: %r", condition)
+            if logic == "and":
+                return False
+            continue
+
         param = condition.get("param")
         op = condition.get("op", "exists")
         expected = condition.get("value")

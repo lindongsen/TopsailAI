@@ -3,7 +3,6 @@ Unit tests for the tool approval decorator.
 """
 
 import threading
-import time
 
 import pytest
 
@@ -221,14 +220,22 @@ class TestDecoratorAsk:
             return f"ran {cmd}"
 
         def resolve_later():
-            time.sleep(0.05)
+            # Best effort only: the assertion runs on the main thread, because
+            # pytest discards an exception raised inside a worker thread.
+            if not transport.request_ready.wait(timeout=1):
+                return
             instance = transport.instances[0]
             transport.resolve(instance.id, "deny")
 
         threading.Thread(target=resolve_later).start()
-        with pytest.raises(ToolApprovalDeniedError):
+        with pytest.raises(ToolApprovalDeniedError) as caught:
             wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
         assert len(calls) == 0
+        # A policy timeout under policy=deny also raises with "status: denied",
+        # so the message alone cannot prove that a human refused. decision_by is
+        # the channel that separates a human refusal from a policy timeout.
+        assert transport.instances[0].decision_by == "user"
+        assert "status: denied" in str(caught.value)
 
     def test_ask_timeout_deny_raises(self, monkeypatch):
         monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
@@ -302,15 +309,24 @@ class TestDecoratorAsk:
         def run_cmd(cmd):
             return f"ran {cmd}"
 
-        def resolve_later():
-            time.sleep(0.08)
-            instance = transport.instances[0]
-            transport.resolve(instance.id, "approve")
+        # Drive the second wait cycle deterministically instead of racing a
+        # sleep against the timeout: the transport records each wait and the
+        # human answers during the retry cycle that ask_again opens.
+        waits = []
+        original_wait = transport.wait_response
 
-        threading.Thread(target=resolve_later).start()
+        def counting_wait(instance, timeout=None):
+            waits.append(timeout)
+            if len(waits) == 2:
+                instance.approve()
+            return original_wait(instance, timeout=timeout)
+
+        transport.wait_response = counting_wait
         result = wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
         assert result == "executed"
         assert len(calls) == 1
+        assert len(waits) == 2
+        assert transport.instances[0].decision_by == "user"
 
 
 class TestDecoratorRegistry:
@@ -331,13 +347,23 @@ class TestDecoratorRegistry:
         def run_cmd(cmd):
             return f"ran {cmd}"
 
-        def check_registry():
-            time.sleep(0.02)
-            assert len(registry.list_pending_approvals()) >= 1
+        observed = []
 
-        threading.Thread(target=check_registry).start()
+        def check_registry():
+            # Record the observation only; the assertion runs on the main thread
+            # because pytest discards an exception raised in a worker thread and
+            # emits PytestUnhandledThreadExceptionWarning instead of failing.
+            if transport.request_ready.wait(timeout=1):
+                observed.append(len(registry.list_pending_approvals()))
+
+        worker = threading.Thread(target=check_registry)
+        worker.start()
         with pytest.raises(ToolApprovalDeniedError):
             wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+        worker.join(timeout=1)
+
+        assert not worker.is_alive()
+        assert observed == [1]
         assert registry.get_pending_approval(transport.instances[0].id) is None
 
 

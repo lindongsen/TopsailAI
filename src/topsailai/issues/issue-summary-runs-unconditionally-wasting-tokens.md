@@ -5,6 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: open
 ---
 
 # Summary runs unconditionally in the dynamic watermark branch

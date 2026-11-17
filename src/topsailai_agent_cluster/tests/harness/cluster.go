@@ -161,12 +161,13 @@ type FaultInjection struct {
 	// default omits, such as context.inject, declares the list here instead of
 	// changing what every deployment advertises.
 	AdvertisedCapabilities []string
-	// MessagesBody and MessagesCount configure the fixture's conversation
-	// content. They are emitted by appendFaultEnvironment, which is the only
-	// seam that reaches the Endpoint and therefore the fixture child: the
-	// Endpoint does not receive ClusterOptions.Environment, so a body set there
-	// would be silently ignored and a scenario would assert against the default
-	// body while appearing to prove the configured one.
+	// MessagesBody and MessagesCount configure the provider's conversation
+	// content. They are emitted as provider argv by providerFaultArgs, because
+	// the adapter starts the provider with exactly the configured environment,
+	// which is empty: a variable set on the Endpoint never reaches the provider
+	// child. An earlier version emitted them as Endpoint environment variables,
+	// which the provider never read, so a scenario asserted against the
+	// provider's default body while appearing to prove the configured one.
 	MessagesBody  string
 	MessagesCount int
 	// CapabilityRevision overrides the descriptor revision the fixture adapter
@@ -879,6 +880,19 @@ func providerFaultArgs(faults FaultInjection) []string {
 	if faults.RecordBeforeDelay {
 		args = append(args, "--record-before-delay")
 	}
+	// The conversation body and count travel through argv for exactly the reason
+	// above: the adapter starts the provider with the configured environment,
+	// which is empty, so a variable set on the Endpoint never reaches the
+	// provider child. Emitting them here is what makes a scenario's configured
+	// body actually arrive. Without it the mock answered with its own default,
+	// and an assertion that expected the same text compared that default with
+	// itself while appearing to prove the configured body.
+	if faults.MessagesBody != "" {
+		args = append(args, "--messages-body", faults.MessagesBody)
+	}
+	if faults.MessagesCount > 0 {
+		args = append(args, "--messages-count", fmt.Sprint(faults.MessagesCount))
+	}
 	return args
 }
 
@@ -912,12 +926,6 @@ func appendFaultEnvironment(env []string, faults FaultInjection) []string {
 	}
 	if faults.OutputUnsupported {
 		env = append(env, "AGENT_CLUSTER_TEST_OUTPUT_UNSUPPORTED=1")
-	}
-	if faults.MessagesBody != "" {
-		env = append(env, "AGENT_CLUSTER_TEST_MESSAGES_BODY="+faults.MessagesBody)
-	}
-	if faults.MessagesCount > 0 {
-		env = append(env, fmt.Sprintf("AGENT_CLUSTER_TEST_MESSAGES_COUNT=%d", faults.MessagesCount))
 	}
 	return env
 }
