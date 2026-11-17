@@ -75,3 +75,14 @@ have hidden it inside a diff that reviewers read as mechanical.
   mapping and the summary stay correct.
 - Add a test that feeds an unrecognized provider word and asserts the published state
   is `unknown` with the provider word preserved as the reason.
+
+## Resolution
+
+Implemented in `providers/topsailai/read.go`. `normalizeSessionState`
+(`read.go:393`) maps the provider's documented words onto the closed cluster vocabulary
+and maps an unrecognized word to `unknown`, so the colour mapping and the fleet summary
+stay correct. It is applied at `read.go:178-180`, where the provider's own word is kept in
+`state_reason` as descriptive evidence.
+
+The provider's original word therefore survives as the reason while the published state
+is always a member of the closed vocabulary.
