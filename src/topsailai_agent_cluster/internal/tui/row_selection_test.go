@@ -30,7 +30,7 @@ func TestResolveRowSelectionRejectsUnusableTokens(t *testing.T) {
 		{"no-list", rowSelectionState(), "1", "no list is available for row selection; run list first"},
 		{"out-of-range", rowSelectionState(sessionRow), "2", "row 2 is out of range; valid rows are 1-1"},
 		{"placeholder", rowSelectionState(placeholderRow), "2", "row 2 does not identify a session; choose a session row"},
-		{"no-generation", rowSelectionState(generationlessRow), "3", "row 3 has no generation; run list again"},
+		{"no-generation", rowSelectionState(generationlessRow), "3", "row 3 has no generation; run refresh to collect a fresh inventory"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

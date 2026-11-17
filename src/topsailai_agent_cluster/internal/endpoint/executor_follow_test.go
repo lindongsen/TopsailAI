@@ -124,18 +124,33 @@ func TestFollowOutputUnsupportedWhenAdapterCannotStream(t *testing.T) {
 }
 
 // TestFollowOutputRejectsIncompleteTarget proves a request without a resource ID
-// or generation is refused before any adapter is consulted.
+// is refused before any adapter is consulted.
+//
+// A missing generation is deliberately not a rejection: a follow addresses
+// identity, which the mapping proves, not liveness. The positive case is covered
+// by TestFollowOutputAcceptsUnverifiedTarget.
 func TestFollowOutputRejectsIncompleteTarget(t *testing.T) {
 	instance := &followTestAdapter{}
-	executor, resourceID := newFollowExecutor(t, instance)
-	cases := []protocol.OutputFollowRequest{
-		{ProviderGeneration: "g1"},
-		{ResourceID: resourceID},
+	executor, _ := newFollowExecutor(t, instance)
+	if err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ProviderGeneration: "g1"}, func(protocol.OutputChunk) error { return nil }); err == nil {
+		t.Fatal("request without a resource ID was accepted")
 	}
-	for _, request := range cases {
-		if err := executor.FollowOutput(context.Background(), request, func(protocol.OutputChunk) error { return nil }); err == nil {
-			t.Fatalf("request=%#v was accepted", request)
-		}
+}
+
+// TestFollowOutputAcceptsUnverifiedTarget proves a follow reaches the adapter for
+// a target whose generation was never verified.
+//
+// This is the case the operator needs: a session the provider listed but could not
+// prove live is exactly the one whose output must still be readable. The mapping
+// proves identity, so the stream is armed instead of being refused.
+func TestFollowOutputAcceptsUnverifiedTarget(t *testing.T) {
+	var received protocol.OutputFollowRequest
+	executor, resourceID := newFollowExecutor(t, &followTestAdapter{received: &received})
+	if err := executor.FollowOutput(context.Background(), protocol.OutputFollowRequest{ResourceID: resourceID}, func(protocol.OutputChunk) error { return nil }); err != nil {
+		t.Fatalf("unverified target was refused: %v", err)
+	}
+	if received.ResourceID != resourceID {
+		t.Fatalf("adapter was never consulted: received=%#v", received)
 	}
 }
 

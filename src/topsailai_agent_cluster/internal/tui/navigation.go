@@ -302,7 +302,13 @@ func cdRowNumber(state *interactiveState, api InteractiveAPI, parent context.Con
 		return fmt.Errorf("row %d does not identify a session; choose a session row", number)
 	}
 	if row.ProviderGeneration == "" {
-		return fmt.Errorf("row %d has no generation; run list again", number)
+		// A row reported without a generation is present but its liveness was not
+		// verified, so it cannot be entered. The remedy is a fresh collection,
+		// because the usual cause is an inventory document older than the
+		// provider's truth; "run list again" re-reads that same document and
+		// cannot change the outcome. Resume is named for the case where the
+		// session really has no process.
+		return fmt.Errorf("row %d is unverified: the session record exists but no process holds it, so it cannot be entered; run refresh to collect a fresh inventory, or use resume to resume it", number)
 	}
 	return cdSessionRow(state, api, parent, number, row)
 }

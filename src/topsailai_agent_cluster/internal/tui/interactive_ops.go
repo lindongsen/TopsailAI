@@ -34,11 +34,19 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	}
 	if target != "" {
 		resourceID = target
-		row, resolved, err := resolveSessionTokenInEndpoint(state, target, endpointID)
+		// logs is a read, so it resolves through the read resolver: an unverified
+		// session is still readable, and refusing it here would make the output of
+		// exactly the session an operator needs to inspect unreachable. A
+		// placeholder row still carries no session identity, so it is rejected with
+		// the same message the strict resolver uses.
+		row, resolved, err := resolveReadSessionTokenInEndpoint(state, target, endpointID)
 		if err != nil {
 			return err
 		}
 		if resolved {
+			if row.ClusterSessionID == "" {
+				return fmt.Errorf("row %d does not identify a session; choose a session row", row.No)
+			}
 			resourceID = row.ClusterSessionID
 		}
 	}

@@ -263,9 +263,23 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 }
 
 // ReadOutput reads a bounded snapshot through the mapped resource adapter.
+//
+// A generation is not required. A generation proves liveness, which is what a
+// mutation needs to know which process it would reach; a read needs identity,
+// which record's output to return. Identity is already proven without it: the
+// resource ID resolves through the durable mapping, and the provider proves the
+// row by digest or refuses an ambiguous or absent match. Requiring a generation
+// here made the output of an unverified session unreadable, which is exactly the
+// session an operator most needs to inspect.
+//
+// The liveness comparison is skipped rather than merely tolerated when the
+// generation is empty. revalidateGeneration compares with !=, so an empty
+// requested generation would compare equal to an empty observed one and pass
+// while proving nothing; skipping states the intent instead of relying on that
+// coincidence.
 func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
-	if request.ResourceID == "" || request.ProviderGeneration == "" {
-		return protocol.OutputSnapshotResponse{ErrorCode: "invalid_target"}, fmt.Errorf("resource ID and generation are required")
+	if request.ResourceID == "" {
+		return protocol.OutputSnapshotResponse{ErrorCode: "invalid_target"}, fmt.Errorf("resource ID is required")
 	}
 	mapping, err := e.store.LookupResourceID(ctx, request.ResourceID)
 	if err != nil {
@@ -280,8 +294,10 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	// collection snapshot. A live inspection re-runs the provider's full discovery,
 	// which costs seconds per read, so it is reserved for the cases the snapshot
 	// cannot answer: unknown data, stale data, or a resource absent from it.
-	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}); err != nil {
-		return protocol.OutputSnapshotResponse{ErrorCode: revalidationFailureCode(err, "generation_mismatch")}, err
+	if request.ProviderGeneration != "" {
+		if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}); err != nil {
+			return protocol.OutputSnapshotResponse{ErrorCode: revalidationFailureCode(err, "generation_mismatch")}, err
+		}
 	}
 	limit := request.MaxBytes
 	if limit <= 0 {
@@ -326,8 +342,8 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 // that cannot stream reports ErrUnsupported, which the Endpoint turns into an
 // honest "unsupported" end frame instead of a provider failure.
 func (e *Executor) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
-	if request.ResourceID == "" || request.ProviderGeneration == "" {
-		return fmt.Errorf("resource ID and generation are required")
+	if request.ResourceID == "" {
+		return fmt.Errorf("resource ID is required")
 	}
 	mapping, err := e.store.LookupResourceID(ctx, request.ResourceID)
 	if err != nil {
@@ -341,8 +357,15 @@ func (e *Executor) FollowOutput(ctx context.Context, request protocol.OutputFoll
 	// version it started on. Releasing it after the stream ends lets a replacement
 	// close the retired instance at that point instead of interrupting the stream.
 	defer release()
-	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}); err != nil {
-		return err
+	// A generation is optional for the same reason it is optional in ReadOutput:
+	// it proves liveness, while a follow needs identity, which the mapping and the
+	// provider's own row proof already establish. The comparison is skipped rather
+	// than tolerated, because an empty generation would compare equal to an empty
+	// observed one and pass while proving nothing.
+	if request.ProviderGeneration != "" {
+		if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}); err != nil {
+			return err
+		}
 	}
 	follower, ok := instance.(adapter.OutputFollower)
 	if !ok {
