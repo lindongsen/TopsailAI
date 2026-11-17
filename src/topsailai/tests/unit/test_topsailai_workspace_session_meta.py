@@ -19,6 +19,16 @@ from topsailai.utils import qos_tool
 from topsailai.workspace import session_meta
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 
+# ``sun_path`` in ``sockaddr_un`` is 108 bytes including the terminating NUL, so
+# a usable AF_UNIX path is at most 107 bytes. The limit is expressed in bytes
+# because a multi-byte character consumes more than one byte of ``sun_path``.
+_MAX_SUN_PATH_BYTES = 107
+# A short, TMPDIR-independent root for tests that must bind a real AF_UNIX
+# socket. ``tempfile.mkdtemp`` honours ``TMPDIR``, so relying on the default
+# temporary root would let an inherited long ``TMPDIR`` push the socket path
+# over the kernel limit.
+_SHORT_TEMP_ROOT = "/tmp"
+
 
 @pytest.fixture(autouse=True)
 def _isolate_meta_files(monkeypatch, tmp_path):
@@ -725,13 +735,26 @@ def test_orphan_cleanup_retains_socket_endpoint(monkeypatch):
     behaviour under test. The module folder is still redirected to that same
     directory, so the real inventory scan and the real socket stay inside the
     assertion boundary.
+
+    The directory is created under ``/tmp`` explicitly rather than through the
+    default temporary root, because ``tempfile.mkdtemp`` honours ``TMPDIR`` and
+    an inherited long ``TMPDIR`` would reintroduce the same path-length coupling
+    this test is meant to avoid. The measured length is asserted so a future
+    layout change reports the real cause instead of a kernel-level ``OSError``.
     """
-    short_dir = tempfile.mkdtemp(prefix="sm-")
+    short_dir = tempfile.mkdtemp(prefix="sm-", dir=_SHORT_TEMP_ROOT)
     monkeypatch.setattr(session_meta, "FOLDER_WORKSPACE_TASK", short_dir)
     sock_path = os.path.join(short_dir, "orphan-socket.4246.session.sock")
+    sock_path_bytes = len(sock_path.encode("utf-8"))
+    assert sock_path_bytes <= _MAX_SUN_PATH_BYTES, (
+        f"socket path is {sock_path_bytes} bytes, over the AF_UNIX limit of "
+        f"{_MAX_SUN_PATH_BYTES}: {sock_path}"
+    )
     endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    bound = False
     try:
         endpoint.bind(sock_path)
+        bound = True
         old_time = time.time() - 30 * 86400
         os.utime(sock_path, (old_time, old_time))
 
@@ -743,7 +766,10 @@ def test_orphan_cleanup_retains_socket_endpoint(monkeypatch):
         assert os.path.exists(sock_path)
     finally:
         endpoint.close()
-        os.unlink(sock_path)
+        # Only unlink a path this test actually created; otherwise a failed
+        # bind would be masked by a FileNotFoundError from the cleanup itself.
+        if bound:
+            os.unlink(sock_path)
         os.rmdir(short_dir)
 
 
