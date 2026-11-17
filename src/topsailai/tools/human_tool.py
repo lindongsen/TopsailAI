@@ -47,14 +47,26 @@ def _get_default_timeout() -> int | None:
     except (TypeError, ValueError, OverflowError):
         return None
 
+
+_MAX_ANSWER_LENGTH_DEFAULT = 30000
+_MAX_ANSWER_LENGTH_FALLBACK = 8000
+
+
 def _get_max_answer_length() -> int:
-    """Return max answer length from TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH."""
-    value = os.getenv("TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH", "30000")
+    """Return max answer length from TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH.
+
+    An unusable value (non-numeric, non-positive, or empty) falls back to one
+    documented constant so the truncation cap never depends on how the value
+    happened to be malformed.
+    """
+    value = os.getenv(
+        "TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH", str(_MAX_ANSWER_LENGTH_DEFAULT)
+    )
     try:
         n = int(value)
-        return n if n > 0 else 2000
     except (TypeError, ValueError):
-        return 8000
+        return _MAX_ANSWER_LENGTH_FALLBACK
+    return n if n > 0 else _MAX_ANSWER_LENGTH_FALLBACK
 
 
 def _get_prompt_template() -> str:
@@ -146,12 +158,29 @@ def _build_prompt(
     opts_text = _render_options(display_options) if display_options else ""
 
     if template:
-        rendered = template.format(
-            question=question,
-            options=opts_text,
-            default=default or "",
-        )
-        return rendered.strip()
+        try:
+            rendered = template.format(
+                question=question,
+                options=opts_text,
+                default=default or "",
+            )
+        except (KeyError, IndexError, ValueError, AttributeError) as exc:
+            # A malformed template must not escape as an exception: the tool
+            # contract is to degrade, and the Human would otherwise never see
+            # the question at all. Fall through to the built-in rendering.
+            logger.warning(
+                "[human_tool] Ignoring unusable TOPSAILAI_HUMAN_DECISION_PROMPT_TEMPLATE "
+                "(%s: %s); falling back to built-in rendering.",
+                type(exc).__name__,
+                exc,
+            )
+        else:
+            if rendered.strip():
+                return rendered.strip()
+            logger.warning(
+                "[human_tool] TOPSAILAI_HUMAN_DECISION_PROMPT_TEMPLATE rendered an empty "
+                "prompt; falling back to built-in rendering."
+            )
 
     header = f"\n[Blocked Task] {question}"
     parts = [header]
