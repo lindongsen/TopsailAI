@@ -13,10 +13,10 @@ import (
 // detailReader is the optional API capability that reads one session's provider
 // metadata and runtime document.
 //
-// It is a separate interface rather than a method on CommandAPI, for the same
-// reason metricsReader is: a surface that cannot read detail must still satisfy
-// the command surface, and a client without the capability renders the standard
-// fields alone instead of failing the whole command.
+// It is a separate interface rather than a method on CommandAPI, so a surface
+// that cannot read detail still satisfies the command surface, and a client
+// without the capability renders the standard fields alone instead of failing
+// the whole command.
 type detailReader interface {
 	GetDetail(context.Context, string, string) (protocol.SessionDetail, error)
 }

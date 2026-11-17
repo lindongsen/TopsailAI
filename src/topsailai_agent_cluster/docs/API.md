@@ -321,6 +321,12 @@ never cache a result, so a count describes the session at the moment the provide
 an observation of how much context a running session currently holds, which is why a session with no
 live process has no counts to report.
 
+These routes are **not** how a table gets its counts. The periodic inventory report already carries
+them, and every rendering surface reads that reported copy, because a render must never depend on an
+Endpoint being reachable. These routes exist for the separate case where an operator explicitly asks
+for the counts of a session right now, and paying one provider call for that is the operator's choice
+rather than a cost every render pays.
+
 `GET /api/v1/metrics` requires `endpoint_id` and `session_id`. The response `data` carries
 `provider_session_id`, `messages` (`inbound` and `outbound`) and `observed_at_ms`.
 
@@ -337,8 +343,10 @@ zero is a measured zero, so a caller must render an unmeasured member as unmeasu
 `0/0`. The top-level `error_code` is reserved for a failure that applies to the whole request.
 
 Reaching a provider costs a fixed amount that does not depend on how many sessions are asked about, so
-a table costs one read per Endpoint instead of one read per row. That is the reason the batch route
-exists, and it is why a caller should prefer it whenever it is about to render more than one row.
+a batch costs one read per Endpoint instead of one read per row. That is the reason the batch route
+exists: an operator who explicitly wants current counts for many sessions pays one call per Endpoint
+rather than one per session. It is not a rendering optimisation, because a render does not read counts
+from here at all.
 
 Reading counts requires the `metrics.read` operation permission on the Endpoint access policy. The
 check runs at the Endpoint, so the Server forwards the caller token without interpreting it.

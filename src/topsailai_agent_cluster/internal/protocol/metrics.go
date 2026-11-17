@@ -18,12 +18,19 @@ type MessageCounts struct {
 	Outbound int `json:"outbound"`
 }
 
-// SessionMetrics carries the message counts of one session.
+// SessionMetrics carries the message counts of one session as a live read.
 //
-// The counts are a live observation, not a persisted projection: they describe
-// how much context a running session currently holds, so they are read on demand
-// and never collected into the inventory. A session whose process is gone has no
-// counts to report, which is an unavailable observation rather than a zero.
+// The counts are also reported in the periodic inventory, and that reported copy
+// is what a table render uses. This type exists for the separate on-demand read:
+// an operator who wants the counts of a session right now asks for them, and the
+// answer describes the session at the moment the provider replied. A session
+// whose process is gone has no counts to report, which is an unavailable
+// observation rather than a zero.
+//
+// The two paths must not be confused. A render reads the inventory, because a
+// render must never depend on an Endpoint being reachable. This read is an
+// explicit request, so paying one provider call for it is the operator's choice
+// rather than a cost every table render pays.
 type SessionMetrics struct {
 	ProviderSessionID string        `json:"provider_session_id"`
 	Messages          MessageCounts `json:"messages"`

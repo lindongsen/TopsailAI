@@ -492,6 +492,20 @@ func runtimeMessageCounts(items []workspaceItem, sessionID string) (messageCount
 		// answer than a provider failure.
 		return messageCountsFact{}, codedError{code: providerSessionNotFoundCode, message: "provider session does not exist"}
 	}
+	return rowMessageCounts(item)
+}
+
+// rowMessageCounts reads one row's message counts from its runtime record.
+//
+// Discovery and the metrics read both call this, so the periodic report and the
+// on-demand read cannot disagree about what a row's counts are. Discovery passes
+// the row it already holds, which is why this takes a row rather than a session
+// identifier: the selection rule belongs to the caller that knows what it is
+// selecting for.
+//
+// An error means the row was not measured, never that it has no messages. The
+// caller must therefore leave the counts absent rather than substitute a zero.
+func rowMessageCounts(item workspaceItem) (messageCountsFact, error) {
 	if item.Runtime == nil || item.Runtime.State != "ok" || item.Runtime.Data == nil {
 		return messageCountsFact{}, errorsNew("provider did not report runtime message counts")
 	}

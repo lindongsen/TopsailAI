@@ -40,17 +40,6 @@ type TableOptions struct {
 	// failed, which the default still shows.
 	All    bool
 	OnRows func([]SessionRow)
-	// EnrichRows attaches live per-row observations to the rows about to be
-	// printed. It is a function rather than a flag so the renderer never learns
-	// which observation is being read, and it is nil by default so a surface that
-	// did not ask for live data pays nothing. Only the list render sets it: watch
-	// re-renders on a timer, so enriching there would multiply provider reads by
-	// the tick rate, and refresh is a collection command rather than a table read.
-	//
-	// The caller supplies the closure, so the caller owns the context and the
-	// budget. The renderer must not invent either, because a render is not the
-	// place that knows how long a live read may take.
-	EnrichRows func([]SessionRow)
 	// Location formats the DATA_STATUS success stamp; nil means the local timezone.
 	Location *time.Location
 	// HideSessionID drops the SESSION_ID column from the rendered layout. It is an

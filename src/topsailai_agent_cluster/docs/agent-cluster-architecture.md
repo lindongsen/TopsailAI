@@ -653,6 +653,54 @@ offline Endpoint and needs no special handling for a re-home.
 
 For MVP use one active Server with durable storage, not active-active routing. Reconnect and process generation rules still apply. HA later needs a shared command journal and an execution-authority lease/fencing design; adding a load balancer alone is insufficient.
 
+## `list` reads only the Server's persisted inventory
+
+Human direction on 2026-11-17, wording normalized, meaning preserved:
+
+> 同意，认可。list 在任何情况下，永远都只能拿 server 现成的数据。
+
+This is a hard rule, not a performance preference. `list` is a projection of the inventory the
+Server already holds. It never asks an Endpoint to collect, never asks a provider to answer, and
+never waits on a live read while the operator is looking at the table. The same rule holds for every
+scope, every flag, and every surface: the interactive REPL and the standalone command both render
+only what the Server persisted.
+
+The rule is stated as three prohibitions, because each one is a different way to break it:
+
+| Prohibited | Meaning |
+|---|---|
+| `list` triggers collection | Rendering a table never causes an Endpoint to run provider discovery. |
+| `list` triggers a live read | Rendering a table never causes a provider subprocess to answer a question the report did not already answer. |
+| `list` waits on an Endpoint | A slow, offline or degraded Endpoint cannot delay or fail a `list` render. |
+
+Consequences that MUST hold for every change:
+
+- Every column `list` renders must be carried by the periodic inventory report. If a fact is not in
+  the report, the answer is to add it to the report, not to read it at render time.
+- A fact that cannot be measured is reported as absent, and an absent fact renders as `-`. It is
+  never rendered as a zero, because a zero is a measurement nobody made.
+- Freshness is the report's own `observed_at_ms`, shown as a column. `list` never manufactures
+  freshness by reading again.
+- A caller that genuinely needs a fresh observation uses `refresh`, which is an explicit operator
+  action with its own budget and its own failure reporting. `refresh` is a different command with a
+  different contract; it is not a `list` mode.
+- A new read surface added to `list` must be proven to issue zero Endpoint requests. Counting
+  provider invocations is the evidence; a fast render is not, because a cached live read is still a
+  live read.
+
+Why this is a hard rule rather than a guideline: the Endpoint's periodic report is the only thing
+that bounds provider cost. A render-time read makes that cost proportional to how often an operator
+looks at a table, which is unbounded and invisible. It also couples the operator's view to the
+health of every Endpoint in the fleet, so one slow node degrades a command that has nothing to do
+with it. The inventory exists precisely so that reading is cheap and independent of the fleet.
+
+This was learned by getting it wrong. The `MESSAGES` column was read live at render time, one batch
+request per render, even though the same provider command that discovery already runs can report the
+counts with one extra flag. The column looked correct and the cost was invisible, because a live read
+that succeeds is indistinguishable from a reported value. See
+`issues/list-latency-metrics-enrichment.md` and
+`issues/message-counts-empty-on-older-provider.md`.
+
 ## Storage and retention
 
 Server must support SQLite and stores one latest Session inventory JSON field per Endpoint, not one row per Session. Each valid newer report atomically replaces that field in the database immediately, without a deferred batch flush. No Session snapshot history, per-session upserts, incremental resource event log or historical removal tracking is required. Separate endpoint metadata and command intents/results/audit retain their own purposes. Endpoint privately stores stable identity, resource/provider mapping, current inventory revision and command deduplication journal. Provider output stays provider-owned by default; fetch bounded snapshots on demand rather than mirroring all stdout centrally.

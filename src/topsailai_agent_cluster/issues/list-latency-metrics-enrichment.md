@@ -254,3 +254,109 @@ remains open and must be scheduled when no Agent is running.
 - One row on the `topsailai` Endpoint renders `-`. The cause is not yet
   determined and must be re-checked after the binaries are refreshed, because the
   stale fleet cannot distinguish a provider-side absence from a genuine failure.
+
+## Re-measured after the batch path was deployed: the fallback is the remaining cost
+
+Measured on 2026-11-17 22:00-22:10 against the same live Server at `172.19.1.1:53680`. The fleet has
+been redeployed since the previous section, so the batch path is now active and the earlier
+"deployment is deliberately deferred" state no longer describes the running system.
+
+### The batch path is live
+
+| Evidence | Result |
+|---|---|
+| `POST /api/v1/metrics/batch` with no credentials | **401 unauthorized** (previously 404 page not found) |
+| `strings` on `/opt/agent-cluster/bin/agent-cluster-endpoint` for `metrics_batch_request` | 1 match |
+| Endpoint binary mtime | 2026-11-17T19:58, after batch commit `27796790` at 19:13 |
+| `query adapter metrics batch` lines in the Endpoint log | 0, so the batch call itself is not failing |
+| `POST /api/v1/metrics/batch` for `ac.topsail` (7 ids) | 5 of 7 members answered with real counts |
+
+### The remaining latency is the per-row fallback, multiplied
+
+One consistent measurement window, all commands against the same fleet:
+
+| Command | Elapsed |
+|---|---|
+| `list --json` | 19 ms |
+| `list --brief` | 18 ms |
+| `list` (full table) | 7598 ms |
+| `list --endpoint ac.topsail` (7 rows) | 5744-7958 ms |
+| `list --endpoint ac.ai-dev` (3 rows) | 7598-8061 ms |
+| `list --endpoint ac.topsailai-dev` (0 rows) | 18 ms |
+
+The cost model fits both windows exactly. One `list` performs one batch scan plus one full scan per
+member the batch did not answer, and those scans serialize at the Endpoint:
+
+```text
+elapsed = (1 batch + unanswered members) x scan cost
+```
+
+| Endpoint | Unanswered | Scan cost | Predicted | Measured |
+|---|---|---|---|---|
+| `ac.topsail` | 2 of 7 | 1.90 s | 5.70 s | 5.744 s |
+| `ac.ai-dev` | 3 of 3 | 1.90 s | 7.60 s | 7.598 s |
+| `ac.topsail` (earlier window) | 2 of 7 | 1.00 s | 3.00 s | 2.993 s |
+
+The scan cost is host-load dependent and was measured at 0.89-0.96 s and 1.90-2.29 s in two different
+windows, which is why the same command took 2.99 s and 5.74 s at different times. Absolute latency is
+therefore not a stable number; the multiplier is.
+
+### The fallback cannot succeed, so its cost is pure waste
+
+This is the decisive finding, and it is a defect rather than a tuning problem.
+
+The batch drops a member when `runtimeMessageCounts` returns an error
+(`providers/topsailai/query.go:459-467`). The per-row fallback then calls the single-session read,
+which runs the **same** command and the **same** predicate:
+
+| Path | Provider command | Predicate |
+|---|---|---|
+| Batch (`providers/topsailai/query.go:449`) | `workspace list --json --local --include-runtime` | `runtimeMessageCounts` (`:480`) |
+| Single (`providers/topsailai/query.go:403`) | `workspace list --json --local -s SESSION --include-runtime` | `runtimeMessageCounts` (`:480`) |
+
+The `-s` filter does not reduce the cost, because the provider still scans the whole task directory:
+
+```text
+single(-s) 892 / 896 / 928 ms
+full scan  915 / 956 / 964 ms
+```
+
+So the fallback pays a full scan to re-evaluate a condition that already failed on the same data. It
+cannot produce a count, and the row still renders `-`. The Endpoint log confirms the outcome: every
+fallback attempt logs `query adapter metrics` with
+`provider provider_error: provider did not report runtime message counts`, repeatedly, and the
+`ac.ai-dev` table shows `-` for all three rows.
+
+The provider's own comment at `providers/topsailai/query.go:459-463` states the reason the member is
+dropped: "The provider result carries no per-member error field, so the only honest way to report an
+unmeasurable member is to leave it out; the single-session read is the surface that names the reason."
+That reasoning is what creates the waste: leaving the member out is indistinguishable from not asking,
+so the caller must re-ask, and re-asking cannot succeed.
+
+### Why the members are unmeasurable
+
+`runtimeMessageCounts` rejects a row whose `runtime.state` is not `ok`
+(`providers/topsailai/query.go:487`). The provider document on this host reports
+`runtime_state=rejected` for two of the seven `ac.topsail` rows, which is exactly the two members the
+batch omitted. The `ac.ai-dev` rows are on a different host and are not in this host's local document
+at all, so all three are omitted there.
+
+### Corrected statement of the remaining causes
+
+The previous section listed the inline `channelLoop` as "a concurrency defect in its own right, not the
+cause of `list` latency". That is now wrong for the fallback path: because the fallback reads are
+dispatched inline at `internal/endpoint/service.go:582-584`, the client's 8-way fan-out
+(`internal/tui/metrics.go:31`) collapses to serial execution at the Endpoint. Measured peak concurrent
+business scans during one `list` was 2, not 8. The inline dispatch is therefore a direct multiplier of
+the fallback cost, not merely a separate defect.
+
+### Fix direction for this remaining cost
+
+- Stop falling back when the batch already ran the same scan. A member the batch omitted is
+  unmeasurable, not unasked, so the caller should render `-` immediately instead of re-reading.
+- Or add a per-member error code to the provider batch result, so "not measured" and "not asked" become
+  distinguishable and the fallback is only used for the genuinely unasked case.
+- Either way, the `MESSAGES` column should not cost a provider scan per unmeasurable row, and the
+  Endpoint `channelLoop` should not run these reads inline.
+
+No code was changed for this re-measurement.

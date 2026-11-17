@@ -192,10 +192,6 @@ type watchController struct {
 	// tracker remembers the last observed state per session identity, so the
 	// trigger fires on a transition rather than on a state.
 	tracker triggerTracker
-	// metrics remembers message counts across ticks. A watch tick must not read
-	// the provider once per row per tick, so the counts are cached with a TTL and
-	// the cache is owned by this loop rather than shared with any other surface.
-	metrics *MetricsCache
 
 	mu      sync.Mutex
 	pending *watchResult
@@ -235,11 +231,7 @@ func newWatchController(parent context.Context, api InteractiveAPI, filter strin
 		ctx:          ctx,
 		cancel:       cancel,
 		runner:       runner,
-		// The cache is created here so it lives exactly as long as this loop. A
-		// cache supplied from outside could outlive the surface that filled it and
-		// present a measurement taken for a different render.
-		metrics: NewMetricsCache(),
-		done:    make(chan struct{}),
+		done:         make(chan struct{}),
 	}
 	go controller.run()
 	return controller
@@ -406,11 +398,9 @@ func (c *watchController) render(loaded reportLoad) ([]SessionRow, []byte, error
 	options := tableOptionsFor(safe, c.color, listArguments{All: c.request.All}, func(rendered []SessionRow) {
 		rows = append(rows, rendered...)
 	})
-	// The counts are attached through the cached enricher, so a tick reuses a
-	// measurement taken within the TTL instead of reading the provider once per
-	// row per tick. The context is the collection budget, so a slow provider
-	// costs one cell rather than the tick.
-	options.EnrichRows = CachedMetricsEnricher(c.ctx, c.api, c.metrics)
+	// No live enrichment. The counts come from the inventory this tick rendered,
+	// so a periodic surface and a one-shot list cannot disagree about the same
+	// cell, and a tick never costs a provider read.
 	if err := renderListRows(safe, safe, loaded, c.filter, false, options); err != nil {
 		return nil, nil, err
 	}

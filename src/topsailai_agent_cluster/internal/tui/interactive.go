@@ -1024,10 +1024,10 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	options := tableOptionsFor(out, color, arguments, func(rows []SessionRow) { staged = append(staged, rows...) })
-	// Only the list render reads live message counts. The closure is built from
-	// this command's context, so the counts share the command budget, and it is
-	// nil for a client that cannot read them.
-	options.EnrichRows = MetricsEnricher(ctx, api)
+	// No live enrichment: the message counts are part of the inventory the Server
+	// already stored, so this render reads only persisted data. Reading them here
+	// would make the cost of looking at a table proportional to how often the
+	// operator looks, and would couple the render to every Endpoint's health.
 	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, options)
 	if err != nil {
 		state.Rows = nil
@@ -1296,10 +1296,9 @@ func interactiveRefreshWithArguments(parent context.Context, api InteractiveAPI,
 		}
 	}
 	options := tableOptionsFor(out, color, listArguments{All: arguments.All}, func(rows []SessionRow) { staged = append(staged, rows...) })
-	// A refresh is one explicit command, not a timer, so it reads the counts
-	// uncached exactly as list does. Caching here would make a command that
-	// exists to produce current data return an older answer.
-	options.EnrichRows = MetricsEnricher(ctx, api)
+	// No live enrichment. A refresh forces a fresh collection, so the counts it
+	// renders are the ones that collection just reported; reading them again
+	// would be a second source for the same cell.
 	err = renderListRows(out, errors, loaded, scoped, false, options)
 	if err != nil {
 		state.Rows = nil

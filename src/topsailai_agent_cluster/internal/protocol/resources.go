@@ -63,6 +63,13 @@ type Session struct {
 	// provider semantics, and an absent summary means the provider reported no
 	// driver observation rather than that no driver exists.
 	Drive *DriveSummary `json:"drive,omitempty"`
+	// Messages carries the message counts the adapter reported in the same
+	// inventory report. It is a reported fact, not a live observation: `list`
+	// renders it from the Server's stored inventory and never reads it on demand.
+	// An absent value means the provider could not measure this session, which is
+	// a different fact from a session with no messages, so a consumer must render
+	// absence as unknown rather than as zero.
+	Messages *MessageCounts `json:"messages,omitempty"`
 }
 
 // DriveSummary describes the standard controller state of one session.

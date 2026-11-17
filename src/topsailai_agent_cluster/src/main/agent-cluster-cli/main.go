@@ -1012,13 +1012,10 @@ func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, fil
 	options.All = parsed.All
 	options.Full = options.Full || parsed.Full
 	options.Brief = parsed.Brief
-	// The standalone list reads live message counts for the rows it prints, using
-	// the command's own context so the read shares the command budget. A JSON
-	// caller is not enriched: the renderer returns the machine-readable document
-	// before the enrichment runs, because an automation caller that wants counts
-	// asks the metrics route directly instead of paying one provider read per row
-	// for a document it may only parse.
-	options.EnrichRows = tui.MetricsEnricher(ctx, api)
+	// No live enrichment: the message counts are reported in the inventory, so
+	// this command reads only what the Server already stored. A JSON caller is
+	// unaffected for the same reason it always was, because nothing is read here
+	// at all.
 	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, options)
 }
 
@@ -1030,10 +1027,8 @@ func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 	options := tui.TableOptionsFor(output)
 	options.Color = color
 	options.All = parsed.All
-	// A refresh is one explicit command, not a timer, so it reads the counts
-	// uncached exactly as list does. The read shares the refresh budget, so a
-	// slow provider costs one cell rather than the command.
-	options.EnrichRows = tui.MetricsEnricher(refreshCtx, api)
+	// No live enrichment. The forced collection this command waits for reports the
+	// counts, so reading them again would be a second source for the same cell.
 	// A forced collection is the longest silent wait on the read surface, so it
 	// reports progress like a command does. The reporter is built from the
 	// diagnostics stream, so a redirected stream stays silent.

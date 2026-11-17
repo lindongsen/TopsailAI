@@ -93,6 +93,11 @@ type sessionAttributes struct {
 	ProviderPwd              string        `json:"provider_pwd,omitempty"`
 	ProviderAgentID          string        `json:"provider_agent_id,omitempty"`
 	Drive                    *driveSummary `json:"drive,omitempty"`
+	// Messages carries the message counts the provider reported in the same
+	// discovery document. It is absent when the row could not be measured, which
+	// is a different fact from a session with no messages: an absent value renders
+	// as "-", while a measured zero renders as "0/0".
+	Messages *messageCountsFact `json:"messages,omitempty"`
 }
 
 type driveSummary struct {
@@ -106,7 +111,23 @@ type driveSummary struct {
 
 func (p *provider) discover(ctx context.Context) (*discoveryResult, error) {
 	var document workspaceResponse
-	if err := runJSON(ctx, p.runner, []string{"workspace", "list", "--json", "--local"}, 1<<20, &document); err != nil {
+	// --include-runtime makes the provider report each row's message counts in
+	// this same document. The counts are therefore part of the periodic report
+	// rather than a separate read, which is what lets `list` render them from the
+	// Server's stored inventory without asking any Endpoint anything.
+	//
+	// The flag is best-effort on the provider side: a row whose process does not
+	// answer keeps `runtime: null` and the document still succeeds. A provider
+	// older than the flag discards it silently, so the counts are simply absent
+	// and render as "-" instead of failing the collection.
+	//
+	// The byte bound is the same one the metrics read uses for this identical
+	// command, because --include-runtime makes it the same document plus the
+	// runtime records. Keeping the previous 1 MiB bound would have silently
+	// reduced how many rows one collection can carry, which is a capacity
+	// regression rather than a safety limit.
+	args := []string{"workspace", "list", "--json", "--local", "--include-runtime"}
+	if err := runJSON(ctx, p.runner, args, maxMetricsBatchBytes, &document); err != nil {
 		return nil, err
 	}
 	if document.Items == nil {
@@ -222,11 +243,18 @@ func (p *provider) observation(item workspaceItem) (providerObservation, error) 
 		state = "unknown"
 		reason = "liveness_unverified"
 	}
+	// The counts are read from this row's own runtime record, which discovery
+	// collected in the same document. A row that could not be measured keeps an
+	// absent value, so the report distinguishes "not measured" from "no messages".
+	var messages *messageCountsFact
+	if counts, countsErr := rowMessageCounts(item); countsErr == nil {
+		messages = &counts
+	}
 	attributes, err := json.Marshal(sessionAttributes{
 		ProviderSessionID: item.SessionID, ProviderPID: item.PID,
 		ProviderDisplayName: item.SessionName, ProviderSessionQualifier: item.SessionQualifier,
 		ProviderProjectWorkspace: item.ProjectWorkspace, ProviderPwd: item.Pwd, ProviderAgentID: item.AgentID,
-		Drive: mapDrive(item.Driver, now),
+		Drive: mapDrive(item.Driver, now), Messages: messages,
 	})
 	if err != nil {
 		return providerObservation{}, err

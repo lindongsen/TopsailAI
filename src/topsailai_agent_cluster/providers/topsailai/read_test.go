@@ -66,7 +66,7 @@ func sessionTarget(t *testing.T) *target {
 
 func TestDiscoverEmitsStableProviderObservationWithoutClusterID(t *testing.T) {
 	doc := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7,"state":"input","session_name":"demo","project_workspace":"/work"}],"total":1}`
-	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(doc)}}
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": answer(doc)}}
 	p := fixedProvider(r)
 	response := p.dispatch(context.Background(), validRequest(functionDiscover))
 	if !response.OK || response.Discovery == nil || len(response.Discovery.Observations) != 1 {
@@ -99,7 +99,7 @@ func TestDiscoverEmitsStableProviderObservationWithoutClusterID(t *testing.T) {
 // satisfy a "the attributes are present" check.
 func TestDiscoverEmitsBothDirectoryCandidates(t *testing.T) {
 	doc := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7,"project_workspace":"/work/project","pwd":"/work/project/sub"}],"total":1}`
-	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(doc)}}
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": answer(doc)}}
 	response := fixedProvider(r).dispatch(context.Background(), validRequest(functionDiscover))
 	if !response.OK || response.Discovery == nil || len(response.Discovery.Observations) != 1 {
 		t.Fatalf("response=%+v", response)
@@ -262,7 +262,7 @@ func TestReadFunctionsFailClosedOnInvalidPayloadAndProviderFailure(t *testing.T)
 	if response.OK || response.Error == nil || response.Error.Code != "invalid_request" {
 		t.Fatalf("response=%+v", response)
 	}
-	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": {{stderr: "broken", err: errors.New("exit 1")}}}}
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": {{stderr: "broken", err: errors.New("exit 1")}}}}
 	response = fixedProvider(r).dispatch(context.Background(), validRequest(functionDiscover))
 	if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "broken") {
 		t.Fatalf("response=%+v", response)
@@ -303,7 +303,7 @@ func TestReadContractsRejectDuplicateProviderKeys(t *testing.T) {
 		request                  request
 		call                     string
 	}{
-		{name: "discover duplicate row", function: functionDiscover, document: `{"items":[{"session_id":"s","filename":"row"},{"session_id":"s","filename":"row"}]}`, request: validRequest(functionDiscover), call: "workspace\x00list\x00--json\x00--local"},
+		{name: "discover duplicate row", function: functionDiscover, document: `{"items":[{"session_id":"s","filename":"row"},{"session_id":"s","filename":"row"}]}`, request: validRequest(functionDiscover), call: "workspace\x00list\x00--json\x00--local\x00--include-runtime"},
 		{name: "history missing session", function: functionQuery, document: `[{"status":"Idle"}]`, request: queryRequest(queryHistoryMessages, nil, `{"limit":0}`), call: "project\x00list_sessions\x00--json"},
 		{name: "history duplicate session", function: functionQuery, document: `[{"session_id":"s"},{"session_id":"s"}]`, request: queryRequest(queryHistoryMessages, nil, `{"limit":0}`), call: "project\x00list_sessions\x00--json"},
 	}
@@ -319,7 +319,7 @@ func TestReadContractsRejectDuplicateProviderKeys(t *testing.T) {
 }
 
 func TestBusinessCLIJSONRejectsExtraDocument(t *testing.T) {
-	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(`{"items":[]} {}`)}}
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": answer(`{"items":[]} {}`)}}
 	got := fixedProvider(r).dispatch(context.Background(), validRequest(functionDiscover))
 	if got.OK || got.Error == nil || !strings.Contains(got.Error.Message, "extra JSON document") {
 		t.Fatalf("response=%+v", got)
@@ -377,7 +377,7 @@ func TestReadResultsEncodeEmptyCollectionsAsArrays(t *testing.T) {
 		answers  map[string][]runnerAnswer
 		required string
 	}{
-		{name: "discovery", request: validRequest(functionDiscover), answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(`{"items":[],"total":0}`)}, required: `"observations":[]`},
+		{name: "discovery", request: validRequest(functionDiscover), answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": answer(`{"items":[],"total":0}`)}, required: `"observations":[]`},
 		{name: "launch", request: queryRequest(queryLaunchOptions, nil, `{"include_projects":true}`), answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(`[]`)}, required: `"projects":[]`},
 		{name: "history", request: queryRequest(queryHistoryMessages, nil, `{"limit":0}`), answers: map[string][]runnerAnswer{"project\x00list_sessions\x00--json": answer(`[]`)}, required: `"rows":[]`},
 	}
@@ -473,7 +473,7 @@ func TestUnwrapContentKeepsExtraStepFields(t *testing.T) {
 func TestProviderDocumentsContainNoClusterIdentityField(t *testing.T) {
 	forbidden := []string{"launch_profile_id", "resource_id", "model_profile_id", "cluster_session_id", "command_id"}
 	document := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7}],"total":1}`
-	got := fixedProvider(&scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(document)}}).dispatch(context.Background(), validRequest(functionDiscover))
+	got := fixedProvider(&scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": answer(document)}}).dispatch(context.Background(), validRequest(functionDiscover))
 	encoded, err := json.Marshal(got)
 	if err != nil {
 		t.Fatal(err)

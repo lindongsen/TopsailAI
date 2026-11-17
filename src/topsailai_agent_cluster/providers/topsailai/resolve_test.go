@@ -211,7 +211,7 @@ func TestDiscoverAndAuthorityStayLocal(t *testing.T) {
 	t.Run("discover", func(t *testing.T) {
 		document := `{"items":[{"session_id":"s-1","filename":"row","pid":42,"process_generation":7}]}`
 		runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
-			authorityCall: answer(document),
+			discoverCall: answer(document),
 			// The unscoped read is answered as well, so a read that dropped
 			// --local still completes and the assertion below reports the
 			// consequence. Without this answer the fixture would fail first
@@ -248,14 +248,21 @@ func TestDiscoverAndAuthorityStayLocal(t *testing.T) {
 	})
 }
 
-// assertLocalAuthorityRead fails when a read is not exactly the host-scoped
-// workspace read, naming the consequence rather than only the missing token,
-// because the token alone does not say what breaks.
+// assertLocalAuthorityRead proves a read stayed host-scoped.
+//
+// The assertion is on the --local token rather than on the whole argv, because
+// the property this test protects is reach, not spelling. Discovery also asks for
+// runtime counts, so pinning the complete argv here would make an unrelated
+// addition to the discover call look like a scope regression, and the failure
+// message would name the wrong boundary.
 func assertLocalAuthorityRead(t *testing.T, label string, args []string) {
 	t.Helper()
-	if got := strings.Join(args, "\x00"); got != authorityCall {
-		t.Fatalf("%s read %v, want the host-scoped %v: dropping --local widens its reach to rows recorded on another host", label, args, strings.Split(authorityCall, "\x00"))
+	for _, token := range args {
+		if token == "--local" {
+			return
+		}
 	}
+	t.Fatalf("%s read %v without --local: dropping it widens its reach to rows recorded on another host", label, args)
 }
 
 // TestInspectReportsLiveWhenAnyRowOfTheSessionIsLive proves the scan does not stop

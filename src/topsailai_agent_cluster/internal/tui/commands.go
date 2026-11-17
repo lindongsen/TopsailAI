@@ -121,20 +121,6 @@ func renderListRows(out, errors io.Writer, loaded reportLoad, filter string, jso
 		return RenderJSON(out, rows)
 	}
 	assignRowNumbers(rows)
-	// The live observation is attached after row numbers are assigned and before
-	// anything is printed, so the enrichment sees exactly the rows this render
-	// will show. It runs before OnRows so a caller that stages the rows receives
-	// the same values the table prints.
-	//
-	// The enrichment is skipped when the layout does not print the messages
-	// column, because the counts would be measured and then discarded. `--brief`
-	// is the case that matters: it prints three identifying columns, so a full
-	// table's worth of provider reads bought nothing and cost the operator the
-	// whole command budget. The check asks the layout rather than the flag, so a
-	// future layout that drops the column for another reason is covered too.
-	if options.EnrichRows != nil && layoutPrintsColumn(options, columnMessages) {
-		options.EnrichRows(rows)
-	}
 	if options.OnRows != nil {
 		options.OnRows(append([]SessionRow(nil), rows...))
 	}

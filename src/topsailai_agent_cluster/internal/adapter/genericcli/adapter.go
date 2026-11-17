@@ -824,6 +824,7 @@ func (a *Adapter) mapSession(ctx context.Context, observation providercli.Provid
 		ProviderAgentID:          attributes.ProviderAgentID, ProviderGeneration: observation.ProviderGeneration,
 		AdapterID: a.config.AdapterID, State: observation.State, StateReason: observation.StateReason,
 		ObservedAtMS: observation.ObservedAtMS, Drive: attributes.Drive,
+		Messages: attributes.Messages,
 	}, nil
 }
 
@@ -836,6 +837,11 @@ type sessionAttributes struct {
 	ProviderPwd              string                 `json:"provider_pwd,omitempty"`
 	ProviderAgentID          string                 `json:"provider_agent_id,omitempty"`
 	Drive                    *protocol.DriveSummary `json:"drive,omitempty"`
+	// Messages carries the message counts the provider reported in the same
+	// discovery document. It is absent when the row could not be measured, and an
+	// absent value must stay absent: rendering it as zero would state a
+	// measurement nobody made.
+	Messages *protocol.MessageCounts `json:"messages,omitempty"`
 }
 
 // intersectCapabilities keeps only the configured capabilities the provider

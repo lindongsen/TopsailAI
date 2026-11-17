@@ -13,6 +13,13 @@ import (
 // authorityCall is the single workspace read every session authority check makes.
 const authorityCall = "workspace\x00list\x00--json\x00--local"
 
+// discoverCall is the workspace read discovery makes. It is authorityCall plus
+// --include-runtime, because the periodic report carries the message counts a
+// table renders. Keeping it a separate constant makes the difference explicit:
+// discovery asks for more than an authority check needs, and a mutation must not
+// inherit that extra work.
+const discoverCall = "workspace\x00list\x00--json\x00--local\x00--include-runtime"
+
 // inspectCall is the workspace read inspect makes. It deliberately omits --local,
 // because resume authorizes on the absence of a live target and a --local read
 // would report another host's session as missing.

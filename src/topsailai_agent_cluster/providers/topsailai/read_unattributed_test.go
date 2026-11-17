@@ -28,7 +28,7 @@ const unattributedRowDocument = `{"items":[` +
 // assertion counts both observations, because a fix that merely stopped failing
 // would still have dropped the healthy row.
 func TestDiscoverAcceptsRowWithoutSessionID(t *testing.T) {
-	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(unattributedRowDocument)}}
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": answer(unattributedRowDocument)}}
 	p := fixedProvider(r)
 	response := p.dispatch(context.Background(), validRequest(functionDiscover))
 	if !response.OK || response.Discovery == nil {
@@ -216,7 +216,7 @@ func TestDiscoverSkipsAnUnmappableRow(t *testing.T) {
 		`{"session_id":"s-2","filename":"","pid":4242,"state":"running"}` +
 		`],"total":2}`
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
-		strings.Join([]string{"workspace", "list", "--json", "--local"}, "\x00"): answer(document),
+		strings.Join([]string{"workspace", "list", "--json", "--local", "--include-runtime"}, "\x00"): answer(document),
 	}}
 	provider := newProvider(runner, controlCatalog{}, supportedPlatform, t.TempDir())
 

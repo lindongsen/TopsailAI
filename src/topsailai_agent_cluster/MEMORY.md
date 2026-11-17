@@ -414,3 +414,31 @@ The document `docs/agent-cluster-adapters.md` previously described the split by 
 `--local`, revalidation does not"), which was wrong because revalidation has two reads and only one
 omits it. The document now states the per-read rule, and `workspaceAuthority`'s own doc comment records
 the same reason at the site that implements it.
+
+## `list` must always read only the Server's existing data
+
+Directed by the human on 2026-11-17, wording normalized, meaning preserved:
+
+> 同意，认可。list 在任何情况下，永远都只能拿 server 现成的数据。
+
+This is a standing rule for every `list` surface, scope and flag, not a note about one column. `list`
+renders only the inventory the Server already persisted. It never triggers Endpoint collection, never
+triggers a provider read, and never waits on an Endpoint.
+
+The rule exists because the `MESSAGES` column was read live at render time through
+`MetricsEnricher`, one batch request per render, even though the counts were already available from
+the same provider command discovery runs. The human rejected that design: the data should be
+reported, not read on demand.
+
+Consequences that MUST hold:
+
+- Every column `list` renders must be carried by the periodic inventory report. A missing fact is
+  added to the report, never read at render time.
+- An unmeasurable fact is reported as absent and renders as `-`, never as `0`.
+- `refresh` stays the only path that forces a fresh collection, and it is a separate command with
+  its own budget and failure reporting, not a `list` mode.
+- A new `list` read surface must be proven to issue zero Endpoint requests by counting provider
+  invocations, not by observing a fast render.
+
+The rule is recorded in `docs/agent-cluster-architecture.md` under
+"`list` reads only the Server's persisted inventory".
