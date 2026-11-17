@@ -194,6 +194,11 @@ func main() {
 	}
 	collector, err := endpointservice.NewCollectorWithOptions(ctx, bindings, 30*time.Second, store, endpointservice.CollectorOptions{SourceCacheExpiry: cacheExpiry, LogCacheDeletion: func(adapterID string) {
 		logger.Info("deleted expired source cache", "adapter_id", adapterID, "retention", cacheExpiry.String())
+	}, LogCollectionFailure: func(adapterID, errorCode, errorMessage string, lastSuccessAtMS int64) {
+		// The error is otherwise only stored in the source cache, where the next
+		// successful cycle overwrites it. Logging it is the only durable evidence
+		// that a transient provider failure happened at all.
+		logger.Warn("adapter collection degraded", "adapter_id", adapterID, "error_code", errorCode, "error_message", errorMessage, "last_success_at_ms", lastSuccessAtMS)
 	}})
 	if err != nil {
 		logger.Error("create collector", "error", err)
