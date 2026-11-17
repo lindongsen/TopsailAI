@@ -15,6 +15,28 @@ import (
 //go:embed internal/migrations/001_initial.sql
 var migrationFS embed.FS
 
+// maxOpenConnections bounds how many SQLite connections the Server keeps open.
+//
+// It stays at one, and that is a measured decision rather than an oversight.
+// Raising it was tried and reverted: under journal_mode(DELETE) a reader holds
+// SHARED and a writer needs EXCLUSIVE to commit, so once two connections can be
+// live at the same time a reader that holds SHARED longer than busy_timeout makes
+// every write fail with SQLITE_BUSY. That is precisely the symptom of the
+// production outage, so a larger pool would let the Server reproduce its own
+// outage internally instead of only suffering one caused from outside.
+//
+// With one connection, reads and writes queue for the same connection, so that
+// overlap cannot happen at all. The cost is that one connection left inside a
+// transaction starves every read and write, which is why the transaction path
+// must never leave a connection inside a transaction: that is enforced by the
+// deferred rollback on the panic path, by BEGIN IMMEDIATE, and by the transaction
+// budget, each of which has its own test.
+//
+// A larger pool becomes correct only together with journal_mode(WAL), where
+// readers no longer block writers. That change was considered and declined, so
+// the pool stays at one.
+const maxOpenConnections = 1
+
 // Store owns the Server database connection.
 type Store struct {
 	db *sql.DB
@@ -42,8 +64,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	// The pool size is one, and the reason is recorded on maxOpenConnections:
+	// under journal_mode(DELETE) a second live connection lets a reader block a
+	// writer's COMMIT, which is the production outage's own symptom. One
+	// connection makes that overlap impossible, so the transaction path must
+	// never leave a connection inside a transaction.
+	db.SetMaxOpenConns(maxOpenConnections)
+	db.SetMaxIdleConns(maxOpenConnections)
 	store := &Store{db: db}
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()

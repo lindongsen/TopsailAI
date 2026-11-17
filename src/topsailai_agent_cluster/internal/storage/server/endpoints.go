@@ -160,13 +160,13 @@ func (s *Store) DegradeOfflineEndpoints(ctx context.Context, cutoffMS, nowMS, re
 	}
 	var degradedIDs []string
 	var inventoryIDs []string
-	err := s.withTransaction(ctx, "endpoint degrade", func(conn *sql.Conn) error {
+	err := s.withTransaction(ctx, "endpoint degrade", func(txCtx context.Context, conn *sql.Conn) error {
 		var err error
-		degradedIDs, err = queryReturningIDs(ctx, conn, `UPDATE endpoints SET connection_state = 'degraded', degraded_since_at_ms = ?, expires_at_ms = ?, update_at_ms = ? WHERE connection_state = 'offline' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ? RETURNING endpoint_id`, nowMS, nowMS+retentionMS, nowMS, cutoffMS)
+		degradedIDs, err = queryReturningIDs(txCtx, conn, `UPDATE endpoints SET connection_state = 'degraded', degraded_since_at_ms = ?, expires_at_ms = ?, update_at_ms = ? WHERE connection_state = 'offline' AND offline_since_at_ms > 0 AND offline_since_at_ms <= ? RETURNING endpoint_id`, nowMS, nowMS+retentionMS, nowMS, cutoffMS)
 		if err != nil {
 			return fmt.Errorf("degrade offline endpoints: %w", err)
 		}
-		inventoryIDs, err = queryReturningIDs(ctx, conn, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND degraded_since_at_ms = ?) RETURNING endpoint_id`, nowMS)
+		inventoryIDs, err = queryReturningIDs(txCtx, conn, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND degraded_since_at_ms = ?) RETURNING endpoint_id`, nowMS)
 		if err != nil {
 			return fmt.Errorf("delete degraded endpoint inventory: %w", err)
 		}
@@ -201,17 +201,17 @@ func (s *Store) ExpireDegradedEndpoints(ctx context.Context, cutoffMS int64) (En
 	var deletedCommands []DeletedCommand
 	var inventoryIDs []string
 	var endpointIDs []string
-	err := s.withTransaction(ctx, "endpoint expiry", func(conn *sql.Conn) error {
+	err := s.withTransaction(ctx, "endpoint expiry", func(txCtx context.Context, conn *sql.Conn) error {
 		var err error
-		deletedCommands, err = queryDeletedCommands(ctx, conn, `DELETE FROM commands WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ?) RETURNING command_id, endpoint_id, status, effect_certainty`, cutoffMS)
+		deletedCommands, err = queryDeletedCommands(txCtx, conn, `DELETE FROM commands WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ?) RETURNING command_id, endpoint_id, status, effect_certainty`, cutoffMS)
 		if err != nil {
 			return fmt.Errorf("delete expired endpoint commands: %w", err)
 		}
-		inventoryIDs, err = queryReturningIDs(ctx, conn, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ?) RETURNING endpoint_id`, cutoffMS)
+		inventoryIDs, err = queryReturningIDs(txCtx, conn, `DELETE FROM endpoint_session_state WHERE endpoint_id IN (SELECT endpoint_id FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ?) RETURNING endpoint_id`, cutoffMS)
 		if err != nil {
 			return fmt.Errorf("delete expired endpoint inventory: %w", err)
 		}
-		endpointIDs, err = queryReturningIDs(ctx, conn, `DELETE FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ? RETURNING endpoint_id`, cutoffMS)
+		endpointIDs, err = queryReturningIDs(txCtx, conn, `DELETE FROM endpoints WHERE connection_state = 'degraded' AND expires_at_ms > 0 AND expires_at_ms <= ? RETURNING endpoint_id`, cutoffMS)
 		if err != nil {
 			return fmt.Errorf("delete expired endpoint metadata: %w", err)
 		}
