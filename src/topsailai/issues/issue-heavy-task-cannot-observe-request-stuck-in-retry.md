@@ -5,6 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: resolved
 ---
 
 # HeavyTask cannot observe a request stuck inside the retry loop
@@ -74,3 +75,15 @@ failure that the existing `ModelServiceError` handling already surfaces.
 ## Status
 
 Fixed in `1b16c1f5`. Not deployed.
+
+## Closure verification (2026-11-17)
+
+Resolved in HEAD.
+
+- `1b16c1f5 fix: bound one llm request by a wall clock budget` (2026-11-16) is an ancestor of
+  HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`.
+- `ai_base/llm_control/exception.py:41` defines `LLMRequestTimeoutError`.
+- `ai_base/configuration.py:118` defines `LLM_REQUEST_WALL_CLOCK_BUDGET_DEFAULT_SEC = 1800`.
+- `workspace/agent/agent_shell_base.py:95-97` lists `LLMRequestTimeoutError` in
+  `RECOVERABLE_REQUEST_ERRORS`, so a request stuck inside the retry loop now surfaces as a
+  recoverable error instead of an unobservable hang.

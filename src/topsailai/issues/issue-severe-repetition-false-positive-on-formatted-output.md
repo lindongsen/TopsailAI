@@ -5,6 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: resolved
 ---
 
 # Severe repetition check false-positives on formatted output
@@ -67,3 +68,14 @@ must be revised deliberately.
 `TOPSAILAI_REFUSE_SEVERE_REPETITION` was set to `0` in the affected process
 memory only. The check still computes and logs the rate; it no longer raises.
 This mitigation disappears when the process exits.
+
+## Closure verification (2026-11-17)
+
+Resolved in HEAD.
+
+- `684a3feb fix: exclude structural lines from repetition judgement and remove quadratic scan`
+  (2026-11-15) is an ancestor of HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`.
+- `utils/text_tool.py:13-31` defines `is_structural_line()`, which excludes fenced code
+  delimiters, table separators and symbol-only lines from the repetition judgement, so formatted
+  output no longer trips the severe-repetition check.
+- The same commit removed the quadratic scan from the judgement path.

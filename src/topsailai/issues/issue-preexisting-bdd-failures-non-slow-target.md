@@ -6,6 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 author: DawsonLin
+status: resolved
 ---
 
 # Eleven pre-existing BDD failures in the non-slow core target
@@ -127,3 +128,27 @@ investigation, its own logical unit, and its own verification.
    HEAD before concluding causation.
 4. Fix or quarantine each group as its own logical unit, and keep the default
    target green afterwards so future regressions are visible.
+
+## Closure verification (2026-11-17)
+
+Resolved. The eleven failures recorded here no longer reproduce.
+
+Ran the five affected modules together:
+
+```text
+tests/bdd/test_compiled_module_discovery.py
+tests/bdd/test_llm_chat_attempt_points.py
+tests/bdd/test_llm_first_byte_control.py
+tests/bdd/test_llm_first_byte_timeout_warning.py
+tests/bdd/test_tool_execute_hooks.py
+```
+
+Result: **30 passed**, 0 failed. The recorded baseline was `11 failed, 19 passed` for the same
+five modules, so every listed test id now passes.
+
+The failures were fixed by the intervening Hook Point and first-byte work rather than by a
+dedicated repair for this record, which is why no single commit is cited. This issue existed to
+keep the red default target traceable; that purpose is now served and the target is green.
+
+Limitation: this run used the five modules directly, not the full `-m "not slow and not packaged"`
+target, so a failure elsewhere in that target is not covered by this verification.

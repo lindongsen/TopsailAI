@@ -46,3 +46,20 @@ The 20-worker full-regression signal is unreliable for the affected Hooks/proces
 ## Recommended Follow-up
 
 Authorize a dedicated test-runner reliability investigation covering shared process and scheduler capacity, deadline budgeting under parallel load, and test-runner isolation. The investigation must not weaken or alter U8 close-epoch or canonical candidate-plan provenance behavior merely to make concurrent runs pass.
+
+## Reproduced again on 2026-11-17
+
+The contention is still live at HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`. Same eleven files, same runner, two modes:
+
+| Mode | Result |
+|---|---|
+| `--workers 20` | **9 failed, 2 passed**, 30 failed cases out of 432 records |
+| `--sequential` | **9 passed, 0 failed**, 308 cases |
+
+The nine files that fail concurrently all pass sequentially, which reproduces the reported
+symptom exactly and confirms it is scheduler/deadline contention rather than a Hooks behavior
+defect. `test_summary_prepared_registration.py` and `test_hook_point_plan_capture.py` passed in
+both modes this time, so the affected set is not fixed.
+
+This issue remains open because the recommended follow-up is a dedicated test-runner reliability
+investigation, which has not been authorized.

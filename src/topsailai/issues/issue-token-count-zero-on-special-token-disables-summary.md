@@ -5,6 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: resolved
 ---
 
 # Token counting returns 0 on a literal special token, which silently disables summarization
@@ -120,3 +121,17 @@ automatic summarization permanently for the rest of its life, because the
 offending text stays in the context. The failure is silent: the trigger log line
 still appears, so the session looks like it is summarizing while it grows without
 bound.
+
+## Closure verification (2026-11-17)
+
+Resolved in HEAD.
+
+- `8fc4111f fix: count literal special tokens instead of returning zero` (2026-11-15) is an
+  ancestor of HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`.
+- `context/token.py:156,210` call `encoding.encode(text, disallowed_special=())`, so a literal
+  `<|endoftext|>` in a tool result is counted as ordinary text instead of raising `ValueError`.
+- `context/token.py:96` defines `CHARS_PER_TOKEN = 4.0` and `:116` returns
+  `max(1, int(len(text) / CHARS_PER_TOKEN))` as the fallback, so non-empty text never reports
+  `0` tokens even when exact counting fails. `0` is now reserved for genuinely empty text.
+- The fallback lives in `context/token.py` rather than `workspace/print_tool.py`, avoiding the
+  circular import that module would create.

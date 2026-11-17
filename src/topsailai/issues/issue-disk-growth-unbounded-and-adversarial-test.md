@@ -421,3 +421,14 @@ lifecycle stays within the declared bound; the adversarial disk-full test reache
 the input prompt instead of exiting; a killed test run leaves no temporary build
 tree; the reaper reclaims a dead `running` meta while preserving a live one; the
 events count bound is enforced.
+
+## Action 1 re-verified on 2026-11-17
+
+`68e5e80a fix: bound the interactive prompt loops on a closed input channel` (2026-11-14) is an
+ancestor of HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`, so the completed part of this issue is committed and live.
+
+Actions 2 through 6 remain open. Action 5 requires human approval to terminate specific orphan
+processes by exact PID and to purge the stale `running` metas, so this issue cannot be closed
+autonomously. Action 3 overlaps
+[issue-reaper-cannot-clean-sigkilled-owner-record.md](./issue-reaper-cannot-clean-sigkilled-owner-record.md),
+which is blocked on the same cleanup-authorization decision.
