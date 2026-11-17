@@ -25,6 +25,7 @@ class ResourceEdgeScenario:
         self.case = None
         self.config = {NAME: {}}
         self.expected = []
+        self.expected_status = 'success'
         self.diagnostic = None
         self.process = None
         self.report = None
@@ -44,24 +45,31 @@ class ResourceEdgeScenario:
             link = self.modules / 'link_inside.py'
             link.symlink_to(target)
             self.config[NAME]['modules'] = str(self.modules)
-            self.expected = [('module', 'link_inside.py', 'success')]
+            self.expected = []
+            self.expected_status = 'unavailable'
+            self.diagnostic = 'discovery failed'
         elif case == 'symlink-escape':
             target = self.write_source(self.root / 'outside' / 'escaped.py')
             link = self.modules / 'link_escape.py'
             link.symlink_to(target)
             self.config[NAME]['modules'] = str(self.modules)
-            self.expected = [('module', 'link_escape.py', 'success')]
+            self.expected = []
+            self.expected_status = 'unavailable'
+            self.diagnostic = 'discovery failed'
         elif case == 'symlink-directory':
             (self.root / 'sub').mkdir()
             link = self.modules / 'link_dir'
             link.symlink_to(self.root / 'sub')
             self.config[NAME]['modules'] = str(self.modules)
             self.expected = []
+            self.expected_status = 'unavailable'
+            self.diagnostic = 'discovery failed'
         elif case == 'ordering-logical':
             self.write_source(self.modules / 'a-b.py')
             (self.modules / 'a.so').write_bytes(b'\x7fELF')
             self.config[NAME]['modules'] = str(self.modules)
             self.expected = [('module', 'a-b.py', 'success'), ('module', 'a.so', 'error')]
+            self.expected_status = 'completed_with_errors'
         else:
             raise AssertionError(case)
 
@@ -93,6 +101,7 @@ class ResourceEdgeScenario:
             assert Path(path).resolve().is_relative_to(WORKSPACE.resolve()), path
         observed = [(item['kind'], item['name'], item['status']) for item in self.report['results']]
         assert observed == self.expected, (observed, self.logs)
+        assert self.report['status'] == self.expected_status, (self.report['status'], self.logs)
         if self.diagnostic:
             assert self.diagnostic in self.logs
         else:
