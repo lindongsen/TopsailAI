@@ -25,20 +25,22 @@ type Binding struct {
 
 // Collector runs independent, bounded discovery operations for configured bindings.
 type Collector struct {
-	bindings          []Binding
-	timeout           time.Duration
-	store             *endpointstorage.Store
-	sourceCacheExpiry time.Duration
-	logCacheDeletion  func(string)
-	mu                sync.Mutex
-	sources           map[string]endpointstorage.SourceSnapshot
-	revision          int64
+	bindings             []Binding
+	timeout              time.Duration
+	store                *endpointstorage.Store
+	sourceCacheExpiry    time.Duration
+	logCacheDeletion     func(string)
+	logCollectionFailure func(string, string, string, int64)
+	mu                   sync.Mutex
+	sources              map[string]endpointstorage.SourceSnapshot
+	revision             int64
 }
 
-// CollectorOptions controls durable source-cache lifecycle.
+// CollectorOptions controls durable source-cache lifecycle and degraded-cycle reporting.
 type CollectorOptions struct {
-	SourceCacheExpiry time.Duration
-	LogCacheDeletion  func(string)
+	SourceCacheExpiry    time.Duration
+	LogCacheDeletion     func(string)
+	LogCollectionFailure func(adapterID, errorCode, errorMessage string, lastSuccessAtMS int64)
 }
 
 // NewCollector creates a collector and restores cache only for configured bindings.
@@ -58,7 +60,7 @@ func NewCollectorWithOptions(ctx context.Context, bindings []Binding, timeout ti
 	for _, binding := range bindings {
 		configured[binding.AdapterID] = struct{}{}
 	}
-	c := &Collector{bindings: append([]Binding(nil), bindings...), timeout: timeout, store: store, sourceCacheExpiry: options.SourceCacheExpiry, logCacheDeletion: options.LogCacheDeletion, sources: make(map[string]endpointstorage.SourceSnapshot)}
+	c := &Collector{bindings: append([]Binding(nil), bindings...), timeout: timeout, store: store, sourceCacheExpiry: options.SourceCacheExpiry, logCacheDeletion: options.LogCacheDeletion, logCollectionFailure: options.LogCollectionFailure, sources: make(map[string]endpointstorage.SourceSnapshot)}
 	if store != nil {
 		items, err := store.ListSourceSnapshots(ctx)
 		if err != nil {
@@ -242,7 +244,6 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 		return nil
 	}
 	if item.err != nil || !item.result.Complete || item.result.CollectionStatus != protocol.CollectionSucceeded {
-		snapshot.CollectionStatus = protocol.CollectionFailed
 		snapshot.ReportComplete = false
 		snapshot.ErrorMessage = "discovery failed"
 		if item.err != nil {
@@ -251,62 +252,71 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 		if item.result.ErrorCode != "" {
 			snapshot.ErrorCode = item.result.ErrorCode
 		}
-		if hadPrevious && previous.DataKnown {
+		// A cycle that observed rows but could not complete them is degraded, not
+		// failed. Reporting it as failed discarded every healthy row it did observe,
+		// so one unattributable provider row made the whole node look broken while
+		// every other session was fine. The distinction is load-bearing: `failed`
+		// means nothing was observed, `partial` means something was observed and
+		// something was not.
+		if item.err == nil && len(item.result.Sessions) > 0 {
+			snapshot.CollectionStatus = protocol.CollectionPartial
+			snapshot.Sessions = append([]protocol.Session(nil), item.result.Sessions...)
+			if err := c.mapSessions(ctx, &snapshot, binding, nowMS); err != nil {
+				return err
+			}
+			if snapshot.CollectionStatus != protocol.CollectionFailed {
+				snapshot.DataKnown = true
+				snapshot.Stale = false
+				lastSuccessMS := nowMS
+				snapshot.LastSuccessAtMS = &lastSuccessMS
+			}
+		} else if hadPrevious && previous.DataKnown {
+			snapshot.CollectionStatus = protocol.CollectionFailed
 			snapshot.Sessions = previous.Sessions
 			snapshot.DataKnown = true
 			snapshot.Stale = true
 			snapshot.LastSuccessAtMS = previous.LastSuccessAtMS
 		} else {
+			snapshot.CollectionStatus = protocol.CollectionFailed
 			snapshot.DataKnown = false
 			snapshot.Stale = false
+		}
+		// The error only lives in the source cache, and the next successful cycle
+		// overwrites it. Without this line a transient provider failure leaves no
+		// trace anywhere, which is why one recurring failure stayed undiagnosed.
+		if c.logCollectionFailure != nil {
+			lastSuccessMS := int64(0)
+			if snapshot.LastSuccessAtMS != nil {
+				lastSuccessMS = *snapshot.LastSuccessAtMS
+			}
+			c.logCollectionFailure(binding.AdapterID, snapshot.ErrorCode, snapshot.ErrorMessage, lastSuccessMS)
 		}
 	} else {
 		snapshot.CollectionStatus = protocol.CollectionSucceeded
 		snapshot.ReportComplete = true
 		snapshot.Sessions = append([]protocol.Session(nil), item.result.Sessions...)
-		if c.store != nil {
-			for index := range snapshot.Sessions {
-				session := &snapshot.Sessions[index]
-				clusterSessionID := session.ClusterSessionID
-				mapping, lookupErr := c.store.LookupResourceID(ctx, clusterSessionID)
-				if lookupErr != nil || mapping.AdapterID != binding.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
-					mapping, lookupErr = c.store.GetOrCreateResourceID(ctx, binding.AdapterID, protocol.ResourceSession, clusterSessionID, nowMS)
-				}
-				if lookupErr != nil {
-					// A cancelled store call means the cycle was abandoned, not
-					// that the provider returned bad data. Reporting it as a
-					// mapping failure would publish a degraded report for work
-					// nobody is waiting for any more.
-					if ctxErr := ctx.Err(); ctxErr != nil {
-						return ctxErr
-					}
-					snapshot.CollectionStatus = protocol.CollectionFailed
-					snapshot.ReportComplete = false
-					snapshot.DataKnown = false
-					snapshot.ErrorCode = "resource_mapping_failed"
-					snapshot.ErrorMessage = lookupErr.Error()
-					snapshot.Sessions = nil
-					break
-				}
-				session.ClusterSessionID = mapping.ResourceID
-				if session.AdapterID == "" {
-					session.AdapterID = binding.AdapterID
-				}
-			}
+		if err := c.mapSessions(ctx, &snapshot, binding, nowMS); err != nil {
+			return err
 		}
-		adapterFreshnessProvided := item.result.LastAttemptAtMS > 0 || item.result.LastSuccessAtMS > 0 || item.result.DataKnown || item.result.Stale
-		if adapterFreshnessProvided {
-			snapshot.DataKnown = item.result.DataKnown
-			snapshot.Stale = item.result.Stale
-			if item.result.LastSuccessAtMS > 0 {
-				lastSuccessMS := item.result.LastSuccessAtMS
+		// A cycle that withheld every reported row is not a success, so it must
+		// not claim fresh known data. mapSessions downgrades that case to failed;
+		// assigning freshness here would overwrite the downgrade and make an
+		// empty report read as "known, and there are no sessions".
+		if snapshot.CollectionStatus != protocol.CollectionFailed {
+			adapterFreshnessProvided := item.result.LastAttemptAtMS > 0 || item.result.LastSuccessAtMS > 0 || item.result.DataKnown || item.result.Stale
+			if adapterFreshnessProvided {
+				snapshot.DataKnown = item.result.DataKnown
+				snapshot.Stale = item.result.Stale
+				if item.result.LastSuccessAtMS > 0 {
+					lastSuccessMS := item.result.LastSuccessAtMS
+					snapshot.LastSuccessAtMS = &lastSuccessMS
+				}
+			} else {
+				snapshot.DataKnown = true
+				snapshot.Stale = false
+				lastSuccessMS := nowMS
 				snapshot.LastSuccessAtMS = &lastSuccessMS
 			}
-		} else {
-			snapshot.DataKnown = true
-			snapshot.Stale = false
-			lastSuccessMS := nowMS
-			snapshot.LastSuccessAtMS = &lastSuccessMS
 		}
 	}
 	// Re-check before mutating the cache so an aborted cycle leaves no trace.
@@ -318,6 +328,83 @@ func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64
 		if err := c.store.ApplySourceSnapshot(ctx, snapshot, nowMS); err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
+	}
+	return nil
+}
+
+// mapSessions replaces each session's provider key with its durable Cluster ID.
+//
+// It is shared by the complete and the degraded branches so the mapping rule
+// exists once. A second copy would drift, and the drift would be invisible: both
+// copies would compile and both would produce plausible IDs.
+//
+// A store failure that is not caused by cancellation marks the snapshot failed and
+// clears its sessions, because publishing rows whose Cluster IDs were never minted
+// would expose identities no later command could resolve. A cancelled store call
+// returns the context error instead, because that cycle was abandoned rather than
+// observing bad data.
+func (c *Collector) mapSessions(ctx context.Context, snapshot *endpointstorage.SourceSnapshot, binding Binding, nowMS int64) error {
+	if c.store == nil {
+		return nil
+	}
+	mapped := snapshot.Sessions[:0]
+	for index := range snapshot.Sessions {
+		session := snapshot.Sessions[index]
+		clusterSessionID := session.ClusterSessionID
+		mapping, lookupErr := c.store.LookupResourceID(ctx, clusterSessionID)
+		if lookupErr != nil || mapping.AdapterID != binding.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
+			switch {
+			case lookupErr != nil && !errors.Is(lookupErr, endpointstorage.ErrResourceNotFound):
+				// A genuine store failure is not a mapping decision, so it is
+				// reported as-is instead of being reinterpreted as one.
+			case protocol.IsClusterResourceID(clusterSessionID):
+				// The value already has the shape of a Cluster resource ID, so
+				// it is not a provider key and must not be used as one. Minting
+				// here would store a mapping row keyed by a Cluster ID, which
+				// makes the provider-to-cluster relationship ambiguous: a later
+				// reconciliation reading the table could not tell the two kinds
+				// of key apart. It would also hand the session a different
+				// Cluster ID than the one the adapter minted, silently breaking
+				// identity stability. The adapter mints before it reports, so
+				// this is an adapter contract violation: the row is withheld and
+				// the rest of the cycle is preserved, because one bad row must
+				// not discard every healthy row the provider did report.
+				snapshot.CollectionStatus = protocol.CollectionPartial
+				snapshot.ReportComplete = false
+				snapshot.ErrorCode = "resource_mapping_failed"
+				snapshot.ErrorMessage = fmt.Sprintf("session reports Cluster resource ID %q that is not a %s mapping for adapter %q", clusterSessionID, protocol.ResourceSession, binding.AdapterID)
+				continue
+			default:
+				mapping, lookupErr = c.store.GetOrCreateResourceID(ctx, binding.AdapterID, protocol.ResourceSession, clusterSessionID, nowMS)
+			}
+		}
+		if lookupErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			snapshot.CollectionStatus = protocol.CollectionFailed
+			snapshot.ReportComplete = false
+			snapshot.DataKnown = false
+			snapshot.ErrorCode = "resource_mapping_failed"
+			snapshot.ErrorMessage = lookupErr.Error()
+			snapshot.Sessions = nil
+			return nil
+		}
+		session.ClusterSessionID = mapping.ResourceID
+		if session.AdapterID == "" {
+			session.AdapterID = binding.AdapterID
+		}
+		mapped = append(mapped, session)
+	}
+	snapshot.Sessions = mapped
+	if len(mapped) == 0 && snapshot.CollectionStatus == protocol.CollectionPartial {
+		// Every reported row was withheld, so nothing was actually observed.
+		// Publishing `partial` with an empty list would read as "known, and there
+		// are no sessions", which would make the existing rows disappear from the
+		// operator's view. `failed` is the honest status: nothing usable was
+		// observed, and the previous snapshot is retained by the caller.
+		snapshot.CollectionStatus = protocol.CollectionFailed
+		snapshot.DataKnown = false
 	}
 	return nil
 }
