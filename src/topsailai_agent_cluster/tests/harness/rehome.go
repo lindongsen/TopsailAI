@@ -36,6 +36,11 @@ type ChannelProxy struct {
 	mu       sync.Mutex
 	conns    []net.Conn
 	closed   bool
+	// frozen makes the proxy a blackhole: it keeps reading from both sides so
+	// neither sender blocks, and discards every byte instead of forwarding it.
+	// The connections stay open, so the peer observes a Server that accepts
+	// bytes and never answers rather than a Server that went away.
+	frozen bool
 }
 
 // StartChannelProxy listens on a free loopback port and forwards to target,
@@ -69,15 +74,39 @@ func (p *ChannelProxy) serve() {
 			continue
 		}
 		p.track(client, upstream)
-		go func() {
-			_, _ = io.Copy(upstream, client)
-			_ = upstream.Close()
-		}()
-		go func() {
-			_, _ = io.Copy(client, upstream)
-			_ = client.Close()
-		}()
+		go p.pump(upstream, client)
+		go p.pump(client, upstream)
 	}
+}
+
+// pump copies bytes from src to dst until either side closes.
+//
+// It is a hand-written loop rather than io.Copy because Freeze must be able to
+// stop forwarding on a connection that is already open. io.Copy would keep
+// moving bytes for as long as the peer sends them, so a frozen proxy would still
+// deliver the Endpoint's frames to the Server and the Server's replies back, and
+// the Endpoint would never observe an unresponsive Server. Reading and
+// discarding is what makes the freeze a blackhole: the sender never blocks, and
+// nothing arrives.
+func (p *ChannelProxy) pump(dst, src net.Conn) {
+	buffer := make([]byte, 32*1024)
+	for {
+		n, err := src.Read(buffer)
+		if n > 0 {
+			p.mu.Lock()
+			frozen := p.frozen
+			p.mu.Unlock()
+			if !frozen {
+				if _, writeErr := dst.Write(buffer[:n]); writeErr != nil {
+					break
+				}
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	_ = dst.Close()
 }
 
 // track records the connections that Sever must close.
@@ -85,6 +114,38 @@ func (p *ChannelProxy) track(conns ...net.Conn) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.conns = append(p.conns, conns...)
+}
+
+// Freeze turns the proxy into a blackhole without closing anything.
+//
+// This is the only way to reproduce a Server that is still running, still
+// accepting bytes at the TCP layer, and no longer answering at the application
+// layer. Severing the transport is a different failure: the Endpoint's read
+// returns an error immediately, so a build with no liveness detection still
+// reconnects and the scenario would pass for the wrong reason. A frozen proxy
+// keeps every socket open and discards every byte, so the only way the Endpoint
+// can notice is by deciding that the Server stopped answering.
+func (p *ChannelProxy) Freeze() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.frozen = true
+}
+
+// Thaw resumes forwarding on the connections that are still open.
+//
+// It exists so a scenario can prove that a frozen Server is not permanently
+// abandoned: the Endpoint must be able to come back to it once it answers again.
+func (p *ChannelProxy) Thaw() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.frozen = false
+}
+
+// Frozen reports whether the proxy is currently discarding bytes.
+func (p *ChannelProxy) Frozen() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.frozen
 }
 
 // Sever closes every live connection so the Endpoint observes a transport
@@ -697,4 +758,108 @@ func (c *Cluster) CountSecondaryLogOccurrences(needle string) (int, error) {
 		return 0, err
 	}
 	return strings.Count(log, needle), nil
+}
+
+// PrimaryDialAddress reports the address the Endpoint dials to reach the primary
+// Server.
+//
+// It is the proxy address when a proxy sits in front of the primary Server, and
+// the direct address otherwise. A scenario that asserts on a refused address must
+// name the address the Endpoint actually dialled, because the proxy address and
+// the Server address are different strings and asserting the wrong one would
+// never match.
+func (c *Cluster) PrimaryDialAddress() string {
+	if c.ChannelProxy != nil {
+		return c.ChannelProxy.Address()
+	}
+	return "wss://127.0.0.1:" + c.Channel
+}
+
+// StopPrimaryServerE stops the primary Server and leaves it stopped.
+//
+// This is deliberately separate from RestartServerE, which stops and starts in
+// one step. A fallback scenario must observe the Endpoint while the primary is
+// genuinely absent, because the event under test is the Endpoint's own walk to
+// the next address. A stop-and-start helper would hide that window entirely.
+func (c *Cluster) StopPrimaryServerE() error {
+	if err := StopProcessE(c.Server); err != nil {
+		return fmt.Errorf("stop primary server: %w", err)
+	}
+	return nil
+}
+
+// StartPrimaryServerE starts the primary Server again with its original
+// configuration and waits for readiness.
+//
+// The database survives, so the Server keeps its durable identity, while the
+// in-memory fence starts again at 1. A scenario that restores the primary must
+// therefore not expect the Endpoint to adopt it: the Endpoint holds a higher
+// generation from the second Server, and nothing forces a reconnect while the
+// second link is healthy.
+//
+// Startup also marks every persisted online row offline, so the primary Server
+// reports the Endpoint offline until a real link is installed. That is what makes
+// "the primary Server reports the Endpoint online" a discriminating assertion: it
+// can only become true through an actual reconnect.
+func (c *Cluster) StartPrimaryServerE() error {
+	if len(c.ServerEnv) == 0 {
+		return fmt.Errorf("cluster did not retain the primary server environment, so it cannot be restarted")
+	}
+	server, err := StartProcessE(c.ServerPath, c.ServerEnv)
+	if err != nil {
+		return fmt.Errorf("start primary server: %w", err)
+	}
+	c.Server = server
+	if err := WaitHTTPE(c.URL("/healthz"), "", 200, serverReadinessWait); err != nil {
+		return fmt.Errorf("wait for primary server readiness: %w", err)
+	}
+	return nil
+}
+
+// FreezeSecondaryE makes the second Server stop answering without closing its
+// sockets.
+//
+// A stopped Server cannot discriminate liveness detection: the closed socket
+// produces an immediate read error, so a build with no heartbeat timeout still
+// reconnects and the scenario would pass for the wrong reason. Freezing keeps
+// every socket open and discards every byte, so the Endpoint can only recover by
+// deciding the Server is unhealthy.
+func (c *Cluster) FreezeSecondaryE() error {
+	if c.SecondaryChannelProxy == nil {
+		return fmt.Errorf("cluster has no second channel proxy, so the second Server cannot be frozen without closing its sockets")
+	}
+	c.SecondaryChannelProxy.Freeze()
+	return nil
+}
+
+// AssertNoReconnectAfterE fails when the Endpoint reconnected after the offset.
+//
+// The final online state cannot discriminate here. Whether the Endpoint never
+// attempted a switch-back or attempted one and was refused, the second Server
+// still reports it online. Only the absence of a new "endpoint channel
+// reconnected" line proves that no attempt was made, so the assertion reads the
+// Endpoint's own log from a recorded offset and counts occurrences.
+//
+// The window is the honest bound of the claim: the assertion proves that no
+// reconnect happened within it, not that none can ever happen. A window shorter
+// than the unhealthy window would pass for a build that reconnects only after
+// deciding the Server is unhealthy, so the caller must pass a window longer than
+// that decision takes.
+func (c *Cluster) AssertNoReconnectAfterE(offset int64, window time.Duration) error {
+	if c.EndpointLogPath == "" {
+		return fmt.Errorf("cluster was not started with an Endpoint log file")
+	}
+	time.Sleep(window)
+	content, err := os.ReadFile(c.EndpointLogPath)
+	if err != nil {
+		return fmt.Errorf("read endpoint log: %w", err)
+	}
+	if int64(len(content)) <= offset {
+		return nil
+	}
+	after := string(content[offset:])
+	if count := strings.Count(after, "endpoint channel reconnected"); count > 0 {
+		return fmt.Errorf("the Endpoint reconnected %d time(s) within %s after the first Server was restored, so a healthy link did not hold it; log tail:\n%s", count, window, logTailOf(after))
+	}
+	return nil
 }

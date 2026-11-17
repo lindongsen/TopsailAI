@@ -180,8 +180,19 @@ type coverageHeartbeater struct {
 	called chan struct{}
 }
 
+// RunHeartbeat signals the first invocation and then returns the configured
+// error. The signal is a non-blocking send rather than a close because
+// heartbeatLoop restarts the heartbeat after it stops, so this double is
+// invoked more than once. Closing the channel would panic on the second call
+// and the panic would be reported as a service defect rather than a stale test
+// double. A send is also safe across the value copies this double is stored as,
+// because the channel itself is shared while a sync.Once field would be copied
+// and would therefore never remember the first call.
 func (h coverageHeartbeater) RunHeartbeat(_ context.Context, _ time.Duration) error {
-	close(h.called)
+	select {
+	case h.called <- struct{}{}:
+	default:
+	}
 	return h.err
 }
 
@@ -203,13 +214,19 @@ func TestServiceHeartbeatAndChannelFailurePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The heartbeat loop now restarts after a heartbeat stops, so it only
+	// returns when its context is cancelled. A background context would make
+	// wg.Wait below block forever, which is why this test owns a cancellable
+	// context and cancels it once the first invocation is observed.
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
 	service.wg.Add(1)
-	go service.heartbeatLoop(context.Background())
+	go service.heartbeatLoop(heartbeatCtx)
 	select {
 	case <-heartbeat.called:
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat was not started")
 	}
+	stopHeartbeat()
 	service.wg.Wait()
 
 	var logs bytes.Buffer

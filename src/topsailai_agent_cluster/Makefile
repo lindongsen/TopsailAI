@@ -315,8 +315,14 @@ test-provider-topsailai-conformance:
 # Endpoint and CLI together, so splitting it by component would either duplicate
 # scenarios or assert a component in isolation, which the unit groups already do.
 # The feature files are registered in tests/bdd/suite_test.go.
+# The suite drives real Server, Endpoint and CLI processes, and several scenarios
+# wait for a bounded liveness or settlement window to expire before they can
+# assert anything. That makes the whole run exceed Go's 10-minute default, which
+# would kill the suite mid-scenario and report a timeout panic instead of a test
+# result. The explicit budget is a ceiling for a hung scenario, not an expected
+# duration: a run that reaches it has a real problem to investigate.
 test-bdd:
-	go test ./tests/bdd -count=1 -v
+	go test ./tests/bdd -count=1 -v -timeout 40m
 
 # The integration suite is cross-component for the same reason, and it needs the
 # testhooks build tag because it exercises fault injection inside the binaries.

@@ -146,12 +146,42 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES` | `--channel-addresses` | empty | Ordered comma-separated Server WSS addresses the Endpoint tries in turn; the first reachable one wins, and it takes precedence over `AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS` when both are set |
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
+| `AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT` | `--heartbeat-ack-timeout` | `3s` | Positive duration one heartbeat waits for the Server's acknowledgement; a heartbeat that is not acknowledged within this bound counts as one failure |
+| `AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW` | `--unhealthy-window` | `30s` | Positive duration of consecutive unacknowledged heartbeats after which the Endpoint declares the Server unhealthy and closes the connection so the ordered address list is walked again |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `--endpoint-access-policy-dir` | empty | Endpoint-local directory holding one access policy file per caller token; empty means every caller is permitted |
 | `AGENT_CLUSTER_ENDPOINT_REPLACE_REQUEST_FILE` | `--replace-request-file` | empty | Endpoint-local request document that activates one Provider CLI version for one adapter; empty disables activation entirely |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | none | `5000` | Positive post-collection delay in milliseconds; launcher value is `COLLECTION_DELAY_MS` |
 | `AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY` | none | `10m` | Positive duration retaining each Adapter's last successful source snapshot; older source cache is deleted before collection, while resource mappings and command evidence are preserved; launcher value is `SOURCE_CACHE_EXPIRY` |
+
+### `AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT` and `AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW`
+
+These two values are the Endpoint's only bounded judgement of whether the Server it
+is attached to is still alive. Before they existed the Endpoint had no such
+judgement at all: the channel read had no deadline, so a Server whose process stayed
+up but whose application stopped answering produced no error, and the Endpoint
+stayed attached to it forever. A Server that exits or is killed is a different
+failure, because the closed socket makes the read fail immediately.
+
+The rule is consecutive failures, not a single one. Every heartbeat must be
+acknowledged within `AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT`; an
+unacknowledged heartbeat counts as one failure and resets on the next acknowledged
+one. When the accumulated unacknowledged time reaches
+`AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW`, the Endpoint declares the Server
+unhealthy, logs `heartbeat acknowledgement timed out`, and closes the connection.
+Closing is the whole mechanism: the channel loop already treats a read error as
+transport loss and reconnects through the ordered address list, so the Endpoint
+walks back to the first reachable Server without any additional switch-back logic.
+
+The acknowledgement timeout is deliberately shorter than the heartbeat interval, so
+one slow acknowledgement is attributed to that beat instead of being confused with
+the next one. The unhealthy window is deliberately longer than one beat, so a single
+lost acknowledgement does not move a healthy Endpoint off a working Server.
+
+Both values must be positive. A zero or negative value is rejected at startup rather
+than silently disabling the rule, because a disabled rule is indistinguishable from
+a healthy Server.
 
 ### `AGENT_CLUSTER_ENDPOINT_REPLACE_REQUEST_FILE`
 

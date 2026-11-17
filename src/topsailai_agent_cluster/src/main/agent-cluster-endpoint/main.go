@@ -97,12 +97,18 @@ func main() {
 	if hostnameErr != nil {
 		logger.Warn("resolve endpoint hostname", "error", hostnameErr)
 	}
-	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: clientTLS, Address: cfg.ChannelAddress, Addresses: dialAddresses, Bidirectional: bidirectional, OnAttemptFailure: func(address string, attemptErr error) {
+	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: clientTLS, Address: cfg.ChannelAddress, Addresses: dialAddresses, Bidirectional: bidirectional, HeartbeatAckTimeout: cfg.HeartbeatAckTimeout, UnhealthyWindow: cfg.UnhealthyWindow, OnAttemptFailure: func(address string, attemptErr error) {
 		// A failed attempt is logged even when a later address succeeds, because a
 		// silent walk leaves the operator unable to tell "the first Server is down"
 		// from "the first Server was never configured". The walk continues, so this
 		// is a warning rather than an error.
 		logger.Warn("endpoint channel address refused", "address", address, "error", attemptErr)
+	}, OnServerUnhealthy: func(unacknowledged time.Duration) {
+		// The decision is logged before the connection is closed, because the
+		// reconnect that follows is otherwise indistinguishable from a Server that
+		// was restarted or killed. Without this line an operator cannot tell that
+		// the Endpoint gave up on a Server that was still running.
+		logger.Error("heartbeat acknowledgement timed out", "unacknowledged", unacknowledged.String(), "window", cfg.UnhealthyWindow.String())
 	}}
 	if listens {
 		// The Endpoint accepts the Server connection, so it must verify the
