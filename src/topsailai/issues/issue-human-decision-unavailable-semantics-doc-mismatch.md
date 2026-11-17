@@ -5,6 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: open
 references:
   - /TopsailAI/src/topsailai/tools/human_tool.py
   - /TopsailAI/src/topsailai/utils/env_tool.py
@@ -173,3 +174,44 @@ built-in rendering, or to drop the absolute "never raises" claim.
 
 ## Follow-up scalar normalization
 On 2026-08-27, explicit human direction changed the request-boundary policy. `allow_free_text` is now an integer flag (`1`/`0`, strings converted with `int()`, no truthy vocabulary) and `timeout_seconds` actively parses finite numeric strings; both advertise those types in `TOOLS_INFO`. Other malformed scalars still return `invalid_request`, and this does not alter the open timeout/availability, TTY, thread-scoped sub-agent, prompt-template, or answer-length findings above.
+
+## Documentation portion resolved on 2026-11-17
+
+The documentation findings above are fixed in commit `5141a442 docs: correct human decision availability and timeout semantics`.
+
+`docs/Environment_Variables.md` no longer states the false timeout-to-availability causality. The
+`TOPSAILAI_HUMAN_DECISION_TIMEOUT` row now says the timeout only bounds the wait after a usable
+input source has been found, that availability is decided independently and earlier, and that a
+positive value never makes an unavailable channel usable. A paragraph after the table documents
+the three-tier availability rule, that a session-provided channel works without a terminal, that a
+nested-agent call is refused even with a terminal, that disabling interactive mode does not
+short-circuit a session-provided channel, and that malformed arguments report an invalid request
+with a machine-readable reason rather than unavailability.
+
+Verified against the implementation rather than the issue text: `tools/human_tool.py::ask_decision`
+validates arguments first (`_validate_request` -> `invalid_request`), then builds the prompt, then
+runs the sub-agent guard (`_is_sub_agent_context`), then the input-source guard
+(`_has_usable_input_source`), and only then reads. `_has_usable_input_source` returns `True` on the
+thread-local runtime input branch before consulting `TOPSAILAI_INTERACTIVE_MODE` or
+`sys.stdin.isatty()`, which is exactly the "not necessary" case the issue described.
+`_get_default_timeout` never inspects TTY or interactive mode.
+
+No test asserted the old wording (`grep -rn "only honored when an interactive TTY"` over `*.py` and
+`*.md`, excluding `issues/` and `.tmp`, returned nothing), so the correction breaks no expectation.
+
+### Remaining open scope: code findings only
+
+Two findings in this issue are code defects, not documentation defects, and both were re-verified
+live on 2026-11-17:
+
+1. **`_build_prompt` is unguarded, so `PROMPT`'s "never raises" claim is false.** With
+   `TOPSAILAI_HUMAN_DECISION_PROMPT_TEMPLATE="Q={question} A={answer}"`, a probe raised
+   `KeyError: 'answer'` out of `ask_decision` instead of degrading to `unavailable`.
+2. **`_get_max_answer_length` uses two different fallbacks.** Measured: `"0"` -> `2000`,
+   `"-5"` -> `2000`, `"abc"` -> `8000`, `"30000"` -> `30000`. The documentation records only the
+   `30000` default and neither fallback.
+
+The thread-scoped sub-agent detection finding also remains open: `KEY_AGENT_DEEP` is thread-local,
+so a nested agent started in a new thread begins at depth `0` and the guard does not fire.
+
+This issue therefore stays open for the code findings above. The documentation portion is closed.
