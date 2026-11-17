@@ -194,17 +194,26 @@ def main() -> int:
     # independent-Server case this feature exists for.
     secondary_api_port = 0
     secondary_channel_port = 0
+    secondary_token = ""
     if args.secondary_server:
         secondary_api_port = available_port()
         secondary_channel_port = available_port()
-        # The ports are persisted into the same configuration document the
-        # primary ports already live in, so a caller reads every port from one
-        # machine-readable file. Parsing them back out of the human-readable
-        # READY line is not an option: that line contains both "api_port=" and
-        # "secondary_api_port=", and any pattern matching the former also
-        # matches the tail of the latter.
+        # The second Server gets its own bearer token. Two Servers that accept the
+        # same credential are not independent from a client's point of view: a
+        # profile that selected the wrong token would still be accepted, so the
+        # profile feature could not be discriminated and a re-home would look
+        # correct even if the client kept presenting the primary Server's token.
+        # A real second Server has its own operator credential.
+        secondary_token = secrets.token_urlsafe(32)
+        # The ports and the token are persisted into the same configuration
+        # document the primary values already live in, so a caller reads every
+        # value from one machine-readable file. Parsing them back out of the
+        # human-readable READY line is not an option: that line contains both
+        # "api_port=" and "secondary_api_port=", and any pattern matching the
+        # former also matches the tail of the latter.
         config["secondary_api_port"] = secondary_api_port
         config["secondary_channel_port"] = secondary_channel_port
+        config["secondary_token"] = secondary_token
         config_path = args.runtime / CONFIG_NAME
         config_path.write_text(json.dumps(config), encoding="utf-8")
         config_path.chmod(0o600)
@@ -232,11 +241,15 @@ def main() -> int:
     # primary, because the Endpoint is configured with one CA and one client
     # certificate. Sharing the certificate does not make the two Servers one
     # deployment: identity is the database, and these are two databases.
+    #
+    # It does not share the bearer token. A client that selected the wrong
+    # profile must be refused, and that is only observable when the two Servers
+    # accept different credentials.
     secondary_env = base | {
         "AGENT_CLUSTER_SERVER_API_LISTEN_ADDR": f"127.0.0.1:{secondary_api_port}",
         "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR": f"127.0.0.1:{secondary_channel_port}",
         "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "server-secondary.db"),
-        "AGENT_CLUSTER_SERVER_AUTH_TOKEN": token,
+        "AGENT_CLUSTER_SERVER_AUTH_TOKEN": secondary_token,
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "server.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "server.key"),
     }
@@ -277,12 +290,36 @@ def main() -> int:
         endpoint_env["AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE"] = str(args.allowlist)
     # The CLI loads .env.local from the directory of its own executable, so the
     # isolated configuration must live beside the binary rather than in runtime.
+    #
+    # Both Servers are defined as named profiles, so following the Endpoint to the
+    # second Server is a selection rather than a rewrite of the client's
+    # configuration. Each profile carries its own URL and its own token, because a
+    # Server URL and its bearer token are one credential pair: changing them
+    # separately is how one Server's token ends up presented to another Server.
     cli_environment = args.bin_dir / ".env.local"
-    cli_environment.write_text(f"AGENT_CLUSTER_CLI_SERVER_URL=http://127.0.0.1:{api_port}\nAGENT_CLUSTER_CLI_SERVER_TOKEN={token}\n", encoding="utf-8")
+    profile_urls = f"primary=http://127.0.0.1:{api_port}"
+    profile_tokens = f"primary={token}"
+    if secondary_token:
+        profile_urls += f",secondary=http://127.0.0.1:{secondary_api_port}"
+        profile_tokens += f",secondary={secondary_token}"
+    cli_environment.write_text(
+        f"AGENT_CLUSTER_CLI_SERVER_PROFILES={profile_urls}\n"
+        f"AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS={profile_tokens}\n"
+        "AGENT_CLUSTER_CLI_SERVER_PROFILE=primary\n",
+        encoding="utf-8",
+    )
     cli_environment.chmod(0o600)
     # Inherited AGENT_CLUSTER_* variables take precedence over .env.local, so the
-    # launch command must clear them before starting the CLI.
-    launch = "env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN " + str(args.bin_dir / "agent-cluster-cli") + " interactive"
+    # launch command must clear them before starting the CLI. The profile keys are
+    # cleared for the same reason: an inherited selection would silently override
+    # the one this file defines.
+    launch = (
+        "env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN "
+        "-u AGENT_CLUSTER_CLI_SERVER_PROFILES -u AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS "
+        "-u AGENT_CLUSTER_CLI_SERVER_PROFILE "
+        + str(args.bin_dir / "agent-cluster-cli")
+        + " interactive"
+    )
     planned = []
     if args.role in ("both", "server"):
         planned.append(("server", server, server_env))

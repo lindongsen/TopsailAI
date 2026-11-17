@@ -112,6 +112,18 @@ print(document.get("secondary_api_port") or "")
 log "API_PORT=${API_PORT} SECONDARY_API_PORT=${SECONDARY_API_PORT}"
 
 API_TOKEN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "${RUN_DIR}/runtime/services.json")"
+# The second Server has its own operator credential. Reading it separately is what
+# makes the profile selection below a real check: if both Servers accepted the same
+# token, a client that kept presenting the primary Server's credential would still
+# be accepted, and the profile would prove nothing.
+SECONDARY_API_TOKEN="$(python3 -c '
+import json, sys
+document = json.load(open(sys.argv[1]))
+print(document.get("secondary_token") or "")
+' "${RUN_DIR}/runtime/services.json")"
+[ -n "${SECONDARY_API_TOKEN}" ] || die "could not read secondary_token from services.json; the second Server has no independent credential"
+[ "${API_TOKEN}" != "${SECONDARY_API_TOKEN}" ] || die "the two Servers share one token, so a profile that selected the wrong credential could not be detected"
+log "TOKENS_DISTINCT_OK"
 # endpoint_state prints the connection_state the given Server reports for the
 # Endpoint. It is read from the Server's own API, so the answer is that Server's
 # view rather than a shared guess.
@@ -122,9 +134,24 @@ API_TOKEN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["to
 # rather than an error. The curl failure is therefore absorbed explicitly, because
 # the caller runs under `set -e` and `pipefail`.
 endpoint_state() {
-  local port="$1"
-  local body=""
-  body="$(curl -sS -H "Authorization: Bearer ${API_TOKEN}" "http://127.0.0.1:${port}/api/v1/endpoints" 2>/dev/null)" || body=""
+  local port="$1" token="$2"
+  local body="" status=""
+  # The HTTP status is captured separately from the body, because an empty answer
+  # has three different meanings and only one of them is "this Server has no row".
+  # A Server that is not answering and a Server that refused the credential both
+  # produce no rows, so reporting either as an empty state would send the
+  # investigation to the re-home logic when the real cause is the credential.
+  local body_file="${RUN_DIR}/out/state-body.$$"
+  body="$(curl -sS -o "${body_file}" -w '%{http_code}' \
+    -H "Authorization: Bearer ${token}" \
+    "http://127.0.0.1:${port}/api/v1/endpoints" 2>/dev/null)" || status=""
+  status="${body}"
+  body="$(cat "${body_file}" 2>/dev/null || true)"
+  rm -f "${body_file}"
+  case "${status}" in
+    000|"") printf '%s' "unreachable"; return 0 ;;
+    401|403) printf '%s' "unauthorized"; return 0 ;;
+  esac
   printf '%s' "${body}" | python3 -c '
 import json, sys
 try:
@@ -145,14 +172,21 @@ else:
 # observable answer is what turns "the Endpoint should have moved" into "this
 # Server says it did".
 wait_state() {
-  local port="$1" want="$2" limit="$3" label="$4"
+  local port="$1" want="$2" limit="$3" label="$4" token="$5"
   local deadline=$(( $(date +%s) + limit ))
   local state=""
   while :; do
-    state="$(endpoint_state "${port}")"
+    state="$(endpoint_state "${port}" "${token}")"
     if [ "${state}" = "${want}" ]; then
       log "STATE_OK ${label} ${want}"
       return 0
+    fi
+    # A refused credential is not a state that can change by waiting, so it is
+    # reported immediately. Polling it for the whole deadline would describe the
+    # symptom as "never reported online" and hide the cause, which is the
+    # credential rather than the re-home.
+    if [ "${state}" = "unauthorized" ]; then
+      die "${label} refused the credential presented for port ${port}, so this is a credential problem rather than a re-home problem"
     fi
     if [ "$(date +%s)" -ge "${deadline}" ]; then
       log "last state for ${label}: '${state}'"
@@ -172,9 +206,9 @@ log "== assert ordered preference =="
 # The Endpoint must prefer the first address. This is the assertion that proves
 # the list is ordered rather than merely accepted: if the Endpoint connected to
 # the second Server first, the first Server would never report it online.
-wait_state "${API_PORT}" online "${STARTUP_TIMEOUT_SECONDS}" "primary"
-PRIMARY_STATE="$(endpoint_state "${API_PORT}")"
-SECONDARY_STATE="$(endpoint_state "${SECONDARY_API_PORT}")"
+wait_state "${API_PORT}" online "${STARTUP_TIMEOUT_SECONDS}" "primary" "${API_TOKEN}"
+PRIMARY_STATE="$(endpoint_state "${API_PORT}" "${API_TOKEN}")"
+SECONDARY_STATE="$(endpoint_state "${SECONDARY_API_PORT}" "${SECONDARY_API_TOKEN}")"
 log "primary=${PRIMARY_STATE} secondary=${SECONDARY_STATE}"
 [ "${PRIMARY_STATE}" = "online" ] || die "the primary Server does not report the Endpoint online"
 # The second Server may legitimately have no row at all, because the Endpoint
@@ -183,6 +217,12 @@ log "primary=${PRIMARY_STATE} secondary=${SECONDARY_STATE}"
 # whether the second Server happened to observe a rejected handshake.
 case "${SECONDARY_STATE}" in
   online) die "the Endpoint connected to the second Server first, so the address list is not ordered" ;;
+  # An unreachable or refusing second Server would also be "not online", so it
+  # would satisfy the ordering assertion for the wrong reason. The second Server
+  # is started before this point, so it must be answering; only "answering with no
+  # row" is the state that proves the Endpoint preferred the first address.
+  unreachable) die "the second Server is not answering, so 'not online' proves nothing about the address order" ;;
+  unauthorized) die "the second Server refused the credential presented for it, so 'not online' proves nothing about the address order" ;;
   *) log "ORDERED_OK second Server state '${SECONDARY_STATE}'" ;;
 esac
 
@@ -191,6 +231,8 @@ INVENTORY_DEADLINE=$(( $(date +%s) + STARTUP_TIMEOUT_SECONDS ))
 while :; do
   set +e
   LIST_OUT="$(env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN \
+    -u AGENT_CLUSTER_CLI_SERVER_PROFILES -u AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS \
+    -u AGENT_CLUSTER_CLI_SERVER_PROFILE \
     "${CLI}" --no-color --no-progress list --json 2>&1)"
   LIST_STATUS=$?
   set -e
@@ -243,7 +285,7 @@ while :; do
   fi
   sleep 0.5
 done
-wait_state "${API_PORT}" online "${REHOME_TIMEOUT_SECONDS}" "primary-after-reconnect"
+wait_state "${API_PORT}" online "${REHOME_TIMEOUT_SECONDS}" "primary-after-reconnect" "${API_TOKEN}"
 
 log "== stop the primary Server =="
 # The primary Server is stopped by its exact PID, read from the pid file the
@@ -273,14 +315,14 @@ log "== assert re-home =="
 # The Endpoint must move on its own. It is not restarted here, and no
 # configuration is changed, so the only thing that can make the second Server
 # report it online is the Endpoint walking to the next address.
-wait_state "${SECONDARY_API_PORT}" online "${REHOME_TIMEOUT_SECONDS}" "secondary"
+wait_state "${SECONDARY_API_PORT}" online "${REHOME_TIMEOUT_SECONDS}" "secondary" "${SECONDARY_API_TOKEN}"
 
 log "== assert the re-homed Endpoint serves inventory =="
 # A connection that cannot serve inventory would look online and be useless, so
 # the re-homed Endpoint must also publish a report the second Server accepts.
 REHOME_INVENTORY_DEADLINE=$(( $(date +%s) + REHOME_TIMEOUT_SECONDS ))
 while :; do
-  SECONDARY_INVENTORY="$(curl -sS -H "Authorization: Bearer ${API_TOKEN}" \
+  SECONDARY_INVENTORY="$(curl -sS -H "Authorization: Bearer ${SECONDARY_API_TOKEN}" \
     "http://127.0.0.1:${SECONDARY_API_PORT}/api/v1/endpoints/live-tmux-endpoint/session-state" 2>/dev/null || true)"
   case "${SECONDARY_INVENTORY}" in
     *cluster_session_id*) break ;;
@@ -327,16 +369,23 @@ else
   log "SETTLE_SKIPPED no recorded receipt existed before the re-home"
 fi
 
-log "== point the CLI at the Server that now manages the Endpoint =="
-# The operator follows the Endpoint. The CLI holds one Server URL and one Server
-# token, so a re-home requires reconfiguring the client; multi-profile support is
-# deliberately not part of this change. Writing the new URL here is what makes the
-# command below a real end-to-end check rather than a request to a dead Server.
+log "== select the profile for the Server that now manages the Endpoint =="
+# The operator follows the Endpoint by selecting a profile, not by rewriting the
+# client's configuration. A profile carries the URL and the token together, so the
+# selection cannot pair one Server's address with another Server's credential.
+#
+# The selection is written into .env.local rather than passed as a flag because
+# this is what an operator would actually do: the file is the client's own
+# configuration, and every later invocation inherits the choice without repeating
+# the flag. The flag path is covered by the CLI unit tests.
 CLI_ENV="${RUN_DIR}/bin/.env.local"
-printf 'AGENT_CLUSTER_CLI_SERVER_URL=http://127.0.0.1:%s\nAGENT_CLUSTER_CLI_SERVER_TOKEN=%s\n' \
-  "${SECONDARY_API_PORT}" "${API_TOKEN}" >"${CLI_ENV}"
+cat >"${CLI_ENV}" <<EOF
+AGENT_CLUSTER_CLI_SERVER_PROFILES=primary=http://127.0.0.1:${API_PORT},secondary=http://127.0.0.1:${SECONDARY_API_PORT}
+AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS=primary=${API_TOKEN},secondary=${SECONDARY_API_TOKEN}
+AGENT_CLUSTER_CLI_SERVER_PROFILE=secondary
+EOF
 chmod 600 "${CLI_ENV}"
-log "CLI now targets the secondary Server on port ${SECONDARY_API_PORT}"
+log "CLI profile 'secondary' selected, targeting port ${SECONDARY_API_PORT}"
 
 log "== assert the re-homed Endpoint still executes a command =="
 # A re-home that leaves the Endpoint unable to serve commands would be a
@@ -344,6 +393,8 @@ log "== assert the re-homed Endpoint still executes a command =="
 # second Server, so it exercises the whole path rather than one hop.
 set +e
 SESSION_JSON="$(env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN \
+  -u AGENT_CLUSTER_CLI_SERVER_PROFILES -u AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS \
+  -u AGENT_CLUSTER_CLI_SERVER_PROFILE \
   "${CLI}" --no-color --no-progress list --json 2>&1)"
 LIST_STATUS=$?
 set -e
@@ -372,6 +423,8 @@ log "SESSION_ID=${SESSION_ID} GENERATION=${GENERATION}"
 
 set +e
 SEND_OUT="$(env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN \
+  -u AGENT_CLUSTER_CLI_SERVER_PROFILES -u AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS \
+  -u AGENT_CLUSTER_CLI_SERVER_PROFILE \
   "${CLI}" --no-color --no-progress send --yes live-tmux-endpoint "${SESSION_ID}" "rehome message" "${GENERATION}" 2>&1)"
 SEND_STATUS=$?
 set -e
@@ -379,6 +432,48 @@ printf '%s' "${SEND_OUT}" >"${RUN_DIR}/out/send-after-rehome.txt"
 log "send exit ${SEND_STATUS}"
 log "send output: ${SEND_OUT}"
 [ "${SEND_STATUS}" -eq 0 ] || die "the re-homed Endpoint refused a command, so the move left it unable to serve"
+
+log "== assert the profile selection is what makes the command work =="
+# The command above succeeded, but success alone does not prove the profile did
+# anything: a client that still held the primary Server's address and token would
+# also have succeeded if the primary Server were still answering. It is not
+# answering, so the only way the command could have worked is by using the
+# secondary profile's own address and credential.
+#
+# Selecting the primary profile must therefore fail. If it succeeds, the profile
+# selection is not what the command depends on, and the run proves nothing about
+# the feature.
+set +e
+WRONG_PROFILE_OUT="$(env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN \
+  -u AGENT_CLUSTER_CLI_SERVER_PROFILES -u AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS \
+  AGENT_CLUSTER_CLI_SERVER_PROFILE=primary \
+  "${CLI}" --no-color --no-progress list --json 2>&1)"
+WRONG_PROFILE_STATUS=$?
+set -e
+if [ "${WRONG_PROFILE_STATUS}" -eq 0 ]; then
+  log "wrong-profile output: ${WRONG_PROFILE_OUT}"
+  die "selecting the primary profile still succeeded after the primary Server was stopped, so the profile selection is not what the command depends on"
+fi
+log "PROFILE_DISCRIMINATES_OK primary profile refused with exit ${WRONG_PROFILE_STATUS}"
+
+log "== assert a profile cannot be paired with a foreign credential =="
+# A profile carries one address and one token. Supplying an explicit token
+# alongside a profile is refused rather than merged, because merging is how one
+# Server's credential ends up presented to another Server. The refusal is checked
+# here against the real binary, not only in the unit tests, so the live script
+# demonstrates the guard an operator would actually hit.
+set +e
+MIXED_OUT="$(env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN \
+  -u AGENT_CLUSTER_CLI_SERVER_PROFILES -u AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS \
+  -u AGENT_CLUSTER_CLI_SERVER_PROFILE \
+  "${CLI}" --no-color --no-progress --server-profile secondary --token "${API_TOKEN}" list --json 2>&1)"
+MIXED_STATUS=$?
+set -e
+if [ "${MIXED_STATUS}" -eq 0 ]; then
+  log "mixed-credential output: ${MIXED_OUT}"
+  die "a profile combined with an explicit token was accepted, so one Server's credential can be presented to another Server"
+fi
+log "PROFILE_CREDENTIAL_PAIRING_OK mixed selection refused with exit ${MIXED_STATUS}"
 
 log "== stop =="
 CHILD_PIDS="$(python3 -c 'import json,sys; print(" ".join(str(p) for p in json.load(open(sys.argv[1]))))' "${PIDS_FILE}")"
