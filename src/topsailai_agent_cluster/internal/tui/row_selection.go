@@ -31,7 +31,7 @@ func resolveRowSelection(state *interactiveState, token string) (SessionRow, err
 		if row.State == protocol.SessionStateUnknown {
 			return SessionRow{}, fmt.Errorf("row %d is unverified: the session record exists but no process holds it, so it cannot be addressed; use resume to resume it", number)
 		}
-		return SessionRow{}, fmt.Errorf("row %d has no generation; run list again", number)
+		return SessionRow{}, fmt.Errorf("row %d has no generation; run refresh to collect a fresh inventory", number)
 	}
 	return row, nil
 }

@@ -153,8 +153,10 @@ type FollowChunk = protocol.OutputFollowRecord
 //
 // The Server answers with newline-delimited JSON rather than one envelope, so this
 // method decodes records incrementally instead of reusing request(). Cancelling
-// ctx closes the response body, which releases the follow at the Server and stops
-// the provider child.
+// ctx closes the response body, which releases the follow at the Server; the Server
+// then sends output_follow_cancel to the Endpoint, which cancels the stream and
+// releases its follow slot. The provider child therefore stops instead of streaming
+// into a queue nobody reads.
 func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (<-chan FollowChunk, error) {
 	path := fmt.Sprintf("/api/v1/output/follow?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)

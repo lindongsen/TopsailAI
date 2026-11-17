@@ -186,6 +186,50 @@ func TestReadOutputUnsupportedReturnsError(t *testing.T) {
 	}
 }
 
+// TestReadOutputAcceptsUnverifiedTarget proves a snapshot is returned for a target
+// whose generation was never verified.
+//
+// A generation proves liveness, which a mutation needs; a read needs identity,
+// which the durable mapping proves. Refusing an empty generation made the output
+// of an unverified session unreadable, which is exactly the session an operator
+// most needs to inspect.
+func TestReadOutputAcceptsUnverifiedTarget(t *testing.T) {
+	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	registry := adapter.NewRegistry()
+	_ = registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+		return outputTestAdapter{output: adapter.OutputResult{Lines: []string{"line one"}}}, nil
+	})
+	_, _ = registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"})
+	mapping, _ := store.GetOrCreateResourceID(context.Background(), "a1", protocol.ResourceSession, "provider", 1)
+	e, _ := NewExecutor(store, registry)
+	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID})
+	if err != nil {
+		t.Fatalf("unverified target was refused: %v", err)
+	}
+	if response.Data != "line one" {
+		t.Fatalf("data=%q", response.Data)
+	}
+}
+
+// TestReadOutputStillRequiresResourceID proves the identity check was not removed
+// along with the liveness check.
+func TestReadOutputStillRequiresResourceID(t *testing.T) {
+	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	e, _ := NewExecutor(store, adapter.NewRegistry())
+	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{})
+	if err == nil || response.ErrorCode != "invalid_target" {
+		t.Fatalf("response=%#v err=%v", response, err)
+	}
+}
+
 func TestExecutorRejectsUnsupportedCapabilityWithoutCallingAdapter(t *testing.T) {
 	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
 	if err != nil {

@@ -546,6 +546,11 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.outputFrame(ctx, frame)
 		case channel.FrameOutputFollowRequest:
 			s.startFollow(ctx, frame)
+		case channel.FrameOutputFollowCancel:
+			// The consumer stopped watching, so this follow must stop too. The
+			// handler only cancels; the goroutine's deferred cleanup deletes the
+			// entry and releases the slot.
+			s.cancelFollow(frame.RequestID)
 		}
 	}
 }

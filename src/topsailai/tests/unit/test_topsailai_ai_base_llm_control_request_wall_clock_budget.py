@@ -6,7 +6,9 @@ Purpose: Unit tests for the per-request LLM wall-clock budget.
 """
 
 import ast
+from collections import deque
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,6 +23,7 @@ from topsailai.ai_base.llm_control.exception import (
     LLMSevereRepetitionError,
     ModelServiceError,
 )
+from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
 
 
 def _make_model():
@@ -196,3 +199,179 @@ class TestRetryLoopWiring:
                 for alias in node.names:
                     imported.add(alias.asname or alias.name)
         assert "_get_llm_request_wall_clock_budget" in imported
+
+
+class _FakeClock:
+    """Advance monotonic time only when the test decides to."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        """Return the current fake monotonic time."""
+        return self.now
+
+    def sleep(self, sec):
+        """Record a backoff sleep without advancing the clock."""
+        self.sleeps.append(sec)
+
+
+def _make_retry_model(monkeypatch, clock, budget):
+    """Build a bare model that drives the real retry loop under a fake clock."""
+    model = object.__new__(LLMModel)
+    model.tokenStat = SimpleNamespace(current_tokens=0, current_cached_tokens=0)
+    model.model_config = {"api_key": "private"}
+    model._get_pending_native_tool_call_responses = lambda: deque()
+    model._split_native_tool_call_response = lambda obj, content: (obj, content, 1, 1)
+    model._return_chat_response = MagicMock(return_value="parsed")
+    model._is_special_response_for_retry = lambda error: False
+    model.call_llm_model = MagicMock(return_value=(object(), "ok"))
+    model.call_llm_model_by_stream = model.call_llm_model
+    model._get_request_wall_clock_budget = lambda: budget
+
+    monkeypatch.setattr(
+        "topsailai.ai_base.llm_base.time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+    )
+    monkeypatch.setattr("topsailai.ai_base.llm_base.get_agent_object", lambda: None)
+    monkeypatch.setattr("topsailai.ai_base.llm_base.print_error", lambda *a, **k: None)
+    monkeypatch.setattr("topsailai.ai_base.llm_base.print_warning", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "topsailai.ai_base.llm_base._record_llm_request_event", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "topsailai.ai_base.llm_base._observe_llm_request_attempt", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "topsailai.ai_base.llm_base._record_llm_request_failure", lambda *a, **k: None,
+    )
+    for phase in ("before", "after", "error"):
+        monkeypatch.setattr(
+            f"topsailai.ai_base.llm_base.hook__aibase__{phase}__llm_chat_attempt",
+            lambda *a, **k: None,
+        )
+    return model
+
+
+class TestHumanDecisionIsNotChargedToTheBudget:
+    """A human decision restarts the budget instead of consuming it."""
+
+    def test_human_decision_time_does_not_exhaust_the_budget(self, monkeypatch):
+        """A retry the human just authorized must not be rejected by their own wait.
+
+        The operator can leave the retry-exhaustion prompt unanswered for hours.
+        Charging that wait to the request rejects the very retry they approved,
+        so the baseline must restart when the decision arrives. The attempt that
+        follows the decision must therefore still be allowed to run.
+        """
+        clock = _FakeClock()
+        model = _make_retry_model(monkeypatch, clock, budget=100.0)
+        # Attempt 19 is the first attempt after the decision, so it must fail to
+        # reach attempt 20, which is the first attempt measured from the new
+        # baseline. Without the reset, attempt 20 is rejected by the human's wait.
+        model.call_llm_model.side_effect = [TypeError("cycle one")] * 19 + [
+            (object(), "ok")
+        ]
+
+        def decide(_policy, *, allow_retry, warning_func):
+            """Simulate a human who answers after nearly three hours."""
+            clock.now += 10000.0
+            return "retry"
+
+        monkeypatch.setattr(
+            "topsailai.ai_base.llm_base._read_retry_exhaustion_action", decide,
+        )
+        policy = LLMRetryInteractionPolicy(
+            interactive_enabled=True,
+            input_func=lambda _: "yes",
+            max_manual_retry_cycles=1,
+        )
+
+        result = model.chat([], for_raw=True, retry_interaction_policy=policy)
+
+        assert result == "ok"
+        assert model.call_llm_model.call_count == 20
+
+    def test_budget_baseline_restarts_at_the_decision(self, monkeypatch):
+        """The post-decision attempt must be measured from the decision instant."""
+        clock = _FakeClock()
+        model = _make_retry_model(monkeypatch, clock, budget=100.0)
+        model.call_llm_model.side_effect = [TypeError("cycle one")] * 19 + [
+            (object(), "ok")
+        ]
+        baselines = []
+        real_check = LLMModel._check_request_wall_clock_budget
+
+        def spy(instance, started_at, budget, attempt_number):
+            """Record the baseline each attempt is measured from."""
+            baselines.append((attempt_number, started_at))
+            return real_check(instance, started_at, budget, attempt_number)
+
+        monkeypatch.setattr(LLMModel, "_check_request_wall_clock_budget", spy)
+
+        def decide(_policy, *, allow_retry, warning_func):
+            """Simulate a human who answers after nearly three hours."""
+            clock.now += 10000.0
+            return "retry"
+
+        monkeypatch.setattr(
+            "topsailai.ai_base.llm_base._read_retry_exhaustion_action", decide,
+        )
+        policy = LLMRetryInteractionPolicy(
+            interactive_enabled=True,
+            input_func=lambda _: "yes",
+            max_manual_retry_cycles=1,
+        )
+
+        model.chat([], for_raw=True, retry_interaction_policy=policy)
+
+        # Attempt 20 is the first attempt after the decision, so it must be
+        # measured from the decision instant rather than from request start.
+        assert (20, 10000.0) in baselines
+        assert (20, 0.0) not in baselines
+
+    def test_budget_still_bounds_provider_work(self, monkeypatch):
+        """Without a human decision the budget must still stop a stalled request."""
+        clock = _FakeClock()
+        model = _make_retry_model(monkeypatch, clock, budget=100.0)
+
+        def slow_failure(*_args, **_kwargs):
+            """Fail slowly so the accumulated provider work exceeds the budget."""
+            clock.now += 60.0
+            raise TypeError("slow failure")
+
+        model.call_llm_model.side_effect = slow_failure
+
+        with pytest.raises(LLMRequestTimeoutError):
+            model.chat([], for_raw=True)
+
+        # Attempt 1 starts at 0s, attempt 2 at 60s, attempt 3 at 120s > 100s.
+        assert model.call_llm_model.call_count == 2
+
+
+class TestBudgetBaselineWiring:
+    """The retry loop must measure the budget from its own resettable baseline."""
+
+    @staticmethod
+    def _llm_base_source():
+        """Return the source text of ai_base/llm_base.py."""
+        import topsailai.ai_base.llm_base as llm_base_module
+
+        return Path(llm_base_module.__file__).read_text(encoding="utf-8")
+
+    def test_check_uses_the_resettable_baseline(self):
+        """The check must not read the telemetry timestamp directly."""
+        source = self._llm_base_source()
+        check = source.index("self._check_request_wall_clock_budget(")
+        call = source[check:check + 200]
+        assert "budget_started_at, request_wall_clock_budget" in call
+        assert "request_started_at, request_wall_clock_budget" not in call
+
+    def test_baseline_restarts_between_the_decision_and_the_retry_branch(self):
+        """The reset must land after the prompt and before the retry branch."""
+        source = self._llm_base_source()
+        prompt = source.index("action = _read_retry_exhaustion_action(")
+        reset = source.index("budget_started_at = time.monotonic()", prompt)
+        retry_branch = source.index('if action == "retry":', prompt)
+        assert prompt < reset < retry_branch

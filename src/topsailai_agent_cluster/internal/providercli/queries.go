@@ -31,3 +31,21 @@ func IsStandardQuery(name, version string) bool {
 	}
 	return false
 }
+
+// QueryRequiresSessionTarget reports whether one registered query addresses a
+// session and therefore must carry a session target.
+//
+// The rule is stated once, here, because two callers need it for different
+// reasons: DecodeQueryPayload rejects a request that breaks it, and the
+// conformance suite builds a request that satisfies it. A second copy in the
+// suite would let a newly registered session-scoped query be exercised with no
+// target, and the resulting failure would read as a Provider defect rather than
+// as a gap in the test.
+func QueryRequiresSessionTarget(name string) bool {
+	switch name {
+	case QueryModelCatalog, QuerySessionMessages, QuerySessionMetrics, QuerySessionDetail:
+		return true
+	default:
+		return false
+	}
+}

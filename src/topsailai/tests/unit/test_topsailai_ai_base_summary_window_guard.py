@@ -10,6 +10,7 @@ Purpose: Verify the bottom-line guard that terminates a turn when recent LLM
          disabled state, and the re-raise chain that lets the exception reach
          the agent chat loop instead of being retried or swallowed
 """
+import logging
 
 import pytest
 
@@ -464,3 +465,51 @@ def test_attempt_level_window_evicts_older_attempts():
     # The sixth attempt evicts the last summary attempt.
     assert guard.record(False)[0] is False
     assert guard.snapshot() == [False, False, False, False]
+
+
+def test_replacing_a_foreign_guard_attribute_is_logged(caplog):
+    """A discarded non-guard attribute must leave a trace instead of vanishing."""
+    class _Agent(object):
+        """Stand-in agent holding a foreign object under the guard attribute."""
+
+    agent = _Agent()
+    agent._summary_window_guard = "not-a-guard"
+
+    with caplog.at_level(logging.WARNING):
+        guard = get_agent_summary_window_guard(agent)
+
+    assert isinstance(guard, SummaryWindowGuard)
+    assert agent._summary_window_guard is guard
+    assert "replaced a non-guard attribute" in caplog.text
+    assert "existing_type=str" in caplog.text
+    assert "agent_type=_Agent" in caplog.text
+
+
+def test_creating_a_missing_guard_attribute_is_not_logged(caplog):
+    """First use on a clean agent is normal, so it must not warn."""
+    class _Agent(object):
+        """Stand-in agent without the guard attribute."""
+
+    agent = _Agent()
+
+    with caplog.at_level(logging.WARNING):
+        guard = get_agent_summary_window_guard(agent)
+
+    assert isinstance(guard, SummaryWindowGuard)
+    assert "replaced a non-guard attribute" not in caplog.text
+
+
+def test_an_existing_real_guard_is_reused_without_logging(caplog):
+    """A real guard must be reused silently, otherwise every call would warn."""
+    class _Agent(object):
+        """Stand-in agent owning a real guard."""
+
+    agent = _Agent()
+    installed = SummaryWindowGuard(window_size=4, max_summaries=1)
+    agent._summary_window_guard = installed
+
+    with caplog.at_level(logging.WARNING):
+        guard = get_agent_summary_window_guard(agent)
+
+    assert guard is installed
+    assert "replaced a non-guard attribute" not in caplog.text

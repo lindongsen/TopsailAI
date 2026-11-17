@@ -85,6 +85,16 @@ const (
 	// for its request ID, so a consumer that stops receiving chunks without it
 	// treats the stream as interrupted rather than complete.
 	FrameOutputEnd = "output_end"
+	// FrameOutputFollowCancel tells the Endpoint to stop one follow stream. It is
+	// the only frame that carries a consumer's departure, because a follow is the
+	// one request whose lifetime is decided by the consumer rather than by the
+	// Endpoint: the Server drops its pending entry when the operator stops
+	// watching, and without this frame the Endpoint would keep the follow
+	// goroutine, its concurrency slot and the provider child alive until the
+	// adapter deadline expired. It is sent only when the Endpoint may still be
+	// streaming, so a follow that already sent its terminal frame is never
+	// cancelled twice.
+	FrameOutputFollowCancel = "output_follow_cancel"
 	// InitiatorEndpoint marks a connection dialed by the Endpoint.
 	InitiatorEndpoint = "endpoint"
 	// InitiatorServer marks a connection dialed by the Server.

@@ -668,6 +668,7 @@ class LLMModel(
         Raises:
             LLMBackToChatError: If an interactive user abandons this turn.
             LLMRetryExhaustedError: If bounded request retries are exhausted.
+            LLMRequestTimeoutError: If the request exceeds its wall-clock budget.
         """
         pending_responses = self._get_pending_native_tool_call_responses()
         if pending_responses:
@@ -707,6 +708,14 @@ class LLMModel(
             ),
         )
         request_started_at = time.monotonic()
+        # The budget is measured from its own baseline instead of from
+        # ``request_started_at``, because the two values answer different
+        # questions: ``request_started_at`` reports the true age of the request
+        # in telemetry, while the budget must measure provider work only. A
+        # human decision restarts this baseline, so the time spent waiting for
+        # that decision is never charged to the request and the retry the human
+        # just authorized starts with a full budget.
+        budget_started_at = request_started_at
         # One wall-clock budget for the whole logical request. It is read once
         # per request so every attempt of this request is bounded by the same
         # value, and it covers retry attempts plus backoff sleeps. Without it a
@@ -731,8 +740,11 @@ class LLMModel(
             # Check the budget before any cycle-exhaustion prompt or backoff
             # sleep, so a stalled request stops instead of paying another wait
             # and asking the human to continue a request that cannot recover.
+            # It measures provider work only: a human decision restarts
+            # ``budget_started_at``, so the answer the human just gave is never
+            # rejected by time that the human themselves spent deciding.
             self._check_request_wall_clock_budget(
-                request_started_at, request_wall_clock_budget, total_attempt,
+                budget_started_at, request_wall_clock_budget, total_attempt,
             )
             # Bottom-line guard: stop a turn whose recent LLM traffic is
             # dominated by summary requests. It is recorded once per provider
@@ -773,6 +785,12 @@ class LLMModel(
                         ),
                         warning_func=print_warning,
                     )
+                    # The human has now intervened, so the counter restarts.
+                    # Everything measured so far describes work that the human
+                    # has already judged and answered; charging it again would
+                    # reject the very retry they just authorized whenever their
+                    # decision took longer than the remaining budget.
+                    budget_started_at = time.monotonic()
                     if action == "retry":
                         manual_cycle_count += 1
                     elif action == "back":

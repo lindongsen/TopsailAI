@@ -1360,3 +1360,71 @@ configuration that refers to them, so a versioned install path and a configured 
 diverge silently on every upgrade. The failure is fail-open in the worst way: the old
 binary still works, so the Endpoint reports healthy while running the previous release,
 and the only evidence is a directory listing nobody checks.
+
+## A pathspec commit takes the working tree, so hunk-level staging is discarded
+
+Trigger: `adapter.go` contained one hunk of mine and one hunk from a concurrent agent. I
+staged only my two hunks with `git apply --cached`, verified the staged diff contained
+exactly them, and then ran `git commit -m "..." -- <paths>`. The pathspec form commits the
+**working tree** content of those paths and ignores the index, so the foreign hunk was
+swept into my commit while the staged version I had verified was never used. The
+verification was real and it certified the wrong thing.
+
+Action: when a file contains hunks from more than one author, never pass a pathspec to
+`git commit`. Stage the exact hunks, confirm `git diff --cached` contains only them, and
+then commit with no pathspec so the index is what lands. If a pathspec is unavoidable,
+verify the result with `git show <commit> -- <file>` afterwards, because the pre-commit
+`git diff --cached` check cannot detect this mistake.
+
+Why this prevents recurrence: the two forms look interchangeable and the pathspec form is
+the one that feels safer, because it names exactly the files being committed. The failure
+is silent in the direction that matters: the commit succeeds, the file list is correct, and
+only the hunk content is wrong. The pre-commit check passes because it inspects the index,
+which is not what the pathspec form reads. This is the same class as the recorded lesson
+about a green test proving nothing until it has been seen to fail: the check and the
+behaviour live in different places, so a passing check certifies nothing about the commit.
+
+## A branch that other agents commit to cannot be rewritten to fix your own commit
+
+Trigger: after the pathspec mistake above, the corrected commit was built with
+`commit-tree` and the branch was moved with `update-ref`. The update was rejected because
+the branch had advanced: two other agents had committed on top of mine in the meantime.
+Rewriting my commit would have required rewriting theirs, so the foreign hunk stayed in
+history and only the content of the final tree could be verified.
+
+Action: before planning any history rewrite, check whether the branch has descendants with
+`git merge-base --is-ancestor <my-commit> HEAD` and `git log --oneline <my-commit>..HEAD`.
+If it does, do not rewrite. Verify instead that the final tree is correct, and report the
+attribution defect to the human rather than repairing it. Also clear any index entry that
+was prepared for the abandoned rewrite, because a stale index blob silently reverts the
+other agent's change the moment someone commits it.
+
+Why this prevents recurrence: a shared branch moves under you, and the window between
+building a replacement commit and moving the ref is long enough for another agent to
+commit. The rewrite is safe only when the commit is still the tip, which is a condition
+that must be checked at the moment of the rewrite rather than assumed from an earlier
+observation. Leaving a prepared index entry behind is worse than the original mistake,
+because it converts a wrong attribution into a silent revert of someone else's work.
+
+## A clean status on your own edited file can mean a foreign commit already took it
+
+Trigger: after editing `internal/adapter/genericcli/adapter.go` to pass `requireGeneration=false`,
+`git status` listed every other file of the change but not that one. The natural reading was "the edit
+was lost", and the summary was about to claim a change that the diff did not contain. The edit was in
+fact already committed: another agent's unrelated commit `08d89ac2` had swept the file in, so HEAD
+contained the fix and the working tree had nothing left to show.
+
+Action: when a file you edited is absent from `git status`, do not conclude the edit was lost and do
+not re-apply it. Read the file to confirm the intended content is present, then run
+`git log -S '<a distinctive string from your change>' -- <path>` to find which commit carries it. If a
+foreign commit took it, verify the content is correct and report the attribution defect instead of
+re-committing. Then check the index separately with `git diff --cached -- <path>`, because a foreign
+staged change can revert the very line that HEAD already has correctly.
+
+Why this prevents recurrence: `git status` compares the working tree against the index, so it answers
+"is there anything left to commit", not "is my change present". In a shared workspace those two
+questions diverge in both directions: a foreign commit can absorb your edit, and a foreign staged
+change can revert it while the working tree still looks right. Re-applying a change that HEAD already
+contains produces a no-op diff that hides the real state, and trusting the index produces a commit
+that silently undoes your own fix. Reading the file plus `git log -S` is what distinguishes "lost",
+"already committed" and "staged for revert".

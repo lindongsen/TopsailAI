@@ -219,11 +219,27 @@ func delivery(args []string, state string) {
 }
 
 // control answers one control invocation with a correlated document.
+//
+// A `call_instruction` invocation is answered in the provider's own nested
+// envelope, because that is the shape the Provider parses for a registered
+// instruction: the report is a JSON string inside `response.result`, not a flat
+// document. Only `agent.tokens` is answered with a report; every other
+// instruction keeps the flat document, which the Provider reads as "the
+// observation was unavailable". That distinction is deliberate: answering
+// `agent.llm` with a report would change the current-model column that the
+// catalog read reports, and this fixture exists to prove the wire contract, not
+// to invent provider state.
 func control(args []string) {
 	action := ""
+	payload := ""
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
-		case "-s", "-a":
+		case "-s":
+			index++
+		case "-a":
+			if index+1 < len(args) {
+				payload = args[index+1]
+			}
 			index++
 		case "--json":
 			continue
@@ -236,6 +252,18 @@ func control(args []string) {
 	if action == "" {
 		fail("missing control action")
 	}
+	if action == "call_instruction" {
+		if report, ok := instructionReport(payload); ok {
+			emit(map[string]any{
+				"ok": true,
+				"response": map[string]any{
+					"status": "ok",
+					"result": report,
+				},
+			})
+			return
+		}
+	}
 	emit(map[string]any{
 		"ok":             true,
 		"action":         action,
@@ -243,6 +271,34 @@ func control(args []string) {
 		"delivery_state": "control_acknowledged",
 		"request_id":     "fixture-request",
 	})
+}
+
+// instructionReport returns the report document for one registered instruction.
+//
+// The counts are unequal so the document cannot be mistaken for a symmetric
+// one, but conformance only decodes this document and never asserts the two
+// values. The order of the two positions is proven by the Provider's own unit
+// tests and by the adapter mapping tests, not here. This fixture exists to prove
+// that the wire shape is answerable at all, which is the part conformance owns.
+func instructionReport(payload string) (string, bool) {
+	var request struct {
+		Instruction string `json:"instruction"`
+	}
+	if err := json.Unmarshal([]byte(payload), &request); err != nil {
+		return "", false
+	}
+	if request.Instruction != "agent.tokens" {
+		return "", false
+	}
+	report, err := json.Marshal(map[string]any{
+		"ok":         true,
+		"user2agent": map[string]any{"messages": 7},
+		"agent2llm":  map[string]any{"messages": 3},
+	})
+	if err != nil {
+		return "", false
+	}
+	return string(report), true
 }
 
 // emit writes one JSON document to stdout.

@@ -136,7 +136,7 @@ func TestLiveCommandsStillRefuseUnverifiedRow(t *testing.T) {
 		{
 			name:  "cd",
 			input: "list\ncd 1\nquit\n",
-			want:  "row 1 has no generation; run list again",
+			want:  "row 1 is unverified: the session record exists but no process holds it, so it cannot be entered; run refresh to collect a fresh inventory, or use resume to resume it",
 		},
 		{
 			name:  "stop",
@@ -171,5 +171,34 @@ func TestInfoReadsLiveRowStill(t *testing.T) {
 		if !strings.Contains(segment, want) {
 			t.Fatalf("missing %q in info output: %q", want, segment)
 		}
+	}
+}
+
+// TestLogsReadsUnverifiedRow proves the read widening reaches the real surface the
+// operator types, not only the Endpoint executor.
+//
+// The row is visible in the list, so refusing it here would leave the operator
+// unable to read the output of exactly the session that needs inspection. The
+// assertion checks the generation the client actually sent, because an empty
+// generation is the whole point: a test that only asserted "no error" would pass
+// even if the client had refused the row before any request was made.
+func TestLogsReadsUnverifiedRow(t *testing.T) {
+	stub := readRowsStub()
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nlist\nlogs 1\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.outputCalls != 1 {
+		t.Fatalf("snapshot reads=%d want=1", stub.outputCalls)
+	}
+	request := stub.outputRequests[0]
+	if request.resourceID != "res-unverified" {
+		t.Fatalf("resource=%q want res-unverified", request.resourceID)
+	}
+	if request.generation != "" {
+		t.Fatalf("generation=%q want empty for an unverified row", request.generation)
+	}
+	if !strings.Contains(output, "log") {
+		t.Fatalf("snapshot content missing from output: %q", output)
 	}
 }

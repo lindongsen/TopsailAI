@@ -185,3 +185,31 @@ func (s *Service) stopFollows() {
 		cancel()
 	}
 }
+
+// cancelFollow stops one follow because its consumer stopped watching.
+//
+// The Server drops its pending entry the moment the operator stops reading, so
+// the chunks this Endpoint keeps producing are discarded on arrival. Without this
+// cancellation the Endpoint would keep the follow goroutine, one of its
+// maxConcurrentFollows slots and the adapter's follow slot until the adapter
+// deadline expired, which is two minutes in the deployed configuration. Two
+// abandoned follows were therefore enough to make the next follow wait for
+// capacity it could not see.
+//
+// Only the cancel function is invoked here. Deleting the entry and releasing the
+// slot stay in the goroutine's deferred cleanup, so a cancel that races the
+// adapter's own exit cannot release the slot twice.
+//
+// An unknown request ID is not an error: the follow may have already sent its
+// terminal frame, and the Server sends this frame only when it believes the
+// Endpoint is still streaming. Treating that race as a failure would log an error
+// for a correct sequence.
+func (s *Service) cancelFollow(requestID string) {
+	s.followMu.Lock()
+	cancel, ok := s.activeFollows[requestID]
+	s.followMu.Unlock()
+	if !ok {
+		return
+	}
+	cancel()
+}
