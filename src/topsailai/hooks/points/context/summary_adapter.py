@@ -145,6 +145,17 @@ SUMMARY_CONTROL_EXCEPTIONS = (
 )
 
 
+def _checkpoint_outcome(operation, checkpoint):
+    """Resolve the declared lifecycle phase instead of inferring it from the name."""
+    points = _CHECKPOINTS.get(operation.layer)
+    if points is None or type(checkpoint) is not str:
+        return None
+    selected = points.get(checkpoint)
+    if selected is None:
+        return None
+    return selected.POINT.phase
+
+
 def emit_summary_checkpoint(checkpoint, **classification):
     """Isolate ordinary observer failures without hiding host control signals."""
     operation = current_summary_operation()
@@ -154,7 +165,7 @@ def emit_summary_checkpoint(checkpoint, **classification):
         return operation.emit(checkpoint, **classification)
     except BaseException as error:
         # An active business exception always outranks its error observer.
-        if not checkpoint.startswith("error_") and (
+        if _checkpoint_outcome(operation, checkpoint) != "error" and (
                 not isinstance(error, Exception) or isinstance(error, SUMMARY_CONTROL_EXCEPTIONS)):
             raise
         logger.warning("summary observer dispatch failed: checkpoint=%s reason=observer_failure", checkpoint)

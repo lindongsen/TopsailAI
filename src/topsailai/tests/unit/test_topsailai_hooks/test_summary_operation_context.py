@@ -235,3 +235,70 @@ def test_emitter_returns_exact_direct_result(calls, monkeypatch):
         assert emit_summary_checkpoint('before_summary_generate') is result
 
     business()
+
+
+@pytest.mark.parametrize('checkpoint,declared_phase,failure_kind,expect_propagate', [
+    ('before_summary_generate', 'error', 'ordinary', False),
+    ('before_summary_generate', 'error', 'base', False),
+    ('error_summary_generate', 'success', 'ordinary', False),
+    ('error_summary_generate', 'success', 'base', True),
+])
+def test_guard_follows_declared_phase_not_name_prefix(
+        monkeypatch, checkpoint, declared_phase, failure_kind, expect_propagate):
+    """A declared phase decides guard disposition even when the name disagrees."""
+    from types import SimpleNamespace
+
+    error = {'ordinary': RuntimeError('private'), 'base': KeyboardInterrupt()}[failure_kind]
+    selected = _CHECKPOINTS['user2agent'][checkpoint]
+    # The name prefix and the declared phase must genuinely disagree, otherwise
+    # this test would pass under the old name-based inference as well.
+    assert selected.NAME.startswith('hook__context__error__') != (declared_phase == 'error')
+    monkeypatch.setattr(selected, 'POINT', SimpleNamespace(phase=declared_phase))
+
+    def fail(**kwargs):
+        """Raise an exact observer error after admission and payload validation."""
+        raise error
+
+    monkeypatch.setattr(selected, selected.NAME, fail)
+    classification = {}
+    if checkpoint.startswith('error_'):
+        classification = {'error_category': 'unknown', 'failed_stage': 'generation_request'}
+
+    @summary_operation('user2agent')
+    def business():
+        """Observe the guard decision for a name and phase that disagree."""
+        propagated = None
+        try:
+            result = emit_summary_checkpoint(checkpoint, **classification)
+        except BaseException as escaped:
+            propagated = escaped
+            result = None
+        if expect_propagate:
+            assert propagated is error
+        else:
+            assert propagated is None, f"guard propagated {type(propagated).__name__}"
+            assert result is None
+    business()
+    assert current_summary_operation() is None
+
+
+def test_guard_uses_declared_phase_for_every_real_checkpoint():
+    """Every real checkpoint resolves its phase from the declaration, not its name."""
+    from topsailai.hooks.points.context.summary_adapter import _checkpoint_outcome
+
+    for layer, points in _CHECKPOINTS.items():
+        operation = DirectSummaryOperation(layer)
+        for checkpoint, selected in points.items():
+            assert _checkpoint_outcome(operation, checkpoint) == selected.POINT.phase
+            assert selected.POINT.phase in ('before', 'success', 'error')
+
+
+def test_guard_ignores_unknown_checkpoint_and_layer():
+    """An unresolvable checkpoint yields no phase instead of a name guess."""
+    from topsailai.hooks.points.context.summary_adapter import _checkpoint_outcome
+
+    operation = DirectSummaryOperation('user2agent')
+    assert _checkpoint_outcome(operation, 'error_summary_unknown') is None
+    assert _checkpoint_outcome(operation, None) is None
+    assert _checkpoint_outcome(operation, 42) is None
+    assert _checkpoint_outcome(DirectSummaryOperation('other'), 'error_summary_generate') is None
