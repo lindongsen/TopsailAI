@@ -203,13 +203,21 @@ func TestListBriefAliasInheritsListScope(t *testing.T) {
 // header. A distinctive value cannot be confused with a default.
 const briefRenderWorkspace = "/srv/brief-render-workspace-must-not-be-printed"
 
+// briefRenderMessages is a distinctive message count, so a brief table that
+// prints the MESSAGES column is detectable by value as well as by header. A
+// distinctive value cannot be confused with a default, and a nil observation
+// would render "-" instead, which would not prove the column reached the
+// renderer.
+var briefRenderMessages = protocol.MessageCounts{Inbound: 7, Outbound: 3}
+
 // briefRenderStub serves one endpoint whose session carries a distinctive
-// workspace path and display name, so both the identifying columns and the
-// dropped columns are observable in the rendered bytes.
+// workspace path, display name and message count, so both the printed columns
+// and the dropped columns are observable in the rendered bytes.
 func briefRenderStub() *interactiveStub {
 	report := scopeInventory("res-1", "generation-1")
 	report.Sessions[0].ProviderProjectWorkspace = briefRenderWorkspace
 	report.Sessions[0].ProviderDisplayName = "brief-render-session"
+	report.Sessions[0].Messages = &briefRenderMessages
 	return &interactiveStub{
 		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "host-one"}},
 		reports:   map[string]protocol.InventoryReport{"endpoint-1": report},
@@ -230,19 +238,24 @@ func headerLineOf(t *testing.T, segment string) string {
 	return ""
 }
 
-// TestListBriefShorthandRendersOnlyIdentifyingColumns proves the composed REPL
-// path prints exactly NO, SESSION_NAME and ENDPOINT. A rewrite test and an
+// TestListBriefShorthandRendersTheNarrowColumnSet proves the composed REPL path
+// prints exactly NO, SESSION_NAME, MESSAGES and ENDPOINT. A rewrite test and an
 // option test are both unit tests of one link, and a chain of correct links can
 // still have no consumer, so only the rendered bytes prove the flag reaches the
 // renderer.
-func TestListBriefShorthandRendersOnlyIdentifyingColumns(t *testing.T) {
+//
+// MESSAGES is asserted by header and by value. The header proves the column is in
+// the layout; the value proves the cell reached the renderer with the reported
+// counts, because a nil observation would render "-" and the header assertion
+// alone would still pass.
+func TestListBriefShorthandRendersTheNarrowColumnSet(t *testing.T) {
 	output, diagnostics := runScope(t, briefRenderStub(), listBriefAlias+"\nexit\n", ColorPolicy{})
 	if strings.Contains(diagnostics, "error") {
 		t.Fatalf("diagnostics=%q", diagnostics)
 	}
 	segment := segmentBeforePrompt(output, "workspace> ")
 	header := headerLineOf(t, segment)
-	for _, want := range []string{"NO", "SESSION_NAME", "ENDPOINT"} {
+	for _, want := range []string{"NO", "SESSION_NAME", "MESSAGES", "ENDPOINT"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("brief header %q is missing %q", header, want)
 		}
@@ -257,6 +270,9 @@ func TestListBriefShorthandRendersOnlyIdentifyingColumns(t *testing.T) {
 	}
 	if !strings.Contains(segment, "brief-render-session") {
 		t.Fatalf("brief table dropped the session name: %q", segment)
+	}
+	if !strings.Contains(segment, "7/3") {
+		t.Fatalf("brief table did not print the reported message counts: %q", segment)
 	}
 }
 
@@ -282,9 +298,9 @@ func TestListWideRenderKeepsTheDroppedColumns(t *testing.T) {
 }
 
 // TestListBriefShorthandCombinesWithFull proves brief and full are independent
-// axes, so "lb --full" prints the three identifying columns without truncating
-// them. The workspace column is dropped, so the untruncated value is proven on
-// the session name, which is a wide column.
+// axes, so "lb --full" prints the narrow column set without truncating them. The
+// workspace column is dropped, so the untruncated value is proven on the session
+// name, which is a wide column.
 func TestListBriefShorthandCombinesWithFull(t *testing.T) {
 	report := scopeInventory("res-1", "generation-1")
 	longName := strings.Repeat("n", 200)
