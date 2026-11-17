@@ -115,3 +115,44 @@ monolithic run is too slow or contaminated by shared process state, use one
 pytest process per BDD module and retain each exit code, scenario counts,
 failure text and elapsed time. Attribute suspected regressions using the
 [pristine-worktree procedure](../LEARN.md#an-autouse-timeout-fixture-equal-to-a-tests-sleep-turns-the-test-into-a-coin-flip).
+
+## Test Execution Requires `bin/` and `/usr/sbin` on `PATH`
+
+### Rule
+
+Every test invocation, whether through `make` or a direct `pytest` call, MUST run
+with a `PATH` that contains the project `bin/` directory and `/usr/sbin`. A
+sanitized shell such as `env -i` does not provide either one, so state them
+explicitly instead of assuming the operator's shell already has them.
+
+### Why
+
+Two independent sweep failures were caused only by a truncated `PATH`, and both
+looked like product defects until the environment was corrected.
+
+- Without `bin/` on `PATH`, the resume scenarios report `assert 5 == 4`. Exit
+  code 5 is the "driver executable not found" branch, which resolves the driver
+  through `shutil.which`; the driver executables live in `bin/`, so the branch
+  fires even though the code is correct. Restoring `bin/` made 66 of 66
+  scenarios pass.
+- Without `/usr/sbin` on `PATH`, the hook capability scenario fails with
+  `setcap is not None`. `setcap` is installed in `/usr/sbin`, so the capability
+  probe reports the tool as missing and the scenario asserts on a capability the
+  host actually has.
+
+### Scope / Applies to
+
+Any run that executes the resume scenarios or the hook capability scenarios, and
+any run started from a sanitized environment. A normal interactive shell usually
+already satisfies both requirements, which is why the defect only appears in
+sanitized or containerized runs.
+
+### How to verify
+
+Print the resolved tool before trusting a failure:
+
+- `command -v topsailai_agent_plan_tasks` must resolve inside the project `bin/`.
+- `command -v setcap` must resolve to `/usr/sbin/setcap`.
+
+If either command is not found, fix `PATH` and rerun before attributing the
+failure to the code.
