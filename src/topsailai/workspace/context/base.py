@@ -1634,6 +1634,13 @@ Summarize Messages
         )
         llm_chat.prompt_ctl.messages = all_messages[:]
 
+        # The tool schema and tool_choice="auto" are deliberately kept identical to a
+        # normal agent request so the request prefix stays the same and the provider's
+        # prompt cache can be reused. Dropping them would change the prefix and lose
+        # that cache reuse, so they must not be removed even though a summary request
+        # never needs tools.
+        # The TIPS prompt below is the actual behavioral constraint: it forbids tool
+        # invocation, so the model must not call any of the offered tools.
         tools = None
         if self.ai_agent and env_tool.is_use_tool_calls():
             tools_for_chat = get_tools_for_chat(self.ai_agent.available_tools)
