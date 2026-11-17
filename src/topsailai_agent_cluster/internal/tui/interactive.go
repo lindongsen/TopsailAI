@@ -1295,7 +1295,12 @@ func interactiveRefreshWithArguments(parent context.Context, api InteractiveAPI,
 			return err
 		}
 	}
-	err = renderListRows(out, errors, loaded, scoped, false, tableOptionsFor(out, color, listArguments{All: arguments.All}, func(rows []SessionRow) { staged = append(staged, rows...) }))
+	options := tableOptionsFor(out, color, listArguments{All: arguments.All}, func(rows []SessionRow) { staged = append(staged, rows...) })
+	// A refresh is one explicit command, not a timer, so it reads the counts
+	// uncached exactly as list does. Caching here would make a command that
+	// exists to produce current data return an older answer.
+	options.EnrichRows = MetricsEnricher(ctx, api)
+	err = renderListRows(out, errors, loaded, scoped, false, options)
 	if err != nil {
 		state.Rows = nil
 		return err

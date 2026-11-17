@@ -1030,6 +1030,10 @@ func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 	options := tui.TableOptionsFor(output)
 	options.Color = color
 	options.All = parsed.All
+	// A refresh is one explicit command, not a timer, so it reads the counts
+	// uncached exactly as list does. The read shares the refresh budget, so a
+	// slow provider costs one cell rather than the command.
+	options.EnrichRows = tui.MetricsEnricher(refreshCtx, api)
 	// A forced collection is the longest silent wait on the read surface, so it
 	// reports progress like a command does. The reporter is built from the
 	// diagnostics stream, so a redirected stream stays silent.

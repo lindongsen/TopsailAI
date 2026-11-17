@@ -43,6 +43,14 @@ func newRefreshTestServer(t *testing.T) *refreshTestServer {
 			writeListTestEnvelope(w, http.StatusOK, "success", listTestInventory("fresh-1"))
 		case r.URL.Path == "/api/v1/endpoints/endpoint-2/session-state":
 			writeListTestEnvelope(w, http.StatusOK, "success", listTestInventory("fresh-2"))
+		case r.URL.Path == "/api/v1/metrics":
+			// The refresh surface reads message counts for the rows it renders, so
+			// the fixture answers the metrics query with a distinctive value. A
+			// distinctive value cannot be confused with an unmeasured cell.
+			writeListTestEnvelope(w, http.StatusOK, "success", protocol.SessionMetrics{
+				ProviderSessionID: r.URL.Query().Get("session_id"),
+				Messages:          protocol.MessageCounts{Inbound: 7, Outbound: 3},
+			})
 		default:
 			writeListTestEnvelope(w, http.StatusNotFound, "not found", nil)
 		}
@@ -193,5 +201,21 @@ func TestRefreshReportsForcedCollectionFailure(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "cached-1") {
 		t.Fatalf("failed refresh rendered cached rows: %q", output.String())
+	}
+}
+
+// TestRefreshFillsTheMessagesColumn proves the standalone refresh surface reads
+// message counts for the rows it renders. The column is filled only through
+// TableOptions.EnrichRows, so a refresh that never assigns it renders a dash for
+// every row while the command still succeeds.
+func TestRefreshFillsTheMessagesColumn(t *testing.T) {
+	fixture := newRefreshTestServer(t)
+	var output, diagnostics strings.Builder
+	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "refresh"}
+	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("refresh failed: %v diagnostics=%q", err, diagnostics.String())
+	}
+	if !strings.Contains(output.String(), "7/3") {
+		t.Fatalf("refresh did not fill the MESSAGES column: %q", output.String())
 	}
 }
