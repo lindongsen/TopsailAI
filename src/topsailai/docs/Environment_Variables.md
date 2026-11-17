@@ -189,6 +189,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_HEAVY_TASK_PROMPT` | `""` | Prompt used when a heavy task is detected. |
 | `TOPSAILAI_SUMMARY_WINDOW_SIZE` | `10` | Number of most recent LLM requests kept in the sliding window used by the summary guard. Positive integer; invalid or non-positive values fall back to `10`. |
 | `TOPSAILAI_SUMMARY_WINDOW_MAX_SUMMARIES` | `3` | Number of summary requests tolerated inside that window. The turn ends when the count is strictly greater than this value, so the default `3` ends the turn at `4`. Non-negative integer; `0` disables the guard, and negative or invalid values fall back to `3`. |
+| `TOPSAILAI_CONTEXT_SUMMARY_MIN_REDUCTION_RATIO` | `0.10` | Minimum token reduction a completed summary must achieve for the next LOW-watermark checkpoint to summarize again. LOW is entered by the safety coefficient rather than by the configured thresholds, so it re-enters on every iteration; when the previous summary reduced the context by less than this ratio, the next LOW checkpoint skips summarization and leaves the context untouched. HIGH and HARD checkpoints always summarize regardless of this value, so a context that keeps growing is still compressed before it can exceed the send limit. Valid values are greater than `0` and at most `1`; `0` or below disables the guard so LOW summarizes unconditionally, and invalid values fall back to `0.10`. |
 
 ### Threshold Resolution
 

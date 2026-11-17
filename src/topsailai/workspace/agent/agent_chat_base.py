@@ -5,6 +5,7 @@
   Purpose:
 '''
 
+import math
 import os
 
 from topsailai.logger import logger
@@ -207,6 +208,9 @@ class AgentChatBase(object):
         set_ai_agent(self.ai_agent)
 
         self.heavy_task = HeavyTaskBase()
+        # Token reduction ratio of the most recent completed summary. ``None``
+        # means no summary has completed yet in this turn.
+        self._last_summary_reduction_ratio = None
 
         ##########################################################################################
         # Agent HOOKS
@@ -252,6 +256,7 @@ class AgentChatBase(object):
                 _ai_agent: The agent instance to operate on.
             """
             self.heavy_task.reset_count()
+            self._reset_summary_effectiveness()
             ctx_runtime_data.reset_messages()
 
             # cut messages
@@ -312,13 +317,60 @@ class AgentChatBase(object):
             if dynamic_summary:
                 need_processed_summary = ctx_runtime_data.is_need_summarize_for_processed()
                 need_processing_summary = ctx_runtime_data.is_need_summarize_for_processing()
-                processed_answer = ctx_runtime_data.summarize_messages_for_processed(
-                    force=force_summary
+                # LOW is entered by the safety coefficient rather than by the
+                # configured thresholds, so it re-enters on every iteration and
+                # would summarize again even when the previous summary barely
+                # reduced the context. Skip that repeat only at LOW: HIGH and
+                # HARD stay forced, so a context that keeps growing is still
+                # compressed before it can exceed the send limit.
+                skip_ineffective_low = (
+                    dynamic_level == CONTEXT_WATERMARK_LOW
+                    and self._is_summary_ineffective()
                 )
-                _answer = ctx_runtime_data.summarize_messages_for_processing(
-                    force=force_summary
-                )
-                summary_completed = bool(processed_answer or _answer)
+                if skip_ineffective_low:
+                    print_tool.print_warning(
+                        "[hook_summarize_messages] skip LOW summarization: the previous "
+                        f"summary reduced tokens by {self._last_summary_reduction_ratio:.4f}, "
+                        f"below the required {self._get_summary_min_reduction_ratio()}, "
+                        f"current_tokens={watermark.current_tokens if watermark else None}, "
+                        f"session_id={ctx_runtime_data.session_id or ''}"
+                    )
+                    logger.warning(
+                        "[hook_summarize_messages] skip LOW summarization: "
+                        "previous_reduction_ratio=%s, required_ratio=%s, "
+                        "current_tokens=%s, session_id=%s",
+                        self._last_summary_reduction_ratio,
+                        self._get_summary_min_reduction_ratio(),
+                        watermark.current_tokens if watermark else None,
+                        ctx_runtime_data.session_id or "",
+                    )
+                    try:
+                        from topsailai.events import record_event
+
+                        record_event(
+                            "context.summary.skipped_ineffective_low",
+                            {
+                                "previous_reduction_ratio": self._last_summary_reduction_ratio,
+                                "required_ratio": self._get_summary_min_reduction_ratio(),
+                                "current_tokens": (
+                                    watermark.current_tokens if watermark else None
+                                ),
+                                "session_id": ctx_runtime_data.session_id or "",
+                            },
+                            session_id=ctx_runtime_data.session_id or None,
+                        )
+                    except Exception:
+                        logger.exception("failed to record ineffective LOW summary skip event")
+                    processed_answer = None
+                    summary_completed = False
+                else:
+                    processed_answer = ctx_runtime_data.summarize_messages_for_processed(
+                        force=force_summary
+                    )
+                    _answer = ctx_runtime_data.summarize_messages_for_processing(
+                        force=force_summary
+                    )
+                    summary_completed = bool(processed_answer or _answer)
             else:
                 need_processing_summary = False
                 if ctx_runtime_data.is_need_summarize_for_processed():
@@ -329,6 +381,16 @@ class AgentChatBase(object):
 
             if dynamic_summary:
                 updated_watermark = ctx_runtime_data._classify_context_watermark()
+                # Remember how much this summary actually reduced, so the next
+                # LOW checkpoint can skip a summarization that already proved
+                # ineffective. A skipped checkpoint leaves the marker untouched,
+                # which keeps LOW skipping until a HIGH or HARD forced summary
+                # produces a real reduction.
+                if summary_completed and watermark and updated_watermark:
+                    self._record_summary_reduction(
+                        watermark.current_tokens,
+                        updated_watermark.current_tokens,
+                    )
                 if (
                         summary_completed
                         and watermark
@@ -574,12 +636,65 @@ class AgentChatBase(object):
             return ""
         return message
 
+    def _get_summary_min_reduction_ratio(self) -> float:
+        """Return the minimum token reduction that makes a summary worthwhile.
+
+        A value of ``0`` or below disables the effectiveness guard, so LOW
+        summarization keeps its original unconditional behaviour.
+        """
+        ratio = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_CONTEXT_SUMMARY_MIN_REDUCTION_RATIO",
+            default=0.10,
+            formatter=float,
+        )
+        try:
+            ratio = float(ratio)
+        except (TypeError, ValueError):
+            ratio = None
+        if ratio is None or not math.isfinite(ratio) or ratio < 0 or ratio > 1:
+            logger.warning(
+                "invalid TOPSAILAI_CONTEXT_SUMMARY_MIN_REDUCTION_RATIO=%s; using 0.10",
+                ratio,
+            )
+            return 0.10
+        return ratio
+
+    def _record_summary_reduction(self, before_tokens, after_tokens) -> None:
+        """Remember how much the summary that just completed actually reduced."""
+        try:
+            before_tokens = int(before_tokens)
+            after_tokens = int(after_tokens)
+        except (TypeError, ValueError):
+            return
+        if before_tokens <= 0:
+            return
+        self._last_summary_reduction_ratio = (
+            before_tokens - after_tokens
+        ) / before_tokens
+        return
+
+    def _is_summary_ineffective(self) -> bool:
+        """True when the previous summary reduced the context too little to retry."""
+        threshold = self._get_summary_min_reduction_ratio()
+        if threshold <= 0:
+            return False
+        ratio = self._last_summary_reduction_ratio
+        if ratio is None:
+            return False
+        return ratio < threshold
+
+    def _reset_summary_effectiveness(self) -> None:
+        """Clear the effectiveness marker at the start of a turn."""
+        self._last_summary_reduction_ratio = None
+        return
+
     def reset(self, first_message:str, model_name:str):
         """ Reset options """
         if first_message:
             self.first_message = first_message
 
         self.heavy_task.reset_count()
+        self._reset_summary_effectiveness()
 
         if model_name:
             self.ai_agent.runtime.llm_model.model_name = model_name
