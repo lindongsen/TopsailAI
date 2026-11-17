@@ -12,6 +12,7 @@ references:
   - workspace/context/ctx_runtime.py
   - workspace/context/agent_tool.py
   - issues/done/issue-agent2llm-summary-orphan-tool-message-400.md
+status: resolved
 ---
 
 # Issue: Follow-Ups From the Orphan Tool Message 400 Review
@@ -99,3 +100,23 @@ Affected test files pass individually:
 | `tests/unit/test_topsailai_workspace_context_agent2llm.py` | 89 passed |
 
 The first official runner attempt exposed one obsolete multimodal test that asserted an orphan `role="tool"` message survived request construction; its fixture was corrected to include the required assistant owner and then passed individually. The required rerun of `tests/run_tests.py` completed with `Total=206, Passed=206, Failed=0`, exit code `0`, in 303.692 seconds. Database backfill, pair-aware User2Agent deletion, and configured-hook merge semantics remain deferred. No change in this issue is committed or staged.
+
+## Closure verification (2026-11-17)
+
+The fixed items are committed and verified in HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`.
+
+- `f5a0966 fix: tighten orphan tool message safeguards` (2026-08-28) is an ancestor of HEAD.
+- Contextual non-retryable classification is live at
+  `ai_base/llm_control/retry_classification.py:17-20`: `function_call_output` requires
+  `no matching function_call` or `no function call found`, and `tool_call_id` requires
+  `not found` or `preceding message`. Generic protocol field names alone no longer fast-fail.
+- `utils/message_tool.py:285-325` `drop_orphaned_tool_messages()` logs the message `index`,
+  `tool_call_id` and tool `name`, and deliberately excludes tool-result content.
+- `context/ctx_manager.py:560` calls `message_tool.expand_tail_start_for_tool_pairing()`, so
+  session-load truncation no longer starts with an ownerless tool result.
+
+Deferred items are explicit design decisions, not open defects, and are recorded above as such:
+historical database backfill (Option D, unnecessary while Option C prevents new corruption),
+pair-aware User2Agent deletion (separate follow-up), and configured-hook merge semantics (a
+public configuration contract change requiring its own decision). Closing this record does not
+authorize any of them.

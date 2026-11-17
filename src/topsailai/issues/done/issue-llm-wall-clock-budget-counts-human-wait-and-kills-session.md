@@ -5,6 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: resolved
 ---
 
 # The LLM wall-clock budget charges the human's interactive wait and then kills the session
@@ -132,3 +133,14 @@ protecting.
   `RECOVERABLE_PROVIDER_ERRORS` or in the loop's handler list.
 - Report provider-work elapsed time separately from total wall-clock time in
   `LLMRequestFailureLog`.
+
+## Closure verification (2026-11-17)
+
+Resolved in HEAD.
+
+- `ai_base/llm_base.py:740-793` documents and implements the boundary: the budget measures
+  provider work only, and `budget_started_at = time.monotonic()` is re-armed after a human
+  decision, so time the human spent deciding is never charged to the request.
+- `workspace/agent/agent_shell_base.py:95-97` lists `LLMRequestTimeoutError` in
+  `RECOVERABLE_REQUEST_ERRORS`, so an exhausted budget is recoverable instead of terminating the
+  session.

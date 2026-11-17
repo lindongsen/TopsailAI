@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: pending
+status: resolved
 ---
 
 # Interrupted activation double counts candidate and active group
@@ -32,3 +32,25 @@ RED was `2 failed, 36 deselected`, reproducing the extra candidate count at the 
 Final Developer evidence: focused retention plus publication `56 passed in 1.10s`; complete ordered artifact gate `365 passed in 7.62s`; seven-module combined coverage `93.55358581788880%` (`879/923` lines and `282/318` branches); expanded eight-module combined coverage `93.35347432024169%` (`935/982` lines and `301/342` branches). Both coverage runs passed `98` tests with `59` trace-dependent instances deselected; all of those instances passed in the uninstrumented gate. Mechanical checks pass, staged count is zero, HEAD is unchanged at `2091b10eb739d651a7c0aabf3ac604cea352e57c`, and no commit was made.
 
 Next action: fourth independent U08-C review by gpt56terra-programmer. Keep this issue pending until that review is approved; Human acceptance remains separate.
+
+## Closure verification (2026-11-17)
+
+Resolved in HEAD. The decision-aware snapshot repair described above as "uncommitted" is committed.
+
+- `d2ec3e22 feat: bound artifact retention maintenance` (2026-10-07) is an ancestor of HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`.
+- `hooks/artifact_publication.py:273-291` `_snapshot_publication_group_counts()` derives both
+  counts from the publication decision. When a charged stage is decided because
+  `PublicationCell.current` is the exact replacement image, the replacement candidate is
+  excluded from the candidate count despite retained recovery custody and counted once as
+  active; exact old roots removed by the replacement are excluded from the active count; a
+  decided no-op candidate counts in neither category.
+- Outside an unfinished decided stage, ordinary candidate-index and lifecycle-state
+  classification is unchanged, so the recovery index, exact-identity deletion, bounded
+  sixteen-position traversal and close convergence all remain intact.
+- Regression coverage: `test_decided_publication_snapshot_classifies_candidate_once` and
+  `test_decided_changed_publication_snapshot_counts_remain_exclusive` pass.
+- Runner result for retention plus publication protocol: `Total=2, Passed=2, Failed=0`, 56 cases.
+
+The `trust_rejected` failures seen under a bare `pytest` invocation are a harness artifact:
+`/tmp` is mode `0777` and `_validate_directory_status` rejects group/other-writable ancestry.
+The project runner uses `.tmp/unit-runner` (mode `0755`) and passes.

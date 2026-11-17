@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: resolved
 ---
 # First EOF submission stalls behind synchronous session eviction
 
@@ -54,3 +54,15 @@ Human requested the fix and explicitly questioned why all historical sessions we
 Automatic eviction now fixes the candidate set to the oldest excess rows, excluding the just-created session. Protected candidates remain without replacement by newer sessions. Selected candidates are screened in batches grouped by recorded home. Only STOPPED candidates enter the unchanged fresh provenance and double-observation deletion path. Ordered database listing still reads the session rows; activity checks do not cover retained newer sessions. Actual deletions retain their fresh directory inspections.
 
 Verification: 182 targeted tests passed; session_cleanup.py statement coverage 65/65 and branch coverage 32/32. A real filesystem case with 110 sessions and 1,000 unrelated artifacts checks only the oldest 10 sessions with two total inventory enumerations for the protected batch. A real SQLite regression confirms only the oldest stopped excess session is removed. Race/refusal, UNKNOWN/RUNNING protection, new-session exclusion, and home grouping are covered. Evidence is under .tmp/session-eviction. Full suite, BDD, and real-provider tmux latency were not rerun; no new end-to-end timing claim is made. Code remains uncommitted pending Human review.
+
+## Closure verification (2026-11-17)
+
+Resolved in HEAD.
+
+- `157bf8af fix: bound session eviction checks to oldest excess candidates` (2026-10-23) is an
+  ancestor of HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`.
+- `context/session_cleanup.py:83-97` now computes `excess = len(counted) - SESSION_RETENTION_LIMIT`,
+  returns early when `excess <= 0`, and slices `candidates = [...][:excess]` so only the oldest
+  excess rows are inspected.
+- Candidates are grouped by `topsailai_home` and observed through `observe_many`, so the first
+  EOF no longer pays for a full-table activity probe.

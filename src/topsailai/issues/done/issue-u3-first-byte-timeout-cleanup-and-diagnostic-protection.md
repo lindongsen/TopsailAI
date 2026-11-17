@@ -6,6 +6,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
+status: resolved
 ---
 # U3 first-byte timeout cleanup and diagnostic protection
 
@@ -30,3 +31,20 @@ Fallback warning and phase-diagnostic logging remain nested in protected excepti
 ## Status
 
 Open pending independent re-review; targeted repair is locally verified and not committed or staged.
+
+## Closure verification (2026-11-17)
+
+Resolved in HEAD. The repair described above as "not committed or staged" is committed.
+
+- `251ad9a6 fix: dispose local owner on all first byte timeout exits` (2026-10-15) is an ancestor
+  of HEAD `5da6bb49f651a501b041486590a0c87e5acd85c6`.
+- `7d5e67a0 fix: warn on late terminal outcomes and pause before first result` (2026-10-15) is
+  also an ancestor.
+- `ai_base/llm_control/first_byte_timeout.py:664-675` holds one outer `try/finally` that pauses
+  for `ERROR`, `EOF` and `VALUE` decisions and disposes the locally owned response on every exit,
+  so a pause failure can no longer skip disposal.
+- `ai_base/llm_control/first_byte_timeout.py:318-324` keeps `_safe_log_first_byte_phase_elapsed`
+  inside a nested exception boundary, so a logging handler failure cannot replace the business
+  outcome.
+- Warning elapsed is derived from the budget's cumulative authority clock rather than the clipped
+  remaining budget.

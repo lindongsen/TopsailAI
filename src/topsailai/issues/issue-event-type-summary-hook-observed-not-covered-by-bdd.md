@@ -1,3 +1,14 @@
+---
+maintainer: AI
+author: DawsonLin
+workspace: /TopsailAI/src/topsailai
+ProjectFolder: /TopsailAI/src/topsailai
+ProjectRootFolder: /TopsailAI
+ProjectCode: TOPSAILAI
+programming_language: python
+status: open
+---
+
 # Event type not covered by BDD: summary.hook.observed
 
 ## Status

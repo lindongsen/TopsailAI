@@ -33,3 +33,13 @@ The oversized module has a high maintenance and review cost. Further non-trivial
 Before any non-trivial future modification to `workspace/context/base.py`, separately authorize a maintenance/refactor task to split the module into cohesive files, with every resulting code file at or below 700 lines.
 
 The U5 and U6 narrow exceptions must not be reused as authority for additional growth. The refactor must preserve public behavior and include targeted regression coverage for the separated responsibilities.
+
+## Re-measured on 2026-11-17
+
+`workspace/context/base.py` is now **1,658 lines**, not the 1,298 recorded above. The debt grew
+by 360 lines after this issue was written, so the recorded figure and the "598 lines over the
+limit" statement are both stale.
+
+This remains a standing constraint rather than a defect to repair: the file must not grow further
+without a separately authorized split, and the U5/U6 narrow exceptions still do not authorize
+additional growth. The issue stays open until that refactor is authorized and completed.

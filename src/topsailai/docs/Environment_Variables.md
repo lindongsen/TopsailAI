@@ -552,9 +552,11 @@ These variables control the optional channel that pushes recorded events to exte
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_HUMAN_DECISION_TIMEOUT` | `0` | Default integer seconds to wait for a decision from the `ask_decision` tool. `0` = infinite, but only honored when an interactive TTY is present; otherwise the tool returns `unavailable` immediately. Positive integers cap the wait; invalid or fractional values fall back to `0`. |
+| `TOPSAILAI_HUMAN_DECISION_TIMEOUT` | `0` | Default integer seconds to wait for a decision from the `ask_decision` tool. `0` = no deadline. The timeout only bounds the wait after a usable input source has been found; availability is decided independently and earlier, so a positive value never makes an unavailable channel usable. Positive integers cap the wait; invalid or fractional values fall back to `0`. |
 | `TOPSAILAI_HUMAN_DECISION_PROMPT_TEMPLATE` | `""` | Optional custom prompt template with placeholders `{question}`, `{options}`, and `{default}`. Empty uses built-in rendering. |
 | `TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH` | `30000` | Maximum length of a free-text answer before truncation. |
+
+Availability and timeout are two independent gates, evaluated in that order. Availability is decided first and does not depend on the timeout value: a session-provided input channel makes the tool usable without a terminal, while a nested-agent call is refused even when a terminal is present. Disabling interactive mode does not short-circuit a session-provided channel, so inside an agent session the tool still waits for an answer and reports a timeout rather than reporting unavailability. Malformed arguments are reported as an invalid request with a machine-readable reason instead of being reported as unavailability.
 
 ## Thought/Final-Answer Abnormal Line-Ratio Detection
 
