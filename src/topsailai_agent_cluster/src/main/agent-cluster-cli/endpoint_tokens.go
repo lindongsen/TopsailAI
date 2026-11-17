@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 )
 
 // endpointTokensEnv names the configuration key that maps an Endpoint ID to the
@@ -25,34 +24,13 @@ const endpointTokensEnv = cliEndpointTokensEnv
 // leave the operator believing a token was configured while the CLI silently sent
 // nothing, and the resulting refusal would look like a policy problem on the
 // Endpoint instead of a typo in the CLI configuration.
+//
+// The pair rules live in parsePairs so every CLI map follows one implementation.
+// This map keeps the stricter separator rule, because a token holding a comma or
+// equals sign cannot be written back unambiguously by the tooling that maintains
+// this file.
 func parseEndpointTokens(value string) (map[string]string, error) {
-	tokens := make(map[string]string)
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return tokens, nil
-	}
-	for _, entry := range strings.Split(trimmed, ",") {
-		pair := strings.TrimSpace(entry)
-		if pair == "" {
-			return nil, fmt.Errorf("%s contains an empty entry", endpointTokensEnv)
-		}
-		endpointID, token, found := strings.Cut(pair, "=")
-		endpointID = strings.TrimSpace(endpointID)
-		token = strings.TrimSpace(token)
-		if !found || endpointID == "" || token == "" {
-			return nil, fmt.Errorf("%s entry %q is not an endpoint_id=token pair", endpointTokensEnv, pair)
-		}
-		// A token containing a separator could not be written back unambiguously,
-		// so it is rejected instead of being silently truncated on the next read.
-		if strings.ContainsAny(token, ",=") {
-			return nil, fmt.Errorf("%s entry %q has a token containing a comma or equals sign", endpointTokensEnv, endpointID)
-		}
-		if _, duplicate := tokens[endpointID]; duplicate {
-			return nil, fmt.Errorf("%s configures endpoint %q more than once", endpointTokensEnv, endpointID)
-		}
-		tokens[endpointID] = token
-	}
-	return tokens, nil
+	return parsePairs(value, endpointTokensEnv, "endpoint_id=token", "endpoint", "token", true)
 }
 
 // resolveEndpointTokenTarget reports the one Endpoint a command addresses, so a

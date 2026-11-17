@@ -368,6 +368,9 @@ CLI configuration files override their built-in defaults.
 |---|---|---|---|
 | `AGENT_CLUSTER_CLI_SERVER_URL` | `--server-url` | `http://127.0.0.1:8080` | Server API URL the CLI connects to |
 | `AGENT_CLUSTER_CLI_SERVER_TOKEN` | `--token` | empty | Bearer token the CLI presents to the Server |
+| `AGENT_CLUSTER_CLI_SERVER_PROFILES` | none | empty | Comma-separated `name=url` map defining named Server profiles |
+| `AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS` | none | empty | Comma-separated `name=token` map giving each profile its bearer token |
+| `AGENT_CLUSTER_CLI_SERVER_PROFILE` | `--server-profile` | empty | Profile name to select when no flag is given |
 | `AGENT_CLUSTER_CLI_ENDPOINT_TOKENS` | `--endpoint-token` for one selected Endpoint | empty | Comma-separated `endpoint_id=token` map used for Endpoint authorization |
 | `AGENT_CLUSTER_CLI_HISTORY_FILE` | none | `${HOME}/.topsailai/.topsailai_agent_cluster.history.jsonl` | Persistent JSONL file for accepted interactive input |
 | `AGENT_CLUSTER_CLI_HISTORY_MAX_ENTRIES` | none | `100` | Maximum trailing history records read at startup and maximum commands retained for Up/Down recall |
@@ -378,6 +381,32 @@ CLI configuration files override their built-in defaults.
 token. A CLI started without it omits the `Authorization` header entirely, so the
 Server rejects the request instead of the client silently using a known development
 value.
+
+A Server profile is one URL and one token under one name, because the two are a single
+credential pair rather than two independent settings. An operator who moves an Endpoint
+to a different Server has to change both at once, and changing them separately is how
+one Server's token ends up being presented to another Server.
+
+```shell
+AGENT_CLUSTER_CLI_SERVER_PROFILES='primary=http://127.0.0.1:8080,secondary=https://other.example.test'
+AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS='primary=token-a,secondary=token-b'
+AGENT_CLUSTER_CLI_SERVER_PROFILE=secondary
+```
+
+The selection may come from `AGENT_CLUSTER_CLI_SERVER_PROFILE` or from
+`--server-profile`; the flag wins, so one invocation can override a script's choice
+without editing the environment. A profile cannot be combined with an explicit
+`--server-url` or `--token`: that combination is refused rather than merged, because a
+stale flag in a shell alias would silently redirect the profile's token to a different
+machine and nothing in the output would show that the pair had been split. The
+environment defaults for those two settings are not a conflict, because they are the
+fallback for an invocation that selects no profile.
+
+A token configured for a profile that has no URL is rejected at load time. The
+alternative is a later "unknown profile" failure that describes the symptom while the
+configured token sits unused. A profile with no token is valid and yields an empty
+token, which means the CLI omits the `Authorization` header rather than inventing a
+default.
 
 Interactive history stores every accepted nonblank submission as one JSON object per
 line. REPL commands use `kind=command`; confirmation, guided-choice and wizard answers

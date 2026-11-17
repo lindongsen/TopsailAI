@@ -79,6 +79,12 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	confirmed := flags.Bool("yes", false, "confirm a mutating action")
 	serverURL := flags.String("server-url", envOr(cliServerURLEnv, "http://127.0.0.1:8080"), "Server API URL")
 	token := flags.String("token", cliEnvironmentValue(os.Getenv, cliServerTokenEnv), "Server bearer token")
+	// --server-profile selects one named Server URL and token pair, so an operator
+	// who moves an Endpoint to a different Server changes one name instead of two
+	// settings. The name may also come from AGENT_CLUSTER_CLI_SERVER_PROFILE, which
+	// is what lets a script or a shell alias select a Server without repeating the
+	// flag on every invocation.
+	serverProfile := flags.String("server-profile", cliEnvironmentValue(os.Getenv, serverProfileEnv), "named Server URL and token pair; see AGENT_CLUSTER_CLI_SERVER_PROFILES")
 	// --endpoint-token is the token the target Endpoint accepts. It is a separate
 	// credential from --token because the two answer different questions: the
 	// Server token decides whether this CLI may talk to the cluster, while the
@@ -171,7 +177,31 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	if err := applyEndpointTokenFlag(endpointTokens, resolveEndpointTokenTarget(*filter, flags.Args()), *endpointToken); err != nil {
 		return err
 	}
-	api := client.NewAPIClient(*serverURL, *token)
+	// The Server profile maps are resolved before any command runs, so a malformed
+	// map or an unknown profile name is reported once instead of surfacing as a
+	// connection failure to whichever Server the invocation happened to reach.
+	// A profile supplies the URL and the token together, so a selection can never
+	// pair one Server's address with another Server's credential.
+	serverProfiles, err := parseServerProfiles(cliEnvironmentValue(os.Getenv, serverProfilesEnv))
+	if err != nil {
+		return err
+	}
+	serverProfileTokens, err := parseServerProfileTokens(cliEnvironmentValue(os.Getenv, serverProfileTokensEnv))
+	if err != nil {
+		return err
+	}
+	if err := validateServerProfileTokens(serverProfiles, serverProfileTokens); err != nil {
+		return err
+	}
+	// An explicit --server-url or --token alongside a profile is refused rather
+	// than merged, because merging is how a credential reaches the wrong Server.
+	// The environment defaults for those two settings are not a conflict: they are
+	// the fallback for an invocation that selects no profile.
+	resolvedURL, resolvedToken, err := resolveServerTarget(*serverProfile, serverProfiles, serverProfileTokens, flagSupplied(flags, "server-url"), flagSupplied(flags, "token"), *serverURL, *token)
+	if err != nil {
+		return err
+	}
+	api := client.NewAPIClient(resolvedURL, resolvedToken)
 	api.EndpointTokens = endpointTokens
 	ctx := context.Background()
 	if interactiveSelected {
@@ -579,6 +609,7 @@ func flagSupplied(flags *flag.FlagSet, name string) bool {
 // cannot be added without deciding whether it is hoistable.
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
+	"server-profile":  true,
 	"endpoint-token":  true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
 	"no-progress": true, "no-truncate": true, "limit": true, "max-chars": true, "c": true,

@@ -26,6 +26,9 @@ Examples:
 |---|---|---|
 | `AGENT_CLUSTER_CLI_SERVER_URL` | `https://cluster.example.test` | Server URL |
 | `AGENT_CLUSTER_CLI_SERVER_TOKEN` | `operator-token` | Server bearer token |
+| `AGENT_CLUSTER_CLI_SERVER_PROFILES` | `primary=https://cluster.example.test` | named Server profile URLs |
+| `AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS` | `primary=operator-token` | named Server profile tokens |
+| `AGENT_CLUSTER_CLI_SERVER_PROFILE` | `primary` | selected Server profile |
 | `AGENT_CLUSTER_CLI_ENDPOINT_TOKENS` | `endpoint-a=token-a` | Endpoint token map |
 | `AGENT_CLUSTER_CLI_HISTORY_FILE` | `/tmp/history.jsonl` | history path |
 | `AGENT_CLUSTER_CLI_HISTORY_MAX_ENTRIES` | `200` | in-memory recall bound |
