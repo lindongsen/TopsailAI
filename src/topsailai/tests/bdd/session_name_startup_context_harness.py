@@ -630,6 +630,12 @@ class SessionNameStartupScenario:
             "BDD_INTEGRITY_REPORT": str(self.events_dir / "integrity-report.json"),
             "BDD_SERVER_STATE_URL": f"http://127.0.0.1:{self.server.server_port}/debug/state",
         })
+        # The child is driven with exactly one input line per turn, so the
+        # multi-line input mode must be stated here instead of inherited from
+        # the operator's shell. An inherited "1" makes the child wait for a
+        # second line that this harness never sends, and the scenario then
+        # fails with a pipe timeout rather than the behaviour under test.
+        env["TOPSAILAI_CHAT_MULTI_LINE"] = "0"
         self.process = subprocess.run(
             [sys.executable, "-c", _CHILD_SCRIPT],
             cwd=str(Path(__file__).parents[2]),

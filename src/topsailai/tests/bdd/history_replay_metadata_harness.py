@@ -259,6 +259,12 @@ class MetadataScenario:
             source_path.write_text(source, encoding="utf-8")
             env.update({"BDD_PREFIX": "1", "BDD_PREFIX_AGENT_SOURCE": str(source_path)})
         env.update({"SESSION_ID": self.session_id, "REPORT": str(self.report_path), "REQUEST_COUNT": "3" if self.native else "2", "BDD_NATIVE": "1" if self.native else "0", "BDD_MOCK_PORT": str(self.server.server_port)})
+        # The child is driven with exactly one input line per turn, so the
+        # multi-line input mode must be stated here instead of inherited from
+        # the operator's shell. An inherited "1" makes the child wait for a
+        # second line that this harness never sends, and the scenario then
+        # fails with a pipe timeout rather than the behaviour under test.
+        env["TOPSAILAI_CHAT_MULTI_LINE"] = "0"
         try:
             result = subprocess.run([sys.executable, "-c", _CHILD], cwd=str(Path(__file__).parents[2]), env=env, text=True, capture_output=True, timeout=60)
         except subprocess.TimeoutExpired as error:
