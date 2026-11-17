@@ -36,6 +36,7 @@ var featurePaths = []string{
 	"../../features/endpoint_expiry.feature",
 	"../../features/endpoint_server_rehome_connection.feature",
 	"../../features/endpoint_server_rehome_receipts.feature",
+	"../../features/endpoint_server_rehome_deployment.feature",
 }
 
 // TestFeatures runs the strict real-boundary BDD suite.
@@ -91,6 +92,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerEndpointExpirySteps(ctx)
 	registerEndpointServerRehomeConnectionSteps(ctx)
 	registerEndpointServerRehomeReceiptSteps(ctx)
+	registerEndpointServerRehomeDeploymentSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone

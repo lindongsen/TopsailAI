@@ -43,10 +43,18 @@ type mockOptions struct {
 	mutationFile       string
 	discoveryCountFile string
 	delayMS            int
-	followHoldMS       int
-	outputSize         int
-	failAfterN         int
-	alwaysFail         bool
+	// recordBeforeDelay writes the invocation record before the delay instead of
+	// after it. A caller that must prove an invocation happened even when the
+	// Cluster cancelled the call mid-flight needs this: the default records only
+	// after the work finishes, so a cancelled call leaves no trace and an
+	// "invoked exactly once" assertion compares zero with zero and passes while
+	// proving nothing. The record written early carries no end_ns, which is the
+	// honest signal that the invocation started and never completed.
+	recordBeforeDelay bool
+	followHoldMS      int
+	outputSize        int
+	failAfterN        int
+	alwaysFail        bool
 	// sessionDir is the working directory the mock reports for every session it
 	// publishes. The Cluster resolves an operator command's directory from this
 	// provider evidence and refuses the command when it is absent, so a mock that
@@ -77,6 +85,11 @@ func parseOptions() mockOptions {
 	flag.StringVar(&options.mutationFile, "mutation-file", "", "append one line per applied mutation")
 	flag.StringVar(&options.discoveryCountFile, "discovery-count-file", "", "durable discovery invocation counter")
 	flag.IntVar(&options.delayMS, "delay-ms", 0, "delay execution for evidence tests")
+	// recordBeforeDelay exists so a scenario can prove an invocation happened even
+	// when the Cluster cancelled the call mid-flight. The default records only
+	// after the work finishes, so a cancelled call leaves no trace and an
+	// "invoked exactly once" assertion would compare zero with zero.
+	flag.BoolVar(&options.recordBeforeDelay, "record-before-delay", false, "record the invocation before the delay instead of after it")
 	// followHoldMS keeps a follow stream alive after its last record. A stream
 	// that ends on its own can never be mistaken for a stream the operator
 	// stopped, so a scenario that proves the stop path needs the process to
@@ -295,10 +308,22 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		// every entry at zero, so an overlap assertion compared zero with zero and
 		// passed while proving nothing.
 		startNS := time.Now().UnixNano()
+		// A caller that must prove an invocation happened even when the call was
+		// cancelled asks for the record before the delay. Without this the record
+		// is written only after the work finishes, so a call the Cluster cancelled
+		// mid-flight leaves no trace at all and an "invoked exactly once"
+		// assertion compares zero with zero and passes while proving nothing.
+		// The record written here carries no end_ns, and that absence is the
+		// honest signal that the invocation started and never completed.
+		if options.recordBeforeDelay {
+			recordInvocationInterval(options, request, "execute", startNS, 0)
+		}
 		if options.delayMS > 0 {
 			time.Sleep(time.Duration(options.delayMS) * time.Millisecond)
 		}
-		recordInvocationInterval(options, request, "execute", startNS, time.Now().UnixNano())
+		if !options.recordBeforeDelay {
+			recordInvocationInterval(options, request, "execute", startNS, time.Now().UnixNano())
+		}
 		// The diagnostic goes to stderr and the answer is a failure document, so
 		// the Cluster keeps the provider's own words as evidence instead of
 		// flattening the failure into a generic error. The invocation is recorded

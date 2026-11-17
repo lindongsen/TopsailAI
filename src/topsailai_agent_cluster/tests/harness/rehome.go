@@ -276,6 +276,45 @@ func (c *Cluster) SecondaryURL(path string) string {
 	return "http://127.0.0.1:" + c.SecondaryAPI + path
 }
 
+// SecondaryRequestWithEndpointTokenE performs one authenticated request against
+// the secondary Server.
+//
+// A re-home scenario must read the Server that actually holds the state after the
+// move. Reading the primary Server would report the pre-move world, so a scenario
+// that resolved a target or polled a command through the primary would fail with
+// "inventory has no sessions" and look like a defect in the re-home instead of a
+// scenario reading the wrong Server.
+func (c *Cluster) SecondaryRequestWithEndpointTokenE(method, path string, payload any, endpointToken string) (int, []byte, error) {
+	if c.SecondaryAPI == "" {
+		return 0, nil, fmt.Errorf("cluster was not started with a second Server")
+	}
+	return c.requestAtE("http://127.0.0.1:"+c.SecondaryAPI, method, path, payload, endpointToken)
+}
+
+// WaitEndpointOnlineE waits until the primary Server reports the Endpoint online.
+//
+// The primary Server is the only authority for whether the Endpoint reached it,
+// so a deployment-shape scenario reads that Server's own endpoint list instead of
+// inferring connectivity from a successful process start. A process that started
+// and never connected would otherwise look like a passing scenario.
+func (c *Cluster) WaitEndpointOnlineE(limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	var last string
+	for time.Now().Before(deadline) {
+		state, err := c.endpointConnectionStateE(c.URL("/api/v1/endpoints"))
+		if err == nil {
+			last = state
+			if state == "online" {
+				return nil
+			}
+		} else {
+			last = err.Error()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("the primary Server never reported endpoint-1 online within %s; last observation: %s", limit, last)
+}
+
 // WaitSecondaryEndpointOnlineE waits until the second Server reports the
 // Endpoint online.
 //

@@ -97,7 +97,13 @@ func main() {
 	if hostnameErr != nil {
 		logger.Warn("resolve endpoint hostname", "error", hostnameErr)
 	}
-	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: clientTLS, Address: cfg.ChannelAddress, Addresses: dialAddresses, Bidirectional: bidirectional}
+	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: clientTLS, Address: cfg.ChannelAddress, Addresses: dialAddresses, Bidirectional: bidirectional, OnAttemptFailure: func(address string, attemptErr error) {
+		// A failed attempt is logged even when a later address succeeds, because a
+		// silent walk leaves the operator unable to tell "the first Server is down"
+		// from "the first Server was never configured". The walk continues, so this
+		// is a warning rather than an error.
+		logger.Warn("endpoint channel address refused", "address", address, "error", attemptErr)
+	}}
 	if listens {
 		// The Endpoint accepts the Server connection, so it must verify the
 		// Server certificate itself and reject a revoked one.

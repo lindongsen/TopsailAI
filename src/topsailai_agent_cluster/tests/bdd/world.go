@@ -69,6 +69,13 @@ type World struct {
 	Transport   *bddTransport
 	events      chan []byte
 	realCluster *harness.Cluster
+	// rehomedToSecondary records that the Endpoint has moved to the second
+	// Server, so every later read addresses the Server that actually holds the
+	// state. Without it a scenario that re-homed and then resolved a target or
+	// polled a command would read the primary Server's pre-move world and fail
+	// with "inventory has no sessions", which reads like a defect in the re-home
+	// rather than a scenario reading the wrong Server.
+	rehomedToSecondary bool
 	// launchProfileToken is the Endpoint credential used to read the launch
 	// catalog. A policy-enforcing Endpoint refuses the catalog read without it,
 	// and the resulting 403 fallback would hand agent.start a provider key
@@ -204,6 +211,12 @@ type commandSubmission struct {
 	OperationVersion     string
 	PayloadSchemaVersion string
 	EndpointToken        string
+	// ExecuteBefore overrides the command deadline. It exists because the
+	// Endpoint's own execute budget is the intent deadline, so a scenario that
+	// must observe a command converge to unconfirmed has to choose a deadline
+	// shorter than the provider hold. The zero value keeps the 20s default that
+	// every existing scenario was written against.
+	ExecuteBefore time.Time
 }
 
 // SubmitRealCommandWithToken submits one immutable command that presents an
@@ -255,7 +268,16 @@ func (w *World) submitRealCommandWithToken(commandID string, submission commandS
 	if launchProfileID == "" {
 		launchProfileID = "fixture-main"
 	}
-	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": launchProfileID, "operation": submission.Operation, "operation_version": operationVersion, "capability_revision": "v1", "payload_schema_version": payloadSchemaVersion, "payload": raw, "execute_before_at_ms": time.Now().Add(20 * time.Second).UnixMilli()}
+	// The deadline defaults to 20s, which is the budget every existing scenario
+	// was written against. A scenario that must observe a command converge to
+	// unconfirmed overrides it, because the Endpoint's own execute budget is the
+	// intent deadline: a hold longer than the deadline would be cut off by the
+	// Endpoint instead of being observed as in flight.
+	executeBefore := submission.ExecuteBefore
+	if executeBefore.IsZero() {
+		executeBefore = time.Now().Add(20 * time.Second)
+	}
+	intent := map[string]any{"hash_version": "v1", "command_id": commandID, "endpoint_id": "endpoint-1", "launch_profile_id": launchProfileID, "operation": submission.Operation, "operation_version": operationVersion, "capability_revision": "v1", "payload_schema_version": payloadSchemaVersion, "payload": raw, "execute_before_at_ms": executeBefore.UnixMilli()}
 	if submission.Folder != "" {
 		intent["folder"] = submission.Folder
 	}
@@ -269,7 +291,7 @@ func (w *World) submitRealCommandWithToken(commandID string, submission commandS
 	if target != "" {
 		intent["target"] = map[string]any{"kind": "session", "resource_id": target, "provider_generation": generation}
 	}
-	status, body, err := w.realCluster.RequestWithEndpointTokenE(http.MethodPost, "/api/v1/commands", intent, submission.EndpointToken)
+	status, body, err := w.realRequestWithTokenE(http.MethodPost, "/api/v1/commands", intent, submission.EndpointToken)
 	if err != nil {
 		return "", err
 	}
@@ -298,7 +320,7 @@ func (w *World) resolveLaunchProfile() (string, string, error) {
 	if w.realCluster == nil {
 		return "", "", fmt.Errorf("real cluster is not running")
 	}
-	status, body, err := w.realCluster.RequestWithEndpointTokenE(http.MethodGet, "/api/v1/launch-options?endpoint_id=endpoint-1", nil, w.launchProfileToken)
+	status, body, err := w.realRequestWithTokenE(http.MethodGet, "/api/v1/launch-options?endpoint_id=endpoint-1", nil, w.launchProfileToken)
 	if err != nil {
 		return "", "", fmt.Errorf("read launch options: %w", err)
 	}
@@ -461,7 +483,7 @@ func (w *World) resolveModelProfile(target, generation string) (string, error) {
 	if providerGeneration != "" {
 		path += "&provider_generation=" + url.QueryEscape(providerGeneration)
 	}
-	status, body, err := w.realCluster.RequestWithEndpointTokenE(http.MethodGet, path, nil, w.launchProfileToken)
+	status, body, err := w.realRequestWithTokenE(http.MethodGet, path, nil, w.launchProfileToken)
 	if err != nil {
 		return "", fmt.Errorf("read model catalog: %w", err)
 	}
@@ -491,11 +513,34 @@ func (w *World) resolveModelProfile(target, generation string) (string, error) {
 }
 
 // realRequestE performs a real-cluster request without terminating the BDD test process.
+//
+// The request addresses the Server that currently owns the Endpoint. After a
+// re-home that is the second Server, and reading the primary instead would report
+// the pre-move world: the primary no longer receives inventory, so a target
+// resolution would fail with "inventory has no sessions" and a command poll would
+// never observe the receipt the second Server stored. Routing every read through
+// this one function keeps that decision in a single place, so a new read cannot
+// silently address the wrong Server.
 func (w *World) realRequestE(method, path string, payload any) (int, []byte, error) {
+	return w.realRequestWithTokenE(method, path, payload, "")
+}
+
+// realRequestWithTokenE is realRequestE for a request that carries an Endpoint token.
+//
+// It exists because a write must follow the Endpoint too. A submit that kept
+// addressing the primary Server after a re-home would be refused with
+// endpoint_unavailable, and the scenario would fail while submitting instead of
+// observing the behaviour it exists to prove. Keeping the routing decision in one
+// function means a new write cannot silently address the Server that no longer
+// owns the Endpoint.
+func (w *World) realRequestWithTokenE(method, path string, payload any, endpointToken string) (int, []byte, error) {
 	if w.realCluster == nil {
 		return 0, nil, fmt.Errorf("real cluster is not running")
 	}
-	return w.realCluster.RequestE(method, path, payload)
+	if w.rehomedToSecondary {
+		return w.realCluster.SecondaryRequestWithEndpointTokenE(method, path, payload, endpointToken)
+	}
+	return w.realCluster.RequestWithEndpointTokenE(method, path, payload, endpointToken)
 }
 
 // RealCommandStatus reads one command without changing its durable execution fact.

@@ -88,6 +88,32 @@ type ClusterOptions struct {
 	// assert on a reconnect or on the absence of a superseded rejection. The log
 	// is the only place either event is observable.
 	EndpointLogFile bool
+	// NoEndpointDialAddress omits the Endpoint's dial address entirely, which is
+	// the "the Server dials the Endpoint" deployment shape. It is opt-in because
+	// every other scenario configures an address, and omitting it implicitly
+	// would silently change what those scenarios prove.
+	NoEndpointDialAddress bool
+	// UnreachableFirstAddress prepends an address nothing listens on, so the
+	// Endpoint must fail one attempt before it reaches a working Server. Without
+	// it a scenario can only prove that the first address works, never that the
+	// walk continues past a failure.
+	UnreachableFirstAddress bool
+	// AdapterTimeoutMS overrides the adapter's own per-call timeout. It exists so
+	// a scenario that must observe a command still in flight can make the intent
+	// deadline, rather than the adapter timeout, the thing that ends the call.
+	//
+	// The adapter budget is min(configured timeout, remaining deadline)
+	// (internal/adapter/genericcli/runner.go:225-235), so the deadline wins
+	// whenever it is shorter. A scenario that wants the deadline to be the
+	// binding constraint therefore has to raise the configured timeout above it;
+	// otherwise the call ends at the adapter timeout and the scenario measures a
+	// timeout instead of an in-flight command.
+	//
+	// This is a fidelity setting, not a proven discriminator: removing it does not
+	// fail the in-flight scenario, because both budgets still cut the call off
+	// before the hold finishes. The zero value keeps the 5000ms default every
+	// existing scenario was written against.
+	AdapterTimeoutMS int
 }
 
 // FaultInjection contains test-only process-composition controls shared by integration and BDD tests.
@@ -113,8 +139,15 @@ type FaultInjection struct {
 	// provider to outlive its records. The value must stay below the adapter
 	// timeout, because a hold longer than the timeout turns the stream into a
 	// timeout instead of a stop.
-	FollowHoldMS          int
-	HoldPhase             string
+	FollowHoldMS int
+	HoldPhase    string
+	// RecordBeforeDelay writes the mock's invocation record before its delay
+	// instead of after it. A scenario that must prove an invocation happened even
+	// though the Cluster cancelled the call mid-flight needs this: the default
+	// records only after the work finishes, so a cancelled call leaves no trace
+	// and an "invoked exactly once" assertion compares zero with zero and passes
+	// while proving nothing.
+	RecordBeforeDelay     bool
 	HoldDir               string
 	UnsupportedCapability string
 	// AdvertisedCapabilities replaces the default capability list the harness
@@ -353,7 +386,17 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	// one it refuses with session_directory_unavailable rather than falling back to
 	// its own directory. The value travels as argv because the adapter sets a
 	// child's environment to exactly the configured Environment, which is empty.
-	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": append([]string{"--mode", mode, "--session-dir", root, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, providerFaultArgs(options.Faults)...), "timeout_ms": 5000}}
+	// The adapter timeout defaults to 5000ms, which is the value every existing
+	// scenario was written against. A scenario that must observe a command still
+	// in flight raises it so the intent deadline is the binding constraint: the
+	// adapter budget is min(configured timeout, remaining deadline), so a
+	// configured timeout below the deadline would end the call first and the
+	// scenario would measure a timeout rather than an in-flight command.
+	adapterTimeoutMS := 5000
+	if options.AdapterTimeoutMS > 0 {
+		adapterTimeoutMS = options.AdapterTimeoutMS
+	}
+	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": append([]string{"--mode", mode, "--session-dir", root, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, providerFaultArgs(options.Faults)...), "timeout_ms": adapterTimeoutMS}}
 	if options.Faults.TwoAdapters {
 		adapterArgs = []map[string]any{{"adapter_id": "adapter-a", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-a"}, "timeout_ms": 5000}, {"adapter_id": "adapter-b", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--always-fail", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-b"}, "timeout_ms": 5000}}
 	}
@@ -460,11 +503,31 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		cluster.ChannelProxy = StartChannelProxy(t, "127.0.0.1:"+cluster.Channel)
 		primaryAddress = cluster.ChannelProxy.Address()
 	}
-	addressVariable := "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=" + primaryAddress
-	if options.SecondServer {
-		addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES=" + primaryAddress + ",wss://127.0.0.1:" + cluster.SecondaryChannel
+	// The address variable is omitted entirely for the "the Server dials the
+	// Endpoint" shape, because an Endpoint with no configured Server must wait
+	// rather than dial. Emitting an empty value would be a different setting: the
+	// Endpoint would read it as configured-but-blank instead of absent, and the
+	// scenario would then prove the wrong thing.
+	if options.NoEndpointDialAddress && options.ChannelDirection != "server-initiated" {
+		return nil, fmt.Errorf("NoEndpointDialAddress requires the server-initiated direction, because an Endpoint that dials needs an address")
 	}
-	endpointEnv := []string{addressVariable, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
+	addressVariable := ""
+	if !options.NoEndpointDialAddress {
+		addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=" + primaryAddress
+		if options.SecondServer {
+			addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES=" + primaryAddress + ",wss://127.0.0.1:" + cluster.SecondaryChannel
+		}
+		if options.UnreachableFirstAddress {
+			// A dead address first is what proves the walk continues past a failure.
+			// Without it a scenario can only prove that the first address works, which
+			// is true whether or not the walk exists.
+			addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES=wss://127.0.0.1:1/channel," + primaryAddress
+		}
+	}
+	endpointEnv := []string{"AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
+	if addressVariable != "" {
+		endpointEnv = append(endpointEnv, addressVariable)
+	}
 	if options.ChannelDirection != "" {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
 	}
@@ -666,6 +729,17 @@ func (c *Cluster) RequestE(method, path string, payload any) (int, []byte, error
 // that proves authorization must present one. An empty token keeps the previous
 // behaviour, so existing scenarios are unchanged.
 func (c *Cluster) RequestWithEndpointTokenE(method, path string, payload any, endpointToken string) (int, []byte, error) {
+	return c.requestAtE("http://127.0.0.1:"+c.API, method, path, payload, endpointToken)
+}
+
+// requestAtE performs one authenticated request against a Server base URL.
+//
+// The primary and the secondary Server are addressed by this one function so a
+// re-home scenario cannot accidentally assert against a transport the other
+// Server never sees. A second copy would drift the moment one of them gained a
+// header or a timeout, and the drift would be invisible because both copies would
+// still compile and both would still return a status.
+func (c *Cluster) requestAtE(base, method, path string, payload any, endpointToken string) (int, []byte, error) {
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -674,7 +748,7 @@ func (c *Cluster) RequestWithEndpointTokenE(method, path string, payload any, en
 		}
 		body = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(method, c.URL(path), body)
+	req, err := http.NewRequest(method, base+path, body)
 	if err != nil {
 		return 0, nil, fmt.Errorf("create request: %w", err)
 	}
@@ -781,6 +855,13 @@ func providerFaultArgs(faults FaultInjection) []string {
 	}
 	if faults.FollowHoldMS > 0 {
 		args = append(args, "--follow-hold-ms", fmt.Sprint(faults.FollowHoldMS))
+	}
+	// The record is written before the delay so a call the Cluster cancelled
+	// mid-flight still leaves evidence that it happened. Without this the record
+	// is written only after the work finishes, so a cancelled call leaves no
+	// trace and an "invoked exactly once" assertion compares zero with zero.
+	if faults.RecordBeforeDelay {
+		args = append(args, "--record-before-delay")
 	}
 	return args
 }

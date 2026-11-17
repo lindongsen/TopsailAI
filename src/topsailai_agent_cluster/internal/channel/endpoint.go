@@ -39,9 +39,15 @@ type EndpointClient struct {
 	Bidirectional bool
 	// Addresses is the ordered list of Server addresses to try. When it is set,
 	// a dial walks it in order instead of using the single Address.
-	Addresses  []string
-	Conn       *websocket.Conn
-	Generation int64
+	Addresses []string
+	// OnAttemptFailure is called for every address that refused a dial before the
+	// walk moved on. It exists because a successful walk is otherwise silent: the
+	// caller sees a connection and cannot tell that an earlier address was tried
+	// and refused, so an operator cannot distinguish "the first Server is down"
+	// from "the first Server was never configured".
+	OnAttemptFailure func(address string, err error)
+	Conn             *websocket.Conn
+	Generation       int64
 	// ServerIdentity names the Server database behind the active connection. It
 	// is recorded from the handshake so the Endpoint can tell a restarted Server
 	// from a different one.
@@ -75,6 +81,13 @@ const dialAttemptTimeout = 10 * time.Second
 // another Server may still be reachable. The joined error is returned only when
 // every address failed, so a caller can tell "no Server is reachable" from "this
 // Server refused me".
+//
+// Every failed attempt is reported through OnAttemptFailure before the walk
+// continues. Without that report a successful walk is completely silent: the
+// caller sees a connection and has no way to learn that an earlier address was
+// tried and refused, so an operator cannot tell "the first Server is down" from
+// "the first Server was never configured". The callback is optional so a caller
+// that only needs the outcome is unaffected.
 func (c *EndpointClient) DialAll(ctx context.Context, addresses []string) error {
 	if len(addresses) == 0 {
 		return errors.New("no channel address is configured")
@@ -91,6 +104,9 @@ func (c *EndpointClient) DialAll(ctx context.Context, addresses []string) error 
 			return nil
 		}
 		failures = append(failures, fmt.Errorf("%s: %w", address, err))
+		if c.OnAttemptFailure != nil {
+			c.OnAttemptFailure(address, err)
+		}
 	}
 	return errors.Join(failures...)
 }
