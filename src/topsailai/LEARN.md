@@ -542,3 +542,31 @@ the fallback must be defined in `context/token.py` rather than imported from
 reverse import would be circular; and the two pre-existing tests that asserted
 `0` on failure had to be updated, because they encoded the old contract and would
 otherwise have blocked the fix.
+
+## A test that pins an identity must set every spelling the resolver reads
+
+Trigger: three BDD scenarios failed only when run inside tmux. The tmux global
+environment carried `TOPSAILAI_SESSION_ID=wa-1fb57b5948b4`, and
+`utils/env_tool.py::get_session_id()` resolves `TOPSAILAI_SESSION_ID` **before**
+`SESSION_ID`. The scenarios set only `SESSION_ID`, so the inherited value won and
+production wrote its control markers and session metadata under a different
+session than the scenario asserted. The first-byte handler then correctly
+reported `not_waiting`, because the marker it was asked to consume had been
+written elsewhere.
+
+Action: when a test pins an identity that a resolver reads through several
+spellings, set every spelling the resolver consults, not just the one the test
+happens to name. `tests/bdd/steps/control_pause_steps.py:163-164` already did
+this and is the pattern to copy. Document the baseline requirement in
+`tests/bdd.md` so the next operator does not re-diagnose it.
+
+Why this prevents recurrence: the failure is invisible outside tmux, because a
+plain shell does not export a session id, so the same test passes locally and
+fails in the environment where agents actually run. The symptom also points away
+from the cause: `not_waiting` reads as a control-handler defect, and the metadata
+assertion reads as a persistence defect, while both are the same identity
+mismatch. The decisive evidence is a controlled pair rather than a single green
+run — at pristine HEAD the same three scenarios fail with the id exported and all
+pass with it unset, and after the fix all pass even with it exported. A test that
+only asserts "the scenario passes" cannot distinguish a correct fix from a
+scenario that never exercised the leak.
