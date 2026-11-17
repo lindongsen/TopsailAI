@@ -160,3 +160,97 @@ Brief is consistently faster, and the rendered output confirms the mechanism: th
 brief table prints `NO | SESSION_NAME | ENDPOINT` with no `MESSAGES` header, while
 the full table still prints the column. The deterministic proof is the unit test
 pair, not the wall clock.
+
+## Resolution of the cost direction: one batch read per Endpoint
+
+The cost direction was implemented and committed as `27796790`
+(`feat: add batch message count read across cluster layers`). It replaces the
+per-row provider read with one set read per Endpoint, so the number of provider
+processes no longer grows with the number of rendered rows.
+
+The path is complete at every layer, verified by reading each one:
+
+| Layer | Implementation |
+|---|---|
+| TUI capability | `metricsBatchReader` (`internal/tui/metrics_batch.go:18`) |
+| TUI grouping | `groupTargetsByEndpoint` (`:85`) keeps one group per Endpoint and preserves row order |
+| TUI dispatch | `readMetrics` (`:53`) fans out per Endpoint group through `metricsWorkers` |
+| TUI preference | `resolveEndpointGroup` (`:102`) tries the set read first and falls back to per-row only for members the set read did not answer |
+| TUI budget | `metricsBatchBudget = 10 * time.Second` (`:29`) |
+| Client | `APIClient.GetMetricsBatch` (`internal/client/metrics.go:43`) posts `/api/v1/metrics/batch` |
+| Server route | `mux.HandleFunc("/api/v1/metrics/batch", h.metricsBatch)` (`internal/server/http.go:115`) |
+| Server handler | `MetricsBatchRequester.RequestMetricsBatch` (`internal/server/metrics_batch.go:68`), bounded by `protocol.MaxMetricsBatchSessions` (`:56`) |
+| Endpoint frame | `FrameMetricsBatchRequest` (`internal/channel/frames.go:69`) handled by `metricsBatchFrame` (`internal/endpoint/metrics.go:191`), budget 8 s (`:30`) |
+| Adapter | `Adapter.MetricsBatch` (`internal/adapter/genericcli/adapter.go:522`) issues one `session.metrics.batch` query on `classRead` |
+| Provider | `metricsBatch` (`providers/topsailai/query.go:433`) runs **one** `workspace list --json --local --include-runtime` and reads every requested session from that single document; bound `maxMetricsBatchSessions = 200` (`:38`) |
+
+The provider batch is one process invocation, not a loop of invocations.
+`runtimeMessageCounts` (`providers/topsailai/query.go:480`) is shared by the single
+and batch paths, so the two granularities cannot drift.
+
+Ten tests cover the batch path in `internal/tui/metrics_batch_test.go`, and all
+pass: one batch call per Endpoint, row-index mapping, fallback for unanswered
+members, fallback when the batch fails, fallback when the batch reports an error
+code, dropping members that carry an error code, deduplicating repeated sessions,
+a batch-only client, and the two render cases.
+
+### The improvement is not visible in the running fleet
+
+The deployed binaries predate the batch commit, so every batch request fails and
+the client falls back to the per-row path. This is why the live latency is still
+seconds even though the code is correct.
+
+| Evidence | Result |
+|---|---|
+| `POST /api/v1/metrics/batch` against the running Server | **404 page not found**, while `GET /api/v1/endpoints` returns 200 |
+| `strings` on the Server container binary for `metrics/batch` | 0 matches |
+| `strings` on the installed Endpoint binary for `metrics_batch_request` | 0 matches |
+| Endpoint binary mtime | 2026-11-17 12:18 |
+| Server container binary mtime | 2026-11-17 04:22 |
+| Batch feature commit `27796790` | 2026-11-17 19:13 |
+| Endpoint process start times | 13:04:34, 13:04:36, 16:23:37 |
+| Server process start time | 18:46:43 |
+| `metrics batch` lines in the Endpoint log | 0 |
+
+Every running process started before the batch feature existed, and the installed
+binaries do not contain the frame or route names. The Server binary file has also
+been removed from the host path while the process still holds its inode, so a
+rebuild is required rather than a restart alone.
+
+Live measurement on the stale fleet, for the record:
+
+```
+list (full)  run1 2.70 s   run2 2.58 s   run3 2.68 s
+list --brief            0.00 s
+```
+
+Six of seven rows carried real counts (`15/70`, `10/125`, `4/66`, `5/119`,
+`11/125`, `2/108`); one row on the `topsailai` Endpoint showed `-`. These numbers
+describe the fallback path, not the batch path, so they are not evidence about the
+batch implementation.
+
+### Deployment is deliberately deferred
+
+Rebuilding and restarting was not performed. Three provider sessions were running
+at the time (`wa-5421006dfe45`, `wa-e46ae362e1bb`, `wa-ac0881d97da4`), and two of
+the three Endpoints run inside Docker containers (`ai-dev`, `topsailai-dev`).
+Recreating a container that hosts its own Agents kills them, which is the incident
+recorded in `issues/done/endpoint-container-restart-kills-agents-and-hides-records.md`.
+The human chose to record the state rather than restart, so the deployment step
+remains open and must be scheduled when no Agent is running.
+
+### What remains open after both directions
+
+- The Endpoint `channelLoop` still runs ten request frames inline
+  (`internal/endpoint/service.go:571-590`); only `startFollow` (`:592`) spawns a
+  goroutine. This is now a concurrency defect in its own right, not the cause of
+  `list` latency, because the client no longer depends on per-row reads. The
+  largest single blocker is `FrameInventoryRefresh` (`:571`), whose collector
+  budget is 30 s (`src/main/agent-cluster-endpoint/main.go:194`), three times the
+  metrics budget the issue originally focused on.
+- The per-row fallback still costs about a second per row and is still reachable
+  whenever the set read does not answer a member, so the fallback cost matters
+  until the batch path is deployed.
+- One row on the `topsailai` Endpoint renders `-`. The cause is not yet
+  determined and must be re-checked after the binaries are refreshed, because the
+  stale fleet cannot distinguish a provider-side absence from a genuine failure.
