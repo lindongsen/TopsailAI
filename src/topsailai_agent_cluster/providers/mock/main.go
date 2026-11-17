@@ -576,12 +576,18 @@ func sessionMessagesResult(sessionKey string, options mockOptions) json.RawMessa
 	messages := make([]map[string]any, 0, count)
 	for index := 0; index < count; index++ {
 		role := "user"
-		content := body
+		stored := body
 		if index > 0 {
 			role = "assistant"
-			content = "the operator wrote this"
+			stored = "the operator wrote this"
 		}
-		words := len(strings.Fields(content))
+		// The provider unwraps its own step record before answering, and measures
+		// the counts from the stored body rather than from the unwrapped text, so
+		// the mock does the same. A double that answered the raw record would make
+		// a scenario observe the Cluster rendering record keys that never reach
+		// production, which is a failure invented by the double.
+		content := unwrapStepRecord(stored)
+		words := len(strings.Fields(stored))
 		messages = append(messages, map[string]any{
 			"role":        role,
 			"content":     content,
@@ -605,6 +611,78 @@ func sessionMessagesResult(sessionKey string, options mockOptions) json.RawMessa
 		return json.RawMessage(`{}`)
 	}
 	return json.RawMessage(encoded)
+}
+
+// unwrapStepRecord converts one stored conversation body into the text a provider
+// reports, mirroring providers/topsailai/query.go.
+//
+// The mock stands in for the TopsailAI provider, and that provider unwraps its own
+// step record before answering. A double that answered the raw record instead would
+// not reproduce the contract it stands in for: a scenario injecting a real record
+// would observe the Cluster rendering the record keys and fail for a reason that
+// does not exist in production. The duplication is the price of the module
+// boundary, exactly like nonLiveOperations.
+//
+// A body that is not a step record is returned unchanged, so prose and the default
+// body keep their existing meaning.
+func unwrapStepRecord(content string) string {
+	if !strings.Contains(content, "step_name") {
+		return content
+	}
+	var decoded any
+	if json.Unmarshal([]byte(content), &decoded) != nil {
+		return content
+	}
+	candidates, list := decoded.([]any)
+	if !list {
+		candidates = []any{decoded}
+	}
+	entries := make([]map[string]any, 0, len(candidates))
+	for _, candidate := range candidates {
+		entry, record := candidate.(map[string]any)
+		if !record {
+			return content
+		}
+		if _, present := entry["step_name"]; !present {
+			return content
+		}
+		entries = append(entries, entry)
+	}
+	var builder strings.Builder
+	for _, entry := range entries {
+		builder.WriteString("topsailai.")
+		builder.WriteString(fmt.Sprint(entry["step_name"]))
+		builder.WriteByte('\n')
+		delete(entry, "step_name")
+		if raw, present := entry["raw_text"]; present {
+			// A string body is written verbatim, because marshalling it would
+			// escape every real newline and collapse a multi-line answer onto one
+			// line. Only a non-string value keeps the JSON form.
+			if text, isString := raw.(string); isString {
+				builder.WriteString(text)
+			} else {
+				builder.WriteString(jsonDump(raw))
+			}
+			builder.WriteByte('\n')
+			delete(entry, "raw_text")
+		}
+		if len(entry) > 0 {
+			builder.WriteString(jsonDump(entry))
+			builder.WriteByte('\n')
+		}
+		builder.WriteByte('\n')
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+// jsonDump renders one value as compact JSON, falling back to its printed form so a
+// value that cannot be encoded is still reported instead of dropped.
+func jsonDump(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(encoded)
 }
 
 // appendMutationRecord appends one line naming the request whose mutation was
