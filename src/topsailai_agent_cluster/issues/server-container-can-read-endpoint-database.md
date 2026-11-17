@@ -133,3 +133,37 @@ The Server database (`data/server/server.sqlite`, mode `0644`) is readable by an
 Server container runs as its owner, so that is not a container-isolation defect, but the file is still
 world-readable on the host. That is a separate exposure and is recorded separately rather than widened
 into this fix.
+
+### The packaging test cannot assert this, and the reason matters
+
+The issue asks for the mode to be asserted "in the packaging test rather than leaving it as a
+documented expectation". That is not possible at that layer, and the reason is worth recording: the
+deb ships no database file at all. `scripts/make-deb.sh` contains no `sqlite` reference, so the file
+is created at runtime by the Endpoint process. `tests/packaging/deb_layout_test.go` can only assert
+what the package payload contains, and the payload contains the directory but never the file.
+
+What the packaging layer does declare is already correct and already asserted: `debLayoutDirs` pins
+`data/endpoint` at `rwxr-x---`, and `make-deb.sh:352` creates it at `0750`. The gap was one level
+deeper — the per-endpoint subdirectory and the file, both created by SQLite at runtime — so the
+assertion belongs where the file is created, which is `db_permissions_test.go`.
+
+The live tree had also drifted from the package contract: `data/endpoint` was `755` on the host while
+the package declares `0750`. The fix's explicit `Chmod` corrects that on the next open.
+
+### Live acceptance
+
+The issue's own acceptance criterion was executed on the deployed fleet:
+
+```text
+before: READABLE
+after:  denied
+```
+
+The host Endpoint (`ac.topsail`) was corrected in place and the probe now returns `denied`. The two
+container Endpoints (`ai-dev`, `topsailai-dev`) hold their own databases inside their containers at
+`0644`; the same remedy was applied there. All three Endpoint processes survived the change, and the
+host Endpoint kept writing (database mtime advanced, descriptor still open), because an open SQLite
+descriptor is unaffected by a mode change on the path.
+
+The code fix applies the same modes automatically on the next Endpoint start, so a rebuilt and
+restarted node reaches this state without a manual `chmod`.
