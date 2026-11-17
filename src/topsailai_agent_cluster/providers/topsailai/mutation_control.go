@@ -273,6 +273,12 @@ func (c controlCatalog) args(operation, sessionID string, payload json.RawMessag
 	if !strings.HasPrefix(operation, controlOperationPrefix) {
 		return nil, fmt.Errorf("%w: provider control operation is required", errInvalidRequest)
 	}
+	// A control action addresses one session, so a row that reports no session
+	// identifier cannot be controlled. Refusing here keeps the unattributed row
+	// listable without letting an empty selector reach the provider.
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, fmt.Errorf("%w: control operation %q requires a session identifier, and this row reports none", errInvalidRequest, operation)
+	}
 	name := strings.TrimPrefix(operation, controlOperationPrefix)
 	action, ok := c.actions[name]
 	if !ok {

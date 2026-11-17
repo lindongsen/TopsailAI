@@ -117,7 +117,14 @@ func (p *provider) discover(ctx context.Context) (*discoveryResult, error) {
 	for _, item := range document.Items {
 		observation, err := p.observation(item)
 		if err != nil {
-			return nil, err
+			// One unmappable row must not discard the rows that did map. Returning
+			// the error aborted the whole inventory, so a single unattributable
+			// provider file made every healthy session disappear and the Endpoint
+			// reported the node as failed. The cycle is marked incomplete instead,
+			// which publishes the observed rows as a partial report and keeps the
+			// failure visible.
+			result.Complete = false
+			continue
 		}
 		if _, exists := seen[observation.ProviderResourceKey]; exists {
 			return nil, errors.New("workspace response contains duplicate provider resource key")
@@ -227,9 +234,17 @@ func (p *provider) observation(item workspaceItem) (providerObservation, error) 
 	return providerObservation{ProviderResourceKey: key, ProviderGeneration: generation, ResourceKind: resourceSession, State: state, StateReason: reason, ObservedAtMS: now, Attributes: attributes}, nil
 }
 
+// providerSessionKey mints the mapping key for one workspace row.
+//
+// The filename is the only identity a row must carry. A row may legitimately
+// report no session identifier: the provider publishes a stdout file it cannot
+// attribute to a session, and refusing such a row aborted the whole inventory
+// over one unattributable file. The session identifier stays inside the digest
+// when it is present, so a row that has one keeps exactly the key it had
+// before, and an unattributed row still receives a stable key of its own.
 func providerSessionKey(item workspaceItem) (string, error) {
-	if strings.TrimSpace(item.SessionID) == "" || strings.TrimSpace(item.ProviderRowKey) == "" {
-		return "", errors.New("workspace row requires session_id and filename")
+	if strings.TrimSpace(item.ProviderRowKey) == "" {
+		return "", errors.New("workspace row requires filename")
 	}
 	identity := struct {
 		SessionID      string `json:"session_id"`
@@ -314,8 +329,16 @@ func sessionScopedKey(key string) bool {
 // A session-scoped key matches every row of its session, which is the correct
 // reading for a target the operator named by session identifier: the operator did
 // not choose a row. A row-scoped key still matches exactly one row.
+//
+// A row that reports no session identifier cannot belong to a session-scoped
+// target, so it reports no match. Returning the minter's error instead would let
+// one unattributed row abort the resolution of every session-scoped key, which is
+// a wider failure than the row itself.
 func matchesSessionKey(key string, item workspaceItem) (bool, error) {
 	if sessionScopedKey(key) {
+		if strings.TrimSpace(item.SessionID) == "" {
+			return false, nil
+		}
 		candidate, err := sessionProviderKey(item.SessionID)
 		if err != nil {
 			return false, err

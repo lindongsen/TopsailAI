@@ -293,13 +293,16 @@ func TestProviderSessionKeyIsStableAcrossPIDChangesAndDistinctForSiblingRows(t *
 	}
 }
 
-func TestReadContractsRejectMissingAndDuplicateProviderKeys(t *testing.T) {
+// A row without a filename is no longer a rejection: it is skipped and the cycle
+// is marked incomplete, which TestDiscoverSkipsAnUnmappableRow asserts. A
+// duplicate provider key stays a hard error, because two rows claiming one
+// identity cannot be represented at all.
+func TestReadContractsRejectDuplicateProviderKeys(t *testing.T) {
 	tests := []struct {
 		name, function, document string
 		request                  request
 		call                     string
 	}{
-		{name: "discover missing filename", function: functionDiscover, document: `{"items":[{"session_id":"s"}]}`, request: validRequest(functionDiscover), call: "workspace\x00list\x00--json\x00--local"},
 		{name: "discover duplicate row", function: functionDiscover, document: `{"items":[{"session_id":"s","filename":"row"},{"session_id":"s","filename":"row"}]}`, request: validRequest(functionDiscover), call: "workspace\x00list\x00--json\x00--local"},
 		{name: "history missing session", function: functionQuery, document: `[{"status":"Idle"}]`, request: queryRequest(queryHistoryMessages, nil, `{"limit":0}`), call: "project\x00list_sessions\x00--json"},
 		{name: "history duplicate session", function: functionQuery, document: `[{"session_id":"s"},{"session_id":"s"}]`, request: queryRequest(queryHistoryMessages, nil, `{"limit":0}`), call: "project\x00list_sessions\x00--json"},

@@ -1523,3 +1523,33 @@ Endpoint alive, so each side's evidence contradicts the other and neither log al
 same shape exists in the other direction, where the Server's `readLoop` calls `OnFrame` and `OnReceipt`
 inline and both write SQLite, so a slow inventory commit delays the acknowledgement the Server owes the
 Endpoint. Any single-reader loop that also performs durable work has this defect.
+
+## A single-reader loop that also persists has the same defect in both directions
+
+Trigger: a liveness timer fires on the wrong side, or a peer reports its partner dead while the partner
+reports it alive, and the loop that reads frames also performs durable work.
+
+The Endpoint fix above removed the defect from the Endpoint's read loop. The Server's `readLoop` had the
+identical shape: it called `OnReceipt` and `OnFrame` inline, and both write SQLite, so a slow inventory
+commit delayed the heartbeat acknowledgement the Server owed the Endpoint. The Endpoint counts
+unacknowledged heartbeats and closes the connection after 30 seconds, so the Server's own persistence
+latency appeared as an Endpoint-side reconnect loop while the Server still showed the Endpoint as
+`online`. Fixing one direction does not fix the other; the shape has to be checked on both sides.
+
+Action: give each peer a bounded business queue drained by one worker goroutine, answer the heartbeat
+inside the read loop, and never queue the heartbeat. Queueing it is the subtle mistake: a heartbeat every
+few seconds would fill a bounded queue during a stall and disconnect the very peer the design protects.
+Keep one worker per peer so arrival order survives, because a receipt and the inventory that follows it
+are causally related. Make a full queue close the connection rather than block the loop or drop the
+frame, since a peer that cannot absorb its own inbound frames is already unhealthy and reconnecting is
+honest while dropping leaves state silently inconsistent. Signal the worker to stop instead of joining
+it: waiting for a worker blocked in a database write reintroduces the stall being removed. Guard the
+worker with an authority check, because a superseded connection's worker can otherwise write stale state
+over the connection that replaced it.
+
+Why this prevents recurrence: the amplifier is what makes the defect reachable, and it lives in the
+persistence layer rather than the loop. One connection with `journal_mode(DELETE)` and a 30 second
+transaction budget means a single long transaction can hold the only connection for exactly the
+Endpoint's unhealthy window, so the defect is not theoretical. Check the persistence layer's worst-case
+hold time against the peer's liveness window whenever a loop both reads frames and writes durably; if the
+hold time can reach the window, the loop is a liveness bug regardless of how fast the average write is.

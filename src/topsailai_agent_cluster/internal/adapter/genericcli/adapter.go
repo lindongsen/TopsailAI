@@ -172,6 +172,13 @@ func (a *Adapter) Discover(ctx context.Context, request adapter.DiscoverRequest)
 		return adapter.DiscoverResult{}, errors.New("provider discovery response is missing")
 	}
 	result := adapter.DiscoverResult{Complete: response.Discovery.Complete, CollectionStatus: protocol.CollectionSucceeded, DataKnown: true, LastAttemptAtMS: a.config.Now().UnixMilli()}
+	if !response.Discovery.Complete {
+		// The provider observed rows but could not complete the cycle, so the
+		// result is degraded rather than successful. Reporting it as succeeded
+		// would publish an incomplete inventory as complete, and reporting it as
+		// failed would discard the rows that were observed.
+		result.CollectionStatus = protocol.CollectionPartial
+	}
 	for _, observation := range response.Discovery.Observations {
 		if observation.ResourceKind != protocol.ResourceSession {
 			continue

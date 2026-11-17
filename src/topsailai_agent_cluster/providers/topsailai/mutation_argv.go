@@ -55,6 +55,14 @@ type runtimeMessagePayload struct {
 // match the Cluster adapter exactly, because two spellings of one provider
 // invocation would be two behaviours to keep in step.
 func mutationArgs(invocation mutationInvocation) ([]string, error) {
+	// A row may report no session identifier, but no provider operation can act
+	// on one: every argv below passes the identifier as the provider's session
+	// selector, and an empty selector would either be rejected by the provider or,
+	// worse, be read as "no filter" and address a different session. Refusing here
+	// keeps the unattributed row listable without making it operable.
+	if invocation.Operation != operationAgentStart && strings.TrimSpace(invocation.Resolved.SessionID) == "" {
+		return nil, fmt.Errorf("%w: operation %q requires a session identifier, and this row reports none", errInvalidRequest, invocation.Operation)
+	}
 	switch invocation.Operation {
 	case operationMessageSend:
 		message, err := runtimeMessage(invocation.Payload)

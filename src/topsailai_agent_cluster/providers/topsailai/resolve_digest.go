@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -160,6 +161,27 @@ func (p *provider) resolveReadTarget(ctx context.Context, value *target) (provid
 	if err != nil {
 		return providerSessionTarget{}, err
 	}
+	resolved, err := p.resolveReadTargetByKey(ctx, key, value)
+	if err != nil {
+		return providerSessionTarget{}, err
+	}
+	// A read addresses one session, so a row that reports no session identifier
+	// cannot be read: the provider CLI takes the identifier as its selector, and an
+	// empty selector would be rejected or, worse, read as "no filter". Refusing
+	// here keeps the unattributed row listable without making it readable.
+	if strings.TrimSpace(resolved.SessionID) == "" {
+		return providerSessionTarget{}, fmt.Errorf("%w: reading output requires a session identifier, and this row reports none", errInvalidRequest)
+	}
+	return resolved, nil
+}
+
+// resolveReadTargetByKey resolves one read target without judging whether the
+// resolved row is addressable.
+//
+// The digest proof and the discovery fallback are kept here so the addressability
+// rule lives in exactly one place: a caller that needs the row identity without
+// reading its output must not inherit a read-only refusal.
+func (p *provider) resolveReadTargetByKey(ctx context.Context, key string, value *target) (providerSessionTarget, error) {
 	if proven, ok := p.resolveRowTargetByDigest(key); ok {
 		return proven, nil
 	}

@@ -136,6 +136,17 @@ const channelReadLimit int64 = 2 << 20
 // maxPendingRefresh bounds concurrent forced collections so discovery cannot amplify.
 const maxPendingRefresh = 64
 
+// businessQueueDepth bounds how many business frames one peer may have waiting.
+//
+// The queue exists so the read loop never performs a blocking business
+// operation: a heartbeat acknowledgement must not wait behind a database write.
+// It is bounded because an unbounded queue would let one slow peer grow Server
+// memory without limit, which is the same reasoning that bounds the follow
+// buffer. Sixteen frames is generous for a healthy peer, which sends one
+// inventory every few seconds, so the queue only fills when persistence has
+// genuinely stalled.
+const businessQueueDepth = 16
+
 // Peer is one currently connected Endpoint.
 type Peer struct {
 	EndpointID           string
@@ -145,6 +156,34 @@ type Peer struct {
 	Initiator            string
 	Conn                 *websocket.Conn
 	LastSeen             time.Time
+	// business carries frames from the read loop to this peer's worker. The
+	// worker is the only consumer, so frames are handled in arrival order.
+	business chan Frame
+	// workerDone is closed once to tell the worker to stop. It is a signal, not
+	// a join: waiting for a worker stuck in a database write would reintroduce
+	// the very stall this design removes.
+	workerDone chan struct{}
+	// workerStopped records that workerDone was closed. It is a plain bool
+	// guarded by Server.Mu rather than a sync.Once or an atomic, because Peer is
+	// passed by value to the OnFrame, OnReceipt and OnDisconnect hooks and any
+	// type carrying noCopy would make every one of those calls copy a lock.
+	workerStopped bool
+}
+
+// stopWorker tells this peer's worker to exit, at most once.
+//
+// The guard is the Server lock because Peer is copied by value into the hooks:
+// only the pointer paths stop a worker, so a copied flag is never the one that
+// closes the channel.
+func (s *Server) stopWorker(peer *Peer) {
+	s.Mu.Lock()
+	if peer.workerStopped {
+		s.Mu.Unlock()
+		return
+	}
+	peer.workerStopped = true
+	s.Mu.Unlock()
+	close(peer.workerDone)
 }
 
 // NewServer constructs a channel server.
@@ -228,10 +267,16 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) installPeer(endpointID, instanceID, hostname, initiator string, conn *websocket.Conn) *Peer {
 	s.Mu.Lock()
 	generation := s.Fence.Acquire(endpointID)
-	peer := &Peer{EndpointID: endpointID, InstanceID: instanceID, Hostname: hostname, ConnectionGeneration: generation, Initiator: initiator, Conn: conn, LastSeen: time.Now()}
+	peer := &Peer{EndpointID: endpointID, InstanceID: instanceID, Hostname: hostname, ConnectionGeneration: generation, Initiator: initiator, Conn: conn, LastSeen: time.Now(), business: make(chan Frame, businessQueueDepth), workerDone: make(chan struct{})}
 	previous := s.Active[endpointID]
 	s.Active[endpointID] = peer
 	s.Mu.Unlock()
+	// The worker starts before the read loop so the first business frame always
+	// has a consumer. It is started here rather than in the read loop because a
+	// peer that never receives a business frame still needs a worker ready, and
+	// because the worker must outlive the read loop long enough to drain what was
+	// already accepted.
+	go s.runBusinessWorker(peer)
 	if previous != nil && previous.Conn != conn {
 		_ = previous.Conn.CloseNow()
 	}
@@ -284,8 +329,15 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		s.Mu.Lock()
 		peer.LastSeen = time.Now()
 		s.Mu.Unlock()
+		// The heartbeat acknowledgement is written here, before any business work
+		// is even queued, because it is the frame that keeps the link alive.
+		// Routing it through the worker would put it behind a database write and
+		// make a busy Server look dead to its Endpoints. It is also never queued:
+		// a heartbeat every few seconds would otherwise fill the bounded queue
+		// during a stall and disconnect the peer this design is meant to protect.
 		if frame.Type == FrameHeartbeat {
 			_ = wsjson.Write(ctx, peer.Conn, Frame{Type: FrameHeartbeatAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10)})
+			continue
 		}
 		if frame.Type == FrameLaunchResponse {
 			s.deliverLaunch(peer, frame)
@@ -319,18 +371,79 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		if frame.Type == FrameOutputChunk || frame.Type == FrameOutputEnd {
 			s.deliverFollow(peer, frame)
 		}
-		if frame.Type == FrameReceipt && frame.Receipt != nil && s.OnReceipt != nil {
-			s.OnReceipt(*peer, *frame.Receipt)
-		}
-		if s.OnFrame != nil {
-			s.OnFrame(*peer, frame)
-		}
-		// A forced collection is delivered only after the persistence hook ran, so the
-		// waiter observes the committed state rather than the submitted report.
-		if frame.Type == FrameInventory && frame.RequestID != "" {
-			s.deliverRefresh(peer, frame)
+		// Everything that can block on persistence or on a network write is
+		// handed to the peer's worker. The read loop must reach the next
+		// wsjson.Read promptly, because that is the only way the next heartbeat
+		// is seen at all.
+		if !s.enqueueBusiness(peer, frame) {
+			return
 		}
 	}
+}
+
+// enqueueBusiness hands one frame to the peer's worker without ever blocking the
+// read loop.
+//
+// A full queue means this peer cannot keep up with its own inbound frames, which
+// only happens when persistence has stalled. Closing the connection is the
+// honest outcome: the Endpoint reconnects and resends, whereas blocking would
+// stall the heartbeat and dropping the frame would leave state silently
+// inconsistent.
+func (s *Server) enqueueBusiness(peer *Peer, frame Frame) bool {
+	select {
+	case peer.business <- frame:
+		return true
+	default:
+		_ = peer.Conn.CloseNow()
+		return false
+	}
+}
+
+// runBusinessWorker drains one peer's business queue in arrival order.
+//
+// The worker is what makes the read loop non-blocking: a database write or an
+// acknowledgement send that takes seconds delays only the next business frame of
+// this peer, never the heartbeat acknowledgement that keeps the link alive. One
+// worker per peer keeps arrival order without any extra sequencing, which
+// matters because a receipt and the inventory that follows it are causally
+// related.
+func (s *Server) runBusinessWorker(peer *Peer) {
+	for {
+		select {
+		case <-peer.workerDone:
+			return
+		case frame := <-peer.business:
+			// A superseded connection must not write business state: the newer
+			// connection already owns this Endpoint, and a late write from the
+			// old worker would overwrite it with stale data.
+			if !s.isAuthoritative(peer) {
+				return
+			}
+			s.handleBusinessFrame(peer, frame)
+		}
+	}
+}
+
+// handleBusinessFrame runs the blocking part of one frame.
+func (s *Server) handleBusinessFrame(peer *Peer, frame Frame) {
+	if frame.Type == FrameReceipt && frame.Receipt != nil && s.OnReceipt != nil {
+		s.OnReceipt(*peer, *frame.Receipt)
+	}
+	if s.OnFrame != nil {
+		s.OnFrame(*peer, frame)
+	}
+	// A forced collection is delivered only after the persistence hook ran, so the
+	// waiter observes the committed state rather than the submitted report.
+	if frame.Type == FrameInventory && frame.RequestID != "" {
+		s.deliverRefresh(peer, frame)
+	}
+}
+
+// isAuthoritative reports whether this peer still owns its Endpoint.
+func (s *Server) isAuthoritative(peer *Peer) bool {
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
+	return s.Active[peer.EndpointID] == peer
 }
 
 // deliverRefresh hands a correlated forced-collection report to its waiting request.
@@ -684,6 +797,9 @@ func (s *Server) ExpireStalePeers(now time.Time) []Peer {
 	}
 	s.Mu.Unlock()
 	for _, peer := range expired {
+		// The worker is stopped before the connection is closed so it cannot
+		// begin another frame for an Endpoint that is already being removed.
+		s.stopWorker(peer)
 		_ = peer.Conn.CloseNow()
 	}
 	for _, peer := range expired {
@@ -697,6 +813,12 @@ func (s *Server) ExpireStalePeers(now time.Time) []Peer {
 }
 
 func (s *Server) remove(peer *Peer) {
+	// The worker is told to stop before the peer is removed from Active, so a
+	// worker that is between frames cannot start a new one after the Endpoint is
+	// already gone. It is a signal rather than a join: a worker blocked in a
+	// database write must not delay this cleanup, which is the same stall this
+	// design removes from the read loop.
+	s.stopWorker(peer)
 	s.Mu.Lock()
 	current := s.Active[peer.EndpointID]
 	authoritative := current == peer
@@ -747,6 +869,10 @@ func (s *Server) Close() error {
 	s.Active = make(map[string]*Peer)
 	s.Mu.Unlock()
 	for _, peer := range peers {
+		// Stop the worker explicitly rather than relying on the read loop's
+		// deferred remove: Close clears Active first, so an idle worker would
+		// otherwise wait forever on a queue nobody will ever fill.
+		s.stopWorker(peer)
 		_ = peer.Conn.CloseNow()
 	}
 	return nil
