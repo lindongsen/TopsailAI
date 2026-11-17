@@ -51,6 +51,20 @@ const (
 // two literals in two packages would drift.
 const PolicyDenied = "policy_denied"
 
+// InvalidTarget reports that a request named an identity the addressed surface
+// cannot accept, so the request was rejected before any provider process started.
+//
+// It is deliberately distinct from a provider failure. The caller supplied the
+// wrong kind of identity, so the remedy is to supply the right one; reporting it
+// as a provider failure sends the operator to investigate a provider that was
+// never invoked. The Server already uses this code for a missing selector, so one
+// vocabulary covers both a missing identity and a wrong one.
+//
+// It lives here rather than in the Endpoint package because the Server must
+// recognise the code to report it as a caller error instead of a provider
+// failure, and two literals in two packages would drift.
+const InvalidTarget = "invalid_target"
+
 // AdapterBusy reports that an adapter could not obtain the capacity it needs
 // within the caller's budget, so the requested provider call never happened.
 //

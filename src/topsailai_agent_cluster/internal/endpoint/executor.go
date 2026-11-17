@@ -633,16 +633,22 @@ func observationFailureCode(err error) string {
 
 // readFailureCode names why a read-only provider call did not happen.
 //
-// A busy adapter and a broken provider are different facts and must not share one
-// code. Capacity is a transient collision with another invocation of the same
-// Adapter instance, so the same read may succeed unchanged once that invocation
-// finishes; reporting it as a provider failure told the operator to investigate a
-// provider that was never invoked. The provider code is kept for every other
-// error, because only a capacity condition is provably unrelated to the provider.
+// A busy adapter, a rejected request identity and a broken provider are three
+// different facts and must not share one code. Capacity is a transient collision
+// with another invocation of the same Adapter instance, so the same read may
+// succeed unchanged once that invocation finishes; reporting it as a provider
+// failure told the operator to investigate a provider that was never invoked. A
+// rejected identity is a caller error, so the remedy is to supply the identity the
+// surface accepts; reporting it as a provider failure sends the operator to
+// investigate a provider that was never invoked either. The provider code is kept
+// for every other error, because only those two conditions are provably unrelated
+// to the provider.
 //
 // A capacity condition outranks whatever the adapter reported, because the adapter
-// never reached the provider and so has no provider evidence to report. Otherwise
-// the adapter's own code is preserved and providerCode is only the fallback for an
+// never reached the provider and so has no provider evidence to report. A rejected
+// identity outranks the adapter's code for the same reason: the request was refused
+// at the contract boundary before any provider process started. Otherwise the
+// adapter's own code is preserved and providerCode is only the fallback for an
 // adapter that reported nothing, which keeps the original precedence intact.
 //
 // Every read path calls this one helper rather than repeating the check, because
@@ -652,10 +658,33 @@ func readFailureCode(err error, reported, providerCode string) string {
 	if code, busy := capacityCode(err); busy {
 		return code
 	}
+	if code, rejected := requestIdentityCode(err); rejected {
+		return code
+	}
 	if reported != "" {
 		return reported
 	}
 	return providerCode
+}
+
+// requestIdentityCode reports the caller-error code when err is a rejected request
+// identity, so every read surface classifies that one fact identically.
+//
+// The rejection is recognised through the ErrorCode method rather than by importing
+// the package that produces it, because the Endpoint owns this contract and must not
+// depend on a concrete provider implementation to recognise the condition. This is
+// the same shape the adapter already uses for a provider's own error code.
+//
+// It exists as one primitive rather than a repeated check because the defect it
+// replaces existed precisely because one path was updated and its siblings were
+// not. A second spelling of "the caller named the wrong identity" is a future
+// divergence, not a local convenience.
+func requestIdentityCode(err error) (string, bool) {
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) && coded.ErrorCode() == protocol.InvalidTarget {
+		return protocol.InvalidTarget, true
+	}
+	return "", false
 }
 
 // revalidationFailureCode names why a target generation could not be confirmed.

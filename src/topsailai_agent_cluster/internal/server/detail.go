@@ -97,6 +97,11 @@ func (h *Handler) writeDetailResultFailure(w http.ResponseWriter, r *http.Reques
 		// was never invoked. This is transient and retryable, not a provider
 		// fault, so it must not share the provider default.
 		h.writeError(w, 503, protocol.AdapterBusy, "detail read was not attempted: adapter capacity was unavailable, retry")
+	case protocol.InvalidTarget:
+		// The caller named an identity this surface cannot accept, so the request
+		// was refused before any provider process started. This is a caller error,
+		// not a provider fault, so it must not share the provider default.
+		h.writeError(w, http.StatusBadRequest, protocol.InvalidTarget, "session_id must be the provider session ID, not a cluster resource ID")
 	default:
 		h.writeError(w, 502, protocol.DetailProviderError, "provider detail read failed")
 	}

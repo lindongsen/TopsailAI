@@ -668,9 +668,35 @@ func validateProviderResourceKey(name, value string, required bool) error {
 		return err
 	}
 	if protocol.IsClusterResourceID(value) {
-		return fmt.Errorf("%s must be a provider-private key, not a Cluster resource ID %q", name, value)
+		return &requestIdentityError{Name: name, Value: value}
 	}
 	return nil
+}
+
+// requestIdentityError reports a request that named a Cluster resource ID where a
+// provider-private key belongs.
+//
+// The code is carried as a field rather than flattened into the message because a
+// caller has to act on it: a wrong identity is a caller error, and a caller error
+// must not be reported as a provider failure. The message keeps the original
+// wording so existing logs still read the same.
+//
+// The type lives here rather than in the Endpoint package because this package is
+// where the rejection happens, and the Endpoint recognises it through the
+// ErrorCode method rather than by importing this package.
+type requestIdentityError struct {
+	Name  string
+	Value string
+}
+
+// Error renders the rejection in the historical format.
+func (e *requestIdentityError) Error() string {
+	return fmt.Sprintf("%s must be a provider-private key, not a Cluster resource ID %q", e.Name, e.Value)
+}
+
+// ErrorCode reports the caller-error code so a caller can classify the rejection.
+func (e *requestIdentityError) ErrorCode() string {
+	return protocol.InvalidTarget
 }
 
 func decodeStrict(data []byte, target any) error {
