@@ -387,3 +387,48 @@ def retrieve_session_history_via_control(
         return False
     print(sanitize_terminal_text(_render_history_result(result.response.get("result"))))
     return True
+
+
+def show_session_history(
+    session_id: Optional[str],
+    task_dir: str,
+    *,
+    row: Optional[Dict[str, Any]] = None,
+    no_channel_message: str = "No session ID available for this file.",
+) -> bool:
+    """Print one session's history through the single shared retrieval path.
+
+    Every scope that can show history calls this function, so workspace and
+    runtime scope cannot drift apart. A real session id keeps the database
+    retrieval path unchanged. A session without one (a temporary session
+    displayed as ``(temp)``) is served through its control socket by invoking
+    ``ctx.history``. When no control channel exists the caller's message is
+    printed, because the absence of a channel is not a transport failure.
+
+    Args:
+        session_id: Session identity as displayed to the user.
+        task_dir: Trusted task directory that owns session sockets.
+        row: A discovered log row, used when the caller selected one. Its exact
+            session PID is preferred over scanning for a live socket.
+        no_channel_message: Message printed when no control channel exists.
+
+    Returns:
+        ``True`` when history was printed, else ``False``.
+    """
+    if session_id and session_id not in (TEMP_SESSION_ID, TEMP_SESSION_MARKER):
+        retrieve_session(session_id, max_chars=1000)
+        return True
+    try:
+        if row is not None:
+            target = resolve_control_history_target(task_dir, row=row)
+        else:
+            target = resolve_control_history_target(
+                task_dir, session_id=session_id
+            )
+    except ControlHistoryError as error:
+        print(f"{Colors.RED}[ERROR] {error.error_code}: {error}{Colors.RESET}")
+        return False
+    if target is None:
+        print(f"{Colors.RED}[ERROR] {no_channel_message}{Colors.RESET}")
+        return False
+    return retrieve_session_history_via_control(target)

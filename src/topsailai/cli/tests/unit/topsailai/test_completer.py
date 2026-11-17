@@ -89,7 +89,11 @@ class TestControlCompleter(unittest.TestCase):
                 break
             matches.append(candidate)
             state += 1
-        self.assertEqual(matches, ["/meta"])
+        # "/me" is a shared prefix, so the assertion states the contract (every
+        # real runtime command with that prefix is offered) instead of freezing
+        # the current inventory, which would fail on any legitimate addition.
+        self.assertIn("/meta", matches)
+        self.assertIn("/messages", matches)
 
     def _yaml_commands(self):
         return [

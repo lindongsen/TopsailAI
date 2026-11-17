@@ -827,30 +827,18 @@ def _show_selected_session_history(row: dict, task_dir: str) -> None:
     through its existing control socket by invoking ``ctx.history``. When no
     control channel exists the previous message is kept, because the absence of
     a channel is not a transport failure.
-    """
-    from cli_topsailai.constants import TEMP_SESSION_ID, TEMP_SESSION_MARKER
-    from cli_topsailai.retrieve import (
-        ControlHistoryError,
-        resolve_control_history_target,
-        retrieve_session,
-        retrieve_session_history_via_control,
-    )
 
-    session_id = row.get("session_id")
-    if session_id and session_id not in (TEMP_SESSION_ID, TEMP_SESSION_MARKER):
-        retrieve_session(session_id, max_chars=1000)
-        return
-    try:
-        target = resolve_control_history_target(task_dir, row=row)
-    except ControlHistoryError as error:
-        print(f"{Colors.RED}[ERROR] {error.error_code}: {error}{Colors.RESET}")
-        return
-    if target is None:
-        print(
-            f"{Colors.RED}[ERROR] No session ID available for this file.{Colors.RESET}"
-        )
-        return
-    retrieve_session_history_via_control(target)
+    The retrieval itself lives in ``retrieve.show_session_history`` so runtime
+    scope prints exactly the same history through exactly the same path.
+    """
+    from cli_topsailai.retrieve import show_session_history
+
+    show_session_history(
+        row.get("session_id"),
+        task_dir,
+        row=row,
+        no_channel_message="No session ID available for this file.",
+    )
 
 
 def _show_literal_session_history(session_id: str, task_dir: str) -> None:
@@ -860,29 +848,16 @@ def _show_literal_session_history(session_id: str, task_dir: str) -> None:
     single control socket that belongs to it. Several matching sockets are
     reported as ambiguous instead of being guessed.
     """
-    from cli_topsailai.constants import TEMP_SESSION_ID, TEMP_SESSION_MARKER
-    from cli_topsailai.retrieve import (
-        ControlHistoryError,
-        resolve_control_history_target,
-        retrieve_session,
-        retrieve_session_history_via_control,
-    )
+    from cli_topsailai.constants import TEMP_SESSION_MARKER
+    from cli_topsailai.retrieve import show_session_history
 
-    if session_id and session_id not in (TEMP_SESSION_ID, TEMP_SESSION_MARKER):
-        retrieve_session(session_id, max_chars=1000)
-        return
-    try:
-        target = resolve_control_history_target(task_dir, session_id=session_id)
-    except ControlHistoryError as error:
-        print(f"{Colors.RED}[ERROR] {error.error_code}: {error}{Colors.RESET}")
-        return
-    if target is None:
-        print(
-            f"{Colors.RED}[ERROR] No session ID available for session "
-            f"'{TEMP_SESSION_MARKER}'.{Colors.RESET}"
-        )
-        return
-    retrieve_session_history_via_control(target)
+    show_session_history(
+        session_id,
+        task_dir,
+        no_channel_message=(
+            f"No session ID available for session '{TEMP_SESSION_MARKER}'."
+        ),
+    )
 
 
 def _stdin_has_pending_input() -> bool:

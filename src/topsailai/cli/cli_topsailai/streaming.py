@@ -411,7 +411,7 @@ class _CursesOutputCapture:
 
 # Runtime commands implemented by the streaming layer itself. They are listed
 # here so a bare spelling is recognized without the leading "/".
-_RUNTIME_BUILTIN_COMMANDS = ("send", "ctx.btw-all", "meta", "help")
+_RUNTIME_BUILTIN_COMMANDS = ("send", "ctx.btw-all", "meta", "help", "messages")
 
 
 def _runtime_command_line(cmd_line: str, task_dir: str) -> Optional[str]:
@@ -564,13 +564,13 @@ def _prompt_send_as_message(
     if output_callback is not None:
         output_callback(
             f"[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]' (alias '/btw'), '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]' (alias '/model'), '/meta', '/help', 'q', 'quit', 'exit', or 'cd'. "
+            f"Use '/send [message]', '/ctx.btw [message]' (alias '/btw'), '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]' (alias '/model'), '/meta', '/messages', '/help', 'q', 'quit', 'exit', or 'cd'. "
             f"The leading '/' is optional."
         )
     else:
         print(
             f"{Colors.RED}[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]' (alias '/btw'), '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]' (alias '/model'), '/meta', '/help', 'q', 'quit', 'exit', or 'cd'. "
+            f"Use '/send [message]', '/ctx.btw [message]' (alias '/btw'), '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]' (alias '/model'), '/meta', '/messages', '/help', 'q', 'quit', 'exit', or 'cd'. "
             f"The leading '/' is optional.{Colors.RESET}"
         )
     return True
@@ -1242,6 +1242,7 @@ def _stream_file_raw(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
         f"type 'send [message]' to send a message, "
         f"'ctx.btw [message]' (alias 'btw') or 'ctx.btw-all [message]' to inject agent2llm messages, "
+        f"'messages' to print this session's history, "
         f"'control <command>' to send a control request, or Ctrl+C to exit. "
         f"The leading '/' is optional.{Colors.RESET}\n"
     )
@@ -1371,6 +1372,7 @@ def _stream_file_legacy(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
         f"type 'send [message]' to send a message, "
         f"'ctx.btw [message]' (alias 'btw') or 'ctx.btw-all [message]' to inject agent2llm messages, "
+        f"'messages' to print this session's history, "
         f"'control <command>' to send a control request, or Ctrl+C to exit. "
         f"The leading '/' is optional.{Colors.RESET}\n"
     )
@@ -1479,8 +1481,9 @@ def _handle_stream_command(
 
     Supports ``/send`` (defaulting to the watched session), ``/ctx.btw``
     (inject an agent2llm message), ``/ctx.btw-all`` (broadcast an agent2llm
-    message to discoverable PIDs in the watched session), ``/control`` and
-    ``/meta``. Other runtime YAML commands remain available.
+    message to discoverable PIDs in the watched session), ``/control``,
+    ``/meta`` and ``/messages`` (print the watched session's history). Other
+    runtime YAML commands remain available.
 
     Args:
         input_provider: Optional callable used to collect multi-line input
@@ -1525,6 +1528,11 @@ def _handle_stream_command(
     if cmd == "/meta":
         _handle_stream_meta(task_dir, default_session_id, default_session_pid)
         return
+    if cmd == "/messages":
+        _handle_stream_messages(
+            cmd_line, task_dir, default_session_id, default_session_pid
+        )
+        return
     if cmd == "/help":
         keyword = parts[1].strip() if len(parts) > 1 else None
         help_text.print_help(state.yaml_commands, state.current_scope, keyword=keyword)
@@ -1539,7 +1547,8 @@ def _handle_stream_command(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
         f"Use '/send [message]', '/ctx.btw [message]' (alias '/btw'), "
         f"'/ctx.btw-all [message]', '/control <command>', "
-        f"'/agent.<instruction> [args...]' (alias '/model'), '/meta', '/help', "
+        f"'/agent.<instruction> [args...]' (alias '/model'), '/meta', "
+        f"'/messages', '/help', "
         f"'q', 'quit', 'exit', or 'cd'. The leading '/' is optional.{Colors.RESET}"
     )
 
@@ -1647,6 +1656,55 @@ def _handle_stream_meta(
         return
 
     print(content, end="" if content.endswith("\n") else "\n")
+
+
+def _handle_stream_messages(
+    cmd_line: str,
+    task_dir: str,
+    session_id: Optional[str],
+    session_pid: Optional[int],
+) -> None:
+    """Print the watched session's history, exactly as workspace scope does.
+
+    Runtime scope already knows which session is being watched, so the command
+    takes no argument. The retrieval itself is delegated to
+    ``retrieve.show_session_history``, the same function the workspace-scope
+    ``messages`` alias uses, so both scopes print identical output for the same
+    session. A temporary session is resolved through its exact session PID when
+    one is known, which keeps the control-channel lookup unambiguous.
+    """
+    from cli_topsailai.retrieve import show_session_history
+
+    parts = cmd_line.split(None, 1)
+    if len(parts) > 1 and parts[1].strip():
+        print(
+            f"{Colors.RED}[ERROR] Usage: /messages (alias: messages). "
+            f"Runtime scope already targets the watched session, so no "
+            f"argument is accepted.{Colors.RESET}"
+        )
+        return
+
+    if not session_id:
+        print(
+            f"{Colors.RED}[ERROR] No session is associated with this log file."
+            f"{Colors.RESET}"
+        )
+        return
+
+    row = None
+    if session_pid is not None:
+        row = {
+            "session_id": session_id,
+            "is_task": False,
+            "pid": session_pid,
+            "session_pid": session_pid,
+        }
+    show_session_history(
+        session_id,
+        task_dir,
+        row=row,
+        no_channel_message="No session ID available for this log file.",
+    )
 
 
 def _handle_stream_send(

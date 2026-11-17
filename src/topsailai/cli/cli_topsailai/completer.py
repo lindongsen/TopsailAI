@@ -107,6 +107,9 @@ def get_available_completions() -> List[str]:
         completions.append("/send")
     if cli_state.current_scope == "runtime":
         completions.append("/ctx.btw-all")
+        # "/messages" prints the watched session's history in runtime scope,
+        # the same command workspace scope accepts as a "/session" alias.
+        completions.append("/messages")
         # Runtime aliases are advertised only where they are accepted, and are
         # derived from the same declaration the recognizer expands, so a
         # spelling cannot be accepted without being discoverable.

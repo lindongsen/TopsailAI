@@ -81,7 +81,7 @@ def print_scopes() -> None:
         (
             "runtime",
             "The live log-streaming scope entered after selecting a workspace log file. It follows output for the watched session or task while keeping session messaging available.",
-            "Send process messages with /send, inject agent2llm context to the watched PID with /ctx.btw (alias /btw) or to all discoverable live PIDs with /ctx.btw-all, print session metadata with /meta, send control requests with /control, forward agent instructions with /agent.<instruction> (alias /model for /agent.models), recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit. The leading '/' is optional for every runtime command, so send hello and /send hello are the same command.",
+            "Send process messages with /send, inject agent2llm context to the watched PID with /ctx.btw (alias /btw) or to all discoverable live PIDs with /ctx.btw-all, print session metadata with /meta, print the watched session's history with /messages, send control requests with /control, forward agent instructions with /agent.<instruction> (alias /model for /agent.models), recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit. The leading '/' is optional for every runtime command, so send hello and /send hello are the same command.",
         ),
         (
             "project",
@@ -387,6 +387,12 @@ def print_help(
             "cmd": "/meta",
             "desc": "Print the metadata file for the watched parent session. Task logs use their parent session PID rather than the child task PID.",
             "example": "Example: /meta",
+            "scopes": ["runtime"],
+        },
+        {
+            "cmd": "/messages",
+            "desc": "Print the watched session's history, with the same retrieval path and output as the workspace-scope messages command. No arguments: runtime scope already targets the watched session, so an argument is rejected.",
+            "example": "Example: messages  or  /messages",
             "scopes": ["runtime"],
         },
         {
