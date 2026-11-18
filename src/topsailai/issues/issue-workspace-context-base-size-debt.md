@@ -43,3 +43,45 @@ limit" statement are both stale.
 This remains a standing constraint rather than a defect to repair: the file must not grow further
 without a separately authorized split, and the U5/U6 narrow exceptions still do not authorize
 additional growth. The issue stays open until that refactor is authorized and completed.
+
+## Split plan prepared on 2026-11-18, awaiting authorization
+
+A concrete split plan now exists at `.task/plan_20261118T094031_workspace-context-base-split.md`.
+No production code was changed. The plan is the "separately authorized maintenance/refactor
+task" this issue requires, and the issue stays open until a human authorizes it.
+
+The plan records the constraint that makes this refactor non-mechanical: **312 test patch
+sites** target module-level names on `topsailai.workspace.context.base`
+(`env_tool` 72, `ctx_manager` 70, `AgentBase` 51, `get_llm_chat` 28, and ten more names).
+`patch("base.env_tool")` replaces the name in the base module namespace only, so a method
+that moves to another file and keeps its own `from ... import env_tool` reads the unpatched
+original. Measured: `patch pkg2.base.env_tool` leaves a mixin reading `original`, while
+`patch mixin.env_tool` reaches it. A naive move therefore disables all 312 patches while
+every test still passes, which is the dangerous failure mode for this refactor.
+
+Five mechanisms were measured; only one works in both import orders: moved methods read
+dependencies through `self._deps.<name>`, where `_deps` is a property on the composed class
+returning `sys.modules[__name__]`. A mixin that instead does
+`from pkg import base as _base` at module top raises `ImportError: cannot import name
+'Mixin' from partially initialized module` when the mixin is imported first.
+
+The proposed decomposition yields six files, all at or below 700 lines: `base.py` ~200,
+`context_message_mixin.py` ~326, `context_observation_mixin.py` ~351,
+`context_summary_window_mixin.py` ~387, `context_watermark_mixin.py` ~234,
+`context_summary_generation_mixin.py` ~314. All 14 cross-group call edges are
+`self.<method>`, so no mixin needs to import another.
+
+Baseline for the four directly affected test files is **285 passed in 2.60s**, recorded
+before any edit so the split can be proven behaviour-preserving.
+
+Two items still need a decision before implementation:
+
+1. `workspace/context/ctx_runtime.py` is **708 lines**, a second violation in the same
+   package that this issue does not name. It must be included or explicitly scoped out.
+2. `init(self, session_id: str, ai_agent: AgentBase)` carries a bare `AgentBase`
+   annotation evaluated at class-definition time, and `AgentBase` is patched 51 times.
+   The moved method must either stay in `base.py` or annotate through `_deps` with
+   `from __future__ import annotations`.
+
+Authorization was requested and the question timed out after 600 seconds with the default
+"keep the issue open and move on". This is a timeout default, not approval. No code changed.
