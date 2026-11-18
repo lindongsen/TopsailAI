@@ -1,7 +1,8 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
+resolved: 2026-11-18
 created: 2026-11-15
 ---
 
@@ -333,3 +334,112 @@ ac.topsailai-dev  CAPABILITY_REVISION topsailai-v1
 
 The column is now truthful about what it contains: a configured label, not a fingerprint. It still
 cannot tell an operator that a node's served surface changed, because nothing computes or compares one.
+
+## Resolution, 2026-11-18
+
+The human decided the seam stays and the Provider fills it: "这是个 seam，要留着。让 provider 自己去填充。"
+That supersedes the A to D options above, including the recommendation to delete the column.
+
+### Why this is safe where option C was not
+
+The concern recorded in "The revision is also a deduplication input" was that a computed revision churns
+on every descriptor refresh and breaks in-flight command deduplication through `CanonicalHash`. That
+concern applies to a fingerprint derived from the capability set. It does not apply here, because
+`providercli.Descriptor.DescriptorRevision` is a constant the Provider declares about its own build, not
+a value derived from the set:
+
+- `internal/providercli/validation.go:528` validates it as a required identifier, so a real Provider
+  always supplies one.
+- `providers/topsailai/descriptor.go:23` declares `topsailai-provider-v1` as a literal.
+
+Swapping one constant for another constant keeps the deduplication input stable across refreshes, so no
+`HashVersion` migration is needed and no in-flight command changes meaning.
+
+### Change
+
+`internal/adapter/genericcli/adapter.go:970` now builds the descriptor as
+`protocol.CapabilityDescriptor{Revision: descriptor.DescriptorRevision}` instead of
+`{Revision: configured.Revision}`.
+
+The configured `revision` field now reaches no decision. Verified: `grep -rn 'configured.Revision'` over
+the package returns only the guard-test comment that names it as the removed source.
+
+No fallback to the configured string was added on purpose. An empty Provider revision stays empty,
+because substituting the configured value would restore the second source of truth this change removes.
+Downstream already maps empty to `unknown` (`src/main/agent-cluster-server/main.go:22`,
+`internal/server/http.go:420`), so an empty value is a supported state rather than a broken one.
+
+### Data chain
+
+provider `descriptor_revision` -> `intersectCapabilities` (`adapter.go:970`) -> `Describe()`
+(`adapter.go:170`) -> binding -> inventory report -> `inventoryCapabilityRevision`
+(`src/main/agent-cluster-server/main.go:31-39`) -> `endpoints.capability_revision` -> TUI column
+(`internal/tui/endpoints.go:109`).
+
+### Tests
+
+New file `internal/adapter/genericcli/capability_revision_source_test.go`, three tests. Each configures a
+different string from the one the Provider declares, so a test cannot pass for either source:
+
+| Test | Property |
+|---|---|
+| `TestPublishedRevisionComesFromTheProvider` | configured `configured-r1` vs provider `provider-r1`; the Provider wins |
+| `TestPublishedRevisionDoesNotFallBackToTheConfiguration` | provider declares `""`; published value is empty, not `configured-r1` |
+| `TestPublishedRevisionChangesWhenTheProviderChanges` | configured held constant, provider `r1` to `r2`; the published value moves |
+
+`TestIntersectCapabilitiesAcceptsTheControlActionFamily` (`adapter_test.go:753`) asserted the configured
+value; it now supplies `DescriptorRevision: "provider-r1"` and asserts that.
+
+Two deliberate breakages, both restored:
+
+- reverting to `configured.Revision` failed all three tests with
+  `published revision = "configured-r1", want the Provider's descriptor revision "provider-r1"`,
+  `want empty because the Provider declared none and the configured string must not be substituted`, and
+  `published revision stayed "configured-r1" across two Provider revisions, so it does not track the Provider`;
+- adding a fallback when the Provider declares none failed
+  `TestPublishedRevisionDoesNotFallBackToTheConfiguration` with the same substitution message.
+
+### Statements that became false and were corrected together
+
+The decision inverted four statements written in the previous three passes. Leaving any one behind would
+have created a new false statement, which is the defect class this issue is about.
+
+| Location | Before | After |
+|---|---|---|
+| `docs/agent-cluster-protocol.md:706-714` | "the `revision` string the Adapter configuration declares ... The provider descriptor revision is input evidence, not the public capability revision." | the Provider's own `descriptor_revision`, explicitly not the configured string, with the no-fallback rule stated |
+| `docs/agent-cluster-architecture.md:359-376` | "the `revision` value the Adapter configuration declares" | the Provider's `descriptor_revision`; the Mermaid node `AdapterConfig["Adapter configuration revision"]` renamed to `ProviderRevision["Provider descriptor revision"]` |
+| `internal/tui/help.go:60` | "the `revision` string the endpoint's Adapter configuration declares" | "the revision the endpoint's Provider declares for its own implementation" |
+| `internal/tui/capability_revision_help_guard_test.go` | required the entry to name the Adapter configuration | requires "Provider declares" and rejects "Adapter configuration declares" |
+
+The guard test was renamed `TestCapabilityRevisionHelpStatesTheConfiguredStringMeaning` to
+`TestCapabilityRevisionHelpStatesTheProviderMeaning`. The third assertion is what stops the removed
+behaviour from being re-documented. Proven by deliberate breakage: restoring the old help wording failed
+with both `the CAPABILITY_REVISION help does not state that the value is the revision the Provider
+declares` and `the CAPABILITY_REVISION help still names the Adapter configuration as the source, but the
+published value is the Provider's descriptor revision`.
+
+### Obsolete guard removed
+
+`src/main/agent-cluster-endpoint/control_action_comment_guard_test.go:158-160` required the shipped
+`ADAPTERS` example to declare a non-empty `revision`, on the rationale that an empty value made every
+command fail as an invalid intent. That rationale no longer holds, so the assertion was replaced with a
+comment explaining why the configured revision is deliberately not asserted. Proven non-vacuous: setting
+the shipped example's `"revision": ""` now leaves the package green, which is the intended new behaviour.
+
+`conf/node.endpoint.conf.example:44-48` gained a comment stating the field is retained for compatibility
+but reaches no decision.
+
+### Verification
+
+- `go build ./...` clean.
+- `go test ./internal/adapter/genericcli/ ./internal/tui/ ./internal/endpoint/
+  ./src/main/agent-cluster-endpoint/ ./src/main/agent-cluster-server/` all `ok` on a clean checkout
+  extracted from the commit (`internal/tui` 98.347s, `internal/endpoint` 11.013s,
+  `agent-cluster-server` 22.564s).
+- `gofmt -l` clean and `go vet` clean on all three touched packages.
+- Commit `b121a3d5`, 9 files, verified with `git show --name-only` that no foreign hunk was swept in.
+
+### Remaining limitation
+
+The fleet will keep showing one revision until the Provider binaries and the Endpoints are redeployed.
+The column now reports a value the Provider owns, but a stale deployment still reports the old constant.
