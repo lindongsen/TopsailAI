@@ -358,16 +358,20 @@ report the capability limitation rather than claim safe execution.
 
 The provider descriptor reports what the provider CLI implements. The Endpoint intersects that
 information with its own supported standard surface and local policy, then publishes the effective
-capability set to the Server. The revision string published beside that set is the `revision` value
-the Adapter configuration declares, copied through unchanged; it is not computed from the set, so a
-changed capability set does not change the revision.
+capability set to the Server. The revision string published beside that set is the Provider's own
+`descriptor_revision`, copied through unchanged; it is not computed from the set, so a changed
+capability set does not change the revision. It is deliberately not the `revision` value the Adapter
+configuration declares: only the Provider knows when its implementation changed, so only the Provider
+can honestly report a revision, while a configured string is written once by an operator and never
+updated. A Provider that declares no revision leaves the published value empty, which readers report
+as `unknown`; the configured string is never substituted for it.
 
 ```mermaid
 flowchart LR
     Provider["Provider descriptor"] --> Intersect["Endpoint normalization and intersection"]
     Standard["Cluster standard operation and query registry"] --> Intersect
     Policy["Endpoint local policy"] --> Intersect
-    AdapterConfig["Adapter configuration revision"] --> Intersect
+    ProviderRevision["Provider descriptor revision"] --> Intersect
     Intersect --> Effective["Effective capabilities + revision"]
 ```
 

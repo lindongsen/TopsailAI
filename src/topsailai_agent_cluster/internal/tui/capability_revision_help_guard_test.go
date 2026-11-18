@@ -1,8 +1,8 @@
 package tui
 
-// The endpoint table's CAPABILITY_REVISION column shows the `revision` string an
-// Adapter configuration declares. It is not a fingerprint of the capability set,
-// and no admission path compares it against a command's revision.
+// The endpoint table's CAPABILITY_REVISION column shows the revision the
+// Provider declares for its own implementation. It is not a fingerprint of the
+// capability set, and no admission path compares it against a command's revision.
 //
 // The help text is the only place an operator learns what the column means, and
 // nothing in the code can notice when it drifts: the renderer prints whatever
@@ -14,7 +14,7 @@ package tui
 // that the revision describes "the effective capability set", and that a changed
 // revision implies the served operations changed and an older command may be
 // refused. Neither is true: `internal/adapter/genericcli/adapter.go` builds the
-// descriptor as `protocol.CapabilityDescriptor{Revision: configured.Revision}`,
+// descriptor as `protocol.CapabilityDescriptor{Revision: descriptor.DescriptorRevision}`,
 // and `supports()` in `internal/endpoint/executor.go` matches on operation name
 // and version only.
 
@@ -79,17 +79,23 @@ func TestCapabilityRevisionHelpDoesNotClaimAFingerprint(t *testing.T) {
 	}
 }
 
-// TestCapabilityRevisionHelpStatesTheConfiguredStringMeaning is the other half:
+// TestCapabilityRevisionHelpStatesTheProviderMeaning is the other half:
 // rejecting the false claims is not enough, because an entry that says nothing
 // would also pass. The entry must state what the value actually is.
-func TestCapabilityRevisionHelpStatesTheConfiguredStringMeaning(t *testing.T) {
+func TestCapabilityRevisionHelpStatesTheProviderMeaning(t *testing.T) {
 	entry := capabilityRevisionHelpEntry(t)
 	header := capabilityRevisionHeader(t)
 
-	if !strings.Contains(entry, "Adapter configuration declares") {
-		t.Errorf("the %s help does not state that the value is the revision the Adapter configuration declares: %q", header, entry)
+	if !strings.Contains(entry, "Provider declares") {
+		t.Errorf("the %s help does not state that the value is the revision the Provider declares: %q", header, entry)
 	}
 	if !strings.Contains(entry, "not derived from the capability set") {
 		t.Errorf("the %s help does not state that the value is not derived from the capability set: %q", header, entry)
+	}
+	// The configured string must not be named as the source. It is still a
+	// configuration field, so an entry that names it as the origin would
+	// describe the behaviour this change removed.
+	if strings.Contains(entry, "Adapter configuration declares") {
+		t.Errorf("the %s help still names the Adapter configuration as the source, but the published value is the Provider's descriptor revision: %q", header, entry)
 	}
 }

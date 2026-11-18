@@ -705,10 +705,15 @@ is understood; otherwise the invocation fails with `incompatible_protocol`.
 
 `describe` reports the supported major/minor range, provider descriptor revision, standard operations,
 standard queries, control actions, limits and concurrency constraints. The Endpoint intersects that
-descriptor with the Cluster registry, Endpoint-supported behavior, Adapter configuration revision and
-local policy. The advertised capability revision is the `revision` string the Adapter configuration
-declares, copied through unchanged; it is not derived from the intersected capability set. The provider
-descriptor revision is input evidence, not the public capability revision.
+descriptor with the Cluster registry, Endpoint-supported behavior, the Adapter configuration's
+capability allowlist and local policy. The advertised capability revision is the Provider's own
+`descriptor_revision`, copied through unchanged; it is not derived from the intersected capability set,
+and it is not the `revision` string the Adapter configuration declares. The Provider is the only party
+that knows when its implementation changed, so it is the only party that can honestly report a
+revision: a configured string is written once by an operator and never updated, which is why every
+Endpoint in a fleet used to publish the same value while serving different surfaces. A Provider that
+declares no revision leaves the published value empty, which readers report as `unknown`; the
+configured string is never substituted for it.
 
 The Endpoint refreshes an Adapter descriptor on Endpoint startup, Adapter add/change and provider
 executable-version switch. Periodic discovery uses the accepted cached descriptor and does not invoke

@@ -155,9 +155,12 @@ func TestShippedAdapterExampleAdvertisesEveryControlAction(t *testing.T) {
 	if descriptor == nil {
 		t.Fatalf("the shipped ADAPTERS example declares no capabilities, so a node built from this template advertises none and refuses every operation")
 	}
-	if descriptor.Revision == "" {
-		t.Fatalf("the shipped ADAPTERS example declares an empty capability revision, so every command is rejected as an invalid intent before it reaches the endpoint")
-	}
+	// The configured revision is deliberately not asserted here. It used to be
+	// required because an empty value made every command fail as an invalid
+	// intent, but the published capability revision now comes from the Provider's
+	// own descriptor revision, so the configured string reaches no decision. A
+	// guard that still demanded a non-empty value would pin a field that has no
+	// effect and would tell the next reader that the field still matters.
 
 	declared := make(map[string]protocol.Capability, len(descriptor.Capabilities))
 	for _, capability := range descriptor.Capabilities {

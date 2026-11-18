@@ -932,8 +932,16 @@ var capabilityProviderContract = map[string]struct {
 // operation unreachable on every provider that reports only what it implements.
 // The configured entry is the operator's allowlist and is kept unchanged.
 //
-// The revision is carried through unchanged, which is what makes a published
-// effective revision meaningful.
+// The revision is the Provider's own descriptor revision, not the configured
+// string. The Provider is the only party that knows when its implementation
+// changed, so it is the only party that can honestly report a revision: a
+// configured string is a label an operator writes once and never updates, which
+// is why every Endpoint used to publish the same value regardless of what it
+// actually served. The Provider declares this field as required, so a real
+// Provider always supplies one; an empty value is left empty rather than filled
+// from the configuration, because falling back would restore the second source
+// of truth this change removes. Downstream already reads an empty revision as
+// "unknown" instead of inventing a value.
 func intersectCapabilities(configured protocol.CapabilityDescriptor, descriptor providercli.Descriptor) protocol.CapabilityDescriptor {
 	allowed := make(map[string]struct{}, len(descriptor.Operations)+len(descriptor.ControlActions))
 	for _, item := range descriptor.Operations {
@@ -959,7 +967,7 @@ func intersectCapabilities(configured protocol.CapabilityDescriptor, descriptor 
 	for _, query := range descriptor.Queries {
 		queries[query.Name+"\x00"+query.Version] = struct{}{}
 	}
-	result := protocol.CapabilityDescriptor{Revision: configured.Revision}
+	result := protocol.CapabilityDescriptor{Revision: descriptor.DescriptorRevision}
 	for _, capability := range configured.Capabilities {
 		// command.exec is executed by the Endpoint, so the provider cannot offer
 		// it. Keeping the configured entry is what makes the operator's own

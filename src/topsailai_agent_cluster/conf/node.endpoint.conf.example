@@ -41,6 +41,11 @@ SERVER_API_URL=http://127.0.0.1:53680
 # Replace <package-version> below with that directory name. agent-clusterctl
 # doctor refuses to start while the command is not executable, so an unfilled
 # placeholder fails loudly at startup rather than silently at the first command.
+#
+# The "revision" field inside "capabilities" is retained for compatibility but no
+# longer reaches any decision: the capability revision an Endpoint publishes is the
+# Provider's own descriptor revision, which the Provider reports about itself. The
+# value below is inert, so changing it does not change what this node advertises.
 ADAPTERS='[
   {
     "adapter_id": "topsailai-local",

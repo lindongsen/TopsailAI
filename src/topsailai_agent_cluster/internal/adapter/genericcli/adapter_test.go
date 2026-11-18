@@ -750,9 +750,9 @@ func TestIntersectCapabilitiesAcceptsTheControlActionFamily(t *testing.T) {
 	offered := []providercli.NamedContract{{Name: "message.send", Version: "v1"}}
 	controlActions := []providercli.NamedContract{{Name: "ctl.fixture_probe", Version: "v1"}}
 
-	effective := intersectCapabilities(configured, providercli.Descriptor{Operations: offered, ControlActions: controlActions})
-	if effective.Revision != "rev-1" {
-		t.Fatalf("effective revision = %q, want the configured revision", effective.Revision)
+	effective := intersectCapabilities(configured, providercli.Descriptor{DescriptorRevision: "provider-r1", Operations: offered, ControlActions: controlActions})
+	if effective.Revision != "provider-r1" {
+		t.Fatalf("effective revision = %q, want the Provider's descriptor revision", effective.Revision)
 	}
 	names := make([]string, 0, len(effective.Capabilities))
 	for _, capability := range effective.Capabilities {
