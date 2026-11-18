@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"topsailai_agent_cluster/internal/protocol"
@@ -168,6 +169,23 @@ func (r *Registry) All() []Adapter {
 	for _, entry := range r.instances {
 		result = append(result, entry.adapter)
 	}
+	return result
+}
+
+// IDs returns the configured adapter IDs in a deterministic order.
+//
+// The order is sorted rather than map order, because a caller that must choose
+// one adapter without an identity to attribute has to make the same choice on
+// every run. Map iteration order would make such a choice depend on the process,
+// so the same command could reach a different adapter after a restart.
+func (r *Registry) IDs() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]string, 0, len(r.instances))
+	for adapterID := range r.instances {
+		result = append(result, adapterID)
+	}
+	sort.Strings(result)
 	return result
 }
 

@@ -97,7 +97,15 @@ const genericCLIReadConcurrency = 4
 // create a second source of truth for one setting, and a value that passed
 // validation at startup could then be replaced by a different value later. Zero
 // means the protocol default, which the adapter itself resolves.
-func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, detailMaxBytes int) error {
+//
+// commandDir is the operator-configured working directory for a command.exec
+// request that names no session. It is passed in for the same reason as
+// detailMaxBytes: the configuration boundary already validated that it is an
+// absolute existing directory, so reading the environment here would create a
+// second source of truth. An empty value is not a default: it means endpoint scope
+// has no working directory, and the adapter refuses that form instead of falling
+// back to the Endpoint process working directory.
+func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, detailMaxBytes int, commandDir string) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}
@@ -135,6 +143,7 @@ func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, d
 			MaxStderrBytes: genericCLIMaxStderrBytes,
 			MaxRecords:     genericCLIMaxRecords,
 			MaxDetailBytes: detailMaxBytes,
+			CommandDir:     commandDir,
 			EndpointLimits: genericCLIConcurrency,
 			AdapterLimits:  genericCLIConcurrency,
 			ReadLimit:      genericCLIReadConcurrency,

@@ -129,6 +129,84 @@ func ResolveExecutable(name string) (string, error) {
 	return path, nil
 }
 
+// ConfiguredDirectory resolves the Endpoint-configured working directory for a
+// command.exec request that carries no session target.
+//
+// Endpoint scope has no session, so there is no provider evidence to ask for a
+// directory. The directory is therefore Endpoint configuration, and it is
+// validated with the same sequence SessionDirectory uses: an absolute path, then
+// symlink resolution, then a directory check. Sharing the sequence is what keeps
+// the configured directory and a session directory the same kind of fact, so the
+// confinement decision is made on the real location in both cases.
+//
+// An empty value is a refusal rather than a fallback. Falling back to the
+// Endpoint process working directory would run the operator's command somewhere
+// the operator never selected, which is a silent wrong-place execution instead of
+// a visible failure. The message names the setting, because the operator cannot
+// fix a refusal that does not say what to configure.
+func ConfiguredDirectory(directory string) (string, error) {
+	trimmed := strings.TrimSpace(directory)
+	if trimmed == "" {
+		return "", fmt.Errorf("%w: AGENT_CLUSTER_ENDPOINT_COMMAND_DIR is not configured, so endpoint scope has no working directory", ErrDirectoryUnresolved)
+	}
+	if !filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("%w: AGENT_CLUSTER_ENDPOINT_COMMAND_DIR %q is not an absolute path", ErrDirectoryUnresolved, trimmed)
+	}
+	resolved, err := filepath.EvalSymlinks(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("%w: AGENT_CLUSTER_ENDPOINT_COMMAND_DIR %q cannot be resolved: %v", ErrDirectoryUnresolved, trimmed, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%w: AGENT_CLUSTER_ENDPOINT_COMMAND_DIR %q is not a directory", ErrDirectoryUnresolved, trimmed)
+	}
+	return resolved, nil
+}
+
+// DecodeRequest decodes, validates and confines one command.exec payload.
+//
+// It returns the standard error code for a refusal together with the error, so
+// both call sites record the same code for the same defect. Two call sites exist
+// because the directory has two sources, and a second copy of this sequence would
+// let one of them accept a payload the other refuses.
+func DecodeRequest(intent protocol.ImmutableIntent) (protocol.CommandExecRequest, string, error) {
+	var payload protocol.CommandExecRequest
+	if err := json.Unmarshal(intent.Payload, &payload); err != nil {
+		return payload, "invalid_payload", fmt.Errorf("decode command.exec payload: %w", err)
+	}
+	if err := payload.Validate(); err != nil {
+		return payload, "invalid_payload", err
+	}
+	if err := ConfineArguments(payload.Argv); err != nil {
+		return payload, "argument_not_confined", err
+	}
+	return payload, "", nil
+}
+
+// Execute runs one decoded command.exec payload in an already resolved directory.
+//
+// The directory is a parameter rather than something this function resolves,
+// because the two call sites resolve it from different authorities: a targeted
+// request asks the provider where its session lives, while an untargeted request
+// uses the Endpoint's own configured directory. Everything after that decision is
+// identical, so it lives here once.
+func Execute(ctx context.Context, runner Runner, intent protocol.ImmutableIntent, payload protocol.CommandExecRequest, directory string) (adapter.ExecuteResult, error) {
+	executable, err := ResolveExecutable(payload.Argv[0])
+	if err != nil {
+		return adapter.ExecuteResult{Receipt: FailedReceipt(intent, "command_not_found")}, err
+	}
+	outcome, runErr := runner.Run(ctx, executable, payload.Argv, directory)
+	result := protocol.CommandExecResult{
+		Argv:         payload.Argv,
+		ExitCode:     outcome.ExitCode,
+		Stdout:       string(outcome.Stdout),
+		Stderr:       string(outcome.Stderr),
+		Truncated:    outcome.Truncated,
+		ObservedAtMS: time.Now().UnixMilli(),
+	}
+	return adapter.ExecuteResult{Receipt: Receipt(intent, result, runErr)}, runErr
+}
+
 // Receipt converts one command outcome into a standard receipt.
 //
 // A completed command is an acknowledged effect: the process ran and its exit

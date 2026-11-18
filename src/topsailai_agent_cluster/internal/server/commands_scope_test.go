@@ -122,3 +122,20 @@ func TestCommandAdmissionStillRejectsIssuerMismatch(t *testing.T) {
 		t.Fatalf("body=%s want code issuer_mismatch", rec.Body.String())
 	}
 }
+
+// TestCommandAdmissionAcceptsATargetlessEndpointCommand proves the Server admits an
+// intent that names no resource.
+//
+// An endpoint-scoped command.exec addresses the machine rather than a session, so it
+// carries no target. The Server decides reachability only, so it must forward such an
+// intent instead of refusing it for a missing field it never needed. The stored row
+// keeps a null target, which is what lets the Endpoint resolve the command against its
+// own configured directory rather than against a session it was never given.
+func TestCommandAdmissionAcceptsATargetlessEndpointCommand(t *testing.T) {
+	handler := scopeTestHandler(t, protocol.Capability{Name: "command.exec", Version: "v1", TargetKinds: []string{"session", "endpoint"}})
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-endpoint-exec", EndpointID: "e1", Operation: "command.exec", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: []byte(`{"argv":["true"]}`), ExecuteBeforeAtMS: 100}
+	rec := postCommand(t, handler, intent)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s, want 202", rec.Code, rec.Body.String())
+	}
+}

@@ -444,7 +444,7 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		// no scope-matrix entry, and its description is supplied here instead of
 		// in the catalog, which must stay one-to-one with the matrix.
 		entry.syntax = "agent-cluster-cli [options] exec <endpoint> <resource> <generation> -- <argv...>"
-		entry.description = "run one allowlisted command in the session working directory; the argv array is taken from the shell's own word splitting and is never re-tokenized, and the allowlist decision is made by the endpoint"
+		entry.description = "run one allowlisted command in the session working directory; the argv array is taken from the shell's own word splitting and is never re-tokenized, and the allowlist decision is made by the endpoint. This standalone form requires a session target; the interactive ! prefix also runs on the endpoint itself when the operator is in endpoint scope"
 		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "generation: target generation", "--: separates the target from the argv array", "argv: program and arguments; the program must be allowlisted by the endpoint", "--json: write the structured receipt instead of the rendered one"}
 		entry.examples = []string{"exec endpoint-1 res_abc gen-1 -- git status", "exec endpoint-1 res_abc gen-1 -- ls -la"}
 	case "help":
@@ -689,6 +689,16 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 		return err
 	}
 	workflow := "Next: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules."
+	if kind == ScopeEndpoint {
+		// Endpoint scope can run the same prefix form as session scope, but the
+		// command runs on the machine rather than in a session, so the working
+		// directory is Endpoint configuration. Naming the setting here is the only
+		// way an operator can discover why the form is refused on a node that has
+		// not configured it.
+		workflow = "Next: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules.\n" +
+			"A line beginning with ! runs one allowlisted command on this endpoint, in the directory configured by AGENT_CLUSTER_ENDPOINT_COMMAND_DIR; the endpoint decides the allowlist, and the form is refused when that directory is not configured.\n" +
+			"Actions require adapter capability support; scope availability alone does not guarantee support."
+	}
 	if kind == ScopeSession {
 		workflow = "Bare cd or cd / returns to workspace; cd .. returns to endpoint. A bare number here is message text, and only the explicit cd <number> form is rejected as unavailable in session scope.\n" +
 			"Entering a session starts the same live tail as logs -f immediately, using the REPL line budget (0300 by default, or the startup --lines value); any key stops it. A client that cannot stream, or an input mode that cannot observe a keypress, renders one bounded snapshot instead and says so.\n" +

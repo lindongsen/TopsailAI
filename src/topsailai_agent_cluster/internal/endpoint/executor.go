@@ -535,6 +535,19 @@ func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.Immutab
 		return instance, mapping.AdapterID, release, nil
 	}
 	if intent.Operation != "agent.start" {
+		// command.exec is Endpoint-native: the Endpoint owns the allowlist, the
+		// working directory, the confinement decision and the process cleanup, so
+		// the command runs on this machine rather than through a provider. It still
+		// needs one adapter to validate the advertised capability against, because
+		// the capability set is published per adapter. Exactly one configured
+		// adapter is required for that, and the rule mirrors the provider session
+		// handle path: zero means no configured adapter publishes the capability,
+		// and several means the capability cannot be attributed without guessing.
+		// Guessing would let the same command be validated against a different
+		// adapter after a restart, so both cases are refused instead.
+		if intent.Operation == protocol.OperationCommandExec {
+			return e.endpointCommandAdapter(intent)
+		}
 		return nil, "", nil, resolutionFailure("target_required", fmt.Errorf("resource_id is required for operation %q", intent.Operation))
 	}
 	mapping, err := e.store.LookupResourceID(ctx, intent.LaunchProfileID)
@@ -558,6 +571,33 @@ func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.Immutab
 	return instance, intent.LaunchProfileID, release, nil
 }
 
+// endpointCommandAdapter resolves the adapter that validates an Endpoint-scoped
+// command.exec capability.
+//
+// The command itself runs on the Endpoint, so this resolution exists only to
+// answer which published capability set the operation is checked against. The
+// rule is the same one the provider session handle path uses, and for the same
+// reason: an identity that cannot be attributed must be refused rather than
+// guessed. Zero configured adapters means nothing on this machine publishes the
+// capability, and several means the choice would depend on configuration order,
+// so the same command could be validated against a different adapter after a
+// restart.
+func (e *Executor) endpointCommandAdapter(intent protocol.ImmutableIntent) (adapter.Adapter, string, func(), error) {
+	ids := e.registry.IDs()
+	switch len(ids) {
+	case 0:
+		return nil, "", nil, resolutionFailure("adapter_not_configured", fmt.Errorf("no adapter is configured, so %q cannot be validated on this endpoint", intent.Operation))
+	case 1:
+	default:
+		return nil, "", nil, resolutionFailure("target_ambiguous", fmt.Errorf("%d adapters are configured, so the endpoint-scoped %q capability cannot be attributed; name a session target instead", len(ids), intent.Operation))
+	}
+	instance, release, ok := e.registry.Acquire(ids[0])
+	if !ok {
+		return nil, "", nil, resolutionFailure("adapter_not_configured", fmt.Errorf("adapter %q is not configured", ids[0]))
+	}
+	return instance, ids[0], release, nil
+}
+
 func (e *Executor) lockFor(key string) *sync.Mutex {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -569,8 +609,20 @@ func (e *Executor) lockFor(key string) *sync.Mutex {
 	return lock
 }
 
+// targetKey names the lock that serializes commands addressing the same target.
+//
+// A target-less intent has no resource to name, so the key is derived from what
+// the intent does address instead of being left empty. An empty key would put
+// every target-less command on one shared lock, which silently serializes
+// unrelated work and hides the coupling: a future target-less operation would
+// join that lock without anyone deciding it should. Endpoint-scoped command.exec
+// is deliberately serialized per Endpoint, because two commands running in the
+// same configured directory at once is a collision the operator did not ask for.
 func targetKey(intent protocol.ImmutableIntent) string {
 	if intent.Target == nil {
+		if intent.Operation == protocol.OperationCommandExec {
+			return intent.EndpointID + ":endpoint:command.exec"
+		}
 		return intent.LaunchProfileID
 	}
 	return intent.EndpointID + ":" + intent.Target.Kind + ":" + intent.Target.ResourceID
