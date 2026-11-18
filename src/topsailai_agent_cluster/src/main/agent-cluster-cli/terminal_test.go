@@ -67,7 +67,7 @@ func TestListKeepsStdoutPlainWhenStdinIsATerminal(t *testing.T) {
 	server := newListBehaviorServer(t)
 	defer server.Close()
 	var output, diagnostics strings.Builder
-	err := runWithIO([]string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list"}, strings.NewReader(""), &output, &diagnostics, true, nil)
+	err := runWithIO([]string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-1", "list"}, strings.NewReader(""), &output, &diagnostics, true, nil)
 	if err != nil {
 		t.Fatalf("list failed: %v diagnostics=%q", err, diagnostics.String())
 	}

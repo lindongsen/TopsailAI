@@ -26,7 +26,7 @@ func TestFollowOutputDecodesRecordsUntilEnd(t *testing.T) {
 	}))
 	defer server.Close()
 
-	records, err := NewAPIClient(server.URL, "token").FollowOutput(context.Background(), "e1", "res_1", "g1", 4096, 250)
+	records, err := newBearerClient(server.URL, "token").FollowOutput(context.Background(), "e1", "res_1", "g1", 4096, 250)
 	if err != nil {
 		t.Fatal(err)
 	}

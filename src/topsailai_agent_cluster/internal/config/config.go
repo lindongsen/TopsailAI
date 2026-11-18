@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
 )
 
 // AdapterConfig describes one Endpoint-local provider adapter.
@@ -105,7 +106,19 @@ type Config struct {
 	TLSCertificateFile    string
 	TLSKeyFile            string
 	TLSRevokedSerialsFile string
-	Adapters              []AdapterConfig
+	// AuthMode selects how the Server authenticates an operator request. The
+	// default is HMAC, so a signed deployment is the default rather than an
+	// opt-in. Bearer stays available because an existing deployment must be able
+	// to upgrade without a flag day, but it has to be selected explicitly: a
+	// silent fallback would let an attacker downgrade a signed deployment by
+	// omitting the signature.
+	AuthMode string
+	// SignatureWindow bounds how far a signed request timestamp may differ from
+	// the verifier's clock. It is configurable because a fleet may contain a host
+	// whose clock drifts, and a window that is too short turns that drift into an
+	// authentication failure that looks like a wrong credential.
+	SignatureWindow time.Duration
+	Adapters        []AdapterConfig
 }
 
 // Channel direction values. The direction names which side dials, so a
@@ -127,7 +140,11 @@ func Defaults(role string) Config {
 	if role == "agent-cluster-endpoint" {
 		databasePath = ".tmp/endpoint.sqlite"
 	}
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development-token", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, WriteLivenessBudget: 2 * time.Minute, WriteLivenessInterval: 5 * time.Second, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server", HeartbeatAckTimeout: 3 * time.Second, UnhealthyWindow: 30 * time.Second}
+	// The default credential is a key_id.secret pair because the default
+	// authentication mode is HMAC, which cannot use a bare secret. A default
+	// token without a key_id would make the default mode unusable, so a Server
+	// started with no configuration would exit at startup instead of serving.
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development.key", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, WriteLivenessBudget: 2 * time.Minute, WriteLivenessInterval: 5 * time.Second, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server", HeartbeatAckTimeout: 3 * time.Second, UnhealthyWindow: 30 * time.Second, AuthMode: string(security.DefaultAuthMode), SignatureWindow: security.DefaultSignatureWindow}
 }
 
 // Load parses command-line flags and applies environment configuration.
@@ -201,6 +218,25 @@ func Load(args []string, role string) (Config, error) {
 			}
 			cfg.TLSSharedCertificate = parsed
 		}
+		// The Server verifies the operator credential, so it owns the Server
+		// authentication mode and the window it will accept. A malformed value is
+		// rejected at startup rather than falling back to the default, because a
+		// verifier that silently runs a different mode than the operator configured
+		// refuses every request for a reason nobody can see.
+		if value := os.Getenv("AGENT_CLUSTER_SERVER_AUTH_MODE"); value != "" {
+			parsed, err := security.ParseAuthMode(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_AUTH_MODE: %w", err)
+			}
+			cfg.AuthMode = string(parsed)
+		}
+		if value := os.Getenv("AGENT_CLUSTER_SERVER_SIGNATURE_WINDOW"); value != "" {
+			parsed, err := security.ParseSignatureWindow(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_SERVER_SIGNATURE_WINDOW: %w", err)
+			}
+			cfg.SignatureWindow = parsed
+		}
 	}
 	if endpointRole || genericRole {
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE"); value != "" {
@@ -234,6 +270,24 @@ func Load(args []string, role string) (Config, error) {
 				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW: %w", err)
 			}
 			cfg.UnhealthyWindow = parsed
+		}
+		// The Endpoint verifies the endpoint-token, so it owns its own mode and
+		// window. The two roles are separate processes, so one field pair serves
+		// whichever role is running; a single process never verifies both
+		// credentials.
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_AUTH_MODE"); value != "" {
+			parsed, err := security.ParseAuthMode(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_AUTH_MODE: %w", err)
+			}
+			cfg.AuthMode = string(parsed)
+		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_SIGNATURE_WINDOW"); value != "" {
+			parsed, err := security.ParseSignatureWindow(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_SIGNATURE_WINDOW: %w", err)
+			}
+			cfg.SignatureWindow = parsed
 		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ID"); value != "" {
 			cfg.EndpointID = value
@@ -328,6 +382,12 @@ func Load(args []string, role string) (Config, error) {
 		flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 		flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")
 	}
+	// The credential mode and window belong to whichever role verifies a
+	// credential, so both roles register them. Registering them once outside the
+	// role branches keeps one spelling for one setting instead of a Server flag
+	// and an Endpoint flag that could drift apart.
+	flags.StringVar(&cfg.AuthMode, "auth-mode", cfg.AuthMode, "credential authentication mode: hmac (default) or bearer")
+	flags.DurationVar(&cfg.SignatureWindow, "signature-window", cfg.SignatureWindow, "how far a signed request timestamp may differ from the verifier clock")
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -435,6 +495,18 @@ func (c Config) Validate() error {
 	case DirectionEndpointInitiated, DirectionServerInitiated, DirectionBidirectional:
 	default:
 		return fmt.Errorf("invalid channel direction %q", c.ChannelDirection)
+	}
+	// An unrecognized authentication mode must fail at startup, because the
+	// verifier refuses every request when it cannot resolve a mode. Rejecting it
+	// here names the setting, while the runtime refusal would look like a wrong
+	// credential.
+	if _, err := security.ParseAuthMode(c.AuthMode); err != nil {
+		return err
+	}
+	// A non-positive window would reject every signed request, and an oversized
+	// one would make a captured signature replayable for that whole period.
+	if c.SignatureWindow <= 0 || c.SignatureWindow > security.MaxSignatureWindow {
+		return fmt.Errorf("signature window must be positive and at most %s", security.MaxSignatureWindow)
 	}
 	return nil
 }

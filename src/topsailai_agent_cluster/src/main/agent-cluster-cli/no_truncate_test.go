@@ -44,7 +44,7 @@ func TestNoTruncateFlagKeepsFullValues(t *testing.T) {
 	server := newNoTruncateServer(t)
 	defer server.Close()
 	sessionID := noTruncateSessionID()
-	base := []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list", "--clean"}
+	base := []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-1", "list", "--clean"}
 	var bounded, full, diagnostics strings.Builder
 	if err := runWithIO(base, strings.NewReader(""), &bounded, &diagnostics, false, nil); err != nil {
 		t.Fatalf("bounded list failed: %v diagnostics=%q", err, diagnostics.String())
@@ -97,7 +97,7 @@ func TestNoTruncateAppliesToEndpoints(t *testing.T) {
 	}))
 	defer server.Close()
 	var output, diagnostics strings.Builder
-	args := []string{"--no-truncate", "--server-url", server.URL, "--token", "test-token", "endpoints"}
+	args := []string{"--no-truncate", "--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "endpoints"}
 	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("endpoints failed: %v diagnostics=%q", err, diagnostics.String())
 	}

@@ -111,7 +111,7 @@ func (f *startRefreshServer) calls() []string {
 
 // startArgs builds the documented non-interactive start invocation.
 func startArgs(serverURL string, extra ...string) []string {
-	args := []string{"--server-url", serverURL, "--token", "test-token", "--yes", "--profile", "p", "--profile-revision", "r"}
+	args := []string{"--server-url", serverURL, "--token", "test-token", "--auth-mode", "bearer", "--yes", "--profile", "p", "--profile-revision", "r"}
 	return append(args, extra...)
 }
 

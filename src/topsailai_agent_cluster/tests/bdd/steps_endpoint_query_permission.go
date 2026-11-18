@@ -195,6 +195,10 @@ func performQueryRead(operation, credential string) error {
 		token = queryMatrixReadOutputToken
 	}
 	api := client.NewAPIClient(activeScenario.realCluster.URL(""), "secret")
+	// The harness Server runs in bearer mode, so this in-process client must
+	// present the same scheme. An empty mode would fall back to the HMAC default
+	// and be refused before the request reached the policy hook under test.
+	api.AuthMode = security.ModeBearer
 	api.EndpointTokens = map[string]string{scopedEndpointID: token}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
@@ -81,7 +80,7 @@ func TestMetricsHTTPClient(t *testing.T) {
 	}}
 	server := httptest.NewServer(metricsHandler(stub))
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	got, err := api.GetMetrics(context.Background(), "e /1", "s 1")
 	if err != nil {
 		t.Fatalf("GetMetrics: %v", err)

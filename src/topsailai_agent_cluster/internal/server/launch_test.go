@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
@@ -32,7 +31,7 @@ func TestLaunchHTTPClient(t *testing.T) {
 	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: launchRequester{}}
 	server := httptest.NewServer(h)
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	result, err := api.GetLaunchOptions(context.Background(), "e /1", "a&1")
 	if err != nil || result.Handlers[0].AdapterID != "a&1" || result.Handlers[0].Revision != "e /1" {
 		t.Fatalf("%#v %v", result, err)

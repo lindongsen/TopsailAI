@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
 )
@@ -75,7 +74,7 @@ func TestMetricsBatchHTTPClient(t *testing.T) {
 	}}
 	server := httptest.NewServer(metricsHandler(stub))
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	got, err := api.GetMetricsBatch(context.Background(), "e /1", []string{"s1", "s2"})
 	if err != nil {
 		t.Fatalf("GetMetricsBatch: %v", err)
@@ -112,7 +111,7 @@ func TestMetricsBatchPreservesPartialSuccess(t *testing.T) {
 	}}
 	server := httptest.NewServer(metricsHandler(stub))
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	got, err := api.GetMetricsBatch(context.Background(), "e1", []string{"s1", "s2", "s3"})
 	if err != nil {
 		t.Fatalf("GetMetricsBatch: %v", err)

@@ -26,7 +26,7 @@ func TestReadRequestsCarryTheEndpointToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := NewAPIClient(server.URL, "server-token")
+	api := newBearerClient(server.URL, "server-token")
 	api.EndpointTokens = map[string]string{"gd-dev": "endpoint-token"}
 	ctx := context.Background()
 
@@ -64,7 +64,7 @@ func TestCommandRequestCarriesTheEndpointToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := NewAPIClient(server.URL, "server-token")
+	api := newBearerClient(server.URL, "server-token")
 	api.EndpointTokens = map[string]string{"gd-dev": "endpoint-token"}
 	intent := protocol.ImmutableIntent{CommandID: "c1", EndpointID: "gd-dev", Operation: protocol.OperationAgentStop}
 	if _, err := api.AdmitCommand(context.Background(), intent); err != nil {
@@ -86,7 +86,7 @@ func TestFollowRequestCarriesTheEndpointToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := NewAPIClient(server.URL, "server-token")
+	api := newBearerClient(server.URL, "server-token")
 	api.EndpointTokens = map[string]string{"gd-dev": "endpoint-token"}
 	records, err := api.FollowOutput(context.Background(), "gd-dev", "res_1", "g1", 1024, 10)
 	if err != nil {
@@ -116,7 +116,7 @@ func TestUnconfiguredEndpointSendsNoToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := NewAPIClient(server.URL, "server-token")
+	api := newBearerClient(server.URL, "server-token")
 	api.EndpointTokens = map[string]string{"other": "endpoint-token"}
 	if _, err := api.GetHistory(context.Background(), "gd-dev", 5); err != nil {
 		t.Fatalf("GetHistory: %v", err)
@@ -141,7 +141,7 @@ func TestRefusalNamesTheMissingLocalToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := NewAPIClient(server.URL, "server-token")
+	api := newBearerClient(server.URL, "server-token")
 	_, err := api.GetHistory(context.Background(), "gd-dev", 5)
 	if err == nil {
 		t.Fatal("GetHistory succeeded, want a refusal")
@@ -165,7 +165,7 @@ func TestRefusalOnConfiguredEndpointIsUnchanged(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := NewAPIClient(server.URL, "server-token")
+	api := newBearerClient(server.URL, "server-token")
 	api.EndpointTokens = map[string]string{"gd-dev": "endpoint-token"}
 	_, err := api.GetHistory(context.Background(), "gd-dev", 5)
 	if err == nil {
@@ -186,7 +186,7 @@ func TestNonPolicyFailureIsUnchanged(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := NewAPIClient(server.URL, "server-token")
+	api := newBearerClient(server.URL, "server-token")
 	_, err := api.GetHistory(context.Background(), "gd-dev", 5)
 	if err == nil {
 		t.Fatal("GetHistory succeeded, want a failure")

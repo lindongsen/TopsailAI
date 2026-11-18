@@ -180,8 +180,19 @@ func main() {
 			return
 		}
 	}
+	// The authenticator is built from configuration before the handler exists,
+	// so a mode that cannot be satisfied by the configured credential fails at
+	// startup instead of refusing every request at runtime. A runtime refusal
+	// would be reported as a wrong credential, which points the operator at the
+	// token value rather than at the mode that cannot use it.
+	authenticator, err := security.NewCredentialAuthenticator(security.AuthMode(cfg.AuthMode), cfg.AuthToken, cfg.SignatureWindow)
+	if err != nil {
+		logger.Error("build operator authenticator", "auth_mode", cfg.AuthMode, "error", err)
+		_ = store.Close()
+		os.Exit(1)
+	}
 	service, err := serverapi.NewService(serverapi.ServiceDeps{
-		APIHandler:           serverapi.NewHandlerWithCommandsAndBrokerAndOutputAndRefresh(store, cfg.AuthToken, commandService, broker, channelService, channelService),
+		APIHandler:           serverapi.NewHandlerWithCredential(store, authenticator, commandService, broker, channelService, channelService),
 		ChannelServer:        channelService,
 		Storage:              store,
 		Logger:               logger,

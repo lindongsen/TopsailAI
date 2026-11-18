@@ -84,7 +84,9 @@ a container.
 | `AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR` | `--channel-listen-addr` | `:8443` | mTLS Endpoint channel address; unused in the `server-initiated` direction |
 | `AGENT_CLUSTER_SERVER_ENDPOINT_DIAL_ADDRESSES` | `--endpoint-dial-addresses` | empty | Comma-separated `endpoint_id=wss://address` pairs the Server dials in the `server-initiated` and `bidirectional` directions |
 | `AGENT_CLUSTER_SERVER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
-| `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
+| `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | `--auth-token` | `development.key` | Operator credential the API validates; a `key_id.secret` pair in `hmac` mode, a bare secret in `bearer` mode |
+| `AGENT_CLUSTER_SERVER_AUTH_MODE` | `--auth-mode` | `hmac` | Authentication scheme the API accepts: `hmac` or `bearer`; one mode is in force at a time and a failed HMAC never falls back to bearer |
+| `AGENT_CLUSTER_SERVER_SIGNATURE_WINDOW` | `--signature-window` | `60s` | Positive duration a signed request's timestamp may differ from the Server clock; also the nonce retention bound |
 | `AGENT_CLUSTER_SERVER_ENDPOINT_EXPIRY` | `--endpoint-expiry` | `24h` | Positive offline-retention duration after which the Server removes Endpoint inventory; Endpoint metadata is also removed when no retained command references it |
 | `AGENT_CLUSTER_SERVER_COMMAND_RETENTION` | `--command-retention` | `720h` | Positive retention duration for terminal command records; purging them is what lets an expired Endpoint metadata row be removed |
 
@@ -117,10 +119,16 @@ the row and immediately expires it once its deadline has passed.
 
 ### `AGENT_CLUSTER_SERVER_AUTH_TOKEN`
 
-The built-in default `development-token` is a development convenience, not a
+The built-in default `development.key` is a development convenience, not a
 deployment value. A Server started without an explicit token accepts that known
-string from any reachable client. Always set a real token, and restrict the API
+credential from any reachable client. Always set a real token, and restrict the API
 listener to a trusted address.
+
+The default is a `key_id.secret` pair because the default authentication mode is
+`hmac`, which cannot use a bare secret: the key identifier is what lets the verifier
+select the right secret without trying every configured one. A deployment that
+selects `bearer` supplies a bare secret instead, and the pair form is then rejected
+rather than silently split.
 
 ### Removed Server environment names
 
@@ -154,6 +162,8 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_REPLACE_REQUEST_FILE` | `--replace-request-file` | empty | Endpoint-local request document that activates one Provider CLI version for one adapter; empty disables activation entirely |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | none | `5000` | Positive post-collection delay in milliseconds; launcher value is `COLLECTION_DELAY_MS` |
 | `AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY` | none | `10m` | Positive duration retaining each Adapter's last successful source snapshot; older source cache is deleted before collection, while resource mappings and command evidence are preserved; launcher value is `SOURCE_CACHE_EXPIRY` |
+| `AGENT_CLUSTER_ENDPOINT_AUTH_MODE` | `--auth-mode` | `hmac` | Authentication scheme the Endpoint accepts for caller credentials: `hmac` or `bearer`; one mode is in force at a time and a failed HMAC never falls back to bearer |
+| `AGENT_CLUSTER_ENDPOINT_SIGNATURE_WINDOW` | `--signature-window` | `60s` | Positive duration a signed caller request's timestamp may differ from the Endpoint clock; also the nonce retention bound |
 
 ### `AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT` and `AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW`
 
@@ -397,7 +407,8 @@ CLI configuration files override their built-in defaults.
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
 | `AGENT_CLUSTER_CLI_SERVER_URL` | `--server-url` | `http://127.0.0.1:8080` | Server API URL the CLI connects to |
-| `AGENT_CLUSTER_CLI_SERVER_TOKEN` | `--token` | empty | Bearer token the CLI presents to the Server |
+| `AGENT_CLUSTER_CLI_SERVER_TOKEN` | `--token` | empty | Operator credential the CLI presents to the Server; a `key_id.secret` pair in `hmac` mode, a bare secret in `bearer` mode |
+| `AGENT_CLUSTER_CLI_AUTH_MODE` | `--auth-mode` | `hmac` | Authentication scheme the CLI signs with; must match the Server's mode, because a mismatch is reported as an authentication failure rather than retried in the other scheme |
 | `AGENT_CLUSTER_CLI_SERVER_PROFILES` | none | empty | Comma-separated `name=url` map defining named Server profiles |
 | `AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS` | none | empty | Comma-separated `name=token` map giving each profile its bearer token |
 | `AGENT_CLUSTER_CLI_SERVER_PROFILE` | `--server-profile` | empty | Profile name to select when no flag is given |

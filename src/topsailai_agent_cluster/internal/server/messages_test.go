@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
@@ -40,7 +39,7 @@ func TestMessagesHTTPClient(t *testing.T) {
 	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: messagesRequester{}}
 	server := httptest.NewServer(h)
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	result, err := api.GetMessages(context.Background(), "e /1", "s 1", 0, 0)
 	if err != nil || len(result.Messages) != 1 || result.Messages[0].Content != "e /1" {
 		t.Fatalf("%#v %v", result, err)
@@ -256,7 +255,7 @@ func TestMessagesMaxCharsReachesTheEndpoint(t *testing.T) {
 	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: requester}
 	server := httptest.NewServer(h)
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	for _, item := range []struct {
 		maxChars int
 		want     int

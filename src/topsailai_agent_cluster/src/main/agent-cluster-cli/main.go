@@ -16,6 +16,7 @@ import (
 
 	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
 	"topsailai_agent_cluster/internal/tui"
 )
 
@@ -78,7 +79,12 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	filter := flags.String("endpoint", "", "filter by endpoint ID")
 	confirmed := flags.Bool("yes", false, "confirm a mutating action")
 	serverURL := flags.String("server-url", envOr(cliServerURLEnv, "http://127.0.0.1:8080"), "Server API URL")
-	token := flags.String("token", cliEnvironmentValue(os.Getenv, cliServerTokenEnv), "Server bearer token")
+	token := flags.String("token", cliEnvironmentValue(os.Getenv, cliServerTokenEnv), "Server credential; hmac mode requires key_id.secret form")
+	// --auth-mode selects how the Server credential is presented. It is a flag as
+	// well as an environment variable because every other credential setting has
+	// one, and because the rollout needs an explicit per-invocation way to keep
+	// presenting a plain bearer token while the Server is still configured for it.
+	authModeFlag := flags.String("auth-mode", cliEnvironmentValue(os.Getenv, cliAuthModeEnv), "credential presentation mode: hmac (default) or bearer")
 	// --server-profile selects one named Server URL and token pair, so an operator
 	// who moves an Endpoint to a different Server changes one name instead of two
 	// settings. The name may also come from AGENT_CLUSTER_CLI_SERVER_PROFILE, which
@@ -203,6 +209,14 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	}
 	api := client.NewAPIClient(resolvedURL, resolvedToken)
 	api.EndpointTokens = endpointTokens
+	// The mode is resolved before the first request so a malformed value is
+	// reported once, as a configuration error, instead of surfacing as an
+	// authentication failure from whichever request happened to run first.
+	authMode, err := security.ParseAuthMode(*authModeFlag)
+	if err != nil {
+		return fmt.Errorf("%s: %w", cliAuthModeEnv, err)
+	}
+	api.AuthMode = authMode
 	ctx := context.Background()
 	if interactiveSelected {
 		if *jsonMode || *confirmed {
@@ -609,6 +623,7 @@ func flagSupplied(flags *flag.FlagSet, name string) bool {
 // cannot be added without deciding whether it is hoistable.
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
+	"auth-mode":       true,
 	"server-profile":  true,
 	"endpoint-token":  true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,

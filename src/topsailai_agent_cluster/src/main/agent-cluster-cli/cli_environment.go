@@ -8,6 +8,13 @@ const (
 	cliServerURLEnv      = "AGENT_CLUSTER_CLI_SERVER_URL"
 	cliServerTokenEnv    = "AGENT_CLUSTER_CLI_SERVER_TOKEN"
 	cliEndpointTokensEnv = "AGENT_CLUSTER_CLI_ENDPOINT_TOKENS"
+	// cliAuthModeEnv selects how the CLI presents its credentials.
+	//
+	// It is a CLI-owned key rather than a reuse of the Server or Endpoint key
+	// because the CLI is a separate process with its own configuration file. A
+	// CLI that read the Server's key would present a mode chosen for a different
+	// process, and the two would disagree the moment one of them was changed.
+	cliAuthModeEnv = "AGENT_CLUSTER_CLI_AUTH_MODE"
 	// A profile is one Server URL and its bearer token under one name. The three
 	// keys are separate because definition and selection are separate decisions:
 	// a deployment ships the profiles once, and each operator or script selects

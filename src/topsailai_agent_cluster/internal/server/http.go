@@ -75,8 +75,14 @@ type RefreshRequester interface {
 
 // Handler serves authenticated Server APIs backed by durable storage.
 type Handler struct {
-	Store          *serverstorage.Store
-	Authenticator  security.BearerAuthenticator
+	Store *serverstorage.Store
+	// Authenticator validates one inbound operator credential. It is the
+	// interface rather than a concrete bearer type because the Server accepts
+	// two authentication modes and must not know which one a deployment
+	// selected. A concrete field would make the mode a compile-time decision
+	// instead of a configuration decision, which is how a configured mode ends
+	// up read, validated and then never consulted.
+	Authenticator  security.RequestAuthenticator
 	CommandService *CommandService
 	MaxBodyBytes   int64
 	Broker         *EventBroker
@@ -510,7 +516,24 @@ func NewHandlerWithCommandsAndBrokerAndOutput(store *serverstorage.Store, token 
 
 // NewHandlerWithCommandsAndBrokerAndOutputAndRefresh returns an authenticated handler
 // with output forwarding and forced Endpoint collection.
+//
+// The token is interpreted as a bearer credential, which is what every existing
+// caller and test expects. A deployment that selects another authentication mode
+// builds its authenticator from configuration and passes it to
+// NewHandlerWithCredential instead, so the mode stays a configuration decision
+// rather than a property of this constructor.
 func NewHandlerWithCommandsAndBrokerAndOutputAndRefresh(store *serverstorage.Store, token string, commands *CommandService, broker *EventBroker, output OutputRequester, refresh RefreshRequester) http.Handler {
-	h := &Handler{Store: store, Authenticator: security.BearerAuthenticator{Token: token}, CommandService: commands, MaxBodyBytes: 4 << 20, Broker: broker, Output: output, Refresh: refresh}
+	return NewHandlerWithCredential(store, security.BearerAuthenticator{Token: token}, commands, broker, output, refresh)
+}
+
+// NewHandlerWithCredential returns an authenticated handler that validates
+// operator requests with the supplied authenticator.
+//
+// The authenticator is a parameter rather than a mode name because the Server
+// must not know which scheme a deployment selected. It receives a value that
+// already answers "is this request authenticated", so adding a scheme requires no
+// change here and a configured mode cannot be read and then ignored.
+func NewHandlerWithCredential(store *serverstorage.Store, authenticator security.RequestAuthenticator, commands *CommandService, broker *EventBroker, output OutputRequester, refresh RefreshRequester) http.Handler {
+	h := &Handler{Store: store, Authenticator: authenticator, CommandService: commands, MaxBodyBytes: 4 << 20, Broker: broker, Output: output, Refresh: refresh}
 	return h.authenticated(h.routes())
 }

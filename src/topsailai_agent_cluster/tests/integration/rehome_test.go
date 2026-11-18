@@ -32,6 +32,7 @@ func rehomeServer(t *testing.T, root, name string, certs certFiles) (apiURL, cha
 		"AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel,
 		"AGENT_CLUSTER_DATABASE_PATH="+db,
 		"AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret",
+		"AGENT_CLUSTER_SERVER_AUTH_MODE=bearer",
 		"AGENT_CLUSTER_TLS_CA_FILE="+certs.ca,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey,

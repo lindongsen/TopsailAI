@@ -43,7 +43,7 @@ func TestEveryAdvertisedStandaloneCommandIsDispatched(t *testing.T) {
 		var output, diagnostics strings.Builder
 		// An unreachable Server keeps the check offline: any transport error is
 		// acceptable, but an unknown-command rejection is not.
-		args := []string{"--server-url", "http://127.0.0.1:1", "--token", "test-token", name}
+		args := []string{"--server-url", "http://127.0.0.1:1", "--token", "test-token", "--auth-mode", "bearer", name}
 		err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil)
 		if err != nil && strings.Contains(err.Error(), "unknown command") {
 			t.Fatalf("advertised command %q is not dispatched: %v", name, err)
@@ -56,7 +56,7 @@ func TestEveryAdvertisedStandaloneCommandIsDispatched(t *testing.T) {
 func TestRemovedStandaloneSpellingsStayRejected(t *testing.T) {
 	for _, name := range []string{"table", "use"} {
 		var output, diagnostics strings.Builder
-		args := []string{"--server-url", "http://127.0.0.1:1", "--token", "test-token", name}
+		args := []string{"--server-url", "http://127.0.0.1:1", "--token", "test-token", "--auth-mode", "bearer", name}
 		err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil)
 		if err == nil {
 			t.Fatalf("removed command %q was accepted", name)

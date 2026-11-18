@@ -11,7 +11,7 @@ import (
 // listFullBaseArgs returns the standalone arguments shared by every list
 // rendering case, so a test varies only the spelling under test.
 func listFullBaseArgs(serverURL string) []string {
-	return []string{"--server-url", serverURL, "--token", "test-token", "--endpoint", "endpoint-1"}
+	return []string{"--server-url", serverURL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-1"}
 }
 
 // TestListFullFlagKeepsFullValues proves the standalone --full flag stops the

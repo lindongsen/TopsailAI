@@ -475,7 +475,7 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 	}{
 		{
 			name:    "global endpoint before list",
-			args:    []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list"},
+			args:    []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-1", "list"},
 			wantIDs: []string{"A1", "A2"},
 		},
 		{
@@ -484,7 +484,7 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 			// summary line is what keeps the omission from looking like proof
 			// that the endpoint holds no sessions.
 			name:        "default omits offline endpoint without querying it",
-			args:        []string{"--server-url", server.URL, "--token", "test-token", "list"},
+			args:        []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "list"},
 			wantIDs:     []string{"A1", "A2", "B1", "B2"},
 			wantAbsent:  []string{"endpoint-3"},
 			wantNoDiag:  "endpoint-3 unavailable",
@@ -494,14 +494,14 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 			// --all is the documented way to see the endpoint again, so the
 			// request, the placeholder row and the diagnostic all return.
 			name:       "all includes offline endpoint and queries it",
-			args:       []string{"--server-url", server.URL, "--token", "test-token", "list", "--all"},
+			args:       []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "list", "--all"},
 			wantIDs:    []string{"A1", "A2", "B1", "B2"},
 			wantOutput: "endpoint-3",
 			wantDiag:   "endpoint-3 unavailable",
 		},
 		{
 			name:       "all short spelling matches the long one",
-			args:       []string{"--server-url", server.URL, "--token", "test-token", "list", "-a"},
+			args:       []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "list", "-a"},
 			wantIDs:    []string{"A1", "A2", "B1", "B2"},
 			wantOutput: "endpoint-3",
 			wantDiag:   "endpoint-3 unavailable",
@@ -510,7 +510,7 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 			// --clean keeps its own meaning: it also hides an online endpoint
 			// whose fetch failed, which the default still shows.
 			name:        "clean after list",
-			args:        []string{"--server-url", server.URL, "--token", "test-token", "list", "--clean"},
+			args:        []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "list", "--clean"},
 			wantIDs:     []string{"A1", "A2", "B1", "B2"},
 			wantAbsent:  []string{"endpoint-3"},
 			wantNoDiag:  "endpoint-3 unavailable",
@@ -518,7 +518,7 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 		},
 		{
 			name:    "global endpoint and clean",
-			args:    []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list", "--clean"},
+			args:    []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-1", "list", "--clean"},
 			wantIDs: []string{"A1", "A2"},
 		},
 		{
@@ -526,23 +526,23 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 			// because answering with an empty table would describe the endpoint
 			// as absent instead of offline.
 			name:       "explicit offline filter still renders the endpoint",
-			args:       []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-3", "list"},
+			args:       []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-3", "list"},
 			wantOutput: "endpoint-3",
 			wantDiag:   "endpoint-3 unavailable",
 		},
 		{
 			name:      "endpoint positional argument rejected",
-			args:      []string{"--server-url", server.URL, "--token", "test-token", "list", "endpoint-1"},
+			args:      []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "list", "endpoint-1"},
 			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full] [--brief]",
 		},
 		{
 			name:      "repeated all spelling rejected",
-			args:      []string{"--server-url", server.URL, "--token", "test-token", "list", "-a", "--all"},
+			args:      []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "list", "-a", "--all"},
 			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full] [--brief]",
 		},
 		{
 			name:    "global endpoint after list is honoured",
-			args:    []string{"--server-url", server.URL, "--token", "test-token", "list", "--endpoint", "endpoint-1"},
+			args:    []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "list", "--endpoint", "endpoint-1"},
 			wantIDs: []string{"A1", "A2"},
 		},
 	}
@@ -632,7 +632,7 @@ func TestListBehaviorTestsDoNotUseProductionPortsOrToken(t *testing.T) {
 	server := newListBehaviorServer(t)
 	defer server.Close()
 	var output, diagnostics strings.Builder
-	err := runWithIO([]string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list", "--clean"}, strings.NewReader(""), &output, &diagnostics, false, nil)
+	err := runWithIO([]string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-1", "list", "--clean"}, strings.NewReader(""), &output, &diagnostics, false, nil)
 	if err != nil {
 		t.Fatalf("isolated list failed: %v diagnostics=%q", err, diagnostics.String())
 	}
@@ -693,7 +693,7 @@ func TestListHelpAndDispatchContract(t *testing.T) {
 	server := newListBehaviorServer(t)
 	defer server.Close()
 	var output, diagnostics strings.Builder
-	args := []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list", "--clean"}
+	args := []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-1", "list", "--clean"}
 	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("advertised syntax failed: %v diagnostics=%q", err, diagnostics.String())
 	}
@@ -837,7 +837,7 @@ func TestEndpointsHelpAndDispatchContract(t *testing.T) {
 
 	server := newListBehaviorServer(t)
 	defer server.Close()
-	base := []string{"--server-url", server.URL, "--token", "test-token"}
+	base := []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer"}
 
 	var output, diagnostics strings.Builder
 	if err := runWithIO(append(append([]string{}, base...), "endpoints"), strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {

@@ -27,6 +27,14 @@ type APIClient struct {
 	HTTPClient *http.Client
 	BaseURL    string
 	Token      string
+	// AuthMode selects how the Server credential is presented.
+	//
+	// An empty value means the default, which is HMAC. The field exists because
+	// the Server accepts exactly one mode at a time and refuses a request that
+	// arrives in the other one, so the client must present the same mode the
+	// Server was configured with. It is a field rather than a constructor
+	// argument so an existing caller keeps compiling and keeps the default.
+	AuthMode security.AuthMode
 	// EndpointTokens maps an Endpoint ID to the token that Endpoint accepts.
 	//
 	// The mapping lives on the client because the Server must never hold it: a
@@ -38,9 +46,62 @@ type APIClient struct {
 	EndpointTokens map[string]string
 }
 
-// NewAPIClient constructs an API client for baseURL and bearer token.
+// NewAPIClient constructs an API client for baseURL and Server credential.
 func NewAPIClient(baseURL, token string) *APIClient {
 	return &APIClient{HTTPClient: http.DefaultClient, BaseURL: strings.TrimRight(baseURL, "/"), Token: token}
+}
+
+// applyServerCredential attaches the Server credential in the configured mode.
+//
+// The two modes are exclusive. A request is signed or it carries a bearer token,
+// never both, because a Server configured for one mode refuses the other and a
+// request carrying both would leave the operator unable to tell which credential
+// was actually accepted.
+//
+// An empty token attaches nothing. That is deliberate: a Server may be configured
+// without a credential, and inventing one would present a credential the operator
+// never configured.
+func (c *APIClient) applyServerCredential(req *http.Request, body []byte) error {
+	if c.Token == "" {
+		return nil
+	}
+	mode := c.AuthMode
+	if mode == "" {
+		mode = security.DefaultAuthMode
+	}
+	switch mode {
+	case security.ModeBearer:
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		return nil
+	case security.ModeHMAC:
+		token, err := security.ParseToken(c.Token)
+		if err != nil {
+			// The mode is HMAC but the credential has no key identifier, so no
+			// signature can be produced. Reporting it here names the real
+			// mistake; sending an unsigned request would be refused by the
+			// Server with a generic authentication failure that points at the
+			// token value instead of at its format.
+			return fmt.Errorf("server credential is not in key_id.secret form required by hmac mode: %w", err)
+		}
+		// The signed path is taken from the request itself rather than from the
+		// caller's path argument, so the client and the Server derive it with the
+		// same function. Rebuilding it from the argument would let the two
+		// disagree about escaping and produce a signature that fails to verify
+		// for a request that is otherwise correct.
+		signature, err := security.SignRequest(token, func(timestampMS int64, nonce string) string {
+			return security.CanonicalHTTPRequest(req.Method, req.URL.RequestURI(), body, timestampMS, nonce)
+		})
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", signature.Header())
+		return nil
+	default:
+		// An unrecognised mode refuses locally instead of guessing. A guess would
+		// present a credential in a scheme the operator did not select, and the
+		// Server's refusal would then describe the wrong problem.
+		return fmt.Errorf("unsupported authentication mode %q", mode)
+	}
 }
 
 // withEndpointToken attaches the token this Endpoint accepts to the request
@@ -163,8 +224,8 @@ func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, ge
 	if err != nil {
 		return nil, err
 	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	if err := c.applyServerCredential(req, nil); err != nil {
+		return nil, err
 	}
 	if token := security.EndpointToken(c.withEndpointToken(ctx, endpointID)); token != "" {
 		req.Header.Set(endpointTokenHeader, token)
@@ -248,11 +309,13 @@ func (c *APIClient) get(ctx context.Context, path string, target any) error {
 
 func (c *APIClient) request(ctx context.Context, method, path string, body any, target any) error {
 	var reader io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
+		bodyBytes = data
 		reader = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
@@ -262,8 +325,8 @@ func (c *APIClient) request(ctx context.Context, method, path string, body any, 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	if err := c.applyServerCredential(req, bodyBytes); err != nil {
+		return err
 	}
 	if token := security.EndpointToken(ctx); token != "" {
 		req.Header.Set(endpointTokenHeader, token)

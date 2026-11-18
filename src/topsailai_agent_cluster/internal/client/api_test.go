@@ -9,7 +9,20 @@ import (
 	"testing"
 
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
 )
+
+// newBearerClient constructs a client that presents a plain bearer token.
+//
+// These tests assert request plumbing rather than the authentication mode, so
+// they select bearer explicitly. HMAC is the default and requires a
+// key_id.secret credential, so a plain token would make every assertion about
+// the Authorization header describe the signature instead of the token.
+func newBearerClient(baseURL, token string) *APIClient {
+	c := NewAPIClient(baseURL, token)
+	c.AuthMode = security.ModeBearer
+	return c
+}
 
 func TestAPIClientMethodsAndErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +56,7 @@ func TestAPIClientMethodsAndErrors(t *testing.T) {
 		_, _ = fmt.Fprintf(w, `{"code":0,"message":"ok","data":%s}`, data)
 	}))
 	defer server.Close()
-	client := NewAPIClient(server.URL, "token")
+	client := newBearerClient(server.URL, "token")
 	ctx := context.Background()
 	if endpoints, err := client.ListEndpoints(ctx); err != nil || len(endpoints) != 1 || endpoints[0].EndpointID != "e1" {
 		t.Fatalf("ListEndpoints=%#v err=%v", endpoints, err)
@@ -70,7 +83,7 @@ func TestAPIClientMethodsAndErrors(t *testing.T) {
 	if _, err := client.CancelCommand(ctx, "c1"); err != nil {
 		t.Fatal(err)
 	}
-	bad := NewAPIClient(server.URL, "wrong")
+	bad := newBearerClient(server.URL, "wrong")
 	if _, err := bad.GetCommand(ctx, "missing"); err == nil {
 		t.Fatal("unauthorized request succeeded")
 	}

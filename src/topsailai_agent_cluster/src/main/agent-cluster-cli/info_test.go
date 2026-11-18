@@ -64,7 +64,7 @@ func infoTestServer(t *testing.T) *httptest.Server {
 func runInfo(t *testing.T, server *httptest.Server, args ...string) (string, error) {
 	t.Helper()
 	var output, diagnostics strings.Builder
-	full := append([]string{"--server-url", server.URL, "--token", "test-token"}, args...)
+	full := append([]string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer"}, args...)
 	err := runWithIO(full, strings.NewReader(""), &output, &diagnostics, false, nil)
 	return output.String(), err
 }

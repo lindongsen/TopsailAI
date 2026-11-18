@@ -225,6 +225,7 @@ func TestServerProfileSelectsURLAndTokenEndToEnd(t *testing.T) {
 	t.Setenv(serverProfileEnv, "primary")
 	t.Setenv(cliServerURLEnv, "http://127.0.0.1:1")
 	t.Setenv(cliServerTokenEnv, "wrong-token")
+	t.Setenv(cliAuthModeEnv, "bearer")
 
 	var output, diagnostics strings.Builder
 	if err := runWithIO([]string{"list"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
@@ -252,6 +253,7 @@ func TestServerProfileFlagOverridesEnvironmentSelection(t *testing.T) {
 	t.Setenv(serverProfilesEnv, "from-env="+server.URL+",from-flag="+server.URL)
 	t.Setenv(serverProfileTokensEnv, "from-env=env-token,from-flag="+flagToken)
 	t.Setenv(serverProfileEnv, "from-env")
+	t.Setenv(cliAuthModeEnv, "bearer")
 
 	var output, diagnostics strings.Builder
 	if err := runWithIO([]string{"--server-profile", "from-flag", "list"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {

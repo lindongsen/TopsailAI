@@ -282,6 +282,7 @@ func (c *Cluster) StartSecondaryServerE(seed func(path string) error) error {
 		"AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + c.SecondaryChannel,
 		"AGENT_CLUSTER_DATABASE_PATH=" + c.SecondaryServerDB,
 		"AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret",
+		"AGENT_CLUSTER_SERVER_AUTH_MODE=bearer",
 		"AGENT_CLUSTER_TLS_CA_FILE=" + c.Certs.CA,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + c.Certs.ServerCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE=" + c.Certs.ServerKey,

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
@@ -38,7 +37,7 @@ func TestModelCatalogHTTPClient(t *testing.T) {
 	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: modelCatalogRequester{}}
 	server := httptest.NewServer(h)
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	result, err := api.GetModelCatalog(context.Background(), "e /1", "s-1", "")
 	if err != nil || len(result.Profiles) != 1 || result.Profiles[0].ProviderDisplayName != "e /1" {
 		t.Fatalf("%#v %v", result, err)
@@ -250,7 +249,7 @@ func TestModelCatalogTargetReachesTheEndpoint(t *testing.T) {
 	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: requester}
 	server := httptest.NewServer(h)
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	for _, item := range []struct {
 		resourceID string
 		generation string

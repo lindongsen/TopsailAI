@@ -101,7 +101,7 @@ func TestRefreshHelpAndDispatchContract(t *testing.T) {
 	}
 	fixture := newRefreshTestServer(t)
 	var output, diagnostics strings.Builder
-	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "refresh"}
+	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--auth-mode", "bearer", "refresh"}
 	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("advertised syntax failed: %v diagnostics=%q", err, diagnostics.String())
 	}
@@ -122,7 +122,7 @@ func TestRefreshHelpAndDispatchContract(t *testing.T) {
 func TestRefreshNarrowsForcedCollectionToFilteredEndpoint(t *testing.T) {
 	fixture := newRefreshTestServer(t)
 	var output, diagnostics strings.Builder
-	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--endpoint", "endpoint-2", "refresh"}
+	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-2", "refresh"}
 	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("filtered refresh failed: %v diagnostics=%q", err, diagnostics.String())
 	}
@@ -139,12 +139,12 @@ func TestRefreshNarrowsForcedCollectionToFilteredEndpoint(t *testing.T) {
 func TestRefreshJSONMatchesListJSON(t *testing.T) {
 	fixture := newRefreshTestServer(t)
 	var refreshOut, refreshErr strings.Builder
-	refreshArgs := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--json", "refresh"}
+	refreshArgs := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--auth-mode", "bearer", "--json", "refresh"}
 	if err := runWithIO(refreshArgs, strings.NewReader(""), &refreshOut, &refreshErr, false, nil); err != nil {
 		t.Fatalf("refresh --json failed: %v diagnostics=%q", err, refreshErr.String())
 	}
 	var listOut, listErr strings.Builder
-	listArgs := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--json", "list"}
+	listArgs := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--auth-mode", "bearer", "--json", "list"}
 	if err := runWithIO(listArgs, strings.NewReader(""), &listOut, &listErr, false, nil); err != nil {
 		t.Fatalf("list --json failed: %v diagnostics=%q", err, listErr.String())
 	}
@@ -158,7 +158,7 @@ func TestRefreshJSONMatchesListJSON(t *testing.T) {
 func TestRefreshAcceptsPositionalEndpoint(t *testing.T) {
 	fixture := newRefreshTestServer(t)
 	var output, diagnostics strings.Builder
-	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "refresh", "endpoint-1"}
+	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--auth-mode", "bearer", "refresh", "endpoint-1"}
 	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("positional refresh failed: %v diagnostics=%q", err, diagnostics.String())
 	}
@@ -179,7 +179,7 @@ func TestRefreshRejectsConflictingSelectorsAndRepeatedAll(t *testing.T) {
 		{"refresh", "-a", "--all"},
 	} {
 		fixture := newRefreshTestServer(t)
-		fullArgs := append([]string{"--server-url", fixture.server.URL, "--token", "test-token"}, args...)
+		fullArgs := append([]string{"--server-url", fixture.server.URL, "--token", "test-token", "--auth-mode", "bearer"}, args...)
 		var output, diagnostics strings.Builder
 		err := runWithIO(fullArgs, strings.NewReader(""), &output, &diagnostics, false, nil)
 		if err == nil || err.Error() != "usage: agent-cluster-cli [options] [--endpoint <id>] refresh [endpoint] [-a|--all]" {
@@ -209,7 +209,7 @@ func TestRefreshReportsForcedCollectionFailure(t *testing.T) {
 	}))
 	defer server.Close()
 	var output, diagnostics strings.Builder
-	args := []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "refresh"}
+	args := []string{"--server-url", server.URL, "--token", "test-token", "--auth-mode", "bearer", "--endpoint", "endpoint-1", "refresh"}
 	err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil)
 	if err == nil {
 		t.Fatalf("forced collection failure was swallowed: output=%q", output.String())
@@ -231,7 +231,7 @@ func TestRefreshReportsForcedCollectionFailure(t *testing.T) {
 func TestRefreshIssuesNoLiveMessageCountRead(t *testing.T) {
 	fixture := newRefreshTestServer(t)
 	var output, diagnostics strings.Builder
-	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "refresh"}
+	args := []string{"--server-url", fixture.server.URL, "--token", "test-token", "--auth-mode", "bearer", "refresh"}
 	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("refresh failed: %v diagnostics=%q", err, diagnostics.String())
 	}

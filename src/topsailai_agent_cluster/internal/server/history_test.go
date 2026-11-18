@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
@@ -32,7 +31,7 @@ func TestHistoryHTTPClient(t *testing.T) {
 	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: historyRequester{}}
 	server := httptest.NewServer(h)
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	result, err := api.GetHistory(context.Background(), "e /1", 0)
 	if err != nil || len(result.Rows) != 1 || result.Rows[0].ProviderDisplayName != "e /1" {
 		t.Fatalf("%#v %v", result, err)
@@ -247,7 +246,7 @@ func TestHistoryLimitReachesTheEndpoint(t *testing.T) {
 	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: requester}
 	server := httptest.NewServer(h)
 	defer server.Close()
-	api := client.NewAPIClient(server.URL, "test")
+	api := newBearerAPIClient(server.URL, "test")
 	for _, item := range []struct {
 		limit int
 		want  int

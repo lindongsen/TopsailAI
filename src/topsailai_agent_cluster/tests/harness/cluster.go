@@ -327,7 +327,10 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		}
 		cluster.EndpointChannel = endpointChannelPort
 	}
-	serverEnv := []string{"AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=127.0.0.1:" + cluster.API, "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_DATABASE_PATH=" + cluster.ServerDB, "AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ServerCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ServerKey}
+	// The harness sends "Bearer "+token verbatim, so it selects the bearer mode
+	// explicitly. The built-in default is HMAC, and a harness that relied on the
+	// default would fail at startup instead of exercising the API it tests.
+	serverEnv := []string{"AGENT_CLUSTER_SERVER_API_LISTEN_ADDR=127.0.0.1:" + cluster.API, "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_DATABASE_PATH=" + cluster.ServerDB, "AGENT_CLUSTER_SERVER_AUTH_TOKEN=secret", "AGENT_CLUSTER_SERVER_AUTH_MODE=bearer", "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ServerCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ServerKey}
 	if options.ChannelDirection != "" {
 		serverEnv = append(serverEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
 	}
@@ -1075,6 +1078,7 @@ func (c *Cluster) cliEnvironment() []string {
 		"HOME="+home,
 		"AGENT_CLUSTER_CLI_SERVER_URL="+c.URL(""),
 		"AGENT_CLUSTER_CLI_SERVER_TOKEN=secret",
+		"AGENT_CLUSTER_CLI_AUTH_MODE=bearer",
 		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
