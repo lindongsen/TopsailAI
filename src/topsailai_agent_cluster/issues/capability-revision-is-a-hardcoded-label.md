@@ -255,3 +255,28 @@ where no adapter declares a revision and the case where the last declaring adapt
 
 So the column now shows the declared revision. It still does not show a fingerprint, which is the
 defect this issue is about.
+
+## Documentation correction, 2026-11-18 (second pass)
+
+Four more statements described a capability revision the code does not produce. All four were
+corrected to state what the code does. The code was not changed, because the deep defect is still
+option A to D.
+
+| Document | Claim before | Correction |
+|---|---|---|
+| `docs/agent-cluster-protocol.md:979` | The WebSocket handshake exchanges "standard Endpoint capability revision". | The handshake exchanges protocol version, endpoint identity, instance_id, connection generation and the Server database identity. The `Frame` envelope (`internal/channel/frames.go:114-175`) has no capability revision field, so the Server learns the revision only from the first committed inventory report. |
+| `docs/agent-cluster-protocol.md:424` | The Endpoint owns "effective capability revisions". | The Endpoint owns the effective capability *set*. The revision string attached to it is the Adapter configuration's own `revision` value, copied through unchanged. |
+| `docs/agent-cluster-database.md:43` | "Endpoint revalidates current profile/capability revisions and local policy before execution." | The Endpoint revalidates the launch profile revision (`internal/endpoint/executor.go:168`) and local policy. It does not revalidate the capability revision: no admission path compares the intent's `capability_revision` against the Endpoint's current value, and an operation is served when its name and version are still advertised (`supports()`, `executor.go:561`). |
+| `docs/agent-cluster-architecture.md:291,360,421` | The Endpoint computes and publishes an "effective capability revision". | The Endpoint publishes the effective capability set. The revision beside it is the declared `revision` string, so a changed capability set does not change the revision. |
+
+Verified before writing:
+
+- `grep -n "CapabilityRevision" internal/channel/frames.go` returns nothing.
+- `grep -rn "CapabilityRevision" internal/endpoint/*.go` returns nothing.
+- `internal/adapter/genericcli/adapter.go:949` builds the descriptor as
+  `protocol.CapabilityDescriptor{Revision: configured.Revision}`, and its own doc comment at `:922-923`
+  states the revision is carried through unchanged.
+- `internal/endpoint/executor.go:154-170` revalidates `ProfileRevision` only.
+
+The documentation guards that read these files still pass:
+`go test ./src/main/agent-cluster-endpoint/ ./internal/providercli/` is green.

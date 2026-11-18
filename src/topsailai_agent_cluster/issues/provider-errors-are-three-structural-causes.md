@@ -140,3 +140,25 @@ returns no commits. `git log -S 'genericCLIMaxRecords     = 128'` attributes the
 - `src/main/agent-cluster-endpoint/adapter_factory.go`
 - `providers/topsailai/mutation_authority.go`
 - `docs/agent-cluster-adapters.md`
+
+## Documentation correction, 2026-11-18
+
+The protocol document's request example claimed `max_records: 1000` while the shipped Endpoint sends
+`128`. The other two budget values in the same example were correct, which made the wrong one look
+authoritative: a reader comparing the example against `adapter_factory.go` would find two matches and
+one mismatch and could not tell which side was stale.
+
+Corrected in `docs/agent-cluster-protocol.md`:
+
+- The example now states `max_records: 128`.
+- The paragraph introducing the example now names all three constants and their source
+  (`src/main/agent-cluster-endpoint/adapter_factory.go:35-37`), states that they are sent as the
+  Endpoint's own values rather than narrowed by the provider, and names the failure a follow stream
+  produces when it exceeds the bound: `provider stream record limit exceeded`.
+
+Verified: `genericCLIMaxStdoutBytes = 1 << 20` (1048576), `genericCLIMaxStderrBytes = 64 << 10`
+(65536) and `genericCLIMaxRecords = 128` (`adapter_factory.go:35-37`), sent at
+`internal/adapter/genericcli/adapter.go:721`.
+
+This is a documentation fix only. The bound itself is unchanged, because raising it is a code change
+and needs a decision; see the candidate fixes table above.

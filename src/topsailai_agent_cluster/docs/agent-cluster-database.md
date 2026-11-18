@@ -40,7 +40,7 @@ One registered machine, independent of IP, hostname or process lifetime.
 | create_at_ms | BIGINT | Registration time |
 | update_at_ms | BIGINT | Latest persisted change |
 
-Capabilities/profile data are nullable before the first handshake and become stale across disconnection; they never independently authorize an action. Endpoint revalidates current profile/capability revisions and local policy before execution. Public presets describe what may be started, not how a private adapter implements it.
+Capabilities/profile data are nullable before the first handshake and become stale across disconnection; they never independently authorize an action. Endpoint revalidates the launch profile revision and local policy before execution. It does not revalidate the capability revision: no admission path compares the intent's `capability_revision` against the Endpoint's current value, and an operation is served when its name and version are still advertised. Public presets describe what may be started, not how a private adapter implements it.
 
 Compute connection state using the active authenticated channel, Server process state and last_seen_at_ms. A persisted old timestamp cannot establish online status after Server restart. Metadata updates must patch only their fields and never overwrite a newer health update using a stale whole-row object.
 

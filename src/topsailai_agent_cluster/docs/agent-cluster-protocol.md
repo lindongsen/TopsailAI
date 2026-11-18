@@ -421,7 +421,9 @@ The generic CLI Adapter translates between them. It must not serialize a complet
 | `watch` | Optionally stream provider observation changes; absence of support is explicit. |
 
 The Endpoint, not the provider CLI, owns durable Cluster command IDs, authorization, policy, audit,
-deduplication, resource mapping, effective capability revisions, public receipts and network protocol.
+deduplication, resource mapping, the effective capability set, public receipts and network protocol. The
+revision string attached to that set is the Adapter configuration's own `revision` value, copied
+through unchanged, so the Endpoint owns the set and not the label.
 
 ### Invocation sequence
 
@@ -454,7 +456,13 @@ one UTF-8 JSON request from stdin and writes one UTF-8 JSON response to stdout. 
 reads one JSON request and writes JSON Lines, one complete frame per line. Stderr is bounded diagnostic
 text and is never parsed as a successful result.
 
-A request contains at least:
+A request contains at least the fields below. The three budget values are the ones the shipped
+Endpoint sends: `genericCLIMaxStdoutBytes = 1 << 20`, `genericCLIMaxStderrBytes = 64 << 10` and
+`genericCLIMaxRecords = 128` (`src/main/agent-cluster-endpoint/adapter_factory.go:35-37`). They are
+sent as the Endpoint's own values rather than narrowed by the provider, so a provider cannot widen
+them. A follow stream that exceeds `max_records` is terminated with
+`provider stream record limit exceeded`, which is a deliberate fail-closed bound and not a provider
+fault.
 
 ```json
 {
@@ -469,7 +477,7 @@ A request contains at least:
   "budget": {
     "max_stdout_bytes": 1048576,
     "max_stderr_bytes": 65536,
-    "max_records": 1000
+    "max_records": 128
   },
   "target": {
     "provider_resource_key": "provider-private-key",
@@ -976,7 +984,7 @@ Use absolute UTC expiry for interchange with a specified maximum clock skew, and
 
 ## Inventory and event synchronization
 
-WebSocket handshake exchanges protocol major/minor, endpoint identity, instance_id, active connection generation and standard Endpoint capability revision. Reject incompatible major versions and negotiate optional minor features. Session synchronization uses full latest snapshots, not a persistent per-session event history.
+WebSocket handshake exchanges protocol major/minor, endpoint identity, instance_id, active connection generation and the Server database identity. It carries no capability revision: the `Frame` envelope has no such field, so the Server learns the revision only from the first committed inventory report. Reject incompatible major versions and negotiate optional minor features. Session synchronization uses full latest snapshots, not a persistent per-session event history.
 
 Implemented behaviour: the Endpoint stamps `source_generation` with the fixed marker `endpoint-local` (`internal/endpoint/composer.go`), and the column is TEXT. Server-side allocation of a monotonically increasing connection generation remains an unimplemented proposal; no code assigns or validates one. Freshness therefore rests only on `observed_at_ms` plus `snapshot_revision`, and the forced-collection comparison described below never depends on generation semantics. The Endpoint serializes composition and publication, not collection: `compose` increments `snapshot_revision` under the collector lock (`internal/endpoint/composer.go:10-14,45-46`), while `Collect` takes no cycle-wide lock (`internal/endpoint/collector.go:84-108`), so a periodic cycle and a forced refresh can run provider discovery concurrently and only their results are applied under that lock. Retries reuse the original revision and immutable document. Frames carry source_generation, snapshot_revision, observed_at_ms, schema_version, report_complete=true, collection_status (ok/degraded/failed) and the inventory document. Reject lower revisions and mismatched identities. An equal revision with identical content is an idempotent acknowledgement; different content is a conflict. Timestamps are for freshness, not ordering. A newly assembled report preserves per-source observation times and marks any retained data stale. Cached sections never become fresh merely because the report revision changed.
 
