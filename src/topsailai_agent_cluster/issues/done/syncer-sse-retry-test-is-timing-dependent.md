@@ -64,5 +64,14 @@ cancelling. Either form makes the test wait for the behaviour it asserts instead
 
 ## Status
 
-Open. Not fixed in this task because it is unrelated to the CLI Server failover change and
-`internal/client/sync_test.go` was last modified by `f4144927`, not by the current work.
+Resolved. Both retry tests now cancel only after the retry they assert has been observed, and the
+sibling `TestSyncerRetriesManifestOnConnectionRefused` was fixed in the same change because it carried
+the identical wall-clock pattern and would have failed the same way.
+
+Reproduced before the fix: 50 runs under concurrent `go build` load failed with
+`SSE attempts=0 resyncs=0`, while 50 idle runs passed. After the fix, 50 idle runs and 50 loaded runs
+both passed.
+
+Teeth verified by breaking the production path twice: removing the SSE retry loop made
+`TestSyncerRetriesSSEConnectFailure` fail, and removing the manifest retry made
+`TestSyncerRetriesManifestOnConnectionRefused` fail. Both were restored and the package re-ran green.

@@ -74,6 +74,12 @@ func TestSyncerGapInstanceAndResyncRequired(t *testing.T) {
 
 func TestSyncerRetriesManifestOnConnectionRefused(t *testing.T) {
 	var calls, resyncs atomic.Int64
+	// The loop is stopped only after the retry this test asserts has been
+	// observed. A wall-clock deadline races that retry: on a loaded machine the
+	// context can expire before the second manifest request is issued, and the
+	// failure then reports calls=1 for a retry path that never ran.
+	retried := make(chan struct{})
+	var once sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/manifest" {
 			call := calls.Add(1)
@@ -86,6 +92,7 @@ func TestSyncerRetriesManifestOnConnectionRefused(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: inventory_changed\ndata: {\"server_instance_id\":\"s1\",\"sequence\":1}\n\n")
+		once.Do(func() { close(retried) })
 	}))
 	defer server.Close()
 	s := NewSyncer(server.URL, "")
@@ -93,7 +100,10 @@ func TestSyncerRetriesManifestOnConnectionRefused(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-retried:
+		case <-time.After(5 * time.Second):
+		}
 		cancel()
 	}()
 	err := s.Run(ctx, func(Manifest) error { resyncs.Add(1); return nil })
@@ -107,6 +117,11 @@ func TestSyncerRetriesManifestOnConnectionRefused(t *testing.T) {
 
 func TestSyncerRetriesSSEConnectFailure(t *testing.T) {
 	var events, resyncs atomic.Int64
+	// Same rule as the manifest retry above: wait for the observed retry rather
+	// than for a fixed duration, so a loaded machine cannot cancel the context
+	// before the first SSE attempt is issued.
+	retried := make(chan struct{})
+	var once sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/manifest" {
 			fmt.Fprint(w, `{"server_instance_id":"s1","entries":[]}`)
@@ -119,13 +134,18 @@ func TestSyncerRetriesSSEConnectFailure(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: inventory_changed\ndata: {\"server_instance_id\":\"s1\",\"sequence\":1}\n\n")
+		once.Do(func() { close(retried) })
 	}))
 	defer server.Close()
 	s := NewSyncer(server.URL, "")
 	s.sleep = func(context.Context, time.Duration) error { return nil }
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go func() {
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-retried:
+		case <-time.After(5 * time.Second):
+		}
 		cancel()
 	}()
 	err := s.Run(ctx, func(Manifest) error { resyncs.Add(1); return nil })
