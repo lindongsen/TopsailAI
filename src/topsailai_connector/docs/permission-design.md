@@ -13,49 +13,57 @@ updated: 2026-11-10
 These are not preferences. A change that violates one of them is a design
 regression, not a trade-off.
 
-### The Server never stores a Node token
+### The Server never receives a Node secret
 
-The Server forwards the `node-token` on the request it arrives with and keeps no
-copy. This is the single rule the whole three-secret design rests on: if the
-Server stores a Node's token, then compromising the Server yields every stored
-Node credential at once, and the separation between the channel authority and the
-operation authority collapses into one authority.
+The Server forwards the caller's node proof and keeps no copy. It never receives
+the node credential secret at all. This is the single rule the whole design rests
+on: if the Server receives a Node's secret, then compromising the Server yields
+every Node credential at once, and the separation between the channel authority
+and the operation authority collapses into one authority.
 
-"Never stores" is enforced by four concrete prohibitions, because a vague promise
-is how this rule gets broken by accident:
+The rule is stated as "never receives" rather than "never stores", and the
+difference is the point. A Server that received a secret and promised not to store
+it would still hold it for the duration of a request, and a compromised Server
+would hold every Node's credential at once. A Server that never receives it has
+nothing to leak, nothing to log by accident, and nothing to derive a fingerprint
+from.
 
-1. **No persistence.** No database row, no file, no cache directory, no
-   in-memory map keyed by token. A `node-token` exists only as a field of the
-   request being forwarded.
-2. **No logging.** The token is never written to a log, a trace, an audit record
-   or an error message. An audit record names the `node-id`, never the token.
-3. **No retention after forwarding.** The request buffer holding the token is
-   released when the response is written. A retry re-reads the token from the
-   caller, it does not replay a stored copy.
+"Never receives" is enforced by four concrete prohibitions, because a vague
+promise is how this rule gets broken by accident:
+
+1. **No secret on the wire.** The caller sends a signature, not a secret. A
+   signature is derived from a secret and cannot be turned back into one, so the
+   Server holds a value it could not reuse even if it tried.
+2. **No logging.** A proof signature is never written to a log, a trace, an audit
+   record or an error message. An audit record names the `node-id` and the
+   `key_id`, never a secret and never a signature.
+3. **No retention after forwarding.** The proof is released when the response is
+   written. A retry re-reads the proof from the caller, it does not replay a stored
+   copy.
 4. **No derived storage.** The Server does not store a hash, a prefix, a
-   fingerprint or any other value that would let it recognize a token later. A
-   stored fingerprint is still a stored credential index.
+   fingerprint or any other value that would let it recognize a credential later.
+   A stored fingerprint is still a stored credential index.
 
-The Server does hold its own two secrets, `tunnel_token` and `client_token`,
-because it is the party that validates them. That is not a violation: those are
-the Server's own credentials, and holding them is what lets the Server be the
-authority for the channel. The prohibition is specifically about holding a
-credential that belongs to a Node.
+The Server does hold its own two secrets, `tunnel_token` and the client credential
+secrets, because it is the party that validates them. That is not a violation:
+those are the Server's own credentials, and holding them is what lets the Server be
+the authority for the channel and for its own API. The prohibition is specifically
+about holding a credential that belongs to a Node.
 
 ### The same rule covers the Server's own secrets
 
-The Server's two secrets are read from the environment once at startup and are
-never copied anywhere else:
+The Server's own secrets are read once at startup and are never copied anywhere
+else:
 
 - They are not written to a config file, a cache, a log or an audit record.
 - They are not echoed by a configuration dump, a `--print-config` command or a
   startup banner. A startup log line may say that a secret is set, never what it
   is.
 - They are not retained in a request-scoped struct after the comparison. The
-  comparison reads the configured value and the presented value, returns a
+  comparison reads the configured secret and the presented signature, returns a
   boolean, and the presented value is released with the request.
 
-The reason is the same as for the Node's token: a stored secret is a stored
+The reason is the same as for the Node's secret: a stored secret is a stored
 credential, and a Server that stores one collapses the separation between the
 channel authority and the operation authority into a single authority.
 
@@ -63,13 +71,13 @@ channel authority and the operation authority into a single authority.
 
 The Server may request an operation. Only the Node decides whether it happens. The
 Server cannot widen its own authority, and a compromised Server cannot forge a
-`node-token` because it never learns the Node's value.
+node proof because it never receives the node credential secret.
 
-This is the property the shared-secret model preserves most clearly. The Server
-holds `tunnel_token` and `client_token`; it does not hold any Node's
-`node-token`. So a compromised Server can refuse service and can impersonate a
-caller toward itself, but it cannot make a Node perform an operation, because the
-Node checks a secret the Server has never seen.
+This is the property the HMAC model preserves most clearly. The Server holds
+`tunnel_token` and its own client credential secrets; it holds no Node's
+credential secret. So a compromised Server can refuse service and can impersonate
+a caller toward itself, but it cannot make a Node perform an operation, because the
+Node verifies a signature the Server could not produce.
 
 The authority has two dimensions, and the Node owns both of them. Neither is
 delegated, and neither is negotiated:
@@ -82,7 +90,7 @@ delegated, and neither is negotiated:
 A request carries a scope name and an operation. The Node looks the scope up in its
 own policy, maps it to a directory it resolved at startup, and checks that the
 operation's permission is granted on that scope. Both checks happen on the Node,
-after the `node-token` is validated, and both are refusals by default.
+after the node proof is verified, and both are refusals by default.
 
 The Server has no scope list, no permission list and no way to learn either. It
 cannot add a scope, cannot widen a grant, cannot translate one permission into
@@ -140,58 +148,62 @@ The Node maps a scope name to a local directory. The Server never learns the rea
 absolute path, so a directory rename does not invalidate the policy and a leaked
 policy does not leak the filesystem layout.
 
-## Three secrets, three gates
+## Three credentials, three gates
 
-The system has three secrets. Each one gates a different thing, and each is
-validated by exactly one party. They are separate because a stolen secret must
+The system has three credentials. Each one gates a different thing, and each is
+validated by exactly one party. They are separate because a stolen credential must
 open one gate, not all three.
 
-| Secret | Generated by | Configured where | Presented by | Validated by | Gates |
+| Credential | Generated by | Configured where | Presented by | Validated by | Gates |
 |---|---|---|---|---|---|
 | `tunnel_token` | Server operator | Server environment | Node, in `hello` | Server | The channel: may this Node connect |
-| `client_token` | Server operator | Server environment | CLI, on every request | Server | The CLI's reach: may this caller use the Server |
-| `node-id.node-token` | Node | Node config, copied to the CLI | CLI, forwarded by the Server | Node | One operation on one scope |
+| Client credential | Server operator | Server credential file | CLI, as a proof on every request | Server | The CLI's reach: may this caller use the Server |
+| Node credential | Node operator | Node credential file | CLI, as a proof, forwarded by the Server | Node | One operation on one scope |
 
-The first two are Server-wide shared secrets. The third is per-Node and is
-generated by the Node itself, so the Server never learns it and never needs to.
+The first is a Server-wide shared secret. The other two are `key_id.secret` pairs,
+and each file may hold several of them, so one caller can be revoked without
+touching the others.
+
+The node credential is generated on the Node and never leaves it. The Server never
+receives the secret, so it never learns it and never needs to.
 
 ### What each gate actually proves
 
-The gates are deliberately narrow. A secret that passes one gate proves nothing
+The gates are deliberately narrow. A credential that passes one gate proves nothing
 about the others.
 
 - `tunnel_token` proves a Node is allowed to open a link. It does not identify
   which Node, and it grants no operation.
-- `client_token` proves a caller is allowed to use the Server. It does not grant
-  access to any particular Node, and it grants no operation.
-- `node-token` proves a caller is allowed to talk to that one Node. It does not
-  grant any particular operation either.
+- A client credential proves a caller is allowed to use the Server. It does not
+  grant access to any particular Node, and it grants no operation.
+- A node credential proves a caller is allowed to talk to that one Node. It does
+  not grant any particular operation either.
 
-**No secret carries a permission.** This is the important consequence of the
-shared-secret model: a token says "you may talk to me", and the policy file says
-"and you may do this". Authorization lives in the Node's policy, never in a
-token. A token that carried permissions would have to be reissued whenever the
-policy changed, and a policy change would silently invalidate live credentials.
+**No credential carries a permission.** This is the important consequence of the
+model: a credential says "you may talk to me", and the policy file says "and you
+may do this". Authorization lives in the Node's policy, never in a credential. A
+credential that carried permissions would have to be reissued whenever the policy
+changed, and a policy change would silently invalidate live credentials.
 
-### Why the CLI carries two secrets
+### Why the CLI carries two credentials
 
 A CLI request must pass two gates, and each gate is checked by a different party.
 
 | Question | Answered by | Checked by |
 |---|---|---|
-| May this caller use the Server at all? | `client_token` | Server |
-| May this caller operate on this Node? | `node-id.node-token` | Node |
+| May this caller use the Server at all? | Client credential | Server |
+| May this caller operate on this Node? | Node credential | Node |
 
-The Server checks the first because the Server owns it. The Node checks the
-second because the Node owns it. Neither party can check the other's secret, so
+The Server checks the first because the Server owns it. The Node checks the second
+because the Node owns it. Neither party can check the other's credential, so
 neither party can widen its own authority.
 
-A caller holding only `client_token` reaches the Server but cannot operate on any
-Node, because the Node refuses a request without a valid `node-token`. A caller
-holding only `node-id.node-token` cannot reach the Server at all, because the
-Server refuses the request before forwarding it.
+A caller holding only a client credential reaches the Server but cannot operate on
+any Node, because the Node refuses a request without a valid node proof. A caller
+holding only a node credential cannot reach the Server at all, because the Server
+refuses the request before forwarding it.
 
-The Server must never treat a valid `client_token` as authority to perform an
+The Server must never treat a valid client proof as authority to perform an
 operation. If it did, the Server would become an authority for operations, which
 the hard constraint forbids.
 
@@ -199,12 +211,15 @@ the hard constraint forbids.
 
 ```
 1. Provisioning (out of band, once, in this order)
-   Server operator: set CONNECTOR_SERVER_TUNNEL_TOKEN and
-                    CONNECTOR_SERVER_CLIENT_TOKEN, then start the Server
+   Server operator: set CONNECTOR_SERVER_TUNNEL_TOKEN, create a client
+                    credential, point CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE
+                    at the file, then start the Server
    Node operator:   connector-node id
-                    -> node_7f3a.kq2v...   (node-id.node-token, printed once)
-   Node operator:   put the node-id.node-token into the CLI's config
+                    -> node_7f3a...        (the public address, printed)
+   Node operator:   connector-node credential add
+                    -> automation-backup.q4ka...   (printed once)
    Node operator:   put tunnel_token into the Node's config
+   Node operator:   give the CLI the node id and the node credential
 
 2. Connect
    Node   -> Server : hello { version, node_id, tunnel_token, operations, scopes }
@@ -212,191 +227,177 @@ the hard constraint forbids.
    Server -> Node   : hello_confirm { version, generation }
 
 3. Operate
-   CLI    -> Server : request { node_id, client_token, node_token, scope, path, ... }
-   Server compares client_token with its configured value
-   Server forwards node_token unchanged; it never stores it
-   Node compares node_token with its own value
+   CLI    -> Server : POST with a client proof and a node proof
+   Server verifies the client proof, records its nonce, and forwards the node
+          proof byte for byte; it never receives the node secret
+   Node   verifies the node proof, records its nonce, checks the policy
    Node resolves scope -> os.Root handle, resolves path inside it, performs the work
    Node -> Server -> CLI : response
 ```
 
-The Server is a pipe for the `node-token`, not a holder of it. It forwards the
-value on every request and keeps no copy, so a Server restart does not preserve
-authority and a Server compromise does not yield a stored Node credential.
+The Server is a pipe for the node proof, not a holder of the node secret. It
+forwards the proof on every request and keeps no copy, so a Server restart does not
+preserve authority and a Server compromise does not yield a Node credential.
 
-## Node identity and the node-token pair
+## Node identity and the node credential
 
-The Node generates a single string at first start and persists it in its config
-directory. The string is two parts joined by a dot:
+The Node owns two separate things, and keeping them separate is what makes
+rotation cheap and revocation precise:
 
-```
-node-id.node-token
-    |         |
-    |         +-- the secret the Node checks on every request
-    +------------ the public name the Server routes by
-```
-
-### The two halves have different jobs
-
-| Half | Secret? | Purpose | May appear in a log |
+| Thing | Secret? | Purpose | May appear in a log |
 |---|---|---|---|
 | `node-id` | No | Routing and audit. Names which Node a request is for. | Yes |
-| `node-token` | Yes | Authentication. Proves the caller may talk to that Node. | Never |
+| Node credential | Yes | Authentication. Proves the caller may talk to that Node. | Never |
 
-Keeping them in one string is a convenience for copying, not a claim that they
-are the same kind of value. The `node-id` half is an address; the `node-token`
-half is a credential. Code must split the pair immediately on receipt and treat
-the halves differently from that point on, because a single string that is
-sometimes logged and sometimes secret will eventually be logged whole.
+The identifier is an address. The credential is a secret. They are stored in
+separate files, generated by separate commands, and rotated independently, because
+a single string that is sometimes logged and sometimes secret will eventually be
+logged whole.
 
-### Format and parsing
+### The node id
 
 ```text
-node-id    = "node_" 26( LOWER / DIGIT )     lowercase base32, no dots
-node-token = 52( LOWER / DIGIT )             lowercase base32, no dots
-pair       = node-id "." node-token
+node-id = "node_" 26( LOWER / DIGIT )     lowercase base32, no dots
 ```
 
-Both halves use unpadded lowercase base32: the characters `a` to `z` and `0` to
-`9`, and nothing else. The alphabet is deliberately narrow. Base64url would add
-`-` and `_`, and base64 would add `+`, `/` and `=`, all of which need escaping in
-a URL, a shell argument or a Windows file name. Uppercase is excluded because
-Windows compares paths case-insensitively, so a token that differs only in case
-would be a token two filesystems disagree about.
+The body is a random 128 bit value encoded as unpadded lowercase base32, prefixed
+`node_`. A hostname, a MAC address or an IP address is rejected as an identifier,
+because all three change and two of them leak host information.
 
-The lengths are fixed and derived from the entropy rather than chosen:
-
-| Half | Entropy | Characters | Derivation |
-|---|---|---|---|
-| `node-id` body | 128 bits | 26 | `ceil(16 * 8 / 5)` |
-| `node-token` | 256 bits | 52 | `ceil(32 * 8 / 5)` |
-
-A whole pair is therefore 84 characters: `node_` (5) + 26 + `.` (1) + 52.
-
-The pair is split on the **first** dot, and the rule that makes this
-unambiguous is that `node-id` may not contain a dot. Splitting on the last dot
-would be wrong: a `node-token` that happened to contain a dot would silently
-shift the boundary, and the two halves would be misidentified.
+The alphabet is deliberately narrow: `a` to `z` and `0` to `9`, and nothing else.
+Base64url would add `-` and `_`, and base64 would add `+`, `/` and `=`, all of
+which need escaping in a URL, a shell argument or a Windows file name. Uppercase is
+excluded because Windows compares paths case-insensitively, so an identifier that
+differs only in case would be one two filesystems disagree about.
 
 Parsing rules, all of which are refusals rather than repairs:
 
-- No dot at all: malformed, refused.
-- Empty `node-id` or empty `node-token`: malformed, refused.
-- A second dot in the `node-token` half: malformed, refused. Neither half's
-  alphabet contains a dot, so a dot there means the value was corrupted or
-  hand-edited.
-- A `node-id` that does not start with `node_`: malformed, refused.
-- A `node-id` whose body is not exactly 26 characters: refused. A truncated
-  identifier addresses nothing, so accepting it would produce a Node that can
-  never be reached and an operator who sees `node_offline` instead of "your
-  identifier is truncated".
-- A character outside `a-z0-9` in either half: refused. This is what rejects
-  `-`, `_`, uppercase and every other spelling a base64url implementation would
-  have accepted.
-- Whitespace anywhere: refused, not trimmed. Trimming hides a copy-paste error
-  that would otherwise surface as a confusing authentication failure.
+- A value that does not start with `node_`: refused.
+- A character outside `a-z0-9` in the body: refused.
+- Whitespace anywhere: refused, not trimmed. Trimming hides a copy-paste error that
+  would otherwise surface as a confusing routing failure.
 
-The token length is **not** validated, and the asymmetry with the identifier is
-deliberate. A token of an unexpected length is still comparable: the comparison
-fails and the request is refused, which is the correct outcome. An identifier of
-an unexpected length addresses nothing, so it must fail at parse time. Checking
-the token length would also break a token generated by an older build with a
-different entropy size, which must remain comparable.
+The documented body length is 26 characters, and the current validator does not
+enforce it: a short body is accepted. That gap is recorded as an issue rather than
+restated here as a rule the code holds.
+
+### The node credential
+
+```text
+credential = key_id "." secret
+key_id     = 1..64( LOWER / DIGIT / "-" / "_" )   not starting with "-" or "_"
+secret     = 32..( LETTER / DIGIT / "-" / "_" )
+```
+
+The key identifier is public: it selects one secret from the verifier's set and may
+appear in an audit record. The secret is the HMAC key and never leaves the signer
+and the verifier.
+
+The split is on the **first** dot, and the rule that makes it unambiguous is that a
+key identifier may not contain a dot. Splitting on the last dot would move the
+boundary if a secret ever contained one.
+
+Parsing rules, all of which are refusals rather than repairs:
+
+- No dot at all: refused. A lone key identifier is not a secret, and a lone secret
+  is not selectable.
+- An empty half: refused, because an empty secret would be an HMAC key of length
+  zero.
+- A second dot in the secret half: refused, because the accepted secret alphabet
+  has no dot, so a dot there means the value was mangled in transit.
+- A key identifier starting with `-` or `_`: refused, so it can never look like a
+  flag.
+- A secret shorter than 32 characters: refused. The secret is an HMAC key, so its
+  length is the only thing between a guess and a forgery.
+- Whitespace anywhere: refused, not trimmed.
 
 ### Why the Node generates its own identity
 
 The Server must never be the authority that mints identity, because an identity
-authority can also deny identity. A Node that generates its own name works
-without the Server being reachable, and a Server that has never seen a Node can
-still route to it once the operator supplies the pair.
+authority can also deny identity. A Node that generates its own name works without
+the Server being reachable, and a Server that has never seen a Node can still route
+to it once the operator supplies the identifier.
 
-- The `node-id` is a random 128 bit value encoded as unpadded lowercase base32,
-  prefixed `node_`. A hostname, a MAC address or an IP address is rejected as an
-  identifier, because all three change and two of them leak host information.
-- The `node-token` is 256 bits from a cryptographic random source, encoded as
-  unpadded lowercase base32. It is compared in constant time.
-- The Server keeps an in-memory registry `node_id -> connection`. The registry is
-  memory only: persisting it would create a record of which Nodes exist and when
-  they were last seen, which is a privacy decision this design does not make.
+The Server keeps an in-memory registry `node_id -> connection`. The registry is
+memory only: persisting it would create a record of which Nodes exist and when they
+were last seen, which is a privacy decision this design does not make.
 
-### Regeneration
-
-The Node may regenerate the pair on demand:
+### Regeneration changes the address, not the credential
 
 ```
 connector-node regenerate
 ```
 
-Regeneration is a deliberate, local, operator-initiated action. It is not
-triggered by the Server, and the Server has no way to ask for it, because a
-Server that could force regeneration could also force a denial of service.
+Regeneration is a deliberate, local, operator-initiated action. It is not triggered
+by the Server, and the Server has no way to ask for it, because a Server that could
+force regeneration could also force a denial of service.
 
-What regeneration does, and what it costs:
-
-| Action | `node-id` | `node-token` | Consequence |
+| Action | `node-id` | Node credential | Consequence |
 |---|---|---|---|
-| `connector-node regenerate` | New | New | The old pair stops working; the CLI must be given the new pair |
-| `connector-node regenerate --keep-id` | Unchanged | New | The CLI keeps its routing name but must be given the new secret |
+| `connector-node regenerate` | New | Unchanged | The CLI must be given the new identifier; its credential keeps working |
 
-Both forms invalidate the old `node-token` immediately, because the Node compares
-against the value it currently holds and keeps no history of previous values. A
-Node that accepted an old token after regeneration would defeat the purpose of
-regenerating.
+Regeneration does **not** invalidate the credential, and that is the point of
+separating the two. An operator who suspects the address has been exposed changes
+the address without reissuing every caller's secret. An operator who suspects a
+secret has been exposed removes that credential with
+`connector-node credential remove`, which invalidates it immediately.
 
-The running Node learns about the change by reading its identity file once per
-second, so "immediately" means "within one poll interval", not "before the
-`regenerate` command returns". The window is bounded and short, and it is stated
-here rather than left as an implied instant. Polling is used because the standard
-library has no portable filesystem notification API and the design forbids a
-third-party dependency; the comparison is on the file's content, because a
-regenerated pair has the same byte length as the pair it replaces and can land in
-the same modification-time tick.
+The running Node learns about an address change by reading its identity file once
+per second, so "immediately" means "within one poll interval", not "before the
+`regenerate` command returns". Polling is used because the standard library has no
+portable filesystem notification API and the design forbids a third-party
+dependency.
 
 Two consequences must be stated rather than discovered:
 
-- **Regeneration disconnects the Node.** The live channel was authenticated with
-  the old pair, so it is dropped and the Node reconnects with the new one. A
-  channel that survived a credential change would be a channel authenticated by a
-  credential that no longer exists.
-- **Regeneration is not revocation of `tunnel_token` or `client_token`.** Those
-  are Server-wide and are changed by editing the Server's environment and
-  restarting it. Regenerating a Node pair does not affect them, and changing them
-  affects every Node and every CLI at once.
+- **Regeneration disconnects the Node.** The live channel was authenticated under
+  the old identity, so it is dropped and the Node reconnects. A channel that
+  survived an identity change would be a channel authenticated by a name that no
+  longer exists.
+- **Regeneration is not revocation of `tunnel_token` or of a client credential.**
+  Those are Server-side and are changed by editing the Server's configuration and
+  restarting it. Regenerating a Node address does not affect them, and changing
+  them affects every Node and every CLI at once.
 
-### How the operator learns the pair
+### How the operator learns the identity and the credential
 
-The CLI must name the Node and prove it may talk to it, so the operator needs the
-pair before the first request. The order is fixed:
+The CLI must name the Node and prove it may talk to it, so the operator needs both
+before the first request. The order is fixed:
 
 ```
-1. Node starts once, generates the pair, persists it, prints it
+1. Node starts once, generates its identity, persists it, prints it
    connector-node id
-   -> node_7f3a.kq2v...        (the operator copies this string)
+   -> node_7f3a...             (the public address)
 
-2. Node is configured with tunnel_token and connects
-3. CLI is configured with client_token and the pair
+2. Node operator creates a credential for the caller
+   connector-node credential add --key-id automation-backup
+   -> automation-backup.q4ka...   (printed once; copy it now)
+
+3. Node is configured with tunnel_token and connects
+4. CLI is configured with the node id and the node credential
 ```
 
 The consequence is that a Node must be started once before any CLI can reach it.
-That is acceptable because the first start does no work: it generates a pair and
-exits. It is stated here because the reverse order looks natural and fails with a
-confusing error, since the Server cannot route to a Node whose name it has never
+That is acceptable because the first start does no work: it generates an identity
+and exits. It is stated here because the reverse order looks natural and fails with
+a confusing error, since the Server cannot route to a Node whose name it has never
 been told.
 
 Two rules follow:
 
-- `connector-node id` prints the pair and nothing else, so it can be copied into
-  a script. It prints a secret, so the operator must treat the output as one: it
-  must not be pasted into a ticket, a chat message or a shell history that is
-  retained.
-- The Server never mints, assigns or overrides a `node-id`. If an operator asks
-  the Server for "the node id of my machine", the answer is that the machine must
-  be asked. A Server-assigned identifier would make the Server the identity
-  authority, which is the thing this design avoids.
+- `connector-node id` prints the public address and nothing else, so it can be
+  pasted anywhere. `connector-node credential add` prints a secret once, so its
+  output must be treated as one: it must not be pasted into a ticket, a chat
+  message or a shell history that is retained.
+- The Server never mints, assigns or overrides a `node-id`. If an operator asks the
+  Server for "the node id of my machine", the answer is that the machine must be
+  asked. A Server-assigned identifier would make the Server the identity authority,
+  which is the thing this design avoids.
 
-An operator who has lost the pair reads it from the Node's config file or runs
-`connector-node id` again. There is no lookup endpoint, because a lookup endpoint
-would let any caller enumerate which Nodes exist.
+An operator who has lost a credential cannot recover it: the file stores the secret
+and the command that lists credentials prints only the key identifiers. The answer
+is to add a new credential and remove the old one, which is also the rotation
+procedure.
 
 ### CLI access path
 
@@ -406,8 +407,9 @@ private to the two components.
 
 ```
 POST /v1/nodes/{node_id}/operations
-  Authorization: Bearer <client_token>
-  X-Connector-Node-Token: <node-token>
+  Authorization: CONNECTOR-CLIENT-HMAC-SHA256 version=1,key_id=...,timestamp_ms=...,nonce=...,signature=...
+  X-Connector-Node-Auth: CONNECTOR-NODE-HMAC-SHA256 version=1,key_id=...,timestamp_ms=...,nonce=...,signature=...
+  X-Request-Id: req_...
   Content-Type: application/json
 
   { "operation": "file.read", "scope": "project", "path": "notes.md",
@@ -415,34 +417,34 @@ POST /v1/nodes/{node_id}/operations
 ```
 
 The `node-id` appears twice on this path, and both occurrences must agree: once in
-the URL, where the Server routes by it, and once as the first half of the
-`node-id.node-token` pair the CLI holds. The Server compares them. A mismatch is
-refused, because otherwise a caller could route to one Node while presenting
-another Node's secret, which would turn the routing table into a way to probe
-which Nodes exist.
+the URL, where the Server routes by it, and once inside the signed node proof,
+where the Node checks it. The Node is the party that enforces the agreement,
+because the Node is the only party that knows which credential belongs to which
+identifier. The Server cannot check it: it never receives the node secret, so it
+cannot read the proof's meaning.
 
 Rules that must hold on this path:
 
-- `client_token` travels in `Authorization`, the `node-token` in a separate
+- The client proof travels in `Authorization`, the node proof in a separate
   header. Keeping them in separate headers means a log that redacts
-  `Authorization` does not accidentally print the Node's secret, and a proxy that
+  `Authorization` does not accidentally print the node proof, and a proxy that
   rewrites one header does not corrupt the other.
-- The Server compares `client_token` before reading the `node-token` at all, so an
-  unauthenticated caller cannot use the Server as an oracle for Node token
-  validity.
-- The Server forwards the `node-token` byte for byte. It does not decode it,
+- The Server verifies the client proof before it forwards anything, so an
+  unauthenticated caller cannot use the Server as a relay.
+- The Server forwards the node proof byte for byte. It does not decode it,
   re-encode it, normalise it or wrap it, because a re-encoded value would be a
   derived value and a derived value is a stored credential index in disguise.
-- The Server never writes either secret to a log, an audit record or an error
-  message. An audit record names the `node-id`, never a secret.
+- The Server never writes a secret or a signature to a log, an audit record or an
+  error message. An audit record names the `node-id` and the `key_id`, never a
+  secret.
 - A request for an unknown `node_id` is refused with `node_offline`, not queued.
 - The Server validates shape only: the operation is known, the scope name is a
   valid identifier, the path is not absolute, and the request fits the frame cap.
   It never validates authority, because authority belongs to the Node.
-- The Server does not check whether the `node-token` is correct, because it cannot:
-  it does not know the value. It forwards the request and relays the Node's
-  refusal. A Server that claimed to validate the Node's secret would be lying
-  about a check it never performed.
+- The Server does not check whether the node proof is correct, because it cannot:
+  it never receives the node secret. It forwards the request and relays the Node's
+  refusal. A Server that claimed to validate the node proof would be lying about a
+  check it never performed.
 
 The endpoint, the header names, the request body and the error codes are specified
 in `docs/API.md`. This section states the rules that must hold on that path; the
@@ -454,23 +456,26 @@ isolated by a port, because they share the routing registry anyway, so a second
 listener would buy isolation that does not exist. A deployment that must keep the
 CLI API unreachable from the internet blocks `/v1/` at the reverse proxy.
 
-## How a secret is checked
+## How a credential is checked
 
-A shared secret is verified by comparison, not by parsing. There is no payload to
-decode, no signature to verify and no clock to consult.
+Two mechanisms are used, and each belongs to one gate.
 
 ```
 Server: constant_time_equal(configured_tunnel_token, hello.tunnel_token)
-Server: constant_time_equal(configured_client_token, request.client_token)
-Node:   constant_time_equal(stored_node_token,     request.node_token)
+Server: verify_hmac(client_secret, canonical_client_request, client_proof.signature)
+Node:   verify_hmac(node_secret,   canonical_node_operation, node_proof.signature)
 ```
 
-### Comparison rules
+The `tunnel_token` is a shared secret, so it is compared. The other two are HMAC
+keys, so they are used to recompute a signature and the result is compared. A
+signature comparison is constant time for the same reason a secret comparison is:
+an early return leaks the length of the matching prefix.
 
-- **Constant time.** A byte-by-byte comparison that returns early leaks the length
-  of the matching prefix, which lets an attacker recover a secret one byte at a
-  time. The comparison must run in time independent of where the first difference
-  is.
+### Verification rules
+
+- **Constant time.** A comparison that returns early leaks the length of the
+  matching prefix, which lets an attacker recover a value one byte at a time. The
+  comparison must run in time independent of where the first difference is.
 - **Compare the whole value.** No prefix matching, no "first 8 characters are
   enough", no case-insensitive comparison. A prefix check turns a 256 bit secret
   into an 8 character one.
@@ -478,35 +483,41 @@ Node:   constant_time_equal(stored_node_token,     request.node_token)
   both refusals. An empty configured secret is a startup failure, never an
   "accept anything" mode, because an unset environment variable is the most likely
   way to accidentally disable authentication.
-- **One error for every failure.** A wrong secret, a missing secret and a
-  malformed secret all produce the same response. Distinguishing them tells an
-  attacker whether a guess was close.
+- **One error for every failure.** A wrong secret, a missing proof, a malformed
+  proof, an expired timestamp and a replayed nonce all produce the same response.
+  Distinguishing them tells an attacker whether a guess was close.
+- **Verify before recording.** A nonce is recorded only after the signature
+  verifies, so a forged proof cannot reserve a nonce a legitimate request needs.
+- **No fallback.** A failed proof is a refusal. There is no downgrade to a weaker
+  scheme, because a downgrade path is the attack.
 
-### What the shared-secret model gives up
+### What the HMAC model gives up
 
 This is the honest trade-off, and it is larger than it looks.
 
-| Property | Signed token (previous design) | Shared secret (this design) |
+| Property | Signed token (rejected design) | HMAC proof (this design) |
 |---|---|---|
-| Expiry | Built in; a leaked token dies on its own | **None.** A leaked secret works until it is rotated |
-| Per-caller identity | Carried in the token | **None.** Every holder of `client_token` is indistinguishable |
-| Revocation | A list of `id` values | Rotate the secret, which affects every holder at once |
-| Rotation cost | Revoke one token | Restart the Server, or regenerate the Node pair |
-| Implementation | Sign, encode, parse, verify, check window | Compare two strings |
+| Expiry | Built in; a leaked token dies on its own | **None.** A leaked secret works until it is removed |
+| Per-caller identity | Carried in the token | **Yes.** The `key_id` names the caller in an audit record |
+| Revocation | A list of `id` values | Remove one credential from the file; other callers are unaffected |
+| Rotation cost | Revoke one token | Add a credential, move the caller, remove the old one |
+| Implementation | Sign, encode, parse, verify, check window | Canonical input, HMAC, timestamp window, nonce cache |
 
-The simplification is real: there is no canonical encoding to get wrong, no clock
-skew to tolerate, no signature library to misuse, and no revocation list to keep
-consistent. The cost is equally real and must be stated rather than discovered:
+The cost is equally real and must be stated rather than discovered:
 
-- **A leaked `client_token` is valid forever.** There is no expiry to bound it.
-  The only remedy is rotation, which invalidates every CLI at once.
-- **A leaked `node-token` is valid until the Node regenerates its pair.** The
-  operator can regenerate without involving the Server, which is the one advantage
+- **A leaked client credential secret is valid until it is removed.** There is no
+  expiry to bound it. The remedy is to remove that one credential, which affects
+  only the callers using it, because each caller has its own `key_id`.
+- **A leaked node credential secret is valid until it is removed.** The operator
+  removes it on the Node without involving the Server, which is the one advantage
   the Node keeps.
-- **No audit trail distinguishes callers.** An audit record can say "a request
-  arrived for node_7f3a", but not which operator sent it, because the secret is
-  shared. If per-caller attribution is ever required, it needs a fourth mechanism,
-  not a change to this one.
+- **A captured proof cannot be reused, but it can be replayed first.** An attacker
+  who captures a request and sends it before the legitimate copy wins the race,
+  because the verifier records the nonce from whichever copy arrives first.
+  Timestamps and nonces cannot order two identical requests. TLS is what prevents
+  capture.
+- **A proof is not a private message.** HMAC proves who built a request and that it
+  was not altered. It does not hide the request from anyone who can read the link.
 
 These are accepted for the first version. They are recorded in the residual risks
 with the mitigation each one actually has, rather than a mitigation that sounds
@@ -517,33 +528,36 @@ reassuring and does nothing.
 Rotation is the only revocation mechanism, so it must be a documented procedure
 rather than an incident-time improvisation.
 
-| Secret | How to rotate | Blast radius | Downtime |
+| Credential | How to rotate | Blast radius | Downtime |
 |---|---|---|---|
 | `tunnel_token` | Change the Server's environment, restart the Server, update every Node | Every Node | Every Node reconnects |
-| `client_token` | Change the Server's environment, restart the Server, update every CLI | Every CLI | None for Nodes |
-| `node-id.node-token` | `connector-node regenerate` on that Node, give the new pair to the CLI | One Node | That Node reconnects |
+| Client credential | Add a new credential, move the caller to it, remove the old one, restart the Server | One caller | None for Nodes |
+| Node credential | `connector-node credential add`, move the caller, `connector-node credential remove` | One caller | None |
 
 Two rules make rotation safe:
 
-- **The Server accepts exactly one value per secret.** There is no "old and new
-  both work" window, because a grace period is a second valid credential and the
-  point of rotating is to end the first one. The cost is that rotation is a
-  coordinated change, which is stated rather than softened.
-- **Rotation is not a hot reload.** The Server reads its secrets once at startup.
-  A `SIGHUP` that reloaded them would mean a running Server could change its own
-  authority without a restart, and a restart is the cheapest possible audit trail:
-  it is visible in the process table and in the logs.
+- **A credential file may hold several credentials, and each is independent.** That
+  is what makes rotation non-destructive: the new credential works while the old
+  one still does, and the old one stops the moment it is removed. The window is
+  bounded by the operator's own procedure, not by a grace period built into the
+  verifier.
+- **Rotation is not a hot reload.** The Server reads its credential file once at
+  startup. A `SIGHUP` that reloaded it would mean a running Server could change its
+  own authority without a restart, and a restart is the cheapest possible audit
+  trail: it is visible in the process table and in the logs.
 
 ### Secrets are never logged
 
-The rule that covered tokens covers secrets unchanged, and the shared-secret model
-makes it more important rather than less, because there is no expiry to bound the
-damage of a leaked log line.
+The rule that covered tokens covers secrets unchanged, and it matters more now,
+because there is no expiry to bound the damage of a leaked log line.
 
 - No secret is written to a log, a trace, an audit record or an error message.
-- An audit record names the `node-id`, which is public, and never the
-  `node-token`, `tunnel_token` or `client_token`.
-- A configuration dump redacts all three. A `--print-config` style command that
+- No proof signature is written to a log either. A signature is not a secret, but
+  it is a value an attacker can replay within its window, so logging it hands over
+  a short-lived credential.
+- An audit record names the `node-id` and the `key_id`, which are public, and never
+  a secret or a signature.
+- A configuration dump redacts every secret. A `--print-config` style command that
   echoes the environment is a credential leak with a helpful name.
 - A secret is never placed in a URL, a query string or a path segment, because
   those are the parts of a request that proxies and access logs record by default.
@@ -1075,23 +1089,30 @@ deliveries of the same Node; the permission model does not change between them.
 | Server URL | Yes | Static, no secret |
 | Policy document | Yes, base64 | A YAML document does not survive a shell, Makefile or linker flag; base64 is a quoting decision, not a secrecy one |
 | `tunnel_token` | Yes, by operator decision | The Node cannot dial without it, so "start it and it works" is unmet otherwise |
-| `node-id.node-token` pair | **No** | Generated on first start, polled every second, rewritten by `regenerate` |
+| `node-id` | **No** | Generated on first start, polled every second, rewritten by `regenerate` |
+| Node credential | **No** | Generated on the target machine, printed once, and removable only there |
 
-The identity pair is excluded for two reasons, and both are refusals rather than
-limitations to work around:
+The identity and the credential are both excluded, and both are refusals rather
+than limitations to work around:
 
 - **Regeneration has no file to rewrite.** `connector-node regenerate` writes the
-  identity file and the running Node adopts it by polling. An embedded pair has no
-  file, so regeneration would either be unavailable or would silently disagree with
-  the value in memory.
+  identity file and the running Node adopts it by polling. An embedded identity has
+  no file, so regeneration would either be unavailable or would silently disagree
+  with the value in memory.
 - **Two copies would share one `node-id`.** The Server keeps an in-memory registry
   `node_id -> connection`, so a second machine running the same binary would evict
   the first. An identity that is not unique per machine is not an identity.
+- **An embedded credential would be one secret for every recipient.** A credential
+  is per caller, and embedding it would make every copy of the binary share one
+  `key_id`, so revoking one recipient would revoke all of them. It would also put a
+  Node secret inside a file the recipient can copy, which is the exposure the
+  credential file exists to avoid.
 
-The binary therefore still generates its own pair on first start and prints it
-once, exactly as a normal build does. "Start it and it works" holds: the Node
-connects without configuration, and the operator runs `<binary> id` once to learn
-the pair the CLI must present.
+The binary therefore still generates its own identity on first start and prints it,
+and the operator creates a credential on the target machine with
+`connector-node credential add`. "Start it and it works" holds: the Node connects
+without configuration, and the operator runs `<binary> id` and
+`<binary> credential add` once to learn what the CLI must present.
 
 ### Precedence
 
@@ -1187,20 +1208,22 @@ These are accepted for the first version and must be stated rather than hidden.
 
 | Risk | Consequence | Mitigation |
 |---|---|---|
-| A leaked `client_token` never expires | Every CLI is compromised until the secret is rotated | Rotate the Server's environment and restart; audit every request. This is the accepted cost of the shared-secret model |
-| A leaked `node-token` never expires | Anyone holding it can operate on that Node until the pair is regenerated | `connector-node regenerate` invalidates it within one poll interval and needs no Server involvement; a running Node adopts the new pair without a restart |
+| A leaked client credential secret never expires | Every caller using that `key_id` is compromised until it is removed | Remove that one credential from the Server's file and restart; other callers are unaffected. This is the accepted cost of a shared-secret model |
+| A leaked node credential secret never expires | Anyone holding it can operate on that Node until it is removed | `connector-node credential remove` invalidates it immediately and needs no Server involvement |
 | A leaked `tunnel_token` never expires | Anyone holding it can open a channel and impersonate a Node | Rotate the Server's environment and restart; the blast radius is every Node |
-| No per-caller attribution | An audit record cannot say which operator sent a request | Accepted; per-caller identity needs a fourth mechanism, not a change to this one |
-| Server sees the `node-token` in transit | A compromised Server can replay it while it holds the request | The Server never stores it; the value lives only for the request being forwarded |
+| A captured proof can be replayed first on a plaintext link | The attacker's copy is accepted and the legitimate copy is refused as a replay | Use TLS. Timestamps and nonces cannot order two identical requests, so HMAC does not replace transport encryption |
+| A proof is not a private message | Anyone who can read the link sees the operation, the scope and the path | Use TLS. HMAC proves origin and integrity, not confidentiality |
+| Server sees the node proof in transit | A compromised Server can replay it within its window | The Server never receives the node secret and never stores the proof; the value lives only for the request being forwarded, and the Node's nonce cache refuses a second use |
 | Node host compromised | The fence is gone entirely | Host security; nothing in this design helps |
-| Secret in a shell history or log | Credential leak with no expiry to bound it | Never log a secret; audit records name the `node-id` only; `connector-node id` prints a secret, so its output must not be pasted into a ticket or a retained history |
+| Secret in a shell history or log | Credential leak with no expiry to bound it | Never log a secret or a signature; audit records name the `node-id` and the `key_id` only; `connector-node credential add` prints a secret once, so its output must not be pasted into a ticket or a retained history |
 | A secret passed as a CLI flag | The value is visible in `argv` to every account on the host and is written to shell history by default | Accepted trade-off, decided by the human on 2026-11-13. The environment variable is the recommended form and keeps the secret out of both; the flag exists so a script that already holds the secret can pass it without exporting it. Removing the flag would not remove the exposure, because `/proc/<pid>/environ` is readable by the same accounts that can read `argv` |
 | A bind mount or `/proc` entry inside a scope | `os.Root` does not prohibit traversal of filesystem boundaries, so such a path is readable | Refuse a scope root that is a mount point; refuse a non-regular file for `read` |
 | Windows path comparison is case-insensitive | A deny-list entry for `config.yaml` is bypassed by `CONFIG.YAML` | Compare deny-list paths case-insensitively on Windows |
 | A hard link inside a scope to a file outside it | The link is a legitimate directory entry, so the fence allows it | Accepted; a hard link cannot be created without write access to the target, so it is not a remote escalation |
-| The CLI holds both secrets at once | A compromised CLI host yields both credentials | The `node-token` is per-Node and regenerable; the `client_token` is Server-wide, so a compromised workstation affects every Node that workstation can reach |
-| The Server sees both secrets on the CLI path | A compromised Server can replay either | The Server stores neither; `client_token` is compared and dropped, `node-token` is forwarded and released |
-| Rotation is a coordinated change | Rotating `client_token` breaks every CLI at once, with no grace period | Accepted; a grace period would be a second valid credential, which defeats the purpose of rotating. The procedure is documented rather than improvised |
+| The CLI holds both credentials at once | A compromised CLI host yields both secrets | The node credential is per caller and removable on the Node; the client credential is per caller and removable on the Server, so one compromised workstation does not require rotating every caller |
+| The replay cache is memory only | A proof captured before a restart can be replayed within its window after the restart | Accepted for read-only operations. It must be revisited before `file.write` or `command.exec`, where a replay has a durable effect |
+| The Server sees both proofs on the CLI path | A compromised Server can replay the node proof within its window | The Server receives no secret at all; the client proof is verified and dropped, the node proof is forwarded and released, and the Node's nonce cache refuses a second use |
+| Rotation is a coordinated change | Removing a credential breaks every caller using that `key_id` | Accepted; each caller has its own `key_id`, so the blast radius is one caller rather than every CLI. The procedure is documented rather than improvised |
 
 ## Decisions
 
@@ -1209,22 +1232,23 @@ later change has to argue against it rather than silently reverse it.
 
 | Question | Decision | Reasoning |
 |---|---|---|
-| Signed tokens with expiry, or shared secrets? | Shared secrets | The human specified `tunnel_token`, `client_token` and a Node-generated `node-id.node-token`. A shared secret removes the canonical encoding, the signature library, the clock window and the revocation list, which is a large reduction in the code that can be wrong. The cost is that no secret expires, which is recorded in the residual risks rather than softened. |
-| Does any secret carry a permission? | No | A token says "you may talk to me"; the policy file says "and you may do this". A token that carried permissions would have to be reissued whenever the policy changed, and a policy change would silently invalidate live credentials. |
-| Who generates the `node-id.node-token` pair? | The Node, at first start | The Server must never be the identity authority, because an identity authority can also deny identity. A Node that names itself works without the Server being reachable. |
-| May the Node regenerate the pair? | Yes, on local operator command | `connector-node regenerate` issues a new pair and invalidates the old one within one poll interval. A running Node watches its identity file and adopts the new pair, dropping the channel authenticated with the retired one. The Server cannot trigger it, because a Server that could force regeneration could also force a denial of service. |
-| Does regeneration keep the `node-id`? | Optional, via `--keep-id` | Keeping the name avoids reconfiguring the CLI's routing target; changing it avoids a name that has been exposed. Both forms always change the `node-token`, because a regeneration that kept the secret would not be a regeneration. |
-| Where do `tunnel_token` and `client_token` live? | Server environment | The human specified environment variables. They are read once at startup, never written to a config file, never logged, and an empty value is a startup failure rather than an "authentication disabled" mode. |
-| Is there a grace period during rotation? | No | A grace period is a second valid credential, and the point of rotating is to end the first one. Rotation is therefore a coordinated change, which is documented rather than improvised. |
-| Let the Node issue a token over the channel? | No | It would make the Server a token courier, which weakens the separation the three-secret design exists to create. The pair is generated locally on the Node. |
+| Signed tokens with expiry, shared secrets, or HMAC proofs? | HMAC proofs for the two caller gates, a shared secret for the channel | The human specified `tunnel_token`, a client credential and a Node-generated credential. HMAC removes the reusable secret from the wire, so a captured request cannot be replayed into a new one, and the `key_id` gives per-caller attribution that a shared secret cannot. The cost is a canonical input to get right and a replay cache to bound, which is recorded in the residual risks rather than softened. |
+| Does any credential carry a permission? | No | A credential says "you may talk to me"; the policy file says "and you may do this". A credential that carried permissions would have to be reissued whenever the policy changed, and a policy change would silently invalidate live credentials. |
+| Who generates the node id? | The Node, at first start | The Server must never be the identity authority, because an identity authority can also deny identity. A Node that names itself works without the Server being reachable. |
+| Who generates a node credential? | The Node operator, on the Node | The secret must never leave the Node. A Server-issued credential would have to travel to the Node and would exist on the Server, which is the exposure the design forbids. |
+| May the Node regenerate its identity? | Yes, on local operator command | `connector-node regenerate` issues a new node id within one poll interval. A running Node watches its identity file and adopts the new value, dropping the channel authenticated with the retired one. The Server cannot trigger it, because a Server that could force regeneration could also force a denial of service. |
+| Does regeneration change the credential? | No | The address and the secret are separate, so an exposed address can be changed without reissuing every caller's secret. A credential is revoked by removing it, which is a different act with a different blast radius. |
+| Where do `tunnel_token` and the client credentials live? | Server environment and a Server-side credential file | The human specified environment variables for the Server's own secrets. The credential file exists because several client credentials must be expressible, which one environment variable cannot do. Both are read once at startup, never logged, and an empty value is a startup failure rather than an "authentication disabled" mode. |
+| Is there a grace period during rotation? | No built-in grace period | A verifier accepts exactly the credentials in its file. Rotation is non-destructive because the operator adds the new credential before removing the old one, so the overlap is the operator's procedure rather than a second valid credential the verifier keeps on purpose. |
+| Let the Node issue a credential over the channel? | No | It would make the Server a courier for a Node secret, which is exactly what the hard constraint forbids. The credential is generated locally on the Node. |
 | Include `command.exec` in the first version? | No | See "First version scope". A command allowlist is not a sandbox. |
 | Support Windows in the first version? | Yes | The human required it. The fence is implemented with `os.Root`, which is standard library and enforces the boundary on Windows as well as on POSIX, so the platform cost is a set of path rules rather than a second fence implementation. |
-| Does the CLI carry two secrets? | Yes | The CLI presents `client_token` and the `node-id.node-token` pair together. The Server compares `client_token` to prove the caller may use the Server, forwards the pair unchanged, and the Node compares the `node-token` to decide whether the operation happens. Each side checks only the secret it owns. |
-| Does the Server keep `client_token` after comparing it? | No, beyond the request | It is compared per request and released when the response is written. It is never cached between requests, so a retry re-reads it from the caller. |
-| Does the Server store the `node-token` from a CLI request? | No | It is forwarded on the request it arrived with and released when the response is written. The Server never learns the correct value, so it could not validate it even if it wanted to. |
-| Is the `node-id` a secret? | No | It is an address, not a credential. It appears in `hello`, in audit records and in the CLI, so it must never be usable as an authenticator. Knowing a `node-id` grants nothing without the `node-token`. |
-| Is the `node-token` a secret? | Yes | It is the only thing that authorizes an operation on that Node. It must never be logged, and `connector-node id` prints it, so that output must be handled as a credential. |
-| How does the operator learn the pair? | The Node prints it; the Server never assigns it | The Node must start once before any CLI can reach it, because the Server cannot route to a name it has never been told. `connector-node id` prints the pair and nothing else. There is no lookup endpoint, because a lookup endpoint would let any caller enumerate which Nodes exist. |
+| Does the CLI carry two credentials? | Yes | The CLI presents a client proof and a node proof together. The Server verifies the client proof to prove the caller may use the Server, forwards the node proof unchanged, and the Node verifies it to decide whether the operation happens. Each side checks only the credential it owns. |
+| Does the Server keep the client proof after verifying it? | No, beyond the request | It is verified per request and released when the response is written. It is never cached between requests, so a retry re-reads it from the caller. |
+| Does the Server receive the node credential secret? | No | It receives a signature, which cannot be turned back into a secret. It forwards the proof and releases it when the response is written, so it could not verify the proof even if it wanted to. |
+| Is the `node-id` a secret? | No | It is an address, not a credential. It appears in `hello`, in audit records and in the CLI, so it must never be usable as an authenticator. Knowing a `node-id` grants nothing without a node credential. |
+| Is a node credential secret? | Yes | It is the only thing that authorizes an operation on that Node. It must never be logged, and `connector-node credential add` prints it once, so that output must be handled as a credential. |
+| How does the operator learn the identity and the credential? | The Node prints both; the Server never assigns either | The Node must start once before any CLI can reach it, because the Server cannot route to a name it has never been told. `connector-node id` prints the address, and `connector-node credential add` prints the credential once. There is no lookup endpoint, because a lookup endpoint would let any caller enumerate which Nodes exist. |
 | Does the CLI API get its own listener? | No, one listener serves both surfaces | The two surfaces share the routing registry, so a second port would not isolate state. One listener means one TLS certificate, one firewall rule and one proxy entry. A deployment that must hide the CLI API blocks `/v1/` at the proxy. |
 | Who decides whether an operation is permitted? | The Node, on both dimensions | The human stated that all permissions are controlled by the Node, covering the access scope and the concrete read/write/exec permission. The Server holds no scope list and no permission list, so it cannot answer "may this caller do this?" and does not try. A policy change and a new scope are therefore Node-local acts, which is what makes access impossible to widen by editing Server configuration. |
 | May the Server pre-approve a request? | No | The Server's authentication proves only that the caller may use the Server. A request the Server has already authenticated is still unauthenticated as far as the Node is concerned, so there is no approval field and an unknown field is refused rather than ignored. |
@@ -1235,19 +1259,36 @@ later change has to argue against it rather than silently reverse it.
 A reviewer checks these before accepting a change that touches the channel or the
 request path.
 
-- [ ] No code path writes `tunnel_token`, `client_token` or a `node-token` to a
-      log, trace, audit record or error message.
-- [ ] No code path stores a `node-token` in a struct field that outlives the
-      request being forwarded.
-- [ ] No code path stores a hash, prefix or fingerprint of a `node-token`.
-- [ ] A retry re-reads the secret from the caller instead of replaying a stored
-      copy.
-- [ ] Every secret comparison is constant time and compares the whole value. No
+- [ ] No code path writes `tunnel_token`, a credential secret or a proof signature
+      to a log, trace, audit record or error message.
+- [ ] No code path receives the node credential secret. The Server handles a
+      signature, never a secret.
+- [ ] No code path stores a proof in a struct field that outlives the request
+      being forwarded.
+- [ ] No code path stores a hash, prefix or fingerprint of a credential secret.
+- [ ] A retry re-reads both proofs from the caller instead of replaying a stored
+      copy, and it regenerates both nonces and both timestamps.
+- [ ] Every signature comparison is constant time and compares the whole value. No
       prefix match, no case-insensitive match, no early return.
-- [ ] An empty or missing `tunnel_token` or `client_token` fails startup instead
-      of disabling authentication.
-- [ ] A wrong secret, a missing secret and a malformed secret produce the same
-      error, so a caller cannot tell whether a guess was close.
+- [ ] An empty or missing `tunnel_token`, or an empty client credential file,
+      fails startup instead of disabling authentication.
+- [ ] A wrong secret, a missing proof, a malformed proof, an expired timestamp and
+      a replayed nonce produce the same error, so a caller cannot tell whether a
+      guess was close.
+- [ ] A nonce is recorded only after its signature verifies, so a forged proof
+      cannot reserve a nonce a legitimate request needs.
+- [ ] A full replay cache refuses new proofs instead of evicting an unexpired
+      nonce.
+- [ ] A failed proof is refused with no fallback to a weaker scheme.
+- [ ] The client proof binds the method, the request target, the raw body digest,
+      the exact node proof header digest, the request id, the timestamp and the
+      nonce, so a valid client proof cannot be paired with a substituted node
+      proof.
+- [ ] The node proof binds the node id, the key id, the operation, the scope, the
+      path, the offset, the length, the request id, the timestamp and the nonce,
+      with every field present even when empty or zero.
+- [ ] The Server and the Node keep separate replay caches, separate windows and
+      separate nonces, so one verifier's state cannot mask the other's.
 - [ ] An operation with no matching grant is refused.
 - [ ] An empty policy refuses everything.
 - [ ] A missing policy file fails startup instead of allowing everything.
@@ -1319,29 +1360,32 @@ request path.
 - [ ] Under the opt-in the start scripts skip the volume-root and config-overlap
       refusals and never the home-directory refusal, because the Node refuses the
       home directory unconditionally.
-- [ ] The `node-id.node-token` pair is split on the first dot, and a pair with no
-      dot, an empty half, a second dot in the token half, a missing `node_` prefix
-      or any whitespace is refused rather than repaired.
-- [ ] The `node-id` in the URL is compared with the `node-id` half of the pair, and
-      a mismatch is refused.
+- [ ] A credential is split on the first dot, and a value with no dot, an empty
+      half, a second dot in the secret half, a key id starting with `-` or `_`, a
+      secret shorter than 32 characters or any whitespace is refused rather than
+      repaired.
+- [ ] A node id that does not start with `node_`, or that contains a character
+      outside `a-z0-9`, is refused rather than repaired.
+- [ ] The `node-id` in the URL is compared with the `node-id` signed inside the
+      node proof, and a mismatch is refused by the Node.
 - [ ] `file.write` and `command.exec` are refused at dispatch even when a caller
       sends one, so the refusal does not depend on the advertisement.
-- [ ] `connector-node regenerate` invalidates the previous `node-token` within one
-      poll interval, and the Node keeps no history of accepted values.
-- [ ] A running Node adopts a regenerated pair from its identity file, so
+- [ ] `connector-node regenerate` changes the node id within one poll interval and
+      leaves the credentials untouched, so an exposed address can be changed
+      without reissuing every caller's secret.
+- [ ] A running Node adopts a regenerated identity from its identity file, so
       regeneration does not require a restart.
 - [ ] Regeneration drops the live channel, so a connection cannot survive the
-      credential that authenticated it.
+      identity that authenticated it.
 - [ ] The Windows build compiles, and the Windows-specific path rules are covered
       by a test that does not depend on the host platform.
-- [ ] `client_token` is compared before the `node-token` is read, so an
-      unauthenticated caller cannot use the Server as an oracle for Node token
-      validity.
+- [ ] The client proof is verified before anything is forwarded, so an
+      unauthenticated caller cannot use the Server as a relay.
 - [ ] A request for an unknown `node_id` is refused rather than queued.
-- [ ] The Server forwards the `node-token` byte for byte. No code path decodes,
+- [ ] The Server forwards the node proof byte for byte. No code path decodes,
       re-encodes, normalises or wraps it.
-- [ ] The Server does not claim to validate the `node-token`, because it does not
-      know the value. It relays the Node's refusal.
+- [ ] The Server does not claim to validate the node proof, because it never
+      receives the node secret. It relays the Node's refusal.
 - [ ] `denied` and `not_found` are distinct codes, so a caller cannot probe for a
       file it may not read.
 - [ ] An `internal` error carries no detail string, because a detail string is
@@ -1351,8 +1395,8 @@ request path.
       all three, never `internal` for one of them, because `internal` is retryable
       and `not_found` is not, so a disagreement tells a caller to retry exactly the
       case that can never succeed.
-- [ ] `connector-node id` prints the pair and nothing else, and the Server has no
-      endpoint that assigns, overrides or looks up a `node-id`.
+- [ ] `connector-node id` prints the node id and nothing else, and the Server has
+      no endpoint that assigns, overrides or looks up a `node-id`.
 - [ ] The channel and the CLI API are served from one listener, and the CLI API
       path prefix is `/v1/` so a reverse proxy can block it without a second port.
 - [ ] The Node's policy file is the only place a scope or a permission is
@@ -1361,7 +1405,7 @@ request path.
 - [ ] No request field lets a caller state its own permission, role or approval,
       and an unknown field is refused rather than ignored.
 - [ ] The scope check and the permission check both run on the Node, after the
-      `node-token` is validated, and both refuse by default.
+      node proof is verified, and both refuse by default.
 - [ ] A refusal names which check refused it, so a misconfigured policy is
       distinguishable from an attack in the log.
 - [ ] A policy reload is all-or-nothing, and a failed reload keeps the previous
