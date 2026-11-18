@@ -101,6 +101,77 @@ Option A therefore deletes only settled `receipt_recorded` rows. An `accepted` r
 because it is the only record that a command was admitted but never executed, which is exactly the
 evidence an operator needs when reconciling an interrupted command. `accepted` rows are also rare:
 the live database contains none, because every admitted command reached `receipt_recorded`.
+## Resolution
+
+Option **A** was approved by the human on 2026-11-18 and implemented in `0c77f5b9`.
+
+### What was implemented
+
+| Layer | Change |
+|---|---|
+| `internal/storage/endpoint/journal_expiry.go` | New `ExpireCommandJournal(ctx, cutoffMS)` returning `[]ExpiredJournalEntry` |
+| `src/main/agent-cluster-endpoint/command_journal_expiry.go` | New `AGENT_CLUSTER_ENDPOINT_COMMAND_JOURNAL_EXPIRY`, default `720h` |
+| `internal/endpoint/collector.go` | `CollectorOptions.CommandJournalExpiry` + `LogJournalDeletion`, mounted in `Collect` |
+| `src/main/agent-cluster-endpoint/main.go` | Reads the window, fails startup when invalid, logs every deletion |
+
+The deletion predicate is:
+
+```sql
+SELECT command_id, phase, COALESCE(receipt_json, ''), created_at_ms
+  FROM command_journal
+ WHERE phase = 'receipt_recorded'
+   AND created_at_ms < ?
+   AND EXISTS (SELECT 1 FROM receipt_settlement
+                WHERE receipt_settlement.command_id = command_journal.command_id)
+```
+
+The settlement row is deleted in the same transaction as its journal row, so a crash cannot leave a
+settlement pointing at a command that no longer exists. A retention failure is returned to the caller
+rather than logged and ignored, because continuing would leave a table that is supposed to be bounded
+growing while every cycle reports success.
+
+### Verification
+
+Eleven tests, each proven by deliberate breakage:
+
+| Broken | Failure |
+|---|---|
+| `EXISTS` settlement filter | `expired entries = 1, want 0 because the receipt is unsettled` |
+| phase filter | `expired entries = [{CommandID:cmd-accepted Phase:accepted ...}], want none` |
+| `cutoffMS < 1` guard | `expire command journal accepted a zero cutoff, want an error` |
+| settlement deletion | `receipt settlement rows = 1, want 0 because the settlement must go with its journal row` |
+| `Collect` mount | `the settled receipt survived the collection cycle` |
+| negative-window rejection | `collector accepted a negative command journal expiry, want an error` |
+| `main.go` wiring | `does not contain the wiring statement "CommandJournalExpiry: journalExpiry"` |
+| `main.go` deletion log | `does not contain the deletion log statement ... "effect_certainty", entry.EffectCertainty` |
+
+The phase filter is unreachable through production writes, because `SettleReceipt` and
+`SettleAllRecordedReceipts` both select only `receipt_recorded` rows. It is therefore proven at the
+storage layer by seeding the corrupt state directly, following the recorded lesson that a guard
+production writes cannot reach must be proven where the state can be created.
+
+The `main.go` wiring needed a source-reading guard (`command_journal_expiry_call_guard_test.go`)
+because the behavioural tests build a collector directly. This is the same gap measured for the access
+policy warnings, where deleting a `main.go` call site kept all eight tests green.
+
+### Correction to this issue's Impact section
+
+The Impact section claimed `ListRecordedReceipts` scans every recorded receipt, so reconnect cost grows
+with total history. That was wrong. `journal.go:138` filters with
+`NOT EXISTS (SELECT 1 FROM receipt_settlement ...)`, so the query returns only unsettled receipts:
+**4 rows out of 565**, not 565. The re-send set was already bounded by settlement. The remaining defect
+was disk growth only: ~86 rows/day at 1532 bytes/row, about 30 MB/year.
+
+### Two further defects remain open
+
+- `ExecuteBeforeAtMS` is not validated as non-zero. `executor.go:119` guards with
+  `if intent.ExecuteBeforeAtMS > 0 && ...`, so a zero value skips the expiry check and an
+  already-expired command would still execute. This is an admission defect, independent of retention.
+- `FrameReceiptAck` (`service.go:561-568`) deletes only from the in-memory `pendingReceipts` map and
+  never persists a settlement, so an acknowledged receipt stays `receipt_recorded` with no settlement
+  row. It is re-sent on every reconnect and is never eligible for retention.
+
+Both need their own issues.
 
 ## Related
 
