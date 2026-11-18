@@ -88,3 +88,39 @@ A cluster release that starts sending a new provider flag must state the minimum
 its deployment notes, and the deployment check must compare the provider's own `--help` output against
 the flags the cluster sends. Comparing the provider commit alone is not enough, because the flag can
 land in a commit that the node's checkout does not have.
+
+## Prevention implemented, 2026-11-18
+
+The Prevention section above asked for a deployment check that compares the provider's own `--help`
+output against the flags the cluster sends. The code side of that check now exists as a guard test,
+because the deployment half cannot be enforced from this repository.
+
+`providers/topsailai/workspace_list_flag_guard_test.go` adds
+`TestWorkspaceListFlagsAreRegisteredByTheProvider`. It reads every production `[]string` argv that
+names the `workspace list` subcommand, extracts the long flags from it, then reads the provider's own
+`workspace_list_parser.add_argument` registrations from
+`../../../topsailai/cli/cli_topsailai/core.py` and fails if any sent flag is not registered.
+
+It reads the registration block rather than the whole file on purpose: a flag registered on a sibling
+subparser is not accepted by `list`, which is the same distinction that made `workspace list --all`
+silently return one row while `workspace --all list` returned eight.
+
+Two deliberate breakages were proven before the test was trusted:
+
+| Break | Failure message |
+|---|---|
+| Add `--not-a-real-flag` to a production argv | `this executable sends [--not-a-real-flag] on a workspace list argv, but the provider does not register them` |
+| Point the guard at a copy of `core.py` with the `--include-runtime` registration removed, which is the exact defect this issue describes | `this executable sends [--include-runtime] on a workspace list argv, but the provider does not register them` |
+
+Both were restored, and the guard passes. A probe confirmed it collects a non-empty set on both sides
+(`SENT=[--include-runtime --json --local]`,
+`REGISTERED=map[--include-runtime:true --json:true --local:true --session:true]`), so it cannot pass by
+finding nothing.
+
+### What this guard does not cover
+
+It proves the flags this executable sends are registered by the provider source in this repository. It
+cannot prove that a deployed node runs a checkout containing that registration, because that is a
+deployment property. The `ai-dev` container still runs `8e818cb6`, which predates `d839d99a`, so the
+remedy in this issue is unchanged: update that checkout and restart the Endpoint. The guard is what
+keeps the code side from regressing while the deployment is corrected.
