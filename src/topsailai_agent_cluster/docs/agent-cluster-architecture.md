@@ -18,6 +18,7 @@ created: 2026-10-27
 - `docs/Environment_Variables.md`: every variable, its flag, its default and the three deployment configuration sources; implemented contract.
 - `docs/cli-command-surface-rules.md`: rules the operator CLI command surface must follow; implemented contract.
 - `docs/agent-cluster-endpoint-access-policy.md`: the Endpoint-local policy directory that decides which cluster operations each caller may exercise on an Endpoint; discussion draft.
+- `docs/agent-cluster-cli-server-failover-prd.md`: requirements for the operator CLI to fall back to the next configured Server when the selected one is unreachable; draft PRD.
 
 The `agent-cluster-*.md` documents are discussion drafts, not an approved final specification;
 the documents marked as an implemented contract describe behaviour that exists in the code.
