@@ -19,7 +19,7 @@ import (
 )
 
 // catalogSourceFile declares the environment variable the Provider reads.
-const catalogSourceFile = "providers/topsailai/mutation_control.go"
+const catalogSourceFile = "providers/topsailai/src/mutation_control.go"
 
 // catalogEnvironmentPattern reads the constant out of the Provider source.
 var catalogEnvironmentPattern = regexp.MustCompile(`const\s+controlActionsEnvironment\s*=\s*"([^"]*)"`)

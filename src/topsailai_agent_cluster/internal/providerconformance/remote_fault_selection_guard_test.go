@@ -77,12 +77,12 @@ func TestNoSchemaDeclaresAFaultProperty(t *testing.T) {
 // field would be silently dropped, which looks like a refusal but leaves the
 // envelope open for the next field.
 func TestMockDecodesTheRequestStrictly(t *testing.T) {
-	source := repoText(t, "providers", "mock", "main.go")
+	source := repoText(t, "providers", "mock", "src", "main.go")
 	if !strings.Contains(source, "decoder.DisallowUnknownFields()") {
-		t.Fatalf("providers/mock/main.go does not decode the request strictly, so an unknown field is ignored")
+		t.Fatalf("providers/mock/src/main.go does not decode the request strictly, so an unknown field is ignored")
 	}
 	if !strings.Contains(source, "func decodeRequest(") {
-		t.Fatalf("providers/mock/main.go has no decodeRequest, so the guard is reading the wrong file")
+		t.Fatalf("providers/mock/src/main.go has no decodeRequest, so the guard is reading the wrong file")
 	}
 }
 
@@ -92,15 +92,15 @@ func TestMockDecodesTheRequestStrictly(t *testing.T) {
 // controlled by the remote caller, so a fault read from the request would be a
 // remote fault selector.
 func TestMockFaultSelectionIsLocalOnly(t *testing.T) {
-	source := repoText(t, "providers", "mock", "main.go")
+	source := repoText(t, "providers", "mock", "src", "main.go")
 	if !strings.Contains(source, `flag.StringVar(&options.fault, "fault"`) {
-		t.Fatalf("providers/mock/main.go does not read the fault from argv, so the harness cannot inject one")
+		t.Fatalf("providers/mock/src/main.go does not read the fault from argv, so the harness cannot inject one")
 	}
 	if !strings.Contains(source, "os.Getenv(faultEnvironment)") {
-		t.Fatalf("providers/mock/main.go does not read the fault from the environment, so the documented channel is gone")
+		t.Fatalf("providers/mock/src/main.go does not read the fault from the environment, so the documented channel is gone")
 	}
 	if strings.Contains(source, "request.Fault") {
-		t.Fatalf("providers/mock/main.go reads a fault from the request, so a remote caller can select one")
+		t.Fatalf("providers/mock/src/main.go reads a fault from the request, so a remote caller can select one")
 	}
 }
 
@@ -108,8 +108,8 @@ func TestMockFaultSelectionIsLocalOnly(t *testing.T) {
 // permissive than the Mock. A strict Mock beside a lenient real Provider would
 // leave the production path open while the conformance suite stayed green.
 func TestRealProviderAlsoDecodesStrictly(t *testing.T) {
-	source := repoText(t, "providers", "topsailai", "provider.go")
+	source := repoText(t, "providers", "topsailai", "src", "provider.go")
 	if !strings.Contains(source, "decoder.DisallowUnknownFields()") {
-		t.Fatalf("providers/topsailai/provider.go does not decode the request strictly, so the production path accepts unknown fields")
+		t.Fatalf("providers/topsailai/src/provider.go does not decode the request strictly, so the production path accepts unknown fields")
 	}
 }

@@ -1,0 +1,17 @@
+---
+maintainer: AI
+author: DawsonLin
+workspace: /TopsailAI/src/topsailai_agent_cluster/providers/mock
+ProjectFolder: /TopsailAI/src/topsailai_agent_cluster/providers/mock
+ProjectRootFolder: /TopsailAI/src/topsailai_agent_cluster
+ProjectCode: agent-cluster-provider-mock
+programming_language: go
+---
+
+# Mock Provider workspace
+
+This workspace is the test-only Provider CLI. It implements the Adapter CLI protocol as a conforming
+reference and as a locally configured fault injector. It is never packaged and never deployed.
+
+The module path is `agent-cluster-provider-mock`, declared in `go.mod` at this workspace root. The
+package `main` and its unit tests live in `src/`.

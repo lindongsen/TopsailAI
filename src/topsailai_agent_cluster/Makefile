@@ -289,7 +289,7 @@ test-provider-schema:
 # cache data and compiler temporary files stay under .tmp/.
 test-conformance:
 	mkdir -p $(CONFORMANCE_DIR)/bin $(CONFORMANCE_DIR)/go-cache $(CONFORMANCE_DIR)/go-tmp
-	cd providers/mock && GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) .
+	cd providers/mock && GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) ./src
 	AGENT_CLUSTER_MOCK_EXECUTABLE=$(abspath $(CONFORMANCE_DIR)/bin/agent-cluster-provider-mock) \
 	AGENT_CLUSTER_PROVIDER_SESSION_ID=session:stable \
 	GOCACHE=$(abspath $(CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(CONFORMANCE_DIR)/go-tmp) go test -count=1 ./internal/providerconformance
@@ -308,7 +308,7 @@ test-provider-topsailai:
 test-provider-topsailai-conformance:
 	mkdir -p $(TOPSAILAI_CONFORMANCE_DIR)/bin $(TOPSAILAI_CONFORMANCE_DIR)/go-cache $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp
 	GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/topsailai-provider-conformance-fixture) ./tests/fixtures/topsailai_provider_conformance
-	cd providers/topsailai && GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/agent-cluster-provider-topsailai) .
+	cd providers/topsailai && GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/agent-cluster-provider-topsailai) ./src
 	AGENT_CLUSTER_PROVIDER_EXECUTABLE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/agent-cluster-provider-topsailai) \
 	AGENT_CLUSTER_PROVIDER_ADAPTER_ID=topsailai \
 	AGENT_CLUSTER_PROVIDER_SESSION_ID=fixture-session \
@@ -443,7 +443,7 @@ bdd: test-bdd
 integration: test-integration
 
 fmt:
-	gofmt -w src internal providers/mock providers/topsailai
+	gofmt -w src internal providers/mock/src providers/topsailai/src
 
 # Builds one package. The builder derives the version from git when DEB_VERSION is
 # empty, so a package always identifies the commit it was built from.

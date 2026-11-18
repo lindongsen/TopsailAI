@@ -33,7 +33,7 @@ A module is not complete while required cases are failed or blocked. Fixes must 
 | ERR-05 | BLOCKED | no honest capability-disabled live adapter; automated capability tests cover the refusal |
 | ERR-06 | PASS | generation swap during confirmation failed closed, zero forbidden markers |
 | ERR-07 | PASS | `.tmp/live-tmux-audit/err-07/` (8 files) |
-| ERR-08 | BLOCKED | CLI path unreachable; `providers/topsailai/output_test.go` covers 12 envelope classes |
+| ERR-08 | BLOCKED | CLI path unreachable; `providers/topsailai/src/output_test.go` covers 12 envelope classes |
 | ERR-09 | PASS | `.tmp/live-tmux-audit/err-09/evidence/err-09-summary.md` |
 | ERR-10 | PASS | `quit`/`q`/`exit`/Ctrl-D restored canonical mode |
 | ERR-11 | PASS | `.tmp/live-tmux-audit/err-11/evidence/` |

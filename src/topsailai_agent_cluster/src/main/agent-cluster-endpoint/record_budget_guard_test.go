@@ -43,11 +43,11 @@ const recordBudgetCommentAnchor = "the follow path must therefore never treat it
 // is what makes that future change safe instead of a silent regression.
 func TestEndpointRecordBudgetDoesNotExceedTheProviderBudget(t *testing.T) {
 	root := repoRoot(t)
-	source := readRepoFile(t, root, "providers/topsailai/descriptor.go")
+	source := readRepoFile(t, root, "providers/topsailai/src/descriptor.go")
 
 	match := providerRecordBudgetPattern.FindStringSubmatch(source)
 	if match == nil {
-		t.Fatalf("providers/topsailai/descriptor.go declares no MaxRecords budget, so this guard cannot compare the two sides")
+		t.Fatalf("providers/topsailai/src/descriptor.go declares no MaxRecords budget, so this guard cannot compare the two sides")
 	}
 	advertised, err := strconv.ParseInt(replaceUnderscores(match[1]), 10, 64)
 	if err != nil {

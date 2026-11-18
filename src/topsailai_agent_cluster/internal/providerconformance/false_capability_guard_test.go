@@ -45,7 +45,7 @@ func TestFalseCapabilityTestAssertsTheContradiction(t *testing.T) {
 // when the false-capability fault is selected, so the contradiction is produced
 // by the fault rather than by a descriptor that never listed the query.
 func TestMockAdvertisesTheQueryItThenRejects(t *testing.T) {
-	descriptor, err := os.ReadFile(filepath.Join("..", "..", "providers", "mock", "main.go"))
+	descriptor, err := os.ReadFile(filepath.Join("..", "..", "providers", "mock", "src", "main.go"))
 	if err != nil {
 		t.Fatalf("read the mock source: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestFalseCapabilityReallyRunsUnderTheConformanceTarget(t *testing.T) {
 	moduleDir := filepath.Join("..", "..", "providers", "mock")
 	binary := filepath.Join(t.TempDir(), "agent-cluster-provider-mock")
 
-	build := exec.Command("go", "build", "-o", binary, ".")
+	build := exec.Command("go", "build", "-o", binary, "./src")
 	build.Dir = moduleDir
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build the Mock Provider: %v\n%s", err, output)

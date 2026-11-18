@@ -59,7 +59,7 @@ function require_file() {
 # resolution no longer exists.
 cd "${PROJECT_DIR}" || die "cannot enter ${PROJECT_DIR}"
 mkdir -p "${PROVIDER_DIR}"
-if ! (cd "${PROJECT_DIR}/providers/mock" && go build -o "${PROVIDER_BIN}" .); then
+if ! (cd "${PROJECT_DIR}/providers/mock" && go build -o "${PROVIDER_BIN}" ./src); then
     die "failed to build the mock provider cli"
 fi
 

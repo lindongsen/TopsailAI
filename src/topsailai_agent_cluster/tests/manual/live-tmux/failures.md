@@ -40,7 +40,7 @@ BLOCKED for the live CLI path, with the reason below, and replaced by automated 
 - A live session always has a readable stdout file, so a genuine empty stdout cannot be produced
   without fabricating provider state. `/root/.topsailai/workspace/task/*.session.stdout` holds
   seven files and none of them is 0 bytes, so no honest empty-stdout fixture exists on this host.
-- Automated coverage: `providers/topsailai/output_test.go` exercises twelve
+- Automated coverage: `providers/topsailai/src/output_test.go` exercises twelve
   envelope classes — body present, empty array, Chinese text, truncated, scan limit, flat legacy
   shape, missing `lines`, `null` lines, `ok:false` with `error_code`, wrong `error_code` type,
   malformed JSON, and a failed subprocess.

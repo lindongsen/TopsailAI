@@ -472,3 +472,55 @@ is used or ignored.
 Consequence that MUST hold: do not add a project-directory dimension to this file. If a
 future requirement genuinely needs two independent selections at once, that is a new
 decision to raise with the human, not an extension of this one.
+
+## Each provider folder is an independent workspace
+
+Directed by the human on 2026-11-18, wording normalized, meaning preserved:
+
+> 我认为 providers 里面的项目的文件夹结构不友好，你要把每个provider的文件夹当做是独立的工作空间一般看待。
+
+> mock folder is an independent workspace, topsailai folder is also an independent workspace.
+
+Every folder directly under `providers/` is a workspace in its own right, not a package directory
+inside the cluster project. A reader who opens one provider folder must find everything needed to
+understand, build, test and diagnose that provider without reading the cluster Makefile or the cluster
+documentation.
+
+The required shape of every provider workspace:
+
+```text
+providers/<name>/
+├── README.md      # what this provider is, how to build, test and run it
+├── project.yaml   # workspace metadata: workspace, ProjectFolder, ProjectRootFolder, ProjectCode, language
+├── Makefile       # build vet fmt test check clean, artifacts under .tmp/
+├── go.mod         # module root, because Go requires the module root to be the workspace root
+├── go.sum         # when the module has dependencies
+├── issues/        # provider-owned issue records, when the provider has any
+└── src/           # package main and its unit tests, because Go requires tests beside their package
+```
+
+Two constraints are structural rather than stylistic, and neither may be traded away for tidiness:
+
+- `go.mod` stays at the workspace root. Moving it into `src/` would make `src/` the module root and
+  break every import path and every `go build ./src` invocation.
+- Unit tests stay in `src/` beside the code they test. Go requires a test file to live in the package
+  directory, so a separate `tests/` folder inside a provider would not compile.
+
+Consequences that MUST hold:
+
+- The cluster builds a provider as `./src` from the provider workspace root, never as `.` and never by
+  importing the module. `providers/mock` and `providers/topsailai` are separate modules with separate
+  dependency graphs, versions and artifacts.
+- A provider workspace owns its own build entry point. The cluster `Makefile` may call it, but the
+  provider `Makefile` must also work when run directly with `make -C providers/<name>`.
+- Provider build artifacts go to that provider's own `.tmp/`, so one provider's build cannot overwrite
+  another's.
+- Provider-specific detail stays inside the provider workspace. `docs/agent-cluster-adapters.md` remains
+  the only cluster document that describes a provider, and no provider vocabulary enters
+  `internal/protocol`, a Server route, a stored document or a CLI help body.
+- A new provider is created by copying this shape, not by adding files to an existing provider folder.
+
+Why this is recorded: the previous layout put 41 `.go` files at the root of `providers/topsailai` and 7
+at the root of `providers/mock`, with no README, no Makefile and no workspace metadata. Nothing in
+either folder said how to build or test it, so the only way to learn was to read the cluster Makefile,
+which is the wrong place to look for a component that is supposed to be independent.

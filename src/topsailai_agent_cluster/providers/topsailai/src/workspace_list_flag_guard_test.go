@@ -116,7 +116,7 @@ func workspaceListFlagsSentByThisExecutable(t *testing.T) []string {
 // returned eight.
 func workspaceListFlagsRegisteredByTheProvider(t *testing.T) map[string]bool {
 	t.Helper()
-	source := filepath.Join("..", "..", "..", "topsailai", "cli", "cli_topsailai", "core.py")
+	source := siblingPath(t, "cli", "cli_topsailai", "core.py")
 	content, err := os.ReadFile(source)
 	if err != nil {
 		t.Skipf("provider source unavailable: %v", err)

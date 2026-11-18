@@ -660,7 +660,7 @@ function build_provider_package() {
     local go_tmp="${PROJECT_DIR}/.tmp/go-tmp"
     mkdir -p "${go_cache}" "${go_tmp}" || die "cannot create the Go cache directories"
     ( cd "${module_dir}" && CGO_ENABLED=0 GOCACHE="${go_cache}" GOTMPDIR="${go_tmp}" \
-        go build -trimpath -ldflags "-s -w" -o "${PKG_ROOT}${binary}" . ) ||
+        go build -trimpath -ldflags "-s -w" -o "${PKG_ROOT}${binary}" ./src ) ||
         die "static build failed for the ${PROVIDER_TYPE} Provider"
     chmod 0755 "${PKG_ROOT}${binary}" || die "cannot set mode on ${binary}"
 

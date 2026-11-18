@@ -17,7 +17,7 @@ import (
 // this file, so the guard lives here rather than beside the Endpoint.
 func shippedCatalogPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join("..", "..", "conf", "control-actions.conf.example")
+	return clusterPath(t, "conf", "control-actions.conf.example")
 }
 
 // loadShippedCatalog reads and parses the shipped example.
@@ -240,7 +240,7 @@ func TestShippedCatalogKeepsShortcutCopiesIdentical(t *testing.T) {
 // provider actually serves, which is the property that matters: a catalog entry
 // the provider cannot execute would fail at the first command.
 func TestShippedCatalogNamesOnlyProviderActions(t *testing.T) {
-	source := filepath.Join("..", "..", "..", "topsailai", "cli", "cli_topsailai", "runtime_cli.py")
+	source := siblingPath(t, "cli", "cli_topsailai", "runtime_cli.py")
 	content, err := os.ReadFile(source)
 	if err != nil {
 		t.Skipf("provider source unavailable: %v", err)
@@ -313,7 +313,7 @@ func TestShippedCatalogPinsOnlyProviderInstructions(t *testing.T) {
 // live provider installation.
 func providerInstructionNames(t *testing.T) map[string]bool {
 	t.Helper()
-	root := filepath.Join("..", "..", "..", "topsailai", "workspace")
+	root := siblingPath(t, "workspace")
 	pluginFiles, err := filepath.Glob(filepath.Join(root, "plugin_instruction", "*.py"))
 	if err != nil {
 		t.Fatalf("list provider plugin instructions: %v", err)

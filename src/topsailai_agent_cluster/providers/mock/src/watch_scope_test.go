@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -16,7 +15,7 @@ import (
 // this mock. Only the combination records that the mock is silent by choice.
 func TestWatchIsAdmittedByTheProtocolButNotServedByTheMock(t *testing.T) {
 	t.Run("the protocol admits the name", func(t *testing.T) {
-		path := filepath.Join("..", "..", "protocol", "provider-cli", "v1", "request.schema.json")
+		path := clusterPath(t, "protocol", "provider-cli", "v1", "request.schema.json")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read request schema: %v", err)

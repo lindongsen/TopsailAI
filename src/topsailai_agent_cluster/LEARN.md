@@ -1663,3 +1663,29 @@ Why this prevents recurrence: a fixed message is written once for the first erro
 later codes are added to the same branch without revisiting the text. The code stays correct, so every
 test that asserts the code passes, and only the human-readable half is wrong. The cost is paid by the
 next investigation, which starts from a false premise supplied by the tool itself.
+
+## A guard that counts directory levels encodes a position, not an identity
+
+Trigger: moving each provider's sources into a `src/` subdirectory silently invalidated six guard tests
+that located sibling files by counting `..` segments: `../../conf/...` for the shipped catalog,
+`../../../topsailai/cli/...` for the provider business CLI, `../../go.mod` for the module boundary and
+`../../protocol/...` for a schema. Every one of them still compiled and still ran. Each would have read
+a file one level away from the intended one, and a guard that reads the wrong file passes while proving
+nothing.
+
+Action: when a test or tool needs a file outside its own package, resolve it by identity rather than by
+depth. Walk up from the working directory until a `go.mod` declares the expected module name, then
+build the path from that root; for a sibling project, resolve the cluster root first and take the
+sibling from there. Put the resolver in one small file per module so every guard shares it, and prove
+the resolver by breaking it: corrupt the module name constant and confirm the guards fail with a
+locating error, then restore it. A resolver that has never been seen to fail is indistinguishable from
+a resolver that returns the wrong path.
+
+Why this prevents recurrence: a depth-counted path is correct only for one directory layout, and it
+fails in the direction that hides itself. Adding a directory level does not produce a compile error or
+a missing-file error, because the wrong path usually still exists: `../../conf` resolves to a real
+directory one level off, so the read succeeds and the assertion runs against the wrong content. The
+same trap applies to any relative path computed from `runtime.Caller` depth, to `filepath.Join` chains
+built from a hardcoded `..` count, and to shell scripts that `cd ../..` before reading a file. Identity
+resolution makes the layout change a non-event, and the deliberate break is what separates "the path
+resolves" from "the path resolves to the file I meant".

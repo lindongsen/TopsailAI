@@ -1,0 +1,17 @@
+---
+maintainer: AI
+author: DawsonLin
+workspace: /TopsailAI/src/topsailai_agent_cluster/providers/topsailai
+ProjectFolder: /TopsailAI/src/topsailai_agent_cluster/providers/topsailai
+ProjectRootFolder: /TopsailAI/src/topsailai_agent_cluster
+ProjectCode: agent-cluster-provider-topsailai
+programming_language: go
+---
+
+# TopsailAI Provider workspace
+
+This workspace is the production Provider CLI for TopsailAI. It implements the Adapter CLI protocol
+and translates each standard request into the installed TopsailAI business CLI.
+
+The module path is `agent-cluster-provider-topsailai`, declared in `go.mod` at this workspace root.
+The package `main` and its unit tests live in `src/`. Provider-owned issue records live in `issues/`.

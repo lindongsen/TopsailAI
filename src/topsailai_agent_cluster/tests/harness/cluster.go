@@ -288,7 +288,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	// scenario-local because BuildModule cannot share the shared build directory
 	// that SharedBinary uses for the repository's own binaries.
 	mockBin := filepath.Join(root, "mock")
-	if err := BuildModule(mockBin, filepath.Join(ModuleRootForBuild(), "providers", "mock"), "."); err != nil {
+	if err := BuildModule(mockBin, filepath.Join(ModuleRootForBuild(), "providers", "mock"), "./src"); err != nil {
 		return nil, err
 	}
 	apiPort, err := FreePortE()

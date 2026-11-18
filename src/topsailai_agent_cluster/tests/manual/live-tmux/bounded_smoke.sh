@@ -28,7 +28,7 @@ log "== build =="
 ( cd "${PROJECT_DIR}" && go build -o "${RUN_DIR}/bin/agent-cluster-server" ./src/main/agent-cluster-server )
 ( cd "${PROJECT_DIR}" && go build -o "${RUN_DIR}/bin/agent-cluster-endpoint" ./src/main/agent-cluster-endpoint )
 ( cd "${PROJECT_DIR}" && go build -o "${RUN_DIR}/bin/agent-cluster-cli" ./src/main/agent-cluster-cli )
-( cd "${PROJECT_DIR}/providers/topsailai" && go build -o "${RUN_DIR}/bin/agent-cluster-provider-topsailai" . )
+( cd "${PROJECT_DIR}/providers/topsailai" && go build -o "${RUN_DIR}/bin/agent-cluster-provider-topsailai" ./src )
 log "BUILD_OK"
 
 log "== start =="

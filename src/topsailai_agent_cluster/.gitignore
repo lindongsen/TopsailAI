@@ -9,6 +9,8 @@
 /topsailai_fixture
 /topsailai_session_info_fixture
 
-# Binary dropped in the Mock Provider module by `go build .` there. The module
-# name is agent-cluster-provider-mock, so go build names the output after it.
-/providers/mock/agent-cluster-provider-mock
+# Provider workspaces need no binary rule of their own. Each provider Makefile
+# passes an explicit -o under its own .tmp/bin, and .tmp/ is ignored at any
+# depth. A bare `go build ./src` inside a provider workspace cannot drop a stray
+# binary either: go names the output after the package directory, which is the
+# src directory itself, so the build refuses rather than writing beside it.

@@ -42,7 +42,7 @@ log "== build =="
 ( cd "${PROJECT_DIR}" && go build -o "${RUN_DIR}/bin/agent-cluster-server" ./src/main/agent-cluster-server )
 ( cd "${PROJECT_DIR}" && go build -o "${RUN_DIR}/bin/agent-cluster-endpoint" ./src/main/agent-cluster-endpoint )
 ( cd "${PROJECT_DIR}" && go build -o "${RUN_DIR}/bin/agent-cluster-cli" ./src/main/agent-cluster-cli )
-( cd "${PROJECT_DIR}/providers/mock" && go build -o "${RUN_DIR}/bin/agent-cluster-provider-mock" . )
+( cd "${PROJECT_DIR}/providers/mock" && go build -o "${RUN_DIR}/bin/agent-cluster-provider-mock" ./src )
 log "BUILD_OK"
 
 log "== start =="

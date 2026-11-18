@@ -118,7 +118,7 @@ func TestManualDocumentsRecordOnlyCodesTheProviderEmits(t *testing.T) {
 // response, read from the provider package source.
 func providerErrorCodes(t *testing.T, root string) map[string]struct{} {
 	t.Helper()
-	dir := filepath.Join(root, "providers", "topsailai")
+	dir := filepath.Join(root, "providers", "topsailai", "src")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read %s: %v", dir, err)

@@ -4,7 +4,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -73,7 +72,7 @@ func TestMockImportsNoClusterPackage(t *testing.T) {
 // replace directive would let the module import Cluster packages while still
 // looking independent.
 func TestMockDeclaresItsOwnModule(t *testing.T) {
-	content, err := os.ReadFile("go.mod")
+	content, err := os.ReadFile(workspacePath(t, "go.mod"))
 	if err != nil {
 		t.Fatalf("read the mock go.mod: %v", err)
 	}
@@ -100,7 +99,7 @@ func TestMockDeclaresItsOwnModule(t *testing.T) {
 // The Mock Provider is a test artifact, so the production module must not require
 // it.
 func TestRootModuleDoesNotDependOnTheMock(t *testing.T) {
-	rootGoMod := filepath.Join("..", "..", "go.mod")
+	rootGoMod := clusterPath(t, "go.mod")
 	content, err := os.ReadFile(rootGoMod)
 	if err != nil {
 		t.Fatalf("read the root go.mod: %v", err)

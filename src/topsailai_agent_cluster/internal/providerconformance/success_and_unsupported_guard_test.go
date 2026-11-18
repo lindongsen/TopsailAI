@@ -169,7 +169,7 @@ func TestConformanceTargetReportsNoSkips(t *testing.T) {
 	moduleDir := filepath.Join("..", "..", "providers", "mock")
 	binary := filepath.Join(t.TempDir(), "agent-cluster-provider-mock")
 
-	build := exec.Command("go", "build", "-o", binary, ".")
+	build := exec.Command("go", "build", "-o", binary, "./src")
 	build.Dir = moduleDir
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build the Mock Provider: %v\n%s", err, output)

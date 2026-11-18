@@ -73,7 +73,7 @@ const replaceCapabilities = `{"revision":"mock-cli-r1","capabilities":[{"name":"
 // package is not part of the main module.
 func buildProviderModule(t *testing.T, out, moduleDir string) {
 	t.Helper()
-	cmd := exec.Command("go", "build", "-o", out, ".")
+	cmd := exec.Command("go", "build", "-o", out, "./src")
 	cmd.Dir = moduleDir
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", moduleDir, err, b)

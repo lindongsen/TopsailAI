@@ -9,7 +9,7 @@ import (
 // mockProviderSource is the mock provider's source file, relative to this
 // package directory. The guard reads it as text because the fact it checks is a
 // literal in that file, not a value this package can import.
-const mockProviderSource = "../../providers/mock/main.go"
+const mockProviderSource = "../../providers/mock/src/main.go"
 
 // TestMessagesFixtureIsDistinguishableFromTheMockDefault fails when the body the
 // messages scenarios configure is also the body the mock provider answers by
