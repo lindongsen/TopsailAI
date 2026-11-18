@@ -237,3 +237,126 @@ def test_generation_value_named_json_does_not_enable_json_mode(tmp_path, capsys)
     assert code == 2
     assert captured.out == ""
     assert "generation" in captured.err
+
+
+def test_capability_failure_message_is_derived_from_error_code(tmp_path, rows, capsys):
+    """A capability gap must not be reported as a target-selection failure."""
+    def unsupported(target, sig):
+        raise WorkspaceKillError("safe_signal_unsupported")
+
+    assert invoke(tmp_path, rows, unsupported,
+                  ["session-123", "-g", "77", "--json"]) == 5
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "safe_signal_unsupported"
+    assert payload["message"] != "No exact verified session target"
+    assert "signal" in payload["message"]
+    # The target was resolved, so the receipt must not deny its existence.
+    assert payload["pid"] == 1234
+
+
+def test_target_failure_message_names_the_real_reason(tmp_path, rows, capsys):
+    """Each classified target rejection states its own cause."""
+    assert invoke(tmp_path, rows, Mock(),
+                  ["session-123", "-g", "76", "--json"]) == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "generation_mismatch"
+    assert "generation" in payload["message"]
+    assert payload["message"] != "No exact verified session target"
+
+
+def test_plain_mode_capability_failure_uses_the_derived_message(tmp_path, rows, capsys):
+    """Human output carries the same derived message as the JSON receipt."""
+    def unsupported(target, sig):
+        raise WorkspaceKillError("safe_signal_unsupported")
+
+    assert invoke(tmp_path, rows, unsupported) == 5
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "No exact verified session target" not in captured.err
+    assert "signal" in captured.err
+
+
+def test_signal_bound_falls_back_when_interpreter_lacks_pidfd(monkeypatch):
+    """A missing interpreter binding degrades instead of failing closed."""
+    killed = Mock()
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", None,
+                        raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal",
+                        None, raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.kill", killed)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli._process_identity",
+                        lambda pid: (pid, 77))
+    assert _signal_bound(KillTarget(1234, 77, (1234, 77)), 15) == "identity_recheck"
+    killed.assert_called_once_with(1234, 15)
+
+
+def test_signal_bound_fallback_revalidates_identity_before_kill(monkeypatch):
+    """The degraded path still refuses a process whose identity changed."""
+    killed = Mock()
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", None,
+                        raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal",
+                        None, raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.kill", killed)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli._process_identity",
+                        lambda pid: (pid, 78))
+    with pytest.raises(WorkspaceKillError, match="target_changed"):
+        _signal_bound(KillTarget(1234, 77, (1234, 77)), 15)
+    killed.assert_not_called()
+
+
+def test_signal_bound_reports_pidfd_binding(monkeypatch):
+    """The preferred path names the stronger binding it actually obtained."""
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", lambda pid: 9,
+                        raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.close", Mock())
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal",
+                        Mock(), raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli._process_identity",
+                        lambda pid: (pid, 77))
+    assert _signal_bound(KillTarget(1234, 77, (1234, 77)), 15) == "pidfd"
+
+
+def test_json_receipt_reports_the_binding_used(tmp_path, rows, capsys):
+    """The receipt states which guarantee was obtained, not an implied one."""
+    assert invoke(tmp_path, rows, lambda target, sig: "identity_recheck",
+                  ["session-123", "-g", "77", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["response"]["binding"] == "identity_recheck"
+    assert "residual" in payload["message"]
+
+
+def test_json_receipt_reports_pidfd_binding(tmp_path, rows, capsys):
+    """A pidfd delivery is reported as the atomic binding."""
+    assert invoke(tmp_path, rows, lambda target, sig: "pidfd",
+                  ["session-123", "-g", "77", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["response"]["binding"] == "pidfd"
+    assert "pidfd" in payload["message"]
+
+
+def test_signal_bound_fallback_reports_vanished_process(monkeypatch):
+    """A process that exits between the identity check and the kill is reported."""
+    def gone(pid, sig):
+        raise ProcessLookupError(pid)
+
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", None,
+                        raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal",
+                        None, raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.kill", gone)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli._process_identity",
+                        lambda pid: (pid, 77))
+    with pytest.raises(WorkspaceKillError, match="target_changed"):
+        _signal_bound(KillTarget(1234, 77, (1234, 77)), 15)
+
+
+def test_signal_bound_reports_unsupported_when_no_kill_exists(monkeypatch):
+    """An environment with no delivery primitive at all is a capability gap."""
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", None,
+                        raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal",
+                        None, raising=False)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.kill", None)
+    with pytest.raises(WorkspaceKillError, match="safe_signal_unsupported"):
+        _signal_bound(KillTarget(1234, 77, (1234, 77)), 15)

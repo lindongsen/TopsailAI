@@ -22,6 +22,7 @@ KILL_ERROR_CODES = {
     2: "usage_error",
     3: "target_error",
     4: "signal_failed",
+    5: "capability_unsupported",
 }
 
 AGENT_ERROR_CODES = {
