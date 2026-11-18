@@ -205,31 +205,34 @@ operation has no permission to look up.
 
 ## Evaluation order
 
-### TC-NODE-23: An invalid node-token is refused before the scope is looked up
+### TC-NODE-23: A node proof that does not verify is refused before the scope is looked up
 
 **Precondition:** A valid policy.
 
-**Action:** Send a request with a wrong `node-token` and an unknown scope.
+**Action:** Send a request whose node proof carries a wrong signature, and an unknown
+scope.
 
-**Expected:** `denied` for the token, and the scope is never consulted. The
-order matters because a scope error would tell an unauthenticated caller which scope
-names exist.
+**Expected:** `unauthenticated`, and the scope is never consulted. The order matters
+because a scope error would tell an unauthenticated caller which scope names exist.
+The code is `unauthenticated` rather than `denied` because the caller did not prove it
+may talk to this Node at all, which is a different answer from "you may talk but not
+do that".
 
-### TC-NODE-24: A valid node-token with an unknown scope is refused
+### TC-NODE-24: A valid node proof with an unknown scope is refused
 
-**Action:** Send a valid `node-token` with `scope: unknown`.
+**Action:** Send a request with a valid node proof and `scope: unknown`.
 
-**Expected:** `denied`, and the refusal names the scope check rather than the
-token check.
+**Expected:** `denied`, and the refusal names the scope check rather than the proof
+check.
 
-### TC-NODE-25: A valid node-token with a known scope and no grant is refused
+### TC-NODE-25: A valid node proof with a known scope and no grant is refused
 
-**Action:** Send a valid `node-token`, a defined scope, and an operation whose
-permission is not granted.
+**Action:** Send a request with a valid node proof, a defined scope, and an operation
+whose permission is not granted.
 
 **Expected:** `denied`, and the refusal names the permission check.
 
-### TC-NODE-26: A valid node-token with a grant and an escaping path is refused
+### TC-NODE-26: A valid node proof with a grant and an escaping path is refused
 
 **Precondition:** `project: [read]`.
 
@@ -382,16 +385,17 @@ refuses it.
 
 **Action:** Send a request with a `subject` or `user` field naming an administrator.
 
-**Expected:** `invalid_argument` or `denied`. The Node's decision depends on the
-`node-token` and the policy, not on a name the caller supplies.
+**Expected:** `invalid_argument`. The Node's decision depends on the node proof and
+the policy, not on a name the caller supplies. An unknown field is refused rather
+than ignored, so a caller cannot smuggle a claim past the decoder.
 
-### TC-NODE-45: Two CLIs with the same `client_token` get the same decision
+### TC-NODE-45: Two callers with different credentials get the same decision
 
-**Action:** Send the same operation from two CLI instances holding the same
-`client_token` and the same `node-token`.
+**Action:** Send the same operation from two CLI instances holding different node
+credentials, both valid for this Node.
 
-**Expected:** Both receive the same result. The Node cannot distinguish them, so it
-cannot treat them differently.
+**Expected:** Both receive the same result. The credential proves the caller may talk
+to the Node; it carries no scope and no permission, so it cannot change the answer.
 
 ## Reload
 
@@ -440,13 +444,13 @@ rather than whatever now occupies the name.
 **Expected:** The log names the scope, the operation and the refusal reason. A refusal
 that cannot be diagnosed is a refusal an operator will disable.
 
-### TC-NODE-51: A refusal log does not contain the `node-token`
+### TC-NODE-51: A refusal log does not contain a secret
 
-**Action:** Send a request with a wrong `node-token`, then search the log for the
-value.
+**Action:** Send a request whose node proof carries a wrong signature, then search the
+log for the secret and for the signature.
 
-**Expected:** The value does not appear. The log may name the `node-id`, because that
-half is public.
+**Expected:** Neither the secret nor the signature appears. The log may name the
+`node_id` and the `key_id`, because both are public.
 
 ### TC-NODE-52: A refusal names the reason code
 

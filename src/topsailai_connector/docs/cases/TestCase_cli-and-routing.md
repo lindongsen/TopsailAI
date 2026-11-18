@@ -6,8 +6,9 @@ author: DawsonLin
 # Test Cases: CLI and Routing
 
 The CLI is a subcommand of the Server binary. These cases check its surface, the
-routing decision, and the rule that the `node-id` in the URL and in the pair must
-agree.
+routing decision, and the rule that the two proofs are independent: the client proof
+is verified by the Server, the node proof is verified by the Node, and neither party
+can verify the other's.
 
 ## CLI surface
 
@@ -15,11 +16,12 @@ agree.
 
 **Precondition:** A Node connected, a policy granting `project: [read]`.
 
-**Action:** `connector-server cli --scope project --path notes.md file.read`.
+**Action:** `connector-server cli --server https://host --client-credential alpha.<secret> --node-credential beta.<secret> --node-id node_a --scope project --path notes.md file.read`.
 
-**Expected:** A `POST` to `/v1/nodes/<node-id>/operations` with
-`Authorization: Bearer <client_token>`, `X-Connector-Node-Token: <node-token>` and a
-body naming `file.read`, `project` and `notes.md`.
+**Expected:** A `POST` to `/v1/nodes/<node-id>/operations` carrying
+`Authorization: CONNECTOR-CLIENT-HMAC-SHA256 …`, `X-Connector-Node-Auth:
+CONNECTOR-NODE-HMAC-SHA256 …`, `X-Request-Id: req_…` and a body naming `file.read`,
+`project` and `notes.md`. No header contains a secret.
 
 ### TC-CLI-2: `file list` sends the documented request
 
@@ -47,41 +49,44 @@ in a status line would make `> out.txt` produce a file with a status line in it.
 **Expected:** The error on stderr, nothing on stdout, exit code non-zero. A refusal
 that exited zero would be a refusal a script could not detect.
 
-### TC-CLI-6: The CLI exits non-zero on a missing `client_token`
+### TC-CLI-6: The CLI exits non-zero on a missing client credential
 
-**Precondition:** `CONNECTOR_CLI_CLIENT_TOKEN` is unset.
+**Precondition:** `CONNECTOR_CLI_CLIENT_CREDENTIAL` is unset and
+`--client-credential` is absent.
 
 **Action:** Any operation.
 
 **Expected:** A message naming the variable, exit code non-zero, and no request sent.
 
-### TC-CLI-7: The CLI exits non-zero on a malformed pair
+### TC-CLI-7: The CLI exits non-zero on a malformed credential
 
-**Precondition:** `CONNECTOR_CLI_NODE=node_abc` (no dot).
+**Precondition:** `CONNECTOR_CLI_CLIENT_CREDENTIAL=node_abc` (no dot).
 
 **Action:** Any operation.
 
 **Expected:** A message naming the problem, exit code non-zero, and no request sent.
-The CLI validates the pair before sending, so a malformed value never reaches the
-Server.
+The CLI parses both credentials before sending, so a malformed value never reaches
+the Server.
 
-### TC-CLI-8: The CLI splits the pair before sending
+### TC-CLI-8: The CLI signs two independent proofs
 
-**Precondition:** `CONNECTOR_CLI_NODE=node_abc.def`.
+**Precondition:** A client credential and a node credential with different key ids.
 
 **Action:** Any operation, against a listener that records the request.
 
-**Expected:** The URL path contains `node_abc` and the header contains `def`. The
-whole pair never appears in one place, so the Server never holds a value that is
-half public and half secret.
+**Expected:** The `Authorization` header carries a `CONNECTOR-CLIENT-HMAC-SHA256`
+proof whose `key_id` is the client key id, and `X-Connector-Node-Auth` carries a
+`CONNECTOR-NODE-HMAC-SHA256` proof whose `key_id` is the node key id. Neither header
+contains a secret. The two proofs are built from different canonical inputs, so one
+cannot be substituted for the other.
 
-### TC-CLI-9: The CLI accepts a secret as a flag, and the flag wins over the environment
+### TC-CLI-9: The CLI accepts a credential as a flag, and the flag wins over the environment
 
-**Action:** `connector-server cli --client-token gamma --node node_a.b --scope project file.list`,
-with `CONNECTOR_CLI_CLIENT_TOKEN` and `CONNECTOR_CLI_NODE` also set to different
-values.
+**Action:** `connector-server cli --server https://host --client-credential alpha.<secret> --node-credential beta.<secret> --node-id node_a --scope project file.list`,
+with `CONNECTOR_CLI_CLIENT_CREDENTIAL` and `CONNECTOR_CLI_NODE_CREDENTIAL` also set to
+different values.
 
-**Expected:** The request is sent with the flag values, not the environment values.
+**Expected:** The request is signed with the flag values, not the environment values.
 `parseArguments` resolves each value with `firstNonEmpty(*flag, lookup(env))`, so a
 flag that is present takes precedence.
 
@@ -93,11 +98,12 @@ variable remains the recommended form because it keeps the secret out of both. S
 
 ### TC-CLI-10: The CLI does not echo a secret in an error
 
-**Precondition:** A wrong `client_token`.
+**Precondition:** A client credential whose secret is wrong.
 
 **Action:** Any operation.
 
-**Expected:** The error names the refusal and does not print the value.
+**Expected:** The error names the refusal and does not print the secret. The key id
+may appear, because it is public.
 
 ### TC-CLI-11: `--help` lists the operations
 
@@ -165,37 +171,42 @@ knowing, and the operator would have no way to cancel it.
 **Expected:** `node_not_connected`. The error is the same as for a disconnected Node,
 so a caller cannot tell which Nodes exist.
 
-### TC-CLI-20: The `node-id` in the URL and in the pair must agree
+### TC-CLI-20: A node proof built for one Node is refused by another
 
-**Precondition:** Two Nodes connected.
+**Precondition:** Two Nodes connected, each with its own credential.
 
-**Action:** Address `node_a` with `node_b`'s `node-token`.
+**Action:** Address `node_a` in the URL, presenting a node proof signed for `node_b`.
 
-**Expected:** `invalid_argument` from the Server, before forwarding. The Server can
-see both halves of the address, so a disagreement is a malformed request rather than
-an authentication failure.
+**Expected:** `unauthenticated` from `node_a`. The node id is part of the canonical
+input the proof signs, so a proof built for one Node cannot verify at another. The
+Server does not compare anything: it has no second copy of the address to compare
+against, because the address now appears once, in the URL, and the binding lives in
+the signature.
 
-### TC-CLI-21: A `node-id` in the URL with no pair is refused
+### TC-CLI-21: A request with no node proof header is refused
 
-**Action:** Send a request with no `X-Connector-Node-Token` header.
+**Action:** Send a request with no `X-Connector-Node-Auth` header.
 
-**Expected:** `invalid_argument`. The Server needs both halves to route and to
-forward.
+**Expected:** `unauthenticated` from the Server, before forwarding. The header is
+required because the Server forwards it unchanged and the Node has nothing to verify
+without it. The refusal is `unauthenticated` rather than `invalid_argument` because a
+missing proof is an authentication failure, not a malformed request.
 
-### TC-CLI-22: A pair with no `node-id` in the URL is refused
+### TC-CLI-22: A request with no `node-id` in the URL is refused
 
 **Action:** Send a request to `/v1/nodes//operations`.
 
 **Expected:** `invalid_argument`.
 
-### TC-CLI-23: The Server does not check whether the `node-token` is correct
+### TC-CLI-23: The Server does not verify the node proof
 
 **Precondition:** A Node connected.
 
-**Action:** Send a request with a wrong `node-token`.
+**Action:** Send a request whose node proof carries a wrong signature.
 
-**Expected:** The Server forwards it and the Node refuses. The Server cannot check
-the value, so a Server-side refusal would mean the Server had learned it.
+**Expected:** The Server forwards it and the Node refuses with `unauthenticated`.
+The Server cannot verify the proof, because it does not hold the node credential, so
+a Server-side refusal would mean the Server had learned the secret.
 
 ### TC-CLI-24: A second connection for the same `node-id` follows the documented rule
 
@@ -234,11 +245,13 @@ non-zero.
 **Expected:** The second request is served normally. A timed-out request that stayed
 queued would execute later.
 
-### TC-CLI-28: A timeout does not retain the `node-token`
+### TC-CLI-28: A timeout does not retain the node proof
 
 **Action:** After a timeout, inspect the Server's memory.
 
-**Expected:** No copy of the `node-token` survives.
+**Expected:** No copy of the node proof survives the request. The Server never held
+the node secret at all, so there is nothing to retain: the proof is a field of the
+forwarded frame and is released with it.
 
 ### TC-CLI-29: A slow Node does not block other Nodes
 
