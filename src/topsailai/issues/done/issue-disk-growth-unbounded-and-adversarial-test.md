@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 author: DawsonLin
-status: open
+status: done
 ---
 
 # Issue: Disk growth is unbounded and lacks adversarial coverage
@@ -709,3 +709,73 @@ implemented here because this workspace contains no Go sources.
 3. The two rejected configuration decisions are recorded as deliberate, not
    pending: the events count default stays unlimited and the meta retention
    window stays 7 days.
+
+## Closed on 2026-11-18
+
+The Human directed: "记一个新issue到临时文件夹，关闭当前issue".
+
+### What this issue owned and what it no longer owns
+
+This issue owned the unbounded disk growth that reached 51.75 GB on 2026-11-14 and the
+adversarial coverage that would have caught it. Both are complete:
+
+- The producer of the growth, `workspace/input_tool.py::input_one_line` swallowing every
+  `EOFError` and reprompting forever, was fixed in `68e5e80a`.
+- All seven in-workspace required behaviors now have assertions, with negative controls
+  proving each assertion observes real behavior rather than passing vacuously.
+
+Requirement 6, "a killed or interrupted test run MUST NOT leave its temporary build tree
+behind", is not a defect in this project. The leaking code is Go test infrastructure in
+`/TopsailAI/src/topsailai_agent_cluster`, a sibling workspace in the same repository. This
+workspace contains no Go sources, so the requirement cannot be implemented or verified here.
+
+### Where requirement 6 went
+
+Staged for the owning project at:
+
+```
+.tmp/project.topsailai_agent_cluster.tmp-build-tree-leak.md
+```
+
+The staging file records the measured residue (17 `TestFeatures*` roots totalling 25 GB and
+109 `agent-cluster-test-bin-*` directories totalling 5282 MB), the two independent leak
+mechanisms (`t.TempDir()` removed only on normal completion, and `os.MkdirTemp` at
+`tests/harness/sharedbuild.go:49` with no removal path anywhere), the absence of `TestMain`
+in the affected packages, and the fact that the host's `systemd-tmpfiles` 10-day policy has
+never executed, so the documented "relies on the operating system" assumption is empty here.
+
+Per the cross-project routing rule, this workspace does not write into the sibling project.
+The owning workspace validates ownership, rewrites the issue under its own conventions, and
+reports back. This workspace deletes the staging file once the owning project accepts or
+rejects it.
+
+### Action 6 is operational, not code
+
+The Docker cleanup on `/opt` is an operator action on the host, not a change to this
+repository. It is not tracked here.
+
+### Deliberate configuration decisions, not pending work
+
+Two items were explicitly rejected by the Human and are recorded as decisions rather than
+open work:
+
+- `TOPSAILAI_EVENTS_FILE_MAX_COUNT` keeps its `0` default. The enforcement mechanism works
+  and is covered by `test_file_backend_cleanup_by_max_count`; only the default stays
+  unlimited.
+- `TOPSAILAI_SESSION_META_RETENTION_DAYS` stays at 7 days. Dead owners older than the window
+  are reclaimed; younger ones are correctly preserved.
+
+### Final coverage
+
+| # | Requirement | Status |
+|---|---|---|
+| 1 | Bounded growth across a repeated lifecycle | covered |
+| 2 | Disk-full survives, reaches prompt, meta and stdout retained | covered |
+| 3 | Closed stdin exits, measured in bytes | covered |
+| 4 | Deleted-but-open detected, space measured | covered |
+| 5 | Orphans actually removed, unrelated data unaffected | covered |
+| 6 | Killed test run leaves no temp build tree | routed to the sibling Go project |
+| 7 | Dead-PID `running` meta becomes cleanable | covered |
+| 8 | `TOPSAILAI_EVENTS_FILE_MAX_COUNT` enforces a bound when set | covered |
+
+Seven of eight are covered here. The eighth is staged for the project that owns the code.
