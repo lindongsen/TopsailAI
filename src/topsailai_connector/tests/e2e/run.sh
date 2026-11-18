@@ -28,6 +28,9 @@ fail() {
 
 [ -n "${E2E_SERVER_PID:-}" ] || fail "no Server PID recorded; run start.sh first"
 [ -n "${E2E_NODE_PID:-}" ] || fail "no Node PID recorded; run start.sh first"
+[ -n "${E2E_CLIENT_CREDENTIAL:-}" ] || fail "no client credential recorded; run start.sh first"
+[ -n "${E2E_NODE_CREDENTIAL:-}" ] || fail "no node credential recorded; run start.sh first"
+[ -n "${E2E_NODE_ID:-}" ] || fail "no node id recorded; run start.sh first"
 
 # stop_processes stops the two processes by exact PID.
 #
@@ -57,25 +60,14 @@ stop_processes() {
 
 trap stop_processes EXIT
 
-# The pair is read from the identity file the Node wrote, which is the same value
-# an operator would copy. Reading it here proves the file is usable, not just that
-# the Node started.
-IDENTITY_FILE="$E2E_WORK/node-config/identity"
-[ -f "$IDENTITY_FILE" ] || fail "$IDENTITY_FILE is missing; the Node did not write an identity"
-PAIR=$(tr -d '\r\n' <"$IDENTITY_FILE")
-[ -n "$PAIR" ] || fail "$IDENTITY_FILE is empty"
-case "$PAIR" in
-*.*) ;;
-*) fail "identity $PAIR is not a node-id.node-token pair" ;;
-esac
-
-echo "run: node identity is ${PAIR%%.*}" >&2
+echo "run: node id is $E2E_NODE_ID" >&2
 
 cli() {
 	"$BIN/connector-server" cli \
 		--server "$E2E_BASE_URL" \
-		--client-token "$E2E_CLIENT_TOKEN" \
-		--node "$PAIR" \
+		--client-credential "$E2E_CLIENT_CREDENTIAL" \
+		--node-credential "$E2E_NODE_CREDENTIAL" \
+		--node-id "$E2E_NODE_ID" \
 		"$@"
 }
 
@@ -115,36 +107,43 @@ check_stat() {
 	echo "run: file.stat reported the size" >&2
 }
 
-# check_refusals asserts that the two gates refuse a wrong secret. A run that only
-# proved the happy path would not show that the secrets are checked at all.
+# check_refusals asserts that the two gates refuse a wrong credential. A run that
+# only proved the happy path would not show that the credentials are checked at all.
+#
+# Each wrong value keeps the right key identifier and carries a different secret, so
+# the verifier finds the entry and the signature fails. A wrong key identifier would
+# exercise the lookup rather than the signature.
 check_refusals() {
 	local out
+	local wrong_client="${E2E_CLIENT_CREDENTIAL%%.*}.wrongclientsecret0123456789abcdef"
 	if out=$("$BIN/connector-server" cli \
 		--server "$E2E_BASE_URL" \
-		--client-token "wrong-client-token-0123456789" \
-		--node "$PAIR" \
+		--client-credential "$wrong_client" \
+		--node-credential "$E2E_NODE_CREDENTIAL" \
+		--node-id "$E2E_NODE_ID" \
 		--scope project --path hello.txt file.read 2>&1); then
-		fail "a wrong client token was accepted: $out"
+		fail "a wrong client credential was accepted: $out"
 	fi
 	case "$out" in
 	*unauthenticated*) ;;
-	*) fail "a wrong client token reported $(printf '%q' "$out"), want unauthenticated" ;;
+	*) fail "a wrong client credential reported $(printf '%q' "$out"), want unauthenticated" ;;
 	esac
-	echo "run: a wrong client token was refused" >&2
+	echo "run: a wrong client credential was refused" >&2
 
-	local wrong_pair="${PAIR%%.*}.wrongnodetoken0123456789"
+	local wrong_node="${E2E_NODE_CREDENTIAL%%.*}.wrongnodesecret0123456789abcdefgh"
 	if out=$("$BIN/connector-server" cli \
 		--server "$E2E_BASE_URL" \
-		--client-token "$E2E_CLIENT_TOKEN" \
-		--node "$wrong_pair" \
+		--client-credential "$E2E_CLIENT_CREDENTIAL" \
+		--node-credential "$wrong_node" \
+		--node-id "$E2E_NODE_ID" \
 		--scope project --path hello.txt file.read 2>&1); then
-		fail "a wrong node token was accepted: $out"
+		fail "a wrong node credential was accepted: $out"
 	fi
 	case "$out" in
 	*unauthenticated*) ;;
-	*) fail "a wrong node token reported $(printf '%q' "$out"), want unauthenticated" ;;
+	*) fail "a wrong node credential reported $(printf '%q' "$out"), want unauthenticated" ;;
 	esac
-	echo "run: a wrong node token was refused" >&2
+	echo "run: a wrong node credential was refused" >&2
 
 	if out=$(cli --scope project --path ../policy.yaml file.read 2>&1); then
 		fail "a path outside the scope was served: $out"
@@ -154,12 +153,13 @@ check_refusals() {
 
 # check_secrets_absent asserts that no secret reached a log file.
 #
-# The tunnel token must be absent from both logs. The node token must be absent
-# from the Server log specifically, because the Server is the party that must never
-# store a node token. The Node prints its own pair once at generation, on stdout,
-# because the operator has to copy it into a CLI and there is no lookup endpoint;
-# that is the documented provisioning path, not a leak, so the Node log is not
-# asserted against its own token.
+# The tunnel token must be absent from both logs. The node credential secret must be
+# absent from the Server log specifically, because the Server never receives it: it
+# forwards the proof, which is a signature rather than a secret. The Node prints its
+# own credential once at generation, on stdout, because the operator has to copy it
+# into a CLI and there is no command that reads a secret back; that is the documented
+# provisioning path, not a leak, so the Node log is not asserted against its own
+# credential.
 check_secrets_absent() {
 	local file
 	for file in "$SERVER_LOG" "$NODE_LOG"; do
@@ -168,10 +168,21 @@ check_secrets_absent() {
 			fail "$file contains the tunnel token"
 		fi
 	done
-	if grep -qF "${PAIR#*.}" "$SERVER_LOG"; then
-		fail "$SERVER_LOG contains the node token"
+
+	local node_secret="${E2E_NODE_CREDENTIAL#*.}"
+	if grep -qF "$node_secret" "$SERVER_LOG"; then
+		fail "$SERVER_LOG contains the node credential secret"
 	fi
-	echo "run: no secret reached the Server log" >&2
+
+	local client_secret="${E2E_CLIENT_CREDENTIAL#*.}"
+	if grep -qF "$client_secret" "$SERVER_LOG"; then
+		fail "$SERVER_LOG contains the client credential secret"
+	fi
+	if grep -qF "$client_secret" "$NODE_LOG"; then
+		fail "$NODE_LOG contains the client credential secret"
+	fi
+
+	echo "run: no secret reached a log" >&2
 }
 
 check_read

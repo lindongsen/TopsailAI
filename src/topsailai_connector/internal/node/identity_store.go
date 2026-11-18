@@ -10,17 +10,17 @@ import (
 	"topsailai_connector/internal/security"
 )
 
-// IdentityFileName is the file inside the config directory that holds the
-// node-id.node-token pair.
+// IdentityFileName is the file inside the config directory that holds the node id.
 //
-// The pair lives in a file rather than in the environment because the Node
-// rewrites it itself when the operator regenerates it, and because a value the
-// Node owns belongs in a file the Node owns rather than in the environment of
-// whatever process launched it.
+// The file holds an address, not a credential. It lives in a file rather than in the
+// environment because the Node rewrites it itself when the operator regenerates it,
+// and because a value the Node owns belongs in a file the Node owns rather than in
+// the environment of whatever process launched it.
 const IdentityFileName = "identity"
 
-// identityFileMode is the mode the identity file is created with. It holds a
-// credential that never expires, so it is readable by its owner and nobody else.
+// identityFileMode is the mode the identity file is created with. The value is not
+// a secret, but it names the Node, so it is kept owner-only for the same reason a
+// host name in a private file is: it is nobody else's business which Nodes exist.
 const identityFileMode = 0o600
 
 // ErrIdentityMissing reports that no identity file exists yet. It is a distinct
@@ -33,38 +33,38 @@ func IdentityPath(configDir string) string {
 	return filepath.Join(configDir, IdentityFileName)
 }
 
-// LoadIdentity reads the identity file at path.
+// LoadIdentity reads the node id from the identity file at path.
 //
 // Every failure is a refusal rather than a repair. A malformed file is not
-// regenerated, because regenerating would silently invalidate the pair the
+// regenerated, because regenerating would silently invalidate the identifier the
 // operator already copied into a CLI, and the operator would see a confusing
-// authentication failure instead of the real cause.
-func LoadIdentity(path string) (security.NodeIdentity, error) {
+// routing failure instead of the real cause.
+func LoadIdentity(path string) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return security.NodeIdentity{}, fmt.Errorf("%w: %s", ErrIdentityMissing, path)
+			return "", fmt.Errorf("%w: %s", ErrIdentityMissing, path)
 		}
-		return security.NodeIdentity{}, fmt.Errorf("read identity file %q: %w", path, err)
+		return "", fmt.Errorf("read identity file %q: %w", path, err)
 	}
 
 	if err := checkIdentityFileMode(path); err != nil {
-		return security.NodeIdentity{}, err
+		return "", err
 	}
 
-	identity, err := security.ParseNodeIdentity(trimLineTerminator(string(content)))
-	if err != nil {
-		return security.NodeIdentity{}, fmt.Errorf("identity file %q: %w", path, err)
+	nodeID := trimLineTerminator(string(content))
+	if err := security.ValidateNodeID(nodeID); err != nil {
+		return "", fmt.Errorf("identity file %q: %w", path, err)
 	}
-	return identity, nil
+	return nodeID, nil
 }
 
 // checkIdentityFileMode refuses an identity file that another user can read.
 //
 // The check is skipped on Windows, where the permission bits Go reports are
 // synthesised from the read-only attribute and carry no ownership information. A
-// check that cannot answer the question must not pretend to: it would refuse
-// every file on one platform and accept every file on the other.
+// check that cannot answer the question must not pretend to: it would refuse every
+// file on one platform and accept every file on the other.
 func checkIdentityFileMode(path string) error {
 	if runtime.GOOS == "windows" {
 		return nil
@@ -74,25 +74,22 @@ func checkIdentityFileMode(path string) error {
 		return fmt.Errorf("stat identity file %q: %w", path, err)
 	}
 	if mode := info.Mode().Perm(); mode&0o077 != 0 {
-		return fmt.Errorf("identity file %q has mode %04o, want no group or other access; it holds a credential that never expires", path, mode)
+		return fmt.Errorf("identity file %q has mode %04o, want no group or other access", path, mode)
 	}
 	return nil
 }
 
-// SaveIdentity writes an identity to path with owner-only permissions.
+// SaveIdentity writes a node id to path with owner-only permissions.
 //
-// The write is atomic: the content goes to a temporary file in the same
-// directory and is renamed over the target. A partial write would leave a file
-// that parses as neither the old pair nor the new one, and the operator would
-// have no way to tell which credential the Node now holds.
+// The write is atomic: the content goes to a temporary file in the same directory
+// and is renamed over the target. A partial write would leave a file that parses as
+// neither the old identifier nor the new one, and the operator would have no way to
+// tell which address the Node now answers to.
 //
 // The temporary file is removed on every failure path, so a failed save does not
-// leave a stray file holding a credential.
-func SaveIdentity(path string, identity security.NodeIdentity) error {
-	if err := security.ValidateNodeID(identity.ID); err != nil {
-		return err
-	}
-	if err := security.ValidateNodeToken(identity.Token); err != nil {
+// leave a stray file behind.
+func SaveIdentity(path string, nodeID string) error {
+	if err := security.ValidateNodeID(nodeID); err != nil {
 		return err
 	}
 
@@ -106,8 +103,6 @@ func SaveIdentity(path string, identity security.NodeIdentity) error {
 	cleanup := func() {
 		temporary.Close()
 		if err := os.Remove(temporaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			// A stray temporary file holds a credential, so a failure to remove
-			// it is reported rather than swallowed.
 			fmt.Fprintf(os.Stderr, "remove temporary identity file %q: %v\n", temporaryPath, err)
 		}
 	}
@@ -116,7 +111,7 @@ func SaveIdentity(path string, identity security.NodeIdentity) error {
 		cleanup()
 		return fmt.Errorf("set mode on temporary identity file %q: %w", temporaryPath, err)
 	}
-	if _, err := temporary.WriteString(identity.String() + "\n"); err != nil {
+	if _, err := temporary.WriteString(nodeID + "\n"); err != nil {
 		cleanup()
 		return fmt.Errorf("write temporary identity file %q: %w", temporaryPath, err)
 	}
@@ -138,57 +133,42 @@ func SaveIdentity(path string, identity security.NodeIdentity) error {
 // EnsureIdentity loads the identity file, generating and saving one when it does
 // not exist yet.
 //
-// The generated flag tells the caller whether the pair is new, so the caller can
-// print it once. Printing it on every start would put a credential into a log on
-// every start, which is the leak the design forbids.
-func EnsureIdentity(path string) (identity security.NodeIdentity, generated bool, err error) {
+// The generated flag tells the caller whether the identifier is new, so the caller
+// can print it once. Printing it on every start would fill a log with an address
+// that never changes.
+func EnsureIdentity(path string) (nodeID string, generated bool, err error) {
 	loaded, err := LoadIdentity(path)
 	if err == nil {
 		return loaded, false, nil
 	}
 	if !errors.Is(err, ErrIdentityMissing) {
-		return security.NodeIdentity{}, false, err
+		return "", false, err
 	}
 
-	created, err := security.NewNodeIdentity()
+	created, err := security.NewNodeID()
 	if err != nil {
-		return security.NodeIdentity{}, false, err
+		return "", false, err
 	}
 	if err := SaveIdentity(path, created); err != nil {
-		return security.NodeIdentity{}, false, err
+		return "", false, err
 	}
 	return created, true, nil
 }
 
-// RegenerateIdentity replaces the identity file with a fresh pair.
+// RegenerateIdentity replaces the identity file with a fresh node id.
 //
-// keepID keeps the identifier and replaces only the token, which is what an
-// operator needs when the CLI's routing target must stay valid. Both forms
-// invalidate the previous token immediately, because the Node compares against
-// the value it currently holds and keeps no history: a Node that accepted an old
-// token after regeneration would defeat the purpose of regenerating.
-func RegenerateIdentity(path string, keepID bool) (security.NodeIdentity, error) {
-	var next security.NodeIdentity
-	if keepID {
-		current, err := LoadIdentity(path)
-		if err != nil {
-			return security.NodeIdentity{}, err
-		}
-		regenerated, err := security.NewNodeToken(current.ID)
-		if err != nil {
-			return security.NodeIdentity{}, err
-		}
-		next = regenerated
-	} else {
-		created, err := security.NewNodeIdentity()
-		if err != nil {
-			return security.NodeIdentity{}, err
-		}
-		next = created
+// Regeneration changes the address, not the credential. The credentials the Node
+// accepts live in a separate file, so regenerating the identifier does not revoke a
+// caller: an operator who wants to revoke a caller edits the credential file, and an
+// operator who wants a new address runs this command. Keeping the two separate is
+// what stops a routine address change from locking every caller out.
+func RegenerateIdentity(path string) (string, error) {
+	created, err := security.NewNodeID()
+	if err != nil {
+		return "", err
 	}
-
-	if err := SaveIdentity(path, next); err != nil {
-		return security.NodeIdentity{}, err
+	if err := SaveIdentity(path, created); err != nil {
+		return "", err
 	}
-	return next, nil
+	return created, nil
 }

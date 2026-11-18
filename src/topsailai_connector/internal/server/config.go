@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -29,12 +30,23 @@ const DefaultRequestTimeout = 30 * time.Second
 // exists to prevent.
 const MaxRequestTimeout = time.Hour
 
+// DefaultClientCredentialFile is the file the Server reads its client credentials
+// from when CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE is unset.
+//
+// The credentials live in a file rather than in one environment variable because a
+// single variable cannot express several public key identifiers, and because a file
+// can be replaced atomically while an environment variable cannot. The file is
+// resolved relative to the working directory only when the operator names it; the
+// default is absolute so a Server started from a different directory does not read
+// a different credential set.
+const DefaultClientCredentialFile = ""
+
 // Config is the Server's startup configuration.
 //
 // It holds the two secrets the Server owns and nothing else. There is
-// deliberately no field for a Node's node-token: the Server forwards that value
-// on the request it arrives with and keeps no copy, so a field for it would be
-// the first step toward storing it.
+// deliberately no field for a Node's credential: the Server forwards the Node proof
+// on the request it arrives with and keeps no copy, so a field for it would be the
+// first step toward storing it.
 //
 // The value is built once at the process boundary and passed down. Nothing below
 // the boundary reads the environment, because a function that reads a
@@ -51,9 +63,15 @@ type Config struct {
 	// TunnelToken is the secret a Node presents in hello. It gates the channel
 	// and grants nothing else.
 	TunnelToken security.Secret
-	// ClientToken is the secret a CLI presents on every request. It gates the
-	// CLI API and grants nothing else.
-	ClientToken security.Secret
+	// ClientCredentials is the set of client credentials the Server accepts. Each
+	// entry is a public key identifier and the secret that verifies its proofs.
+	ClientCredentials *security.CredentialSet
+	// ReplayWindow is how far a client proof timestamp may differ from the
+	// Server's clock.
+	ReplayWindow time.Duration
+	// ReplayCapacity bounds the number of unexpired client nonces the Server
+	// records.
+	ReplayCapacity int
 	// RequestTimeout bounds one forwarded request.
 	RequestTimeout time.Duration
 }
@@ -87,8 +105,18 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
-	clientToken := security.Secret(lookup("CONNECTOR_SERVER_CLIENT_TOKEN"))
-	if err := clientToken.Validate("CONNECTOR_SERVER_CLIENT_TOKEN"); err != nil {
+	credentials, err := loadClientCredentials(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
+	window, err := resolveReplayWindow(lookup("CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS"))
+	if err != nil {
+		return Config{}, err
+	}
+
+	capacity, err := resolveReplayCapacity(lookup("CONNECTOR_SERVER_REPLAY_CAPACITY"))
+	if err != nil {
 		return Config{}, err
 	}
 
@@ -98,13 +126,53 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 	}
 
 	return Config{
-		Listen:         listen,
-		TLSCert:        certPath,
-		TLSKey:         keyPath,
-		TunnelToken:    tunnelToken,
-		ClientToken:    clientToken,
-		RequestTimeout: timeout,
+		Listen:            listen,
+		TLSCert:           certPath,
+		TLSKey:            keyPath,
+		TunnelToken:       tunnelToken,
+		ClientCredentials: credentials,
+		ReplayWindow:      window,
+		ReplayCapacity:    capacity,
+		RequestTimeout:    timeout,
 	}, nil
+}
+
+// loadClientCredentials reads the client credential set.
+//
+// The file is the only source. A second source would be a second answer to "which
+// secret verifies this proof", and the precedence between them would be whatever
+// the code happened to do first. A missing file is a startup failure rather than an
+// empty set, because an empty set refuses every caller and looks like a working
+// Server that denies everything.
+func loadClientCredentials(lookup func(string) string) (*security.CredentialSet, error) {
+	path := lookup("CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE")
+	if path == "" {
+		return nil, fmt.Errorf("CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE is empty; the Server has no client credential to verify proofs with")
+	}
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE %q is relative; a relative path resolves differently per launch", path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE %q: %w", path, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE %q is a directory", path)
+	}
+	if info.Size() > security.MaxCredentialFileBytes {
+		return nil, fmt.Errorf("CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE %q is %d bytes, want at most %d", path, info.Size(), security.MaxCredentialFileBytes)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE %q: %w", path, err)
+	}
+	credentials, err := security.ParseCredentialSet(content)
+	if err != nil {
+		return nil, fmt.Errorf("CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE %q: %w", path, err)
+	}
+	return credentials, nil
 }
 
 // validateListenAddress checks that the address is a host and a port.
@@ -165,6 +233,43 @@ func resolveTLS(certPath, keyPath string) (string, string, error) {
 	return certPath, keyPath, nil
 }
 
+// resolveReplayWindow parses the client replay window in seconds.
+//
+// A zero or negative value is refused rather than clamped, because a clamped window
+// would silently accept a proof the operator meant to refuse.
+func resolveReplayWindow(value string) (time.Duration, error) {
+	if value == "" {
+		return security.DefaultReplayWindow, nil
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS %q is not a whole number of seconds", value)
+	}
+	if seconds < 1 {
+		return 0, fmt.Errorf("CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS is %d, want at least 1", seconds)
+	}
+	window := time.Duration(seconds) * time.Second
+	if window > security.MaxReplayWindow {
+		return 0, fmt.Errorf("CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS is %d, want at most %d", seconds, int(security.MaxReplayWindow/time.Second))
+	}
+	return window, nil
+}
+
+// resolveReplayCapacity parses the client replay cache capacity.
+func resolveReplayCapacity(value string) (int, error) {
+	if value == "" {
+		return security.DefaultReplayCapacity, nil
+	}
+	capacity, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("CONNECTOR_SERVER_REPLAY_CAPACITY %q is not a whole number", value)
+	}
+	if capacity < 1 {
+		return 0, fmt.Errorf("CONNECTOR_SERVER_REPLAY_CAPACITY is %d, want at least 1", capacity)
+	}
+	return capacity, nil
+}
+
 // resolveRequestTimeout parses the timeout in seconds, applying the default when
 // the variable is unset.
 func resolveRequestTimeout(value string) (time.Duration, error) {
@@ -192,16 +297,23 @@ func (c Config) TLSEnabled() bool {
 
 // Redacted renders the configuration for a log line.
 //
-// Both secrets are replaced by their redacted form and the paths are kept,
-// because a path is not a credential. The method exists so a caller never has to
-// decide field by field what may be printed: the decision is made once, here.
+// The tunnel token is replaced by its redacted form and the client credential set is
+// reported by its public key identifiers only. The method exists so a caller never
+// has to decide field by field what may be printed: the decision is made once, here.
 func (c Config) Redacted() string {
-	return fmt.Sprintf("listen=%s tls=%t tunnel_token=%s client_token=%s request_timeout=%s",
-		c.Listen, c.TLSEnabled(), c.TunnelToken.Redacted(), c.ClientToken.Redacted(), c.RequestTimeout)
+	keyIDs := "<none>"
+	if c.ClientCredentials != nil {
+		keyIDs = strings.Join(c.ClientCredentials.KeyIDs(), ",")
+		if keyIDs == "" {
+			keyIDs = "<empty>"
+		}
+	}
+	return fmt.Sprintf("listen=%s tls=%t tunnel_token=%s client_key_ids=%s replay_window=%s replay_capacity=%d request_timeout=%s",
+		c.Listen, c.TLSEnabled(), c.TunnelToken.Redacted(), keyIDs, c.ReplayWindow, c.ReplayCapacity, c.RequestTimeout)
 }
 
-// String renders the configuration with both secrets redacted, so a Config that
-// is printed by accident does not leak either one.
+// String renders the configuration with every secret redacted, so a Config that
+// is printed by accident does not leak one.
 func (c Config) String() string {
 	return c.Redacted()
 }

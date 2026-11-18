@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"topsailai_connector/internal/node"
-	"topsailai_connector/internal/security"
 )
 
 // world is the state one scenario builds up. Every scenario gets a fresh world,
@@ -19,7 +18,6 @@ type world struct {
 	scopeDir   string
 	policyPath string
 	authority  *node.Authority
-	identity   security.NodeIdentity
 	lastError  error
 	lastCode   string
 	lastData   []byte

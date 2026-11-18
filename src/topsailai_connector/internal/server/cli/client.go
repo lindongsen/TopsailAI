@@ -1,19 +1,19 @@
-// Package cli implements the operator-facing client that reaches a Node through
-// the Server's HTTP API.
+// Package cli implements the operator-facing client that reaches a Node through the
+// Server's HTTP API.
 //
-// The CLI is a subcommand of the Server binary rather than a separate program, so
-// an operator installs one binary and gets both the Server and the client. It is a
-// separate package so the request it builds can be tested without starting a
-// process or opening a socket.
+// The CLI is a subcommand of the Server binary rather than a separate program, so an
+// operator installs one binary and gets both the Server and the client. It is a
+// separate package so the request it builds can be tested without starting a process
+// or opening a socket.
 //
 // Two rules shape everything here:
 //
-//   - The CLI never prints a secret. The `client_token` and the `node-token` are
-//     never written to stdout, stderr, an error message or a verbose dump. The
-//     `node-id` is printed in full, because it is not a secret.
-//   - The CLI refuses a malformed pair before it sends anything. A copy-paste
-//     error surfaces locally instead of as a confusing authentication failure
-//     reported by the Node.
+//   - The CLI never prints a secret. The client secret and the node secret are never
+//     written to stdout, stderr, an error message or a verbose dump. The node id is
+//     printed in full, because it is not a secret.
+//   - The CLI refuses a malformed credential before it sends anything. A copy-paste
+//     error surfaces locally instead of as a confusing authentication failure reported
+//     by the Node.
 package cli
 
 import (
@@ -32,16 +32,15 @@ import (
 
 // DefaultTimeout bounds one CLI request.
 //
-// It is longer than the Server's own forward timeout on purpose: the Server
-// reports node_timeout when the Node is slow, and the CLI must be able to receive
-// that answer instead of giving up first and reporting a network error that hides
-// the real cause.
+// It is longer than the Server's own forward timeout on purpose: the Server reports
+// node_timeout when the Node is slow, and the CLI must be able to receive that answer
+// instead of giving up first and reporting a network error that hides the real cause.
 const DefaultTimeout = 45 * time.Second
 
 // MaxResponseBytes bounds the response body the CLI will read.
 //
-// A CLI that read an unbounded body would be a CLI that can be made to exhaust its
-// own memory by a Server that is compromised or merely broken.
+// A CLI that read an unbounded body would be a CLI that can be made to exhaust its own
+// memory by a Server that is compromised or merely broken.
 const MaxResponseBytes = 8 << 20
 
 // ErrUsage reports a request the CLI refuses to build.
@@ -52,11 +51,14 @@ type Options struct {
 	// ServerURL is the base URL of the Server, for example
 	// "https://connector.example.com:8443". A trailing slash is tolerated.
 	ServerURL string
-	// ClientToken is the Server-wide secret the CLI presents.
-	ClientToken security.Secret
-	// Pair is the whole `node-id.node-token` value the operator copied from
-	// `connector-node id`.
-	Pair string
+	// ClientCredential is the credential the Server verifies. Its key identifier is
+	// public and its secret never leaves this process.
+	ClientCredential security.Credential
+	// NodeCredential is the credential the Node verifies. Its key identifier is public
+	// and its secret never leaves this process.
+	NodeCredential security.Credential
+	// NodeID is the address of the Node the request is for.
+	NodeID string
 	// Operation is one of the three enabled operations.
 	Operation protocol.Operation
 	// Scope is the scope name the Node's policy defines.
@@ -67,17 +69,18 @@ type Options struct {
 	Offset int64
 	// Length is the byte count for file.read; zero means up to the cap.
 	Length int64
-	// RequestID is an optional correlation id. An empty value lets the Server
-	// generate one.
+	// RequestID is an optional correlation id. An empty value lets the CLI generate
+	// one, which is the ordinary case: the id is signed by both proofs, so it must be
+	// known before the proofs are built.
 	RequestID string
 }
 
 // Envelope is the response shape the Server returns.
 //
-// It is declared here rather than imported from the Server package so the CLI
-// depends on the wire contract and not on the Server's internals. A CLI that
-// imported the Server's own type would compile against a change that breaks the
-// contract, which is exactly the change a separate declaration catches.
+// It is declared here rather than imported from the Server package so the CLI depends
+// on the wire contract and not on the Server's internals. A CLI that imported the
+// Server's own type would compile against a change that breaks the contract, which is
+// exactly the change a separate declaration catches.
 type Envelope struct {
 	Code      protocol.Code   `json:"code"`
 	Message   string          `json:"message"`
@@ -93,9 +96,9 @@ func (e Envelope) Succeeded() bool {
 
 // requestBody is the body the CLI sends.
 //
-// It deliberately has no node id and no node token: the node id travels in the URL
-// and the node token in a header, so the Server never receives the pair as one
-// value. The Server refuses unknown fields, so a body carrying either would be
+// It deliberately has no node id and no proof: the node id travels in the URL and the
+// proofs travel in headers, so the Server never receives the node id as part of a
+// credential. The Server refuses unknown fields, so a body carrying either would be
 // refused rather than silently ignored.
 type requestBody struct {
 	Operation string `json:"operation"`
@@ -107,26 +110,38 @@ type requestBody struct {
 
 // Client sends one operation and returns the Server's envelope.
 type Client struct {
-	// HTTP is the transport. A nil value uses a client with DefaultTimeout, so a
-	// caller that has not configured a transport still gets a bounded request.
+	// HTTP is the transport. A nil value uses a client with DefaultTimeout, so a caller
+	// that has not configured a transport still gets a bounded request.
 	HTTP *http.Client
 	// MaxResponseBytes bounds the body. Zero uses MaxResponseBytes.
 	MaxResponseBytes int64
+	// Now returns the current time. A nil value uses time.Now, so a test can pin the
+	// clock the proofs are built from.
+	Now func() time.Time
 }
 
 // Send performs one operation.
 //
-// The pair is parsed before the request is built, so a malformed pair is reported
-// as a usage error and nothing is sent. The two halves then go to the two places
-// the Server expects them: the node id into the URL path, the node token into
-// X-Connector-Node-Token.
+// The credentials are validated before the request is built, so a malformed credential
+// is reported as a usage error and nothing is sent. Two proofs are then built over the
+// same request id: the client proof covers the HTTP request and the exact Node proof
+// header, and the Node proof covers the logical operation. The Server verifies the
+// first and forwards the second, so neither party can widen its own authority.
 func (c *Client) Send(options Options) (Envelope, error) {
-	identity, err := security.ParseNodeIdentity(options.Pair)
-	if err != nil {
-		return Envelope{}, fmt.Errorf("%w: --node %v", ErrUsage, err)
+	if err := security.ValidateKeyID(options.ClientCredential.KeyID); err != nil {
+		return Envelope{}, fmt.Errorf("%w: client credential: %v", ErrUsage, err)
 	}
-	if err := options.ClientToken.Validate("client token"); err != nil {
-		return Envelope{}, fmt.Errorf("%w: %v", ErrUsage, err)
+	if err := security.ValidateCredentialSecret(options.ClientCredential.Secret); err != nil {
+		return Envelope{}, fmt.Errorf("%w: client credential: %v", ErrUsage, err)
+	}
+	if err := security.ValidateKeyID(options.NodeCredential.KeyID); err != nil {
+		return Envelope{}, fmt.Errorf("%w: node credential: %v", ErrUsage, err)
+	}
+	if err := security.ValidateCredentialSecret(options.NodeCredential.Secret); err != nil {
+		return Envelope{}, fmt.Errorf("%w: node credential: %v", ErrUsage, err)
+	}
+	if err := security.ValidateNodeID(options.NodeID); err != nil {
+		return Envelope{}, fmt.Errorf("%w: --node-id %v", ErrUsage, err)
 	}
 	if err := options.Operation.Validate(); err != nil {
 		return Envelope{}, fmt.Errorf("%w: %v", ErrUsage, err)
@@ -138,7 +153,19 @@ func (c *Client) Send(options Options) (Envelope, error) {
 		return Envelope{}, fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 
-	url, err := operationURL(options.ServerURL, identity.ID)
+	requestID := options.RequestID
+	if requestID == "" {
+		generated, err := security.NewRequestID()
+		if err != nil {
+			return Envelope{}, err
+		}
+		requestID = generated
+	}
+	if err := security.ValidateRequestID(requestID); err != nil {
+		return Envelope{}, fmt.Errorf("%w: --request-id %v", ErrUsage, err)
+	}
+
+	url, err := operationURL(options.ServerURL, options.NodeID)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("%w: %v", ErrUsage, err)
 	}
@@ -154,16 +181,67 @@ func (c *Client) Send(options Options) (Envelope, error) {
 		return Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
 
+	nowMS := c.now().UnixMilli()
+
+	// The Node proof is built first, because the client proof binds its exact header
+	// bytes. Building the client proof first would mean signing a header that does not
+	// exist yet, and a placeholder would be a value the Server could not reproduce.
+	nodeNonce, err := security.NewNonce()
+	if err != nil {
+		return Envelope{}, err
+	}
+	nodeProof := security.Proof{
+		Scheme:      security.SchemeNode,
+		Version:     security.ProofVersion,
+		KeyID:       options.NodeCredential.KeyID,
+		TimestampMS: nowMS,
+		Nonce:       nodeNonce,
+	}
+	nodeCanonical := security.CanonicalNodeOperation(
+		options.NodeID,
+		nodeProof.KeyID,
+		string(options.Operation),
+		string(options.Scope),
+		options.Path,
+		options.Offset,
+		options.Length,
+		requestID,
+		nodeProof.TimestampMS,
+		nodeProof.Nonce,
+	)
+	nodeProof.Signature = security.Sign(options.NodeCredential.Secret, nodeCanonical)
+	nodeAuthHeader := security.FormatProof(nodeProof)
+
+	clientNonce, err := security.NewNonce()
+	if err != nil {
+		return Envelope{}, err
+	}
+	clientProof := security.Proof{
+		Scheme:      security.SchemeClient,
+		Version:     security.ProofVersion,
+		KeyID:       options.ClientCredential.KeyID,
+		TimestampMS: nowMS,
+		Nonce:       clientNonce,
+	}
+	clientCanonical := security.CanonicalClientRequest(
+		http.MethodPost,
+		requestTarget(url),
+		security.BodyDigest(body, true),
+		security.BytesDigest([]byte(nodeAuthHeader)),
+		requestID,
+		clientProof.TimestampMS,
+		clientProof.Nonce,
+	)
+	clientProof.Signature = security.Sign(options.ClientCredential.Secret, clientCanonical)
+
 	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return Envelope{}, fmt.Errorf("build request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+string(options.ClientToken))
-	request.Header.Set("X-Connector-Node-Token", string(identity.Token))
-	if options.RequestID != "" {
-		request.Header.Set("X-Request-Id", options.RequestID)
-	}
+	request.Header.Set(security.ClientAuthHeader, security.FormatProof(clientProof))
+	request.Header.Set(security.NodeAuthHeader, nodeAuthHeader)
+	request.Header.Set(security.RequestIDHeader, requestID)
 
 	response, err := c.transport().Do(request)
 	if err != nil {
@@ -172,6 +250,14 @@ func (c *Client) Send(options Options) (Envelope, error) {
 	defer response.Body.Close()
 
 	return decodeEnvelope(response.Body, c.limit())
+}
+
+// now returns the clock the proofs are built from.
+func (c *Client) now() time.Time {
+	if c != nil && c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
 }
 
 // transport returns the HTTP client to use.
@@ -190,12 +276,31 @@ func (c *Client) limit() int64 {
 	return MaxResponseBytes
 }
 
+// requestTarget returns the path and query the client proof signs.
+//
+// It is derived from the URL the request is actually sent to, so the signed value and
+// the transmitted value cannot disagree. A caller that signed one path and sent
+// another would produce a proof the Server refuses, and the failure would look like a
+// credential problem rather than a URL problem.
+func requestTarget(url string) string {
+	index := strings.Index(url, "://")
+	if index < 0 {
+		return url
+	}
+	remainder := url[index+3:]
+	slash := strings.IndexByte(remainder, '/')
+	if slash < 0 {
+		return "/"
+	}
+	return remainder[slash:]
+}
+
 // operationURL builds the operation URL for one node id.
 //
-// The node id is validated before it is placed in the path, so a value containing
-// a slash or a dot segment cannot address a different endpoint. The Server
-// validates it again; this check exists so a malformed value is reported locally
-// rather than as a routing failure.
+// The node id is validated before it is placed in the path, so a value containing a
+// slash or a dot segment cannot address a different endpoint. The Server validates it
+// again; this check exists so a malformed value is reported locally rather than as a
+// routing failure.
 func operationURL(serverURL, nodeID string) (string, error) {
 	if serverURL == "" {
 		return "", errors.New("server URL is empty")
@@ -213,8 +318,8 @@ func operationURL(serverURL, nodeID string) (string, error) {
 // decodeEnvelope reads and decodes one envelope.
 //
 // The body is bounded before it is decoded, and a body that is not an envelope is
-// reported as a protocol error rather than as an empty success: a caller that
-// treated an unreadable answer as success would act on a result nobody produced.
+// reported as a protocol error rather than as an empty success: a caller that treated
+// an unreadable answer as success would act on a result nobody produced.
 func decodeEnvelope(body io.Reader, limit int64) (Envelope, error) {
 	payload, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
@@ -227,11 +332,10 @@ func decodeEnvelope(body io.Reader, limit int64) (Envelope, error) {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 
-	// The envelope is decoded into a pointer so a JSON `null` body is refused.
-	// Decoding `null` into a struct value succeeds and leaves every field zero,
-	// and a zero code is CodeSuccess: a body that is not an envelope would become
-	// a successful empty result, which is the one answer a caller must never
-	// receive by accident.
+	// The envelope is decoded into a pointer so a JSON `null` body is refused. Decoding
+	// `null` into a struct value succeeds and leaves every field zero, and a zero code
+	// is CodeSuccess: a body that is not an envelope would become a successful empty
+	// result, which is the one answer a caller must never receive by accident.
 	var envelope *Envelope
 	if err := decoder.Decode(&envelope); err != nil {
 		return Envelope{}, fmt.Errorf("decode response: %w", err)

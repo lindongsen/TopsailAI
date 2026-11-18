@@ -92,7 +92,11 @@ func NewListener(config Config, registry *Registry, logger *slog.Logger) (*Liste
 	// be wired to different registries. A caller that supplied its own handler
 	// could route the CLI API to a registry the channel never registers into, and
 	// the symptom would be a Node that looks connected and answers node_offline.
-	listener.handler = NewHandler(config, registry, listener, logger)
+	handler, err := NewHandler(config, registry, listener, logger)
+	if err != nil {
+		return nil, err
+	}
+	listener.handler = handler
 
 	return listener, nil
 }

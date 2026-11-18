@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"topsailai_connector/internal/node"
+	"topsailai_connector/internal/security"
 )
 
 // runOnceTimeout bounds a child process that is expected to exit on its own. It
@@ -208,33 +211,74 @@ func TestNodeStartsAndReportsReadiness(t *testing.T) {
 	}
 }
 
-// TestNodePrintsTheGeneratedPairOnce proves a first start prints the pair, and
-// that the printed value is the pair the identity file now holds.
-func TestNodePrintsTheGeneratedPairOnce(t *testing.T) {
+// TestNodePrintsTheGeneratedIdentityOnce proves a first start prints the node id,
+// and that the printed value is the value the identity file now holds.
+//
+// The identifier is an address, not a secret, so printing it once is a convenience
+// for the operator rather than a leak. It is still printed only when it is created,
+// because printing it on every start would fill a log with a value that never
+// changes.
+func TestNodePrintsTheGeneratedIdentityOnce(t *testing.T) {
 	env := newEnvironment(t)
 	command, output := start(t, env.vars(), "run")
 	defer stop(t, command)
 
-	text := waitForOutput(t, output, "node identity generated", 20*time.Second)
-	if strings.Count(text, "node identity generated") != 1 {
-		t.Fatalf("pair printed %d times, want once; got:\n%s",
-			strings.Count(text, "node identity generated"), text)
+	text := waitForOutput(t, output, "node id generated: ", 20*time.Second)
+	if strings.Count(text, "node id generated: ") != 1 {
+		t.Fatalf("node id printed %d times, want once; got:\n%s",
+			strings.Count(text, "node id generated: "), text)
 	}
 
 	identity, err := os.ReadFile(filepath.Join(env.configDir, "identity"))
 	if err != nil {
 		t.Fatalf("read identity file: %v", err)
 	}
-	printed := strings.SplitN(text, "node identity generated: ", 2)[1]
+	printed := strings.SplitN(text, "node id generated: ", 2)[1]
 	printed = strings.SplitN(printed, "\n", 2)[0]
 	if printed != strings.TrimSpace(string(identity)) {
-		t.Fatalf("printed pair %q differs from the stored pair %q", printed, strings.TrimSpace(string(identity)))
+		t.Fatalf("printed node id %q differs from the stored value %q", printed, strings.TrimSpace(string(identity)))
 	}
 }
 
-// TestNodeDoesNotPrintThePairOnASecondStart proves the credential is printed only
-// when it is created. Printing it on every start would put it into every log.
-func TestNodeDoesNotPrintThePairOnASecondStart(t *testing.T) {
+// TestNodePrintsTheGeneratedCredentialOnce proves a first start prints the
+// credential, and that the printed value is the credential the file now holds.
+//
+// The credential is a secret that never expires, so it is printed exactly once, at
+// the moment it is created. A second print would put it into a log.
+func TestNodePrintsTheGeneratedCredentialOnce(t *testing.T) {
+	env := newEnvironment(t)
+	command, output := start(t, env.vars(), "run")
+	defer stop(t, command)
+
+	text := waitForOutput(t, output, "node credential generated: ", 20*time.Second)
+	if strings.Count(text, "node credential generated: ") != 1 {
+		t.Fatalf("credential printed %d times, want once; got:\n%s",
+			strings.Count(text, "node credential generated: "), text)
+	}
+
+	printed := strings.SplitN(text, "node credential generated: ", 2)[1]
+	printed = strings.SplitN(printed, "\n", 2)[0]
+
+	// The printed value must be a credential the Node actually accepts, which is
+	// proved by parsing it and by finding its key identifier in the file. Comparing
+	// the whole value against the file would require reading a secret back, which the
+	// credential set deliberately does not allow.
+	credential, err := security.ParseCredential(strings.TrimSpace(printed))
+	if err != nil {
+		t.Fatalf("the printed credential %q does not parse: %v", printed, err)
+	}
+	stored, err := node.LoadCredentials(node.CredentialsPath(env.configDir))
+	if err != nil {
+		t.Fatalf("load the credential file: %v", err)
+	}
+	if _, present := stored.Lookup(credential.KeyID); !present {
+		t.Fatalf("the printed credential names key id %q, which the file does not hold", credential.KeyID)
+	}
+}
+
+// TestNodeDoesNotPrintTheCredentialOnASecondStart proves the credential is printed
+// only when it is created. Printing it on every start would put it into every log.
+func TestNodeDoesNotPrintTheCredentialOnASecondStart(t *testing.T) {
 	env := newEnvironment(t)
 	first, firstOutput := start(t, env.vars(), "run")
 	defer stop(t, first)
@@ -243,8 +287,11 @@ func TestNodeDoesNotPrintThePairOnASecondStart(t *testing.T) {
 	second, secondOutput := start(t, env.vars(), "run")
 	defer stop(t, second)
 	text := waitForOutput(t, secondOutput, "connector-node ready", 20*time.Second)
-	if strings.Contains(text, "node identity generated") {
-		t.Fatalf("second start printed the pair again; got:\n%s", text)
+	if strings.Contains(text, "node credential generated: ") {
+		t.Fatalf("second start printed the credential again; got:\n%s", text)
+	}
+	if strings.Contains(text, "node id generated: ") {
+		t.Fatalf("second start printed the node id again; got:\n%s", text)
 	}
 }
 
@@ -281,9 +328,13 @@ func TestNodeRefusesToStartWithoutATunnelToken(t *testing.T) {
 	}
 }
 
-// TestNodeIDPrintsOnlyThePair proves the `id` subcommand is scriptable: its
-// stdout is the pair and nothing else.
-func TestNodeIDPrintsOnlyThePair(t *testing.T) {
+// TestNodeIDPrintsOnlyTheIdentifier proves the `id` subcommand is scriptable: its
+// stdout is the node id and nothing else.
+//
+// The identifier is an address, so it is safe to print and safe to paste into a
+// script. The credential is not printed here, because a command that printed a
+// secret would be a command whose output is a credential.
+func TestNodeIDPrintsOnlyTheIdentifier(t *testing.T) {
 	env := newEnvironment(t)
 	text, err := runOnce(t, env.vars(), "id")
 	if err != nil {
@@ -294,13 +345,16 @@ func TestNodeIDPrintsOnlyThePair(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("id printed %d lines, want 1; got:\n%s", len(lines), text)
 	}
-	if !strings.Contains(lines[0], ".") {
-		t.Fatalf("id printed %q, which is not a pair", lines[0])
+	if err := security.ValidateNodeID(lines[0]); err != nil {
+		t.Fatalf("id printed %q, which is not a node id: %v", lines[0], err)
+	}
+	if strings.Contains(lines[0], ".") {
+		t.Fatalf("id printed %q, which looks like a credential pair rather than an address", lines[0])
 	}
 }
 
-// TestNodeRegenerateReplacesThePair proves regeneration changes the pair.
-func TestNodeRegenerateReplacesThePair(t *testing.T) {
+// TestNodeRegenerateReplacesTheIdentifier proves regeneration changes the address.
+func TestNodeRegenerateReplacesTheIdentifier(t *testing.T) {
 	env := newEnvironment(t)
 	before, err := runOnce(t, env.vars(), "id")
 	if err != nil {
@@ -313,31 +367,61 @@ func TestNodeRegenerateReplacesThePair(t *testing.T) {
 	}
 
 	if strings.TrimSpace(before) == strings.TrimSpace(after) {
-		t.Fatalf("regenerate returned the same pair %q", strings.TrimSpace(after))
+		t.Fatalf("regenerate returned the same node id %q", strings.TrimSpace(after))
+	}
+	if err := security.ValidateNodeID(strings.TrimSpace(after)); err != nil {
+		t.Fatalf("regenerate printed %q, which is not a node id: %v", strings.TrimSpace(after), err)
 	}
 }
 
-// TestNodeRegenerateKeepIDKeepsTheIdentifier proves --keep-id keeps the routing
-// target valid while replacing the secret.
-func TestNodeRegenerateKeepIDKeepsTheIdentifier(t *testing.T) {
+// TestNodeRegenerateKeepsTheCredential proves regeneration does not touch the
+// credential file.
+//
+// The two values answer different questions, so a routine address change must not
+// revoke a caller. This is the property that makes regeneration safe to run without
+// coordinating with every CLI.
+func TestNodeRegenerateKeepsTheCredential(t *testing.T) {
 	env := newEnvironment(t)
-	before, err := runOnce(t, env.vars(), "id")
+	command, output := start(t, env.vars(), "run")
+	defer stop(t, command)
+	waitForOutput(t, output, "connector-node ready", 20*time.Second)
+
+	before, err := node.LoadCredentials(node.CredentialsPath(env.configDir))
 	if err != nil {
-		t.Fatalf("run connector-node id: %v", err)
+		t.Fatalf("load the credential file before regeneration: %v", err)
 	}
 
-	after, err := runOnce(t, env.vars(), "regenerate", "--keep-id")
-	if err != nil {
-		t.Fatalf("run connector-node regenerate --keep-id: %v", err)
+	if _, err := runOnce(t, env.vars(), "regenerate"); err != nil {
+		t.Fatalf("run connector-node regenerate: %v", err)
 	}
 
-	beforeID := strings.SplitN(strings.TrimSpace(before), ".", 2)[0]
-	afterID := strings.SplitN(strings.TrimSpace(after), ".", 2)[0]
-	if beforeID != afterID {
-		t.Fatalf("--keep-id changed the identifier from %q to %q", beforeID, afterID)
+	after, err := node.LoadCredentials(node.CredentialsPath(env.configDir))
+	if err != nil {
+		t.Fatalf("load the credential file after regeneration: %v", err)
 	}
-	if strings.TrimSpace(before) == strings.TrimSpace(after) {
-		t.Fatal("--keep-id did not replace the token")
+
+	beforeIDs := strings.Join(before.KeyIDs(), ",")
+	afterIDs := strings.Join(after.KeyIDs(), ",")
+	if beforeIDs != afterIDs {
+		t.Fatalf("regenerate changed the credential key ids from %q to %q", beforeIDs, afterIDs)
+	}
+}
+
+// TestNodeRegenerateRejectsKeepID proves the retired flag is refused rather than
+// silently ignored.
+//
+// `--keep-id` existed when the identity and the credential were one value. Now that
+// they are separate, keeping the identifier is what regeneration already does, so
+// the flag has no meaning. A flag that was silently accepted would let an operator
+// believe it still selected a behaviour.
+func TestNodeRegenerateRejectsKeepID(t *testing.T) {
+	env := newEnvironment(t)
+	text, err := runOnce(t, env.vars(), "regenerate", "--keep-id")
+	if err == nil {
+		t.Fatalf("process exited 0 for the retired --keep-id flag; output:\n%s", text)
+	}
+	if !strings.Contains(text, "keep-id") {
+		t.Fatalf("failure does not name the flag; got:\n%s", text)
 	}
 }
 

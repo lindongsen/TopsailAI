@@ -45,6 +45,24 @@ type longRunFixture struct {
 	registry    *server.Registry
 }
 
+// longRunClientCredentials builds the credential set the listener needs.
+//
+// The long-run test never sends a CLI request, so the value is never presented. It
+// still has to exist: a listener built without a credential set has no way to verify
+// a proof, and the handler refuses construction rather than accepting every caller.
+func longRunClientCredentials(t *testing.T) *security.CredentialSet {
+	t.Helper()
+	credential, err := security.NewCredentialWithKeyID("long-run-client")
+	if err != nil {
+		t.Fatalf("generate the long-run client credential: %v", err)
+	}
+	set, err := security.NewCredentialSet([]security.Credential{credential})
+	if err != nil {
+		t.Fatalf("build the long-run credential set: %v", err)
+	}
+	return set
+}
+
 // newLongRunFixture starts a listener on a real port and waits until it binds.
 func newLongRunFixture(t *testing.T) *longRunFixture {
 	t.Helper()
@@ -54,10 +72,10 @@ func newLongRunFixture(t *testing.T) *longRunFixture {
 	registry := server.NewRegistry()
 
 	listener, err := server.NewListener(server.Config{
-		Listen:         "127.0.0.1:0",
-		TunnelToken:    tunnelToken,
-		ClientToken:    security.Secret("client-token-for-the-long-run-test"),
-		RequestTimeout: 10 * time.Second,
+		Listen:            "127.0.0.1:0",
+		TunnelToken:       tunnelToken,
+		ClientCredentials: longRunClientCredentials(t),
+		RequestTimeout:    10 * time.Second,
 	}, registry, logger)
 	if err != nil {
 		t.Fatalf("build the listener: %v", err)

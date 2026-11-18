@@ -16,13 +16,13 @@ import (
 // because a Node that believed it had saved an identity would start with none.
 func TestSaveIdentityFailsWhenTheDirectoryIsMissing(t *testing.T) {
 	base := t.TempDir()
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
 
 	missing := filepath.Join(base, "absent", IdentityFileName)
-	if err := SaveIdentity(missing, identity); err == nil {
+	if err := SaveIdentity(missing, nodeID); err == nil {
 		t.Fatal("SaveIdentity() = nil error, want a failure for a missing directory")
 	}
 	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
@@ -38,9 +38,9 @@ func TestSaveIdentityFailsWhenTheDirectoryIsMissing(t *testing.T) {
 // exercised without depending on a permission trick that root ignores.
 func TestSaveIdentityLeavesNoTemporaryFileOnFailure(t *testing.T) {
 	base := t.TempDir()
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
 
 	target := filepath.Join(base, "identity")
@@ -48,7 +48,7 @@ func TestSaveIdentityLeavesNoTemporaryFileOnFailure(t *testing.T) {
 		t.Fatalf("mkdir target: %v", err)
 	}
 
-	if err := SaveIdentity(target, identity); err == nil {
+	if err := SaveIdentity(target, nodeID); err == nil {
 		t.Fatal("SaveIdentity() = nil error, want a failure when the target is a directory")
 	}
 
@@ -69,17 +69,17 @@ func TestSaveIdentityLeavesNoTemporaryFileOnFailure(t *testing.T) {
 func TestSaveIdentityReplacesAnExistingFile(t *testing.T) {
 	_, identityPath := newIdentityFixture(t)
 
-	first, err := security.NewNodeIdentity()
+	first, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
 	if err := SaveIdentity(identityPath, first); err != nil {
 		t.Fatalf("first SaveIdentity() = %v, want nil", err)
 	}
 
-	second, err := security.NewNodeIdentity()
+	second, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
 	if err := SaveIdentity(identityPath, second); err != nil {
 		t.Fatalf("second SaveIdentity() = %v, want nil", err)
@@ -89,8 +89,8 @@ func TestSaveIdentityReplacesAnExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadIdentity() = %v, want nil", err)
 	}
-	if loaded.ID != second.ID {
-		t.Fatalf("stored id = %q, want the replacement %q", loaded.ID, second.ID)
+	if loaded != second {
+		t.Fatalf("stored id = %q, want the replacement %q", loaded, second)
 	}
 }
 

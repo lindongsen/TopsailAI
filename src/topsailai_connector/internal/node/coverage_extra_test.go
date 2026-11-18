@@ -42,13 +42,18 @@ func TestAdvertisedScopesListsThePolicyNames(t *testing.T) {
 // a crash during the handshake would turn a wiring mistake into a Node that
 // cannot connect at all.
 func TestAdvertisedScopesIsEmptyWithoutAnAuthority(t *testing.T) {
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
+	}
+	holder := NewIdentityHolder(nodeID, nodeTestCredentialSet(t))
+	dispatcher, err := NewDispatcher(nil, holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("NewDispatcher() = %v, want nil", err)
 	}
 
 	dialer := &Dialer{
-		dispatcher: NewDispatcher(nil, identity, slog.New(slog.DiscardHandler)),
+		dispatcher: dispatcher,
 		logger:     slog.New(slog.DiscardHandler),
 	}
 	if scopes := dialer.advertisedScopes(); scopes != nil {
@@ -142,16 +147,21 @@ func TestHandshakeRefusesAnUndecodableFrame(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
+	}
+	holder := NewIdentityHolder(nodeID, nodeTestCredentialSet(t))
+	dispatcher, err := NewDispatcher(nil, holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("NewDispatcher() = %v, want nil", err)
 	}
 	config := Config{
 		ServerURL:   "ws" + strings.TrimPrefix(server.URL, "http"),
 		TunnelToken: security.Secret("tunnel-token-value-1234"),
 		ConfigDir:   t.TempDir(),
 	}
-	dialer, err := NewDialer(config, identity, NewDispatcher(nil, identity, slog.New(slog.DiscardHandler)), slog.New(slog.DiscardHandler))
+	dialer, err := NewDialer(config, nodeID, holder.Credentials(), dispatcher, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("NewDialer() error = %v", err)
 	}
@@ -172,25 +182,24 @@ func TestSaveIdentityReportsAnUnwritableDirectory(t *testing.T) {
 	parent := t.TempDir()
 	missing := filepath.Join(parent, "absent")
 
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
 
-	if err := SaveIdentity(filepath.Join(missing, "identity"), identity); err == nil {
+	if err := SaveIdentity(filepath.Join(missing, "identity"), nodeID); err == nil {
 		t.Fatal("SaveIdentity() = nil error, want a failure for a missing directory")
 	}
 }
 
-// TestSaveIdentityRejectsAnInvalidToken checks that a token outside the generated
-// alphabet is refused before anything is written, because a file holding a token
-// the loader will reject is a Node that cannot start after a restart.
-func TestSaveIdentityRejectsAnInvalidToken(t *testing.T) {
+// TestSaveIdentityRejectsAnInvalidID checks that an id outside the generated alphabet
+// is refused before anything is written, because a file holding an id the loader will
+// reject is a Node that cannot start after a restart.
+func TestSaveIdentityRejectsAnInvalidID(t *testing.T) {
 	configDir, identityPath := newIdentityFixture(t)
 
-	identity := security.NodeIdentity{ID: "node_0123456789abcdefghijklmnop", Token: security.Secret("bad-token")}
-	if err := SaveIdentity(identityPath, identity); err == nil {
-		t.Fatal("SaveIdentity() = nil error, want a token refusal")
+	if err := SaveIdentity(identityPath, "node_0123456789ABCDEFGHIJKLMNOP"); err == nil {
+		t.Fatal("SaveIdentity() = nil error, want an id refusal")
 	}
 
 	entries, err := os.ReadDir(configDir)
@@ -461,7 +470,7 @@ func TestEnsureIdentityReportsAnUnwritableDirectory(t *testing.T) {
 func TestRegenerateIdentityReportsAnUnwritableDirectory(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent", "identity")
 
-	if _, err := RegenerateIdentity(missing, false); err == nil {
+	if _, err := RegenerateIdentity(missing); err == nil {
 		t.Fatal("RegenerateIdentity() = nil error, want a failure for a missing directory")
 	}
 }
@@ -615,12 +624,12 @@ func TestSaveIdentityReportsARenameFailure(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
 
-	if err := SaveIdentity(occupied, identity); err == nil {
+	if err := SaveIdentity(occupied, nodeID); err == nil {
 		t.Fatal("SaveIdentity() = nil error, want a rename failure")
 	}
 

@@ -73,27 +73,25 @@ func (o Operation) Validate() error {
 
 // Request is one operation invocation.
 //
-// NodeID is the address the request is for and NodeToken is the secret that
-// authorizes it. They are separate fields because they are different kinds of
-// value: the identifier may be logged, audited and routed on, and the token may
-// never be. The CLI receives them as one dot-separated pair and splits the pair
-// before sending, so the Server never holds a value that is half public and half
-// secret.
+// NodeID is the address the request is for. NodeAuth is the caller's proof of
+// possession of a Node credential: it is verified by the Node and only forwarded by
+// the Server, so the Server never receives a reusable Node secret.
 //
 // Scope names the area the Node resolves locally and Path is always relative to
 // it; the Node rejects anything that escapes the scope. The Node authorizes the
 // call itself instead of trusting the Server's claim, because the Server's
 // authentication proves only that the caller may use the Server.
 type Request struct {
-	NodeID    string          `json:"node_id"`
-	NodeToken security.Secret `json:"node_token"`
-	Operation Operation       `json:"operation"`
-	Scope     security.Scope  `json:"scope"`
-	Path      string          `json:"path,omitempty"`
-	Offset    int64           `json:"offset,omitempty"`
-	Length    int64           `json:"length,omitempty"`
-	Data      []byte          `json:"data,omitempty"`
-	Argv      []string        `json:"argv,omitempty"`
+	NodeID    string         `json:"node_id"`
+	NodeAuth  security.Proof `json:"node_auth"`
+	RequestID string         `json:"request_id"`
+	Operation Operation      `json:"operation"`
+	Scope     security.Scope `json:"scope"`
+	Path      string         `json:"path,omitempty"`
+	Offset    int64          `json:"offset,omitempty"`
+	Length    int64          `json:"length,omitempty"`
+	Data      []byte         `json:"data,omitempty"`
+	Argv      []string       `json:"argv,omitempty"`
 }
 
 // Response is the result of one Request. A non-success Code means the operation

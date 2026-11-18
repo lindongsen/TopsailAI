@@ -99,13 +99,15 @@ func TestOperationValidate(t *testing.T) {
 }
 
 // TestRequestCarriesNodeIdentitySeparately checks that the node id and the node
-// token are separate fields. They are different kinds of value: the id may be
-// logged and routed on, the token may never be. A single combined field would
-// force every log site to split a value that is half public and half secret.
+// proof are separate fields. They are different kinds of value: the id may be
+// logged and routed on, the proof is a signature the Server forwards without
+// learning anything it could reuse. A single combined field would force every log
+// site to split a value that is half public and half derived from a secret.
 func TestRequestCarriesNodeIdentitySeparately(t *testing.T) {
 	request := Request{
 		NodeID:    "node_abc",
-		NodeToken: security.Secret("token-value"),
+		NodeAuth:  security.Proof{Scheme: security.SchemeNode, Version: security.ProofVersion, KeyID: "operator"},
+		RequestID: "req_abc",
 		Operation: OperationFileRead,
 		Scope:     security.Scope("project"),
 		Path:      "a.txt",
@@ -114,18 +116,23 @@ func TestRequestCarriesNodeIdentitySeparately(t *testing.T) {
 	if request.NodeID != "node_abc" {
 		t.Fatalf("NodeID = %q, want %q", request.NodeID, "node_abc")
 	}
-	if string(request.NodeToken) != "token-value" {
-		t.Fatalf("NodeToken = %q, want %q", request.NodeToken, "token-value")
+	if request.NodeAuth.KeyID != "operator" {
+		t.Fatalf("NodeAuth.KeyID = %q, want %q", request.NodeAuth.KeyID, "operator")
+	}
+	if request.RequestID != "req_abc" {
+		t.Fatalf("RequestID = %q, want %q", request.RequestID, "req_abc")
 	}
 }
 
-// TestRequestJSONKeepsNodeToken checks that the node token survives a JSON round
-// trip, because the Server forwards the request body unchanged and a lost token
-// would surface as an authentication failure at the Node.
-func TestRequestJSONKeepsNodeToken(t *testing.T) {
+// TestRequestJSONKeepsNodeAuth checks that the node proof and the request id
+// survive a JSON round trip, because the Server forwards the request body
+// unchanged and a lost field would surface as an authentication failure at the
+// Node.
+func TestRequestJSONKeepsNodeAuth(t *testing.T) {
 	original := Request{
 		NodeID:    "node_abc",
-		NodeToken: security.Secret("token-value"),
+		NodeAuth:  security.Proof{Scheme: security.SchemeNode, Version: security.ProofVersion, KeyID: "operator"},
+		RequestID: "req_abc",
 		Operation: OperationFileList,
 		Scope:     security.Scope("project"),
 		Path:      "sub",
@@ -144,8 +151,11 @@ func TestRequestJSONKeepsNodeToken(t *testing.T) {
 	if decoded.NodeID != original.NodeID {
 		t.Fatalf("node id = %q, want %q", decoded.NodeID, original.NodeID)
 	}
-	if decoded.NodeToken != original.NodeToken {
-		t.Fatalf("node token = %q, want %q", decoded.NodeToken, original.NodeToken)
+	if decoded.NodeAuth != original.NodeAuth {
+		t.Fatalf("node auth = %+v, want %+v", decoded.NodeAuth, original.NodeAuth)
+	}
+	if decoded.RequestID != original.RequestID {
+		t.Fatalf("request id = %q, want %q", decoded.RequestID, original.RequestID)
 	}
 	if decoded.Operation != original.Operation {
 		t.Fatalf("operation = %q, want %q", decoded.Operation, original.Operation)

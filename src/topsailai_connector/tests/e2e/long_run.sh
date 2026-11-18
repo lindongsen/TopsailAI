@@ -127,7 +127,9 @@ record() {
 		echo "E2E_NODE_PID=${NODE_PID:-}"
 		echo "E2E_BASE_URL=${E2E_BASE_URL:-}"
 		echo "E2E_CHANNEL_URL=${E2E_CHANNEL_URL:-}"
-		echo "E2E_CLIENT_TOKEN=${E2E_CLIENT_TOKEN:-}"
+		echo "E2E_CLIENT_CREDENTIAL=${E2E_CLIENT_CREDENTIAL:-}"
+		echo "E2E_NODE_CREDENTIAL=${E2E_NODE_CREDENTIAL:-}"
+		echo "E2E_NODE_ID=${E2E_NODE_ID:-}"
 		echo "E2E_TUNNEL_TOKEN=${E2E_TUNNEL_TOKEN:-}"
 		echo "E2E_WORK=${E2E_WORK:-}"
 	} >"$ENV_FILE"
@@ -147,8 +149,9 @@ start_node() {
 cli() {
 	"$BIN/connector-server" cli \
 		--server "$E2E_BASE_URL" \
-		--client-token "$E2E_CLIENT_TOKEN" \
-		--node "$PAIR" \
+		--client-credential "$E2E_CLIENT_CREDENTIAL" \
+		--node-credential "$E2E_NODE_CREDENTIAL" \
+		--node-id "$E2E_NODE_ID" \
 		"$@"
 }
 
@@ -170,14 +173,10 @@ trap stop_all EXIT
 
 IDENTITY_FILE="$E2E_WORK/node-config/identity"
 [ -f "$IDENTITY_FILE" ] || fail "$IDENTITY_FILE is missing; the Node did not write an identity"
-PAIR=$(tr -d '\r\n' <"$IDENTITY_FILE")
-[ -n "$PAIR" ] || fail "$IDENTITY_FILE is empty"
-case "$PAIR" in
-*.*) ;;
-*) fail "identity $PAIR is not a node-id.node-token pair" ;;
-esac
+NODE_ID=$(tr -d '\r\n' <"$IDENTITY_FILE")
+[ -n "$NODE_ID" ] || fail "$IDENTITY_FILE is empty"
 
-echo "long-run: node identity is ${PAIR%%.*}" >&2
+echo "long-run: node id is $NODE_ID" >&2
 
 # The baseline is taken after the first connection is up, so the Server's own startup
 # allocations are already counted and cannot be mistaken for growth caused by the

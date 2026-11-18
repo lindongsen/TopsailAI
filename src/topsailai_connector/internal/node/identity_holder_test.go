@@ -7,131 +7,184 @@ import (
 	"topsailai_connector/internal/security"
 )
 
-// holderFixture is a pair of identities a test can swap between.
+// holderFixture is a pair of node ids and credential sets a test can swap between.
 type holderFixture struct {
-	first  security.NodeIdentity
-	second security.NodeIdentity
+	firstID    string
+	secondID   string
+	firstSet   *security.CredentialSet
+	secondSet  *security.CredentialSet
+	firstCred  security.Credential
+	secondCred security.Credential
 }
 
-// newHolderFixture builds two distinct identities, so a test can tell which one a
-// reader observed.
+// newHolderFixture builds two distinct node ids and two distinct credential sets, so
+// a test can tell which one a reader observed.
 func newHolderFixture(t *testing.T) holderFixture {
 	t.Helper()
 
-	first, err := security.NewNodeIdentity()
+	firstID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
-	second, err := security.NewNodeIdentity()
+	secondID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
-	if first.ID == second.ID {
-		t.Fatal("two generated identities share an identifier, so a test cannot tell them apart")
+	if firstID == secondID {
+		t.Fatal("two generated node ids share a value, so a test cannot tell them apart")
 	}
-	return holderFixture{first: first, second: second}
+
+	firstCred, err := security.NewCredentialWithKeyID("first-caller")
+	if err != nil {
+		t.Fatalf("NewCredentialWithKeyID() = %v, want nil", err)
+	}
+	secondCred, err := security.NewCredentialWithKeyID("second-caller")
+	if err != nil {
+		t.Fatalf("NewCredentialWithKeyID() = %v, want nil", err)
+	}
+
+	firstSet, err := security.NewCredentialSet([]security.Credential{firstCred})
+	if err != nil {
+		t.Fatalf("NewCredentialSet() = %v, want nil", err)
+	}
+	secondSet, err := security.NewCredentialSet([]security.Credential{secondCred})
+	if err != nil {
+		t.Fatalf("NewCredentialSet() = %v, want nil", err)
+	}
+
+	return holderFixture{
+		firstID:    firstID,
+		secondID:   secondID,
+		firstSet:   firstSet,
+		secondSet:  secondSet,
+		firstCred:  firstCred,
+		secondCred: secondCred,
+	}
 }
 
-// TestIdentityHolderReturnsTheInitialValue checks that a holder reports the pair
-// it was built with, because a Node that started with one identity must serve
-// that identity until something replaces it.
+// TestIdentityHolderReturnsTheInitialValue checks that a holder reports the node id
+// and credential set it was built with, because a Node that started with one identity
+// must serve that identity until something replaces it.
 func TestIdentityHolderReturnsTheInitialValue(t *testing.T) {
 	fixture := newHolderFixture(t)
 
-	holder := NewIdentityHolder(fixture.first)
-	current := holder.Current()
+	holder := NewIdentityHolder(fixture.firstID, fixture.firstSet)
 
-	if current.ID != fixture.first.ID {
-		t.Fatalf("Current().ID = %q, want %q", current.ID, fixture.first.ID)
+	if got := holder.NodeID(); got != fixture.firstID {
+		t.Fatalf("NodeID() = %q, want %q", got, fixture.firstID)
 	}
-	if !current.Token.Equal(fixture.first.Token) {
-		t.Fatal("Current().Token does not match the identity the holder was built with")
+	if _, present := holder.Credentials().Lookup(fixture.firstCred.KeyID); !present {
+		t.Fatal("Credentials() does not hold the credential the holder was built with")
 	}
 }
 
-// TestIdentityHolderReplaceReportsAChange checks that replacing the pair is
-// visible to a reader and reported as a change, because the report is what drops
-// the live channel.
-func TestIdentityHolderReplaceReportsAChange(t *testing.T) {
+// TestIdentityHolderReplaceNodeIDReportsAChange checks that replacing the node id is
+// visible to a reader and reported as a change, because the report is what drops the
+// live channel.
+func TestIdentityHolderReplaceNodeIDReportsAChange(t *testing.T) {
 	fixture := newHolderFixture(t)
-	holder := NewIdentityHolder(fixture.first)
+	holder := NewIdentityHolder(fixture.firstID, fixture.firstSet)
 
-	if !holder.Replace(fixture.second) {
-		t.Fatal("Replace() = false, want true for a different pair")
+	if !holder.ReplaceNodeID(fixture.secondID) {
+		t.Fatal("ReplaceNodeID() = false, want true for a different id")
 	}
-	if current := holder.Current(); current.ID != fixture.second.ID {
-		t.Fatalf("Current().ID = %q, want %q after Replace", current.ID, fixture.second.ID)
+	if got := holder.NodeID(); got != fixture.secondID {
+		t.Fatalf("NodeID() = %q, want %q after ReplaceNodeID", got, fixture.secondID)
 	}
 }
 
-// TestIdentityHolderReplaceReportsNoChangeForTheSamePair checks that installing
-// an identical pair is not reported as a change.
+// TestIdentityHolderReplaceNodeIDReportsNoChangeForTheSameValue checks that installing
+// an identical node id is not reported as a change.
 //
-// The distinction matters: the watcher polls the file, and a rewrite that produced
-// the same pair must not drop a working channel. A holder that reported every
-// write as a change would turn an unrelated file touch into a reconnect.
-func TestIdentityHolderReplaceReportsNoChangeForTheSamePair(t *testing.T) {
+// The distinction matters: the watcher polls the file, and a rewrite that produced the
+// same value must not drop a working channel.
+func TestIdentityHolderReplaceNodeIDReportsNoChangeForTheSameValue(t *testing.T) {
 	fixture := newHolderFixture(t)
-	holder := NewIdentityHolder(fixture.first)
+	holder := NewIdentityHolder(fixture.firstID, fixture.firstSet)
 
-	if holder.Replace(fixture.first) {
-		t.Fatal("Replace() = true, want false for the pair already held")
+	if holder.ReplaceNodeID(fixture.firstID) {
+		t.Fatal("ReplaceNodeID() = true, want false for the id already held")
 	}
 }
 
-// TestIdentityHolderReplaceDetectsATokenOnlyChange checks that a regeneration
-// which keeps the identifier is still reported as a change.
+// TestIdentityHolderReplaceCredentialsReportsAChange checks that a credential set with
+// a different key identifier is adopted.
 //
-// `regenerate --keep-id` is the common case, and it changes only the token. A
-// holder that compared identifiers alone would report no change and the old token
-// would keep working, which is the defect this whole mechanism exists to fix.
-func TestIdentityHolderReplaceDetectsATokenOnlyChange(t *testing.T) {
+// Revoking a caller must take effect on a running Node, otherwise the operator would
+// have to restart the process to make a revocation real.
+func TestIdentityHolderReplaceCredentialsReportsAChange(t *testing.T) {
 	fixture := newHolderFixture(t)
+	holder := NewIdentityHolder(fixture.firstID, fixture.firstSet)
 
-	keptID, err := security.NewNodeToken(fixture.first.ID)
+	if !holder.ReplaceCredentials(fixture.secondSet) {
+		t.Fatal("ReplaceCredentials() = false, want true for a different key id set")
+	}
+	if _, present := holder.Credentials().Lookup(fixture.secondCred.KeyID); !present {
+		t.Fatal("Credentials() does not hold the replacement credential")
+	}
+	if _, present := holder.Credentials().Lookup(fixture.firstCred.KeyID); present {
+		t.Fatal("Credentials() still holds the revoked credential")
+	}
+}
+
+// TestIdentityHolderReplaceCredentialsReportsNoChangeForTheSameKeyIDs checks that a
+// set naming the same key identifiers is not reported as a change.
+//
+// A set deliberately exposes no way to read a secret back, so a secret rotation under
+// one identifier is invisible to this comparison. That is the correct answer for the
+// caller: the channel was authenticated with the identifier, and a secret rotation
+// under one identifier is a change the operator makes by restarting the Node.
+func TestIdentityHolderReplaceCredentialsReportsNoChangeForTheSameKeyIDs(t *testing.T) {
+	fixture := newHolderFixture(t)
+	holder := NewIdentityHolder(fixture.firstID, fixture.firstSet)
+
+	rotated, err := security.NewCredentialWithKeyID(fixture.firstCred.KeyID)
 	if err != nil {
-		t.Fatalf("NewNodeToken() = %v, want nil", err)
+		t.Fatalf("NewCredentialWithKeyID() = %v, want nil", err)
 	}
-	if keptID.ID != fixture.first.ID {
-		t.Fatal("NewNodeToken() changed the identifier, so the test is not exercising a token-only change")
+	rotatedSet, err := security.NewCredentialSet([]security.Credential{rotated})
+	if err != nil {
+		t.Fatalf("NewCredentialSet() = %v, want nil", err)
 	}
 
-	holder := NewIdentityHolder(fixture.first)
-	if !holder.Replace(keptID) {
-		t.Fatal("Replace() = false, want true when only the token changed")
-	}
-	if !holder.Current().Token.Equal(keptID.Token) {
-		t.Fatal("Current().Token is not the replacement token")
+	if holder.ReplaceCredentials(rotatedSet) {
+		t.Fatal("ReplaceCredentials() = true, want false when only the secret changed")
 	}
 }
 
-// TestIdentityHolderNilReturnsTheZeroIdentity checks that a nil holder answers
-// instead of panicking.
+// TestIdentityHolderNilReturnsTheZeroValue checks that a nil holder answers instead of
+// panicking.
 //
-// A dispatcher built without an identity must refuse every request rather than
-// crash on the request path, and the zero identity matches no request, so the
-// refusal is the default-deny answer the design requires.
-func TestIdentityHolderNilReturnsTheZeroIdentity(t *testing.T) {
+// A dispatcher built without an identity must refuse every request rather than crash
+// on the request path, and the empty identifier matches no request, so the refusal is
+// the default-deny answer the design requires.
+func TestIdentityHolderNilReturnsTheZeroValue(t *testing.T) {
 	var holder *IdentityHolder
 
-	if current := holder.Current(); current.ID != "" || current.Token != "" {
-		t.Fatalf("Current() = %q, want the zero identity for a nil holder", current.ID)
+	if got := holder.NodeID(); got != "" {
+		t.Fatalf("NodeID() = %q, want an empty id for a nil holder", got)
 	}
-	if holder.Replace(security.NodeIdentity{ID: "node_x", Token: security.Secret("y")}) {
-		t.Fatal("Replace() = true on a nil holder, want false")
+	if holder.Credentials() != nil {
+		t.Fatal("Credentials() = a set for a nil holder, want nil")
+	}
+	if holder.ReplaceNodeID("node_x") {
+		t.Fatal("ReplaceNodeID() = true on a nil holder, want false")
+	}
+	if holder.ReplaceCredentials(nil) {
+		t.Fatal("ReplaceCredentials() = true on a nil holder, want false")
 	}
 }
 
-// TestIdentityHolderIsSafeUnderConcurrentReadAndReplace checks that a reader and
-// a writer can use the holder at the same time.
+// TestIdentityHolderIsSafeUnderConcurrentReadAndReplace checks that a reader and a
+// writer can use the holder at the same time.
 //
-// The race detector is the assertion here: a plain field would be reported as a
-// data race, and the test fails on that report rather than on a wrong value. The
-// test also checks that every observed value is one of the two pairs, because a
-// torn read would produce a mixture.
+// The race detector is the assertion here: a plain field would be reported as a data
+// race, and the test fails on that report rather than on a wrong value. The test also
+// checks that every observed value is one of the two fixture values, because a torn
+// read would produce a mixture.
 func TestIdentityHolderIsSafeUnderConcurrentReadAndReplace(t *testing.T) {
 	fixture := newHolderFixture(t)
-	holder := NewIdentityHolder(fixture.first)
+	holder := NewIdentityHolder(fixture.firstID, fixture.firstSet)
 
 	const iterations = 200
 	var waitGroup sync.WaitGroup
@@ -141,10 +194,12 @@ func TestIdentityHolderIsSafeUnderConcurrentReadAndReplace(t *testing.T) {
 		defer waitGroup.Done()
 		for index := 0; index < iterations; index++ {
 			if index%2 == 0 {
-				holder.Replace(fixture.second)
+				holder.ReplaceNodeID(fixture.secondID)
+				holder.ReplaceCredentials(fixture.secondSet)
 				continue
 			}
-			holder.Replace(fixture.first)
+			holder.ReplaceNodeID(fixture.firstID)
+			holder.ReplaceCredentials(fixture.firstSet)
 		}
 	}()
 
@@ -152,9 +207,13 @@ func TestIdentityHolderIsSafeUnderConcurrentReadAndReplace(t *testing.T) {
 	go func() {
 		defer waitGroup.Done()
 		for index := 0; index < iterations; index++ {
-			current := holder.Current()
-			if current.ID != fixture.first.ID && current.ID != fixture.second.ID {
-				t.Errorf("Current().ID = %q, want one of the two fixture identifiers", current.ID)
+			current := holder.NodeID()
+			if current != fixture.firstID && current != fixture.secondID {
+				t.Errorf("NodeID() = %q, want one of the two fixture identifiers", current)
+				return
+			}
+			if holder.Credentials() == nil {
+				t.Errorf("Credentials() = nil, want a set")
 				return
 			}
 		}

@@ -43,24 +43,38 @@ const OperationPathSuffix = "/operations"
 // transport decides how a frame travels. Keeping them apart means the routing and
 // authentication rules can be tested without a socket.
 //
-// The node token is a parameter, not a field of any struct that outlives the
-// call. That is the shape the "never stores a Node token" rule requires: the value
-// exists only for the duration of the forward.
+// The Node proof is a field of the request being forwarded, not a field of any
+// struct that outlives the call. That is the shape the "never stores a Node
+// credential" rule requires: the value exists only for the duration of the forward.
 type Forwarder interface {
 	Forward(ctx context.Context, nodeID string, request protocol.Request) (protocol.Response, error)
 }
 
 // Handler serves the CLI API.
 //
-// It authenticates the caller with the Server's own client token, finds the live
-// connection for the requested node id and forwards the request unchanged. It
-// never decides whether an operation is allowed, because the policy that answers
-// that question lives on the Node and the Server never sees it.
+// It authenticates the caller with a client HMAC proof, finds the live connection
+// for the requested node id and forwards the request unchanged. It never decides
+// whether an operation is allowed, because the policy that answers that question
+// lives on the Node and the Server never sees it.
+//
+// It also never verifies the Node proof. It cannot: it does not hold the Node
+// credential. It checks the proof's shape and size so a malformed envelope is
+// refused before it reaches a Node, and it says so in its log rather than claiming a
+// check it did not perform.
 type Handler struct {
 	config    Config
 	registry  *Registry
 	forwarder Forwarder
 	logger    *slog.Logger
+	replay    *security.ReplayCache
+	// window is the resolved freshness window. It is stored rather than read from
+	// config on each request, because NewHandler substitutes a default when the
+	// configuration left it zero. A verification path that read config.ReplayWindow
+	// directly would compare against zero and refuse every proof, which is exactly
+	// the defect this field prevents: one value, resolved once, used by both the
+	// cache and the check.
+	window time.Duration
+	now    func() time.Time
 }
 
 // NewHandler builds the CLI API handler.
@@ -68,11 +82,37 @@ type Handler struct {
 // A nil logger falls back to the default logger. A nil registry or a nil
 // forwarder is not substituted, because a handler that cannot route has no answer
 // to give and inventing one would be inventing a routing decision.
-func NewHandler(config Config, registry *Registry, forwarder Forwarder, logger *slog.Logger) *Handler {
+//
+// The replay cache is built here from the validated configuration, so a handler
+// cannot be wired to a window the configuration never stated. A configuration whose
+// window or capacity is unusable refuses construction instead of falling back to a
+// default, because a verifier that silently substituted a default would be a
+// verifier whose operator cannot state what it enforces.
+func NewHandler(config Config, registry *Registry, forwarder Forwarder, logger *slog.Logger) (*Handler, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{config: config, registry: registry, forwarder: forwarder, logger: logger}
+	window := config.ReplayWindow
+	if window == 0 {
+		window = security.DefaultReplayWindow
+	}
+	capacity := config.ReplayCapacity
+	if capacity == 0 {
+		capacity = security.DefaultReplayCapacity
+	}
+	replay, err := security.NewReplayCache(window, capacity)
+	if err != nil {
+		return nil, fmt.Errorf("build the client replay cache: %w", err)
+	}
+	return &Handler{
+		config:    config,
+		registry:  registry,
+		forwarder: forwarder,
+		logger:    logger,
+		replay:    replay,
+		window:    window,
+		now:       time.Now,
+	}, nil
 }
 
 // envelope is the project-wide response format.
@@ -96,20 +136,22 @@ type envelope struct {
 //     forwarder refuses everything instead of panicking, because a crash on the
 //     request path is a denial of service caused by a wiring mistake.
 //  1. The method must be POST. A read is a POST because the request carries a
-//     secret in a header and a body, and a GET would put the operation in a URL
+//     proof in a header and a body, and a GET would put the operation in a URL
 //     that proxies and shell histories record.
 //  2. The path must name a node id, and the id must be well formed. A malformed
-//     id is refused before any secret is compared, so a typo does not become a
+//     id is refused before any proof is verified, so a typo does not become a
 //     credential test.
-//  3. The client token must match. This runs before the node token is read,
-//     because the Server's own gate answers first and a caller that fails it
-//     learns nothing about the Node.
-//  4. The body must be JSON within the size cap and must decode strictly.
-//  5. The node token must be present. It is not validated here: the Server does
-//     not know the value, and claiming to have checked it would be a lie about
-//     the one thing the caller relies on.
-//  6. A live connection must exist for the node id.
-//  7. The request is forwarded and the Node's answer is relayed unchanged.
+//  3. The body must be read within the size cap, because the client proof binds
+//     the exact body bytes and the digest must be computed before decoding.
+//  4. The client proof must verify. This runs before the Node proof is parsed, so
+//     an unauthenticated caller cannot use the Server as an oracle for Node proof
+//     validity.
+//  5. The body must be JSON and must decode strictly.
+//  6. The Node proof must be present and well formed. It is not verified here: the
+//     Server does not hold the Node credential, and claiming to have checked it
+//     would be a lie about the one thing the caller relies on.
+//  7. A live connection must exist for the node id.
+//  8. The request is forwarded and the Node's answer is relayed unchanged.
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	requestID := requestIDOf(request)
 
@@ -133,19 +175,25 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	if !h.clientTokenMatches(request) {
-		h.refuse(writer, requestID, protocol.CodeUnauthenticated, "client token is missing or does not match")
+	payload, err := readBody(request)
+	if err != nil {
+		h.refuse(writer, requestID, CodeOfForwardError(err), "request body was refused")
+		return
+	}
+
+	nodeAuthHeader := request.Header.Get(security.NodeAuthHeader)
+	if nodeAuthHeader == "" {
+		h.refuse(writer, requestID, protocol.CodeUnauthenticated, "node proof header is missing")
+		return
+	}
+
+	if err := h.verifyClientProof(request, payload, nodeAuthHeader, requestID); err != nil {
+		h.refuse(writer, requestID, protocol.CodeUnauthenticated, "client proof is missing or does not verify")
 		return
 	}
 
 	if !isJSONContentType(request.Header.Get("Content-Type")) {
 		h.refuse(writer, requestID, protocol.CodeInvalidArgument, "content type must be application/json")
-		return
-	}
-
-	payload, err := readBody(request)
-	if err != nil {
-		h.refuse(writer, requestID, CodeOfForwardError(err), "request body was refused")
 		return
 	}
 
@@ -155,9 +203,9 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	nodeToken := security.Secret(request.Header.Get("X-Connector-Node-Token"))
-	if nodeToken == "" {
-		h.refuse(writer, requestID, protocol.CodeUnauthenticated, "node token header is missing")
+	nodeAuth, err := security.ParseProof(nodeAuthHeader, security.SchemeNode)
+	if err != nil {
+		h.refuse(writer, requestID, protocol.CodeInvalidArgument, "node proof header is malformed")
 		return
 	}
 
@@ -167,7 +215,12 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	forwarded.NodeID = nodeID
-	forwarded.NodeToken = nodeToken
+	forwarded.NodeAuth = nodeAuth
+	// The caller's request id is forwarded because both proofs sign it: the Node
+	// rebuilds the canonical operation from this value, so a Server that substituted
+	// its own id would make every Node proof fail. The id is the caller's, not the
+	// Server's, and the Server does not use it for routing.
+	forwarded.RequestID = requestID
 
 	response, err := h.forward(request.Context(), nodeID, forwarded)
 	if err != nil {
@@ -176,6 +229,58 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	h.write(writer, requestID, response)
+}
+
+// verifyClientProof verifies the client HMAC proof and records its nonce.
+//
+// The order is fixed: parse, look up the key, check the timestamp, verify the
+// signature, then record the nonce. A nonce is recorded only after the signature
+// verifies, so a forged proof cannot reserve a nonce a legitimate request later
+// needs.
+//
+// The canonical input binds the method, the request target, the raw body digest, the
+// exact Node proof header digest, the caller request id, the timestamp and the nonce.
+// Binding the Node proof header is what stops an attacker from keeping a valid client
+// proof and replacing the Node proof it travels with.
+func (h *Handler) verifyClientProof(request *http.Request, payload []byte, nodeAuthHeader string, requestID string) error {
+	proof, err := security.ParseProof(request.Header.Get(security.ClientAuthHeader), security.SchemeClient)
+	if err != nil {
+		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "reason", "malformed proof")
+		return err
+	}
+
+	secret, present := h.config.ClientCredentials.Lookup(proof.KeyID)
+	if !present {
+		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "unknown key id")
+		return security.ErrProofMismatch
+	}
+
+	nowMS := h.now().UnixMilli()
+	if !security.TimestampWithinWindow(nowMS, proof.TimestampMS, h.window.Milliseconds()) {
+		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "timestamp outside the window")
+		return security.ErrProofMismatch
+	}
+
+	bodyPresent := request.Body != nil && request.ContentLength != 0
+	canonical := security.CanonicalClientRequest(
+		request.Method,
+		request.URL.RequestURI(),
+		security.BodyDigest(payload, bodyPresent),
+		security.BytesDigest([]byte(nodeAuthHeader)),
+		requestID,
+		proof.TimestampMS,
+		proof.Nonce,
+	)
+	if err := security.VerifySignature(secret, canonical, proof.Signature); err != nil {
+		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "signature does not verify")
+		return err
+	}
+
+	if err := h.replay.Admit(proof.KeyID, proof.Nonce); err != nil {
+		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", err.Error())
+		return err
+	}
+	return nil
 }
 
 // forward sends the request with the configured timeout.
@@ -198,23 +303,6 @@ func (h *Handler) forward(parent context.Context, nodeID string, request protoco
 		return protocol.Response{}, err
 	}
 	return response, nil
-}
-
-// clientTokenMatches reports whether the Authorization header carries the
-// configured client token.
-//
-// The comparison is the constant time one from the security package, and a
-// missing header is a mismatch rather than a skip. The header is parsed for the
-// Bearer scheme only: accepting a bare token would make the scheme optional and
-// two spellings of one credential is one spelling too many.
-func (h *Handler) clientTokenMatches(request *http.Request) bool {
-	header := request.Header.Get("Authorization")
-	const scheme = "Bearer "
-	if !strings.HasPrefix(header, scheme) {
-		return false
-	}
-	presented := security.Secret(strings.TrimPrefix(header, scheme))
-	return h.config.ClientToken.Equal(presented)
 }
 
 // nodeIDFromPath extracts the node id from the operation path.
@@ -271,10 +359,10 @@ func readBody(request *http.Request) ([]byte, error) {
 
 // requestBody is the body the CLI API accepts.
 //
-// It deliberately omits the node id and the node token. Those arrive in the path
+// It deliberately omits the node id and the Node proof. Those arrive in the path
 // and in a header, and a body that could also carry them would be a second place
 // an identity can be claimed. Because the decoder refuses unknown fields, a body
-// containing `node_id` or `node_token` is refused rather than silently ignored,
+// containing `node_id` or `node_auth` is refused rather than silently ignored,
 // so a caller cannot believe it set an identity the Server took from elsewhere.
 type requestBody struct {
 	Operation protocol.Operation `json:"operation"`
@@ -340,7 +428,7 @@ func (h *Handler) write(writer http.ResponseWriter, requestID string, response p
 //
 // The log line names the request id, the code and the reason, and never a secret.
 // The reason is written for an operator and may name a header or a path; it never
-// carries a value from either secret header.
+// carries a value from either proof header.
 func (h *Handler) refuse(writer http.ResponseWriter, requestID string, code protocol.Code, reason string) {
 	h.logger.Warn("connector-server refused a request",
 		"request_id", requestID,
@@ -427,18 +515,25 @@ func messageOf(code protocol.Code) string {
 // requestIDOf returns the caller's correlation id or a fresh one.
 //
 // A caller supplied id is echoed so a request can be followed across two systems.
-// It is not trusted for anything else, and it is bounded so a caller cannot use it
-// to fill a log line.
+// It is not trusted for anything else, and it is validated rather than merely
+// bounded: the id is signed by both proofs and occupies one line of the canonical
+// input, so a value containing a newline would let a caller shift the signed fields
+// and a value containing a control character would make a log line ambiguous. A
+// supplied id that fails validation is replaced by a fresh one rather than refused,
+// because the id is a convenience and refusing the request over it would turn a
+// logging mistake into an outage.
 func requestIDOf(request *http.Request) string {
-	if supplied := request.Header.Get("X-Request-Id"); supplied != "" && len(supplied) <= 128 {
-		return supplied
+	if supplied := request.Header.Get(security.RequestIDHeader); supplied != "" {
+		if err := security.ValidateRequestID(supplied); err == nil {
+			return supplied
+		}
 	}
 	return newRequestID()
 }
 
 // newRequestID returns a random correlation id.
 func newRequestID() string {
-	buffer := make([]byte, 8)
+	buffer := make([]byte, 16)
 	if _, err := rand.Read(buffer); err != nil {
 		return "req_unknown"
 	}

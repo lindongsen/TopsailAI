@@ -68,15 +68,15 @@ func assertNoTemporaryIdentityFile(t *testing.T, directory string) {
 	}
 }
 
-// newValidIdentity returns a pair that passes validation, so a test that wants to
+// newValidIdentity returns a node id that passes validation, so a test that wants to
 // reach a disk failure is not stopped by the validation guards first.
-func newValidIdentity(t *testing.T) security.NodeIdentity {
+func newValidIdentity(t *testing.T) string {
 	t.Helper()
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
-	return identity
+	return nodeID
 }
 
 // TestSaveIdentityReportsACreateTempFailure checks that a directory that cannot

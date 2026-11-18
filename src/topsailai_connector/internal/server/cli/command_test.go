@@ -69,8 +69,9 @@ func runCLI(t *testing.T, status int, response string, arguments []string, value
 func validArguments(t *testing.T) []string {
 	t.Helper()
 	return []string{
-		"--client-token", string(testClientToken()),
-		"--node", testIdentity(t).String(),
+		"--client-credential", testClientCredential().String(),
+		"--node-credential", testNodeCredential().String(),
+		"--node-id", testNodeID(t),
 		"--scope", "project",
 		"--path", "a.txt",
 		"file.read",
@@ -80,19 +81,24 @@ func validArguments(t *testing.T) []string {
 // TestRunRefusesMissingConfiguration proves every required value is reported as a
 // usage error with a non-zero status.
 func TestRunRefusesMissingConfiguration(t *testing.T) {
-	identity := testIdentity(t)
-	clientToken := string(testClientToken())
+	clientCredential := testClientCredential().String()
+	nodeCredential := testNodeCredential().String()
+	nodeID := testNodeID(t)
 
 	cases := map[string][]string{
-		"no operation":      {"--client-token", clientToken, "--node", identity.String(), "--scope", "project"},
-		"no client token":   {"--node", identity.String(), "--scope", "project", "file.read"},
-		"no node pair":      {"--client-token", clientToken, "--scope", "project", "file.read"},
-		"no scope":          {"--client-token", clientToken, "--node", identity.String(), "file.read"},
-		"two operations":    {"--client-token", clientToken, "--node", identity.String(), "--scope", "project", "file.read", "file.list"},
-		"unknown operation": {"--client-token", clientToken, "--node", identity.String(), "--scope", "project", "file.delete"},
-		"negative offset":   {"--client-token", clientToken, "--node", identity.String(), "--scope", "project", "--offset", "-1", "file.read"},
-		"negative length":   {"--client-token", clientToken, "--node", identity.String(), "--scope", "project", "--length", "-1", "file.read"},
-		"unknown flag":      {"--client-token", clientToken, "--node", identity.String(), "--scope", "project", "--nope", "file.read"},
+		"no operation":                {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project"},
+		"no client credential":        {"--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "file.read"},
+		"no node credential":          {"--client-credential", clientCredential, "--node-id", nodeID, "--scope", "project", "file.read"},
+		"no node id":                  {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--scope", "project", "file.read"},
+		"no scope":                    {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "file.read"},
+		"two operations":              {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "file.read", "file.list"},
+		"unknown operation":           {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "file.delete"},
+		"negative offset":             {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "--offset", "-1", "file.read"},
+		"negative length":             {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "--length", "-1", "file.read"},
+		"unknown flag":                {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "--nope", "file.read"},
+		"malformed client credential": {"--client-credential", "no-dot", "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "file.read"},
+		"malformed node credential":   {"--client-credential", clientCredential, "--node-credential", "no-dot", "--node-id", nodeID, "--scope", "project", "file.read"},
+		"malformed node id":           {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", "abc", "--scope", "project", "file.read"},
 	}
 
 	for name, arguments := range cases {
@@ -128,14 +134,13 @@ func TestRunRefusesAMissingServerURL(t *testing.T) {
 	}
 }
 
-// TestRunReadsTheEnvironment proves the documented variables are honoured, so a
-// script can export them instead of repeating flags.
+// TestRunReadsTheEnvironment proves the documented variables are honoured, so a script
+// can export them instead of repeating flags.
 func TestRunReadsTheEnvironment(t *testing.T) {
-	identity := testIdentity(t)
-
 	result := runCLI(t, http.StatusOK, readEnvelope, []string{"--scope", "project", "--path", "a.txt", "file.read"}, map[string]string{
-		EnvClientToken: string(testClientToken()),
-		EnvNode:        identity.String(),
+		EnvClientCredential: testClientCredential().String(),
+		EnvNodeCredential:   testNodeCredential().String(),
+		EnvNodeID:           testNodeID(t),
 	})
 
 	if result.status != 0 {
@@ -149,18 +154,17 @@ func TestRunReadsTheEnvironment(t *testing.T) {
 // TestRunFlagsOverrideTheEnvironment proves a flag is the more explicit statement of
 // intent.
 func TestRunFlagsOverrideTheEnvironment(t *testing.T) {
-	identity := testIdentity(t)
-
-	// The environment carries a malformed pair; the flag carries a valid one. If the
-	// environment won, the request would be refused locally.
+	// The environment carries a malformed node credential; the flag carries a valid
+	// one. If the environment won, the request would be refused locally.
 	result := runCLI(t, http.StatusOK, readEnvelope, []string{
-		"--node", identity.String(),
+		"--node-credential", testNodeCredential().String(),
+		"--node-id", testNodeID(t),
 		"--scope", "project",
 		"--path", "a.txt",
 		"file.read",
 	}, map[string]string{
-		EnvClientToken: string(testClientToken()),
-		EnvNode:        "malformed",
+		EnvClientCredential: testClientCredential().String(),
+		EnvNodeCredential:   "malformed",
 	})
 
 	if result.status != 0 {
@@ -168,8 +172,8 @@ func TestRunFlagsOverrideTheEnvironment(t *testing.T) {
 	}
 }
 
-// TestRunWritesRawBytesForRead proves a read payload is written as raw bytes so it
-// can be piped.
+// TestRunWritesRawBytesForRead proves a read payload is written as raw bytes so it can
+// be piped.
 func TestRunWritesRawBytesForRead(t *testing.T) {
 	result := runCLI(t, http.StatusOK, readEnvelope, validArguments(t), nil)
 
@@ -205,8 +209,9 @@ func TestRunReportsTruncationOnStderr(t *testing.T) {
 // TestRunWritesOneLinePerListEntry proves the list format is stable.
 func TestRunWritesOneLinePerListEntry(t *testing.T) {
 	arguments := []string{
-		"--client-token", string(testClientToken()),
-		"--node", testIdentity(t).String(),
+		"--client-credential", testClientCredential().String(),
+		"--node-credential", testNodeCredential().String(),
+		"--node-id", testNodeID(t),
 		"--scope", "project",
 		"--path", "",
 		"file.list",
@@ -227,8 +232,9 @@ func TestRunWritesOneLinePerListEntry(t *testing.T) {
 // including the timestamp under its documented name.
 func TestRunWritesStatFields(t *testing.T) {
 	arguments := []string{
-		"--client-token", string(testClientToken()),
-		"--node", testIdentity(t).String(),
+		"--client-credential", testClientCredential().String(),
+		"--node-credential", testNodeCredential().String(),
+		"--node-id", testNodeID(t),
 		"--scope", "project",
 		"--path", "a.txt",
 		"file.stat",
@@ -257,8 +263,9 @@ func TestRunWritesStatFields(t *testing.T) {
 // itself, which is the whole point of using Lstat.
 func TestRunReportsASymlinkWithoutFollowingIt(t *testing.T) {
 	arguments := []string{
-		"--client-token", string(testClientToken()),
-		"--node", testIdentity(t).String(),
+		"--client-credential", testClientCredential().String(),
+		"--node-credential", testNodeCredential().String(),
+		"--node-id", testNodeID(t),
 		"--scope", "project",
 		"--path", "link",
 		"file.stat",
@@ -298,11 +305,12 @@ func TestRunExitsNonZeroOnARefusal(t *testing.T) {
 // can read the code and the request id.
 func TestRunWrapsTheEnvelopeWithJSON(t *testing.T) {
 	// The flag must precede the positional operation: Go's flag parser stops at the
-	// first non-flag argument, so a flag after it would be read as a second
-	// positional argument and refused.
+	// first non-flag argument, so a flag after it would be read as a second positional
+	// argument and refused.
 	arguments := []string{
-		"--client-token", string(testClientToken()),
-		"--node", testIdentity(t).String(),
+		"--client-credential", testClientCredential().String(),
+		"--node-credential", testNodeCredential().String(),
+		"--node-id", testNodeID(t),
 		"--scope", "project",
 		"--path", "a.txt",
 		"--json",
@@ -370,10 +378,10 @@ func TestRunRefusesANilLookup(t *testing.T) {
 	}
 }
 
-// TestRedactNeverPrintsTheValue proves a redaction carries no prefix, no length and
-// no other derived value.
+// TestRedactNeverPrintsTheValue proves a redaction carries no prefix, no length and no
+// other derived value.
 func TestRedactNeverPrintsTheValue(t *testing.T) {
-	secret := security.Secret("client-token-0123456789")
+	secret := security.Secret("client-secret-0123456789abcdefghij")
 
 	got := Redact(secret)
 	if got == "" {
@@ -390,32 +398,39 @@ func TestRedactNeverPrintsTheValue(t *testing.T) {
 	}
 }
 
-// TestDescribeRedactsBothSecretsAndPrintsTheNodeID proves a verbose dump is safe to
-// paste into a bug report: the node id is visible because it is not a secret, and
-// neither secret is.
-func TestDescribeRedactsBothSecretsAndPrintsTheNodeID(t *testing.T) {
-	identity := testIdentity(t)
+// TestDescribeRedactsBothSecretsAndPrintsThePublicValues proves a verbose dump is safe
+// to paste into a bug report: the node id and both key identifiers are visible because
+// they are public, and neither secret is.
+func TestDescribeRedactsBothSecretsAndPrintsThePublicValues(t *testing.T) {
+	nodeID := testNodeID(t)
 	options := Options{
-		ServerURL:   "https://example.com",
-		ClientToken: testClientToken(),
-		Pair:        identity.String(),
-		Operation:   protocol.OperationFileRead,
-		Scope:       security.Scope("project"),
-		Path:        "a.txt",
-		Offset:      10,
-		Length:      20,
+		ServerURL:        "https://example.com",
+		ClientCredential: testClientCredential(),
+		NodeCredential:   testNodeCredential(),
+		NodeID:           nodeID,
+		Operation:        protocol.OperationFileRead,
+		Scope:            security.Scope("project"),
+		Path:             "a.txt",
+		Offset:           10,
+		Length:           20,
 	}
 
 	got := Describe(options)
 
-	if !strings.Contains(got, identity.ID) {
+	if !strings.Contains(got, nodeID) {
 		t.Errorf("Describe = %q, want the node id in full", got)
 	}
-	if strings.Contains(got, string(identity.Token)) {
-		t.Errorf("Describe = %q, want the node token redacted", got)
+	if !strings.Contains(got, options.ClientCredential.KeyID) {
+		t.Errorf("Describe = %q, want the client key id in full", got)
 	}
-	if strings.Contains(got, string(options.ClientToken)) {
-		t.Errorf("Describe = %q, want the client token redacted", got)
+	if !strings.Contains(got, options.NodeCredential.KeyID) {
+		t.Errorf("Describe = %q, want the node key id in full", got)
+	}
+	if strings.Contains(got, string(options.ClientCredential.Secret)) {
+		t.Errorf("Describe = %q, want the client secret redacted", got)
+	}
+	if strings.Contains(got, string(options.NodeCredential.Secret)) {
+		t.Errorf("Describe = %q, want the node secret redacted", got)
 	}
 	if !strings.Contains(got, "offset=10") {
 		t.Errorf("Describe = %q, want the offset", got)
@@ -425,28 +440,14 @@ func TestDescribeRedactsBothSecretsAndPrintsTheNodeID(t *testing.T) {
 	}
 }
 
-// TestDescribeReportsAMalformedPair proves a dump of a broken pair does not panic and
-// does not print the value.
-func TestDescribeReportsAMalformedPair(t *testing.T) {
-	got := Describe(Options{Pair: "not-a-pair"})
-
-	if !strings.Contains(got, "<malformed>") {
-		t.Errorf("Describe = %q, want a malformed marker", got)
-	}
-	if strings.Contains(got, "not-a-pair") {
-		t.Errorf("Describe = %q, want the value withheld", got)
-	}
-}
-
 // TestParseArgumentsDefaults proves the zero values are what an operator gets when a
 // flag is omitted.
 func TestParseArgumentsDefaults(t *testing.T) {
-	identity := testIdentity(t)
-
 	options, jsonOutput, err := parseArguments([]string{
 		"--server", "https://example.com",
-		"--client-token", string(testClientToken()),
-		"--node", identity.String(),
+		"--client-credential", testClientCredential().String(),
+		"--node-credential", testNodeCredential().String(),
+		"--node-id", testNodeID(t),
 		"--scope", "project",
 		"file.read",
 	}, environment(nil))

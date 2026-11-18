@@ -18,9 +18,9 @@ func newIdentityFixture(t *testing.T) (configDir string, identityPath string) {
 	return configDir, IdentityPath(configDir)
 }
 
-// TestEnsureIdentityGeneratesOnce checks that the first call generates a pair and
-// the second returns the same pair, because a Node that regenerated on every start
-// would invalidate the pair the operator already copied into a CLI.
+// TestEnsureIdentityGeneratesOnce checks that the first call generates an id and the
+// second returns the same id, because a Node that regenerated on every start would
+// invalidate the address the operator already copied into a CLI.
 func TestEnsureIdentityGeneratesOnce(t *testing.T) {
 	_, identityPath := newIdentityFixture(t)
 
@@ -31,11 +31,8 @@ func TestEnsureIdentityGeneratesOnce(t *testing.T) {
 	if !generated {
 		t.Fatal("EnsureIdentity() reported generated = false on the first call, want true")
 	}
-	if err := security.ValidateNodeID(first.ID); err != nil {
+	if err := security.ValidateNodeID(first); err != nil {
 		t.Fatalf("generated id is invalid: %v", err)
-	}
-	if err := security.ValidateNodeToken(first.Token); err != nil {
-		t.Fatalf("generated token is invalid: %v", err)
 	}
 
 	second, generated, err := EnsureIdentity(identityPath)
@@ -45,29 +42,25 @@ func TestEnsureIdentityGeneratesOnce(t *testing.T) {
 	if generated {
 		t.Fatal("second EnsureIdentity() reported generated = true, want false")
 	}
-	if second.ID != first.ID {
-		t.Fatalf("second id = %q, want %q", second.ID, first.ID)
-	}
-	if !second.Token.Equal(first.Token) {
-		t.Fatal("second token differs from the first, want the same pair")
+	if second != first {
+		t.Fatalf("second id = %q, want %q", second, first)
 	}
 }
 
-// TestEnsureIdentityRejectsMalformedFile checks that a malformed identity file is
-// a startup failure rather than a regeneration, because regenerating would
-// silently invalidate the pair the operator already distributed.
+// TestEnsureIdentityRejectsMalformedFile checks that a malformed identity file is a
+// startup failure rather than a regeneration, because regenerating would silently
+// invalidate the address the operator already distributed.
 func TestEnsureIdentityRejectsMalformedFile(t *testing.T) {
 	cases := []struct {
 		name    string
 		content string
 	}{
-		{"no dot", "node_abc\n"},
-		{"empty token", "node_abc.\n"},
-		{"empty id", ".token\n"},
-		{"second dot", "node_abc.tok.en\n"},
-		{"bad prefix", "abc.token\n"},
+		{"no prefix", "abc\n"},
 		{"empty file", ""},
-		{"whitespace", " node_abc.token\n"},
+		{"whitespace", " node_abc\n"},
+		{"truncated body", "node_abc\n"},
+		{"uppercase body", "node_ABCDEFGHIJKLMNOPQRSTUVWXY\n"},
+		{"dot pair", "node_abcdefghijklmnopqrstuvwxy.abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz\n"},
 	}
 
 	for _, testCase := range cases {
@@ -89,15 +82,19 @@ func TestEnsureIdentityRejectsMalformedFile(t *testing.T) {
 	}
 }
 
-// TestLoadIdentityRejectsLoosePermissions checks that an identity file another
-// user can read is refused, because it holds a credential that never expires.
+// TestLoadIdentityRejectsLoosePermissions checks that an identity file another user
+// can read is refused.
+//
+// The id is an address rather than a credential, but it names the Node, so it is kept
+// owner-only for the same reason a host name in a private file is: it is nobody else's
+// business which Nodes exist.
 func TestLoadIdentityRejectsLoosePermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits are synthesised on Windows and carry no ownership information")
 	}
 
 	_, identityPath := newIdentityFixture(t)
-	identity, _, err := EnsureIdentity(identityPath)
+	nodeID, _, err := EnsureIdentity(identityPath)
 	if err != nil {
 		t.Fatalf("EnsureIdentity() = %v, want nil", err)
 	}
@@ -109,26 +106,26 @@ func TestLoadIdentityRejectsLoosePermissions(t *testing.T) {
 		t.Fatal("LoadIdentity() = nil error, want a failure for a world-readable identity file")
 	}
 
-	// The pair itself is still valid, so the refusal is about the mode rather
-	// than about the content.
-	if err := security.ValidateNodeID(identity.ID); err != nil {
+	// The id itself is still valid, so the refusal is about the mode rather than
+	// about the content.
+	if err := security.ValidateNodeID(nodeID); err != nil {
 		t.Fatalf("identity id is invalid: %v", err)
 	}
 }
 
-// TestSaveIdentityWritesOwnerOnlyFile checks that a saved identity is readable by
-// its owner and nobody else.
+// TestSaveIdentityWritesOwnerOnlyFile checks that a saved identity is readable by its
+// owner and nobody else.
 func TestSaveIdentityWritesOwnerOnlyFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits are synthesised on Windows and carry no ownership information")
 	}
 
 	_, identityPath := newIdentityFixture(t)
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
-	if err := SaveIdentity(identityPath, identity); err != nil {
+	if err := SaveIdentity(identityPath, nodeID); err != nil {
 		t.Fatalf("SaveIdentity() = %v, want nil", err)
 	}
 
@@ -141,15 +138,16 @@ func TestSaveIdentityWritesOwnerOnlyFile(t *testing.T) {
 	}
 }
 
-// TestSaveIdentityLeavesNoTemporaryFile checks that a successful save leaves only
-// the identity file, because a stray temporary file would hold a credential.
+// TestSaveIdentityLeavesNoTemporaryFile checks that a successful save leaves only the
+// identity file, because a stray temporary file would be a file the operator does not
+// know to look for.
 func TestSaveIdentityLeavesNoTemporaryFile(t *testing.T) {
 	configDir, identityPath := newIdentityFixture(t)
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
-	if err := SaveIdentity(identityPath, identity); err != nil {
+	if err := SaveIdentity(identityPath, nodeID); err != nil {
 		t.Fatalf("SaveIdentity() = %v, want nil", err)
 	}
 
@@ -169,92 +167,90 @@ func TestSaveIdentityLeavesNoTemporaryFile(t *testing.T) {
 	}
 }
 
-// TestSaveIdentityRejectsInvalidIdentity checks that an invalid pair is refused
-// before it reaches the disk, so a file that can never be parsed is never written.
-func TestSaveIdentityRejectsInvalidIdentity(t *testing.T) {
+// TestSaveIdentityRejectsInvalidID checks that an invalid id is refused before it
+// reaches the disk, so a file that can never be parsed is never written.
+func TestSaveIdentityRejectsInvalidID(t *testing.T) {
 	cases := []struct {
-		name     string
-		identity security.NodeIdentity
+		name   string
+		nodeID string
 	}{
-		{"bad id", security.NodeIdentity{ID: "abc", Token: "token"}},
-		{"empty token", security.NodeIdentity{ID: "node_abc", Token: ""}},
-		{"uppercase token", security.NodeIdentity{ID: "node_abc", Token: "TOKEN"}},
+		{"empty", ""},
+		{"no prefix", "abcdefghijklmnopqrstuvwxyz"},
+		{"truncated body", "node_abc"},
+		{"uppercase body", "node_ABCDEFGHIJKLMNOPQRSTUVWXY"},
+		{"dot pair", "node_abcdefghijklmnopqrstuvwxy.abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, identityPath := newIdentityFixture(t)
-			if err := SaveIdentity(identityPath, testCase.identity); err == nil {
+			if err := SaveIdentity(identityPath, testCase.nodeID); err == nil {
 				t.Fatal("SaveIdentity() = nil error, want a failure")
 			}
 			if _, err := os.Stat(identityPath); !errors.Is(err, os.ErrNotExist) {
-				t.Fatal("SaveIdentity() wrote a file for an invalid identity, want no file")
+				t.Fatal("SaveIdentity() wrote a file for an invalid id, want no file")
 			}
 		})
 	}
 }
 
-// TestRegenerateIdentityReplacesBothHalves checks that a full regeneration changes
-// the identifier and the token, because the old pair must stop working.
-func TestRegenerateIdentityReplacesBothHalves(t *testing.T) {
+// TestRegenerateIdentityReplacesTheID checks that a regeneration changes the address,
+// because the old address must stop being the one the Node answers to.
+func TestRegenerateIdentityReplacesTheID(t *testing.T) {
 	_, identityPath := newIdentityFixture(t)
 	original, _, err := EnsureIdentity(identityPath)
 	if err != nil {
 		t.Fatalf("EnsureIdentity() = %v, want nil", err)
 	}
 
-	regenerated, err := RegenerateIdentity(identityPath, false)
+	regenerated, err := RegenerateIdentity(identityPath)
 	if err != nil {
 		t.Fatalf("RegenerateIdentity() = %v, want nil", err)
 	}
-	if regenerated.ID == original.ID {
+	if regenerated == original {
 		t.Fatal("regenerated id equals the original, want a new id")
-	}
-	if regenerated.Token.Equal(original.Token) {
-		t.Fatal("regenerated token equals the original, want a new token")
 	}
 
 	loaded, err := LoadIdentity(identityPath)
 	if err != nil {
 		t.Fatalf("LoadIdentity() = %v, want nil", err)
 	}
-	if loaded.ID != regenerated.ID {
-		t.Fatalf("stored id = %q, want %q", loaded.ID, regenerated.ID)
-	}
-	if !loaded.Token.Equal(regenerated.Token) {
-		t.Fatal("stored token differs from the regenerated token")
+	if loaded != regenerated {
+		t.Fatalf("stored id = %q, want %q", loaded, regenerated)
 	}
 }
 
-// TestRegenerateIdentityKeepIDKeepsTheIdentifier checks that --keep-id preserves
-// the routing name while replacing the secret, because the CLI's target must stay
-// valid while the credential changes.
-func TestRegenerateIdentityKeepIDKeepsTheIdentifier(t *testing.T) {
-	_, identityPath := newIdentityFixture(t)
-	original, _, err := EnsureIdentity(identityPath)
-	if err != nil {
+// TestRegenerateIdentityLeavesCredentialsUntouched checks that regenerating the address
+// does not revoke a caller.
+//
+// The two live in separate files because they answer different questions: regenerating
+// the address must not lock every caller out, and revoking a caller must not change the
+// address.
+func TestRegenerateIdentityLeavesCredentialsUntouched(t *testing.T) {
+	configDir, identityPath := newIdentityFixture(t)
+	credentialsPath := CredentialsPath(configDir)
+
+	if _, _, err := EnsureIdentity(identityPath); err != nil {
 		t.Fatalf("EnsureIdentity() = %v, want nil", err)
 	}
-
-	regenerated, err := RegenerateIdentity(identityPath, true)
+	_, created, err := EnsureCredentials(credentialsPath)
 	if err != nil {
-		t.Fatalf("RegenerateIdentity(keep-id) = %v, want nil", err)
+		t.Fatalf("EnsureCredentials() = %v, want nil", err)
 	}
-	if regenerated.ID != original.ID {
-		t.Fatalf("regenerated id = %q, want %q", regenerated.ID, original.ID)
+	if created == nil {
+		t.Fatal("EnsureCredentials() generated no credential, so the test cannot prove it survived")
 	}
-	if regenerated.Token.Equal(original.Token) {
-		t.Fatal("regenerated token equals the original, want a new token")
-	}
-}
 
-// TestRegenerateIdentityKeepIDRequiresAnIdentity checks that --keep-id on a Node
-// with no identity fails rather than inventing an identifier, because there is no
-// name to keep.
-func TestRegenerateIdentityKeepIDRequiresAnIdentity(t *testing.T) {
-	_, identityPath := newIdentityFixture(t)
-	if _, err := RegenerateIdentity(identityPath, true); err == nil {
-		t.Fatal("RegenerateIdentity(keep-id) = nil error, want a failure with no identity file")
+	if _, err := RegenerateIdentity(identityPath); err != nil {
+		t.Fatalf("RegenerateIdentity() = %v, want nil", err)
+	}
+
+	credentials, err := LoadCredentials(credentialsPath)
+	if err != nil {
+		t.Fatalf("LoadCredentials() = %v, want nil", err)
+	}
+	if _, present := credentials.Lookup(created.KeyID); !present {
+		t.Fatal("regenerating the address revoked the caller, want the credential to survive")
 	}
 }
 
@@ -271,11 +267,11 @@ func TestLoadIdentityReportsMissingFile(t *testing.T) {
 	}
 }
 
-// TestLoadIdentityAcceptsTrailingNewline checks that the newline the Node writes
-// itself is accepted, so a file the Node wrote is always readable by the Node.
+// TestLoadIdentityAcceptsTrailingNewline checks that the newline the Node writes itself
+// is accepted, so a file the Node wrote is always readable by the Node.
 func TestLoadIdentityAcceptsTrailingNewline(t *testing.T) {
 	_, identityPath := newIdentityFixture(t)
-	identity, _, err := EnsureIdentity(identityPath)
+	nodeID, _, err := EnsureIdentity(identityPath)
 	if err != nil {
 		t.Fatalf("EnsureIdentity() = %v, want nil", err)
 	}
@@ -292,13 +288,13 @@ func TestLoadIdentityAcceptsTrailingNewline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadIdentity() = %v, want nil", err)
 	}
-	if loaded.ID != identity.ID {
-		t.Fatalf("loaded id = %q, want %q", loaded.ID, identity.ID)
+	if loaded != nodeID {
+		t.Fatalf("loaded id = %q, want %q", loaded, nodeID)
 	}
 }
 
-// TestIdentityPathJoinsTheConfigDirectory checks that the identity file lives
-// inside the config directory, so the deny list can name it before it exists.
+// TestIdentityPathJoinsTheConfigDirectory checks that the identity file lives inside
+// the config directory, so the deny list can name it before it exists.
 func TestIdentityPathJoinsTheConfigDirectory(t *testing.T) {
 	configDir := t.TempDir()
 	want := filepath.Join(configDir, IdentityFileName)

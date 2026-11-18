@@ -19,6 +19,12 @@ import (
 	"topsailai_connector/internal/security"
 )
 
+// dialerTestNodeID is the address the fixture dialer serves under.
+//
+// It is a fixed value rather than a generated one so a test can assert the hello it
+// receives without threading a value through the fixture.
+const dialerTestNodeID = "node_0123456789abcdefghijklmnop"
+
 // dialerFixture is a dialer wired to a fake Server.
 type dialerFixture struct {
 	dialer *Dialer
@@ -93,13 +99,15 @@ func newDialerFixtureWithLogger(t *testing.T, answer func(protocol.Hello) []prot
 		ConfigDir:   t.TempDir(),
 	}
 
-	identity := security.NodeIdentity{
-		ID:    "node_0123456789abcdefghijklmnop",
-		Token: security.Secret("node-token-value-1234"),
-	}
+	nodeID := dialerTestNodeID
+	credentials := nodeTestCredentialSet(t)
+	holder := NewIdentityHolder(nodeID, credentials)
 
-	dispatcher := NewDispatcher(nil, identity, slog.New(slog.DiscardHandler))
-	dialer, err := NewDialer(config, identity, dispatcher, logger)
+	dispatcher, err := NewDispatcher(nil, holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("build dispatcher: %v", err)
+	}
+	dialer, err := NewDialer(config, nodeID, credentials, dispatcher, logger)
 	if err != nil {
 		t.Fatalf("build dialer: %v", err)
 	}
@@ -233,13 +241,12 @@ func TestDialerRefusesUnexpectedHandshakeAnswer(t *testing.T) {
 // handshake is dispatched and answered, which is the whole point of the channel.
 func TestDialerServesRequestAfterHandshake(t *testing.T) {
 	requestFrame := func() protocol.Frame {
-		request := protocol.Request{
-			NodeID:    "node_0123456789abcdefghijklmnop",
-			NodeToken: security.Secret("node-token-value-1234"),
+		request := signNodeRequest(t, protocol.Request{
+			NodeID:    dialerTestNodeID,
 			Operation: protocol.OperationFileRead,
 			Scope:     security.Scope("project"),
 			Path:      "a.txt",
-		}
+		}, nodeTestCredential)
 		payload, _ := json.Marshal(request)
 		return protocol.Frame{Type: protocol.FrameRequest, RequestID: "wire-1", Payload: payload}
 	}
@@ -286,12 +293,13 @@ func TestDialerServesRequestAfterHandshake(t *testing.T) {
 		TunnelToken: security.Secret("tunnel-token-value-1234"),
 		ConfigDir:   t.TempDir(),
 	}
-	identity := security.NodeIdentity{
-		ID:    "node_0123456789abcdefghijklmnop",
-		Token: security.Secret("node-token-value-1234"),
+	credentials := nodeTestCredentialSet(t)
+	holder := NewIdentityHolder(dialerTestNodeID, credentials)
+	dispatcher, err := NewDispatcher(nil, holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("build dispatcher: %v", err)
 	}
-	dispatcher := NewDispatcher(nil, identity, slog.New(slog.DiscardHandler))
-	dialer, err := NewDialer(config, identity, dispatcher, slog.New(slog.DiscardHandler))
+	dialer, err := NewDialer(config, dialerTestNodeID, credentials, dispatcher, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("build dialer: %v", err)
 	}
@@ -480,11 +488,7 @@ func TestDialerReportsAGenuineIdentityChange(t *testing.T) {
 // TestNewDialerRefusesNilDispatcher checks that a dialer without a dispatcher is
 // refused, because it would accept requests and have no answer.
 func TestNewDialerRefusesNilDispatcher(t *testing.T) {
-	identity := security.NodeIdentity{
-		ID:    "node_0123456789abcdefghijklmnop",
-		Token: security.Secret("node-token-value-1234"),
-	}
-	if _, err := NewDialer(Config{}, identity, nil, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err := NewDialer(Config{}, dialerTestNodeID, nodeTestCredentialSet(t), nil, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("expected an error for a nil dispatcher")
 	}
 }
@@ -493,10 +497,14 @@ func TestNewDialerRefusesNilDispatcher(t *testing.T) {
 // id is refused, because the Server would refuse the hello and the failure would
 // appear as a network problem.
 func TestNewDialerRefusesUnusableIdentity(t *testing.T) {
-	identity := security.NodeIdentity{ID: "not-a-node-id", Token: security.Secret("node-token-value-1234")}
-	dispatcher := NewDispatcher(nil, identity, slog.New(slog.DiscardHandler))
+	credentials := nodeTestCredentialSet(t)
+	holder := NewIdentityHolder("not-a-node-id", credentials)
+	dispatcher, err := NewDispatcher(nil, holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("build dispatcher: %v", err)
+	}
 
-	if _, err := NewDialer(Config{}, identity, dispatcher, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err := NewDialer(Config{}, "not-a-node-id", credentials, dispatcher, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("expected an error for an unusable identity")
 	}
 }

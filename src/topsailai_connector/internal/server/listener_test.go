@@ -33,10 +33,12 @@ func newListenerFixture(t *testing.T) *listenerFixture {
 	t.Helper()
 
 	config := Config{
-		Listen:         "127.0.0.1:0",
-		TunnelToken:    security.Secret("tunnel-token-value-1234"),
-		ClientToken:    security.Secret("client-token-value-1234"),
-		RequestTimeout: 5 * time.Second,
+		Listen:            "127.0.0.1:0",
+		TunnelToken:       security.Secret("tunnel-token-value-1234"),
+		ClientCredentials: testCredentialSet(t),
+		ReplayWindow:      security.DefaultReplayWindow,
+		ReplayCapacity:    security.DefaultReplayCapacity,
+		RequestTimeout:    5 * time.Second,
 	}
 
 	registry := NewRegistry()
@@ -466,8 +468,8 @@ func TestListenerForwardRelaysResponse(t *testing.T) {
 		if request.Operation != protocol.OperationFileRead {
 			t.Errorf("operation = %q, want %q", string(request.Operation), string(protocol.OperationFileRead))
 		}
-		if request.NodeToken != security.Secret("node-token-value-1234") {
-			t.Errorf("node token was not relayed unchanged")
+		if request.NodeAuth.KeyID == "" || request.NodeAuth.Signature == "" {
+			t.Errorf("node proof was not relayed unchanged")
 		}
 
 		response := protocol.Response{Code: protocol.CodeSuccess, Data: []byte(`{"content":"aGk="}`)}
@@ -488,8 +490,16 @@ func TestListenerForwardRelaysResponse(t *testing.T) {
 	}()
 
 	request := protocol.Request{
-		NodeID:    nodeID,
-		NodeToken: security.Secret("node-token-value-1234"),
+		NodeID: nodeID,
+		NodeAuth: security.Proof{
+			Scheme:      security.SchemeNode,
+			Version:     security.ProofVersion,
+			KeyID:       "node-operator",
+			TimestampMS: 1794470400000,
+			Nonce:       "481af01e3f5a0fbaf99d07455137e1b6",
+			Signature:   "7c2e4b1a9f3d5c8e0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071",
+		},
+		RequestID: "req_listener_forward",
 		Operation: protocol.OperationFileRead,
 		Scope:     security.Scope("project"),
 		Path:      "a.txt",
@@ -611,10 +621,12 @@ func TestListenerHandlerServesBothSurfaces(t *testing.T) {
 // startup failure rather than as a Server that appears to be running.
 func TestListenerServeRefusesBadAddress(t *testing.T) {
 	config := Config{
-		Listen:         "127.0.0.1:99999",
-		TunnelToken:    security.Secret("tunnel-token-value-1234"),
-		ClientToken:    security.Secret("client-token-value-1234"),
-		RequestTimeout: time.Second,
+		Listen:            "127.0.0.1:99999",
+		TunnelToken:       security.Secret("tunnel-token-value-1234"),
+		ClientCredentials: testCredentialSet(t),
+		ReplayWindow:      security.DefaultReplayWindow,
+		ReplayCapacity:    security.DefaultReplayCapacity,
+		RequestTimeout:    time.Second,
 	}
 	listener, err := NewListener(config, NewRegistry(), slog.New(slog.DiscardHandler))
 	if err != nil {
@@ -630,10 +642,12 @@ func TestListenerServeRefusesBadAddress(t *testing.T) {
 // the listener and closes the live channels.
 func TestListenerServeStopsOnContextCancel(t *testing.T) {
 	config := Config{
-		Listen:         "127.0.0.1:0",
-		TunnelToken:    security.Secret("tunnel-token-value-1234"),
-		ClientToken:    security.Secret("client-token-value-1234"),
-		RequestTimeout: time.Second,
+		Listen:            "127.0.0.1:0",
+		TunnelToken:       security.Secret("tunnel-token-value-1234"),
+		ClientCredentials: testCredentialSet(t),
+		ReplayWindow:      security.DefaultReplayWindow,
+		ReplayCapacity:    security.DefaultReplayCapacity,
+		RequestTimeout:    time.Second,
 	}
 	registry := NewRegistry()
 	listener, err := NewListener(config, registry, slog.New(slog.DiscardHandler))

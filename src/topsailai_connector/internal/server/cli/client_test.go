@@ -20,24 +20,35 @@ type recordedRequest struct {
 	body   []byte
 }
 
-// testIdentity returns a freshly generated identity, so a test never hardcodes a
-// value that the generator could change.
-func testIdentity(t *testing.T) security.NodeIdentity {
+// testNodeID returns a freshly generated node id, so a test never hardcodes a value
+// the generator could change.
+func testNodeID(t *testing.T) string {
 	t.Helper()
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity: %v", err)
+		t.Fatalf("NewNodeID: %v", err)
 	}
-	return identity
+	return nodeID
 }
 
-// testClientToken returns a client token long enough to pass validation.
-func testClientToken() security.Secret {
-	return security.Secret("client-token-0123456789")
+// testClientCredential returns a client credential long enough to pass validation.
+func testClientCredential() security.Credential {
+	return security.Credential{
+		KeyID:  "operator",
+		Secret: security.Secret("client-secret-0123456789abcdefghij"),
+	}
 }
 
-// newRecordingServer starts a server that records every request and answers with
-// a fixed status and body.
+// testNodeCredential returns a node credential long enough to pass validation.
+func testNodeCredential() security.Credential {
+	return security.Credential{
+		KeyID:  "node-operator",
+		Secret: security.Secret("node-secret-0123456789abcdefghij"),
+	}
+}
+
+// newRecordingServer starts a server that records every request and answers with a
+// fixed status and body.
 func newRecordingServer(t *testing.T, status int, response string) (*httptest.Server, *[]recordedRequest) {
 	t.Helper()
 	recorded := make([]recordedRequest, 0, 1)
@@ -69,42 +80,63 @@ const successEnvelope = `{"code":0,"message":"success","data":{"content":"aGk=",
 func validOptions(t *testing.T, serverURL string) Options {
 	t.Helper()
 	return Options{
-		ServerURL:   serverURL,
-		ClientToken: testClientToken(),
-		Pair:        testIdentity(t).String(),
-		Operation:   protocol.OperationFileRead,
-		Scope:       security.Scope("project"),
-		Path:        "a.txt",
+		ServerURL:        serverURL,
+		ClientCredential: testClientCredential(),
+		NodeCredential:   testNodeCredential(),
+		NodeID:           testNodeID(t),
+		Operation:        protocol.OperationFileRead,
+		Scope:            security.Scope("project"),
+		Path:             "a.txt",
 	}
 }
 
-// TestSendRefusesMalformedPairBeforeSending proves a copy-paste error is reported
-// locally instead of as an authentication failure from the Node.
-func TestSendRefusesMalformedPairBeforeSending(t *testing.T) {
+// TestSendRefusesMalformedCredentialsBeforeSending proves a copy-paste error is
+// reported locally instead of as an authentication failure from the Server or the
+// Node.
+func TestSendRefusesMalformedCredentialsBeforeSending(t *testing.T) {
 	server, recorded := newRecordingServer(t, http.StatusOK, successEnvelope)
 
-	identity := testIdentity(t)
-	cases := map[string]string{
-		"empty":              "",
-		"no dot":             identity.ID,
-		"empty identifier":   "." + string(identity.Token),
-		"empty token":        identity.ID + ".",
-		"second dot":         identity.ID + "." + string(identity.Token) + ".x",
-		"missing prefix":     strings.TrimPrefix(identity.ID, security.NodeIDPrefix) + "." + string(identity.Token),
-		"leading space":      " " + identity.String(),
-		"trailing space":     identity.String() + " ",
-		"trailing newline":   identity.String() + "\n",
-		"uppercase in token": identity.ID + "." + strings.ToUpper(string(identity.Token)),
+	cases := map[string]func(*Options){
+		"empty client key id": func(o *Options) {
+			o.ClientCredential.KeyID = ""
+		},
+		"client key id with a dot": func(o *Options) {
+			o.ClientCredential.KeyID = "a.b"
+		},
+		"client key id with uppercase": func(o *Options) {
+			o.ClientCredential.KeyID = "Operator"
+		},
+		"client key id starting with a dash": func(o *Options) {
+			o.ClientCredential.KeyID = "-operator"
+		},
+		"short client secret": func(o *Options) {
+			o.ClientCredential.Secret = security.Secret("short")
+		},
+		"empty client secret": func(o *Options) {
+			o.ClientCredential.Secret = ""
+		},
+		"client secret with whitespace": func(o *Options) {
+			o.ClientCredential.Secret = security.Secret("client-secret-0123456789abcdefghij\n")
+		},
+		"empty node key id": func(o *Options) {
+			o.NodeCredential.KeyID = ""
+		},
+		"short node secret": func(o *Options) {
+			o.NodeCredential.Secret = security.Secret("short")
+		},
+		"empty node secret": func(o *Options) {
+			o.NodeCredential.Secret = ""
+		},
 	}
 
-	for name, pair := range cases {
+	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			options := validOptions(t, server.URL)
-			options.Pair = pair
+			mutate(&options)
 
 			client := &Client{HTTP: server.Client()}
 			if _, err := client.Send(options); err == nil {
-				t.Fatal("Send accepted a malformed pair")
+				t.Fatal("Send accepted a malformed credential")
 			}
 		})
 	}
@@ -120,13 +152,13 @@ func TestSendRefusesInvalidOptions(t *testing.T) {
 	server, recorded := newRecordingServer(t, http.StatusOK, successEnvelope)
 
 	cases := map[string]func(*Options){
-		"short client token": func(o *Options) { o.ClientToken = security.Secret("short") },
-		"empty client token": func(o *Options) { o.ClientToken = "" },
-		"client token with whitespace": func(o *Options) {
-			o.ClientToken = security.Secret("client-token-0123456789\n")
+		"empty node id": func(o *Options) { o.NodeID = "" },
+		"node id without prefix": func(o *Options) {
+			o.NodeID = strings.TrimPrefix(o.NodeID, security.NodeIDPrefix)
 		},
-		"unknown operation": func(o *Options) { o.Operation = protocol.Operation("file.delete") },
-		"empty operation":   func(o *Options) { o.Operation = "" },
+		"node id with a slash": func(o *Options) { o.NodeID = "node_a/b" },
+		"unknown operation":    func(o *Options) { o.Operation = protocol.Operation("file.delete") },
+		"empty operation":      func(o *Options) { o.Operation = "" },
 		"disabled operation": func(o *Options) {
 			o.Operation = protocol.OperationFileWrite
 		},
@@ -144,6 +176,7 @@ func TestSendRefusesInvalidOptions(t *testing.T) {
 		"server URL with wrong scheme": func(o *Options) {
 			o.ServerURL = "ftp://connector.example.com"
 		},
+		"request id with a space": func(o *Options) { o.RequestID = "req a" },
 	}
 
 	for name, mutate := range cases {
@@ -163,15 +196,13 @@ func TestSendRefusesInvalidOptions(t *testing.T) {
 	}
 }
 
-// TestSendPlacesTheHalvesInTheDocumentedPlaces proves the node id travels in the
-// URL and the node token in a header, so the Server never receives the pair as one
-// value.
-func TestSendPlacesTheHalvesInTheDocumentedPlaces(t *testing.T) {
+// TestSendPlacesTheProofsInTheDocumentedPlaces proves the node id travels in the URL,
+// the client proof in Authorization and the Node proof in its own header, so the
+// Server never receives a reusable secret.
+func TestSendPlacesTheProofsInTheDocumentedPlaces(t *testing.T) {
 	server, recorded := newRecordingServer(t, http.StatusOK, successEnvelope)
 
-	identity := testIdentity(t)
 	options := validOptions(t, server.URL)
-	options.Pair = identity.String()
 
 	client := &Client{HTTP: server.Client()}
 	if _, err := client.Send(options); err != nil {
@@ -186,33 +217,80 @@ func TestSendPlacesTheHalvesInTheDocumentedPlaces(t *testing.T) {
 	if request.method != http.MethodPost {
 		t.Errorf("method = %q, want POST", request.method)
 	}
-	wantPath := "/v1/nodes/" + identity.ID + "/operations"
+	wantPath := "/v1/nodes/" + options.NodeID + "/operations"
 	if request.path != wantPath {
 		t.Errorf("path = %q, want %q", request.path, wantPath)
 	}
-	if got := request.header.Get("X-Connector-Node-Token"); got != string(identity.Token) {
-		t.Errorf("X-Connector-Node-Token = %q, want the node token", got)
+
+	clientProof, err := security.ParseProof(request.header.Get(security.ClientAuthHeader), security.SchemeClient)
+	if err != nil {
+		t.Fatalf("Authorization is not a client proof: %v", err)
 	}
-	if got := request.header.Get("Authorization"); got != "Bearer "+string(options.ClientToken) {
-		t.Errorf("Authorization = %q, want the bearer form", got)
+	if clientProof.KeyID != options.ClientCredential.KeyID {
+		t.Errorf("client proof key id = %q, want %q", clientProof.KeyID, options.ClientCredential.KeyID)
 	}
+
+	nodeProof, err := security.ParseProof(request.header.Get(security.NodeAuthHeader), security.SchemeNode)
+	if err != nil {
+		t.Fatalf("%s is not a node proof: %v", security.NodeAuthHeader, err)
+	}
+	if nodeProof.KeyID != options.NodeCredential.KeyID {
+		t.Errorf("node proof key id = %q, want %q", nodeProof.KeyID, options.NodeCredential.KeyID)
+	}
+	if nodeProof.Nonce == clientProof.Nonce {
+		t.Error("the two proofs share a nonce, want independent nonces")
+	}
+
 	if got := request.header.Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", got)
 	}
-	if got := request.header.Get("X-Request-Id"); got != "" {
-		t.Errorf("X-Request-Id = %q, want it absent when not supplied", got)
+	if got := request.header.Get(security.RequestIDHeader); got == "" {
+		t.Error("X-Request-Id is empty, want a generated id")
 	}
 }
 
+// TestSendNeverTransmitsASecret proves neither secret reaches the wire.
+//
+// The whole point of the proof is that a captured request cannot be replayed into a
+// new one, and a request that carried the secret would make the proof decorative.
+func TestSendNeverTransmitsASecret(t *testing.T) {
+	server, recorded := newRecordingServer(t, http.StatusOK, successEnvelope)
+
+	options := validOptions(t, server.URL)
+
+	client := &Client{HTTP: server.Client()}
+	if _, err := client.Send(options); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	request := (*recorded)[0]
+	transmitted := request.path + "\n" + request.bodyString() + "\n"
+	for name, values := range request.header {
+		transmitted += name + ": " + strings.Join(values, ",") + "\n"
+	}
+
+	for name, secret := range map[string]security.Secret{
+		"client secret": options.ClientCredential.Secret,
+		"node secret":   options.NodeCredential.Secret,
+	} {
+		if strings.Contains(transmitted, string(secret)) {
+			t.Errorf("the request carries the %s", name)
+		}
+	}
+}
+
+// bodyString renders the recorded body for a substring search.
+func (r recordedRequest) bodyString() string {
+	return string(r.body)
+}
+
 // TestSendOmitsIdentityFromTheBody proves the body carries no identity, because the
-// Server refuses unknown fields and a body carrying one would be refused rather
-// than silently ignored.
+// Server refuses unknown fields and a body carrying one would be refused rather than
+// silently ignored.
 func TestSendOmitsIdentityFromTheBody(t *testing.T) {
 	server, recorded := newRecordingServer(t, http.StatusOK, successEnvelope)
 
-	identity := testIdentity(t)
 	options := validOptions(t, server.URL)
-	options.Pair = identity.String()
 
 	client := &Client{HTTP: server.Client()}
 	if _, err := client.Send(options); err != nil {
@@ -220,18 +298,15 @@ func TestSendOmitsIdentityFromTheBody(t *testing.T) {
 	}
 
 	body := string((*recorded)[0].body)
-	if strings.Contains(body, identity.ID) {
+	if strings.Contains(body, options.NodeID) {
 		t.Errorf("body contains the node id: %s", body)
-	}
-	if strings.Contains(body, string(identity.Token)) {
-		t.Errorf("body contains the node token: %s", body)
 	}
 
 	var decoded map[string]any
 	if err := json.Unmarshal((*recorded)[0].body, &decoded); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	for _, forbidden := range []string{"node_id", "node_token", "token"} {
+	for _, forbidden := range []string{"node_id", "node_token", "node_auth", "token"} {
 		if _, present := decoded[forbidden]; present {
 			t.Errorf("body carries %q", forbidden)
 		}
@@ -247,9 +322,9 @@ func TestSendOmitsIdentityFromTheBody(t *testing.T) {
 	}
 }
 
-// TestSendSendsRequestIDOnlyWhenSupplied proves an empty request id lets the Server
-// generate one instead of sending an empty header.
-func TestSendSendsRequestIDOnlyWhenSupplied(t *testing.T) {
+// TestSendUsesTheSuppliedRequestID proves a caller supplied id is the one both proofs
+// sign and the one the request carries.
+func TestSendUsesTheSuppliedRequestID(t *testing.T) {
 	server, recorded := newRecordingServer(t, http.StatusOK, successEnvelope)
 
 	options := validOptions(t, server.URL)
@@ -260,26 +335,47 @@ func TestSendSendsRequestIDOnlyWhenSupplied(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 
-	if got := (*recorded)[0].header.Get("X-Request-Id"); got != "req_abc" {
+	if got := (*recorded)[0].header.Get(security.RequestIDHeader); got != "req_abc" {
 		t.Errorf("X-Request-Id = %q, want req_abc", got)
 	}
 }
 
-// TestSendToleratesTrailingSlash proves a base URL copied with a trailing slash
-// does not produce a doubled separator.
+// TestSendGeneratesADistinctRequestIDPerCall proves two calls do not reuse an id,
+// because a reused id with a fresh nonce would still be a different request and the
+// correlation would be wrong.
+func TestSendGeneratesADistinctRequestIDPerCall(t *testing.T) {
+	server, recorded := newRecordingServer(t, http.StatusOK, successEnvelope)
+
+	client := &Client{HTTP: server.Client()}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := client.Send(validOptions(t, server.URL)); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	}
+
+	if len(*recorded) != 2 {
+		t.Fatalf("server received %d requests, want 2", len(*recorded))
+	}
+	first := (*recorded)[0].header.Get(security.RequestIDHeader)
+	second := (*recorded)[1].header.Get(security.RequestIDHeader)
+	if first == second {
+		t.Fatalf("both calls used request id %q, want distinct ids", first)
+	}
+}
+
+// TestSendToleratesTrailingSlash proves a base URL copied with a trailing slash does
+// not produce a doubled separator.
 func TestSendToleratesTrailingSlash(t *testing.T) {
 	server, recorded := newRecordingServer(t, http.StatusOK, successEnvelope)
 
-	identity := testIdentity(t)
 	options := validOptions(t, server.URL+"/")
-	options.Pair = identity.String()
 
 	client := &Client{HTTP: server.Client()}
 	if _, err := client.Send(options); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
-	wantPath := "/v1/nodes/" + identity.ID + "/operations"
+	wantPath := "/v1/nodes/" + options.NodeID + "/operations"
 	if got := (*recorded)[0].path; got != wantPath {
 		t.Errorf("path = %q, want %q", got, wantPath)
 	}
@@ -394,8 +490,8 @@ func TestSendReportsATransportFailure(t *testing.T) {
 	}
 }
 
-// TestClientDefaultsAreSafe proves a zero Client still gets a bounded transport and
-// a bounded body.
+// TestClientDefaultsAreSafe proves a zero Client still gets a bounded transport and a
+// bounded body.
 func TestClientDefaultsAreSafe(t *testing.T) {
 	var client *Client
 	if got := client.limit(); got != MaxResponseBytes {
@@ -435,13 +531,13 @@ func TestOperationURLValidatesTheNodeID(t *testing.T) {
 // TestOperationURLBuildsTheDocumentedPath proves the path is the one docs/API.md
 // documents.
 func TestOperationURLBuildsTheDocumentedPath(t *testing.T) {
-	identity := testIdentity(t)
+	nodeID := testNodeID(t)
 
-	got, err := operationURL("https://example.com:8443/", identity.ID)
+	got, err := operationURL("https://example.com:8443/", nodeID)
 	if err != nil {
 		t.Fatalf("operationURL: %v", err)
 	}
-	want := "https://example.com:8443/v1/nodes/" + identity.ID + "/operations"
+	want := "https://example.com:8443/v1/nodes/" + nodeID + "/operations"
 	if got != want {
 		t.Errorf("url = %q, want %q", got, want)
 	}

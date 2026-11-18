@@ -120,7 +120,7 @@ func TestRunRejectsAnUnknownCommand(t *testing.T) {
 	}
 }
 
-// TestRunIDPrintsThePair checks that `id` prints the pair and nothing else, so it
+// TestRunIDPrintsTheNodeID checks that `id` prints the node id and nothing else, so it
 // can be copied into a script.
 func TestRunIDPrintsThePair(t *testing.T) {
 	configDir := setNodeEnvironment(t)
@@ -132,27 +132,27 @@ func TestRunIDPrintsThePair(t *testing.T) {
 
 	trimmed := strings.TrimSpace(printed)
 	if trimmed == "" {
-		t.Fatal("run(id) printed nothing, want the pair")
+		t.Fatal("run(id) printed nothing, want the node id")
 	}
-	if strings.Count(trimmed, ".") != 1 {
-		t.Fatalf("run(id) printed %q, want exactly one dot", trimmed)
+	if strings.Contains(trimmed, ".") {
+		t.Fatalf("run(id) printed %q, want no dot: the id is an address and the credential is a separate value", trimmed)
 	}
 	if strings.Contains(trimmed, "\n") {
 		t.Fatalf("run(id) printed %q, want a single line", trimmed)
 	}
 
-	identity, err := node.LoadIdentity(node.IdentityPath(configDir))
+	stored, err := node.LoadIdentity(node.IdentityPath(configDir))
 	if err != nil {
 		t.Fatalf("LoadIdentity() = %v, want nil", err)
 	}
-	if identity.String() != trimmed {
-		t.Fatalf("run(id) printed %q, want the stored pair %q", trimmed, identity.String())
+	if stored != trimmed {
+		t.Fatalf("run(id) printed %q, want the stored id %q", trimmed, stored)
 	}
 }
 
-// TestRunIDIsStableAcrossCalls checks that `id` does not regenerate the pair,
-// because a pair that changed on every call would invalidate the copy the
-// operator already distributed.
+// TestRunIDIsStableAcrossCalls checks that `id` does not regenerate the id, because an
+// id that changed on every call would invalidate the address the operator already
+// distributed.
 func TestRunIDIsStableAcrossCalls(t *testing.T) {
 	setNodeEnvironment(t)
 
@@ -165,12 +165,12 @@ func TestRunIDIsStableAcrossCalls(t *testing.T) {
 		t.Fatalf("second run(id) = %v, want nil", err)
 	}
 	if first != second {
-		t.Fatalf("run(id) printed %q then %q, want the same pair", first, second)
+		t.Fatalf("run(id) printed %q then %q, want the same id", first, second)
 	}
 }
 
-// TestRunRegenerateReplacesThePair checks that `regenerate` writes a new pair and
-// prints it, because the operator has to copy the new value.
+// TestRunRegenerateReplacesTheID checks that `regenerate` writes a new id and prints
+// it, because the operator has to copy the new address.
 func TestRunRegenerateReplacesThePair(t *testing.T) {
 	configDir := setNodeEnvironment(t)
 
@@ -184,50 +184,29 @@ func TestRunRegenerateReplacesThePair(t *testing.T) {
 		t.Fatalf("run(regenerate) = %v, want nil", err)
 	}
 	if strings.TrimSpace(after) == strings.TrimSpace(before) {
-		t.Fatalf("run(regenerate) printed %q, want a new pair", after)
+		t.Fatalf("run(regenerate) printed %q, want a new id", after)
 	}
 
 	stored, err := node.LoadIdentity(node.IdentityPath(configDir))
 	if err != nil {
 		t.Fatalf("LoadIdentity() = %v, want nil", err)
 	}
-	if stored.String() != strings.TrimSpace(after) {
-		t.Fatalf("stored pair = %q, want the printed pair %q", stored.String(), strings.TrimSpace(after))
+	if stored != strings.TrimSpace(after) {
+		t.Fatalf("stored id = %q, want the printed id %q", stored, strings.TrimSpace(after))
 	}
 }
 
-// TestRunRegenerateKeepIDKeepsTheIdentifier checks that --keep-id preserves the
-// routing name while replacing the secret, because the CLI's target must stay
-// valid while the credential changes.
-func TestRunRegenerateKeepIDKeepsTheIdentifier(t *testing.T) {
-	configDir := setNodeEnvironment(t)
+// TestRunRegenerateRejectsKeepID checks that `--keep-id` is refused rather than
+// silently ignored.
+//
+// Regeneration now changes only the address, so keeping the address would make the
+// command do nothing. A flag that is accepted and has no effect is a flag the operator
+// believes took effect.
+func TestRunRegenerateRejectsKeepID(t *testing.T) {
+	setNodeEnvironment(t)
 
-	before, err := captureStdout(t, func() error { return run([]string{"id"}) })
-	if err != nil {
-		t.Fatalf("run(id) = %v, want nil", err)
-	}
-	original, err := node.LoadIdentity(node.IdentityPath(configDir))
-	if err != nil {
-		t.Fatalf("LoadIdentity() = %v, want nil", err)
-	}
-
-	after, err := captureStdout(t, func() error { return run([]string{"regenerate", "--keep-id"}) })
-	if err != nil {
-		t.Fatalf("run(regenerate --keep-id) = %v, want nil", err)
-	}
-
-	regenerated, err := node.LoadIdentity(node.IdentityPath(configDir))
-	if err != nil {
-		t.Fatalf("LoadIdentity() = %v, want nil", err)
-	}
-	if regenerated.ID != original.ID {
-		t.Fatalf("regenerated id = %q, want %q", regenerated.ID, original.ID)
-	}
-	if regenerated.Token.Equal(original.Token) {
-		t.Fatal("regenerated token equals the original, want a new token")
-	}
-	if strings.TrimSpace(after) == strings.TrimSpace(before) {
-		t.Fatalf("run(regenerate --keep-id) printed %q, want a new pair", after)
+	if err := run([]string{"regenerate", "--keep-id"}); err == nil {
+		t.Fatal("run(regenerate --keep-id) = nil error, want a flag refusal")
 	}
 }
 
@@ -401,11 +380,12 @@ func TestServeNodeStopsOnACancelledContext(t *testing.T) {
 func TestServeNodeRefusesAnUnusableIdentity(t *testing.T) {
 	runtime := openNodeRuntime(t)
 
-	// An empty id is refused by ValidateNodeID. A short id is not, which is the
-	// recorded defect in issues/issue-node-id-length-not-enforced.md.
-	broken := security.NodeIdentity{ID: "", Token: security.Secret("tokenvalue")}
-	holder := node.NewIdentityHolder(broken)
-	dispatcher := node.NewDispatcherWithHolder(runtime.Authority(), holder, nil)
+	// An empty id is refused by ValidateNodeID.
+	holder := node.NewIdentityHolder("", runtime.IdentityHolder().Credentials())
+	dispatcher, err := node.NewDispatcher(runtime.Authority(), holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, nil)
+	if err != nil {
+		t.Fatalf("NewDispatcher() = %v, want nil", err)
+	}
 
 	if _, err := node.NewDialerWithHolder(runtime.Config(), holder, dispatcher, nil); err == nil {
 		t.Fatal("NewDialerWithHolder() = nil error, want a refusal for an unusable identity")
@@ -455,9 +435,9 @@ func TestRunNodeWithSignalsServesUntilASignalArrives(t *testing.T) {
 	}
 }
 
-// TestRunNodeWithSignalsPrintsAGeneratedIdentity checks that a first start prints
-// the pair once, because the operator has to copy it into a CLI and there is no
-// lookup endpoint.
+// TestRunNodeWithSignalsPrintsAGeneratedIdentity checks that a first start prints the
+// generated id and credential once, because the operator has to copy both and there is
+// no lookup endpoint.
 func TestRunNodeWithSignalsPrintsAGeneratedIdentity(t *testing.T) {
 	configDir := setNodeEnvironment(t)
 	t.Setenv("CONNECTOR_NODE_POLICY_FILE", writeNodePolicy(t, configDir))
@@ -471,8 +451,11 @@ func TestRunNodeWithSignalsPrintsAGeneratedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runNodeWithSignals() error = %v", err)
 	}
-	if !strings.Contains(printed, "node identity generated:") {
-		t.Fatalf("stdout = %q, want the generated pair", printed)
+	if !strings.Contains(printed, "node id generated:") {
+		t.Fatalf("stdout = %q, want the generated node id", printed)
+	}
+	if !strings.Contains(printed, "node credential generated:") {
+		t.Fatalf("stdout = %q, want the generated credential", printed)
 	}
 }
 
@@ -512,18 +495,18 @@ func TestRunIDNeedsOnlyTheConfigDirectory(t *testing.T) {
 
 	trimmed := strings.TrimSpace(printed)
 	if trimmed == "" {
-		t.Fatal("run(id) printed nothing, want the pair")
+		t.Fatal("run(id) printed nothing, want the node id")
 	}
-	if strings.Count(trimmed, ".") != 1 {
-		t.Fatalf("run(id) printed %q, want exactly one dot", trimmed)
+	if strings.Contains(trimmed, ".") {
+		t.Fatalf("run(id) printed %q, want no dot", trimmed)
 	}
 
-	identity, err := node.LoadIdentity(node.IdentityPath(configDir))
+	stored, err := node.LoadIdentity(node.IdentityPath(configDir))
 	if err != nil {
 		t.Fatalf("LoadIdentity() = %v, want nil", err)
 	}
-	if identity.String() != trimmed {
-		t.Fatalf("run(id) printed %q, want the stored pair %q", trimmed, identity.String())
+	if stored != trimmed {
+		t.Fatalf("run(id) printed %q, want the stored id %q", trimmed, stored)
 	}
 }
 
@@ -543,28 +526,16 @@ func TestRunRegenerateNeedsOnlyTheConfigDirectory(t *testing.T) {
 	}
 
 	after, err := captureStdout(t, func() error {
-		return run([]string{"regenerate", "--keep-id"})
+		return run([]string{"regenerate"})
 	})
 	if err != nil {
 		t.Fatalf("run(regenerate) with only the config directory = %v, want nil", err)
 	}
 
-	beforePair := strings.TrimSpace(before)
-	afterPair := strings.TrimSpace(after)
-	if beforePair == afterPair {
-		t.Fatal("run(regenerate) printed the same pair, want a new token")
-	}
-
-	beforeID, _, ok := strings.Cut(beforePair, ".")
-	if !ok {
-		t.Fatalf("run(id) printed %q, want a pair", beforePair)
-	}
-	afterID, _, ok := strings.Cut(afterPair, ".")
-	if !ok {
-		t.Fatalf("run(regenerate) printed %q, want a pair", afterPair)
-	}
-	if beforeID != afterID {
-		t.Fatalf("run(regenerate --keep-id) changed the node id from %q to %q", beforeID, afterID)
+	beforeID := strings.TrimSpace(before)
+	afterID := strings.TrimSpace(after)
+	if beforeID == afterID {
+		t.Fatal("run(regenerate) printed the same id, want a new address")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"topsailai_connector/internal/protocol"
 	"topsailai_connector/internal/security"
@@ -14,12 +15,15 @@ import (
 
 // dispatchFixture is an authority, an identity and a dispatcher wired together.
 type dispatchFixture struct {
-	authority  *Authority
-	identity   security.NodeIdentity
-	dispatcher *Dispatcher
-	project    string
-	scratch    string
-	logs       *bytes.Buffer
+	t           *testing.T
+	authority   *Authority
+	nodeID      string
+	credentials *security.CredentialSet
+	holder      *IdentityHolder
+	dispatcher  *Dispatcher
+	project     string
+	scratch     string
+	logs        *bytes.Buffer
 }
 
 // newDispatchFixture builds a dispatcher over the two-scope policy fixture.
@@ -33,51 +37,60 @@ func newDispatchFixture(t *testing.T) *dispatchFixture {
 	authorityFixture := newAuthorityFixture(t)
 	authority := authorityFixture.load(t, nil)
 
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
+	credentials := nodeTestCredentialSet(t)
+	holder := NewIdentityHolder(nodeID, credentials)
 
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
+	dispatcher, err := NewDispatcher(authority, holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, logger)
+	if err != nil {
+		t.Fatalf("NewDispatcher() = %v, want nil", err)
+	}
+
 	return &dispatchFixture{
-		authority:  authority,
-		identity:   identity,
-		dispatcher: NewDispatcher(authority, identity, logger),
-		project:    authorityFixture.project,
-		scratch:    authorityFixture.scratch,
-		logs:       logs,
+		t:           t,
+		authority:   authority,
+		nodeID:      nodeID,
+		credentials: credentials,
+		holder:      holder,
+		dispatcher:  dispatcher,
+		project:     authorityFixture.project,
+		scratch:     authorityFixture.scratch,
+		logs:        logs,
 	}
 }
 
-// request builds a request addressed to this Node with the correct token, so a
-// test only states the field it is actually exercising.
+// request builds a signed request addressed to this Node, so a test only states the
+// field it is actually exercising.
 func (f *dispatchFixture) request(operation protocol.Operation, scope security.Scope, path string) protocol.Request {
-	return protocol.Request{
-		NodeID:    f.identity.ID,
-		NodeToken: f.identity.Token,
+	return signNodeRequest(f.t, protocol.Request{
+		NodeID:    f.nodeID,
 		Operation: operation,
 		Scope:     scope,
 		Path:      path,
-	}
+	}, nodeTestCredential)
 }
 
 // TestDispatchRefusesRequestForAnotherNode checks that a request addressed to a
-// different Node is refused even when it carries this Node's token.
+// different Node is refused even when it carries a valid proof.
 //
-// The address is checked before the token on purpose: a misrouted request must
-// not be able to test whether a token is valid here.
+// The address is checked before the proof on purpose: a misrouted request must not be
+// able to test whether a credential is valid here.
 func TestDispatchRefusesRequestForAnotherNode(t *testing.T) {
 	fixture := newDispatchFixture(t)
 
-	other, err := security.NewNodeIdentity()
+	other, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
 
 	request := fixture.request(protocol.OperationFileRead, "project", "inside.txt")
-	request.NodeID = other.ID
+	request.NodeID = other
 
 	response := fixture.dispatcher.Dispatch(request)
 	if response.Code != protocol.CodeDenied {
@@ -85,8 +98,8 @@ func TestDispatchRefusesRequestForAnotherNode(t *testing.T) {
 	}
 }
 
-// TestDispatchRefusesEmptyNodeID checks that a request naming no Node is
-// refused, because an empty address is not this Node's address.
+// TestDispatchRefusesEmptyNodeID checks that a request naming no Node is refused,
+// because an empty address is not this Node's address.
 func TestDispatchRefusesEmptyNodeID(t *testing.T) {
 	fixture := newDispatchFixture(t)
 
@@ -99,14 +112,24 @@ func TestDispatchRefusesEmptyNodeID(t *testing.T) {
 	}
 }
 
-// TestDispatchRefusesWrongToken checks that a wrong node-token is refused, which
-// is the Node's own gate: the Server authenticated the caller but does not know
-// this value.
-func TestDispatchRefusesWrongToken(t *testing.T) {
+// TestDispatchRefusesAForgedProof checks that a proof signed with a secret this Node
+// does not hold is refused.
+//
+// This is the Node's own gate: the Server authenticated the caller but does not know
+// this secret, so only the Node can decide whether the caller may operate here.
+func TestDispatchRefusesAForgedProof(t *testing.T) {
 	fixture := newDispatchFixture(t)
 
-	request := fixture.request(protocol.OperationFileRead, "project", "inside.txt")
-	request.NodeToken = security.Secret("not-the-right-token-value")
+	impostor := security.Credential{
+		KeyID:  nodeTestCredential.KeyID,
+		Secret: security.Secret("not-the-right-secret-0123456789ab"),
+	}
+	request := signNodeRequest(t, protocol.Request{
+		NodeID:    fixture.nodeID,
+		Operation: protocol.OperationFileRead,
+		Scope:     "project",
+		Path:      "inside.txt",
+	}, impostor)
 
 	response := fixture.dispatcher.Dispatch(request)
 	if response.Code != protocol.CodeUnauthenticated {
@@ -114,13 +137,105 @@ func TestDispatchRefusesWrongToken(t *testing.T) {
 	}
 }
 
-// TestDispatchRefusesEmptyToken checks that an absent token is refused rather
-// than treated as "no token required".
-func TestDispatchRefusesEmptyToken(t *testing.T) {
+// TestDispatchRefusesAnUnknownKeyID checks that a proof naming a key identifier this
+// Node does not hold is refused with the same answer as a bad signature, so a caller
+// cannot enumerate which key identifiers exist.
+func TestDispatchRefusesAnUnknownKeyID(t *testing.T) {
+	fixture := newDispatchFixture(t)
+
+	unknown := security.Credential{
+		KeyID:  "not-a-configured-key",
+		Secret: nodeTestCredential.Secret,
+	}
+	request := signNodeRequest(t, protocol.Request{
+		NodeID:    fixture.nodeID,
+		Operation: protocol.OperationFileRead,
+		Scope:     "project",
+		Path:      "inside.txt",
+	}, unknown)
+
+	response := fixture.dispatcher.Dispatch(request)
+	if response.Code != protocol.CodeUnauthenticated {
+		t.Fatalf("Dispatch() code = %s, want unauthenticated", response.Code.Name())
+	}
+}
+
+// TestDispatchRefusesAMissingProof checks that an absent proof is refused rather than
+// treated as "no credential required".
+func TestDispatchRefusesAMissingProof(t *testing.T) {
 	fixture := newDispatchFixture(t)
 
 	request := fixture.request(protocol.OperationFileRead, "project", "inside.txt")
-	request.NodeToken = ""
+	request.NodeAuth = security.Proof{}
+
+	response := fixture.dispatcher.Dispatch(request)
+	if response.Code != protocol.CodeUnauthenticated {
+		t.Fatalf("Dispatch() code = %s, want unauthenticated", response.Code.Name())
+	}
+}
+
+// TestDispatchRefusesATamperedOperation checks that a valid proof cannot be reused
+// with a different operation.
+//
+// The proof signs the logical operation, so changing the operation after signing must
+// invalidate it. Without this binding a caller could keep a proof for a granted read
+// and ask for something else.
+func TestDispatchRefusesATamperedOperation(t *testing.T) {
+	fixture := newDispatchFixture(t)
+
+	request := fixture.request(protocol.OperationFileList, "project", "")
+	request.Operation = protocol.OperationFileRead
+
+	response := fixture.dispatcher.Dispatch(request)
+	if response.Code != protocol.CodeUnauthenticated {
+		t.Fatalf("Dispatch() code = %s, want unauthenticated", response.Code.Name())
+	}
+}
+
+// TestDispatchRefusesATamperedPath checks that a valid proof cannot be reused with a
+// different path, which is the field a caller would change to read another file.
+func TestDispatchRefusesATamperedPath(t *testing.T) {
+	fixture := newDispatchFixture(t)
+
+	request := fixture.request(protocol.OperationFileRead, "project", "inside.txt")
+	request.Path = "other.txt"
+
+	response := fixture.dispatcher.Dispatch(request)
+	if response.Code != protocol.CodeUnauthenticated {
+		t.Fatalf("Dispatch() code = %s, want unauthenticated", response.Code.Name())
+	}
+}
+
+// TestDispatchRefusesAReplayedProof checks that the same proof is refused the second
+// time it arrives.
+//
+// A signature alone cannot stop a replay: the bytes are identical and still verify.
+// The nonce cache is what makes the second copy a refusal.
+func TestDispatchRefusesAReplayedProof(t *testing.T) {
+	fixture := newDispatchFixture(t)
+
+	request := fixture.request(protocol.OperationFileRead, "project", "inside.txt")
+
+	first := fixture.dispatcher.Dispatch(request)
+	if !first.Succeeded() {
+		t.Fatalf("first Dispatch() code = %s, want success", first.Code.Name())
+	}
+
+	second := fixture.dispatcher.Dispatch(request)
+	if second.Code != protocol.CodeUnauthenticated {
+		t.Fatalf("second Dispatch() code = %s, want unauthenticated", second.Code.Name())
+	}
+}
+
+// TestDispatchRefusesAnExpiredProof checks that a proof outside the Node's window is
+// refused even though its signature verifies.
+//
+// The window is the Node's, not the caller's: a request cannot choose or widen it.
+func TestDispatchRefusesAnExpiredProof(t *testing.T) {
+	fixture := newDispatchFixture(t)
+
+	request := fixture.request(protocol.OperationFileRead, "project", "inside.txt")
+	request.NodeAuth.TimestampMS = time.Now().Add(-2 * security.DefaultReplayWindow).UnixMilli()
 
 	response := fixture.dispatcher.Dispatch(request)
 	if response.Code != protocol.CodeUnauthenticated {
@@ -284,6 +399,7 @@ func TestDispatchReadHonoursOffsetAndLength(t *testing.T) {
 	request := fixture.request(protocol.OperationFileRead, "project", "inside.txt")
 	request.Offset = 7
 	request.Length = 7
+	request = signNodeRequest(t, request, nodeTestCredential)
 
 	response := fixture.dispatcher.Dispatch(request)
 	if !response.Succeeded() {
@@ -424,16 +540,24 @@ func TestDispatchRefusalCarriesNoData(t *testing.T) {
 	}
 }
 
-// TestDispatchLogNeverContainsToken checks that a refusal logs the reason and
-// never the token, not even in redacted form.
+// TestDispatchLogNeverContainsASecret checks that a refusal logs the reason and never
+// the credential secret, not even in redacted form.
 //
-// A redacted form is still a value derived from the secret, and the design
-// forbids the Node from keeping one.
-func TestDispatchLogNeverContainsToken(t *testing.T) {
+// A redacted form is still a value derived from the secret, and the design forbids the
+// Node from keeping one.
+func TestDispatchLogNeverContainsASecret(t *testing.T) {
 	fixture := newDispatchFixture(t)
 
-	request := fixture.request(protocol.OperationFileRead, "project", "inside.txt")
-	request.NodeToken = security.Secret("a-very-secret-token-value")
+	impostor := security.Credential{
+		KeyID:  nodeTestCredential.KeyID,
+		Secret: security.Secret("a-very-secret-value-0123456789ab"),
+	}
+	request := signNodeRequest(t, protocol.Request{
+		NodeID:    fixture.nodeID,
+		Operation: protocol.OperationFileRead,
+		Scope:     "project",
+		Path:      "inside.txt",
+	}, impostor)
 
 	response := fixture.dispatcher.Dispatch(request)
 	if response.Code != protocol.CodeUnauthenticated {
@@ -444,8 +568,8 @@ func TestDispatchLogNeverContainsToken(t *testing.T) {
 	if logged == "" {
 		t.Fatalf("log is empty, want a refusal line")
 	}
-	if strings.Contains(logged, "a-very-secret-token-value") {
-		t.Fatalf("log = %q, want no token value", logged)
+	if strings.Contains(logged, string(impostor.Secret)) {
+		t.Fatalf("log = %q, want no secret value", logged)
 	}
 	if !strings.Contains(logged, "node_id") {
 		t.Fatalf("log = %q, want the node id for correlation", logged)
@@ -470,19 +594,24 @@ func TestDispatchNilDispatcher(t *testing.T) {
 // a refusal. It must not be a panic, because the request arrives from the
 // network.
 func TestDispatchNilAuthority(t *testing.T) {
-	identity, err := security.NewNodeIdentity()
+	nodeID, err := security.NewNodeID()
 	if err != nil {
-		t.Fatalf("NewNodeIdentity() = %v, want nil", err)
+		t.Fatalf("NewNodeID() = %v, want nil", err)
 	}
-	dispatcher := NewDispatcher(nil, identity, nil)
+	holder := NewIdentityHolder(nodeID, nodeTestCredentialSet(t))
+	dispatcher, err := NewDispatcher(nil, holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, nil)
+	if err != nil {
+		t.Fatalf("NewDispatcher() = %v, want nil", err)
+	}
 
-	response := dispatcher.Dispatch(protocol.Request{
-		NodeID:    identity.ID,
-		NodeToken: identity.Token,
+	request := signNodeRequest(t, protocol.Request{
+		NodeID:    nodeID,
 		Operation: protocol.OperationFileRead,
 		Scope:     "project",
 		Path:      "inside.txt",
-	})
+	}, nodeTestCredential)
+
+	response := dispatcher.Dispatch(request)
 	if response.Code != protocol.CodeInternal {
 		t.Fatalf("Dispatch() code = %s, want internal", response.Code.Name())
 	}
@@ -492,10 +621,26 @@ func TestDispatchNilAuthority(t *testing.T) {
 // working dispatcher rather than a nil dereference on the first refusal.
 func TestNewDispatcherFallsBackToDefaultLogger(t *testing.T) {
 	fixture := newDispatchFixture(t)
-	dispatcher := NewDispatcher(fixture.authority, fixture.identity, nil)
+	dispatcher, err := NewDispatcher(fixture.authority, fixture.holder, security.DefaultReplayWindow, security.DefaultReplayCapacity, nil)
+	if err != nil {
+		t.Fatalf("NewDispatcher() = %v, want nil", err)
+	}
 
 	response := dispatcher.Dispatch(fixture.request(protocol.OperationFileRead, "nowhere", "inside.txt"))
 	if response.Code != protocol.CodeDenied {
 		t.Fatalf("Dispatch() code = %s, want denied", response.Code.Name())
+	}
+}
+
+// TestNewDispatcherRefusesAnUnusableWindow checks that a window the configuration
+// could not have produced refuses construction instead of falling back to a default.
+//
+// A verifier that silently substituted a default would be a verifier whose operator
+// cannot state what it enforces.
+func TestNewDispatcherRefusesAnUnusableWindow(t *testing.T) {
+	fixture := newDispatchFixture(t)
+
+	if _, err := NewDispatcher(fixture.authority, fixture.holder, -time.Second, security.DefaultReplayCapacity, nil); err == nil {
+		t.Fatal("NewDispatcher() = nil error for a negative window, want a refusal")
 	}
 }

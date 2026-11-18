@@ -41,6 +41,11 @@ PACKAGE_SERVER_URL=${PACKAGE_SERVER_URL:-}
 PACKAGE_SCOPES=${PACKAGE_SCOPES:-}
 PACKAGE_SCOPES_FILE=${PACKAGE_SCOPES_FILE:-}
 PACKAGE_TUNNEL_TOKEN=${PACKAGE_TUNNEL_TOKEN:-}
+# PACKAGE_NODE_KEY_ID names the credential the bundle's Node accepts. It is public,
+# so it is safe to record in the bundle and in the packaging summary. A default is
+# provided because the value only has to be unique within one Node's credential set,
+# and a bundle ships exactly one.
+PACKAGE_NODE_KEY_ID=${PACKAGE_NODE_KEY_ID:-bundle-caller}
 PACKAGE_ALLOW_FILESYSTEM_ROOT=${PACKAGE_ALLOW_FILESYSTEM_ROOT:-}
 PACKAGE_EMBED_CONFIG=${PACKAGE_EMBED_CONFIG:-1}
 BIN_DIR=${BIN_DIR:-bin}
@@ -337,13 +342,24 @@ else
 		GOOS="$PACKAGE_GOOS" GOARCH="$PACKAGE_GOARCH" go build -o "$STAGE/$NODE_BINARY" ./cmd/connector-node
 	)
 
-	# The pair is generated with the Node's own command rather than by a second
-	# implementation here. A second implementation would be a second definition of
-	# the pair format, and the two would eventually disagree.
+	# The node id and the node credential are generated with the Node's own commands
+	# rather than by a second implementation here. A second implementation would be a
+	# second definition of the formats, and the two would eventually disagree.
+	#
+	# The id is an address and the credential is a secret, so they are generated
+	# separately and reported separately. `id` writes the identity file the bundle
+	# ships; `credential add` writes the credential file and prints the value once,
+	# because no command reads a secret back.
 	echo "package: generating the node identity" >&2
-	PAIR=$(CONNECTOR_NODE_CONFIG_DIR="$STAGE/config" "$HOST_NODE" id)
-	[ -n "$PAIR" ] || fail "the Node printed no identity"
+	NODE_ID=$(CONNECTOR_NODE_CONFIG_DIR="$STAGE/config" "$HOST_NODE" id)
+	[ -n "$NODE_ID" ] || fail "the Node printed no identity"
 	[ -f "$STAGE/config/identity" ] || fail "the Node did not write $STAGE/config/identity"
+
+	echo "package: generating the node credential" >&2
+	NODE_CREDENTIAL=$(CONNECTOR_NODE_CONFIG_DIR="$STAGE/config" "$HOST_NODE" credential add --key-id "$PACKAGE_NODE_KEY_ID") ||
+		fail "the Node printed no credential"
+	[ -n "$NODE_CREDENTIAL" ] || fail "the Node printed no credential"
+	[ -f "$STAGE/config/credentials.yaml" ] || fail "the Node did not write $STAGE/config/credentials.yaml"
 
 	# server_url is a file rather than a value baked into the start script, so the
 	# user can point the bundle at a different Server without editing a script.
@@ -400,16 +416,19 @@ create it:
 
   $OUTPUT_PATH id
 
-That prints the node-id.node-token pair and exits. Copy the whole pair into the
-CLI, then start the binary with no arguments.
+That prints the node id and exits. The credential is created on the same first
+start and printed once, because no command reads a secret back. Copy both into
+the CLI, then start the binary with no arguments.
 
-CLI example, runnable as soon as the binary has printed its pair. The flags come
-before the operation because the CLI stops parsing flags at the first positional
-argument, so the operation must be last:
+CLI example, runnable as soon as the binary has printed its id and credential.
+The flags come before the operation because the CLI stops parsing flags at the
+first positional argument, so the operation must be last:
 
   CONNECTOR_CLI_SERVER_URL=$HTTP_BASE \\
-  CONNECTOR_CLI_CLIENT_TOKEN=<client_token> \\
-    connector-server cli --node '<node-id.node-token>' --scope $FIRST_SCOPE --path '' file.list
+  CONNECTOR_CLI_CLIENT_CREDENTIAL=<client_credential> \\
+  CONNECTOR_CLI_NODE_CREDENTIAL=<node_credential> \\
+  CONNECTOR_CLI_NODE_ID=<node_id> \\
+    connector-server cli --scope $FIRST_SCOPE --path '' file.list
 
 SUMMARY
 else
@@ -420,18 +439,25 @@ package: platform $PACKAGE_GOOS/$PACKAGE_GOARCH, scopes $SCOPE_COUNT, channel $C
 package: filesystem root opt-in $ALLOW_FILESYSTEM_ROOT (0 means a volume root is refused)
 
 The bundle carries a credential. Hand it over the way you would hand over a
-password, and regenerate the pair if it leaks.
+password, and regenerate it if it leaks.
 
-node pair (copy this whole value into the CLI):
+node id (an address, safe to record):
 
-  $PAIR
+  $NODE_ID
+
+node credential (a secret, copy it into the CLI and nowhere else):
+
+  $NODE_CREDENTIAL
+
 CLI example, runnable as soon as the user starts the bundle. The flags come
 before the operation because the CLI stops parsing flags at the first positional
 argument, so the operation must be last:
 
   CONNECTOR_CLI_SERVER_URL=$HTTP_BASE \\
-  CONNECTOR_CLI_CLIENT_TOKEN=<client_token> \\
-    connector-server cli --node '$PAIR' --scope $FIRST_SCOPE --path '' file.list
+  CONNECTOR_CLI_CLIENT_CREDENTIAL=<client_credential> \\
+  CONNECTOR_CLI_NODE_CREDENTIAL='$NODE_CREDENTIAL' \\
+  CONNECTOR_CLI_NODE_ID='$NODE_ID' \\
+    connector-server cli --scope $FIRST_SCOPE --path '' file.list
 
 SUMMARY
 fi
