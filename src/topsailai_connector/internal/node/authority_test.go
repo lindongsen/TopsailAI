@@ -264,7 +264,7 @@ func TestLoadAuthorityRecordsDenyList(t *testing.T) {
 	fixture := newAuthorityFixture(t)
 
 	secretPath := filepath.Join(fixture.project, "node.secret")
-	writeFile(t, secretPath, "the node token")
+	writeFile(t, secretPath, "a node credential")
 
 	authority := fixture.load(t, []string{secretPath})
 

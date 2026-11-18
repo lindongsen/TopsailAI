@@ -98,11 +98,11 @@ func TestSecretValidate(t *testing.T) {
 // variable, because an operator who cannot tell which secret is wrong will
 // disable both.
 func TestSecretValidateNamesTheVariable(t *testing.T) {
-	err := Secret("").Validate("client_token")
+	err := Secret("").Validate("CONNECTOR_CLI_CLIENT_CREDENTIAL")
 	if err == nil {
 		t.Fatal("Validate() = nil, want error")
 	}
-	if !strings.Contains(err.Error(), "client_token") {
+	if !strings.Contains(err.Error(), "CONNECTOR_CLI_CLIENT_CREDENTIAL") {
 		t.Fatalf("error %q does not name the variable", err)
 	}
 }
