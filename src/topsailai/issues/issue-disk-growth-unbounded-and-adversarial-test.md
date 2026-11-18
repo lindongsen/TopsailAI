@@ -532,3 +532,78 @@ The asymmetry this issue describes is therefore still present.
    sooner.
 4. Action 2, routed to the sibling Go project.
 5. Action 6, an operational Docker cleanup on `/opt`.
+
+## Adversarial tests written on 2026-11-18
+
+The Human authorized the three missing adversarial assertions and explicitly
+rejected the other two open items: `TOPSAILAI_EVENTS_FILE_MAX_COUNT` keeps its
+`0` default, and the meta retention window stays at 7 days.
+
+New file: `tests/unit/test_topsailai_disk_growth_adversarial.py`, 6 tests,
+`6 passed in 1.33s`.
+
+### Bytes written by a prompt loop
+
+`test_closed_stdin_writes_bounded_bytes` runs `input_one_line` in a child
+process with stdin at `/dev/null` and asserts the child exits 0, writes fewer
+than 200 bytes, and prints the prompt exactly once.
+
+`test_negative_control_reproduces_unbounded_output` runs the pre-fix loop
+(`except EOFError: message = ""` then reprompt) in the same harness and asserts
+it writes more than 1000 bytes and more than 10x the fixed path. Without this
+control a green byte assertion could pass because the child never reached the
+prompt at all.
+
+`test_session_lifecycle_keeps_total_output_bounded` runs 50 turns over a closed
+channel and asserts total output stays under 20x one prompt per turn and that
+exactly 50 prompts were written. A per-turn bound alone would not catch growth
+accumulating across a long run, which is how the incident reached 51.75 GB.
+
+Measured: fixed path 8 bytes, pre-fix path 7992 bytes for one turn, and 399600
+bytes for 50 turns.
+
+### Deleted-but-open detection
+
+`test_deleted_descriptor_keeps_size_until_close` writes 64 KiB, unlinks the
+path, and asserts the open descriptor still reports the full size while the path
+is gone. This is the exact mechanism that made the space invisible to
+path-based inspection.
+
+`test_orphan_descriptor_is_visible_in_descriptor_table` reads
+`/proc/self/fd/<n>` and asserts the target is marked `deleted` and still names
+the removed file, so the condition is diagnosable before the descriptor closes.
+Skipped when `/proc` is unavailable.
+
+`test_closing_the_descriptor_releases_the_held_space` asserts the release is
+tied to the descriptor rather than the path, which is why killing the owning
+processes resolved the incident.
+
+### Negative control result
+
+Reverting only the `if not env_tool.is_input_pipe_enabled(): raise` branch in
+`workspace/input_tool.py` turned 3 of the 6 tests red with
+`7992 not less than 200`, `7992 not greater than 79920`, and
+`399600 not less than 1000`. Restoring the branch returned all 6 to green, so
+the tests observe the real behaviour rather than the test harness.
+
+### Probe harness defect found and fixed
+
+The first probe hung for 180 seconds. The cause was not the product code:
+`topsailai/__init__.py` loads `.env.local` at import time, and that file sets
+`TOPSAILAI_INPUT_PIPE_ENABLED=1` on this host, so the probe blocked on a named
+pipe instead of reaching the closed-stdin branch. The test harness now forces
+`TOPSAILAI_INPUT_PIPE_ENABLED=0` in the child environment; `load_dotenv` does not
+override an existing value, so the explicit setting wins.
+
+### Regression
+
+`tests/unit/test_topsailai_workspace_input_tool.py` plus
+`tests/unit/events/test_backends.py`: **88 passed in 1.19s**.
+
+### Still open after this change
+
+1. Action 2, routed to the sibling Go project.
+2. Action 6, an operational Docker cleanup on `/opt`.
+3. The two rejected configuration decisions are recorded as deliberate, not
+   pending: the events count default stays unlimited and the meta retention
+   window stays 7 days.
