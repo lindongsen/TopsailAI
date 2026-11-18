@@ -451,3 +451,46 @@ Verification on 2026-11-18: `go test ./internal/tui/` ok 47.979s, `go test ./...
   (`TestUnitSendAutoFollowUsesTheTenLineBudget`, `maxLines=300 want=10`). Not reproducible: 30
   isolated runs pass in both trees, and 4 full-suite runs at HEAD pass. The change does not touch the
   send/follow path. Load-dependent, tracked by the existing `LEARN.md:1435` entry.
+
+## Final status: resolved
+
+Resolved on 2026-11-18. The defect this issue describes no longer exists in the code, so there is
+nothing left to fix.
+
+`09d31dbf` removed the mechanism entirely rather than tuning it: `internal/tui/metrics.go`,
+`internal/tui/metrics_batch.go` and their tests were deleted, all six `EnrichRows` call sites were
+removed, and message counts now ride in the periodic inventory report. `list` therefore reads only
+persisted data and performs no provider read at all, which is the standing rule recorded in
+`MEMORY.md`.
+
+That single change closes all three root causes at once, because none of them can be reached any more:
+
+| Root cause | Why it is unreachable |
+|---|---|
+| One provider process pair per row, ~1.1 s each | No per-row provider read exists. |
+| The Endpoint channel loop handles request frames inline | The metrics frames are gone; `cd197c1a` separately moved the remaining business handlers out of the read loop via `dispatchBusiness`. |
+| Enrichment is unconditional and the budget arithmetic guarantees truncation | There is no enrichment and no budget to truncate against. |
+
+The secondary defects are also gone: `--brief` no longer pays for data it does not print (there is no
+cost), `maxMetricsRows` and `metricsRowBudget` no longer exist, and the "a slow provider must cost one
+cell" comment was deleted with the file it described.
+
+The three blocking findings recorded in the review section were closed by `59c1b3e3`, and each was
+re-proven by deliberate breakage on 2026-11-18:
+
+| Test | Break that fails it |
+|---|---|
+| `TestListRowsCarriesReportedMessageCounts` | deleting `Messages: session.Messages` (`internal/tui/model.go:99`) → `measured row lost its reported counts` |
+| `TestDiscoverReportsMessageCountsFromTheSameDocument` | replacing the attach with `_ = counts` (`providers/topsailai/read.go:251`) → `measured row reported no message counts` |
+| `TestListReadsOnlyPersistedInventory` | adding one `GetCapabilities` call → `list called [GetCapabilities GetInventory ListEndpoints] want [GetInventory ListEndpoints]` |
+
+Verified again on 2026-11-18: `go test ./internal/tui/ -run 'TestListRowsCarriesReportedMessageCounts|TestListReadsOnlyPersistedInventory'` ok, and
+`go test ./... -run TestDiscoverReportsMessageCountsFromTheSameDocument` ok in `providers/topsailai`.
+
+### One observation carried forward, not a defect
+
+`GetMetrics` and `GetMetricsBatch` now have no production caller; only
+`tests/bdd/steps_endpoint_query_permission.go:232` uses `GetMetrics`. The routes are retained for
+external callers, and the doc comment that described "an operator who explicitly asks for the counts
+right now" was removed with the TUI surface. This is a deliberate retention, not dead code that needs
+removal, so it does not keep this issue open.
