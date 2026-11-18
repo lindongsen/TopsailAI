@@ -8,11 +8,13 @@ import (
 	"testing"
 
 	"topsailai_connector/internal/node"
+	"topsailai_connector/internal/security"
 )
 
 // world is the state one scenario builds up. Every scenario gets a fresh world,
 // so a scenario cannot pass because of what an earlier one left behind.
 type world struct {
+	t          *testing.T
 	baseDir    string
 	configDir  string
 	scopeDir   string
@@ -23,6 +25,20 @@ type world struct {
 	lastData   []byte
 	lastList   []node.Entry
 	lastEntry  node.Entry
+
+	// signWith is the credential the signed-request scenarios sign with. It
+	// defaults to the credential the Node holds, so a scenario that does not care
+	// about the credential does not have to state one.
+	signWith security.Credential
+
+	// timestampAge is how far into the past a signed proof is dated. Zero means
+	// "now", which is what every scenario except the stale-timestamp one wants.
+	timestampAge int64
+
+	// auth is built by the signed-request scenarios. It is nil until a scenario
+	// sends its first request, so a policy-only scenario never builds a dispatcher
+	// it does not use.
+	auth *authentication
 }
 
 // newWorld creates an empty world rooted in a temporary directory.
@@ -30,10 +46,12 @@ func newWorld(t *testing.T) *world {
 	t.Helper()
 	base := t.TempDir()
 	state := &world{
+		t:          t,
 		baseDir:    base,
 		configDir:  filepath.Join(base, "config"),
 		scopeDir:   filepath.Join(base, "project"),
 		policyPath: filepath.Join(base, "config", "policy.yaml"),
+		signWith:   bddNodeCredential,
 	}
 	if err := os.MkdirAll(state.configDir, 0o700); err != nil {
 		t.Fatalf("create config directory: %v", err)

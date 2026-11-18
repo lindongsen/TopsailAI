@@ -227,6 +227,8 @@ func steps() *registry {
 		return nil
 	})
 
+	authSteps(registered)
+
 	return registered
 }
 
