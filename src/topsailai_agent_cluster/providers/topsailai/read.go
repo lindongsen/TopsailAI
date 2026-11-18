@@ -23,20 +23,25 @@ type workspaceResponse struct {
 }
 
 type workspaceItem struct {
-	SessionID         string            `json:"session_id"`
-	ProviderRowKey    string            `json:"filename"`
-	SessionName       string            `json:"session_name"`
-	SessionQualifier  string            `json:"session_qualifier"`
-	IsTask            bool              `json:"is_task"`
-	ProcessGeneration json.RawMessage   `json:"process_generation"`
-	State             string            `json:"state"`
-	Status            string            `json:"status"`
-	AgentID           string            `json:"agent_id"`
-	PID               int64             `json:"pid"`
-	ProjectWorkspace  string            `json:"project_workspace"`
-	Pwd               string            `json:"pwd"`
-	Driver            *workspaceDriver  `json:"driver"`
-	Runtime           *workspaceRuntime `json:"runtime"`
+	SessionID         string           `json:"session_id"`
+	ProviderRowKey    string           `json:"filename"`
+	SessionName       string           `json:"session_name"`
+	SessionQualifier  string           `json:"session_qualifier"`
+	IsTask            bool             `json:"is_task"`
+	ProcessGeneration json.RawMessage  `json:"process_generation"`
+	State             string           `json:"state"`
+	Status            string           `json:"status"`
+	AgentID           string           `json:"agent_id"`
+	PID               int64            `json:"pid"`
+	ProjectWorkspace  string           `json:"project_workspace"`
+	Pwd               string           `json:"pwd"`
+	Driver            *workspaceDriver `json:"driver"`
+	// Runtime keeps the provider's own envelope bytes rather than a decoded
+	// struct, because the detail seam forwards that envelope verbatim and a typed
+	// round trip would drop every field this provider does not model. The facts
+	// are decoded at the one place that needs them, so the raw bytes stay
+	// available to the seam.
+	Runtime json.RawMessage `json:"runtime"`
 }
 
 // workspaceRuntime is one row's runtime record as the provider collected it.
