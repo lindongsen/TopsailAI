@@ -471,8 +471,8 @@ The generic CLI Adapter translates between them. It must not serialize a complet
 
 The Endpoint, not the provider CLI, owns durable Cluster command IDs, authorization, policy, audit,
 deduplication, resource mapping, the effective capability set, public receipts and network protocol. The
-revision string attached to that set is the Adapter configuration's own `revision` value, copied
-through unchanged, so the Endpoint owns the set and not the label.
+revision string attached to that set is the Provider's own `descriptor_revision`, copied through
+unchanged, so the Endpoint owns the set and not the label.
 
 ### Invocation sequence
 
@@ -724,9 +724,9 @@ and approved provider-specific controls use `ctl.<action>`.
 ### Implemented provider document seams
 
 Two fields carry provider documents the Cluster deliberately does not model. They are the only
-seams in the protocol where the content is decided entirely by the Provider, and they exist because
-an operator asking for a session's detail wants the facts the Provider keeps, not a curated subset
-the Cluster guessed at.
+document seams in the protocol, and they exist because an operator asking for a session's detail wants
+the facts the Provider keeps, not a curated subset the Cluster guessed at. The capability revision is a
+third Provider-decided seam of a different kind, described under "The capability revision seam" below.
 
 | Seam | Producer | Forwarding rule |
 |---|---|---|
@@ -777,6 +777,39 @@ also rejected a document would create a second, invisible limit: an operator who
 bound would still be refused by the Provider, and the refusal would arrive as a generic provider
 error that sends the investigation to a Provider behaving correctly.
 
+### The capability revision seam
+
+The advertised capability revision is the third seam where the content is decided entirely by the
+Provider. It differs from the two document seams above in what it carries and in why it exists.
+
+| Seam | Producer | Forwarding rule |
+|---|---|---|
+| `capability_revision` | the Provider's `descriptor_revision` in the `describe` result | copied through unchanged, never derived and never substituted |
+
+**The Provider decides the value, and the Endpoint only forwards it.** `descriptor_revision` is a
+required field of the `describe` result, so a Provider cannot omit it; an empty value is refused as
+`descriptor_revision is required` before any capability is published. The Endpoint copies it into the
+advertised capability descriptor verbatim. It is not derived from the intersected capability set, and it
+is not the `revision` string the Adapter configuration declares.
+
+**Why it is a seam rather than a Cluster-computed value.** Only the Provider knows when its own
+implementation changed. A Cluster-computed hash would change on every descriptor refresh, because the
+intersected capability set is an input to it, and a revision that changes without the implementation
+changing is not a revision an operator can reason about. A configured string has the opposite defect: it
+is written once by an operator and never updated, which is why every Endpoint in a fleet used to publish
+the same value while serving different surfaces. The Provider's own constant is the only value that
+changes exactly when the implementation changes.
+
+**The seam carries no admission authority.** No admission path compares the advertised revision. A
+command is admitted by operation name and operation version, so a changed revision never refuses a
+command and a stale revision never admits one. The value exists for the operator and for the capabilities
+API, and `docs/agent-cluster-database.md` records the same limit for the persisted column.
+
+**A Provider that changes its implementation must change `descriptor_revision`.** The obligation is on
+the Provider because the Cluster cannot detect the change any other way. A Provider that ships a new
+implementation under an unchanged revision makes the seam report a stale fact, which is the defect this
+seam replaced rather than a new failure mode.
+
 ### Version and capability compatibility
 
 `protocol` is the fixed identifier `agent-cluster-adapter`. The `describe` bootstrap envelope uses the
@@ -792,9 +825,12 @@ capability allowlist and local policy. The advertised capability revision is the
 and it is not the `revision` string the Adapter configuration declares. The Provider is the only party
 that knows when its implementation changed, so it is the only party that can honestly report a
 revision: a configured string is written once by an operator and never updated, which is why every
-Endpoint in a fleet used to publish the same value while serving different surfaces. A Provider that
-declares no revision leaves the published value empty, which readers report as `unknown`; the
-configured string is never substituted for it.
+Endpoint in a fleet used to publish the same value while serving different surfaces. `descriptor_revision`
+is a required field of the `describe` result, so a Provider cannot omit it: an empty value is refused as
+`descriptor_revision is required` before any capability is published, and the configured string is never
+substituted for it. The published value is `unknown` only when no adapter declaration reached the Server
+at all, such as an inventory frame that could not be decoded; that is an absent report, not a Provider
+that declined to name its revision.
 
 The Endpoint refreshes an Adapter descriptor on Endpoint startup, Adapter add/change and provider
 executable-version switch. Periodic discovery uses the accepted cached descriptor and does not invoke
@@ -805,7 +841,8 @@ empty capability set and never leaves the old descriptor advertised as current: 
 `degraded` or `unavailable`, its last valid inventory remains explicitly stale, and new mutating
 operations are refused until a compatible descriptor is accepted. Recovery re-describes the Adapter and
 republishes the inventory before admitting new mutation. The advertised revision string is unchanged by
-that recovery, because it comes from configuration rather than from the descriptor.
+that recovery, because it is the Provider's own constant rather than a value derived from the descriptor's
+capability lists.
 
 ### Identity, generation and invocation rules
 

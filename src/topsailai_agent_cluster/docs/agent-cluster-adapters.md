@@ -118,6 +118,12 @@ configuration select it, so production input cannot activate a testing bypass.
     them per Adapter instance together with its stricter hard and local limits; the provider process must not
     assume an in-memory lock coordinates separate invocations.
 13. Pass executable conformance without an Endpoint, Server, channel or Cluster database.
+14. Declare `descriptor_revision` in the `describe` result and change it whenever the implementation
+    changes. The Endpoint publishes that value as the advertised capability revision, copied through
+    unchanged; it is never derived from the capability set and never replaced by the Adapter
+    configuration's `revision`. The field is required, so an empty value is refused before any
+    capability is published. Only the Provider knows when its own implementation changed, so a new
+    implementation shipped under an unchanged revision makes the cluster report a stale fact.
 
 ### Trust model
 

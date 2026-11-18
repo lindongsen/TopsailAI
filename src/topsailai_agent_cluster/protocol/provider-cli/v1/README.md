@@ -140,6 +140,28 @@ the whole record is worse than a refused read, because the operator cannot tell 
 missing. There is no truncation flag, because a flag would make a partial document look like a
 supported outcome.
 
+### The capability revision seam
+
+`descriptor_revision` in the `describe` result is the third seam where the content is decided entirely
+by the Provider. The Endpoint publishes it as the advertised capability revision, copied through
+unchanged.
+
+| Field | Producer | Forwarding rule |
+|---|---|---|
+| `descriptor_revision` | the Provider's own implementation revision | copied through unchanged, never derived and never substituted |
+
+The field is required by `response.schema.json` and by the Endpoint's decoder, so an empty value is
+refused as `descriptor_revision is required` before any capability is published. The Adapter
+configuration's `revision` string is never substituted for it.
+
+A Provider must change this value whenever its implementation changes. Only the Provider knows when
+that happened, so a new implementation shipped under an unchanged revision makes the cluster report a
+stale fact. The value is not derived from the advertised capability set, because a derived value would
+change on every descriptor refresh and would stop describing the implementation.
+
+The seam carries no admission authority: no admission path compares the advertised revision, and a
+command is admitted by operation name and operation version.
+
 ## Size bounds
 
 Request budgets are byte and record limits. JSON Schema `maxLength` counts Unicode characters rather
