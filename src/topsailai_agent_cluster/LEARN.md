@@ -1711,3 +1711,43 @@ that matters: the suite is green, the file is valid Go, and the folder looks com
 into a provider workspace would have made it worse, because the new location implies ownership and
 maintenance that nobody provides. The tell is a comment written in the past tense about a binary the
 harness "no longer builds": that sentence is a defect report nobody acted on.
+
+## A failover feature configured with one candidate has nothing to fail over to
+
+Trigger: the DR test stopped the primary Server and the CLI printed a raw
+`dial tcp 172.19.1.1:53680: connect: connection refused` instead of falling back. The failover code
+was correct and fully tested. `AGENT_CLUSTER_CLI_SERVER_PROFILE` was set to the single name
+`primary`, and `parseServerProfileGroup` (`src/main/agent-cluster-cli/cli_server_profile.go:118`)
+treats one name as a group of one, which is deliberate: it keeps an existing single-Server deployment
+unchanged. So the deployment had one candidate and the feature had nothing to choose between.
+
+Action: when a failover or retry feature is deployed, verify the configured candidate list has more
+than one member before testing the failure path. Read the resolved list, not the variable: a
+comma-separated group and a single name are the same variable with different arity, and the arity is
+what the feature needs. Here the fix was `primary,secondary`, and the same command then reported
+`server "primary" skipped: unreachable` followed by `using server profile "secondary"`.
+
+Why this prevents recurrence: a group-of-one is a supported configuration, so nothing rejects it and
+no test fails. The feature is then present, tested and inert, and the failure it produces is the
+generic transport error the feature exists to replace. The tell is that the error names a URL rather
+than a skipped candidate: a working failover always reports which candidate it skipped, because
+skipping is the decision it made.
+
+## A fallback peer left in the old auth mode turns a failover into a credential error
+
+Trigger: after the CLI switched to HMAC, stopping the primary made the CLI fall back to the secondary
+and receive `401 unauthorized: authentication required`. The credential was correct. The secondary
+Server was still `AUTH_MODE=bearer` while the CLI signed its request, so the fallback reached a peer
+that could not verify the new scheme.
+
+Action: when a credential scheme changes, treat every peer that can answer a request as a boundary to
+migrate, including peers that are only reachable on a failure path. Enumerate them from the failover
+configuration rather than from the list of machines currently serving traffic, because a standby
+receives no requests until the moment it matters. Verify each peer independently with a positive call
+and a wrong-secret call before declaring the migration complete.
+
+Why this prevents recurrence: the standby is invisible during normal operation, so every check that
+exercises the active peer passes while the standby stays on the old scheme. The failure then appears
+only during the incident the standby exists for, and it presents as an authentication problem, which
+sends the investigation to the credential rather than to the mode. A wrong-secret probe on each peer
+is what distinguishes "this peer verifies HMAC" from "this peer is reachable".
