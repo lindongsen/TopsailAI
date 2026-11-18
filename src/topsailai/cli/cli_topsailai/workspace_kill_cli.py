@@ -139,27 +139,81 @@ def _resolve_target(
     return target
 
 
-def _signal_bound(target: KillTarget, sig: int) -> None:
-    """Deliver one signal through a pidfd bound to the verified process instance."""
+def _signal_bound(target: KillTarget, sig: int) -> str:
+    """Deliver one signal to the verified instance and report the binding used.
+
+    A pidfd binds the exact process instance atomically, so it is always
+    preferred. When the running interpreter does not expose the pidfd bindings,
+    the identity is re-verified immediately before ``os.kill``, which keeps a
+    documented residual race but is still stronger than the interactive ``/kill``
+    path that ships today. The returned binding name lets the receipt state which
+    guarantee was actually obtained instead of implying the stronger one.
+    """
     pidfd_open = getattr(os, "pidfd_open", None)
     pidfd_send = getattr(signal, "pidfd_send_signal", None)
-    if pidfd_open is None or pidfd_send is None:
-        raise WorkspaceKillError("safe_signal_unsupported")
-    try:
-        descriptor = pidfd_open(target.pid)
-    except ProcessLookupError as error:
-        raise WorkspaceKillError("target_changed") from error
-    except OSError as error:
-        raise WorkspaceKillError("target_identity_unavailable") from error
-    try:
-        if _process_identity(target.pid) != target.identity:
-            raise WorkspaceKillError("target_changed")
+    if pidfd_open is not None and pidfd_send is not None:
         try:
-            pidfd_send(descriptor, sig)
+            descriptor = pidfd_open(target.pid)
         except ProcessLookupError as error:
             raise WorkspaceKillError("target_changed") from error
-    finally:
-        os.close(descriptor)
+        except OSError as error:
+            raise WorkspaceKillError("target_identity_unavailable") from error
+        try:
+            if _process_identity(target.pid) != target.identity:
+                raise WorkspaceKillError("target_changed")
+            try:
+                pidfd_send(descriptor, sig)
+            except ProcessLookupError as error:
+                raise WorkspaceKillError("target_changed") from error
+        finally:
+            os.close(descriptor)
+        return "pidfd"
+    kill = getattr(os, "kill", None)
+    if kill is None:
+        raise WorkspaceKillError("safe_signal_unsupported")
+    if _process_identity(target.pid) != target.identity:
+        raise WorkspaceKillError("target_changed")
+    try:
+        kill(target.pid, sig)
+    except ProcessLookupError as error:
+        raise WorkspaceKillError("target_changed") from error
+    return "identity_recheck"
+
+
+# One human-readable message per classified failure. The message must state what
+# actually failed, because a fixed message sends the investigation to the wrong
+# layer: a capability gap is not a target-selection failure.
+_KILL_ERROR_MESSAGES = {
+    "multiple_live_instances":
+        "Multiple live process instances match this session; none is selected",
+    "target_identity_unavailable":
+        "The process identity of the session target could not be verified",
+    "target_not_alive":
+        "No live process instance holds this session's stdout file",
+    "generation_mismatch":
+        "The live process generation differs from the requested generation",
+    "target_changed":
+        "The process instance changed before the signal was delivered",
+    "safe_signal_unsupported":
+        "This platform cannot deliver a signal to a verified process instance",
+}
+
+
+def _kill_error_message(error_code: str) -> str:
+    """Derive the failure message from the classified error code."""
+    return _KILL_ERROR_MESSAGES.get(
+        error_code, f"Termination failed: {error_code}"
+    )
+
+
+def _kill_failure_exit_code(error_code: str) -> int:
+    """Separate an environment capability gap from a target rejection.
+
+    Exit ``3`` means the target was rejected, so a caller may retry with a fresh
+    generation. Exit ``5`` means the environment cannot signal safely at all, so
+    retrying the same command can never succeed.
+    """
+    return 5 if error_code == "safe_signal_unsupported" else 3
 
 
 def run_workspace_kill_cli(
@@ -186,6 +240,7 @@ def run_workspace_kill_cli(
         return 2
 
     target = None
+    binding = None
     try:
         home = Path((home_resolver or get_topsailai_home)()).resolve()
         rows = discover(str(home / "workspace" / "task"))
@@ -197,16 +252,19 @@ def run_workspace_kill_cli(
             identity_probe=identity_probe, absence_probe=absence_probe,
             relation_probe=relation_probe,
         )
-        bound_signal_sender(target, signal.SIGTERM)
+        binding = bound_signal_sender(target, signal.SIGTERM)
     except WorkspaceKillError as error:
+        error_code = str(error)
+        exit_code = _kill_failure_exit_code(error_code)
+        message = _kill_error_message(error_code)
         if json_mode:
-            emit_failure("kill", 3, str(error), "No exact verified session target",
+            emit_failure("kill", exit_code, error_code, message,
                          session_id=args.session_id,
                          pid=target.pid if target is not None else None)
         else:
-            print(f"[ERROR] Cannot terminate session {args.session_id}: {error}",
+            print(f"[ERROR] Cannot terminate session {args.session_id}: {message}",
                   file=sys.stderr)
-        return 3
+        return exit_code
     except OSError as error:
         if json_mode:
             emit_failure("kill", 4, "signal_failed",
@@ -220,20 +278,31 @@ def run_workspace_kill_cli(
             )
         return 4
 
+    # A sender seam may return a non-string value; only a real binding name is
+    # reported, so the receipt never claims a guarantee it did not obtain.
+    binding_name = binding if isinstance(binding, str) else "unknown"
+    if binding_name == "pidfd":
+        message = ("SIGTERM submitted through a pidfd bound to the verified "
+                   "process instance; exit is not confirmed")
+    else:
+        message = ("SIGTERM submitted after re-verifying the process identity; "
+                   "a residual PID-reuse race remains and exit is not confirmed")
     if json_mode:
         receipt = new_receipt("kill", session_id=args.session_id, pid=target.pid)
         receipt.update(
             ok=True, exit_code=0, delivery_state="signal_sent",
-            message="SIGTERM submitted to the verified process instance; exit is not confirmed",
+            message=message,
             response={
                 "signal": "SIGTERM", "signal_number": int(signal.SIGTERM),
                 "generation": target.generation, "exit_confirmed": False,
+                "binding": binding_name,
             },
         )
         emit_receipt(receipt)
         return 0
     print(
         f"[INFO] SIGTERM sent to session={args.session_id}, PID={target.pid}, "
-        f"generation={target.generation}; process exit is not confirmed."
+        f"generation={target.generation}, binding={binding_name}; "
+        f"process exit is not confirmed."
     )
     return 0

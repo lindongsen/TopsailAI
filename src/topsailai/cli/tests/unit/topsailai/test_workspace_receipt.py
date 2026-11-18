@@ -47,6 +47,15 @@ def test_settle_classifies_success_and_documented_failures():
     assert failure["delivery_unknown"] is False
 
 
+def test_settle_separates_capability_gap_from_target_rejection():
+    """A capability gap is not classified as a target error."""
+    receipt = receipts.settle(
+        receipts.new_receipt("kill"), 5, receipts.KILL_ERROR_CODES)
+    assert receipt["ok"] is False
+    assert receipt["error_code"] == "capability_unsupported"
+    assert receipt["error_code"] != "target_error"
+
+
 def test_settle_preserves_observed_child_status():
     """An observed child status is not flattened into a generic failure."""
     receipt = receipts.settle(
