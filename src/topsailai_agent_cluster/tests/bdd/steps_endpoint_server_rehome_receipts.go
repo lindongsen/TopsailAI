@@ -22,7 +22,14 @@ const receiptSettleWait = 60 * time.Second
 // settlement row is only meaningful once the rejection was actually received. A
 // scenario that asserted only on the table would pass for a build that never
 // reconnected at all.
-func startReceiptCluster(secondServer bool) error {
+//
+// dropAcknowledgement makes the Server persist a receipt without telling the
+// Endpoint it did. The rejection scenarios need it: an acknowledged receipt is
+// settled immediately, so it is never re-sent and the Server never gets the chance
+// to refuse it. Dropping the acknowledgement reproduces the only state in which a
+// rejection can happen, which is a receipt the Endpoint still holds because it
+// never learned the Server stored it.
+func startReceiptCluster(secondServer, dropAcknowledgement bool) error {
 	if activeTest == nil {
 		return fmt.Errorf("active BDD test is not initialized")
 	}
@@ -30,6 +37,7 @@ func startReceiptCluster(secondServer bool) error {
 		ChannelDirection: "endpoint-initiated",
 		SecondServer:     secondServer,
 		EndpointLogFile:  true,
+		Faults:           harness.FaultInjection{DropAck: dropAcknowledgement},
 	})
 	if err != nil {
 		return err
@@ -38,16 +46,45 @@ func startReceiptCluster(secondServer bool) error {
 	return nil
 }
 
+// assertSettledAsRejection fails unless the receipt was settled by a rejection
+// carrying exactly the expected reason.
+//
+// The origin is asserted as well as the reason, because an acknowledgement stores
+// no reason at all. A scenario that checked only the reason would read an empty
+// string for an acknowledgement and therefore could not tell the two terminal
+// outcomes apart, which is the whole subject of this feature.
+func assertSettledAsRejection(commandID, wantReason string) error {
+	cluster := activeScenario.world.realCluster
+	if cluster == nil {
+		return fmt.Errorf("real cluster is not running")
+	}
+	settlement, err := cluster.WaitReceiptSettledOriginE(commandID, receiptSettleWait)
+	if err != nil {
+		return err
+	}
+	if settlement.Origin != "rejection" {
+		return fmt.Errorf("settlement origin for %q = %q, want %q", commandID, settlement.Origin, "rejection")
+	}
+	if settlement.Reason != wantReason {
+		return fmt.Errorf("settlement reason for %q = %q, want %q", commandID, settlement.Reason, wantReason)
+	}
+	return nil
+}
+
 // registerEndpointServerRehomeReceiptSteps registers the receipt-settlement
 // re-home scenarios.
 func registerEndpointServerRehomeReceiptSteps(ctx *godog.ScenarioContext) {
-	ctx.Step(`^a real cluster with a second server for receipt settlement$`, func() error {
+	ctx.Step(`^a real cluster with a second server for receipt settlement whose acknowledgement is lost$`, func() error {
 		activeScenario.world = &World{}
-		return startReceiptCluster(true)
+		return startReceiptCluster(true, true)
 	})
-	ctx.Step(`^a real cluster with a receipt settlement journal$`, func() error {
+	ctx.Step(`^a real cluster with a receipt settlement journal whose acknowledgement is lost$`, func() error {
 		activeScenario.world = &World{}
-		return startReceiptCluster(false)
+		return startReceiptCluster(false, true)
+	})
+	ctx.Step(`^a real cluster with a receipt settlement journal whose acknowledgement is delivered$`, func() error {
+		activeScenario.world = &World{}
+		return startReceiptCluster(false, false)
 	})
 	ctx.Step(`^a command has been executed and its receipt recorded$`, func() error {
 		commandID, err := activeScenario.world.SubmitRealCommand("message.send", "fixture-session", "fixture-generation", `{"text":"settle"}`)
@@ -84,16 +121,25 @@ func registerEndpointServerRehomeReceiptSteps(ctx *godog.ScenarioContext) {
 		return cluster.WaitSecondaryEndpointOnlineE(receiptSettleWait)
 	})
 	ctx.Step(`^the endpoint settles the receipt as unknown command$`, func() error {
+		return assertSettledAsRejection(activeScenario.realCommandID, "unknown_command")
+	})
+	ctx.Step(`^the endpoint settles the receipt as acknowledged$`, func() error {
 		cluster := activeScenario.world.realCluster
 		if cluster == nil {
 			return fmt.Errorf("real cluster is not running")
 		}
-		reason, err := cluster.WaitReceiptSettledE(activeScenario.realCommandID, receiptSettleWait)
+		settlement, err := cluster.WaitReceiptSettledOriginE(activeScenario.realCommandID, receiptSettleWait)
 		if err != nil {
 			return err
 		}
-		if reason != "unknown_command" {
-			return fmt.Errorf("settlement reason for %q = %q, want %q", activeScenario.realCommandID, reason, "unknown_command")
+		if settlement.Origin != "acknowledgement" {
+			return fmt.Errorf("settlement origin for %q = %q, want %q", activeScenario.realCommandID, settlement.Origin, "acknowledgement")
+		}
+		// An acknowledgement carries no rejection reason, so the stored reason must
+		// be absent rather than an empty string that a reader could mistake for a
+		// rejection with an unnamed cause.
+		if settlement.Reason != "" {
+			return fmt.Errorf("settlement reason for %q = %q, want no reason because an acknowledgement carries none", activeScenario.realCommandID, settlement.Reason)
 		}
 		return nil
 	})
@@ -115,6 +161,13 @@ func registerEndpointServerRehomeReceiptSteps(ctx *godog.ScenarioContext) {
 		// the second Server's own log is the only evidence that the receipt was
 		// never sent at all. This is what distinguishes bulk settlement from the
 		// per-receipt rejection path, which reaches the same final state.
+		//
+		// The check is skipped when the cluster has no second Server, because there
+		// is then no second log to read and the resend set is the only available
+		// evidence.
+		if cluster.SecondaryLogPath == "" {
+			return nil
+		}
 		rejections, err := cluster.CountSecondaryLogOccurrences("store command receipt")
 		if err != nil {
 			return err
@@ -177,18 +230,7 @@ func registerEndpointServerRehomeReceiptSteps(ctx *godog.ScenarioContext) {
 		return cluster.RestartServerE()
 	})
 	ctx.Step(`^the endpoint settles the receipt as revision stale$`, func() error {
-		cluster := activeScenario.world.realCluster
-		if cluster == nil {
-			return fmt.Errorf("real cluster is not running")
-		}
-		reason, err := cluster.WaitReceiptSettledE(activeScenario.realCommandID, receiptSettleWait)
-		if err != nil {
-			return err
-		}
-		if reason != "revision_stale" {
-			return fmt.Errorf("settlement reason for %q = %q, want %q", activeScenario.realCommandID, reason, "revision_stale")
-		}
-		return nil
+		return assertSettledAsRejection(activeScenario.realCommandID, "revision_stale")
 	})
 	ctx.Step(`^the server stores a different receipt at the same revision$`, func() error {
 		cluster := activeScenario.world.realCluster

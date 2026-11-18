@@ -140,6 +140,27 @@ func (r ReceiptRejection) Settles() bool {
 	return r == ReceiptRejectedUnknownCommand || r == ReceiptRejectedRevisionStale
 }
 
+// SettlementOrigin names which terminal outcome ended a receipt's resend
+// obligation.
+//
+// It is a separate axis from ReceiptRejection on purpose. A rejection reason
+// answers "why can this receipt never be applied", and only some rejections
+// settle. An acknowledgement answers "the Server already holds this receipt",
+// which is a different fact and carries no rejection reason at all. Storing both
+// in one column would force the reason column to describe two unrelated events,
+// and a reader could no longer tell an integrity conflict from a delivery
+// confirmation.
+type SettlementOrigin string
+
+const (
+	// SettlementOriginRejection means the Server refused the receipt and named a
+	// reason that proves it can never be applied.
+	SettlementOriginRejection SettlementOrigin = "rejection"
+	// SettlementOriginAcknowledgement means the Server durably stored the receipt
+	// and acknowledged it, so the Endpoint must stop re-sending it.
+	SettlementOriginAcknowledgement SettlementOrigin = "acknowledgement"
+)
+
 // CommandStatus describes Server-side command lifecycle.
 type CommandStatus string
 

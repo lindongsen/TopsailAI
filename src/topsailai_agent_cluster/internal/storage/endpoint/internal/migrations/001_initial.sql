@@ -34,8 +34,9 @@ CREATE TABLE IF NOT EXISTS source_cache (
     error_message TEXT,
     update_at_ms BIGINT NOT NULL
 );
--- receipt_settlement records receipts the Endpoint must stop re-sending because
--- the current Server proved it can never apply them.
+-- receipt_settlement records receipts the Endpoint must stop re-sending, either
+-- because the current Server proved it can never apply them or because the
+-- Server durably stored and acknowledged them.
 --
 -- It is a separate table rather than a column on command_journal because the
 -- downgrade guard pins command_journal and source_cache to identical columns
@@ -47,9 +48,17 @@ CREATE TABLE IF NOT EXISTS source_cache (
 -- A row here is a decision, not a deletion: the journal entry and its receipt
 -- stay readable, so the evidence that a receipt existed is preserved while the
 -- resend set shrinks.
+--
+-- settled_by names which terminal outcome ended the resend obligation, and
+-- reason carries the rejection reason only. An acknowledgement has no rejection
+-- reason, so reason is NULL for it rather than an empty string. The DEFAULT on
+-- settled_by is what keeps an older binary writable: that binary inserts only
+-- (command_id, reason, settled_at_ms), and without a default its insert would
+-- fail against this table.
 CREATE TABLE IF NOT EXISTS receipt_settlement (
     command_id TEXT PRIMARY KEY,
-    reason TEXT NOT NULL,
+    reason TEXT,
+    settled_by TEXT NOT NULL DEFAULT 'rejection',
     settled_at_ms BIGINT NOT NULL
 );
 -- server_identity_seen records the Server database identity this Endpoint last

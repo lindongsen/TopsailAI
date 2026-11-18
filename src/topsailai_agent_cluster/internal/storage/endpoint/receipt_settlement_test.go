@@ -50,7 +50,7 @@ func TestSettleReceiptRemovesItFromTheResendSet(t *testing.T) {
 		t.Fatalf("recorded receipts before settlement = %d, want 2", len(before))
 	}
 
-	if err := store.SettleReceipt(ctx, "cmd-a", protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-a", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
 		t.Fatalf("settle cmd-a: %v", err)
 	}
 
@@ -70,7 +70,7 @@ func TestSettleReceiptKeepsTheJournalEvidence(t *testing.T) {
 	ctx := context.Background()
 	store := openJournalStore(t)
 	recordReceipt(t, store, "cmd-a")
-	if err := store.SettleReceipt(ctx, "cmd-a", protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-a", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
 		t.Fatalf("settle cmd-a: %v", err)
 	}
 	entry, err := store.GetJournal(ctx, "cmd-a")
@@ -95,10 +95,10 @@ func TestSettleReceiptIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	store := openJournalStore(t)
 	recordReceipt(t, store, "cmd-a")
-	if err := store.SettleReceipt(ctx, "cmd-a", protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-a", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
 		t.Fatalf("first settlement: %v", err)
 	}
-	if err := store.SettleReceipt(ctx, "cmd-a", protocol.ReceiptRejectedRevisionStale, 4); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-a", protocol.SettlementOriginRejection, protocol.ReceiptRejectedRevisionStale, 4); err != nil {
 		t.Fatalf("second settlement: %v", err)
 	}
 	receipts, err := store.ListRecordedReceipts(ctx)
@@ -114,7 +114,7 @@ func TestSettleReceiptIsIdempotent(t *testing.T) {
 // rather than writing a row that could never match a receipt.
 func TestSettleReceiptRequiresACommandID(t *testing.T) {
 	store := openJournalStore(t)
-	if err := store.SettleReceipt(context.Background(), "", protocol.ReceiptRejectedUnknownCommand, 3); err == nil {
+	if err := store.SettleReceipt(context.Background(), "", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err == nil {
 		t.Fatal("an empty command id was accepted")
 	}
 }

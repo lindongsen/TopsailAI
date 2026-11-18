@@ -41,7 +41,7 @@ func seedSettledReceipt(t *testing.T, store *endpointstorage.Store, commandID st
 	if err := store.RecordReceipt(ctx, commandID, receipt, createdAtMS+1); err != nil {
 		t.Fatalf("record receipt %s: %v", commandID, err)
 	}
-	if err := store.SettleReceipt(ctx, commandID, protocol.ReceiptRejectedUnknownCommand, createdAtMS+2); err != nil {
+	if err := store.SettleReceipt(ctx, commandID, protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, createdAtMS+2); err != nil {
 		t.Fatalf("settle %s: %v", commandID, err)
 	}
 }

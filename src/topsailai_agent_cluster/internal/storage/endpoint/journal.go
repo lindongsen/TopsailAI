@@ -156,21 +156,46 @@ func (s *Store) ListRecordedReceipts(ctx context.Context) ([]protocol.ExecutionR
 }
 
 // SettleReceipt records that a receipt must never be re-sent, because the
-// current Server proved it can never apply it.
+// current Server either proved it can never apply it or already stored it.
 //
 // Settlement is durable rather than in-memory because the pending set is
 // reloaded from the journal on every reconnect. Clearing only the in-memory map
 // would let the next reconnect re-send exactly the receipts that were just
 // settled, which is the loop this method exists to end.
 //
-// The reason is stored so an operator can tell a re-homing artefact from an
-// integrity disagreement without reading logs.
-func (s *Store) SettleReceipt(ctx context.Context, commandID string, reason protocol.ReceiptRejection, nowMS int64) error {
+// The origin is stored so an operator can tell a delivery confirmation from a
+// refusal without reading logs, and the rejection reason is stored alongside it
+// so a re-homing artefact can be told from an integrity disagreement. An
+// acknowledgement carries no rejection reason, so reason is NULL for it rather
+// than an empty string: an empty value that means something is the implicit
+// contract this schema avoids.
+func (s *Store) SettleReceipt(ctx context.Context, commandID string, origin protocol.SettlementOrigin, reason protocol.ReceiptRejection, nowMS int64) error {
 	if commandID == "" {
 		return errors.New("command id is required to settle a receipt")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO receipt_settlement(command_id, reason, settled_at_ms) VALUES(?,?,?) ON CONFLICT(command_id) DO UPDATE SET reason=excluded.reason, settled_at_ms=excluded.settled_at_ms`, commandID, string(reason), nowMS)
+	if origin == "" {
+		return errors.New("settlement origin is required to settle a receipt")
+	}
+	if origin == protocol.SettlementOriginRejection && reason == "" {
+		return errors.New("a rejection settlement requires a rejection reason")
+	}
+	if origin == protocol.SettlementOriginAcknowledgement && reason != "" {
+		return fmt.Errorf("an acknowledgement settlement carries no rejection reason, got %q", reason)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO receipt_settlement(command_id, reason, settled_by, settled_at_ms) VALUES(?,?,?,?) ON CONFLICT(command_id) DO UPDATE SET reason=excluded.reason, settled_by=excluded.settled_by, settled_at_ms=excluded.settled_at_ms`, commandID, nullableReason(origin, reason), string(origin), nowMS)
 	return err
+}
+
+// nullableReason returns the rejection reason to store, or nil when the
+// settlement is an acknowledgement.
+//
+// The conversion lives here rather than at each call site so no caller can
+// accidentally store an empty string where NULL is the contract.
+func nullableReason(origin protocol.SettlementOrigin, reason protocol.ReceiptRejection) any {
+	if origin != protocol.SettlementOriginRejection {
+		return nil
+	}
+	return string(reason)
 }
 
 // SettleAllRecordedReceipts settles every receipt still awaiting acknowledgement
@@ -181,8 +206,17 @@ func (s *Store) SettleReceipt(ctx context.Context, commandID string, reason prot
 // them individually would require one round trip per receipt, and the outcome is
 // already known: a Server that never admitted a command can never apply its
 // receipt.
+//
+// Every row this method writes is a rejection, because the caller supplies the
+// reason that proves the receipt can never be applied. The origin column is
+// therefore a literal rather than a parameter: a bulk settlement has no
+// acknowledgement case, and accepting an origin here would let a caller write an
+// acknowledgement with no evidence that the Server stored anything.
 func (s *Store) SettleAllRecordedReceipts(ctx context.Context, reason protocol.ReceiptRejection, nowMS int64) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `INSERT INTO receipt_settlement(command_id, reason, settled_at_ms) SELECT command_id, ?, ? FROM command_journal WHERE phase = ? AND receipt_json IS NOT NULL AND NOT EXISTS (SELECT 1 FROM receipt_settlement WHERE receipt_settlement.command_id = command_journal.command_id)`, string(reason), nowMS, protocol.PhaseReceiptRecorded)
+	if reason == "" {
+		return 0, errors.New("a bulk settlement requires a rejection reason")
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO receipt_settlement(command_id, reason, settled_by, settled_at_ms) SELECT command_id, ?, ?, ? FROM command_journal WHERE phase = ? AND receipt_json IS NOT NULL AND NOT EXISTS (SELECT 1 FROM receipt_settlement WHERE receipt_settlement.command_id = command_journal.command_id)`, string(reason), string(protocol.SettlementOriginRejection), nowMS, protocol.PhaseReceiptRecorded)
 	if err != nil {
 		return 0, err
 	}

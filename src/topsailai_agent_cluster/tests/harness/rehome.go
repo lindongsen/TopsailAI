@@ -570,16 +570,93 @@ func (c *Cluster) SettledReceipts() (map[string]string, error) {
 	defer func() { _ = rows.Close() }()
 	settled := map[string]string{}
 	for rows.Next() {
-		var commandID, reason string
+		var commandID string
+		// reason is NULL for an acknowledgement, because an acknowledgement
+		// carries no rejection reason. Scanning it into a plain string would fail
+		// the whole read with "converting NULL to string is unsupported", so the
+		// absence is mapped to the empty string here and a caller that asserts on
+		// a rejection reason still sees exactly that reason.
+		var reason sql.NullString
 		if err := rows.Scan(&commandID, &reason); err != nil {
 			return nil, fmt.Errorf("scan receipt settlement: %w", err)
 		}
-		settled[commandID] = reason
+		settled[commandID] = reason.String
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate receipt settlement: %w", err)
 	}
 	return settled, nil
+}
+
+// ReceiptSettlement is one persisted settlement decision.
+//
+// The origin and the reason are separate fields because they answer different
+// questions. The origin says which terminal outcome ended the resend obligation,
+// and the reason is only meaningful for a rejection: an acknowledgement carries
+// no rejection reason, so its reason is empty.
+type ReceiptSettlement struct {
+	Origin string
+	Reason string
+}
+
+// Settlements reads every persisted settlement decision with its origin.
+//
+// A scenario that asserts only on the reason cannot tell an acknowledgement from
+// a rejection, because an acknowledgement stores no reason at all. Reading the
+// origin is what makes "the receipt was settled because the Server stored it"
+// distinguishable from "the receipt was settled because the Server refused it".
+func (c *Cluster) Settlements() (map[string]ReceiptSettlement, error) {
+	if c.EndpointDB == "" {
+		return nil, fmt.Errorf("cluster has no Endpoint database path")
+	}
+	db, err := sql.Open("sqlite", c.EndpointDB+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("open endpoint database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	rows, err := db.QueryContext(context.Background(), `SELECT command_id, settled_by, reason FROM receipt_settlement`)
+	if err != nil {
+		return nil, fmt.Errorf("read receipt settlement: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	settlements := map[string]ReceiptSettlement{}
+	for rows.Next() {
+		var commandID, origin string
+		var reason sql.NullString
+		if err := rows.Scan(&commandID, &origin, &reason); err != nil {
+			return nil, fmt.Errorf("scan receipt settlement: %w", err)
+		}
+		settlements[commandID] = ReceiptSettlement{Origin: origin, Reason: reason.String}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate receipt settlement: %w", err)
+	}
+	return settlements, nil
+}
+
+// WaitReceiptSettledOriginE waits until the Endpoint has persisted a settlement
+// for one command and returns its origin and reason.
+//
+// It exists so a scenario can assert which terminal outcome settled the receipt.
+// Asserting only that a row exists would pass for either outcome, and the two
+// outcomes are the whole point: an acknowledgement proves the Server stored the
+// receipt, while a rejection proves it never will.
+func (c *Cluster) WaitReceiptSettledOriginE(commandID string, limit time.Duration) (ReceiptSettlement, error) {
+	deadline := time.Now().Add(limit)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		settlements, err := c.Settlements()
+		if err != nil {
+			lastErr = err
+		} else if settlement, ok := settlements[commandID]; ok {
+			return settlement, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return ReceiptSettlement{}, fmt.Errorf("no settlement recorded for %q within %s: %w", commandID, limit, lastErr)
+	}
+	return ReceiptSettlement{}, fmt.Errorf("no settlement recorded for %q within %s", commandID, limit)
 }
 
 // WaitReceiptSettledE waits until the Endpoint has persisted a settlement for one

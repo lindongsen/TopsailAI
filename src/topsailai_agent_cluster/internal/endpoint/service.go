@@ -347,8 +347,40 @@ func (s *Service) settleRejectedReceipt(ctx context.Context, frame channel.Frame
 		s.loggerWarn("receipt rejection kept pending", "command_id", key, "reason", frame.ReceiptRejection)
 		return
 	}
-	if err := s.storage.SettleReceipt(ctx, key, frame.ReceiptRejection, time.Now().UnixMilli()); err != nil {
+	if err := s.storage.SettleReceipt(ctx, key, protocol.SettlementOriginRejection, frame.ReceiptRejection, time.Now().UnixMilli()); err != nil {
 		s.logError("settle rejected receipt", err)
+		return
+	}
+	s.receiptsMu.Lock()
+	delete(s.pendingReceipts, key)
+	s.receiptsMu.Unlock()
+}
+
+// settleAcknowledgedReceipt records that the Server durably stored a receipt and
+// acknowledged it, so the Endpoint must stop re-sending it.
+//
+// Clearing only the in-memory pending map is not enough. The pending set is
+// rebuilt from the journal on every reconnect, so a receipt that was never
+// settled is re-sent for the lifetime of the Endpoint. The acknowledgement is
+// proof that the Server holds the receipt: PersistReceiptAndAck writes it before
+// it acknowledges, so an acknowledgement cannot arrive for a receipt the Server
+// failed to store.
+//
+// The settlement is written before the in-memory entry is dropped, mirroring the
+// rejection path. If the write fails the receipt stays pending, which is the safe
+// direction: a duplicate resend is idempotent on the Server, while a dropped
+// receipt would lose the only evidence that the command ran.
+func (s *Service) settleAcknowledgedReceipt(ctx context.Context, frame channel.Frame) {
+	key := frame.FrameID
+	if key == "" {
+		key = frame.RequestID
+	}
+	if key == "" {
+		s.loggerWarn("receipt acknowledgement without a command id")
+		return
+	}
+	if err := s.storage.SettleReceipt(ctx, key, protocol.SettlementOriginAcknowledgement, "", time.Now().UnixMilli()); err != nil {
+		s.logError("settle acknowledged receipt", err)
 		return
 	}
 	s.receiptsMu.Lock()
@@ -585,13 +617,7 @@ func (s *Service) channelLoop(ctx context.Context) {
 		case channel.FrameInventoryAck:
 			s.acknowledgeInventory(frame.SnapshotRevision)
 		case channel.FrameReceiptAck:
-			key := frame.FrameID
-			if key == "" {
-				key = frame.RequestID
-			}
-			s.receiptsMu.Lock()
-			delete(s.pendingReceipts, key)
-			s.receiptsMu.Unlock()
+			s.dispatchBusiness(ctx, frame, s.settleAcknowledgedReceipt)
 		case channel.FrameReceiptRejected:
 			s.dispatchBusiness(ctx, frame, s.settleRejectedReceipt)
 		case channel.FrameInventoryRefresh:

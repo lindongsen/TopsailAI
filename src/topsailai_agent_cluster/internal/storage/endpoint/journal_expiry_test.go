@@ -36,7 +36,7 @@ func TestExpireCommandJournalDeletesASettledReceipt(t *testing.T) {
 	ctx := context.Background()
 	store := openJournalStore(t)
 	recordReceipt(t, store, "cmd-old")
-	if err := store.SettleReceipt(ctx, "cmd-old", protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-old", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
 		t.Fatalf("settle cmd-old: %v", err)
 	}
 
@@ -127,7 +127,7 @@ func TestExpireCommandJournalKeepsARowInsideTheWindow(t *testing.T) {
 	ctx := context.Background()
 	store := openJournalStore(t)
 	recordReceipt(t, store, "cmd-recent")
-	if err := store.SettleReceipt(ctx, "cmd-recent", protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-recent", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
 		t.Fatalf("settle cmd-recent: %v", err)
 	}
 
@@ -149,7 +149,7 @@ func TestExpireCommandJournalRejectsANonPositiveCutoff(t *testing.T) {
 	ctx := context.Background()
 	store := openJournalStore(t)
 	recordReceipt(t, store, "cmd-a")
-	if err := store.SettleReceipt(ctx, "cmd-a", protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-a", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
 		t.Fatalf("settle cmd-a: %v", err)
 	}
 
@@ -168,12 +168,12 @@ func TestExpireCommandJournalRemovesOnlyTheExpiredRow(t *testing.T) {
 	ctx := context.Background()
 	store := openJournalStore(t)
 	recordReceipt(t, store, "cmd-old")
-	if err := store.SettleReceipt(ctx, "cmd-old", protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-old", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
 		t.Fatalf("settle cmd-old: %v", err)
 	}
 	recordReceipt(t, store, "cmd-pending")
 	recordReceipt(t, store, "cmd-new")
-	if err := store.SettleReceipt(ctx, "cmd-new", protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
+	if err := store.SettleReceipt(ctx, "cmd-new", protocol.SettlementOriginRejection, protocol.ReceiptRejectedUnknownCommand, 3); err != nil {
 		t.Fatalf("settle cmd-new: %v", err)
 	}
 	// Move cmd-new inside the window so only cmd-old is eligible.
