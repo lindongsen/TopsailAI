@@ -131,6 +131,18 @@ milestone, where A becomes the natural choice.
 
 ## Status
 
-Open, latent. Not fixed. The current single-adapter behaviour is correct, so this is a design
-hardening item rather than a user-visible defect. Requires a human decision on the option before
-implementation.
+Resolved as documented, 2026-11-18. The human chose option C: document only, revisit when a second
+adapter lands. No code was changed, because the current single-adapter behaviour is correct and a
+protocol change for a latent defect is not justified yet.
+
+Verified against the code before closing:
+
+- `internal/tui/model.go:198-199` still returns `stop request sent` when
+  `DeliveryBoundary == DeliverySignalSent && !ExitConfirmed`, before the status switch and without
+  considering the operation.
+- `protocol.ExecutionReceipt` still has no `Operation` field, so `StatusLabel` cannot distinguish
+  operations. This is why the defect cannot be fixed locally.
+
+The finding is recorded in `MEMORY.md` under "StatusLabel hardcodes stop onto a generic delivery
+boundary", which is where the human directed it to be kept. Revisit at the second-adapter milestone,
+where adding `Operation` to the receipt becomes the natural choice.

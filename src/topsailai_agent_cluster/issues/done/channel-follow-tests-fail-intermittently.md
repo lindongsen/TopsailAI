@@ -93,3 +93,30 @@ The reproduction counts above are from one host under concurrent load from other
 in the same workspace, so the absolute failure rate is not a stable number. The comparison that
 matters is the paired one: the working tree and HEAD fail at a similar rate with the same tests,
 which is what establishes that the flakiness is pre-existing.
+
+## Resolution, 2026-11-18
+
+The suspected cause was the second of the two directions listed above: the follow writer could
+outlive the connection it wrote to. It was a production defect, not a test defect.
+
+`70c9fe05` fixed it. `internal/endpoint/follow.go` gained `sendFollowFrame`, which writes a follow
+frame with `context.WithoutCancel(ctx)` plus a bounded `followWriteTimeout` of 10 seconds. The
+previous code wrote with the follow's own context, so cancelling one follow made the write fail, and
+the websocket library closes the whole connection on any error from any method. One cancelled follow
+therefore destroyed the shared link, and every request in the reconnect window was reported as
+`endpoint_offline` on a healthy Endpoint. That is exactly the symptom this issue recorded.
+
+The same commit added a WARN log on the Server's `RequestFollow` send-failure path, which had no log
+at all, so a follow that never started left no trace.
+
+Verification after the fix, on this host:
+
+| Run set | Result |
+|---|---|
+| The four named tests, 5 consecutive runs | 5 pass, 0 fail |
+| The whole `internal/channel` package, 6 consecutive runs | 6 pass, 0 fail |
+
+Before the fix the issue recorded 4 of 5 runs failing at HEAD with the same test set.
+
+No timeout was widened, which was the constraint this issue set. The fix separates two lifetimes
+instead of hiding the race.
