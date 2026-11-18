@@ -348,6 +348,19 @@ function start_node() {
         # The bearer token the API handler validates; without it the server falls
         # back to the built-in development token and every client call returns 401.
         [ -n "${AUTH_TOKEN:-}" ] && args+=(--auth-token "${AUTH_TOKEN}")
+        # The Server owns how it verifies the operator credential, and it reads
+        # that decision from the environment rather than from a flag. node.conf
+        # spells the setting AUTH_MODE, which is exported by the sourcing above
+        # under that name, so without this mapping the binary never sees it and
+        # silently runs its default mode. That failure is fail-closed and
+        # invisible: the configuration looks correct, the file exists, and only
+        # the startup log names the mode actually in force. The mapping is
+        # therefore load-bearing, not cosmetic.
+        [ -n "${AUTH_MODE:-}" ] && export AGENT_CLUSTER_SERVER_AUTH_MODE="${AUTH_MODE}"
+        # The accepted signature window is the same kind of setting: a verifier
+        # that runs a different window than the operator configured rejects
+        # requests for a reason nobody can see.
+        [ -n "${SIGNATURE_WINDOW:-}" ] && export AGENT_CLUSTER_SERVER_SIGNATURE_WINDOW="${SIGNATURE_WINDOW}"
         # Offline Endpoint inventory is retained only for this window. The
         # Server owns expiry because it owns the persisted fleet projection.
         [ -n "${ENDPOINT_EXPIRY:-}" ] && args+=(--endpoint-expiry "${ENDPOINT_EXPIRY}")
@@ -373,6 +386,14 @@ function start_node() {
         # node.conf but never passes it here would accept every SIGHUP and ignore
         # every request, while the controller reported the request was sent.
         [ -n "${REPLACE_REQUEST_FILE:-}" ] && args+=(--replace-request-file "${REPLACE_REQUEST_FILE}")
+        # The Endpoint verifies the endpoint-token, so it owns its own mode and
+        # window. It reads both from the environment, and node.conf spells them
+        # AUTH_MODE and SIGNATURE_WINDOW, so the role-specific names have to be
+        # mapped here. Without the mapping the Endpoint silently runs its default
+        # mode while the configuration says otherwise, which is the same
+        # fail-closed, invisible failure the Server branch documents above.
+        [ -n "${AUTH_MODE:-}" ] && export AGENT_CLUSTER_ENDPOINT_AUTH_MODE="${AUTH_MODE}"
+        [ -n "${SIGNATURE_WINDOW:-}" ] && export AGENT_CLUSTER_ENDPOINT_SIGNATURE_WINDOW="${SIGNATURE_WINDOW}"
         # Adapters are supplied through the environment; no flag exists for them.
         export AGENT_CLUSTER_ENDPOINT_ADAPTERS="${ADAPTERS}"
         # The collection delay is likewise environment-only, so the binary owns
