@@ -499,8 +499,13 @@ document already states for re-homing an Endpoint.
 
 ## Open questions
 
-- [ ] Should the sticky state be per operator or per project directory? Per operator is simpler; per
-      project would let one engineer watch two clusters without the two selections interfering.
+- [x] **Decided 2026-11-18: the sticky state is per operator, not per project directory.** The file
+      stays at `${HOME}/.topsailai/.topsailai_agent_cluster.server-profile`, overridable with
+      `AGENT_CLUSTER_CLI_SERVER_PROFILE_STICKY_FILE`. It reuses the per-user state directory this CLI
+      already uses for its configuration and input history, and it is advisory, so a wrong entry
+      self-corrects: `preferSticky` ignores a name that is no longer configured, and the next
+      successful invocation overwrites the file. Partitioning by project directory would add a state
+      file per project and buy no behaviour difference. Recorded in `MEMORY.md`.
 - [ ] Should a reselection inside an interactive session preserve the selected Endpoint and session, or
       reset the scope to workspace? Preserving it is friendlier, but the resource may not exist on the
       new Server.

@@ -442,3 +442,33 @@ Consequences that MUST hold:
 
 The rule is recorded in `docs/agent-cluster-architecture.md` under
 "`list` reads only the Server's persisted inventory".
+
+## CLI Server failover sticky state is per operator, not per project directory
+
+Directed by the human on 2026-11-18, wording normalized, meaning preserved:
+
+> sticky 文件就保持 per-operator，不用按项目目录分。
+
+The CLI remembers the last Server profile that answered in one file per operator, at
+`${HOME}/.topsailai/.topsailai_agent_cluster.server-profile`, overridable with
+`AGENT_CLUSTER_CLI_SERVER_PROFILE_STICKY_FILE`. It is never partitioned by project
+directory.
+
+Two reasons, and both are load-bearing:
+
+- It reuses the convention this CLI already has. Per-user CLI state lives together under
+  `.topsailai`, beside the configuration file and the input history
+  (`inputHistoryRelativePath` in `src/main/agent-cluster-cli/input_history.go`). A second
+  partitioning scheme would be a second spelling of "where this operator's CLI state
+  lives", and the two would drift.
+- The file is advisory, so a wrong entry self-corrects. `preferSticky` ignores a name that
+  is no longer configured, and the next successful invocation overwrites the file. A
+  misremembered Server therefore costs one probe, not a broken invocation.
+
+Partitioning by project directory would add a state file per project and buy no behaviour
+difference, because the preference is already self-correcting and already reported when it
+is used or ignored.
+
+Consequence that MUST hold: do not add a project-directory dimension to this file. If a
+future requirement genuinely needs two independent selections at once, that is a new
+decision to raise with the human, not an extension of this one.
