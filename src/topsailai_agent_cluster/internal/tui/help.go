@@ -57,7 +57,7 @@ var endpointFieldHelp = []string{
 	"DISPLAY_NAME: the operator-facing name the endpoint reported; a dash means it reported none. It is descriptive only and never a selector.",
 	"CONNECTION_STATE: the endpoint's channel state as the Server last observed it, such as online, degraded, offline, or unknown; a dash means no state was recorded. It describes the link, not the agents on that machine, so an offline endpoint says nothing about whether its sessions are still running.",
 	"OBSERVED_AT: local clock time of the last observation, as HH:MM:SS; a dash means nothing has been observed yet. It is a time of day without a date, so it answers how fresh the row is rather than when in history it happened.",
-	"CAPABILITY_REVISION: the revision of the effective capability set the endpoint advertised; a dash means it advertised none. A changed revision means the endpoint's served operations changed, so a command admitted against an older revision may be refused.",
+	"CAPABILITY_REVISION: the `revision` string the endpoint's Adapter configuration declares, copied through unchanged; a dash means it declared none. It is not derived from the capability set, so a changed capability set does not change it, and no admission path compares it against a command's revision: an operation is served when its name and version are still advertised. Read the capabilities API for the actual served surface.",
 	"EXPIRES_AT: when a degraded endpoint's retained inventory will be deleted, as a local date and time; a dash means the row is not degraded, so no expiry applies. Only a degraded endpoint has an expiry, because only a degraded endpoint has inventory that is already considered stale.",
 }
 
