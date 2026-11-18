@@ -5,6 +5,13 @@
   Purpose: multi-task writing helpers extracted from tools/agent_tool.py.
 '''
 
+# DEPRECATED MODULE: no longer used and not maintained. Kept only for compatibility.
+# Every function here spawns a thread that runs a nested agent with a fresh
+# thread-local agent depth and no runtime input channel, so the sub-agent guard
+# in human_tool cannot fire and ask_decision may block on a terminal read
+# instead of degrading to unavailable. The only registered consumer,
+# plugins/tools/agent_tool.py, sets FLAG_TOOL_ENABLED = False.
+
 import os
 import threading
 

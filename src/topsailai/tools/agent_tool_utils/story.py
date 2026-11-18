@@ -92,6 +92,12 @@ def subprocess_agent_memory_as_story(
         )
     )
 
+# DEPRECATED: no longer used and not maintained. Kept only for compatibility.
+# The spawned thread runs a nested agent with a fresh thread-local agent depth
+# and no runtime input channel, so the sub-agent guard in human_tool cannot fire
+# and ask_decision may block on a terminal read instead of degrading to
+# unavailable. Prefer subprocess_agent_memory_as_story, or call
+# agent_memory_as_story directly when a background thread is not required.
 def async_agent_memory_as_story(
         msg_or_file,
         model_name:str=None,
