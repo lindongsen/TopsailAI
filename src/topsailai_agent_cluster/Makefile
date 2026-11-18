@@ -145,6 +145,7 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
         test-unit-endpoint test-unit-cli test-provider-schema test-conformance \
         test-provider-topsailai test-provider-topsailai-conformance \
         test-bdd test-integration test-packaging test-harness test-live-smoke \
+        test-clean \
         bdd integration \
         deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint deb-provider \
         deb-inspect deb-clean \
@@ -176,6 +177,7 @@ help:
 	@echo "  test-integration  run the integration suite with test hooks"
 	@echo "  test-packaging    run the Debian packaging tests"
 	@echo "  test-harness      run the test-harness self-tests"
+	@echo "  test-clean        remove the test build cache and leftover scenario roots"
 	@echo "  test-live-smoke   run the bounded live smoke: real Server, Endpoint and"
 	@echo "                    Provider CLI, one asserted CLI answer, exact-PID stop"
 	@echo ""
@@ -261,16 +263,20 @@ vet:
 test-unit: test-unit-common test-unit-server test-unit-endpoint test-unit-cli
 
 test-unit-common:
-	go test -count=1 $(COMMON_TEST_PKGS)
+	@mkdir -p "$(TEST_TMP_DIR)"
+	TMPDIR="$(TEST_TMP_DIR)" go test -count=1 $(COMMON_TEST_PKGS)
 
 test-unit-server:
-	go test -count=1 $(SERVER_TEST_PKGS)
+	@mkdir -p "$(TEST_TMP_DIR)"
+	TMPDIR="$(TEST_TMP_DIR)" go test -count=1 $(SERVER_TEST_PKGS)
 
 test-unit-endpoint:
-	go test -count=1 $(ENDPOINT_TEST_PKGS)
+	@mkdir -p "$(TEST_TMP_DIR)"
+	TMPDIR="$(TEST_TMP_DIR)" go test -count=1 $(ENDPOINT_TEST_PKGS)
 
 test-unit-cli:
-	go test -count=1 $(CLI_TEST_PKGS)
+	@mkdir -p "$(TEST_TMP_DIR)"
+	TMPDIR="$(TEST_TMP_DIR)" go test -count=1 $(CLI_TEST_PKGS)
 
 # Provider CLI contract tests validate the strict Go DTO boundary and the
 # language-neutral JSON Schema inventory together. This target stays separate so
@@ -345,14 +351,29 @@ BDD_GROUP_TIMEOUT ?= 20m
 # BDD_BUILD_DIR keeps the shared test binaries across groups. Without it each
 # group would rebuild the Server, the Endpoint and the provider fixture, which
 # would add the same cost to every group instead of paying it once.
-BDD_BUILD_DIR ?= $(abspath .tmp/bdd-build)
+#
+# It defaults to the same path the harness uses on its own, so a direct
+# `go test ./tests/bdd` and `make test-bdd` share one build location instead of
+# creating two. One concept, one directory.
+BDD_BUILD_DIR ?= $(abspath .tmp/test-build)
+
+# TEST_TMP_DIR bounds the scenario roots that t.TempDir() creates.
+#
+# Go removes a t.TempDir() tree when the test function returns, so a killed,
+# timed-out or interrupted run leaves the whole tree behind. Under the system
+# temporary directory that residue is invisible to `du` on the project tree and
+# accumulates until someone notices the filesystem is full. Pointing TMPDIR at a
+# project-local directory keeps the residue where it can be seen and removed by
+# `make test-clean`.
+TEST_TMP_DIR ?= $(abspath .tmp/test-tmp)
 
 test-bdd:
-	@mkdir -p "$(BDD_BUILD_DIR)"; \
+	@mkdir -p "$(BDD_BUILD_DIR)" "$(TEST_TMP_DIR)"; \
 	failed=""; \
 	for group in $(BDD_GROUPS); do \
 		echo "=== BDD group: $$group ==="; \
-		if AGENT_CLUSTER_TEST_BUILD_DIR="$(BDD_BUILD_DIR)" \
+		if TMPDIR="$(TEST_TMP_DIR)" \
+			AGENT_CLUSTER_TEST_BUILD_DIR="$(BDD_BUILD_DIR)" \
 			AGENT_CLUSTER_BDD_GROUP="$$group" \
 			go test ./tests/bdd -count=1 -v -timeout $(BDD_GROUP_TIMEOUT); then \
 			echo "=== BDD group $$group: PASS ==="; \
@@ -370,12 +391,14 @@ test-bdd:
 # The integration suite is cross-component for the same reason, and it needs the
 # testhooks build tag because it exercises fault injection inside the binaries.
 test-integration:
-	go test -tags='integration testhooks' ./tests/integration -count=1
+	@mkdir -p "$(TEST_TMP_DIR)"
+	TMPDIR="$(TEST_TMP_DIR)" go test -tags='integration testhooks' ./tests/integration -count=1
 
 # The packaging tests live in an untagged package so the default suite below
 # discovers them. This target runs them alone while iterating on the packager.
 test-packaging:
-	go test -count=1 ./tests/packaging
+	@mkdir -p "$(TEST_TMP_DIR)"
+	TMPDIR="$(TEST_TMP_DIR)" go test -count=1 ./tests/packaging
 
 # The bounded live smoke starts the real binaries and asserts one real CLI
 # answer. It is bounded by an explicit startup deadline, run deadline and stop
@@ -388,14 +411,28 @@ test-live-smoke:
 # Server, Endpoint and fixture processes, so it is verified on its own instead of
 # being folded into a component group.
 test-harness:
-	go test -count=1 ./tests/harness
+	@mkdir -p "$(TEST_TMP_DIR)"
+	TMPDIR="$(TEST_TMP_DIR)" go test -count=1 ./tests/harness
 
 # The default suite is every untagged test, which is what `go test ./...` already
 # covers: the unit groups, the harness package, the packaging tests and the BDD
 # suite. The tagged integration suite is not included, so `test-all` is the target
 # that verifies everything.
 test:
-	go test -count=1 ./...
+	@mkdir -p "$(TEST_TMP_DIR)"
+	TMPDIR="$(TEST_TMP_DIR)" go test -count=1 ./...
+
+# Removes the test build cache and any scenario roots a killed run left behind.
+#
+# Both paths are guarded against an empty value, because `rm -rf $(TEST_TMP_DIR)`
+# with an empty variable becomes `rm -rf /`. Only the two test directories are
+# removed, so a concurrent build or a running cluster is unaffected.
+test-clean:
+	@[ -n "$(TEST_TMP_DIR)" ] || { echo "TEST_TMP_DIR is empty; refusing to clean" >&2; exit 1; }
+	@[ -n "$(BDD_BUILD_DIR)" ] || { echo "BDD_BUILD_DIR is empty; refusing to clean" >&2; exit 1; }
+	rm -rf $(TEST_TMP_DIR)
+	rm -rf $(BDD_BUILD_DIR)
+	@echo "removed $(TEST_TMP_DIR) and $(BDD_BUILD_DIR)"
 
 # Full verification: every test kind, including the tagged integration suite.
 test-all: test-unit test-provider-schema test-conformance test-bdd test-integration test-packaging test-harness
