@@ -275,3 +275,75 @@ func TestValidateRejectsNonPositiveHeartbeatBounds(t *testing.T) {
 		t.Fatal("Validate accepted a zero unhealthy window")
 	}
 }
+
+func TestEndpointDetailBoundConfiguration(t *testing.T) {
+	// Zero is the documented way to ask for the protocol default, so the default
+	// configuration must carry zero rather than a copied constant. Copying the
+	// constant here would make the default a second source of truth that could
+	// drift from the protocol value the adapter actually resolves.
+	defaults := Defaults("agent-cluster-endpoint")
+	if defaults.DetailMaxBytes != 0 {
+		t.Fatalf("default detail bound = %d, want 0 so the protocol default applies", defaults.DetailMaxBytes)
+	}
+	t.Setenv("AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES", "2097152")
+	cfg, err := Load(nil, "agent-cluster-endpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DetailMaxBytes != 2097152 {
+		t.Fatalf("environment did not configure the detail bound: %d", cfg.DetailMaxBytes)
+	}
+	// A flag must win over the environment, because the flag is the more specific
+	// declaration and the precedence rule is shared with every other setting.
+	cfg, err = Load([]string{"--detail-max-bytes", "1048576"}, "agent-cluster-endpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DetailMaxBytes != 1048576 {
+		t.Fatalf("flag did not override the detail bound: %d", cfg.DetailMaxBytes)
+	}
+}
+
+func TestEndpointDetailBoundRejectsInvalidValues(t *testing.T) {
+	// A negative bound is a configuration mistake rather than a request for the
+	// default, and a bound above the ceiling could never be carried by the
+	// transport. Both are rejected at load time so the operator sees the mistake
+	// at startup instead of as a provider fault on the first read.
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"negative", "-1"},
+		{"above ceiling", "2097153"},
+		{"malformed", "invalid"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES", testCase.value)
+			if _, err := Load(nil, "agent-cluster-endpoint"); err == nil {
+				t.Fatalf("accepted AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES=%q", testCase.value)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsInvalidDetailBound(t *testing.T) {
+	// Validate is the last gate before service initialization, so a caller that
+	// builds a Config directly must be refused for the same values Load refuses.
+	base := Defaults("agent-cluster-endpoint")
+	negative := base
+	negative.DetailMaxBytes = -1
+	if err := negative.Validate(); err == nil {
+		t.Fatal("Validate accepted a negative detail bound")
+	}
+	aboveCeiling := base
+	aboveCeiling.DetailMaxBytes = 2097153
+	if err := aboveCeiling.Validate(); err == nil {
+		t.Fatal("Validate accepted a detail bound above the contract ceiling")
+	}
+	atCeiling := base
+	atCeiling.DetailMaxBytes = 2097152
+	if err := atCeiling.Validate(); err != nil {
+		t.Fatalf("Validate rejected the ceiling itself: %v", err)
+	}
+}

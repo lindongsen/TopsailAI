@@ -118,7 +118,13 @@ type Config struct {
 	// whose clock drifts, and a window that is too short turns that drift into an
 	// authentication failure that looks like a wrong credential.
 	SignatureWindow time.Duration
-	Adapters        []AdapterConfig
+	// DetailMaxBytes bounds one provider detail document. It is Endpoint
+	// configuration rather than a contract constant because a provider's session
+	// record is provider detail: one provider's records may be far larger than
+	// another's, and the operator who installed that provider is the one who knows
+	// the right bound. A zero value means the protocol default applies.
+	DetailMaxBytes int
+	Adapters       []AdapterConfig
 }
 
 // Channel direction values. The direction names which side dials, so a
@@ -302,6 +308,18 @@ func Load(args []string, role string) (Config, error) {
 			}
 			cfg.Adapters = adapters
 		}
+		// The detail bound is read here rather than inside the adapter so the
+		// process boundary owns configuration, exactly as every other setting does.
+		// A malformed value is rejected at startup instead of silently falling back
+		// to the default, because an adapter running with an unintended bound is
+		// indistinguishable from one the operator configured.
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES"); value != "" {
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES: %w", err)
+			}
+			cfg.DetailMaxBytes = parsed
+		}
 	}
 	if value := os.Getenv("AGENT_CLUSTER_DATABASE_PATH"); value != "" {
 		cfg.DatabasePath = value
@@ -381,6 +399,7 @@ func Load(args []string, role string) (Config, error) {
 		flags.DurationVar(&cfg.UnhealthyWindow, "unhealthy-window", cfg.UnhealthyWindow, "how long consecutive unacknowledged heartbeats accumulate before the Server is declared unhealthy")
 		flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 		flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")
+		flags.IntVar(&cfg.DetailMaxBytes, "detail-max-bytes", cfg.DetailMaxBytes, "maximum accepted size of one provider detail document in bytes; zero uses the protocol default")
 	}
 	// The credential mode and window belong to whichever role verifies a
 	// credential, so both roles register them. Registering them once outside the
@@ -507,6 +526,19 @@ func (c Config) Validate() error {
 	// one would make a captured signature replayable for that whole period.
 	if c.SignatureWindow <= 0 || c.SignatureWindow > security.MaxSignatureWindow {
 		return fmt.Errorf("signature window must be positive and at most %s", security.MaxSignatureWindow)
+	}
+	// A negative detail bound is a configuration mistake, not a request to use the
+	// default: zero is the documented way to ask for the default. Accepting a
+	// negative value would make the adapter reject every provider document, which
+	// looks like a provider fault rather than the misconfiguration it is. A bound
+	// above the contract ceiling is refused for the same reason the ceiling exists:
+	// the transport could never carry a document that large, so the setting would
+	// appear to work while every read failed at the transport instead.
+	if c.DetailMaxBytes < 0 {
+		return fmt.Errorf("detail max bytes must not be negative")
+	}
+	if c.DetailMaxBytes > protocol.MaxDetailCeilingBytes {
+		return fmt.Errorf("detail max bytes must be at most %d", protocol.MaxDetailCeilingBytes)
 	}
 	return nil
 }

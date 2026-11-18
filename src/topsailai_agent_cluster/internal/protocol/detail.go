@@ -73,7 +73,13 @@ const DefaultMaxDetailBytes = 1 << 20
 // satisfied: the transport would reject the envelope before the document bound
 // was ever consulted, and the operator would read a transport failure instead of
 // the rejection this contract defines.
-const MaxDetailCeilingBytes = 8 << 20
+//
+// The Endpoint derives its provider stdout budget from this value, so the two
+// cannot drift apart: the budget is six times the ceiling, which is exactly the
+// worst-case expansion of the largest document the contract permits. Raising this
+// ceiling therefore raises the transport budget with it, and lowering it keeps a
+// document that is accepted here inside a budget that can actually carry it.
+const MaxDetailCeilingBytes = 2 << 20
 
 // SessionDetailQuery addresses one session whose provider record is wanted.
 //

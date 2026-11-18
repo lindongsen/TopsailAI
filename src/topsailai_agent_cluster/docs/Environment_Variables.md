@@ -164,6 +164,7 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_SOURCE_CACHE_EXPIRY` | none | `10m` | Positive duration retaining each Adapter's last successful source snapshot; older source cache is deleted before collection, while resource mappings and command evidence are preserved; launcher value is `SOURCE_CACHE_EXPIRY` |
 | `AGENT_CLUSTER_ENDPOINT_AUTH_MODE` | `--auth-mode` | `hmac` | Authentication scheme the Endpoint accepts for caller credentials: `hmac` or `bearer`; one mode is in force at a time and a failed HMAC never falls back to bearer |
 | `AGENT_CLUSTER_ENDPOINT_SIGNATURE_WINDOW` | `--signature-window` | `60s` | Positive duration a signed caller request's timestamp may differ from the Endpoint clock; also the nonce retention bound |
+| `AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES` | `--detail-max-bytes` | `0` | Maximum accepted size in bytes of one provider detail document; `0` uses the protocol default of 1 MiB, and the value may not exceed the 2 MiB contract ceiling. A document above the bound is refused with `detail_response_too_large` rather than truncated |
 
 ### `AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT` and `AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW`
 
