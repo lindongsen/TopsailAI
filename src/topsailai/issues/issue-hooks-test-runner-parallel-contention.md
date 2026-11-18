@@ -245,3 +245,90 @@ run on a loaded host describe the same code.
 
 This host has 8 CPUs. The runner's `DEFAULT_WORKERS` is 4 and it has no CPU-count cap, so
 `--workers 20` oversubscribes by 2.5x before any test-level load is added.
+
+## Re-measured on 2026-11-18: the premise was partly wrong
+
+The earlier sections attributed every failure to scheduler/deadline contention. A cleaner
+measurement separates three distinct causes that were previously counted as one.
+
+### Cause A: two files fail with no load at all, and are not contention
+
+`test_hook_point_plan_capture.py` and `test_simplified_configured_runtime.py` fail in
+single-file isolation on an idle host:
+
+```text
+test_hook_point_plan_capture.py        45 failed, 50 passed in 0.75s
+test_simplified_configured_runtime.py  24 failed, 70 passed in 1.45s
+```
+
+Root cause traced to `hooks/artifact_validation.py:674` `_validate_directory_status`, which
+rejects a source-root ancestry directory whose mode has any of `0o022` set. The tests build
+their source root under pytest's `tmp_path`, whose ancestry includes `/tmp`, and this host's
+`/tmp` is `0777`. The rejection surfaces as `CandidateBuildError: trust_rejected` from
+`hooks/hook_point_plan_capture.py:154`, which `register_configured` maps to
+`artifact_rejected`.
+
+Proof it is the `/tmp` mode and nothing else:
+
+```text
+TMPDIR=<0700 dir>  -> 189 passed in 34.90s   (both files)
+no TMPDIR          ->  69 failed, 120 passed in 6.25s
+```
+
+This is a **test-environment defect, not a product defect and not contention**. The product
+correctly refuses a world-writable ancestry directory. The tests assume a private temp root
+that this host does not provide.
+
+### Cause B: the runner's own basetemp already avoids cause A
+
+`tests/run_tests.py` creates its basetemp under `.tmp/unit-runner` and calls
+`chmod(0o755)` on the invocation root, so `/tmp` is not in the ancestry of a runner child.
+Both cause-A files therefore **pass under the runner**:
+
+```text
+--workers 20: test_simplified_configured_runtime.py PASS (29.359s)
+              test_hook_point_plan_capture.py        PASS (70.200s)
+```
+
+So the issue's original "9 failed files under the runner" cannot be explained by cause A.
+
+### Cause C: genuine contention affects exactly three files
+
+Under the runner at `--workers 20`, three files fail with 3 failing cases out of 432 records:
+
+```text
+test_module_stop_wiring.py   FAIL  test_expired_absolute_deadline_before_preparation
+                                   assert 'timeout' == 'success'
+test_process_backend.py      FAIL  test_worker_environment_redirects_writable_runtime_state
+                                   assert 'timeout' == 'invalid_output'
+test_process_cleanup.py      FAIL  test_worker_exact_reader_handles_controlled_segments_and_early_eof
+                                   assert False ... DeadlineBackend.validated
+CASES: passed 429, records 432, failures 3
+```
+
+The same three files pass at the runner's own default concurrency and sequentially:
+
+```text
+--workers 4   -> 3/3 PASS, 72 records, 0 failures, 16.329s
+--sequential  -> 3/3 PASS, 72 records, 0 failures, 27.660s
+--workers 20  -> 3/3 FAIL
+```
+
+### What this changes about the three proposed repairs
+
+- **Runner-side CPU cap** is now the only repair the evidence supports, and it is nearly
+  already in place: `DEFAULT_WORKERS = 4` on an 8-CPU host already avoids the failure. The
+  defect is that `--workers 20` is accepted without a CPU-count ceiling, so an operator can
+  oversubscribe by 2.5x. Capping effective workers at `os.cpu_count()` would make the
+  documented command safe without touching any assertion or any runtime deadline.
+- **Test-side budget widening** is no longer justified by this evidence. Only 3 cases fail,
+  and they fail because the host is oversubscribed, not because their budgets are wrong.
+- **Production-side deadline change** is not justified at all. No product behavior is
+  implicated; the product returns `timeout` because the child genuinely did not finish.
+
+### Cause A needs its own disposition
+
+Cause A is a separate defect from this issue and should not be fixed by widening anything.
+Either the two test files must create a private temp root instead of relying on `tmp_path`
+ancestry, or the suite must document that it requires a non-world-writable `TMPDIR`. That
+choice is not authorized here and is recorded rather than implemented.
