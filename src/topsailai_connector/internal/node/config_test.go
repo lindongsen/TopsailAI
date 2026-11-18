@@ -139,7 +139,8 @@ func TestLoadConfigRejectsConfigDirThatIsAFile(t *testing.T) {
 }
 
 // TestLoadConfigCreatesConfigDir checks that a config directory that does not
-// exist is created with owner-only permissions, because it holds the node token.
+// exist is created with owner-only permissions, because it holds the node
+// credential file and the identity file.
 func TestLoadConfigCreatesConfigDir(t *testing.T) {
 	base := t.TempDir()
 	configDir := filepath.Join(base, "created")
@@ -269,7 +270,7 @@ func TestResolveConfigDirCreatesTheDirectory(t *testing.T) {
 
 // TestResolveConfigDirRejectsBadValues checks that the narrow resolver keeps the
 // config directory checks, because narrowing the loader must not drop a check
-// that protects the directory holding the node token.
+// that protects the directory holding the node credential file.
 func TestResolveConfigDirRejectsBadValues(t *testing.T) {
 	filePath := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(filePath, []byte("x"), 0o600); err != nil {

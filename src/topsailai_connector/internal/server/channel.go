@@ -63,10 +63,10 @@ var ErrChannelBusy = errors.New("channel has too many requests in flight")
 // permission table: it moves frames and nothing else, because the Node is the only
 // authority for permissions.
 //
-// It holds no node token. The token arrives as a field of the request being
-// forwarded, is written into one frame and is released with that frame. There is
-// deliberately no field here that could hold it, so a later change cannot start
-// storing it by accident.
+// It holds no node secret. The caller's node proof arrives as a field of the
+// request being forwarded, is written into one frame and is released with that
+// frame. There is deliberately no field here that could hold a credential or a
+// secret, so a later change cannot start storing one by accident.
 type channel struct {
 	nodeID string
 	conn   *websocket.Conn
@@ -147,9 +147,9 @@ func (c *channel) writeFrame(frame protocol.Frame) error {
 // needs one that cannot collide with another caller's. Keeping them separate means
 // a caller cannot choose a wire id that matches a request already in flight.
 //
-// The node token is written into the frame and then released with it. It is never
-// copied into a field of this struct, so a retry re-reads it from the caller
-// instead of replaying a stored copy.
+// The caller's node proof is written into the frame and then released with it. It
+// is never copied into a field of this struct, so a retry re-reads it from the
+// caller instead of replaying a stored copy.
 func (c *channel) Forward(ctx context.Context, nodeID string, request protocol.Request) (protocol.Response, error) {
 	if nodeID != c.nodeID {
 		return protocol.Response{}, ErrNodeOffline

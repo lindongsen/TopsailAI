@@ -11,12 +11,15 @@ import (
 
 // This file injects real failures into SaveIdentity and asserts the security
 // promise its doc comment makes: "The temporary file is removed on every failure
-// path, so a failed save does not leave a stray file holding a credential."
+// path, so a failed save does not leave a stray file behind."
 //
-// A stray temporary file is not a cosmetic problem. It holds a node token that
-// never expires, in a directory the Node owns, under a name the operator does not
-// know to look for. So every failure case here asserts two things: the error names
-// the path and the action, and no temporary file survives.
+// A stray temporary file is not a cosmetic problem, but the reason changed when
+// the identity file stopped holding a secret. The identity file now holds only the
+// node id, which is an address rather than a credential, so a stray file is not a
+// leaked secret. It is still a stale address in a directory the Node owns, under a
+// name the operator does not know to look for, and a reader who found one could not
+// tell whether it was the address in force. So every failure case here asserts two
+// things: the error names the path and the action, and no temporary file survives.
 //
 // What this file adds is assertions, not coverage. Both reachable failure
 // branches were already exercised by store_extra_test.go, which fails the rename
@@ -32,7 +35,7 @@ import (
 //     The kernel refuses with ENOTDIR, so no temporary file is ever created.
 //   - Rename failure: reached by making the rename target a non-empty directory.
 //     The kernel refuses with EEXIST, and this is the case that matters most,
-//     because the temporary file already exists and holds the credential when the
+//     because the temporary file already exists and holds the new address when the
 //     failure happens.
 //   - Chmod, WriteString, Sync and Close failures: NOT reached. os.CreateTemp
 //     always returns a fresh file opened for writing, so none of those four can
@@ -60,11 +63,12 @@ func temporaryIdentityFiles(t *testing.T, directory string) []string {
 	return matches
 }
 
-// assertNoTemporaryIdentityFile fails when a failed save left a credential behind.
+// assertNoTemporaryIdentityFile fails when a failed save left a temporary file
+// behind.
 func assertNoTemporaryIdentityFile(t *testing.T, directory string) {
 	t.Helper()
 	if stray := temporaryIdentityFiles(t, directory); len(stray) != 0 {
-		t.Fatalf("a failed save left %v behind, want no temporary file holding a credential", stray)
+		t.Fatalf("a failed save left %v behind, want no temporary file holding an address", stray)
 	}
 }
 
@@ -121,7 +125,7 @@ func TestSaveIdentityReportsACreateTempFailure(t *testing.T) {
 }
 
 // TestSaveIdentityRemovesTheTemporaryFileWhenRenameFails is the central test of
-// this file. The temporary file exists and holds the credential when the rename
+// this file. The temporary file exists and holds the new address when the rename
 // fails, so this is the case where the cleanup promise is actually under load.
 func TestSaveIdentityRemovesTheTemporaryFileWhenRenameFails(t *testing.T) {
 	directory := t.TempDir()
@@ -221,13 +225,13 @@ func TestSaveIdentityLeavesNoTemporaryFileOnEveryFailure(t *testing.T) {
 
 // TestSaveIdentityLeavesNoHalfWrittenFileWhenTheSaveFails checks that a failed
 // save leaves nothing at the identity path that parses as an identity. A file that
-// parses as neither the old pair nor the new one would leave the operator unable to
-// tell which credential the Node holds.
+// parses as neither the old node id nor the new one would leave the operator unable
+// to tell which address the Node answers to.
 //
 // The previous file is removed before the failure is injected, because a rename
 // over an existing regular file succeeds on POSIX and would not fail at all. So
-// this test does not claim the old pair survives; it claims the failure does not
-// invent a third state.
+// this test does not claim the old node id survives; it claims the failure does
+// not invent a third state.
 func TestSaveIdentityLeavesNoHalfWrittenFileWhenTheSaveFails(t *testing.T) {
 	directory := t.TempDir()
 	identityPath := IdentityPath(directory)
@@ -238,9 +242,9 @@ func TestSaveIdentityLeavesNoHalfWrittenFileWhenTheSaveFails(t *testing.T) {
 	}
 
 	// Make the rename fail by replacing the identity file with a non-empty
-	// directory. The previous pair is gone from disk at this point, so this test
+	// directory. The previous node id is gone from disk at this point, so this test
 	// checks the narrower promise that the failure does not leave a half-written
-	// file that parses as neither pair.
+	// file that parses as neither the old address nor the new one.
 	if err := os.Remove(identityPath); err != nil {
 		t.Fatalf("remove the identity file to make room for the occupying directory: %v", err)
 	}
@@ -259,8 +263,8 @@ func TestSaveIdentityLeavesNoHalfWrittenFileWhenTheSaveFails(t *testing.T) {
 	assertNoTemporaryIdentityFile(t, directory)
 
 	// Nothing at the identity path may parse as an identity, because a file that
-	// parses as neither the old pair nor the new one leaves the operator unable to
-	// tell which credential the Node holds.
+	// parses as neither the old node id nor the new one leaves the operator unable
+	// to tell which address the Node answers to.
 	if _, loadErr := LoadIdentity(identityPath); loadErr == nil {
 		t.Fatal("LoadIdentity() = nil error after a failed save, want the path to hold no identity")
 	}
