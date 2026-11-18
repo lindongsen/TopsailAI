@@ -88,24 +88,90 @@ func resolveServerProfile(name string, profiles, tokens map[string]string) (stri
 	return url, tokens[name], nil
 }
 
-// resolveServerTarget decides which Server URL and token one invocation uses.
+// ServerTarget is one resolved Server: the profile name that selected it, and the
+// URL and credential that profile supplies.
 //
-// A profile supplies both values together. An explicit --server-url or --token
-// alongside a profile is refused rather than merged, because merging is how a
-// credential reaches the wrong Server: a stale --server-url left in a shell alias
-// would silently redirect the profile's token to a different machine, and nothing
-// in the output would show that the pair had been split. The refusal names both
-// ways to proceed so the operator can pick one deliberately.
+// The profile name travels with the pair because it is what the operator
+// configured and what the CLI reports back. A bare URL would be a second spelling
+// of the same Server, and the operator would have to translate between the two to
+// understand which configured entry was used.
+type ServerTarget struct {
+	Profile string
+	URL     string
+	Token   string
+}
+
+// parseServerProfileGroup splits an ordered selection into profile names.
+//
+// Position expresses preference, so the order is preserved exactly as written.
+// A single name is a group of one, which is what keeps an existing deployment
+// unchanged: one candidate means nothing to choose between.
+//
+// An empty member is rejected rather than skipped. A skipped member would leave
+// the operator believing a fallback exists while the CLI silently walked a
+// shorter list, and the resulting failure would name fewer Servers than the
+// operator configured.
+//
+// A repeated name is rejected for the same reason: the operator believes two
+// candidates exist, but probing one Server twice cannot reach a second one, so
+// the duplicate only hides that the list is shorter than it looks.
+func parseServerProfileGroup(selection string) ([]string, error) {
+	trimmed := strings.TrimSpace(selection)
+	if trimmed == "" {
+		return nil, nil
+	}
+	names := make([]string, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	for _, entry := range strings.Split(trimmed, ",") {
+		name := strings.TrimSpace(entry)
+		if name == "" {
+			return nil, fmt.Errorf("%s contains an empty profile name in %q", serverProfileEnv, selection)
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return nil, fmt.Errorf("%s names profile %q more than once in %q", serverProfileEnv, name, selection)
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// resolveServerTargets decides which Servers one invocation may use, in order.
+//
+// A profile supplies its URL and token together. An explicit --server-url or
+// --token alongside a profile is refused rather than merged, because merging is
+// how a credential reaches the wrong Server: a stale --server-url left in a shell
+// alias would silently redirect the profile's token to a different machine, and
+// nothing in the output would show that the pair had been split. The refusal
+// names both ways to proceed so the operator can pick one deliberately.
 //
 // Environment defaults for the URL and token are not a conflict. They are the
 // fallback for an invocation that selects no profile, and a profile replaces them
-// as a pair rather than overriding one of them.
-func resolveServerTarget(profileName string, profiles, tokens map[string]string, explicitURL, explicitToken bool, flagURL, flagToken string) (string, string, error) {
-	if profileName == "" {
-		return flagURL, flagToken, nil
+// as a pair rather than overriding one of them. That fallback is returned as a
+// single unnamed target, so an invocation that selects no profile has exactly one
+// candidate and therefore nothing to fail over to.
+//
+// Every member is resolved before any request is sent, so a typo in the last name
+// fails the invocation instead of being discovered only after the earlier
+// candidates were tried and refused.
+func resolveServerTargets(selection string, profiles, tokens map[string]string, explicitURL, explicitToken bool, flagURL, flagToken string) ([]ServerTarget, error) {
+	names, err := parseServerProfileGroup(selection)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		return []ServerTarget{{URL: flagURL, Token: flagToken}}, nil
 	}
 	if explicitURL || explicitToken {
-		return "", "", fmt.Errorf("--server-profile %q cannot be combined with --server-url or --token; state the profile alone, or state --server-url and --token without a profile", profileName)
+		return nil, fmt.Errorf("--server-profile %q cannot be combined with --server-url or --token; state the profile alone, or state --server-url and --token without a profile", selection)
 	}
-	return resolveServerProfile(profileName, profiles, tokens)
+	targets := make([]ServerTarget, 0, len(names))
+	for _, name := range names {
+		url, token, err := resolveServerProfile(name, profiles, tokens)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, ServerTarget{Profile: name, URL: url, Token: token})
+	}
+	return targets, nil
 }

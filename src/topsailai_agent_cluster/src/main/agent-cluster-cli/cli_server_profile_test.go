@@ -154,13 +154,13 @@ func TestResolveServerProfileRejectsSelectionWithNoProfiles(t *testing.T) {
 	}
 }
 
-// TestResolveServerTargetRejectsProfileWithExplicitURL verifies a profile cannot be
+// TestResolveServerTargetsRejectsProfileWithExplicitURL verifies a profile cannot be
 // combined with an explicit --server-url. Merging them is how a credential reaches
 // the wrong Server: a stale flag in a shell alias would redirect the profile's
 // token to a different machine and nothing in the output would show the split.
-func TestResolveServerTargetRejectsProfileWithExplicitURL(t *testing.T) {
+func TestResolveServerTargetsRejectsProfileWithExplicitURL(t *testing.T) {
 	profiles := map[string]string{"primary": "http://a"}
-	_, _, err := resolveServerTarget("primary", profiles, nil, true, false, "http://stale", "")
+	_, err := resolveServerTargets("primary", profiles, nil, true, false, "http://stale", "")
 	if err == nil {
 		t.Fatal("resolve succeeded, want an error")
 	}
@@ -169,27 +169,142 @@ func TestResolveServerTargetRejectsProfileWithExplicitURL(t *testing.T) {
 	}
 }
 
-// TestResolveServerTargetRejectsProfileWithExplicitToken verifies the same refusal
+// TestResolveServerTargetsRejectsProfileWithExplicitToken verifies the same refusal
 // for an explicit --token, because a token is the half that must never be split
 // from its address.
-func TestResolveServerTargetRejectsProfileWithExplicitToken(t *testing.T) {
+func TestResolveServerTargetsRejectsProfileWithExplicitToken(t *testing.T) {
 	profiles := map[string]string{"primary": "http://a"}
-	_, _, err := resolveServerTarget("primary", profiles, nil, false, true, "", "stale-token")
+	_, err := resolveServerTargets("primary", profiles, nil, false, true, "", "stale-token")
 	if err == nil {
 		t.Fatal("resolve succeeded, want an error")
 	}
 }
 
-// TestResolveServerTargetKeepsEnvironmentDefaults verifies an invocation that
+// TestResolveServerTargetsKeepsEnvironmentDefaults verifies an invocation that
 // selects no profile keeps the URL and token it was given, so the environment
 // fallback still works for every existing deployment.
-func TestResolveServerTargetKeepsEnvironmentDefaults(t *testing.T) {
-	url, token, err := resolveServerTarget("", nil, nil, false, false, "http://default", "default-token")
+//
+// The fallback is one unnamed candidate, which is what makes failover impossible
+// for an invocation that selected no profile: there is nothing to fall back to,
+// and inventing a second Server would send a credential the operator never
+// configured.
+func TestResolveServerTargetsKeepsEnvironmentDefaults(t *testing.T) {
+	targets, err := resolveServerTargets("", nil, nil, false, false, "http://default", "default-token")
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	if url != "http://default" || token != "default-token" {
-		t.Fatalf("resolved (%q, %q), want the supplied defaults", url, token)
+	if len(targets) != 1 {
+		t.Fatalf("resolved %d targets, want 1", len(targets))
+	}
+	if targets[0].URL != "http://default" || targets[0].Token != "default-token" {
+		t.Fatalf("resolved (%q, %q), want the supplied defaults", targets[0].URL, targets[0].Token)
+	}
+	if targets[0].Profile != "" {
+		t.Fatalf("resolved profile %q, want an unnamed target", targets[0].Profile)
+	}
+}
+
+// TestParseServerProfileGroupPreservesOrder verifies position expresses
+// preference, because the walk uses the order the operator wrote.
+func TestParseServerProfileGroupPreservesOrder(t *testing.T) {
+	names, err := parseServerProfileGroup(" primary , secondary , tertiary ")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	want := []string{"primary", "secondary", "tertiary"}
+	if len(names) != len(want) {
+		t.Fatalf("parsed %v, want %v", names, want)
+	}
+	for index, name := range want {
+		if names[index] != name {
+			t.Fatalf("parsed %v, want %v", names, want)
+		}
+	}
+}
+
+// TestParseServerProfileGroupSingleNameIsOneCandidate verifies a single name is a
+// group of one, which is what keeps an existing deployment unchanged.
+func TestParseServerProfileGroupSingleNameIsOneCandidate(t *testing.T) {
+	names, err := parseServerProfileGroup("primary")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(names) != 1 || names[0] != "primary" {
+		t.Fatalf("parsed %v, want [primary]", names)
+	}
+}
+
+// TestParseServerProfileGroupEmptySelectionYieldsNoCandidates verifies an unset
+// selection is not an error, because a deployment that selects no profile is a
+// valid deployment.
+func TestParseServerProfileGroupEmptySelectionYieldsNoCandidates(t *testing.T) {
+	for _, value := range []string{"", "   "} {
+		names, err := parseServerProfileGroup(value)
+		if err != nil {
+			t.Fatalf("parse %q failed: %v", value, err)
+		}
+		if len(names) != 0 {
+			t.Fatalf("parse %q produced %v, want no candidates", value, names)
+		}
+	}
+}
+
+// TestParseServerProfileGroupRejectsEmptyMember verifies an empty member is
+// reported instead of skipped. A skipped member would leave the operator believing
+// a fallback exists while the CLI walked a shorter list.
+func TestParseServerProfileGroupRejectsEmptyMember(t *testing.T) {
+	for _, value := range []string{"primary,,secondary", ",primary", "primary,"} {
+		if _, err := parseServerProfileGroup(value); err == nil {
+			t.Fatalf("parse %q succeeded, want an error", value)
+		}
+	}
+}
+
+// TestParseServerProfileGroupRejectsDuplicateName verifies a repeated name is
+// reported, because probing one Server twice cannot reach a second one and the
+// duplicate only hides that the list is shorter than it looks.
+func TestParseServerProfileGroupRejectsDuplicateName(t *testing.T) {
+	_, err := parseServerProfileGroup("primary,secondary,primary")
+	if err == nil {
+		t.Fatal("parse succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "primary") {
+		t.Fatalf("error %q does not name the repeated profile", err)
+	}
+}
+
+// TestResolveServerTargetsResolvesEveryMemberInOrder verifies each member keeps its
+// own URL and token, so a group can never pair one Server's address with another
+// Server's credential.
+func TestResolveServerTargetsResolvesEveryMemberInOrder(t *testing.T) {
+	profiles := map[string]string{"primary": "http://a", "secondary": "http://b"}
+	tokens := map[string]string{"primary": "token-a", "secondary": "token-b"}
+	targets, err := resolveServerTargets("secondary,primary", profiles, tokens, false, false, "", "")
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("resolved %d targets, want 2", len(targets))
+	}
+	if targets[0].Profile != "secondary" || targets[0].URL != "http://b" || targets[0].Token != "token-b" {
+		t.Fatalf("first target = %+v, want secondary/http://b/token-b", targets[0])
+	}
+	if targets[1].Profile != "primary" || targets[1].URL != "http://a" || targets[1].Token != "token-a" {
+		t.Fatalf("second target = %+v, want primary/http://a/token-a", targets[1])
+	}
+}
+
+// TestResolveServerTargetsRejectsUnknownMemberBeforeAnyRequest verifies a typo in
+// any member fails the whole resolution, so the operator learns the name is wrong
+// instead of watching the CLI try the earlier candidates first.
+func TestResolveServerTargetsRejectsUnknownMemberBeforeAnyRequest(t *testing.T) {
+	profiles := map[string]string{"primary": "http://a"}
+	_, err := resolveServerTargets("primary,missing", profiles, nil, false, false, "", "")
+	if err == nil {
+		t.Fatal("resolve succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("error %q does not name the undefined profile", err)
 	}
 }
 

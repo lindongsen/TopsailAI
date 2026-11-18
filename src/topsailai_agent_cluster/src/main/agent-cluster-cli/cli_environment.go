@@ -22,6 +22,10 @@ const (
 	cliServerProfilesEnv      = "AGENT_CLUSTER_CLI_SERVER_PROFILES"
 	cliServerProfileTokensEnv = "AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS"
 	cliServerProfileEnv       = "AGENT_CLUSTER_CLI_SERVER_PROFILE"
+	// cliServerProfileStickyFileEnv overrides where the last Server that answered
+	// is remembered. It is a path, not a name, because the file is per-user state
+	// and an operator may keep it beside other state they already manage.
+	cliServerProfileStickyFileEnv = "AGENT_CLUSTER_CLI_SERVER_PROFILE_STICKY_FILE"
 )
 
 // cliEnvironmentValue returns the component-owned value, or an empty string

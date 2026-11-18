@@ -90,7 +90,12 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// settings. The name may also come from AGENT_CLUSTER_CLI_SERVER_PROFILE, which
 	// is what lets a script or a shell alias select a Server without repeating the
 	// flag on every invocation.
-	serverProfile := flags.String("server-profile", cliEnvironmentValue(os.Getenv, serverProfileEnv), "named Server URL and token pair; see AGENT_CLUSTER_CLI_SERVER_PROFILES")
+	//
+	// The value may name an ordered group, such as "primary,secondary". Position
+	// expresses preference, so the CLI uses the first Server it can reach and
+	// reports which one that was. A single name is a group of one and keeps the
+	// previous behaviour exactly, including its failure mode.
+	serverProfile := flags.String("server-profile", cliEnvironmentValue(os.Getenv, serverProfileEnv), "named Server URL and token pair, or an ordered group such as primary,secondary; see AGENT_CLUSTER_CLI_SERVER_PROFILES")
 	// --endpoint-token is the token the target Endpoint accepts. It is a separate
 	// credential from --token because the two answer different questions: the
 	// Server token decides whether this CLI may talk to the cluster, while the
@@ -203,11 +208,23 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// than merged, because merging is how a credential reaches the wrong Server.
 	// The environment defaults for those two settings are not a conflict: they are
 	// the fallback for an invocation that selects no profile.
-	resolvedURL, resolvedToken, err := resolveServerTarget(*serverProfile, serverProfiles, serverProfileTokens, flagSupplied(flags, "server-url"), flagSupplied(flags, "token"), *serverURL, *token)
+	//
+	// Every candidate is resolved here, before any request is sent, so a typo in
+	// the last name of a group fails the invocation instead of being discovered
+	// only after the earlier candidates were tried and refused.
+	serverTargets, err := resolveServerTargets(*serverProfile, serverProfiles, serverProfileTokens, flagSupplied(flags, "server-url"), flagSupplied(flags, "token"), *serverURL, *token)
 	if err != nil {
 		return err
 	}
-	api := client.NewAPIClient(resolvedURL, resolvedToken)
+	// The Server is chosen once, before any request, and the whole invocation uses
+	// that one choice. Re-selecting mid-invocation would let one command read from
+	// one Server and write to another, and the two are independent worlds with
+	// independent command history.
+	serverTarget, err := selectServerTarget(context.Background(), serverTargets, stickyProfilePathFromProcess(), client.Selector{}, errors)
+	if err != nil {
+		return err
+	}
+	api := client.NewAPIClient(serverTarget.URL, serverTarget.Token)
 	api.EndpointTokens = endpointTokens
 	// The mode is resolved before the first request so a malformed value is
 	// reported once, as a configuration error, instead of surfacing as an

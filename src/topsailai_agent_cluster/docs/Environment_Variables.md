@@ -411,7 +411,8 @@ CLI configuration files override their built-in defaults.
 | `AGENT_CLUSTER_CLI_AUTH_MODE` | `--auth-mode` | `hmac` | Authentication scheme the CLI signs with; must match the Server's mode, because a mismatch is reported as an authentication failure rather than retried in the other scheme |
 | `AGENT_CLUSTER_CLI_SERVER_PROFILES` | none | empty | Comma-separated `name=url` map defining named Server profiles |
 | `AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS` | none | empty | Comma-separated `name=token` map giving each profile its bearer token |
-| `AGENT_CLUSTER_CLI_SERVER_PROFILE` | `--server-profile` | empty | Profile name to select when no flag is given |
+| `AGENT_CLUSTER_CLI_SERVER_PROFILE` | `--server-profile` | empty | Profile name, or a comma-separated ordered group of names, to select when no flag is given |
+| `AGENT_CLUSTER_CLI_SERVER_PROFILE_STICKY_FILE` | none | `${HOME}/.topsailai/.topsailai_agent_cluster.server-profile` | File that remembers the last Server profile that answered |
 | `AGENT_CLUSTER_CLI_ENDPOINT_TOKENS` | `--endpoint-token` for one selected Endpoint | empty | Comma-separated `endpoint_id=token` map used for Endpoint authorization |
 | `AGENT_CLUSTER_CLI_HISTORY_FILE` | none | `${HOME}/.topsailai/.topsailai_agent_cluster.history.jsonl` | Persistent JSONL file for accepted interactive input |
 | `AGENT_CLUSTER_CLI_HISTORY_MAX_ENTRIES` | none | `100` | Maximum trailing history records read at startup and maximum commands retained for Up/Down recall |
@@ -448,6 +449,67 @@ alternative is a later "unknown profile" failure that describes the symptom whil
 configured token sits unused. A profile with no token is valid and yields an empty
 token, which means the CLI omits the `Authorization` header rather than inventing a
 default.
+
+### CLI Server failover
+
+`AGENT_CLUSTER_CLI_SERVER_PROFILE` accepts a comma-separated ordered group. Position
+expresses preference, so `primary,secondary` means "use primary, and use secondary only
+when primary cannot serve the request".
+
+```shell
+AGENT_CLUSTER_CLI_SERVER_PROFILES='primary=http://127.0.0.1:8080,secondary=https://other.example.test'
+AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS='primary=token-a,secondary=token-b'
+AGENT_CLUSTER_CLI_SERVER_PROFILE='primary,secondary'
+```
+
+A single name is a group of one and behaves exactly as before: no probe, no sticky
+state, no new failure mode. An invocation that selects no profile has one unnamed
+Server and therefore nothing to fail over to.
+
+Reachability is decided by `GET /readyz` with no credential attached. The probe is
+credential-free on purpose: HMAC is the default mode, so probing with a credential
+would sign a request with one Server's key and present it to a Server that has not
+been selected. The readiness route bypasses authentication, so no Server change is
+needed.
+
+Only unreachability causes a switch:
+
+| Answer | Action |
+|---|---|
+| Transport failure, probe timeout, or `503` from the readiness route | Try the next candidate |
+| `401` or `403` | Stop and report; fix the credential instead of falling back |
+| Any other non-2xx | Stop and report; the Server is reachable and answered |
+| `2xx` | Use this candidate |
+
+A credential refusal stops the walk because falling back would present a second
+credential to a Server that already refused the first, and the operator would never
+learn that the credential is wrong. Any other answer stops the walk because replacing
+a real answer with a second, equally real answer hides what the first Server said.
+
+The last Server that answered is remembered in
+`AGENT_CLUSTER_CLI_SERVER_PROFILE_STICKY_FILE` and tried first on the next invocation.
+This is what keeps the CLI in the same world as the fleet: an Endpoint only reconnects
+on transport failure, so after a primary recovers the fleet stays on the secondary. A
+CLI that always probed from the head of the group would return to the primary and
+report an empty fleet, which reads as a total outage. The remembered name is recorded
+only after a Server answered, so a failed invocation never moves the preference. A
+remembered name that is no longer configured is ignored and reported. The file holds a
+profile name only, never a URL or a token, and is created with mode `0600`.
+
+Every skipped candidate and the final choice are reported on the diagnostics stream,
+never on stdout, so a `--json` document stays machine-readable. A group of one reports
+nothing, because there is nothing to choose.
+
+The Server is chosen once per invocation, before any request. A sent write is never
+retried: a write that reached a Server may have been admitted and dispatched, and
+re-sending it to a second Server creates a second intent while that Server has no
+channel to the Endpoint. The operator would see a failure for an operation that
+actually ran, and for `agent.stop` or `workspace.clean` that duplicate is destructive.
+
+Failover makes the CLI able to connect; it does not make the cluster continuous. Two
+Servers are independent deployments with independent databases and independent command
+history, so a command admitted on one Server is not visible on the other. Confirm that
+no command is in flight before moving an Endpoint between Servers.
 
 Interactive history stores every accepted nonblank submission as one JSON object per
 line. REPL commands use `kind=command`; confirmation, guided-choice and wizard answers
