@@ -13,18 +13,19 @@
 #     absolute paths, and the packaging machine's paths are not the user's
 #     paths. The bundle therefore carries a human-editable `scopes.txt` and the
 #     start script turns it into `policy.yaml` on the machine that will serve it.
-#   - The identity pair IS generated here, with the Node's own `id` command. If
-#     the Node generated it on the user's machine, the operator would have to ask
-#     the user to read the pair back before the CLI could address the Node, which
+#   - The node id IS generated here, with the Node's own `id` command, and one
+#     node credential is added with the Node's own `credential add` command. If
+#     the Node generated them on the user's machine, the operator would have to ask
+#     the user to read them back before the CLI could address the Node, which
 #     defeats the point of handing over a bundle.
 #   - The tunnel token is written to a 0600 file that the start script exports as
 #     the documented environment variable. The Node still reads the token from
 #     the environment; the file is the operator's provisioning store, the same
 #     shape as a systemd `EnvironmentFile=`.
 #
-# The bundle is a credential bundle. It carries the Node's identity pair and,
-# when the operator supplies one, the tunnel token. That is stated in the bundle
-# README and in the summary this script prints, rather than left to be
+# The bundle is a credential bundle. It carries the node id, one node credential
+# and, when the operator supplies one, the tunnel token. That is stated in the
+# bundle README and in the summary this script prints, rather than left to be
 # discovered.
 #
 # Every input arrives as an environment variable from the Makefile, so the
