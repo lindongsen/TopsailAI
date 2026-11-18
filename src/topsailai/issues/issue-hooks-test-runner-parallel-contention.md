@@ -140,3 +140,108 @@ This host has 8 CPUs. `--workers 20` exceeds the core count, so the runner itsel
 oversubscribes the machine before any test-level load is added. The runner's
 `DEFAULT_WORKERS` is 4 (set by `f996e78c`), and `--workers 20` appears only in issue and
 `.task/` documents, not in `test.md` or any project configuration file.
+
+## Investigation on 2026-11-18: external CPU load, not runner parallelism, is the cause
+
+The earlier sections attribute the failures to runner parallelism and scheduler contention.
+A controlled experiment shows that attribution is wrong: **sequential execution under the same
+external load fails the same way**. Every number below came from a command executed in this
+workspace.
+
+### Method
+
+Eleven affected files, selected by their `tests/unit`-relative paths, run through
+`tests/run_tests.py` in four conditions. External load was 24 CPU-burning processes on an
+8-CPU host, kept alive for 900 s so it outlasted each run; liveness was re-checked after the
+run finished.
+
+### Results
+
+| Condition | Files passed | Cases | Failures |
+|---|---|---|---|
+| Idle, `--workers 20` | 11 / 11 | 432 / 432 | 0 |
+| 24-process load, `--workers 20` | 0 / 11 | 255 / 337 | 82 |
+| 24-process load, `--workers 4` | 1 / 11 | 265 / 337 | 72 |
+| 24-process load, `--sequential` | 1 / 11 | 275 / 337 | 62 |
+
+Reducing workers from 20 to 4 changed failures from 82 to 72, and removing parallelism
+entirely changed them to 62. Parallelism therefore contributes only a small part of the
+effect; the dominant factor is the external load itself.
+
+### Per-file slowdown
+
+| File | Idle | Load | Ratio |
+|---|---|---|---|
+| `test_module_stop_wiring.py` | 5.1 s | 26.9 s | 5.3x |
+| `test_process_cleanup.py` | 6.8 s | 29.5 s | 4.4x |
+| `test_script_runner_process.py` | 7.1 s | 32.7 s | 4.6x |
+| `test_runtime_reload_settings_red.py` | 7.2 s | 39.5 s | 5.5x |
+| `test_runtime_dispatch.py` | 12.8 s | 60.4 s | 4.7x |
+| `test_captured_module_worker.py` | 14.0 s | 62.1 s | 4.4x |
+| `test_summary_prepared_registration.py` | 14.2 s | 78.2 s | 5.5x |
+| `test_simplified_configured_runtime.py` | 14.9 s | 75.0 s | 5.0x |
+| `test_process_backend.py` | 18.4 s | 71.5 s | 3.9x |
+| `test_module_worker_transport.py` | 22.9 s | 117.5 s | 5.1x |
+| `test_hook_point_plan_capture.py` | 44.7 s | 120.1 s | 2.7x |
+| **Total** | **168.1 s** | **713.5 s** | **4.2x** |
+
+A uniform 4–5x wall-clock inflation is the signature of CPU starvation, not of a scheduling
+bug in the runner. The tests assert completion inside millisecond budgets, so a 4x slowdown
+converts expected outcomes into `timeout`.
+
+### Failure signatures
+
+From the JUnit evidence of the loaded run:
+
+```
+30  assert 'timeout' == 'success'
+ 2  assert 'timeout' == 'invalid_output'
+ 2  assert 'timeout' == 'error'
+ 2  assert 'success' == 'timeout'
+```
+
+The last class is the reverse direction: `test_concurrent_protocol_selection` asserts
+`old.status == new.status == 'success'` and observed one side as `timeout`, so the two
+concurrent protocol selections disagreed. That is a genuine timing-sensitivity in the test,
+not merely a budget that is too small.
+
+A second, distinct failure appeared in the same file:
+`test_post_validation_deadline` raised
+`FileNotFoundError: .../basetemp/test_post_validation_deadline0/import.pid`, meaning the
+worker never wrote its import marker before the deadline expired. This is the same root cause
+observed from the other side.
+
+### Correction to the earlier attribution
+
+The 2026-11-17 section concluded that the failures are "scheduler/deadline contention rather
+than a Hooks behavior defect". The first half is right and the second half is right, but the
+implied cause is wrong: the contention is **host CPU starvation**, which the runner neither
+creates nor can avoid. `--workers 20` on an 8-CPU host does oversubscribe, but the experiment
+shows that even one worker at a time fails when 24 external processes compete for the same
+cores.
+
+### Consequence for the two proposed repairs
+
+The earlier section offered a test-side repair (widen budgets) and a production-side repair
+(change the deadline policy). The measurement adds a third, cheaper option that neither
+requires weakening assertions nor changing runtime behavior:
+
+1. **Runner-side**: cap effective workers at the available CPU count, so the runner cannot
+   oversubscribe the host on its own. This addresses only the runner's own contribution,
+   which the experiment shows is the smaller part.
+2. **Test-side**: widen the tight budgets by the measured 4–5x factor. This is mechanical and
+   preserves every assertion's meaning, but it weakens the timing precision each test was
+   written to assert.
+3. **Production-side**: treat the tight deadlines as a design limit that cannot survive a
+   loaded host. This changes runtime behavior and must not weaken U8 close-epoch or canonical
+   candidate-plan provenance behavior.
+
+None of these is authorized, and the choice between them is still the dedicated test-runner
+reliability investigation this issue says has not been authorized. What the measurement does
+establish is that the failures are **environmental**, so a green run on an idle host and a red
+run on a loaded host describe the same code.
+
+### Environment note
+
+This host has 8 CPUs. The runner's `DEFAULT_WORKERS` is 4 and it has no CPU-count cap, so
+`--workers 20` oversubscribes by 2.5x before any test-level load is added.
