@@ -9,9 +9,11 @@ created: 2026-11-11
 
 ## Symptom
 
-The file holding the `node-id.node-token` pair is readable by every account on a
-Windows machine. `docs/Environment_Variables.md` states twice that it is protected
-by "an owner-only ACL on Windows".
+The file holding the Node's credential is readable by every account on a Windows
+machine. When the defect was found the credential and the node id were one string
+in one file, `node-id.node-token`; they are now two files, and the exposure moved
+with the secret to `config/credentials.yaml`. `docs/Environment_Variables.md`
+stated twice that the file is protected by "an owner-only ACL on Windows".
 
 ## Reproduction
 
@@ -33,7 +35,7 @@ os.Chmod(identityPath, 0o644)
 
 ## Impact
 
-The `node-token` is a credential that never expires and that authorizes every
+The node credential is a secret that never expires and that authorizes every
 operation on that Node. On Windows it is readable by every local account, and
 nothing in the Node detects or reports it. The documented mitigation does not
 exist, so an operator reading the document believes a protection is in place that
@@ -97,10 +99,10 @@ done and one is not:
   correction was applied to `docs/cases/TestCase_node-id-pair.md` (TC-PAIR-19 and
   TC-PAIR-20) and `docs/cases/TestCase_policy-and-scope.md` (TC-POL-50), which
   asserted the non-existent ACL.
-- **Not done: the exposure is unchanged.** The identity file still holds a
-  `node-token` that never expires, and on Windows it is still readable by every local
-  account. Correcting the document tells the operator the truth; it does not protect
-  the credential.
+- **Not done: the exposure is unchanged.** The credential file still holds a secret
+  that never expires, and on Windows it is still readable by every local account.
+  Correcting the document tells the operator the truth; it does not protect the
+  credential.
 
 The remaining choice is unchanged and still needs a decision, because it adds the
 project's second third-party dependency:
@@ -147,8 +149,11 @@ Sddl   : O:BAG:S-1-5-21-...-513D:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;
 ```
 
 `BUILTIN\Users Allow ReadAndExecute` is the finding: every local account can read
-the file that holds the `node-token`. The descriptor is the inherited default of
-the parent directory, which is what the code produces when it never sets one.
+the file. The descriptor is the inherited default of the parent directory, which is
+what the code produces when it never sets one. At the commit that was measured the
+file was the identity file, which then held the `node-id.node-token` pair; the
+identity file now holds only the node id, so the same descriptor on
+`config/credentials.yaml` is the exposure that matters today.
 
 The config directory shows the same shape, with `BUILTIN\Users` granted
 `ReadAndExecute`, `AppendData` and `CreateFiles`:

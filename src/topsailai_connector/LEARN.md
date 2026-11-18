@@ -25,10 +25,11 @@ AI reflection archive, not here.
   not the user's paths, so the bundle ships an editable `scopes.txt` and its start
   script writes `policy.yaml` on the machine that serves the files. Baking the
   paths in produces a bundle that fails on the machine it was built for.
-- The identity pair is generated at packaging time by running the Node's own `id`
-  command, not by a second implementation in the packaging script. A second
-  implementation is a second definition of the pair format, and the two will
-  eventually disagree about what a valid pair is.
+- The node id and the node credential are generated at packaging time by running
+  the Node's own `id` and `credential add` commands, not by a second
+  implementation in the packaging script. A second implementation is a second
+  definition of the credential format, and the two will eventually disagree about
+  what a valid credential is.
 - `make package-windows` is a separate target rather than a variable the caller
   must remember. Forgetting `PACKAGE_GOOS` produces a Linux binary in a zip a
   Windows user cannot run, and the failure appears on their machine rather than
@@ -323,7 +324,7 @@ AI reflection archive, not here.
   with the same command, and encryption needs a key the binary must also carry, so
   no encoding makes an embedded secret safe from someone holding the file.
 - The threat that can be answered is the **remote** one. A scope that contains the
-  binary serves it, so a caller with a valid `node-token` reads the secret out of
+  binary serves it, so a caller with a valid node credential reads the secret out of
   the file. Adding the running executable to the deny list closes that path, and it
   is the only protection that changes the outcome.
 - The deny entry must be conditional on the secret actually being present. A
