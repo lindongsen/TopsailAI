@@ -319,10 +319,53 @@ test-provider-topsailai-conformance:
 # wait for a bounded liveness or settlement window to expire before they can
 # assert anything. That makes the whole run exceed Go's 10-minute default, which
 # would kill the suite mid-scenario and report a timeout panic instead of a test
-# result. The explicit budget is a ceiling for a hung scenario, not an expected
-# duration: a run that reaches it has a real problem to investigate.
+# result.
+#
+# The suite therefore runs as bounded groups, one `go test` process per group.
+# Go's -timeout is a budget for the whole test binary, so a group only gets its
+# own budget and its own report when it runs in its own process; a t.Run subtest
+# would share the parent's deadline and reproduce the original defect, where one
+# long group decides whether every other group reports at all.
+#
+# The groups are defined in tests/bdd/suite_groups_test.go and split by measured
+# duration, not by topic alone. Measured on 2026-11-18, the whole registry cost
+# 352.9s and two features dominated it: endpoint_server_rehome_receipts at 130.2s
+# and endpoint_server_rehome_fallback at 96.6s. Each of those is its own group so
+# neither can consume another feature's budget.
+#
+# BDD_GROUPS is overridable so a caller can run one group while debugging:
+#   make test-bdd BDD_GROUPS=policy
+BDD_GROUPS ?= rehome-receipts rehome-fallback rehome policy lifecycle surface
+
+# BDD_GROUP_TIMEOUT is the per-group ceiling. It is a ceiling for a hung
+# scenario, not an expected duration: the longest measured group is 130.2s, so a
+# group that reaches this budget has a real problem to investigate.
+BDD_GROUP_TIMEOUT ?= 20m
+
+# BDD_BUILD_DIR keeps the shared test binaries across groups. Without it each
+# group would rebuild the Server, the Endpoint and the provider fixture, which
+# would add the same cost to every group instead of paying it once.
+BDD_BUILD_DIR ?= $(abspath .tmp/bdd-build)
+
 test-bdd:
-	go test ./tests/bdd -count=1 -v -timeout 40m
+	@mkdir -p "$(BDD_BUILD_DIR)"; \
+	failed=""; \
+	for group in $(BDD_GROUPS); do \
+		echo "=== BDD group: $$group ==="; \
+		if AGENT_CLUSTER_TEST_BUILD_DIR="$(BDD_BUILD_DIR)" \
+			AGENT_CLUSTER_BDD_GROUP="$$group" \
+			go test ./tests/bdd -count=1 -v -timeout $(BDD_GROUP_TIMEOUT); then \
+			echo "=== BDD group $$group: PASS ==="; \
+		else \
+			echo "=== BDD group $$group: FAIL ==="; \
+			failed="$$failed $$group"; \
+		fi; \
+	done; \
+	if [ -n "$$failed" ]; then \
+		echo "=== BDD groups failed:$$failed ==="; \
+		exit 1; \
+	fi; \
+	echo "=== all BDD groups passed ==="
 
 # The integration suite is cross-component for the same reason, and it needs the
 # testhooks build tag because it exercises fault injection inside the binaries.

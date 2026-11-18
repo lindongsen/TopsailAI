@@ -41,11 +41,20 @@ var featurePaths = []string{
 }
 
 // TestFeatures runs the strict real-boundary BDD suite.
+//
+// The feature list comes from selectedFeaturePaths so the suite can be measured
+// and run in bounded groups. Go's -timeout is a budget for the whole test binary,
+// not for one t.Run subtest, so a group only gets its own budget when it runs in
+// its own process.
 func TestFeatures(t *testing.T) {
+	paths, err := selectedFeaturePaths()
+	if err != nil {
+		t.Fatalf("select BDD features: %v", err)
+	}
 	activeTest = t
 	suite := godog.TestSuite{
 		ScenarioInitializer: InitializeScenario,
-		Options:             &godog.Options{Format: "progress", Paths: append([]string(nil), featurePaths...), Strict: true, TestingT: t},
+		Options:             &godog.Options{Format: "progress", Paths: paths, Strict: true, TestingT: t},
 	}
 	if suite.Run() != 0 {
 		t.Fatal("godog suite failed")
