@@ -72,6 +72,7 @@ func TestZeroAdapterEndpointConnectsAndReportsHealth(t *testing.T) {
 	c.process.Env = append(os.Environ(),
 		"AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS=wss://127.0.0.1:"+channel,
 		"AGENT_CLUSTER_ENDPOINT_ID=endpoint-1",
+		"AGENT_CLUSTER_ENDPOINT_AUTH_MODE=bearer",
 		"AGENT_CLUSTER_DATABASE_PATH="+c.endpoint,
 		"AGENT_CLUSTER_TLS_CA_FILE="+certs.ca,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert,

@@ -1,7 +1,10 @@
 // Package channel provides the authenticated Endpoint channel primitives.
 package channel
 
-import "topsailai_agent_cluster/internal/protocol"
+import (
+	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
+)
 
 const (
 	// ProtocolVersion identifies the channel frame schema.
@@ -159,16 +162,33 @@ type Frame struct {
 	OutputFollowRequest *protocol.OutputFollowRequest    `json:"output_follow_request,omitempty"`
 	OutputChunk         *protocol.OutputChunk            `json:"output_chunk,omitempty"`
 	OutputEnd           *protocol.OutputEnd              `json:"output_end,omitempty"`
-	// EndpointToken is the caller's Endpoint credential, forwarded verbatim by
-	// the Server and consumed by the Endpoint policy check.
+	// EndpointCredential is the caller's Endpoint credential, forwarded verbatim
+	// by the Server and verified by the Endpoint policy check.
 	//
 	// It lives on the envelope rather than inside each request structure for
 	// three reasons. It is a transport credential, not part of the request
-	// meaning, so it must not enter ImmutableIntent.CanonicalHash: a token
+	// meaning, so it must not enter ImmutableIntent.CanonicalHash: a credential
 	// rotation would otherwise change the deduplication identity of an unchanged
 	// command. It must not enter the command journal, which stores the intent, so
 	// keeping it out of the intent keeps the secret out of the audit trail. And
 	// one field covers every frame type, so a new request type cannot be added
 	// without a place to carry the credential.
-	EndpointToken string `json:"endpoint_token,omitempty"`
+	//
+	// It is a struct rather than a string because the Endpoint must be able to
+	// tell a bearer token from an HMAC signature. A single string field would
+	// force the Endpoint to guess which form it received, and a guess is how a
+	// caller downgrades a stronger mode by sending the weaker syntax.
+	EndpointCredential *security.EndpointCredential `json:"endpoint_credential,omitempty"`
+	// EndpointRequestDigest is the digest of the operator request that carried
+	// EndpointCredential, computed by the Server from the request as it arrived.
+	//
+	// It travels on the envelope because the Endpoint never sees the HTTP
+	// request: the Server is the only party that can describe what was actually
+	// received, and the Endpoint is the only party that verifies the signature.
+	// Without it the signature would cover the operation and the machine but not
+	// the request, so a captured signature could be replayed against a different
+	// target on the same machine.
+	//
+	// It is empty for a bearer credential, which has no signature to bind.
+	EndpointRequestDigest string `json:"endpoint_request_digest,omitempty"`
 }

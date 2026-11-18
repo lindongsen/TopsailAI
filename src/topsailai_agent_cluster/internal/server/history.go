@@ -81,6 +81,11 @@ func (h *Handler) writeHistoryResultFailure(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, 502, protocol.HistoryResponseTooLarge, "provider history response exceeded the configured bound")
 	case "endpoint_unavailable":
 		h.writeError(w, 503, "endpoint_unavailable", "history query failed: endpoint is not connected")
+	case protocol.CredentialRejected:
+		// The Endpoint could not authenticate the caller, so the policy was never
+		// consulted. This is a credential problem, not a grant problem, so it must
+		// not share the policy refusal's status or message.
+		h.writeCredentialRejected(w, "history.read")
 	case protocol.PolicyDenied:
 		// The Endpoint refused the caller, so this is not a provider failure and
 		// not an outage. Reporting it as either would send the operator to

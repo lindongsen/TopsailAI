@@ -48,12 +48,12 @@ func (t ChannelTransport) Send(ctx context.Context, envelope protocol.TransportE
 	// credential, and an Endpoint that enforces a policy would refuse a caller
 	// that had configured its token correctly.
 	return t.Channel.SendCommand(ctx, envelope.EndpointInstanceID, channel.Frame{
-		Type:            channel.FrameCommand,
-		ProtocolVersion: channel.ProtocolVersion,
-		FrameID:         envelope.FrameID,
-		RequestID:       envelope.RequestID,
-		Intent:          &envelope.Intent,
-		EndpointToken:   security.EndpointToken(ctx),
+		Type:               channel.FrameCommand,
+		ProtocolVersion:    channel.ProtocolVersion,
+		FrameID:            envelope.FrameID,
+		RequestID:          envelope.RequestID,
+		Intent:             &envelope.Intent,
+		EndpointCredential: security.EndpointCredentialFor(ctx), EndpointRequestDigest: security.EndpointRequestDigestFrom(ctx),
 	})
 }
 

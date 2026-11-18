@@ -11,6 +11,7 @@ import (
 
 	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
 	endpointstorage "topsailai_agent_cluster/internal/storage/endpoint"
 )
 
@@ -87,6 +88,11 @@ func newPolicyService(t *testing.T, endpointID string, files map[string]string) 
 		Executor:     executor,
 		AccessPolicy: policy,
 		EndpointID:   endpointID,
+		// These scenarios present bare tokens, which are the bearer form, so the
+		// mode is stated rather than left to the HMAC default. Leaving it implicit
+		// would make every scenario fail with a credential-form error and hide
+		// whether the policy decision under test still works.
+		AuthMode: string(security.ModeBearer),
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -111,7 +117,7 @@ func lastFrameOfType(t *testing.T, transport *serviceChannel, kind string) chann
 
 // readFrame builds one read request frame carrying the supplied token.
 func readFrame(kind, token string) channel.Frame {
-	frame := channel.Frame{Type: kind, ProtocolVersion: channel.ProtocolVersion, RequestID: "req-1", EndpointToken: token}
+	frame := channel.Frame{Type: kind, ProtocolVersion: channel.ProtocolVersion, RequestID: "req-1", EndpointCredential: &security.EndpointCredential{Token: token}}
 	switch kind {
 	case channel.FrameOutputRequest:
 		frame.OutputRequest = &protocol.OutputSnapshotRequest{ResourceID: "r1", ProviderGeneration: "g1"}

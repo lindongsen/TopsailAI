@@ -47,7 +47,7 @@ func (s *Server) RequestDetail(parent context.Context, endpointID string, query 
 	s.pendingDetail[id] = pendingDetailRequest{peer: peer, response: response}
 	s.Mu.Unlock()
 	defer func() { s.Mu.Lock(); delete(s.pendingDetail, id); s.Mu.Unlock() }()
-	frame := Frame{Type: FrameDetailRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), DetailQuery: &query, EndpointToken: security.EndpointToken(parent)}
+	frame := Frame{Type: FrameDetailRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), DetailQuery: &query, EndpointCredential: security.EndpointCredentialFor(parent), EndpointRequestDigest: security.EndpointRequestDigestFrom(parent)}
 	if err := wsjson.Write(ctx, peer.Conn, frame); err != nil {
 		return protocol.SessionDetail{}, err
 	}

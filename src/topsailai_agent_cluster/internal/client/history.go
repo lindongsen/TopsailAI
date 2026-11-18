@@ -23,6 +23,6 @@ func (c *APIClient) GetHistory(ctx context.Context, endpointID string, limit int
 	if limit > 0 {
 		path += "&limit=" + strconv.Itoa(limit)
 	}
-	err := c.get(c.withEndpointToken(ctx, endpointID), path, &result)
+	err := c.get(c.withEndpointOperation(ctx, endpointID, protocol.OperationHistoryRead), path, &result)
 	return result, c.explainRefusal(err, endpointID)
 }

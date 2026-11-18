@@ -22,6 +22,6 @@ import (
 func (c *APIClient) GetDetail(ctx context.Context, endpointID, sessionID string) (protocol.SessionDetail, error) {
 	var result protocol.SessionDetail
 	path := "/api/v1/detail?endpoint_id=" + url.QueryEscape(endpointID) + "&session_id=" + url.QueryEscape(sessionID)
-	err := c.get(c.withEndpointToken(ctx, endpointID), path, &result)
+	err := c.get(c.withEndpointOperation(ctx, endpointID, protocol.OperationDetailRead), path, &result)
 	return result, c.explainRefusal(err, endpointID)
 }

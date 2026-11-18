@@ -71,6 +71,7 @@ func rehomeEndpoint(t *testing.T, root string, certs certFiles, addresses []stri
 	cmd.Env = append(os.Environ(),
 		"AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES="+joined,
 		"AGENT_CLUSTER_ENDPOINT_ID=endpoint-1",
+		"AGENT_CLUSTER_ENDPOINT_AUTH_MODE=bearer",
 		"AGENT_CLUSTER_DATABASE_PATH="+endpointDB,
 		"AGENT_CLUSTER_TLS_CA_FILE="+certs.ca,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.clientCert,

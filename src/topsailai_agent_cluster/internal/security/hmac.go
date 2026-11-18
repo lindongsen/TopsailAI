@@ -286,24 +286,32 @@ func CanonicalHTTPRequest(method, path string, body []byte, timestampMS int64, n
 //
 // A frame has no HTTP method or path, so its logical identity is signed instead.
 //
-// The request ID is deliberately absent. The Server mints every frame request ID
-// after the caller's request has already been authenticated
-// (internal/server/commands.go:259 and internal/channel/server.go:710), so the
-// signer cannot compute the value it would have to sign. A field the signer cannot
-// compute is not a stronger signature, it is an unimplementable one.
+// Two fields are deliberately absent, and both for the same reason: the signer
+// cannot compute them.
 //
-// The property the request ID was meant to provide is provided by the payload
+// The request ID is minted by the Server after the caller's request has already
+// been authenticated (internal/server/commands.go:259 and
+// internal/channel/server.go:710), so the signer has no value to sign.
+//
+// The frame type is chosen by the Server as well: the CLI never builds a channel
+// frame (no channel.Frame literal exists in internal/client), and one operation
+// can map to more than one frame type, because OperationMetricsRead is checked at
+// both FrameMetricsRequest and FrameMetricsBatchRequest
+// (internal/endpoint/metrics.go:98 and :194). Neither side can therefore derive a
+// unique frame type, and a field neither side can compute is not a stronger
+// signature but an unimplementable one.
+//
+// The property those fields were meant to provide is provided by the payload
 // digest instead. Because the digest covers the whole request content, a captured
 // signature cannot be moved to a different target: a different resource produces a
 // different digest and the signature fails. That is why payloadDigest must cover
 // the request rather than only the operation name.
-func CanonicalFrameRequest(frameType, operation, endpointID, payloadDigest string, timestampMS int64, nonce string) string {
+func CanonicalFrameRequest(operation, endpointID, payloadDigest string, timestampMS int64, nonce string) string {
 	if payloadDigest == "" {
 		payloadDigest = "-"
 	}
 	return strings.Join([]string{
 		HMACScheme,
-		frameType,
 		operation,
 		endpointID,
 		payloadDigest,
@@ -382,6 +390,25 @@ func NewVerifier(tokens map[string]Token, window time.Duration) *Verifier {
 		window = DefaultSignatureWindow
 	}
 	return &Verifier{Tokens: tokens, Window: window, Nonces: NewNonceCache(0, window)}
+}
+
+// WithTokens returns a verifier holding a different token set but the same replay
+// state.
+//
+// It exists because a verifier is rebuilt whenever the declared secrets change, and
+// a rebuilt verifier that also got a fresh nonce cache would silently lose replay
+// protection: every nonce seen before the reload would be accepted again, so a
+// captured request could be replayed once per reload. The token set is the part
+// that a reload changes; the nonce cache is the part that must survive it.
+//
+// The window is carried over unchanged for the same reason: it is configuration,
+// not state, and a reload of the secrets must not quietly widen or narrow the
+// replay window.
+func (v *Verifier) WithTokens(tokens map[string]Token) *Verifier {
+	if v == nil {
+		return NewVerifier(tokens, DefaultSignatureWindow)
+	}
+	return &Verifier{Tokens: tokens, Window: v.Window, Nonces: v.Nonces, Now: v.Now}
 }
 
 func (v *Verifier) now() time.Time {

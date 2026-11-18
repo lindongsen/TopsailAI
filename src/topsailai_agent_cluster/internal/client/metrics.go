@@ -26,7 +26,7 @@ import (
 func (c *APIClient) GetMetrics(ctx context.Context, endpointID, sessionID string) (protocol.SessionMetrics, error) {
 	var result protocol.SessionMetrics
 	path := "/api/v1/metrics?endpoint_id=" + url.QueryEscape(endpointID) + "&session_id=" + url.QueryEscape(sessionID)
-	err := c.get(c.withEndpointToken(ctx, endpointID), path, &result)
+	err := c.get(c.withEndpointOperation(ctx, endpointID, protocol.OperationMetricsRead), path, &result)
 	return result, c.explainRefusal(err, endpointID)
 }
 
@@ -54,6 +54,6 @@ func (c *APIClient) GetMetricsBatch(ctx context.Context, endpointID string, sess
 		EndpointID         string   `json:"endpoint_id"`
 		ProviderSessionIDs []string `json:"provider_session_ids"`
 	}{EndpointID: endpointID, ProviderSessionIDs: sessionIDs}
-	err := c.request(c.withEndpointToken(ctx, endpointID), http.MethodPost, "/api/v1/metrics/batch", body, &result)
+	err := c.request(c.withEndpointOperation(ctx, endpointID, protocol.OperationMetricsRead), http.MethodPost, "/api/v1/metrics/batch", body, &result)
 	return result, c.explainRefusal(err, endpointID)
 }

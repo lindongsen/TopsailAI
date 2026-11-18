@@ -127,6 +127,11 @@ func TestModelCatalogAdapterFailureCodes(t *testing.T) {
 		// A refusal is neither a capability gap nor a provider failure, so it
 		// must not share their status. Reporting it as a provider failure would
 		// send the operator to investigate a provider that was never invoked.
+		// A credential that could not be proven is an authentication failure, not a
+		// grant decision, so it must not share the policy status. Reporting it as
+		// forbidden would send the operator to edit a policy file that is already
+		// correct.
+		{code: protocol.CredentialRejected, status: http.StatusUnauthorized},
 		{code: protocol.PolicyDenied, status: http.StatusForbidden},
 		// A capacity refusal means the provider was never invoked, so it is
 		// transient and retryable rather than a provider fault. Sharing the
@@ -224,7 +229,7 @@ func (r *modelCatalogTokenRequester) RequestOutput(context.Context, string, prot
 }
 
 func (r *modelCatalogTokenRequester) RequestModelCatalog(ctx context.Context, _ string, _ protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
-	r.token = security.EndpointToken(ctx)
+	r.token = security.EndpointCredentialFrom(ctx).Token
 	return protocol.ModelCatalog{}, nil
 }
 

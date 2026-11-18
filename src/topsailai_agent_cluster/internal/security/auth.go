@@ -115,6 +115,18 @@ func (a CredentialAuthenticator) authenticateHMAC(r *http.Request) (string, bool
 	return "operator", true
 }
 
+// ReadAndRestoreBody returns the request body and leaves it readable for the
+// handler.
+//
+// It is exported because the Server needs the same bytes twice for two different
+// reasons: the authenticator verifies the Server credential over them, and the
+// operator boundary digests them into the Endpoint credential binding. Both must
+// see the identical bytes, so both use this one reader instead of each draining
+// the stream in its own way.
+func ReadAndRestoreBody(r *http.Request) ([]byte, error) {
+	return readAndRestoreBody(r)
+}
+
 // readAndRestoreBody returns the request body and leaves it readable for the handler.
 //
 // The signature covers the body, so the authentication boundary has to read it

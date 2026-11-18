@@ -295,7 +295,33 @@ func main() {
 			// answers "may this argv run". A caller that may not ask must not
 			// learn whether its argv would have been allowed.
 			if accessPolicy.Policy != nil {
-				if permitErr := accessPolicy.Policy.Permit(cfg.EndpointID, security.EndpointToken(hookCtx), intent.Operation); permitErr != nil {
+				// The credential is verified before the policy is consulted, for
+				// the same reason the read path does it in that order: a caller
+				// that cannot prove possession of a secret must never reach the
+				// grant table, because a policy refusal and an authentication
+				// refusal are different answers and the first one leaks which
+				// operations exist.
+				//
+				// The verifier is rebuilt from the policy in force so a reload
+				// takes effect here too. A verifier captured at startup would
+				// keep accepting a secret the operator had already rotated away.
+				keyID, token, verifyErr := endpointservice.VerifyEndpointCredential(
+					security.EndpointCredentialFrom(hookCtx),
+					cfg.AuthMode,
+					accessPolicy.Policy.Verifier(cfg.SignatureWindow),
+					cfg.EndpointID,
+					intent.Operation,
+					security.EndpointRequestDigestFrom(hookCtx),
+				)
+				if verifyErr != nil {
+					// The error is marked as an authentication failure so the
+					// executor records credential_rejected instead of
+					// policy_denied. The two have different remedies, and a
+					// caller that could not prove its credential must not be
+					// told to edit a policy file that is already correct.
+					return endpointservice.CredentialRefusal(verifyErr)
+				}
+				if permitErr := accessPolicy.Policy.PermitCredential(cfg.EndpointID, keyID, token, intent.Operation); permitErr != nil {
 					return permitErr
 				}
 			}
@@ -326,7 +352,7 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
-	service, err := endpointservice.NewService(endpointservice.ServiceDeps{Collector: collector, Executor: executor, Channel: client, Heartbeater: client, Storage: store, Logger: logger, CollectionDelay: runtime.CollectionDelay, HeartbeatInterval: 5 * time.Second, ReceiptDelay: runtime.ReceiptDelay, AccessPolicy: accessPolicy.Policy, EndpointID: cfg.EndpointID})
+	service, err := endpointservice.NewService(endpointservice.ServiceDeps{Collector: collector, Executor: executor, Channel: client, Heartbeater: client, Storage: store, Logger: logger, CollectionDelay: runtime.CollectionDelay, HeartbeatInterval: 5 * time.Second, ReceiptDelay: runtime.ReceiptDelay, AccessPolicy: accessPolicy.Policy, EndpointID: cfg.EndpointID, AuthMode: cfg.AuthMode, SignatureWindow: cfg.SignatureWindow})
 	if err != nil {
 		logger.Error("create endpoint service", "error", err)
 		_ = client.Close()

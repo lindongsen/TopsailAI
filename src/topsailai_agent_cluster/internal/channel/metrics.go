@@ -47,7 +47,7 @@ func (s *Server) RequestMetrics(parent context.Context, endpointID string, query
 	s.pendingMetrics[id] = pendingMetricsRequest{peer: peer, response: response}
 	s.Mu.Unlock()
 	defer func() { s.Mu.Lock(); delete(s.pendingMetrics, id); s.Mu.Unlock() }()
-	frame := Frame{Type: FrameMetricsRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), MetricsQuery: &query, EndpointToken: security.EndpointToken(parent)}
+	frame := Frame{Type: FrameMetricsRequest, ProtocolVersion: ProtocolVersion, RequestID: id, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), MetricsQuery: &query, EndpointCredential: security.EndpointCredentialFor(parent), EndpointRequestDigest: security.EndpointRequestDigestFrom(parent)}
 	if err := wsjson.Write(ctx, peer.Conn, frame); err != nil {
 		return protocol.SessionMetrics{}, err
 	}

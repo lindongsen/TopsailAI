@@ -91,6 +91,36 @@ func TestLaunchOptionsReportsRefusalAsForbidden(t *testing.T) {
 	}
 }
 
+// launchCredentialRequester answers every launch query with the credential
+// refusal code, which is what an Endpoint returns when it could not authenticate
+// the caller at all.
+type launchCredentialRequester struct{ launchRequester }
+
+func (launchCredentialRequester) RequestLaunchOptions(context.Context, string, protocol.LaunchQuery) (protocol.LaunchOptions, error) {
+	return protocol.LaunchOptions{ErrorCode: protocol.CredentialRejected}, nil
+}
+
+// TestLaunchOptionsReportsCredentialRefusalAsUnauthorized proves the two refusal
+// classes keep two statuses.
+//
+// A credential that could not be proven is an authentication failure, so the
+// remedy is to fix the credential. Reporting it as forbidden would send the
+// operator to edit a policy file that is already correct, which is the
+// misdirection the split exists to remove.
+func TestLaunchOptionsReportsCredentialRefusalAsUnauthorized(t *testing.T) {
+	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: launchCredentialRequester{}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/launch-options?endpoint_id=e", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	out := httptest.NewRecorder()
+	h.ServeHTTP(out, req)
+	if out.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s want 401", out.Code, out.Body.String())
+	}
+	if !strings.Contains(out.Body.String(), `"`+protocol.CredentialRejected+`"`) {
+		t.Fatalf("body=%s want code %q", out.Body.String(), protocol.CredentialRejected)
+	}
+}
+
 // TestLaunchOptionsDistinguishesUnknownEndpointFromOffline proves a typo is no
 // longer reported as an availability failure.
 func TestLaunchOptionsDistinguishesUnknownEndpointFromOffline(t *testing.T) {
