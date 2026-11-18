@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -91,19 +92,40 @@ func TestRegistryRejectsNilChannel(t *testing.T) {
 // TestRegistryRejectsInvalidNodeID checks that a malformed identity is refused
 // before it becomes a routing key.
 //
-// The cases are the ones ValidateNodeID refuses: an empty value, a missing
-// prefix, an empty body and a character outside the lowercase set. A short body
-// is not refused here, because the validator does not enforce the documented
-// 128 bit length; that gap is recorded as an issue rather than asserted as a
-// rule this unit does not implement.
+// Each case asserts the reason, not only that an error came back. Asserting
+// "some error" would pass for the wrong reason: a 32 character body with an
+// uppercase letter is refused by the length check before the alphabet check
+// runs, so a case built that way measures the length rule while claiming to
+// measure the alphabet rule. The alphabet case therefore uses a body of exactly
+// nodeIDBodyLength characters with one character outside the set.
 func TestRegistryRejectsInvalidNodeID(t *testing.T) {
-	registry := NewRegistry()
+	cases := []struct {
+		name        string
+		nodeID      string
+		wantMessage string
+	}{
+		{name: "empty", nodeID: "", wantMessage: "node id is empty"},
+		{name: "missing prefix", nodeID: "not-a-node-id", wantMessage: `does not start with "node_"`},
+		{name: "empty body", nodeID: "node_", wantMessage: "has no body after the prefix"},
+		{name: "short body", nodeID: "node_abc", wantMessage: "has a 3 character body, want 26"},
+		{name: "long body", nodeID: "node_0123456789abcdef0123456789abcdeZ", wantMessage: "has a 32 character body, want 26"},
+		{name: "uppercase character", nodeID: "node_0123456789abcdefghijklmnoZ", wantMessage: "is not a lowercase letter or digit"},
+		{name: "whitespace", nodeID: "node_0123456789abcdefghijklmnop ", wantMessage: "leading or trailing whitespace"},
+	}
 
-	for _, nodeID := range []string{"", "not-a-node-id", "node_", "node_0123456789abcdef0123456789abcdeZ", "node_0123456789ABCDEF0123456789abcdef"} {
-		t.Run(nodeID, func(t *testing.T) {
-			channel := &fakeChannel{nodeID: nodeID}
-			if _, _, err := registry.Register(channel); err == nil {
-				t.Fatalf("Register(%q) = nil error, want a refusal", nodeID)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			registry := NewRegistry()
+			channel := &fakeChannel{nodeID: testCase.nodeID}
+			_, _, err := registry.Register(channel)
+			if err == nil {
+				t.Fatalf("Register(%q) = nil error, want a refusal", testCase.nodeID)
+			}
+			if !strings.Contains(err.Error(), testCase.wantMessage) {
+				t.Fatalf("Register(%q) = %v, want the message to contain %q", testCase.nodeID, err, testCase.wantMessage)
+			}
+			if registry.Len() != 0 {
+				t.Fatalf("Len() = %d after a refused registration, want 0", registry.Len())
 			}
 		})
 	}
