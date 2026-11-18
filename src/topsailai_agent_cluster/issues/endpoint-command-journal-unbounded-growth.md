@@ -62,9 +62,9 @@ Any retention design must therefore delete rows or use a separate table. It must
 
 - **`ExecuteBeforeAtMS` is not validated as non-zero.** `internal/endpoint/executor.go:119` guards
   with `if intent.ExecuteBeforeAtMS > 0 && e.now().UnixMilli() > intent.ExecuteBeforeAtMS`, so a
-  zero value skips the expiry check entirely. A deletion predicate that selects `accepted` rows by
-  `execute_before_at_ms < cutoff` would therefore delete rows whose expiry was never enforced.
-  The predicate must require `execute_before_at_ms > 0`.
+  zero value skips the expiry check entirely and an already-expired command would still execute.
+  This is independent of retention: it is an admission defect, and it needs its own issue. It is
+  recorded here only because the retention analysis is what surfaced it.
 - **`FrameReceiptAck` never persists its settlement.** `internal/endpoint/service.go:561-568`
   deletes only from the in-memory `pendingReceipts` map. An acknowledged receipt therefore stays
   `receipt_recorded` with no `receipt_settlement` row, so it is re-sent on every reconnect and is
