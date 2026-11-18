@@ -208,6 +208,14 @@ A non-empty `scripts` or `folder` registration additionally requires deployment-
 
 The public `load_configured_trust_manifest()` in `hooks/configured_bootstrap.py` verifies a deployment-pinned manifest digest. The offline Module-only generator below does not generate Script authority; non-empty Script deployments must still provision complete assertions at their trusted deployment boundary. No application runtime hashes discovered files to authorize them; tests may construct exact assertions for their own fixtures. Once that policy has been supplied to `HookRuntime(configured_trust=...)`, use one of the registration forms below.
 
+## Test Temp Roots Must Satisfy Artifact Trust
+
+Artifact capture validates every directory in a source root's ancestry and rejects any that is group- or other-writable. A test that builds a trusted source tree under the default pytest basetemp therefore fails with `trust_rejected` on any host whose temp directory is `1777`, because `/tmp` itself is in that ancestry.
+
+Tests that need a trusted source tree must obtain their temp root from the `trust_eligible_tmp_path` fixture in `tests/unit/test_topsailai_hooks/conftest.py`, which creates a `0700` root under the workspace `.tmp` directory whose ancestry is `0755`. The fixture is opt-in; tests that depend on the default basetemp, including privilege-dropping and socket-path cases, keep their existing behaviour.
+
+The unit runner is unaffected because it creates its own basetemp under `.tmp/unit-runner` and sets the invocation root to `0755`, so `/tmp` never appears in a runner child's ancestry. A direct `pytest` invocation does not have that protection, so a file that passes under the runner can still fail when run alone. Verify a suspected failure by rerunning with `TMPDIR` pointing at a private `0700` directory before attributing it to the code.
+
 ## Existing real-worker demos
 
 The maintained demos under [`tests/demo/hooks/`](../tests/demo/hooks/) exercise the public generic `HookRuntime` binding API with real isolated worker processes:

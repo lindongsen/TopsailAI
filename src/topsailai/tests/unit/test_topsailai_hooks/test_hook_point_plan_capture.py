@@ -18,6 +18,12 @@ from topsailai.hooks.process_backend import IsolatedProcessBackend
 from topsailai.tests.unit.test_topsailai_hooks.test_hook_artifact_cleanup_retry import _native_bytes
 
 
+@pytest.fixture
+def tmp_path(trust_eligible_tmp_path: Path) -> Path:
+    """Use a trust-eligible temp root; artifact capture rejects /tmp ancestry."""
+    return trust_eligible_tmp_path
+
+
 def api():
     """Require the new additive capture API inside attributable RED tests."""
     from topsailai.hooks.hook_point_plan_capture import build_hook_point_candidate

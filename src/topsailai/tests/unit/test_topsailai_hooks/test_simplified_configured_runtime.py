@@ -24,6 +24,12 @@ from topsailai.hooks.hook_script_discovery import (
 )
 
 
+@pytest.fixture
+def tmp_path(trust_eligible_tmp_path: Path) -> Path:
+    """Use a trust-eligible temp root; artifact capture rejects /tmp ancestry."""
+    return trust_eligible_tmp_path
+
+
 def test_candidate_lifecycle_records_are_not_package_root_exports() -> None:
     """The supported package API must not advertise the superseded candidate flow."""
     import topsailai.hooks as hooks

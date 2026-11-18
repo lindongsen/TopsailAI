@@ -55,6 +55,71 @@ class TestResolveSrcRoot:
         assert runner.resolve_src_root(start, "not_exist_pkg") == tmp_path / "pkg"
 
 
+class TestResolveWorkerCount:
+    """Tests for the CPU-count cap applied to the requested worker count."""
+
+    def test_requested_below_cpu_count_is_kept(self, runner, monkeypatch):
+        """A request below the CPU count must be honoured unchanged."""
+        monkeypatch.setattr(runner.os, "cpu_count", lambda: 8)
+        assert runner.resolve_worker_count(4) == 4
+
+    def test_requested_equal_to_cpu_count_is_kept(self, runner, monkeypatch):
+        """A request equal to the CPU count must be honoured unchanged."""
+        monkeypatch.setattr(runner.os, "cpu_count", lambda: 8)
+        assert runner.resolve_worker_count(8) == 8
+
+    def test_requested_above_cpu_count_is_capped(self, runner, monkeypatch):
+        """A request above the CPU count must be capped at the CPU count."""
+        monkeypatch.setattr(runner.os, "cpu_count", lambda: 8)
+        assert runner.resolve_worker_count(20) == 8
+
+    def test_unknown_cpu_count_falls_back_to_one(self, runner, monkeypatch):
+        """An unavailable CPU count must not disable the cap."""
+        monkeypatch.setattr(runner.os, "cpu_count", lambda: None)
+        assert runner.resolve_worker_count(20) == 1
+
+    def test_zero_request_still_yields_one_worker(self, runner, monkeypatch):
+        """A non-positive request must never produce zero workers."""
+        monkeypatch.setattr(runner.os, "cpu_count", lambda: 8)
+        assert runner.resolve_worker_count(0) == 1
+
+    def test_main_uses_the_capped_count(self, runner, monkeypatch, tmp_path):
+        """main() must dispatch with the capped count, not the requested one."""
+        monkeypatch.setattr(runner.os, "cpu_count", lambda: 8)
+        captured = {}
+
+        def fake_execute(test_files, workers, *unused_args, **unused_kwargs):
+            captured["workers"] = workers
+            return [
+                {
+                    "file": "test_example.py",
+                    "status": "PASS",
+                    "details": "All tests passed",
+                    "elapsed": 0.1,
+                }
+            ]
+
+        args = SimpleNamespace(
+            files=[],
+            threshold=10.0,
+            timeout=120,
+            workers=20,
+            retries=0,
+            sequential=False,
+            sequential_yes_do_it=False,
+            output_file=tmp_path / "test_results.txt",
+            temp_root=tmp_path / "runner",
+            keep_invocations=3,
+        )
+        monkeypatch.setattr(runner, "OUTPUT_FILE", tmp_path / "test_results.txt")
+        monkeypatch.setattr(runner, "parse_args", lambda: args)
+        monkeypatch.setattr(runner, "get_test_files", lambda selected=None: ["test_example.py"])
+        monkeypatch.setattr(runner, "execute_concurrently", fake_execute)
+
+        assert runner.main() == 0
+        assert captured["workers"] == 8
+
+
 class TestBuildChildEnv:
     """Tests for build_child_env() PYTHONPATH construction."""
 

@@ -91,6 +91,25 @@ DEFAULT_WORKERS = 4
 DEFAULT_RETRIES = 1
 
 
+def resolve_worker_count(requested):
+    """Cap the requested worker count at the available CPU count.
+
+    Deadline-sensitive process tests fail with ``timeout`` outcomes when the
+    runner oversubscribes the host, because their child processes cannot get
+    CPU time inside their own budgets. The cap keeps an explicit ``--workers``
+    value from oversubscribing, without changing any test budget or any
+    production deadline.
+
+    Args:
+        requested: Worker count requested on the command line.
+
+    Returns:
+        The effective worker count, never below 1.
+    """
+    available = os.cpu_count() or 1
+    return max(1, min(requested, available))
+
+
 def get_test_files(selected=None):
     """Return sorted list of test file paths in TEST_DIR, recursively.
 
@@ -319,7 +338,7 @@ def parse_args(argv=None):
         "--workers",
         type=int,
         default=DEFAULT_WORKERS,
-        help=f"Maximum number of concurrent test workers (default: {DEFAULT_WORKERS}).",
+        help=f"Maximum number of concurrent test workers (default: {DEFAULT_WORKERS}, capped at the CPU count).",
     )
     parser.add_argument(
         "-r",
@@ -456,14 +475,15 @@ def main():
 
     test_files = get_test_files(selected=args.files)
     total = len(test_files)
-    mode = "sequential" if args.sequential else f"concurrent (workers={args.workers})"
+    workers = resolve_worker_count(args.workers)
+    mode = "sequential" if args.sequential else f"concurrent (workers={workers})"
 
     # Print configuration summary at startup.
     print("=" * 60)
     print("Test Runner Configuration:")
     print(f"  timeout:    {args.timeout} seconds    # max execution time per test")
     print(f"  threshold:  {args.threshold} seconds  # SLOW warning threshold")
-    print(f"  workers:    {args.workers}            # max concurrent workers")
+    print(f"  workers:    {workers}            # max concurrent workers (requested {args.workers})")
     print(f"  retries:    {args.retries}            # retries for failed tests")
     print(f"  sequential: {args.sequential}         # run tests one by one")
     print(f"  output:     {output_file}             # result file path")
@@ -484,7 +504,7 @@ def main():
     if args.sequential:
         results = execute_sequentially(test_files, args.timeout, args.threshold, print_lock, args.retries, temp_root=invocation_root)
     else:
-        results = execute_concurrently(test_files, args.workers, args.timeout, args.threshold, print_lock, args.retries, temp_root=invocation_root)
+        results = execute_concurrently(test_files, workers, args.timeout, args.threshold, print_lock, args.retries, temp_root=invocation_root)
 
     passed = 0
     failed = 0
