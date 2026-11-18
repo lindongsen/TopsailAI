@@ -547,3 +547,90 @@ AI reflection archive, not here.
   name-based check reported someone else's work as this run's leak. Both are
   answered by identifying a process by the PID that was recorded at creation, and
   neither is answered by its name.
+
+## A cleanup that reports success is not a cleanup that happened
+
+- The Windows cleanup script printed `removed cfgalias` and `removed escape`, and
+  the very next listing still showed both entries. The script ran with
+  `$ErrorActionPreference = "Continue"`, so `Remove-Item` failed silently and the
+  `Write-Output "removed ..."` line ran anyway. The success message was written by
+  the script, not by the operation.
+- Re-running with `-ErrorAction Stop` produced the real errors, and both were
+  PowerShell 5.1 defects rather than permission problems:
+  `Remove-Item` on a directory symlink throws `System.NullReferenceException`, and
+  on a directory containing a symlink it throws
+  `There is a mismatch between the tag specified in the request and the tag present
+  in the reparse point`.
+- The second failure was protective. `Remove-Item -Recurse` follows a reparse
+  point, so the `escape` directory containing `out -> C:\Windows` was one retry
+  away from deleting the Windows directory. The tag mismatch stopped it. A
+  cleanup script must never retry a `-Recurse` deletion of a directory it did not
+  create, and must never treat a failure as "try harder".
+- `cmd /c rmdir` removes the link itself and does not follow it, so it is the
+  correct tool for a directory symlink on Windows. It succeeded on all three
+  entries where `Remove-Item` failed twice.
+- Verify a destructive cleanup by measuring what must survive, not by reading the
+  script's own output. The count of `C:\Windows\System32` entries was 4099 before
+  and 4099 after, which is the evidence that the link target was untouched. A
+  script that only asserts its own artifacts are gone cannot distinguish "cleaned
+  up" from "deleted too much".
+- The general rule: a cleanup script's log line is a claim, and a claim needs a
+  measurement. Print the resolved path, then re-read the directory and print what
+  is actually there. If the two disagree, the script is wrong, not the listing.
+
+## Decompress straight to the destination
+
+- A Server binary was transferred as gzip, decompressed to `connector-server.new`,
+  and then overwritten by `mv connector-server.new connector-server` after the
+  decompression had already written the correct file. The result was a truncated
+  5931008-byte binary where a 7626936-byte one had existed, and the container
+  failed to start.
+- The cause is a two-step rename around a step that already produced the final
+  file. `gunzip -c x.gz > x` writes the destination directly and atomically enough
+  for this purpose; adding a `.new` intermediate creates a second name that can be
+  moved over the good file by mistake.
+- Verify a transferred binary by size and sha256 against the build host before
+  starting it. The truncated file was caught by `ls -l` showing a size that did not
+  match the local artifact, which is cheaper than reading a container log.
+
+## A launcher script is the configuration, not a convenience
+
+- Running `connector-node.exe run` directly on the Windows host failed with
+  `CONNECTOR_NODE_SERVER_URL is empty`, because `start.ps1` is what exports the
+  environment variables and generates `policy.yaml` from `scopes.txt`. The binary
+  has no defaults for either.
+- The failure looks like a broken binary and is actually a missing launcher. When a
+  bundle ships a start script, the script is part of the contract: the documented
+  way to start the Node is the script, and invoking the executable directly is an
+  undocumented path that is not required to work.
+- Start it through WMI rather than `Start-Process`, so the process is not a child
+  of the SSH session and does not die when the session closes. A log line saying
+  `ready` proves it started, not that it is still there; check the PID and its
+  start time afterwards.
+
+## A container that runs as an unprivileged user needs the credential file's owner changed
+
+- The Server container runs as `65534:65534`. A `client-credentials.yaml` created
+  by root with mode `0600` is unreadable inside the container, so the Server
+  refuses to start even though the file looks correctly protected from the host.
+- Mode and owner are two halves of one permission. `chmod 600` on a root-owned file
+  protects it from other host users and simultaneously locks out the process that
+  must read it. The fix is `chown 65534:65534` plus `chmod 600`, and the reason the
+  mode check exists is unchanged: the file holds secrets that never expire.
+- Mount the credential file as a single file rather than mounting its directory.
+  A directory mount would expose `server.env` and the rollback copies inside the
+  container for no benefit.
+
+## A proof that binds another header must be tested by substituting that header
+
+- The client proof includes the digest of the node proof header, so a valid client
+  proof cannot be reused with a different node proof. That property is invisible to
+  a test that only sends correct proofs, and it is the property that stops a caller
+  from keeping a client proof while swapping in a node proof for another scope.
+- The test that proves it signs one path and sends another, and the Node refuses
+  with `signature does not verify`. A test that only checks "a wrong secret is
+  refused" measures the HMAC, not the binding.
+- Reproduce the canonical signing string in a second implementation before trusting
+  a hand-built proof. The Python probe returned 200 on its first call, which is the
+  evidence that the canonical form was read correctly from the code rather than
+  guessed; a probe that fails on its first call proves nothing about the product.
