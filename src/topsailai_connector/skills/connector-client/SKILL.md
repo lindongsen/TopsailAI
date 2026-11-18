@@ -1,7 +1,7 @@
 ---
 name: connector-client
-description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next. Covers the connector-server cli command, its flags, the node-id.node-token pair, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
-version: 1.0.0
+description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next. Covers the connector-server cli command, its flags, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
+version: 2.0.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -24,9 +24,10 @@ will hit:
 1. **The Node decides everything.** The Server only relays. A `denied` answer came
    from the Node's policy file, not from the Server, so nothing on the Server can
    be changed to make it succeed.
-2. **The CLI carries two secrets.** A `client_token` proves you may use the Server.
-   A `node-id.node-token` pair proves you may talk to that one Node. Each is
-   checked by a different party.
+2. **The CLI holds two credentials, and neither is sent.** A **client credential**
+   proves you may use the Server; the Server checks it. A **node credential**
+   proves you may talk to that one Node; the Node checks it. Each credential signs
+   the request, so the secret itself never travels.
 3. **The first version is read-only.** Only `file.list`, `file.stat` and
    `file.read` exist. Writing and running commands are refused by design.
 
@@ -37,9 +38,10 @@ Use this skill when the user asks to:
 - List, inspect or read a file on a remote machine they reach through the Connector.
 - Work out why a Connector request failed, from an error code or a message.
 - Set up a script that calls the Connector repeatedly.
-- Understand what the `node-id.node-token` pair is and where to get it.
+- Understand what a client credential and a node credential are and where to get
+  them.
 - Call a Node that was handed to a user as a zip, where the operator already holds
-  the pair.
+  the node id and a node credential.
 
 Do **not** use this skill to deploy or operate the Server (that is
 `connector-server-operations`) or to install and configure the Node (that is
@@ -47,30 +49,30 @@ Do **not** use this skill to deploy or operate the Server (that is
 
 ## Before the first request
 
-You need three values. Ask the user for whichever is missing; never invent one.
+You need four values. Ask the user for whichever is missing; never invent one.
 
 | Value | What it looks like | Where it comes from |
 |---|---|---|
 | Server URL | `https://cloud.example:8443` | The Server operator |
-| `client_token` | an opaque string, at least 16 bytes | The Server operator |
-| `node-id.node-token` pair | `node_7f3a...9c1e.kq2v...4d7a` | The Node operator, from `connector-node id` |
+| Client credential | `operator-dawson.XMUThHjCFvpOjShS1-krCLj-k-k5nl93uEUAXqBZbX4` | The Server operator |
+| Node credential | `bundle-caller.1oIP0eKi2U84Voi2XjA8e5Z6FdjMyzmHdhE9Or5AKVQ` | The Node operator, from the Node's first start or `credential add` |
+| Node id | `node_j5ys4xzrqlyfct2n7q4a4jione` | The Node operator, from `connector-node id` |
 
-The pair is **one string with one dot in it**. The part before the dot is the
-`node-id`, which is public and is an address. The part after the dot is the
-`node-token`, which is a secret. The CLI splits it for you; you always pass the
-whole pair to `--node`.
+A credential is **one string with one dot in it**. The part before the dot is the
+`key_id`, which is public and names which credential was used. The part after the
+dot is the secret. The CLI splits it for you; you always pass the whole value.
 
-If the user has only a `node-id` and no token, they cannot proceed. A `node-id`
-grants nothing on its own. Tell them to run `connector-node id` on the Node
-machine, or to ask whoever set the Node up.
+The node id is **not** a credential. It is an address: it says which Node to route
+to, and it grants nothing on its own. A user who has only a node id cannot proceed.
+Tell them to ask the Node operator for a node credential as well.
 
 ### When the Node came from a bundle
 
-If the Node was distributed as a zip, the operator already holds the pair: it was
-generated when the bundle was built, and the packaging output printed it together
-with a ready-to-run CLI command. Do not ask the user to read the pair out of
-`config/identity` in that case, and do not ask them to run `connector-node id`; the
-operator has the value already.
+If the Node was distributed as a zip, the operator already holds the node id and
+one node credential: both were generated when the bundle was built, and the
+packaging output printed them together with a ready-to-run CLI command. Do not ask
+the user to read them out of the bundle's `config/` directory in that case, and do
+not ask them to run `connector-node id`; the operator has the values already.
 
 The printed command is the one to copy. It puts every flag before the operation,
 which is the only order the CLI accepts, and it uses an empty `--path` to list the
@@ -95,23 +97,24 @@ positional argument and refuses it. This is the single most common usage mistake
 | Flag | Environment variable | Required | Meaning |
 |---|---|---|---|
 | `--server` | `CONNECTOR_CLI_SERVER_URL` | yes | Server base URL, `http` or `https` |
-| `--client-token` | `CONNECTOR_CLI_CLIENT_TOKEN` | yes | The `client_token` |
-| `--node` | `CONNECTOR_CLI_NODE` | yes | The whole `node-id.node-token` pair |
+| `--client-credential` | `CONNECTOR_CLI_CLIENT_CREDENTIAL` | yes | The client credential, `key_id.secret` |
+| `--node-credential` | `CONNECTOR_CLI_NODE_CREDENTIAL` | yes | The node credential, `key_id.secret` |
+| `--node-id` | `CONNECTOR_CLI_NODE_ID` | yes | The node id the request is for |
 | `--scope` | none | yes | A scope name the Node's policy defines |
 | `--path` | none | no | Relative path inside the scope; empty means the scope root |
 | `--offset` | none | no | Byte offset for `file.read`, default `0` |
 | `--length` | none | no | Byte count for `file.read`; `0` means up to the cap |
-| `--request-id` | none | no | Correlation id echoed by the Server |
+| `--request-id` | none | no | Correlation id, signed by both proofs and echoed by the Server |
 | `--json` | none | no | Print the whole response envelope instead of the payload |
 
 A flag wins over its environment variable. The environment exists so a script can
 export a value once instead of repeating it on every line.
 
-**Prefer the environment variable for the two secrets.** A secret passed as a flag
-is visible in `argv` to every account on the host and is written to shell history
-by default. The flag is there for a script that already holds the secret and would
-otherwise have to export it; that exposure is an accepted trade-off recorded in the
-residual risks of `docs/permission-design.md`.
+**Prefer the environment variable for the two credentials.** A secret passed as a
+flag is visible in `argv` to every account on the host and is written to shell
+history by default. The flag is there for a script that already holds the secret
+and would otherwise have to export it; that exposure is an accepted trade-off
+recorded in the residual risks of `docs/permission-design.md`.
 
 ### Operations
 
@@ -131,8 +134,9 @@ List the root of a scope:
 
 ```
 connector-server cli --server https://cloud.example:8443 \
-    --client-token "$CONNECTOR_CLI_CLIENT_TOKEN" \
-    --node "$CONNECTOR_CLI_NODE" \
+    --client-credential "$CONNECTOR_CLI_CLIENT_CREDENTIAL" \
+    --node-credential "$CONNECTOR_CLI_NODE_CREDENTIAL" \
+    --node-id "$CONNECTOR_CLI_NODE_ID" \
     --scope project \
     file.list
 ```
@@ -141,8 +145,9 @@ Read a file into a pipeline:
 
 ```
 connector-server cli --server https://cloud.example:8443 \
-    --client-token "$CONNECTOR_CLI_CLIENT_TOKEN" \
-    --node "$CONNECTOR_CLI_NODE" \
+    --client-credential "$CONNECTOR_CLI_CLIENT_CREDENTIAL" \
+    --node-credential "$CONNECTOR_CLI_NODE_CREDENTIAL" \
+    --node-id "$CONNECTOR_CLI_NODE_ID" \
     --scope project --path notes.md \
     file.read > notes.md
 ```
@@ -186,9 +191,9 @@ the payload goes to stdout.
 | Code | Name | What it means | What to do |
 |---|---|---|---|
 | `0` | `success` | The operation happened | — |
-| `1001` | `invalid_argument` | The request is malformed: bad scope name, rejected path, bad JSON | Fix the request. Do not retry |
-| `1002` | `unauthenticated` | `client_token` is wrong or missing, **or** the Node refused the `node-token` | Check both secrets. Do not retry |
-| `1003` | `node_offline` | No live connection for that `node_id` | Retry later; the Node is not connected |
+| `1001` | `invalid_argument` | The request is malformed: bad scope name, rejected path, bad JSON, malformed proof | Fix the request. Do not retry |
+| `1002` | `unauthenticated` | The client credential was refused, **or** the Node refused the node credential | Check both credentials. Do not retry |
+| `1003` | `node_offline` | No live connection for that node id | Retry later; the Node is not connected |
 | `1004` | `node_timeout` | The Node did not answer in time | Retry once; if it repeats, the Node is unhealthy |
 | `1005` | `denied` | The Node's policy does not allow it | Ask the Node operator to change the policy |
 | `1006` | `not_found` | The path does not exist inside the scope | Check the path |
@@ -203,30 +208,46 @@ different fact and it is not yours to infer.
 
 ### The one ambiguous code
 
-`1002 unauthenticated` covers two different causes: a wrong `client_token`, and a
-Node refusing the `node-token`. The Server cannot tell them apart, because it never
-learns the correct `node-token`. To narrow it down:
+`1002 unauthenticated` covers two different causes: the Server refusing the client
+credential, and the Node refusing the node credential. The Server cannot tell them
+apart, because it never receives the node secret and cannot check it. To narrow it
+down:
 
 1. If the request reached the Server at all (you got a JSON answer rather than a
-   connection error), the `client_token` was accepted and the Node refused the
-   token.
-2. If you got a connection error, the Server was unreachable or the
-   `client_token` was rejected before forwarding.
+   connection error), the client credential was accepted and the Node refused the
+   node credential.
+2. If you got a connection error, the Server was unreachable or the client
+   credential was rejected before forwarding.
 
-A `node-token` that used to work and now does not usually means the Node was
-regenerated. Ask the Node operator for the new pair.
+A node credential that used to work and now does not usually means the Node
+operator removed it with `connector-node credential remove`. Ask them for a current
+one. Regenerating the node id does **not** invalidate a credential, so a node id
+change alone is not the cause.
+
+### Why a request cannot simply be resent
+
+Each request carries a timestamp and a one-time nonce, and both verifiers remember
+the nonces they have seen. A request resent byte for byte is refused as a replay,
+even though its credentials are still valid. The CLI generates a fresh timestamp
+and nonce on every invocation, so **re-running the command is correct and resending
+a captured request is not**.
+
+If you write your own client instead of using the CLI, you must generate a new
+nonce per attempt. Reusing one is the mistake that produces an `unauthenticated`
+answer from a credential that is actually correct.
 
 ## Common Pitfalls
 
 - **Flags after the operation.** `cli file.read --scope project` fails with a
   positional-argument error. Flags go first, always.
-- **Passing only the `node-id`.** `--node node_7f3a...` without the dot and the
-  token is refused locally before anything is sent. The whole pair is required.
-- **Passing the two halves separately.** There is no `--node-id` and no
-  `--node-token` flag. One `--node` value holds both.
-- **Trimming whitespace from a copied pair.** A pair with a leading or trailing
-  space is refused rather than trimmed, because trimming would hide a copy-paste
-  error. Re-copy it cleanly.
+- **Passing only the node id.** `--node-id node_7f3a...` without a node credential
+  is refused locally before anything is sent. Both are required.
+- **Swapping the two credentials.** The client credential and the node credential
+  are different values checked by different parties. Passing one where the other
+  belongs produces `unauthenticated` with no hint about which was wrong.
+- **Trimming whitespace from a copied credential.** A credential with a leading or
+  trailing space is refused rather than trimmed, because trimming would hide a
+  copy-paste error. Re-copy it cleanly.
 - **Assuming `--path` is a filesystem path.** It is relative to the scope root and
   is not a path on the Server. `..`, a leading `/`, a backslash, a colon and a NUL
   byte are all refused with `invalid_argument`.
@@ -235,15 +256,18 @@ regenerated. Ask the Node operator for the new pair.
   root.
 - **Retrying `denied` or `unauthenticated`.** Neither becomes true by trying
   again. Only `node_offline`, `node_timeout` and `internal` are worth a retry.
-- **Reporting a secret.** Never print `client_token` or the `node-token` half in a
-  message, a log or a ticket. The `node-id` half is public and is fine to show.
+- **Reporting a secret.** Never print the secret half of either credential in a
+  message, a log or a ticket. The `key_id` half and the node id are public and are
+  fine to show.
 - **Expecting a write.** `file.write` and `command.exec` are refused in this
   version. Do not offer them as an option.
 
 ## Verification Checklist
 
 - [ ] Every flag precedes the operation name.
-- [ ] `--node` holds the whole `node-id.node-token` pair, with exactly one dot.
+- [ ] `--client-credential` holds a `key_id.secret` value from the Server operator.
+- [ ] `--node-credential` holds a `key_id.secret` value from the Node operator.
+- [ ] `--node-id` holds a `node_` identifier, and is not used as a credential.
 - [ ] `--scope` names a scope the Node's policy defines, not a directory path.
 - [ ] `--path` is relative, contains no `..`, `.`, backslash, colon or NUL byte.
 - [ ] The operation is one of `file.list`, `file.stat`, `file.read`.
