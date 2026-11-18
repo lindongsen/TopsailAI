@@ -388,7 +388,7 @@ live process has no Cluster resource ID, so requiring one would make the route u
 the sessions an operator needs detail about. A Cluster resource ID is refused with `invalid_target`
 before any provider process starts.
 
-`provider_metadata` and `provider_runtime` are opaque provider documents. The Server stores and
+`provider_metadata` and `provider_runtime` are opaque provider documents. The Server forwards and
 returns them verbatim and never parses them, so adding or changing a provider requires no Server
 code, schema or API change. Both are optional: a provider that reports neither is honest about it,
 and a client must render the absence as `not reported` rather than as an empty record. Both are
