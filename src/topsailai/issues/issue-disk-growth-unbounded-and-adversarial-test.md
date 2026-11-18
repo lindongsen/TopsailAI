@@ -432,3 +432,103 @@ processes by exact PID and to purge the stale `running` metas, so this issue can
 autonomously. Action 3 overlaps
 [issue-reaper-cannot-clean-sigkilled-owner-record.md](./issue-reaper-cannot-clean-sigkilled-owner-record.md),
 which is blocked on the same cleanup-authorization decision.
+
+## Actions 3, 4 and 5 re-measured on 2026-11-18
+
+Every number below came from a command executed in this workspace, not from the
+earlier text of this issue.
+
+### Action 3 is implemented
+
+`git merge-base --is-ancestor 1956f24a HEAD` returns success, and
+`1956f24a fix: reclaim unfinalized owner residue after its artifacts expire`
+changed `context/session_activity.py` (53 insertions) plus its unit test
+(131 insertions). `_unfinalized_residue` is defined at
+`context/session_activity.py:305` and consumed at `:395`, inside the branch that
+previously returned `UNKNOWN` for any status outside
+`_CLEANABLE_OWNER_STATUSES` (`completed`, `error`, `interrupted`).
+
+`tests/unit/test_topsailai_context_session_activity.py` reports **78 passed**.
+
+So the reaper deadlock described in action 3 no longer exists. The issue text
+above still lists it as open and should be read as superseded by this section.
+
+### Action 3 does not reclaim the current ghost sessions, and the reason is age
+
+A probe over the live task directory reported:
+
+```
+running metas: 10   alive=4   dead=6
+retention=7d (production): cleanable=0  blocked=10
+retention=1d (simulated):  cleanable=2  blocked=8
+```
+
+The two sessions that become cleanable at a one-day window are
+`wa-1fb57b5948b4` and `wa-a1ad42ea0a3f`, both flipping to `stopped`. The
+remaining dead owners stay blocked because at least one of their artifacts is
+still younger than the retention window, which is exactly the guard the residue
+path is supposed to apply. Artifact ages for the blocked dead owners are 0.79d
+to 5.02d, so a seven-day window correctly refuses them.
+
+This means the ghost-session count is a **retention-window** consequence, not a
+reaper defect. Shortening `TOPSAILAI_SESSION_META_RETENTION_DAYS` would reclaim
+them sooner, but that is a policy decision rather than a code fix.
+
+### Action 4: the enforcement exists, only the default is unlimited
+
+`events/backends/file.py:212` deletes the oldest files once
+`self._max_count > 0` is exceeded, and `events/config.py:55` reads
+`TOPSAILAI_EVENTS_FILE_MAX_COUNT` with `default=0`. The documented meaning of
+`0` is "unlimited".
+
+`tests/unit/events/test_backends.py` reports **12 passed**, including the
+count-bound and retention-days cleanup cases.
+
+So the mechanism required by action 4 already works. What remains is choosing a
+finite default, which would begin deleting event files on every deployment and
+therefore needs an explicit decision.
+
+Retention is already aligned: `TOPSAILAI_SESSION_META_RETENTION_DAYS` and
+`TOPSAILAI_EVENTS_FILE_RETENTION_DAYS` both default to `7`.
+
+### Action 5: the six orphan processes are gone
+
+```
+3437597 gone   3454037 gone   3466942 gone
+996363  gone   997207  gone   997931  gone
+```
+
+No termination is needed, so the destructive half of action 5 is moot. The
+remaining half, purging stale `running` metas, is now governed by the action 3
+residue path and the retention window described above.
+
+### Action 2 is outside this workspace
+
+`/TopsailAI/src/topsailai_agent_cluster` exists as a sibling project, and this
+workspace contains no `.go` files. The harness that builds into a per-scenario
+`t.TempDir()` therefore belongs to that project and cannot be changed here.
+
+### Current disk state
+
+```
+~/.topsailai/workspace/task   927M
+.session.meta        453
+.session.events     1409
+.session.stdout       80
+.session.stats.jsonl 728
+```
+
+Compared with the 2026-11-14 measurement recorded above (941M, 492 meta, 754
+events, 15 stdout), the events count has nearly doubled while stdout stayed low.
+The asymmetry this issue describes is therefore still present.
+
+### What is genuinely still open
+
+1. Adversarial assertions that do not exist yet: bytes written by a prompt loop,
+   detection of a deleted-but-open descriptor, and bounded growth across a
+   scripted session lifecycle.
+2. Whether to set a finite `TOPSAILAI_EVENTS_FILE_MAX_COUNT` default.
+3. Whether to shorten the meta retention window so dead owners are reclaimed
+   sooner.
+4. Action 2, routed to the sibling Go project.
+5. Action 6, an operational Docker cleanup on `/opt`.
