@@ -280,3 +280,56 @@ Verified before writing:
 
 The documentation guards that read these files still pass:
 `go test ./src/main/agent-cluster-endpoint/ ./internal/providercli/` is green.
+
+## Documentation correction, 2026-11-18 (third pass)
+
+Two more statements described a capability revision the code does not produce. Both were corrected to
+state what the code does. The code was not changed, because the deep defect is still option A to D.
+
+| Document | Claim before | Correction |
+|---|---|---|
+| `docs/agent-cluster-protocol.md:1047` | "the legacy launch_profile_id identifies the selected configured adapter and profile_revision carries its live capability revision." | `profile_revision` carries the launch profile's own revision, which is the provider-declared profile revision returned by `LaunchProfile` (`internal/adapter/genericcli/adapter.go:417`) and revalidated before execution (`internal/endpoint/executor.go:168`). It is not the capability revision. |
+| `internal/tui/help.go:60` (the `CAPABILITY_REVISION` field help, which is also the text `agent-cluster-cli endpoints --help` prints) | "the revision of the effective capability set the endpoint advertised ... A changed revision means the endpoint's served operations changed, so a command admitted against an older revision may be refused." | The value is the `revision` string the Adapter configuration declares, copied through unchanged. It is not derived from the capability set, so a changed capability set does not change it, and no admission path compares it against a command's revision: an operation is served when its name and version are still advertised. |
+
+The second one is the more damaging of the two, because it is the only place an operator learns what
+the column means. It made three separate false claims in one sentence: that the value describes the
+capability set, that a changed value implies a changed served surface, and that an older revision can
+cause a refusal. All three are contradicted by the code cited in this issue.
+
+Verified before writing:
+
+- `internal/adapter/genericcli/adapter.go:417` returns
+  `protocol.LaunchHandler{... Revision: result.Profile.Revision}`, and `result.Profile.Revision` is the
+  provider-declared launch profile revision (`internal/providercli/query_types.go:22`), validated as an
+  identifier at `internal/providercli/query_types.go:350`.
+- `internal/endpoint/executor.go:154,168` require `intent.ProfileRevision` to be non-empty and equal to
+  the current launch profile revision. That is the only revision comparison in the executor.
+- `internal/adapter/genericcli/adapter.go:962` builds the capability descriptor as
+  `protocol.CapabilityDescriptor{Revision: configured.Revision}`.
+- `internal/endpoint/executor.go:561` `supports()` matches on capability name and version only.
+
+### Regression guard
+
+`internal/tui/capability_revision_help_guard_test.go` pins the corrected help text. It rejects the three
+false claims and, separately, requires the entry to state what the value actually is, so an entry that
+says nothing cannot pass. Both halves were proven by deliberate breakage:
+
+- restoring the original text fails with all three claims named;
+- replacing the entry with a vacuous one ("the capability revision the endpoint reported") fails the
+  second test, which is the half that stops a silent deletion from passing.
+
+The guard reads the header from `endpointColumns` rather than a literal, so a renamed column is covered
+without editing the test.
+
+### Live confirmation
+
+The fleet still shows one revision across three nodes, which is the defect this issue is about:
+
+```text
+ac.ai-dev        CAPABILITY_REVISION topsailai-v1
+ac.topsail        CAPABILITY_REVISION topsailai-v1
+ac.topsailai-dev  CAPABILITY_REVISION topsailai-v1
+```
+
+The column is now truthful about what it contains: a configured label, not a fingerprint. It still
+cannot tell an operator that a node's served surface changed, because nothing computes or compares one.
