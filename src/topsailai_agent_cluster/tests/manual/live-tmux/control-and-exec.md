@@ -5,10 +5,16 @@ author: DawsonLin
 
 # Provider control and allowlisted command execution
 
-This module verifies the two session-scope surfaces that reach the provider beyond
-`send` and `interrupt`: the `ctl` control channel and the `!` allowlisted command
-prefix. It is an operator acceptance procedure driven through the real
-`agent-cluster-cli` binary in tmux, not a unit-test claim.
+This module verifies the two surfaces that reach the provider beyond `send` and
+`interrupt`: the `ctl` control channel and the `!` allowlisted command prefix. It is
+an operator acceptance procedure driven through the real `agent-cluster-cli` binary
+in tmux, not a unit-test claim.
+
+`ctl` is session-scope only. `!` runs in session scope and in endpoint scope: a
+session-scope `!` uses the selected session's working directory, while an
+endpoint-scope `!` uses the Endpoint-local `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` and
+carries no target at all. CTLEXEC-06 covers the session-scope form and CTLEXEC-17
+covers the endpoint-scope form.
 
 Both surfaces are one-shot. Neither starts a periodic refresh, so a case that sees
 output change without a new command is a FAIL, not a bonus.
@@ -194,6 +200,65 @@ scope-matrix entry, so the REPL must not advertise it. Then run
 `agent-cluster-cli help exec` outside the REPL and expect the standalone syntax with the
 `--` separator and the argv description. A REPL that renders `exec` help, or a standalone
 `help exec` that fails, is a FAIL.
+
+## CTLEXEC-17 `!` runs in endpoint scope
+
+Precondition: the Endpoint was started with `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` set to
+an existing directory, and the allowlist contains the program under test. Record the
+configured directory from the Endpoint log line `loaded endpoint command directory`, and
+record the Endpoint's configured adapter count from `endpoints`.
+
+Enter endpoint scope with `cd <endpoint>` and confirm the prompt shows no session. Type
+`!pwd` then Enter. Expect one receipt with CommandID, Status, DeliveryBoundary,
+EffectCertainty, ErrorCode, then `exit_code: 0`, `truncated: false` and a `stdout:`
+section. Expect the printed directory to equal the configured
+`AGENT_CLUSTER_ENDPOINT_COMMAND_DIR`, not the CLI process working directory and not any
+session directory. A receipt that prints a session directory is a FAIL, because it means
+the command was routed to a session the operator did not select.
+
+Confirm no confirmation question appeared, because `!` is a one-shot execution form.
+Confirm the receipt is durable by reading it again with
+`agent-cluster-cli status <command-id>`, which must report the same terminal status.
+
+Then confirm the allowlist still decides. Type `!<unlisted-program>` and expect Status
+`rejected`, EffectCertainty `not_applied` and ErrorCode `policy_denied`, with no `stdout:`
+section. Confirm confinement still applies by typing `!ls /etc/passwd` with a bare `ls`
+allowlist entry and expecting `argument_not_confined`, then `!ls .` and expecting success.
+The configured directory decides how much of the filesystem an argument can address, so a
+directory that is not the filesystem root must refuse an absolute path outside it.
+
+## CTLEXEC-18 Endpoint-scope `!` fails closed when unconfigured
+
+Precondition: the Endpoint was started without `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR`, with
+an allowlist that contains the program under test.
+
+Enter endpoint scope and type `!pwd` then Enter. Expect Status `failed`, EffectCertainty
+`not_applied` and ErrorCode `session_directory_unavailable`, and expect the message to
+name `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` together with the reason it is unusable. Expect
+no `stdout:` section. A command that silently runs in the Endpoint process working
+directory is a FAIL: that directory is not an operator decision, and the confinement
+check would then be computed against a directory nobody chose.
+
+Confirm session scope is unaffected on the same Endpoint: select a session and type
+`!pwd`, and expect the session working directory as in CTLEXEC-06. The setting must not
+change the session-scope form in either direction.
+
+## CTLEXEC-19 Endpoint-scope `!` refuses workspace scope and ambiguous adapters
+
+Precondition: workspace scope, with no session selected.
+
+Type `!pwd` then Enter. Expect the refusal
+`usage: !<program> [arguments...] requires a session or endpoint scope; use cd <number> to
+select a session row, or cd <endpoint-id> to run the command on an endpoint`, and expect no
+admission. A command must run on a named machine, so workspace scope cannot execute one.
+
+Then enter endpoint scope on an Endpoint configured with more than one adapter and type
+`!pwd`. Expect Status `failed`, EffectCertainty `not_applied` and ErrorCode
+`target_ambiguous`, with a message stating how many adapters are configured and telling
+the operator to name a session target instead. The capability is advertised per adapter,
+so the Endpoint cannot choose which one should validate it. On an Endpoint with no
+configured adapter, expect `adapter_not_configured` instead. Both are refusals with
+`not_applied`, never a silent choice of the first adapter.
 
 ## Evidence
 

@@ -267,7 +267,7 @@ requirements derived from the Cluster contract and tests.
 
 ## Allowlisted command execution
 
-`command.exec` runs one configured local command at the Endpoint in a session working directory. It is
+`command.exec` runs one configured local command at the Endpoint in a resolved working directory. It is
 a bounded, allowlisted operation, not a remote shell.
 
 - The request carries an argv array, never a command string. The Endpoint does not parse or split a
@@ -276,9 +276,21 @@ a bounded, allowlisted operation, not a remote shell.
   token sequence, so `git status` matches `git status --short` and does not match `git -c ...`.
 - The allowlist is Endpoint-local administrative configuration. The Server validates the standard
   payload shape and never interprets the allowlist.
-- The working directory is the session `project_workspace`, falling back to the session `pwd`. When
-  neither resolves to an existing directory the operation fails closed; it never falls back to the
-  Endpoint process working directory.
+- The working directory has exactly two sources, and which one applies is decided by the target the
+  intent carries. A session target uses the session `project_workspace`, falling back to the session
+  `pwd`. A target-less intent addresses the machine, so it uses the Endpoint-local
+  `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` (`--command-dir`). When the applicable source does not resolve
+  to an existing directory the operation fails closed; it never falls back to the Endpoint process
+  working directory.
+- A target-less intent is the endpoint-scope form. It carries no resource identity, so the Endpoint
+  resolves it against the one configured adapter that publishes the capability: zero adapters refuse
+  with `adapter_not_configured`, and several refuse with `target_ambiguous` because the choice would
+  otherwise depend on configuration order. The capability set is published per adapter, so the
+  operation is validated against that adapter's descriptor even though the command itself runs on the
+  Endpoint.
+- An unconfigured `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` is a refusal, not a default. The error names the
+  setting, because a silent fallback to the process directory would make the confinement boundary
+  depend on how the Endpoint was started.
 - Arguments are confined to the resolved directory. Absolute argument paths and parent traversal are
   rejected, and confinement is checked on the resolved path rather than on the argument text alone.
 - Execution uses a minimal environment, a bounded lifetime, a bounded output read with truncation

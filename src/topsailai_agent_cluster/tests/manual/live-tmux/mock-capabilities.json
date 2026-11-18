@@ -10,7 +10,7 @@
     {"name": "agent.drive.start", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
     {"name": "agent.drive.stop", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
     {"name": "workspace.clean", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
-    {"name": "command.exec", "version": "1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
+    {"name": "command.exec", "version": "1", "target_kinds": ["session", "endpoint"], "safety_class": "mutating", "required_permission": "control"},
     {"name": "agent.model.select", "version": "1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
     {"name": "ctl.fixture_probe", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
     {"name": "ctl.get_session_messages", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "read_output"},

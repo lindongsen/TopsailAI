@@ -68,6 +68,6 @@ Every command that takes a session or endpoint target accepts a short form, so a
 | `drive` | `drive <row>` | `drive <resource-id>`, `drive <provider-session-id>`, `drive status <row>` |
 | `ctl` | `ctl` then a bare action number or name | `ctl <action> <key=value ...>`, `ctl.<action> <key=value ...>` |
 
-The interactive `!` prefix is a short form of its own: `!<argv>` runs one allowlisted command in the selected session without any endpoint, resource or generation argument, because the current session supplies them. It has no `help <command>` entry; see `control-and-exec.md`.
+The interactive `!` prefix is a short form of its own: `!<argv>` runs one allowlisted command without any endpoint, resource or generation argument. In session scope the selected session supplies the working directory; in endpoint scope the command runs in the Endpoint-local `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR`, and an Endpoint that has not configured it refuses the form and names the setting. It has no `help <command>` entry; see `control-and-exec.md`.
 
 Actionable errors must name the short form: a missing session reports `use cd <number> to select a session row`, and a workspace-scope `show` reports `use show <number> for a session row or show <endpoint-id>`.
