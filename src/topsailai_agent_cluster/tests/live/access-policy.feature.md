@@ -251,3 +251,114 @@ When the operator lists token names, Endpoints, scopes, and permissions
 Then the output omits clear token secrets
 And hashed rules do not expose a reversible value
 And file permissions prevent unapproved users from reading the policy directory
+
+## Scenario AUTH-LIVE-028: Bearer mode still accepts the legacy Endpoint token header
+
+Given the Endpoint runs in `bearer` mode with a configured policy directory
+And the caller presents the granted token in `X-Endpoint-Token`
+When it requests `launch.query`
+Then the Endpoint allows the operation
+And the response carries no refusal code
+And the provider is invoked
+
+## Scenario AUTH-LIVE-029: A signed credential is refused when the Endpoint runs in bearer mode
+
+Given the Endpoint runs in `bearer` mode with a configured policy directory
+And the caller presents a correctly signed `X-Endpoint-Auth` credential
+When it requests `launch.query`
+Then the Endpoint refuses the request with `credential_rejected`
+And the refusal is not reported as `policy_denied`
+And the provider is not invoked
+
+## Scenario AUTH-LIVE-030: A valid signature authenticates the Endpoint in HMAC mode
+
+Given the Endpoint runs in `hmac` mode with a policy file declaring `key-id`
+And the caller presents a signature computed over the documented six-field grammar
+When it requests `launch.query`
+Then the Endpoint allows the operation
+And the provider is invoked exactly once
+And the response does not echo the Endpoint secret
+
+## Scenario AUTH-LIVE-031: A wrong secret is refused as a credential, not as a policy
+
+Given the Endpoint runs in `hmac` mode with a policy file declaring `key-id`
+And the caller signs with the correct key identifier but the wrong secret
+When it requests `launch.query`
+Then the Endpoint returns `credential_rejected` with status 401
+And the response does not contain `policy_denied`
+And the provider is not invoked
+
+## Scenario AUTH-LIVE-032: An absent signature is refused in HMAC mode
+
+Given the Endpoint runs in `hmac` mode with a policy file declaring `key-id`
+And the caller presents no `X-Endpoint-Auth` credential
+When it requests `launch.query`
+Then the Endpoint returns `credential_rejected`
+And the provider is not invoked
+
+## Scenario AUTH-LIVE-033: The weaker bearer form cannot downgrade HMAC mode
+
+Given the Endpoint runs in `hmac` mode with a policy file declaring `key-id`
+And the caller presents the granted token in `X-Endpoint-Token` instead of a signature
+When it requests `launch.query`
+Then the Endpoint returns `credential_rejected`
+And the request is not accepted as a bearer credential
+And the provider is not invoked
+
+## Scenario AUTH-LIVE-034: A replayed signature is refused by the nonce cache
+
+Given the Endpoint runs in `hmac` mode with a policy file declaring `key-id`
+And the caller has already completed one signed request successfully
+When it resends the identical credential without re-signing
+Then the Endpoint returns `credential_rejected`
+And the provider is not invoked a second time
+
+## Scenario AUTH-LIVE-035: A proof cannot be moved to another operation
+
+Given the Endpoint runs in `hmac` mode with a policy file declaring `key-id`
+And the caller holds a signature computed for a different operation
+When it presents that signature for `launch.query`
+Then the Endpoint returns `credential_rejected`
+And the provider is not invoked
+
+## Scenario AUTH-LIVE-036: A verified credential without a grant is refused by policy
+
+Given the Endpoint runs in `hmac` mode with a policy file that declares no `launch.query` grant
+And the caller presents a correctly signed credential
+When it requests `launch.query`
+Then the Endpoint returns `policy_denied` with status 403
+And the response does not contain `credential_rejected`
+And the provider is not invoked
+
+## Scenario AUTH-LIVE-037: The Server never receives the Endpoint secret
+
+Given the Endpoint runs in `hmac` mode with a policy file declaring `key-id`
+And the caller completes one signed request through the Server
+When the Server response and the Server database are inspected
+Then neither contains the Endpoint secret
+And neither contains the `key_id.secret` pair credential
+And the Server forwards only the key identifier, timestamp, nonce, signature and request digest
+
+## Scenario AUTH-LIVE-038: A policy file may mix bearer and signed rules
+
+Given one policy file declares a `token` rule and another declares `key-id` with a pair token
+When the Endpoint loads the directory
+Then both rules load successfully
+And the bearer rule authenticates a bearer request
+And the signed rule authenticates a signed request
+And neither rule weakens the other
+
+## Scenario AUTH-LIVE-039: A key-id rule cannot be combined with a token digest
+
+Given a policy file declares `key-id` together with `token-sha256`
+When the Endpoint loads the directory
+Then the load fails visibly
+And the error explains that a digest cannot verify a signature
+And the Endpoint does not start with a partially applied policy
+
+## Scenario AUTH-LIVE-040: A key-id rule requires the full pair token
+
+Given a policy file declares `key-id` with a bare token that has no secret part
+When the Endpoint loads the directory
+Then the load fails visibly
+And the error explains that the rule needs a `key_id.secret` credential

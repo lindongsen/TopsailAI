@@ -170,6 +170,20 @@ def main() -> int:
     parser.add_argument("--capabilities", type=Path, help="optional capability descriptor file the endpoint declares")
     parser.add_argument("--startup-timeout-seconds", type=float, default=30.0, help="how long to wait for the API port to accept a connection")
     parser.add_argument("--timeout-seconds", type=float, default=0.0, help="stop after this many seconds; zero waits until interrupted")
+    # The Endpoint authentication mode is opt-in so every existing scenario keeps
+    # the permissive Endpoint it had before. An Endpoint with no policy directory
+    # accepts every caller, which is why the default smoke never exercised the
+    # credential path at all: it proved the Server credential and nothing else.
+    parser.add_argument(
+        "--endpoint-auth-mode",
+        choices=("bearer", "hmac"),
+        help="Endpoint credential mode; omit to leave the Endpoint on its built-in default",
+    )
+    parser.add_argument(
+        "--endpoint-policy-dir",
+        type=Path,
+        help="Endpoint-local access policy directory; required to enforce any credential",
+    )
     # A second Server is opt-in so every existing scenario keeps its exact
     # single-Server topology. It is a genuinely independent Server with its own
     # database and API port, which is what a re-home moves an Endpoint between.
@@ -270,6 +284,19 @@ def main() -> int:
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "client.key"),
         "AGENT_CLUSTER_ENDPOINT_ADAPTERS": json.dumps([adapter_document(args.provider, args.capabilities, args.provider_arg)]),
     }
+    # The mode and the policy directory are set together, because either one alone
+    # proves nothing. A mode without a policy directory leaves the Endpoint
+    # permissive, so every credential is accepted and the mode is never consulted.
+    # A policy directory without a mode leaves the Endpoint on its HMAC default,
+    # which refuses the bearer token the harness CLI presents.
+    if args.endpoint_auth_mode is not None:
+        endpoint_env["AGENT_CLUSTER_ENDPOINT_AUTH_MODE"] = args.endpoint_auth_mode
+    if args.endpoint_policy_dir is not None:
+        if not args.endpoint_policy_dir.is_absolute():
+            parser.error("--endpoint-policy-dir must be an absolute path")
+        if not args.endpoint_policy_dir.is_dir():
+            parser.error("--endpoint-policy-dir must name an existing directory")
+        endpoint_env["AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"] = str(args.endpoint_policy_dir)
     if args.secondary_server:
         endpoint_env["AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES"] = (
             f"wss://127.0.0.1:{channel_port},wss://127.0.0.1:{secondary_channel_port}"
