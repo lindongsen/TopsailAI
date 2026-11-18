@@ -26,12 +26,19 @@ or prunes them, so the table grows for the whole lifetime of the Endpoint proces
 
 ## Impact
 
-- `ListRecordedReceipts` (`journal.go:132-151`) scans every recorded receipt on every reconnect,
-  so reconnect cost grows with total command history rather than with the number of unsettled
-  receipts.
-- `resendPendingReceipts` (`internal/endpoint/service.go:309-330`) then re-sends every row it
-  returns, so a long-lived Endpoint re-sends an ever-growing set of frames on every reconnect.
-- This violates the project rule that data must not grow indefinitely.
+- **Disk growth is the only remaining defect.** Measured on the live Endpoint database
+  (`/opt/agent-cluster/data/endpoint/ac.topsail/endpoint.sqlite`, 1.4 MB) on 2026-11-18: 565 rows,
+  all `receipt_recorded`, spanning 5.84 days. Average row 1532 bytes (intent 317,768 + receipt
+  546,364 = 864,132 bytes total). Daily counts 62, 61, 151, 97, 34, 137, 22, so roughly 86 rows and
+  130 KB per day, about 31k rows and 30 MB per year.
+- **The reconnect cost claim in the original version of this section was wrong.** It stated that
+  `ListRecordedReceipts` scans every recorded receipt so reconnect cost grows with total history.
+  `journal.go:138` filters with `NOT EXISTS (SELECT 1 FROM receipt_settlement ...)`, so the query
+  returns only unsettled receipts: **4 rows out of 565**, not 565. `resendPendingReceipts`
+  (`internal/endpoint/service.go:395-414`) sends exactly what that query returns, so the re-send set
+  is already bounded by settlement and does not grow with history. Only the table itself grows.
+- This still violates the project rule that data must not grow indefinitely, but the harm is disk
+  consumption and a slower full-table scan, not an ever-growing reconnect burst.
 
 ## Why it is not fixed by the re-home work
 
@@ -40,12 +47,47 @@ retired without deleting the journal row. That bounds the *re-send* set but not 
 Bounding the table needs a retention policy with its own decision about which phases are safe to
 delete, and that decision is independent of the re-home work.
 
+## Structural constraint: a retention column is forbidden
+
+`internal/storage/endpoint/downgrade_boundary_guard_test.go:209-228`
+(`TestSharedTablesAreIdenticalAcrossVersions`) pins `command_journal` and `source_cache` to
+identical column lists across schema versions. Adding a retention column to `command_journal`
+therefore fails that guard, and the migration file states the same reason in a comment on
+`receipt_settlement`: it is a separate table rather than a column precisely because an older
+binary must keep writing `command_journal` unchanged.
+
+Any retention design must therefore delete rows or use a separate table. It must not add a column.
+
+## Two further defects found while analysing this issue
+
+- **`ExecuteBeforeAtMS` is not validated as non-zero.** `internal/endpoint/executor.go:119` guards
+  with `if intent.ExecuteBeforeAtMS > 0 && e.now().UnixMilli() > intent.ExecuteBeforeAtMS`, so a
+  zero value skips the expiry check entirely. A deletion predicate that selects `accepted` rows by
+  `execute_before_at_ms < cutoff` would therefore delete rows whose expiry was never enforced.
+  The predicate must require `execute_before_at_ms > 0`.
+- **`FrameReceiptAck` never persists its settlement.** `internal/endpoint/service.go:561-568`
+  deletes only from the in-memory `pendingReceipts` map. An acknowledged receipt therefore stays
+  `receipt_recorded` with no `receipt_settlement` row, so it is re-sent on every reconnect and is
+  never eligible for retention. This is a distinct defect from table growth and needs its own
+  issue.
+
 ## Required decision
 
 Which journal phases may be deleted, and after what age? A `receipt_recorded` row is the only
 durable evidence that a command reached the provider, so deleting it silently removes audit
 evidence. A retention design must therefore state what replaces that evidence before any row is
 removed.
+
+Three options were presented on 2026-11-18 and none is approved yet:
+
+- **A** — time-window deletion following the existing `cache_expiry.go` pattern. Delete `accepted`
+  rows with `execute_before_at_ms > 0 AND < cutoff`, and `receipt_recorded` rows that are settled
+  and past cutoff, deleting their `receipt_settlement` rows in the same transaction. Never delete
+  `invocation_started`, `endpoint_admitted`, or unsettled receipts. New variable
+  `AGENT_CLUSTER_ENDPOINT_COMMAND_JOURNAL_EXPIRY`, default `720h`, mounted beside
+  `expireSourceCache` (`internal/endpoint/collector.go:109-120`).
+- **B** — compress deleted rows into a bounded evidence table before removing them.
+- **C** — do not fix; document the growth and its measured rate as accepted behaviour.
 
 ## Related
 
