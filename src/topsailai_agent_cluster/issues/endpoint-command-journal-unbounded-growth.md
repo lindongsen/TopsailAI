@@ -80,14 +80,27 @@ removed.
 
 Three options were presented on 2026-11-18 and none is approved yet:
 
-- **A** — time-window deletion following the existing `cache_expiry.go` pattern. Delete `accepted`
-  rows with `execute_before_at_ms > 0 AND < cutoff`, and `receipt_recorded` rows that are settled
-  and past cutoff, deleting their `receipt_settlement` rows in the same transaction. Never delete
+- **A** — time-window deletion following the existing `cache_expiry.go` pattern. Delete
+  `receipt_recorded` rows that are settled and older than the cutoff, deleting their
+  `receipt_settlement` rows in the same transaction. Never delete `accepted`,
   `invocation_started`, `endpoint_admitted`, or unsettled receipts. New variable
   `AGENT_CLUSTER_ENDPOINT_COMMAND_JOURNAL_EXPIRY`, default `720h`, mounted beside
   `expireSourceCache` (`internal/endpoint/collector.go:109-120`).
 - **B** — compress deleted rows into a bounded evidence table before removing them.
 - **C** — do not fix; document the growth and its measured rate as accepted behaviour.
+
+### Why option A cannot select `accepted` rows by expiry
+
+The first sketch of option A proposed deleting `accepted` rows whose `execute_before_at_ms` had
+passed. That predicate is not expressible: `command_journal` has seven columns and
+`execute_before_at_ms` is not one of them. The deadline lives only inside `intent_json`, and the
+Endpoint storage layer uses no SQLite JSON functions anywhere, so reading it would require parsing
+JSON in Go for every candidate row.
+
+Option A therefore deletes only settled `receipt_recorded` rows. An `accepted` row is left in place
+because it is the only record that a command was admitted but never executed, which is exactly the
+evidence an operator needs when reconciling an interrupted command. `accepted` rows are also rare:
+the live database contains none, because every admitted command reached `receipt_recorded`.
 
 ## Related
 
