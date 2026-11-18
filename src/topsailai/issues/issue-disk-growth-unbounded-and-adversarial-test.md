@@ -432,3 +432,178 @@ processes by exact PID and to purge the stale `running` metas, so this issue can
 autonomously. Action 3 overlaps
 [issue-reaper-cannot-clean-sigkilled-owner-record.md](./issue-reaper-cannot-clean-sigkilled-owner-record.md),
 which is blocked on the same cleanup-authorization decision.
+
+## Actions 3, 4 and 5 re-measured on 2026-11-18
+
+Every number below came from a command executed in this workspace, not from the
+earlier text of this issue.
+
+### Action 3 is implemented
+
+`git merge-base --is-ancestor 1956f24a HEAD` returns success, and
+`1956f24a fix: reclaim unfinalized owner residue after its artifacts expire`
+changed `context/session_activity.py` (53 insertions) plus its unit test
+(131 insertions). `_unfinalized_residue` is defined at
+`context/session_activity.py:305` and consumed at `:395`, inside the branch that
+previously returned `UNKNOWN` for any status outside
+`_CLEANABLE_OWNER_STATUSES` (`completed`, `error`, `interrupted`).
+
+`tests/unit/test_topsailai_context_session_activity.py` reports **78 passed**.
+
+So the reaper deadlock described in action 3 no longer exists. The issue text
+above still lists it as open and should be read as superseded by this section.
+
+### Action 3 does not reclaim the current ghost sessions, and the reason is age
+
+A probe over the live task directory reported:
+
+```
+running metas: 10   alive=4   dead=6
+retention=7d (production): cleanable=0  blocked=10
+retention=1d (simulated):  cleanable=2  blocked=8
+```
+
+The two sessions that become cleanable at a one-day window are
+`wa-1fb57b5948b4` and `wa-a1ad42ea0a3f`, both flipping to `stopped`. The
+remaining dead owners stay blocked because at least one of their artifacts is
+still younger than the retention window, which is exactly the guard the residue
+path is supposed to apply. Artifact ages for the blocked dead owners are 0.79d
+to 5.02d, so a seven-day window correctly refuses them.
+
+This means the ghost-session count is a **retention-window** consequence, not a
+reaper defect. Shortening `TOPSAILAI_SESSION_META_RETENTION_DAYS` would reclaim
+them sooner, but that is a policy decision rather than a code fix.
+
+### Action 4: the enforcement exists, only the default is unlimited
+
+`events/backends/file.py:212` deletes the oldest files once
+`self._max_count > 0` is exceeded, and `events/config.py:55` reads
+`TOPSAILAI_EVENTS_FILE_MAX_COUNT` with `default=0`. The documented meaning of
+`0` is "unlimited".
+
+`tests/unit/events/test_backends.py` reports **12 passed**, including the
+count-bound and retention-days cleanup cases.
+
+So the mechanism required by action 4 already works. What remains is choosing a
+finite default, which would begin deleting event files on every deployment and
+therefore needs an explicit decision.
+
+Retention is already aligned: `TOPSAILAI_SESSION_META_RETENTION_DAYS` and
+`TOPSAILAI_EVENTS_FILE_RETENTION_DAYS` both default to `7`.
+
+### Action 5: the six orphan processes are gone
+
+```
+3437597 gone   3454037 gone   3466942 gone
+996363  gone   997207  gone   997931  gone
+```
+
+No termination is needed, so the destructive half of action 5 is moot. The
+remaining half, purging stale `running` metas, is now governed by the action 3
+residue path and the retention window described above.
+
+### Action 2 is outside this workspace
+
+`/TopsailAI/src/topsailai_agent_cluster` exists as a sibling project, and this
+workspace contains no `.go` files. The harness that builds into a per-scenario
+`t.TempDir()` therefore belongs to that project and cannot be changed here.
+
+### Current disk state
+
+```
+~/.topsailai/workspace/task   927M
+.session.meta        453
+.session.events     1409
+.session.stdout       80
+.session.stats.jsonl 728
+```
+
+Compared with the 2026-11-14 measurement recorded above (941M, 492 meta, 754
+events, 15 stdout), the events count has nearly doubled while stdout stayed low.
+The asymmetry this issue describes is therefore still present.
+
+### What is genuinely still open
+
+1. Adversarial assertions that do not exist yet: bytes written by a prompt loop,
+   detection of a deleted-but-open descriptor, and bounded growth across a
+   scripted session lifecycle.
+2. Whether to set a finite `TOPSAILAI_EVENTS_FILE_MAX_COUNT` default.
+3. Whether to shorten the meta retention window so dead owners are reclaimed
+   sooner.
+4. Action 2, routed to the sibling Go project.
+5. Action 6, an operational Docker cleanup on `/opt`.
+
+## Adversarial tests written on 2026-11-18
+
+The Human authorized the three missing adversarial assertions and explicitly
+rejected the other two open items: `TOPSAILAI_EVENTS_FILE_MAX_COUNT` keeps its
+`0` default, and the meta retention window stays at 7 days.
+
+New file: `tests/unit/test_topsailai_disk_growth_adversarial.py`, 6 tests,
+`6 passed in 1.33s`.
+
+### Bytes written by a prompt loop
+
+`test_closed_stdin_writes_bounded_bytes` runs `input_one_line` in a child
+process with stdin at `/dev/null` and asserts the child exits 0, writes fewer
+than 200 bytes, and prints the prompt exactly once.
+
+`test_negative_control_reproduces_unbounded_output` runs the pre-fix loop
+(`except EOFError: message = ""` then reprompt) in the same harness and asserts
+it writes more than 1000 bytes and more than 10x the fixed path. Without this
+control a green byte assertion could pass because the child never reached the
+prompt at all.
+
+`test_session_lifecycle_keeps_total_output_bounded` runs 50 turns over a closed
+channel and asserts total output stays under 20x one prompt per turn and that
+exactly 50 prompts were written. A per-turn bound alone would not catch growth
+accumulating across a long run, which is how the incident reached 51.75 GB.
+
+Measured: fixed path 8 bytes, pre-fix path 7992 bytes for one turn, and 399600
+bytes for 50 turns.
+
+### Deleted-but-open detection
+
+`test_deleted_descriptor_keeps_size_until_close` writes 64 KiB, unlinks the
+path, and asserts the open descriptor still reports the full size while the path
+is gone. This is the exact mechanism that made the space invisible to
+path-based inspection.
+
+`test_orphan_descriptor_is_visible_in_descriptor_table` reads
+`/proc/self/fd/<n>` and asserts the target is marked `deleted` and still names
+the removed file, so the condition is diagnosable before the descriptor closes.
+Skipped when `/proc` is unavailable.
+
+`test_closing_the_descriptor_releases_the_held_space` asserts the release is
+tied to the descriptor rather than the path, which is why killing the owning
+processes resolved the incident.
+
+### Negative control result
+
+Reverting only the `if not env_tool.is_input_pipe_enabled(): raise` branch in
+`workspace/input_tool.py` turned 3 of the 6 tests red with
+`7992 not less than 200`, `7992 not greater than 79920`, and
+`399600 not less than 1000`. Restoring the branch returned all 6 to green, so
+the tests observe the real behaviour rather than the test harness.
+
+### Probe harness defect found and fixed
+
+The first probe hung for 180 seconds. The cause was not the product code:
+`topsailai/__init__.py` loads `.env.local` at import time, and that file sets
+`TOPSAILAI_INPUT_PIPE_ENABLED=1` on this host, so the probe blocked on a named
+pipe instead of reaching the closed-stdin branch. The test harness now forces
+`TOPSAILAI_INPUT_PIPE_ENABLED=0` in the child environment; `load_dotenv` does not
+override an existing value, so the explicit setting wins.
+
+### Regression
+
+`tests/unit/test_topsailai_workspace_input_tool.py` plus
+`tests/unit/events/test_backends.py`: **88 passed in 1.19s**.
+
+### Still open after this change
+
+1. Action 2, routed to the sibling Go project.
+2. Action 6, an operational Docker cleanup on `/opt`.
+3. The two rejected configuration decisions are recorded as deliberate, not
+   pending: the events count default stays unlimited and the meta retention
+   window stays 7 days.
