@@ -46,9 +46,10 @@ type TableOptions struct {
 	// interactive presentation choice only: the provider session ID stays on the
 	// row, so it is still accepted as a command target, but it is not printed.
 	HideSessionID bool
-	// Brief renders only the columns that identify a row: NO, SESSION_NAME and
-	// ENDPOINT. It is a column-set choice, independent of Full, which is a
-	// truncation choice, so "brief and untruncated" is a coherent request.
+	// Brief renders the narrow column set: the fields that identify a row (NO,
+	// SESSION_NAME and ENDPOINT) plus MESSAGES. It is a column-set choice,
+	// independent of Full, which is a truncation choice, so "brief and
+	// untruncated" is a coherent request.
 	Brief bool
 }
 
@@ -128,13 +129,21 @@ func columnsFor(policy ColorPolicy) []tableColumn {
 	return columns
 }
 
-// briefColumnKeys is the column set a brief layout prints: the three fields that
-// identify a row and nothing else. It is a set rather than a list of removals, so
-// a column added later is absent from a brief table by default instead of
-// silently widening it.
+// briefColumnKeys is the column set a brief layout prints: the fields that
+// identify a row plus MESSAGES. It is a set rather than a list of removals, so a
+// column added later is absent from a brief table by default instead of silently
+// widening it.
+//
+// MESSAGES is included because it is the one runtime fact an operator scans while
+// choosing a session, and it is carried by the persisted inventory, so printing it
+// costs no provider read. The columns that stay out are the ones that either
+// duplicate the row colour (SESSION_STATUS), widen the table with an opaque value
+// (SESSION_ID), or describe the row rather than identify it (DRIVER,
+// PROJECT_WORKSPACE, DATA_STATUS).
 var briefColumnKeys = map[string]bool{
 	columnNo:       true,
 	columnName:     true,
+	columnMessages: true,
 	columnEndpoint: true,
 }
 
@@ -143,8 +152,8 @@ var briefColumnKeys = map[string]bool{
 // not depend on colour, so a hidden column is dropped for every colour policy.
 //
 // Brief is applied last and is a set, so it wins over the colour layout: a brief
-// table prints the same three columns whether or not colour is enabled, which is
-// what makes the layout predictable for an operator who redirected the output.
+// table prints the same columns whether or not colour is enabled, which is what
+// makes the layout predictable for an operator who redirected the output.
 func layoutColumns(options TableOptions) []tableColumn {
 	columns := columnsFor(options.Color)
 	kept := make([]tableColumn, 0, len(columns))

@@ -671,11 +671,11 @@ every command full for a whole session.
 
 ## The `list --brief` flag and the `lb` shorthand
 
-`--brief` is the per-command request to print only the columns that identify a row:
-`NO`, `SESSION_NAME` and `ENDPOINT`. It exists so an operator can scan which session
-runs on which machine without the descriptive columns pushing the table past a narrow
-terminal. `lb` is its shorthand. It is a form of `list`, not a second command and not
-an alias entry.
+`--brief` is the per-command request to print the narrow column set: `NO`,
+`SESSION_NAME`, `MESSAGES` and `ENDPOINT`. It exists so an operator can scan which
+session runs on which machine, and how much conversation it has carried, without the
+descriptive columns pushing the table past a narrow terminal. `lb` is its shorthand. It
+is a form of `list`, not a second command and not an alias entry.
 
 - Standalone: `agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all] [--full] [--brief]`
   and `agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [-a|--all] [--full]`.
@@ -688,7 +688,7 @@ an alias entry.
   combination is a contradiction rather than a harmless duplicate.
 - `--brief` and `--full` are independent axes. `--brief` chooses the column set and
   `--full` chooses whether a value is truncated, so `lb --full` is a coherent request:
-  the three identifying columns, printed without truncation. `--brief` is not ORed
+  the narrow column set, printed without truncation. `--brief` is not ORed
   with any session-wide option, because no startup flag selects a column set.
 - Both surfaces resolve the shorthand into the canonical `list` tail before parsing,
   so one grammar stays authoritative and the shorthand cannot drift into a second set
@@ -705,7 +705,7 @@ an alias entry.
 
 The brief column set is a set rather than a list of removals, so a column added later
 is absent from a brief table by default instead of silently widening it. It is applied
-after the colour-dependent layout, so a brief table prints the same three columns
+after the colour-dependent layout, so a brief table prints the same columns
 whether or not colour is enabled, which is what makes the layout predictable for an
 operator who redirected the output.
 

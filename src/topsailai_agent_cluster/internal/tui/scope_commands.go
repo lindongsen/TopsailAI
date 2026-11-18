@@ -141,7 +141,7 @@ func listFullRest(rest string) string {
 // supplies a flag. Resolving the word to "list" alone would parse an empty tail
 // and render the ordinary wide table, which is the worst outcome for this
 // command, because a wide table presented as a brief one looks complete while
-// burying the three columns the operator asked for. It is deliberately absent
+// burying the columns the operator asked for. It is deliberately absent
 // from commandAliases, so "l" keeps completing "list" instead of becoming
 // ambiguous with "lb". The shorthand is documented in the list help body instead,
 // so it stays discoverable without entering the alias registry.
@@ -162,7 +162,7 @@ const ListBriefAlias = listBriefAlias
 // parser. The brief flag is prepended, so "lb --full" becomes "--brief --full"
 // and a repeated "--brief" is rejected by the same duplicate check that guards
 // "list". Brief and full are independent axes, so the combination is accepted:
-// three columns, no truncation.
+// the narrow column set, no truncation.
 func listBriefRest(rest string) string {
 	if strings.TrimSpace(rest) == "" {
 		return "--brief"
