@@ -149,13 +149,20 @@ type SessionMetricsBatchResult struct {
 // SessionDetailPayload is the closed payload of a session-scoped detail read.
 type SessionDetailPayload struct{}
 
-// SessionDetailResult carries one session's provider metadata and runtime document.
+// SessionDetailResult carries one session's two provider documents.
+//
+// Both documents are optional, because a provider may legitimately report one and
+// not the other. Requiring either would force a provider to emit a placeholder,
+// and a placeholder is a claim nobody made.
+//
+// There is no truncation flag. An oversized document is rejected rather than
+// shortened, so a consumer never has to decide whether a document it received is
+// the whole document.
 type SessionDetailResult struct {
 	ProviderSessionID string `json:"provider_session_id"`
-	Metadata          string `json:"metadata"`
-	Runtime           string `json:"runtime,omitempty"`
+	ProviderMetadata  string `json:"provider_metadata,omitempty"`
+	ProviderRuntime   string `json:"provider_runtime,omitempty"`
 	ObservedAtMS      int64  `json:"observed_at_ms"`
-	MetadataTruncated bool   `json:"metadata_truncated,omitempty"`
 }
 
 // DecodeQueryPayload validates and decodes one query-specific request payload.
@@ -251,7 +258,12 @@ func DecodeQueryPayload(query NamedContract, target *Target, payload json.RawMes
 }
 
 // DecodeQueryResult strictly decodes and validates one query-specific Provider result.
-func DecodeQueryResult(query NamedContract, data json.RawMessage) (any, error) {
+//
+// maxDetailBytes is the configured bound for one provider detail document. It is a
+// parameter rather than a package constant because the bound is Endpoint
+// configuration: an operator may raise it for a provider whose records are large,
+// and a package constant would silently ignore that setting.
+func DecodeQueryResult(query NamedContract, data json.RawMessage, maxDetailBytes int) (any, error) {
 	if !IsStandardQuery(query.Name, query.Version) {
 		return nil, fmt.Errorf("unregistered standard query %q version %q", query.Name, query.Version)
 	}
@@ -303,7 +315,7 @@ func DecodeQueryResult(query NamedContract, data json.RawMessage) (any, error) {
 		if err := decodeStrict(data, &value); err != nil {
 			return nil, err
 		}
-		return value, value.validate()
+		return value, value.validate(maxDetailBytes)
 	default:
 		return nil, fmt.Errorf("unsupported query %q", query.Name)
 	}
@@ -472,25 +484,60 @@ func (r SessionMetricsBatchResult) validate() error {
 	}
 	return nil
 }
-
-// validate rejects a detail result whose documents are absent or oversized.
-// Metadata is required because a detail read that returns no record has not
-// answered the question, while Runtime is optional because it is a seam that no
-// provider fills yet.
-func (r SessionDetailResult) validate() error {
+// validate rejects a detail result that cannot be presented as a real
+// observation.
+//
+// Both documents are optional, so an empty document is accepted and reported as
+// not reported. What is rejected is a document that exceeds the configured bound:
+// the contract refuses it rather than shortening it, because a shortened provider
+// document presented as the whole document leaves the consumer unable to tell
+// which fields were dropped.
+//
+// The rejection carries DetailResponseTooLarge so the failure reaches the operator
+// as a specific machine code. A plain error would surface as a generic decode
+// failure, and the operator would read "the provider is broken" instead of "this
+// record is larger than the configured bound".
+func (r SessionDetailResult) validate(maxBytes int) error {
 	if err := validateIdentifier("provider_session_id", r.ProviderSessionID, true); err != nil {
 		return err
 	}
 	if r.ObservedAtMS < 1 {
 		return errors.New("session detail result has invalid observation time")
 	}
-	if r.Metadata == "" {
-		return errors.New("session detail metadata is required")
-	}
-	if len(r.Metadata) > protocol.MaxDetailBytes || len(r.Runtime) > protocol.MaxDetailBytes {
-		return fmt.Errorf("session detail document exceeds %d bytes", protocol.MaxDetailBytes)
+	for _, document := range []struct {
+		name  string
+		value string
+	}{
+		{"provider_metadata", r.ProviderMetadata},
+		{"provider_runtime", r.ProviderRuntime},
+	} {
+		if len(document.value) > maxBytes {
+			return detailTooLargeError{field: document.name, size: len(document.value), max: maxBytes}
+		}
 	}
 	return nil
+}
+
+// detailTooLargeError reports one provider document that exceeded the configured
+// bound.
+//
+// It is a typed error rather than a formatted string because the Endpoint
+// classifies a read failure by its machine code. Without the code the rejection
+// would be indistinguishable from a malformed provider response, and the operator
+// would be told to investigate a provider that answered correctly.
+type detailTooLargeError struct {
+	field string
+	size  int
+	max   int
+}
+
+func (e detailTooLargeError) Error() string {
+	return fmt.Sprintf("session detail %s is %d bytes, exceeding the configured bound of %d bytes", e.field, e.size, e.max)
+}
+
+// ErrorCode reports the stable machine code for an oversized provider document.
+func (e detailTooLargeError) ErrorCode() string {
+	return protocol.DetailResponseTooLarge
 }
 
 func validateTypedProviderKey(actualKind, requiredKind, key string) error {

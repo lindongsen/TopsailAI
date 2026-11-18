@@ -673,10 +673,29 @@ func readFailureCode(err error, reported, providerCode string) string {
 	if code, rejected := requestIdentityCode(err); rejected {
 		return code
 	}
+	if code, oversized := detailTooLargeCode(err); oversized {
+		return code
+	}
 	if reported != "" {
 		return reported
 	}
 	return providerCode
+}
+
+// detailTooLargeCode reports a provider document that exceeded its bound.
+//
+// It is extracted here rather than left to the generic provider code because the
+// two failures need different handling: an oversized document means the provider
+// answered correctly and the bound is too small, while a provider error means the
+// provider failed. Collapsing them would tell the operator to investigate a
+// provider that did nothing wrong, and the Server maps this code to its own
+// response instead of a generic provider failure.
+func detailTooLargeCode(err error) (string, bool) {
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) && coded.ErrorCode() == protocol.DetailResponseTooLarge {
+		return protocol.DetailResponseTooLarge, true
+	}
+	return "", false
 }
 
 // requestIdentityCode reports the caller-error code when err is a rejected request

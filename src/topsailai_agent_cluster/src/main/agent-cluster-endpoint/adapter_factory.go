@@ -31,8 +31,17 @@ import (
 // of the Endpoint, adapter and provider limits. The byte and record budgets are
 // not narrowed that way: they are sent as the Endpoint's own values.
 const (
-	genericCLIMaxStdinBytes  = 1 << 20
-	genericCLIMaxStdoutBytes = 1 << 20
+	genericCLIMaxStdinBytes = 1 << 20
+	// genericCLIMaxStdoutBytes bounds one provider response document, not one
+	// provider payload. A detail document is carried inside a JSON envelope, so the
+	// bytes on stdout are larger than the document itself: escaping alone measured
+	// 1.114x on a real record, and a control character expands to six bytes as
+	// \u00XX. A 1 MiB detail bound therefore needs headroom above 1 MiB here, or the
+	// transport rejects the response before the document bound is ever consulted
+	// and the operator reads a generic stdout-limit failure instead of the real
+	// reason. 8 MiB covers the six-times worst case for the largest permitted
+	// document.
+	genericCLIMaxStdoutBytes = 8 << 20
 	genericCLIMaxStderrBytes = 64 << 10
 	genericCLIMaxRecords     = 128
 )

@@ -50,6 +50,14 @@ var schemaDocumentBindings = []schemaStructBinding{
 	{"request.schema.json", "", reflect.TypeOf(Request{})},
 	{"response.schema.json", "", reflect.TypeOf(Response{})},
 	{"stream-frame.schema.json", "", reflect.TypeOf(StreamFrame{})},
+	// A per-query result document is a top-level object with no $defs, and it is
+	// the document a provider actually produces. It belongs here for the same
+	// reason the envelope does: the schema sets additionalProperties false, so a
+	// property the schema omits rejects a conforming provider, and a property the
+	// struct does not produce advertises a field nothing emits. This binding was
+	// missing, so renaming a field in this document passed every test while the
+	// contract and the decoder disagreed.
+	{"session-detail-result.schema.json", "", reflect.TypeOf(SessionDetailResult{})},
 }
 
 // schemaDefinitionsWithoutStruct records the object definitions that deliberately

@@ -858,13 +858,13 @@ func TestSessionDetailForwardsProviderRecordVerbatim(t *testing.T) {
 	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Metadata != record {
-		t.Fatalf("metadata=%q, want the provider record verbatim", result.Metadata)
+	if result.ProviderMetadata != record {
+		t.Fatalf("provider_metadata=%q, want the provider record verbatim", result.ProviderMetadata)
 	}
-	// Runtime is the reserved seam. This provider reports nothing for it, so an
-	// empty value is the correct answer and a placeholder would be a lie.
-	if result.Runtime != "" {
-		t.Fatalf("runtime=%q, want empty until a provider fills it", result.Runtime)
+	// provider_runtime is the reserved seam. This provider reports nothing for it,
+	// so an empty value is the correct answer and a placeholder would be a lie.
+	if result.ProviderRuntime != "" {
+		t.Fatalf("provider_runtime=%q, want empty until a provider fills it", result.ProviderRuntime)
 	}
 }
 

@@ -636,7 +636,7 @@ func TestDetailForwardsProviderMetadataVerbatimAndLeavesRuntimeEmpty(t *testing.
 		}
 		return providercli.Response{
 			Version: request.Version, RequestID: request.RequestID, OK: true,
-			QueryResult: json.RawMessage(`{"provider_session_id":"s-1","metadata":` + strconv.Quote(providerRecord) + `,"observed_at_ms":42}`),
+			QueryResult: json.RawMessage(`{"provider_session_id":"s-1","provider_metadata":` + strconv.Quote(providerRecord) + `,"observed_at_ms":42}`),
 		}, nil
 	}
 	binding := mustAdapter(t, provider)
@@ -644,11 +644,11 @@ func TestDetailForwardsProviderMetadataVerbatimAndLeavesRuntimeEmpty(t *testing.
 	if err != nil {
 		t.Fatalf("detail error = %v, want success", err)
 	}
-	if result.Metadata != providerRecord {
-		t.Fatalf("detail metadata = %q, want the provider record verbatim", result.Metadata)
+	if result.ProviderMetadata != providerRecord {
+		t.Fatalf("detail provider_metadata = %q, want the provider record verbatim", result.ProviderMetadata)
 	}
-	if result.Runtime != "" {
-		t.Fatalf("detail runtime = %q, want empty because the provider reported none", result.Runtime)
+	if result.ProviderRuntime != "" {
+		t.Fatalf("detail provider_runtime = %q, want empty because the provider reported none", result.ProviderRuntime)
 	}
 	if result.ProviderSessionID != "s-1" || result.ObservedAtMS != 42 {
 		t.Fatalf("detail identity = %q observed=%d, want s-1 observed=42", result.ProviderSessionID, result.ObservedAtMS)

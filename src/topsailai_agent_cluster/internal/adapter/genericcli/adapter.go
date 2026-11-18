@@ -44,6 +44,13 @@ type Config struct {
 	Capabilities protocol.CapabilityDescriptor
 	Mapper       adapter.ResourceMapper
 	Now          func() time.Time
+	// MaxDetailBytes bounds one provider detail document. It is Endpoint
+	// configuration rather than a package constant because a provider's session
+	// record is provider detail: one provider's records may be far larger than
+	// another's, and the operator who installed that provider is the one who knows
+	// the right bound. A zero value falls back to the protocol default so an
+	// Endpoint that configures nothing still has a working bound.
+	MaxDetailBytes int
 	// CommandRunner executes one allowlisted argv array on the Endpoint itself.
 	// It is a field rather than a package-level call so a test can observe the
 	// exact argv, directory and executable without running a real program.
@@ -119,6 +126,13 @@ func newWithRunner(ctx context.Context, config Config, runner cliRunner) (*Adapt
 		// value matches the Endpoint's own read ceiling; a caller that wants a
 		// different bound sets it explicitly.
 		config.ReadLimit = defaultReadLimit
+	}
+	if config.MaxDetailBytes < 1 {
+		// A zero bound would reject every document, so a caller that configures
+		// nothing falls back to the protocol default instead of silently refusing
+		// every detail read. The default lives here rather than in New because this
+		// is the constructor every path shares, including the test seam.
+		config.MaxDetailBytes = protocol.DefaultMaxDetailBytes
 	}
 	bootstrap, err := newScheduler(config.AdapterLimits, config.ReadLimit)
 	if err != nil {
@@ -590,10 +604,9 @@ func (a *Adapter) Detail(ctx context.Context, query protocol.SessionDetailQuery)
 	providerResult := value.(providercli.SessionDetailResult)
 	return protocol.SessionDetail{
 		ProviderSessionID: providerResult.ProviderSessionID,
-		Metadata:          providerResult.Metadata,
-		Runtime:           providerResult.Runtime,
+		ProviderMetadata:  providerResult.ProviderMetadata,
+		ProviderRuntime:   providerResult.ProviderRuntime,
 		ObservedAtMS:      providerResult.ObservedAtMS,
-		MetadataTruncated: providerResult.MetadataTruncated,
 	}, nil
 }
 
@@ -621,7 +634,7 @@ func (a *Adapter) typedQuery(ctx context.Context, name string, target *providerc
 	if err := responseError(response); err != nil {
 		return nil, err
 	}
-	value, err := providercli.DecodeQueryResult(query, response.QueryResult)
+	value, err := providercli.DecodeQueryResult(query, response.QueryResult, a.config.MaxDetailBytes)
 	if err != nil {
 		return nil, fmt.Errorf("decode provider query result: %w", err)
 	}

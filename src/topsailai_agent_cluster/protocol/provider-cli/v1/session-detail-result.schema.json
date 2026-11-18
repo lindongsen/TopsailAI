@@ -6,7 +6,6 @@
   "additionalProperties": false,
   "required": [
     "provider_session_id",
-    "metadata",
     "observed_at_ms"
   ],
   "properties": {
@@ -16,22 +15,18 @@
       "maxLength": 256,
       "pattern": "^\\S(?:.*\\S)?$"
     },
-    "metadata": {
+    "provider_metadata": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 524288
+      "maxLength": 1048576
     },
-    "runtime": {
+    "provider_runtime": {
       "type": "string",
-      "maxLength": 524288
+      "maxLength": 1048576
     },
     "observed_at_ms": {
       "type": "integer",
       "minimum": 1
-    },
-    "metadata_truncated": {
-      "type": "boolean"
     }
   },
-  "description": "Validated after correlation with the v1 query in the common request envelope. metadata and runtime are opaque provider documents, so the contract bounds their size and never their shape."
+  "description": "Validated after correlation with the v1 query in the common request envelope. provider_metadata and provider_runtime are seams: opaque provider documents whose shape the contract never models, so a second provider may report entirely different documents without a schema change. Both are optional, because a provider that reports neither is honest about it and the surface renders the absence as not reported. The contract bounds their size only, and a document that exceeds the bound is rejected rather than truncated."
 }

@@ -10,8 +10,8 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
-// detailReader is the optional API capability that reads one session's provider
-// metadata and runtime document.
+// detailReader is the optional API capability that reads one session's two
+// provider documents.
 //
 // It is a separate interface rather than a method on CommandAPI, so a surface
 // that cannot read detail still satisfies the command surface, and a client
@@ -32,71 +32,101 @@ type detailSection struct {
 	body  string
 }
 
-// sessionDetailSections returns the provider sections to append to the standard
-// session fields, or nil when the API cannot read detail.
+// detailRead is the outcome of one detail read.
 //
-// Returning nil rather than an empty section is deliberate: a client without the
-// capability then renders exactly what it rendered before, so a missing seam is
-// invisible instead of being reported as a provider that returned nothing.
-//
-// A failed read is reported as a section that states the failure, because the
-// operator asked for provider detail and silence would be indistinguishable from
-// a provider that has no detail to give.
-func sessionDetailSections(ctx context.Context, api CommandAPI, endpointID, providerSessionID string) []detailSection {
+// Both surfaces consume this one value, so the text form and the machine-readable
+// form can never disagree about what the provider reported. Reading twice would
+// let them diverge, and a caller comparing the two would have no way to tell which
+// one was current.
+type detailRead struct {
+	// Available is false when the API cannot read detail at all. A surface then
+	// renders exactly what it rendered before the seam existed, so a missing
+	// capability stays invisible instead of being reported as an empty provider
+	// document.
+	Available bool
+	// Detail holds the provider documents. It is meaningful only when Failure is
+	// empty.
+	Detail protocol.SessionDetail
+	// Failure states, in operator terms, why no document is available. It is
+	// reported rather than swallowed because the operator asked for provider
+	// detail, and silence would be indistinguishable from a provider that has
+	// nothing to report.
+	Failure string
+}
+
+// readSessionDetail performs the one detail read both surfaces share.
+func readSessionDetail(ctx context.Context, api CommandAPI, endpointID, providerSessionID string) detailRead {
 	reader, ok := api.(detailReader)
 	if !ok {
-		return nil
+		return detailRead{}
 	}
 	if providerSessionID == "" {
 		// A session with no provider identifier cannot be addressed by the
 		// provider, so there is nothing to read. This is reported rather than
 		// silently omitted, because an operator reading info on such a session
 		// must not conclude that the provider has no record.
-		return []detailSection{{label: "metadata", body: "not addressable: the session has no provider session identifier"}}
+		return detailRead{Available: true, Failure: "not addressable: the session has no provider session identifier"}
 	}
 	readCtx, cancel := context.WithTimeout(ctx, detailBudget)
 	defer cancel()
 	detail, err := reader.GetDetail(readCtx, endpointID, providerSessionID)
 	if err != nil {
-		return []detailSection{{label: "metadata", body: "read failed: " + err.Error()}}
+		return detailRead{Available: true, Failure: "read failed: " + err.Error()}
 	}
 	if detail.ErrorCode != "" {
-		return []detailSection{{label: "metadata", body: "read failed: " + detail.ErrorCode}}
+		return detailRead{Available: true, Failure: "read failed: " + detail.ErrorCode}
+	}
+	return detailRead{Available: true, Detail: detail}
+}
+
+// sessionDetailSections renders the provider sections to append to the standard
+// session fields, or nil when the API cannot read detail.
+//
+// Returning nil rather than an empty section is deliberate: a client without the
+// capability then renders exactly what it rendered before, so a missing seam is
+// invisible instead of being reported as a provider that returned nothing.
+func sessionDetailSections(read detailRead) []detailSection {
+	if !read.Available {
+		return nil
+	}
+	if read.Failure != "" {
+		return []detailSection{{label: "provider_metadata", body: read.Failure}}
 	}
 	return []detailSection{
-		{label: "metadata", body: detailMetadataBody(detail)},
-		{label: "runtime", body: detailRuntimeBody(detail)},
+		{label: "provider_metadata", body: detailProviderMetadataBody(read.Detail)},
+		{label: "provider_runtime", body: detailProviderRuntimeBody(read.Detail)},
 	}
 }
 
-// detailMetadataBody renders the provider session record.
+// detailProviderMetadataBody renders the provider session record.
 //
 // The record is rendered as readable text through the shared structured renderer,
 // which is the same renderer a conversation body uses. It is not re-encoded and
 // not curated: the provider's own document is what the operator asked for, and a
 // curated subset would silently hide the field that answers the question.
 //
-// Truncation is labelled, because a shortened provider record must never be
-// presented as the complete record.
-func detailMetadataBody(detail protocol.SessionDetail) string {
-	body := renderStructuredBody(detail.Metadata)
+// There is no truncation label, because the contract rejects an oversized
+// document instead of shortening it. A shortened record presented as the whole
+// record would leave the operator unable to tell which fields were dropped, so
+// the read fails visibly and this function never receives a partial document.
+func detailProviderMetadataBody(detail protocol.SessionDetail) string {
+	body := renderStructuredBody(detail.ProviderMetadata)
 	if strings.TrimSpace(body) == "" {
-		body = "not reported"
-	}
-	if detail.MetadataTruncated {
-		body += "\n(truncated: the provider record exceeded the accepted bound)"
+		return "not reported"
 	}
 	return body
 }
 
-// detailRuntimeBody renders the runtime observation.
+// detailProviderRuntimeBody renders the provider runtime observation.
 //
-// Runtime is a seam: no source fills it yet, so an empty document is reported as
-// not reported rather than as an empty runtime. The distinction matters because
-// "the provider reported nothing" and "the cluster has no source for this yet"
-// are different facts, and only the second one is true today.
-func detailRuntimeBody(detail protocol.SessionDetail) string {
-	body := renderStructuredBody(detail.Runtime)
+// The runtime document is a seam: the cluster fixes the position and the bound,
+// and the provider decides the content. A provider that reports nothing leaves it
+// empty, and an empty document is reported as not reported rather than as an
+// empty runtime. The distinction matters because "the provider reported nothing"
+// and "the cluster has no source for this yet" are different facts, and only the
+// first one is a statement about the provider.
+func detailProviderRuntimeBody(detail protocol.SessionDetail) string {
+	body := renderStructuredBody(detail.ProviderRuntime)
 	if strings.TrimSpace(body) == "" {
 		return "not reported"
 	}
@@ -106,9 +136,10 @@ func detailRuntimeBody(detail protocol.SessionDetail) string {
 // writeDetailSections appends the provider sections to the standard fields.
 //
 // Each section is written as a labelled block rather than as more label/value
-// lines, because a provider document is multi-line and a single "metadata: {...}"
-// line would be unreadable. The label is printed once, then the body indented, so
-// the operator can tell where the provider document starts and ends.
+// lines, because a provider document is multi-line and a single
+// "provider_metadata: {...}" line would be unreadable. The label is printed once,
+// then the body indented, so the operator can tell where the provider document
+// starts and ends.
 func writeDetailSections(w io.Writer, sections []detailSection) error {
 	for _, section := range sections {
 		if _, err := fmt.Fprintf(w, "%s:\n", section.label); err != nil {

@@ -36,7 +36,13 @@ const (
 	// process starts, so this copy is a second line of defence rather than the
 	// only one.
 	maxMetricsBatchSessions = 200
-	maxDetailBytes          = 512 << 10
+	// maxDetailBytes bounds one provider detail document. It is 1 MiB because a
+	// provider's `session info --json` record is provider detail: it grows with the
+	// provider's own schema, and a bound tuned to today's record would reject a
+	// legitimate document after a provider upgrade. The Cluster enforces the same
+	// bound before any provider process starts, so this copy is a second line of
+	// defence rather than the only one.
+	maxDetailBytes = 1 << 20
 	maxMessageCount         = 10000000
 )
 
@@ -172,18 +178,27 @@ type metricsBatchResult struct {
 	ObservedAtMS int64           `json:"observed_at_ms"`
 }
 
-// detailResult carries one session's provider metadata and runtime document.
+// detailResult carries one session's two provider documents.
 //
-// Metadata is the provider's own session record, forwarded verbatim. Runtime is
-// the reserved seam: this provider reports nothing for it today, so the field is
-// omitted rather than filled with a placeholder, and a consumer reads its absence
-// as "not reported" instead of "empty".
+// Both fields are seams: the Cluster reserves a place for a provider document and
+// never models its shape, so a second provider can report entirely different
+// documents without a contract change. The names carry the provider_ prefix
+// because the content is provider detail, not a Cluster-modelled field.
+//
+// ProviderMetadata is this provider's own `session info --json` record, forwarded
+// verbatim. ProviderRuntime is the reserved seam: this provider reports nothing
+// for it today, so the field is omitted rather than filled with a placeholder, and
+// a consumer reads its absence as "not reported" instead of "empty". Filling it
+// later is a provider change only.
+//
+// There is no truncation flag. A document that exceeds the bound is rejected
+// outright, because a shortened provider document presented as complete evidence
+// is worse than a visible refusal.
 type detailResult struct {
 	ProviderSessionID string `json:"provider_session_id"`
-	Metadata          string `json:"metadata"`
-	Runtime           string `json:"runtime,omitempty"`
+	ProviderMetadata  string `json:"provider_metadata,omitempty"`
+	ProviderRuntime   string `json:"provider_runtime,omitempty"`
 	ObservedAtMS      int64  `json:"observed_at_ms"`
-	MetadataTruncated bool   `json:"metadata_truncated,omitempty"`
 }
 
 func (p *provider) query(ctx context.Context, contract *namedContract, requested *target, payload json.RawMessage) (json.RawMessage, error) {
@@ -572,15 +587,16 @@ func runtimeRow(items []workspaceItem, sessionID string) (workspaceItem, bool) {
 
 // detail reads one session's provider metadata and runtime document.
 //
-// Metadata is the provider's own `session info --json` record, forwarded verbatim.
-// The Cluster deliberately does not model that record: it is provider detail, it
-// changes when the provider changes, and a Cluster type built from its fields
-// would have to change with it. Forwarding the document keeps the surface honest
-// and lets a second provider report a different record without a contract change.
+// ProviderMetadata is the provider's own `session info --json` record, forwarded
+// verbatim. The Cluster deliberately does not model that record: it is provider
+// detail, it changes when the provider changes, and a Cluster type built from its
+// fields would have to change with it. Forwarding the document keeps the surface
+// honest and lets a second provider report a different record without a contract
+// change.
 //
-// Runtime is the reserved seam. This provider reports nothing for it today, so the
-// field is left empty and the surface says it was not reported. Filling it later
-// is a provider change only.
+// ProviderRuntime is the reserved seam. This provider reports nothing for it
+// today, so the field is left empty and the surface says it was not reported.
+// Filling it later is a provider change only.
 func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMessage) (detailResult, error) {
 	sessionID, err := sessionQueryTarget(requested)
 	if err != nil {
@@ -617,7 +633,7 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 	if len(stdout) == 0 {
 		return detailResult{}, errorsNew("provider returned no session record")
 	}
-	return detailResult{ProviderSessionID: sessionID, Metadata: string(stdout), ObservedAtMS: p.now().UnixMilli()}, nil
+	return detailResult{ProviderSessionID: sessionID, ProviderMetadata: string(stdout), ObservedAtMS: p.now().UnixMilli()}, nil
 }
 
 // sessionQueryTarget extracts the provider session identifier from a session-scoped

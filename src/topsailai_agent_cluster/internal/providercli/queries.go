@@ -56,3 +56,21 @@ func QueryRequiresSessionTarget(name string) bool {
 		return false
 	}
 }
+
+// QueryRequiresSessionSet reports whether one registered query addresses a set
+// of sessions and therefore must carry that set in its payload.
+//
+// The rule is stated once, here, for the same reason QueryRequiresSessionTarget
+// is: DecodeQueryPayload enforces it and the conformance suite builds a request
+// that satisfies it. Without a shared rule the suite swept every registered
+// query while supplying a payload only for the ones it happened to name, so a
+// set-addressed query reached the Provider with an empty payload and the
+// Provider's correct rejection read as a Provider defect.
+func QueryRequiresSessionSet(name string) bool {
+	switch name {
+	case QuerySessionMetricsBatch:
+		return true
+	default:
+		return false
+	}
+}

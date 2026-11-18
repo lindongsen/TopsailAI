@@ -454,13 +454,13 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			if !mockKnownSession(sessionKey) {
 				return failureResponse(request.RequestID, mockSessionNotFoundCode, "provider session does not exist", "not_applied")
 			}
-			// The metadata is a provider document with a field the Cluster does not
-			// model, so a scenario can prove the document was forwarded verbatim
-			// rather than re-encoded from the fields the Cluster knows. Runtime is
-			// deliberately absent, because it is a seam with no source yet and a
-			// mock that invented one would hide that the Cluster reports it as not
-			// reported.
-			base.QueryResult = json.RawMessage(`{"provider_session_id":"` + sessionKey + `","metadata":"{\"session_id\":\"` + sessionKey + `\",\"task\":\"fixture task\",\"unmodelled_field\":\"kept\"}","observed_at_ms":1700000000000}`)
+			// provider_metadata is a provider document with a field the Cluster does
+			// not model, so a scenario can prove the document was forwarded verbatim
+			// rather than re-encoded from the fields the Cluster knows.
+			// provider_runtime is deliberately absent, because it is a seam with no
+			// source yet and a mock that invented one would hide that the Cluster
+			// reports it as not reported.
+			base.QueryResult = json.RawMessage(`{"provider_session_id":"` + sessionKey + `","provider_metadata":"{\"session_id\":\"` + sessionKey + `\",\"task\":\"fixture task\",\"unmodelled_field\":\"kept\"}","observed_at_ms":1700000000000}`)
 		default:
 			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
 		}

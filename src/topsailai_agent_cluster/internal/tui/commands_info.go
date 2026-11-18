@@ -12,9 +12,24 @@ import (
 //
 // It carries the endpoint that owns the session plus the standard session
 // record, so a caller never has to infer ownership from a display label.
+//
+// The two provider documents are carried here as well, because they are seams the
+// operator asked for and a machine-readable caller is an operator. Omitting them
+// would make the seam visible only to a human reading a terminal, so a script
+// could not answer the same question the text form answers.
 type SessionInfo struct {
 	EndpointID string           `json:"endpoint_id"`
 	Session    protocol.Session `json:"session"`
+	// ProviderMetadata and ProviderRuntime are the provider's own documents,
+	// forwarded verbatim. They are omitted when the provider reported nothing, so
+	// an absent key means "not reported" rather than "empty document".
+	ProviderMetadata string `json:"provider_metadata,omitempty"`
+	ProviderRuntime  string `json:"provider_runtime,omitempty"`
+	// ProviderDetailError states why no document is available, in operator terms.
+	// It is present only when the read failed or the session is not addressable,
+	// so a caller can distinguish "the provider reported nothing" from "the read
+	// did not happen".
+	ProviderDetailError string `json:"provider_detail_error,omitempty"`
 }
 
 // Info renders the detail of exactly one session selected by identifier.
@@ -39,11 +54,17 @@ func (r CommandRunner) Info(ctx context.Context, out io.Writer, id string, jsonM
 	if err != nil {
 		return err
 	}
+	read := readSessionDetail(ctx, r.API, endpoint.EndpointID, session.ProviderSessionID)
 	if jsonMode {
-		return RenderJSON(out, SessionInfo{EndpointID: endpoint.EndpointID, Session: session})
+		info := SessionInfo{EndpointID: endpoint.EndpointID, Session: session}
+		if read.Available {
+			info.ProviderMetadata = read.Detail.ProviderMetadata
+			info.ProviderRuntime = read.Detail.ProviderRuntime
+			info.ProviderDetailError = read.Failure
+		}
+		return RenderJSON(out, info)
 	}
-	sections := sessionDetailSections(ctx, r.API, endpoint.EndpointID, session.ProviderSessionID)
-	return renderSessionInfoWithSections(out, endpoint, session, sections)
+	return renderSessionInfoWithSections(out, endpoint, session, sessionDetailSections(read))
 }
 
 // findInfoSession resolves one identifier to exactly one session.

@@ -36,8 +36,8 @@ func interactiveInfo(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return numericTokenHint(token, err)
 	}
-	sections := sessionDetailSections(ctx, api, endpoint.EndpointID, session.ProviderSessionID)
-	return renderSessionInfoWithSections(out, endpoint, session, sections)
+	read := readSessionDetail(ctx, api, endpoint.EndpointID, session.ProviderSessionID)
+	return renderSessionInfoWithSections(out, endpoint, session, sessionDetailSections(read))
 }
 
 // locateInfoSession finds the one session named by resourceID.

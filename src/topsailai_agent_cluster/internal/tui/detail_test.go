@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -32,7 +33,11 @@ func (s *detailStubAPI) GetDetail(_ context.Context, endpointID, sessionID strin
 // read detail renders exactly what it rendered before, so a missing seam is
 // invisible instead of being reported as a provider that returned nothing.
 func TestSessionDetailSectionsIsNilWithoutTheCapability(t *testing.T) {
-	if got := sessionDetailSections(context.Background(), nil, "endpoint-1", "provider-session-1"); got != nil {
+	read := readSessionDetail(context.Background(), nil, "endpoint-1", "provider-session-1")
+	if read.Available {
+		t.Fatalf("read without the capability reported Available, want false")
+	}
+	if got := sessionDetailSections(read); got != nil {
 		t.Fatalf("sections without the capability=%v, want nil", got)
 	}
 }
@@ -44,15 +49,15 @@ func TestSessionDetailSectionsIsNilWithoutTheCapability(t *testing.T) {
 func TestSessionDetailSectionsReportsMetadataAndRuntime(t *testing.T) {
 	api := &detailStubAPI{detail: protocol.SessionDetail{
 		ProviderSessionID: "provider-session-1",
-		Metadata:          `{"session_id":"provider-session-1","model":"m1"}`,
-		Runtime:           "",
+		ProviderMetadata:  `{"session_id":"provider-session-1","model":"m1"}`,
+		ProviderRuntime:   "",
 	}}
-	sections := sessionDetailSections(context.Background(), api, "endpoint-1", "provider-session-1")
+	sections := sessionDetailSections(readSessionDetail(context.Background(), api, "endpoint-1", "provider-session-1"))
 	if len(sections) != 2 {
 		t.Fatalf("sections=%d want 2: %+v", len(sections), sections)
 	}
-	if sections[0].label != "metadata" || sections[1].label != "runtime" {
-		t.Fatalf("labels=%q,%q want metadata,runtime", sections[0].label, sections[1].label)
+	if sections[0].label != "provider_metadata" || sections[1].label != "provider_runtime" {
+		t.Fatalf("labels=%q,%q want provider_metadata,provider_runtime", sections[0].label, sections[1].label)
 	}
 	if !strings.Contains(sections[0].body, "model: m1") {
 		t.Fatalf("metadata body is not readable text: %q", sections[0].body)
@@ -68,9 +73,9 @@ func TestSessionDetailSectionsReportsMetadataAndRuntime(t *testing.T) {
 // it cannot know which field that is.
 func TestSessionDetailSectionsKeepsUnmodelledProviderFields(t *testing.T) {
 	api := &detailStubAPI{detail: protocol.SessionDetail{
-		Metadata: `{"session_id":"s1","unmodelled_field":"kept","nested":{"deep":"value"}}`,
+		ProviderMetadata: `{"session_id":"s1","unmodelled_field":"kept","nested":{"deep":"value"}}`,
 	}}
-	sections := sessionDetailSections(context.Background(), api, "endpoint-1", "s1")
+	sections := sessionDetailSections(readSessionDetail(context.Background(), api, "endpoint-1", "s1"))
 	if len(sections) == 0 {
 		t.Fatal("no sections produced")
 	}
@@ -81,16 +86,21 @@ func TestSessionDetailSectionsKeepsUnmodelledProviderFields(t *testing.T) {
 	}
 }
 
-// TestSessionDetailSectionsLabelsTruncation proves a shortened provider record is
-// never presented as the complete record.
-func TestSessionDetailSectionsLabelsTruncation(t *testing.T) {
+// TestSessionDetailSectionsHasNoTruncationLabel proves the surface cannot present
+// a shortened provider record as the complete record.
+//
+// The contract rejects an oversized document instead of shortening it, so there is
+// no truncation flag to render. This test pins that absence: if a truncation label
+// ever reappears, the contract has regressed to shortening documents silently.
+func TestSessionDetailSectionsHasNoTruncationLabel(t *testing.T) {
 	api := &detailStubAPI{detail: protocol.SessionDetail{
-		Metadata:          `{"session_id":"s1"}`,
-		MetadataTruncated: true,
+		ProviderMetadata: `{"session_id":"s1"}`,
 	}}
-	sections := sessionDetailSections(context.Background(), api, "endpoint-1", "s1")
-	if !strings.Contains(sections[0].body, "truncated") {
-		t.Fatalf("truncation is not labelled: %q", sections[0].body)
+	sections := sessionDetailSections(readSessionDetail(context.Background(), api, "endpoint-1", "s1"))
+	for _, section := range sections {
+		if strings.Contains(strings.ToLower(section.body), "truncated") {
+			t.Fatalf("section %q carries a truncation label: %q", section.label, section.body)
+		}
 	}
 }
 
@@ -115,7 +125,7 @@ func TestSessionDetailSectionsReportsFailures(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sections := sessionDetailSections(context.Background(), tc.api, "endpoint-1", "s1")
+			sections := sessionDetailSections(readSessionDetail(context.Background(), tc.api, "endpoint-1", "s1"))
 			if len(sections) != 1 {
 				t.Fatalf("sections=%d want 1: %+v", len(sections), sections)
 			}
@@ -131,7 +141,7 @@ func TestSessionDetailSectionsReportsFailures(t *testing.T) {
 // provider call is made with an empty target.
 func TestSessionDetailSectionsRefusesAnUnaddressableSession(t *testing.T) {
 	api := &detailStubAPI{}
-	sections := sessionDetailSections(context.Background(), api, "endpoint-1", "")
+	sections := sessionDetailSections(readSessionDetail(context.Background(), api, "endpoint-1", ""))
 	if len(api.calls) != 0 {
 		t.Fatalf("provider was called with an empty target: %v", api.calls)
 	}
@@ -201,12 +211,18 @@ type detailRunnerStubAPI struct {
 
 	detail protocol.SessionDetail
 	reads  []string
+	// err makes the detail read fail, so the failure path can be exercised through
+	// the real Info entry point rather than only through the helper.
+	err error
 }
 
 // GetDetail records the read so a test can prove whether the entry point asked
 // the provider at all.
 func (s *detailRunnerStubAPI) GetDetail(_ context.Context, endpointID, sessionID string) (protocol.SessionDetail, error) {
 	s.reads = append(s.reads, endpointID+"/"+sessionID)
+	if s.err != nil {
+		return protocol.SessionDetail{}, s.err
+	}
 	return s.detail, nil
 }
 
@@ -226,7 +242,7 @@ func detailRunnerFixture() *detailRunnerStubAPI {
 		},
 		detail: protocol.SessionDetail{
 			ProviderSessionID: "provider-session-1",
-			Metadata:          `{"session_id":"provider-session-1","unmodelled_field":"kept"}`,
+			ProviderMetadata:  `{"session_id":"provider-session-1","unmodelled_field":"kept"}`,
 		},
 	}
 }
@@ -252,20 +268,57 @@ func TestCommandRunnerInfoRendersProviderSections(t *testing.T) {
 	}
 }
 
-// TestCommandRunnerInfoJSONModeSkipsTheProviderRead proves a machine-readable
-// caller is not charged for a document it cannot see, and that the JSON envelope
-// stays free of provider text.
-func TestCommandRunnerInfoJSONModeSkipsTheProviderRead(t *testing.T) {
+// TestCommandRunnerInfoJSONModeCarriesTheProviderSeams proves a machine-readable
+// caller sees the same provider documents the text form shows.
+//
+// The seams exist so an operator can read a provider's own record. A script is an
+// operator too, so omitting them from the envelope would make the seam visible only
+// to a human reading a terminal, and a caller could not answer the same question
+// the text form answers.
+func TestCommandRunnerInfoJSONModeCarriesTheProviderSeams(t *testing.T) {
 	api := detailRunnerFixture()
 	var out strings.Builder
 	if err := (CommandRunner{API: api}).Info(context.Background(), &out, "res_1", true); err != nil {
 		t.Fatalf("Info: %v", err)
 	}
-	if len(api.reads) != 0 {
-		t.Fatalf("json mode read the provider: %v", api.reads)
+	if len(api.reads) == 0 {
+		t.Fatal("json mode did not read the provider, so the seams are missing")
 	}
-	if strings.Contains(out.String(), "unmodelled_field") {
-		t.Fatalf("json envelope carries provider text: %q", out.String())
+	var info SessionInfo
+	if err := json.Unmarshal([]byte(out.String()), &info); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if !strings.Contains(info.ProviderMetadata, "unmodelled_field") {
+		t.Fatalf("provider_metadata=%q, want the provider record verbatim", info.ProviderMetadata)
+	}
+	if info.ProviderRuntime != "" {
+		t.Fatalf("provider_runtime=%q, want empty because the provider reported none", info.ProviderRuntime)
+	}
+	if info.ProviderDetailError != "" {
+		t.Fatalf("provider_detail_error=%q, want empty on a successful read", info.ProviderDetailError)
+	}
+}
+
+// TestCommandRunnerInfoJSONModeReportsAReadFailure proves a failed read is visible
+// to a machine-readable caller instead of looking like a provider that reported
+// nothing. The two facts need different handling, so they must not share one
+// representation.
+func TestCommandRunnerInfoJSONModeReportsAReadFailure(t *testing.T) {
+	api := detailRunnerFixture()
+	api.err = errors.New("transport failure")
+	var out strings.Builder
+	if err := (CommandRunner{API: api}).Info(context.Background(), &out, "res_1", true); err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	var info SessionInfo
+	if err := json.Unmarshal([]byte(out.String()), &info); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if !strings.Contains(info.ProviderDetailError, "transport failure") {
+		t.Fatalf("provider_detail_error=%q, want the read failure", info.ProviderDetailError)
+	}
+	if info.ProviderMetadata != "" || info.ProviderRuntime != "" {
+		t.Fatalf("a failed read carried documents: %+v", info)
 	}
 }
 

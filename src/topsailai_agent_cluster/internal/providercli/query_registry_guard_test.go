@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 // querySchemaSuffixes are the two schema documents every registered query owns.
@@ -49,7 +51,7 @@ var queryFixtures = map[string]queryFixture{
 	QuerySessionDetail: {
 		target:  &Target{ResourceKind: ResourceSession, ProviderResourceKey: "provider-session"},
 		payload: `{}`,
-		result:  `{"provider_session_id":"provider-session","metadata":"{\"session_id\":\"provider-session\"}","observed_at_ms":1}`,
+		result:  `{"provider_session_id":"provider-session","provider_metadata":"{\"session_id\":\"provider-session\"}","observed_at_ms":1}`,
 	},
 	QuerySessionMetricsBatch: {
 		payload: `{"provider_session_ids":["provider-session"]}`,
@@ -116,7 +118,7 @@ func TestRegisteredQueriesDecodeThroughTheSwitch(t *testing.T) {
 		if _, err := DecodeQueryPayload(contract, fixture.target, json.RawMessage(fixture.payload)); err != nil {
 			t.Fatalf("registered query %q payload did not decode: %v", query.Name, err)
 		}
-		if _, err := DecodeQueryResult(contract, json.RawMessage(fixture.result)); err != nil {
+		if _, err := DecodeQueryResult(contract, json.RawMessage(fixture.result), protocol.DefaultMaxDetailBytes); err != nil {
 			t.Fatalf("registered query %q result did not decode: %v", query.Name, err)
 		}
 	}
@@ -132,7 +134,7 @@ func TestUnregisteredQueryIsRejectedBeforeTheSwitch(t *testing.T) {
 	if payloadErr == nil || !strings.Contains(payloadErr.Error(), "unregistered standard query") {
 		t.Fatalf("payload error = %v, want the registry to reject the name before the switch", payloadErr)
 	}
-	_, resultErr := DecodeQueryResult(contract, json.RawMessage(`{}`))
+	_, resultErr := DecodeQueryResult(contract, json.RawMessage(`{}`), protocol.DefaultMaxDetailBytes)
 	if resultErr == nil || !strings.Contains(resultErr.Error(), "unregistered standard query") {
 		t.Fatalf("result error = %v, want the registry to reject the name before the switch", resultErr)
 	}

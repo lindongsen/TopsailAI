@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/providercli"
 )
 
@@ -116,8 +117,20 @@ func TestProviderTypedQueryConformance(t *testing.T) {
 				}
 				request.Target = &providercli.Target{ResourceKind: providercli.ResourceSession, ProviderResourceKey: key}
 			}
+			// A set-addressed query carries its members in the payload, so the
+			// sweep must supply them for the same reason it supplies a target:
+			// the requirement is read from the registry, never restated here.
+			if providercli.QueryRequiresSessionSet(query.Name) {
+				payload, err := json.Marshal(providercli.SessionMetricsBatchPayload{
+					ProviderSessionIDs: []string{providerSessionID()},
+				})
+				if err != nil {
+					t.Fatalf("encode query payload: %v", err)
+				}
+				request.Payload = payload
+			}
 			response := invoke(t, runner, request)
-			if _, err := providercli.DecodeQueryResult(providercli.NamedContract{Name: query.Name, Version: query.Version}, response.QueryResult); err != nil {
+			if _, err := providercli.DecodeQueryResult(providercli.NamedContract{Name: query.Name, Version: query.Version}, response.QueryResult, protocol.DefaultMaxDetailBytes); err != nil {
 				t.Fatalf("decode typed query result: %v", err)
 			}
 			for _, forbidden := range []string{"launch_profile_id", "resource_id", "model_profile_id", "cluster_session_id", "command_id"} {

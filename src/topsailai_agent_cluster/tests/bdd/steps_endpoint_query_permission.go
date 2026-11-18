@@ -111,16 +111,14 @@ type queryReadOutcome struct {
 	// adapter had written the counts in the wrong order.
 	inbound int
 	outbound int
-	// metadata is the provider session record the detail read returned. It is
-	// kept verbatim so an assertion can prove the document was forwarded rather
-	// than re-encoded from the fields the cluster models.
-	metadata string
-	// runtime is the reserved detail seam. It is expected to stay empty until a
-	// source is chosen, so an assertion can prove the cluster reports it as not
-	// reported instead of inventing one.
-	runtime string
-	// metadataTruncated records whether the provider document hit its bound.
-	metadataTruncated bool
+	// providerMetadata is the provider session record the detail read returned.
+	// It is kept verbatim so an assertion can prove the document was forwarded
+	// rather than re-encoded from the fields the cluster models.
+	providerMetadata string
+	// providerRuntime is the reserved detail seam. It is expected to stay empty
+	// until a source is chosen, so an assertion can prove the cluster reports it
+	// as not reported instead of inventing one.
+	providerRuntime string
 	// chunks counts streamed records, for the follow read.
 	chunks int
 	// elapsed is how long the read took, used to prove a refused follow started
@@ -246,9 +244,8 @@ func performQueryRead(operation, credential string) error {
 		outcome.errorCode = result.ErrorCode
 		outcome.observedAtMS = result.ObservedAtMS
 		outcome.content = result.ProviderSessionID
-		outcome.metadata = result.Metadata
-		outcome.runtime = result.Runtime
-		outcome.metadataTruncated = result.MetadataTruncated
+		outcome.providerMetadata = result.ProviderMetadata
+		outcome.providerRuntime = result.ProviderRuntime
 	case queryOutputSnapshot:
 		result, err := api.GetOutput(ctx, scopedEndpointID, queryMatrixResourceID, queryMatrixGeneration, 0, 0)
 		outcome.err = err
@@ -378,21 +375,19 @@ func assertQueryAllowed(operation string) error {
 		if outcome.observedAtMS == 0 {
 			return fmt.Errorf("allowed detail read carried no observation time, so the adapter did not answer")
 		}
-		// The fixture metadata carries a field the cluster does not model. Its
-		// presence is the only evidence that the document was forwarded verbatim
-		// rather than re-encoded from the fields the cluster knows, because a
-		// re-encoded document would still contain every field the cluster models.
-		if !strings.Contains(outcome.metadata, "unmodelled_field") {
-			return fmt.Errorf("allowed detail read returned metadata %q, want the provider record verbatim", outcome.metadata)
+		// The fixture provider_metadata carries a field the cluster does not model.
+		// Its presence is the only evidence that the document was forwarded
+		// verbatim rather than re-encoded from the fields the cluster knows,
+		// because a re-encoded document would still contain every field the
+		// cluster models.
+		if !strings.Contains(outcome.providerMetadata, "unmodelled_field") {
+			return fmt.Errorf("allowed detail read returned provider_metadata %q, want the provider record verbatim", outcome.providerMetadata)
 		}
-		if outcome.metadataTruncated {
-			return fmt.Errorf("allowed detail read reported a truncated metadata document")
-		}
-		// Runtime is a seam with no source yet. An empty value is the correct
-		// answer, and a non-empty one would mean the cluster invented a runtime
-		// observation nobody decided on.
-		if outcome.runtime != "" {
-			return fmt.Errorf("allowed detail read reported runtime %q, want the seam left empty", outcome.runtime)
+		// provider_runtime is a seam with no source yet. An empty value is the
+		// correct answer, and a non-empty one would mean the cluster invented a
+		// runtime observation nobody decided on.
+		if outcome.providerRuntime != "" {
+			return fmt.Errorf("allowed detail read reported provider_runtime %q, want the seam left empty", outcome.providerRuntime)
 		}
 		count, err := queryMatrixInvocations(querySessionDetailOperation)
 		if err != nil {
