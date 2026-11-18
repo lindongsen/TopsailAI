@@ -140,6 +140,24 @@ claims from the request body.
 `409 intent_conflict`. An intent whose `execute_before_at_ms` has already passed is recorded and
 immediately expired rather than dispatched.
 
+`execute_before_at_ms` is an absolute UTC epoch-millisecond deadline. A value of `0` means the
+intent carries no deadline: the Server does not expire it on admission, the age-based reconciliation
+sweep skips it, and the Endpoint does not bound the provider call by it. A positive value is a hard
+bound, and the two sides report its violation with distinct codes:
+
+| Code | Raised by | Meaning |
+|---|---|---|
+| `expired_before_execution` | Endpoint, before admission completes | The deadline had already passed when the command arrived, so the provider was never consulted |
+| `expired_after_validation` | Endpoint, after admission and before the provider call | The deadline passed while the command was being validated, so the provider was never consulted |
+
+Both codes are terminal and both carry `effect_certainty = not_applied` and `outcome = expired`,
+because in both cases the provider was provably never called. They are distinct because the remedy
+differs: `expired_before_execution` means the caller's deadline was already stale on arrival, while
+`expired_after_validation` means the Endpoint's own validation consumed the remaining budget.
+
+A zero deadline is therefore not a way to express "expire immediately". A caller that wants a
+command to be refused rather than executed must send a positive deadline that has already passed.
+
 ### Command record
 
 A command record separates lifecycle from provider evidence. It carries `command_id`,

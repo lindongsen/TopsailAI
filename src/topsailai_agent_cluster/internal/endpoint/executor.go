@@ -252,9 +252,21 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			return protocol.ExecutionReceipt{}, err
 		}
 	}
+	// The adapter call is still ahead of this point, so nothing has been applied
+	// and the effect is certain. Reporting unknown here would send an operator to
+	// investigate a command that provably did nothing, and unknown is also the
+	// value that forbids automatic retry, so a safely retryable command would be
+	// labelled unsafe. The receipt is recorded through the same path as the
+	// pre-admission expiry check above, because a receipt that is only returned
+	// leaves the journal at endpoint_admitted: a replay would then re-derive the
+	// outcome from that phase and report invocation_recovery_unknown, which claims
+	// the adapter might have run when it never did.
 	deadlineBudget := intent.ExecuteBeforeAtMS - e.now().UnixMilli()
 	if deadlineBudget <= 0 {
-		return unknownReceipt(intent, requestHash, "expired_after_validation"), nil
+		receipt := unknownReceipt(intent, requestHash, "expired_after_validation")
+		receipt.EffectCertainty = protocol.EffectNotApplied
+		receipt.Outcome = "expired"
+		return e.recordEarlyRejection(ctx, intent, receipt)
 	}
 	callBudget := deadlineBudget
 	if intent.Budget.CLITimeoutMS > 0 && intent.Budget.CLITimeoutMS < callBudget {

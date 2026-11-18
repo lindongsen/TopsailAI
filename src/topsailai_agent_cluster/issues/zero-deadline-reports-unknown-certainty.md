@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
 created: 2026-11-18
 ---
 
@@ -85,27 +85,108 @@ returns the unknown constructor because it was written for the case where admiss
 happened and the provider might have been reached, but at `:249` the adapter call is still ahead of
 it, so nothing has been applied.
 
-## Required decision
+## Resolution
 
-Two independent questions, and they should be decided separately.
+Fixed by option A: the post-validation expiry now reports a certain, unapplied effect and records
+the receipt durably, without changing which commands execute.
 
-1. **Should a zero `ExecuteBeforeAtMS` be rejected at admission?** A command with no deadline can
-   never expire, so it is admitted and dispatched with no time bound. Rejecting it with
-   `invalid_target`-style validation would make the field mandatory. Alternatively, treat zero as
-   "no deadline" explicitly and document it, which is what the current code effectively does.
-2. **Should `:249` report `not_applied` instead of `unknown`?** This is a one-line change to build
-   the receipt with `EffectNotApplied` and `Outcome: "expired"`, matching the reachable path. It is
-   correct regardless of how question 1 is decided, because at that point the adapter has provably
-   not been called.
+### What changed
 
-## Prevention
+`internal/endpoint/executor.go` — the post-validation budget check now builds the receipt with
+`EffectCertainty = protocol.EffectNotApplied` and `Outcome = "expired"`, and returns it through
+`recordEarlyRejection` instead of returning it directly.
 
-The two guards read one field and disagree about what a zero value means. A table-driven test over
-`ExecuteBeforeAtMS` values `{0, past, future}` asserting both the `error_code` and the
-`effect_certainty` for each would have made the disagreement visible, because the zero and past
-cases produce the same observable behaviour (adapter not called) but different labels. Asserting
-only the error code is not enough: both cases return a receipt with no error, so the label is the
-only difference.
+The durable write is not cosmetic. A probe against the real executor showed that the old code
+returned the receipt without recording it, so the journal stayed at `endpoint_admitted`:
+
+```text
+before the fix, zero deadline:
+  returned: outcome=unknown code=expired_after_validation effect=unknown
+  journal_phase=endpoint_admitted
+  replay:   outcome=unknown code=invocation_recovery_unknown effect=unknown
+
+after the fix, zero deadline:
+  returned: outcome=expired code=expired_after_validation effect=not_applied
+  journal_phase=receipt_recorded
+  replay:   outcome=expired code=expired_after_validation effect=not_applied
+```
+
+A label-only change would therefore have been incomplete: the replay path would still have reported
+`invocation_recovery_unknown`, which claims the adapter might have run.
+
+### A worse consequence the issue did not record
+
+The `unknown` receipt leaves the Server command `executing`, and `executing` is not terminal. A probe
+against the real storage layer measured it:
+
+```text
+zero+unknown      after_receipt="executing" after_sweep="executing" swept=0
+zero+not_applied  after_receipt="rejected"  after_sweep="rejected"  swept=0
+past+not_applied  after_receipt="rejected"  after_sweep="rejected"  swept=0
+```
+
+`ReconcileExpiredCommands` (`internal/storage/server/commands.go:121`) carries
+`AND deadline_at_ms > 0`, so a zero-deadline row is never swept, and `PurgeExpiredCommands` only
+deletes terminal rows, so it is never purged either. The Endpoint had already given its final answer,
+so no second receipt could rescue it. The command was stuck permanently.
+
+Option A fixes this as a side effect: `not_applied` maps to `rejected`
+(`internal/storage/server/command_queries.go:151-153`), which is terminal.
+
+### Decision on the two questions
+
+1. **Zero stays legal and means "no deadline".** Four readers already agree on that
+   (`internal/server/commands.go:249`, `internal/storage/server/commands.go:121`, the generic CLI
+   adapter's `boundedContext`, and `internal/endpoint/executor.go:119`). Only the post-validation
+   check disagreed, so the outlier was corrected rather than the majority. Rejecting zero at
+   admission was rejected as an option because it would contradict the Server's own design and break
+   any client that omits the field.
+2. **`:249` reports `not_applied`.** Implemented as described above.
+
+### Verification
+
+New `internal/endpoint/executor_deadline_certainty_test.go`, four tests:
+
+- `TestExpiredDeadlineReportsCertainNotAppliedEffect` — table-driven over `{zero, past}`, asserting
+  the provider was reached zero times, the error code, `not_applied`, `outcome=expired`, and the
+  durable journal state.
+- `assertDurableExpiry` — requires `phase=receipt_recorded` and the stored receipt to carry the same
+  code and certainty.
+- `TestReplayedExpiredDeadlineKeepsTheCertainOutcome` — proves a replay does not fall back to
+  `invocation_recovery_unknown`.
+- `TestLiveDeadlineStillReachesTheProvider` — positive control, so deleting the deadline check
+  entirely cannot pass.
+
+Three deliberate breakages, each restored afterwards:
+
+| Breakage | Failure |
+|---|---|
+| Revert to `return unknownReceipt(...)` | `effect certainty="unknown", want "not_applied": the provider was never called, so the effect is certain` and `replay error code="invocation_recovery_unknown", want "expired_after_validation"` |
+| Keep the label but return the receipt directly | `journal phase="endpoint_admitted", want "receipt_recorded": a returned-only receipt leaves the command replayable as unknown` |
+| Delete the `deadlineBudget <= 0` check | `the provider was reached 1 times, so the reported certainty cannot be trusted` |
+
+Package results: `internal/endpoint` 7.775s, `internal/storage/server` 109.188s, `internal/protocol`
+0.002s, `internal/server` 1.790s, `src/main/agent-cluster-endpoint` 0.259s — all green. `go build
+./...`, `go vet` and `gofmt` clean.
+
+### Documentation
+
+`docs/API.md` and `docs/agent-cluster-protocol.md` now state the zero-value meaning, both expiry
+codes, and that both carry `not_applied`. Neither code appeared anywhere in `docs/` before.
+
+New `src/main/agent-cluster-endpoint/deadline_contract_guard_test.go`, three tests, because the
+regression is prose that no code path can observe. Three deliberate breakages confirmed it is not
+vacuous: removing "no deadline" from `docs/API.md`, renaming `expired_after_validation` in the
+protocol document, and changing `not_applied` to `unknown` each failed with a message naming the
+missing statement.
+
+### Live data
+
+The defect is latent, not active. Copied `/opt/agent-cluster/data/server/server.sqlite` to
+`/tmp/live_server_probe.sqlite` (a direct query returns `database is locked`): 431 commands, **0**
+with a zero deadline; `expired_after_validation` and `expired_before_execution` appear **0** times in
+`/opt/agent-cluster/logs/`. The TUI is the only producer and always sets five minutes, so only a
+hand-written request or a future client can reach this path.
 
 ## Related
 

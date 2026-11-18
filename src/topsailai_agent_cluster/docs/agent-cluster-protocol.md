@@ -1183,6 +1183,21 @@ The receipt also carries the provider's own return document as `provider_respons
 
 `unconfirmed` is terminal and always carries `unknown` effect certainty. It is written when a command is still `executing` after its immutable deadline, because delivery already happened and the exit was never confirmed. Reporting such a command as `not_applied` would deny a signal that was actually sent, and leaving it `executing` forever would hide the terminal outcome from the operator. Reads converge these rows idempotently and never overwrite a command that already reached `finished`, `rejected` or `failed`.
 
+### Deadline semantics and the two expiry codes
+
+`execute_before_at_ms` is an absolute UTC epoch-millisecond deadline. Zero means the intent carries no deadline, and every reader must agree on that: the Server skips admission expiry, the age-based reconciliation sweep skips the row, and the Endpoint does not bound the provider call. A positive value is a hard bound.
+
+An Endpoint that refuses a command because of its deadline reports one of two codes, and both are terminal with `effect_certainty = not_applied` and `outcome = expired`:
+
+| Code | Raised at | Meaning |
+|---|---|---|
+| `expired_before_execution` | Before admission completes | The deadline had already passed on arrival |
+| `expired_after_validation` | After admission, before the provider call | Validation consumed the remaining budget |
+
+The distinction matters because the remedy differs, and the certainty matters because the provider was provably never called. Reporting `unknown` for either case would send an operator to investigate a command that did nothing, and `unknown` is also the value that forbids automatic retry, so a safely retryable command would be labelled unsafe.
+
+Both codes must be recorded durably before the receipt is returned. A receipt that is only returned leaves the journal at `endpoint_admitted`, and a replay then re-derives the outcome from that phase and reports `invocation_recovery_unknown`, which claims the provider might have run when it never did. The Server maps `not_applied` to `rejected`, which is terminal; an `unknown` receipt instead leaves the command `executing`, and a zero-deadline row is skipped by the reconciliation sweep, so it would never converge.
+
 End-to-end delivery is at-least-once with bounded deduplication, NOT exactly-once execution:
 
 - Server persists intent before replying 202. Endpoint persists admitted intent before invoking the provider.
