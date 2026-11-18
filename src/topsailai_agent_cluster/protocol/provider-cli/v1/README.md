@@ -75,12 +75,70 @@ A Provider query result must never contain a Cluster-owned identity such as `lau
 `(adapter_id, resource_kind, provider_resource_key)` through `ResourceMapper` and publishes only the
 resulting opaque Cluster ID. A Provider cannot mint, copy or infer that ID.
 
+### The closed query registry
+
+Seven queries are registered, all at version `v1`. The registry is closed: a Provider may advertise
+support for a registered query or return `unsupported`, but it cannot add a provider-namespaced
+query. `internal/providercli/queries.go` is the single source of truth, and the conformance suite
+reads the same registry so a newly registered query cannot be exercised with a request that breaks
+its own rule.
+
+| Query | Addresses | Target required | Session set in payload |
+|---|---|---|---|
+| `launch.options` | a launch profile | no | no |
+| `history.messages` | a session | no | no |
+| `model.catalog` | a model profile | yes | no |
+| `session.messages` | a session | yes | no |
+| `session.metrics` | a session | yes | no |
+| `session.metrics.batch` | a set of sessions | no | yes |
+| `session.detail` | a session | yes | no |
+
+Two rules are stated once in code and enforced in two places, because the decoder rejects a request
+that breaks them and the conformance suite builds a request that satisfies them:
+
+- `QueryRequiresSessionTarget` — the query addresses one session, so the envelope must carry a
+  session target. `session.metrics.batch` is named explicitly as the exception rather than left to
+  the default, so a reader cannot mistake its absence for an omission.
+- `QueryRequiresSessionSet` — the query addresses a set, so the payload must carry that set. Only
+  `session.metrics.batch` does. Without this shared rule the suite swept every registered query while
+  supplying a payload only for the ones it happened to name, so a set-addressed query reached the
+  Provider with an empty payload and the Provider's correct rejection read as a Provider defect.
+
+A session-addressed query targets the Provider's own session identifier rather than a Cluster
+resource ID, because a session with no live process has no Cluster resource ID and these reads exist
+precisely for such a session.
+
 The machine-readable contracts are:
 
 - `launch-options-request.schema.json` and `launch-options-result.schema.json`
 - `history-messages-request.schema.json` and `history-messages-result.schema.json`
 - `model-catalog-request.schema.json` and `model-catalog-result.schema.json`
 - `session-messages-request.schema.json` and `session-messages-result.schema.json`
+- `session-metrics-request.schema.json` and `session-metrics-result.schema.json`
+- `session-metrics-batch-request.schema.json` and `session-metrics-batch-result.schema.json`
+- `session-detail-request.schema.json` and `session-detail-result.schema.json`
+
+### Provider document seams
+
+`session.detail` is the one query whose result carries documents the contract deliberately does not
+model. Its two document fields are seams, not typed structures:
+
+| Field | Producer | Forwarding rule |
+|---|---|---|
+| `provider_metadata` | the Provider's session record | forwarded verbatim, whole record |
+| `provider_runtime` | the Provider's runtime observation | forwarded verbatim, raw bytes |
+
+Both are optional strings. The contract fixes only their position and their bound, so a second
+Provider may report entirely different documents with no protocol, Server, schema or CLI change. A
+Provider that reports neither is honest about it, and the surface renders the absence as
+`not reported` rather than inventing an observation. Requiring either field would force a Provider to
+emit a placeholder, and a placeholder is a claim nobody made.
+
+Both are bounded by `maxLength` in the schema and by the Endpoint's configured bound in code. The
+bound is enforced as a hard rejection, never a truncation: a shortened Provider document presented as
+the whole record is worse than a refused read, because the operator cannot tell which fields are
+missing. There is no truncation flag, because a flag would make a partial document look like a
+supported outcome.
 
 ## Size bounds
 

@@ -386,30 +386,38 @@ These are submitted as an immutable intent and already pass `PolicyHook`
 | `command.exec` | `control` | Also gated by the command allowlist |
 | `ctl.<action>` | `control` | One advertised action per capability |
 
-### Operations that bypass every hook today
+### Frame-level reads and their policy identifiers
 
-These arrive as their own frame type and are served directly by the Endpoint service. They
-are the gap this policy has to close, because they are exactly the operations that reveal what
-an Endpoint is doing.
+These arrive as their own frame type and are served directly by the Endpoint service, so they never
+reach `PolicyHook` and the policy has to check each one at its frame handler. Every one of them is
+checked today.
 
-| Operation | Scope | Current entry point | Today |
+| Operation | Scope | Entry point | Enforced at |
 |---|---|---|---|
-| `output.read` | `read_output` | `internal/endpoint/service.go:415` `outputFrame` | No policy check |
-| `output.follow` | `read_output` | `internal/endpoint/follow.go:22` `startFollow` | No policy check |
-| `agent.model.list` | `view` | `internal/endpoint/model.go:45` `modelCatalogFrame` | No policy check |
-| `launch.query` | `view` | `internal/endpoint/launch.go:56` `launchFrame` | No policy check |
-| `history.read` | `view` | `internal/endpoint/history.go:42` `historyFrame` | No policy check |
-| `messages.read` | `view` | `internal/endpoint/messages.go:43` `messagesFrame` | No policy check |
+| `output.read` | `read_output` | `internal/endpoint/service.go` `outputFrame` | `service.go:680` |
+| `output.follow` | `read_output` | `internal/endpoint/follow.go` `startFollow` | `follow.go:41` |
+| `agent.model.list` | `view` | `internal/endpoint/model.go` `modelCatalogFrame` | `model.go:48` |
+| `launch.query` | `view` | `internal/endpoint/launch.go` `launchFrame` | `launch.go:74` |
+| `history.read` | `view` | `internal/endpoint/history.go` `historyFrame` | `history.go:45` |
+| `messages.read` | `view` | `internal/endpoint/messages.go` `messagesFrame` | `messages.go:46` |
+| `metrics.read` | `view` | `internal/endpoint/metrics.go` `metricsFrame` and `metricsBatchFrame` | `metrics.go:98`, `:194` |
+| `detail.read` | `view` | `internal/endpoint/metrics.go` `detailFrame` | `metrics.go:129` |
 
 `agent.model.list` already has an operation constant
-(`internal/protocol/capabilities.go:28`), but it is served by its own frame
+(`internal/protocol/capabilities.go`), but it is served by its own frame
 (`channel.FrameModelCatalogRequest`) rather than as an immutable intent, so it never reaches
-`PolicyHook`. The policy therefore has to check it at the frame handler.
+`PolicyHook`. The policy therefore checks it at the frame handler.
 
-`launch.query`, `history.read` and `messages.read` are frame-level queries without an existing
-operation constant. The policy needs a stable name for each, so these three names are
-introduced here. They are policy identifiers, not new protocol operations, and they do not
-appear on the wire.
+`launch.query`, `history.read`, `messages.read`, `metrics.read` and `detail.read` are frame-level
+queries. The first three have no wire operation constant, so the policy needs a stable name for each
+and these three names are policy identifiers rather than protocol operations. `metrics.read` and
+`detail.read` do have operation constants, because the client sends them as the endpoint operation
+header so the Endpoint can name the refused operation in its answer. None of the five appears as an
+operation field on the wire.
+
+`metrics.read` covers both the single and the batch route, because one permission for one capability
+is the honest model: a caller allowed to read one session's counts is allowed to read a set of them,
+and splitting the permission would let a policy grant a capability it cannot describe.
 
 ### What the policy does not gate
 

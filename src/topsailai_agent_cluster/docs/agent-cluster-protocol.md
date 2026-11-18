@@ -321,15 +321,17 @@ an Endpoint with no entry in its map refuses locally and reports a configuration
 sending a request without a credential, because an Endpoint refusal would describe the symptom and
 hide the cause.
 
-Six operations bypass every Endpoint hook today and are the gap the policy closes:
-`output.read`, `output.follow`, `agent.model.list`, `launch.query`, `history.read`
-and `messages.read`. `agent.model.list` has an operation constant but is served by
-its own frame instead of an immutable intent, so it never reaches the policy hook.
-The last three are policy identifiers rather than protocol operations, because those
-frames carry no operation constant. Inventory publication, heartbeat, command
-receipt delivery, the fleet list and the session list stay outside the policy, so a
-denying caller still sees which machines and sessions exist while being unable to
-read their content or operate them.
+Eight frame-level reads are served by their own frame type instead of an immutable
+intent, so they never reach the policy hook and the Endpoint checks each one at its
+frame handler: `output.read`, `output.follow`, `agent.model.list`, `launch.query`,
+`history.read`, `messages.read`, `metrics.read` and `detail.read`. All eight are
+checked today. `agent.model.list`, `metrics.read` and `detail.read` have operation
+constants; the other five are policy identifiers rather than protocol operations,
+because those frames carry no operation constant. None of the eight appears as an
+operation field on the wire. Inventory publication, heartbeat, command receipt
+delivery, the fleet list and the session list stay outside the policy, so a denying
+caller still sees which machines and sessions exist while being unable to read their
+content or operate them.
 
 Because the Server no longer authorizes operations, five Server-side checks are
 removed: command admission, output read, messages read, history read and model
@@ -624,11 +626,34 @@ not a compatibility model to preserve in the Provider CLI contract.
 ### Query framing
 
 `query` is the single framing function for provider-neutral read surfaces. Its names and schemas form
-a closed, versioned Cluster registry. Initial standard names are `launch.options`, `history.messages`,
-`model.catalog` and `session.messages`; the protocol schema deliverable freezes each target kind and
-request/result schema before implementation. Query capabilities and mutating operation capabilities
-are separate typed descriptor collections, so a read cannot become a mutation through classification
-ambiguity.
+a closed, versioned Cluster registry. Seven queries are registered, all at version `v1`:
+
+| Query | Addresses | Target required | Session set in payload |
+|---|---|---|---|
+| `launch.options` | a launch profile | no | no |
+| `history.messages` | a session | no | no |
+| `model.catalog` | a model profile | yes | no |
+| `session.messages` | a session | yes | no |
+| `session.metrics` | a session | yes | no |
+| `session.metrics.batch` | a set of sessions | no | yes |
+| `session.detail` | a session | yes | no |
+
+`internal/providercli/queries.go` is the single source of truth for that list, and it also states the
+two addressing rules once, because two callers need each of them for different reasons: the decoder
+rejects a request that breaks the rule, and the conformance suite builds a request that satisfies it.
+`QueryRequiresSessionTarget` names `session.metrics.batch` explicitly as the exception rather than
+leaving it to the default, so a reader cannot mistake its absence for an omission.
+`QueryRequiresSessionSet` covers the batch query, whose set travels in the payload because it
+addresses many resources rather than one. A second copy of either rule in the suite would let a newly
+registered query be exercised with a request that breaks its own rule, and the resulting failure would
+read as a Provider defect rather than as a gap in the test.
+
+A session-addressed query targets the Provider's own session identifier, not a Cluster resource ID,
+because a session with no live process has no Cluster resource ID and these reads exist precisely for
+such a session.
+
+Query capabilities and mutating operation capabilities are separate typed descriptor collections, so
+a read cannot become a mutation through classification ambiguity.
 
 ```json
 {
@@ -648,6 +673,62 @@ ambiguity.
 A provider may advertise support for a registered query or return `unsupported`; it may not create a
 provider-namespaced arbitrary query. Queries are read-only. Any state-changing behavior uses `execute`,
 and approved provider-specific controls use `ctl.<action>`.
+
+### Implemented provider document seams
+
+Two fields carry provider documents the Cluster deliberately does not model. They are the only
+seams in the protocol where the content is decided entirely by the Provider, and they exist because
+an operator asking for a session's detail wants the facts the Provider keeps, not a curated subset
+the Cluster guessed at.
+
+| Seam | Producer | Forwarding rule |
+|---|---|---|
+| `provider_metadata` | the Provider's session record | forwarded verbatim, whole record |
+| `provider_runtime` | the Provider's runtime observation | forwarded verbatim, raw bytes |
+
+Both travel in the `session.detail` query result. Both are optional strings, and the contract fixes
+only their position and their bound.
+
+**The Cluster never models the document's shape.** A cluster type built from one Provider's fields
+would have to change whenever that Provider changed, and a second Provider would then need a
+protocol, Server, schema and CLI change to be supported at all. Forwarding the Provider's own
+document keeps the abstraction intact: a second Provider may report an entirely different document
+and nothing above the adapter changes.
+
+**Both are optional.** A Provider that reports neither is honest about it, and the surface renders
+the absence as `not reported` rather than inventing an observation. Requiring either field would
+force a Provider to emit a placeholder, and a placeholder is a claim nobody made.
+
+**Both are bounded, and the bound is a rejection rather than a truncation.** `DefaultMaxDetailBytes`
+is 1 MiB and `MaxDetailCeilingBytes` is 2 MiB; an Endpoint may configure any bound in that range
+through `AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES` or `--detail-max-bytes`. An oversized document is
+refused with `detail_response_too_large`. There is no truncation flag, because a shortened Provider
+document presented as the whole record is worse than a refused read: the operator cannot tell which
+fields are missing, and a flag would make a partial document look like a supported outcome.
+
+The ceiling exists because the document travels inside a provider response envelope, and JSON string
+escaping expands a document by up to six times when it contains control characters. The Endpoint
+derives its provider stdout budget from the ceiling, so the two cannot drift apart: the budget is six
+times the ceiling, which is exactly the worst-case expansion of the largest document the contract
+permits. A bound above the ceiling could never be satisfied, because the transport would reject the
+envelope before the document bound was consulted and the operator would read a transport failure
+instead of the rejection this contract defines.
+
+**Forwarding is byte-level, never a typed round trip.** An adapter that decodes a Provider document
+into a struct and re-encodes it silently drops every field the struct does not model, and the
+operator then reads a trimmed record as the whole one. The Provider CLI therefore forwards the raw
+bytes it received.
+
+**`provider_runtime` is host-scoped while `provider_metadata` is not.** A session recorded on another
+host is described without a runtime envelope, because this host cannot observe a process it cannot
+see. That is an unobservable row, not a Provider failure, so the seam stays empty and the surface
+reports `not reported`. A Provider call that actually fails is returned as an error instead, because
+an empty field would present a failed read as a row nobody measured.
+
+The Provider side enforces no bound of its own. The bound is a Cluster contract, so a Provider that
+also rejected a document would create a second, invisible limit: an operator who raised the Endpoint
+bound would still be refused by the Provider, and the refusal would arrive as a generic provider
+error that sends the investigation to a Provider behaving correctly.
 
 ### Version and capability compatibility
 
@@ -790,7 +871,20 @@ must be proven by observing the matching broken mode fail.
 
 ## Proposed HTTP surfaces
 
-All paths below are proposed, not existing APIs. JSON responses use a common envelope: code, message, data, request_id, timestamp. Errors preserve stable machine codes; HTTP statuses are meaningful. Paginated responses carry next_cursor, snapshot_revision and has_more; sorting is deterministic with ID as a tie-breaker.
+This table is the original proposal and is kept for the routes that do not exist yet. The
+implemented surface is authoritative in `docs/API.md`, which records the exact request parameters,
+response documents and failure codes for every route that is served today. Where the two disagree,
+`docs/API.md` describes the running Server and this table describes an intention.
+
+Implemented read routes that this proposal did not enumerate: `GET /api/v1/launch-options`,
+`GET /api/v1/history`, `GET /api/v1/messages`, `GET /api/v1/metrics`, `POST /api/v1/metrics/batch`,
+`GET /api/v1/detail` and `GET /api/v1/model-catalog`. Each is a live provider read forwarded through
+the Endpoint channel, not a stored projection, and each is authorized by the Endpoint rather than by
+the Server.
+
+JSON responses use a common envelope: code, message, data, request_id, timestamp. Errors preserve
+stable machine codes; HTTP statuses are meaningful. Paginated responses carry next_cursor,
+snapshot_revision and has_more; sorting is deterministic with ID as a tie-breaker.
 
 | API | Purpose |
 |---|---|
