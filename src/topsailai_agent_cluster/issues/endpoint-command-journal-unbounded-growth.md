@@ -60,11 +60,19 @@ Any retention design must therefore delete rows or use a separate table. It must
 
 ## Two further defects found while analysing this issue
 
-- **`ExecuteBeforeAtMS` is not validated as non-zero.** `internal/endpoint/executor.go:119` guards
-  with `if intent.ExecuteBeforeAtMS > 0 && e.now().UnixMilli() > intent.ExecuteBeforeAtMS`, so a
-  zero value skips the expiry check entirely and an already-expired command would still execute.
-  This is independent of retention: it is an admission defect, and it needs its own issue. It is
-  recorded here only because the retention analysis is what surfaced it.
+- **A zero `ExecuteBeforeAtMS` produces `effect_certainty=unknown` for a command that provably never
+  ran.** `internal/endpoint/executor.go:119` guards with
+  `if intent.ExecuteBeforeAtMS > 0 && e.now().UnixMilli() > intent.ExecuteBeforeAtMS`, so a zero
+  value skips that check. It does **not** execute the command: the post-admission budget check at
+  `executor.go:249` computes `deadlineBudget := 0 - now`, which is negative, and returns
+  `expired_after_validation`. Measured by probe: `err=<nil> phase=receipt_recorded
+  outcome=unknown error_code=expired_after_validation effect=unknown`, and the adapter was not
+  called. The defect is therefore the **certainty label**, not reachability: the command was
+  provably not applied, yet the receipt reports `unknown` instead of `not_applied`. Compare the
+  reachable path, where a positive deadline that expires after admission returns
+  `outcome=expired error_code=expired_before_execution effect=not_applied`. An earlier version of
+  this issue claimed a zero value "would still execute"; that was wrong and is corrected here.
+  This is independent of retention and needs its own issue.
 - **`FrameReceiptAck` never persists its settlement.** `internal/endpoint/service.go:561-568`
   deletes only from the in-memory `pendingReceipts` map. An acknowledged receipt therefore stays
   `receipt_recorded` with no `receipt_settlement` row, so it is re-sent on every reconnect and is
@@ -164,12 +172,18 @@ was disk growth only: ~86 rows/day at 1532 bytes/row, about 30 MB/year.
 
 ### Two further defects remain open
 
-- `ExecuteBeforeAtMS` is not validated as non-zero. `executor.go:119` guards with
-  `if intent.ExecuteBeforeAtMS > 0 && ...`, so a zero value skips the expiry check and an
-  already-expired command would still execute. This is an admission defect, independent of retention.
-- `FrameReceiptAck` (`service.go:561-568`) deletes only from the in-memory `pendingReceipts` map and
+- A zero `ExecuteBeforeAtMS` fails closed but mislabels certainty. `executor.go:119` skips its check
+  when the value is zero, and `executor.go:249` then returns `expired_after_validation` with
+  `effect_certainty=unknown`, although the adapter was never called. The reachable path returns
+  `not_applied`. The defect is the label, not reachability; an earlier version of this issue claimed
+  the command would execute, which was wrong.
+- `FrameReceiptAck` (`service.go:587-594`) deletes only from the in-memory `pendingReceipts` map and
   never persists a settlement, so an acknowledged receipt stays `receipt_recorded` with no settlement
-  row. It is re-sent on every reconnect and is never eligible for retention.
+  row. Measured on the live Endpoint database on 2026-11-18: 580 journal rows, 561 settled, **19
+  unsettled**, and all 19 exist on the Server with `phase=receipt_recorded effect_certainty=acknowledged`.
+  The Server persisted and acknowledged them, yet the Endpoint has no settlement row, so they are
+  re-sent on every reconnect and are never eligible for retention. This is a live, currently
+  accumulating defect, not a theoretical one.
 
 Both need their own issues.
 
