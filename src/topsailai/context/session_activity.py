@@ -302,6 +302,56 @@ class SessionActivityProbe:
                 return ActivityState.UNKNOWN
         return None
 
+    def _unfinalized_residue(self, root, names):
+        """Return ``None`` when an unfinalized owner is only expired residue.
+
+        A ``SIGKILL``ed owner never runs its finalizer, so its metadata keeps
+        ``status: running`` forever and the strict status gate would protect the
+        record permanently. Such a record is reclaimed only when at least one
+        non-metadata artifact exists and every one of them is older than the
+        retention window, which proves the owner has been gone long enough that
+        the record is residue rather than evidence.
+
+        The metadata is excluded from the age test because it is the record under
+        judgement, not evidence about the owner: a freshly written metadata file
+        beside an expired artifact is exactly the shape a hard kill leaves. The
+        metadata bytes are never rewritten, and a disabled retention window keeps
+        the strict gate.
+        """
+        if self.stdout_retention_seconds <= 0:
+            return ActivityState.UNKNOWN
+        now = time.time()
+        inspected = 0
+        for name in names:
+            if name.endswith(".session.meta"):
+                continue
+            try:
+                age = now - (root / name).stat().st_mtime
+            except OSError:
+                logger.warning("Cannot inspect session artifact %s", name, exc_info=True)
+                return ActivityState.UNKNOWN
+            if age <= self.stdout_retention_seconds:
+                return ActivityState.UNKNOWN
+            inspected += 1
+        if inspected:
+            return None
+        # Cleanup deletes the metadata last, so a reclaimed owner can reach this
+        # point with its metadata as the only surviving record. The metadata age
+        # then carries the evidence: an expired record is residue, while a fresh
+        # one still protects a recently killed owner.
+        for name in names:
+            if not name.endswith(".session.meta"):
+                continue
+            try:
+                age = now - (root / name).stat().st_mtime
+            except OSError:
+                logger.warning("Cannot inspect session artifact %s", name, exc_info=True)
+                return ActivityState.UNKNOWN
+            if age <= self.stdout_retention_seconds:
+                return ActivityState.UNKNOWN
+            return None
+        return ActivityState.UNKNOWN
+
     def _observe_owner(self, root, session_id, pid, names):
         """Protect live owners; authorize stopped only from stable local metadata."""
         socket_path = root / f"{session_id}.{pid}.session.sock"
@@ -342,7 +392,8 @@ class SessionActivityProbe:
             if not self.hostname or owner_hostname.strip() != self.hostname:
                 return ActivityState.UNKNOWN
             if data.get("status") not in _CLEANABLE_OWNER_STATUSES:
-                return ActivityState.UNKNOWN
+                if self._unfinalized_residue(root, names) is not None:
+                    return ActivityState.UNKNOWN
             last = path.lstat()
             identity = (first.st_dev, first.st_ino, first.st_mode, first.st_size, first.st_mtime_ns)
             if identity != (last.st_dev, last.st_ino, last.st_mode, last.st_size, last.st_mtime_ns):

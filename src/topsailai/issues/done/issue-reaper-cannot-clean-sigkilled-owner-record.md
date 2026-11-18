@@ -5,12 +5,12 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
-status: open
+status: closed
 ---
 
 # Reaper cannot clean an owner record left by a SIGKILLed driver
 
-**Status:** open, registered only, not fixed in this change
+**Status:** closed on 2026-11-18 by option C, approved by the Human
 **Severity:** low
 **Discovered:** 2026-11-13 while attributing the `test_driver_reaper.py::TestEndToEnd` failure
 
@@ -140,3 +140,81 @@ The three candidates are:
    `_CLEANABLE_OWNER_STATUSES` rule.
 
 No production code has been changed for this issue.
+
+## Resolution on 2026-11-18: option C implemented and verified
+
+The Human approved option C after the analysis above. The fix reclaims an
+unfinalized owner as expired residue instead of rewriting its metadata.
+
+### What changed
+
+`context/session_activity.py` gained `_unfinalized_residue()`, called from the
+single branch where the recorded status is not in `_CLEANABLE_OWNER_STATUSES`.
+`_CLEANABLE_OWNER_STATUSES` itself is unchanged, so the recorded Human rule that
+`running` must never become a cleanable status still holds.
+
+The gate requires at least one non-metadata artifact and every one of them to be
+older than `TOPSAILAI_SESSION_META_RETENTION_DAYS`. The metadata is excluded from
+that age test because it is the record under judgement, not evidence about the
+owner: a freshly written metadata file beside an expired artifact is exactly the
+shape a hard kill leaves. When cleanup has already removed every other artifact,
+the metadata's own age carries the evidence instead, because cleanup deletes the
+metadata last.
+
+The metadata bytes are never rewritten. A disabled retention window keeps the
+strict gate, so `TOPSAILAI_SESSION_META_RETENTION_DAYS=0` restores the previous
+behaviour exactly.
+
+### Verified behaviour
+
+```text
+running, stdout expired                      -> stopped  can_clean=True
+running, stdout fresh                        -> unknown  can_clean=False
+running, NO artifacts besides meta           -> unknown  can_clean=False
+running, stdout expired, PID LIVE            -> running  can_clean=False
+running, stdout expired + stderr fresh       -> unknown  can_clean=False
+completed, stdout fresh                      -> stopped  can_clean=True
+interrupted, no artifacts                    -> stopped  can_clean=True
+running, stdout expired, retention=0         -> unknown  can_clean=False
+REAL SIGKILL, artifacts fresh                -> unknown  can_clean=False
+REAL SIGKILL, artifacts expired              -> stopped  can_clean=True
+meta bytes unchanged: True | status: running
+```
+
+The deletion order was verified end to end: `stderr`, `stdout`, then `meta`, with
+nothing preserved and nothing left on disk.
+
+### Tests
+
+Nine tests were added to `tests/unit/test_topsailai_context_session_activity.py`:
+expired artifacts reclaimed, fresh artifacts protected, metadata alone protected,
+one fresh artifact among expired ones protected, live PID protected, metadata
+bytes unchanged, disabled retention keeps the gate, expired lone metadata
+reclaimed after artifact removal, and fresh lone metadata protected.
+
+`tests/unit/test_topsailai_context_session_activity.py` reports 78 passed,
+`scripts/session_agent_driver/tests/test_driver_reaper.py` reports 61 passed, and
+the combined run with `test_driver_runtime.py` reports 164 passed.
+`tests/run_tests.py` on the changed test file reports PASS with 78 cases.
+
+### Negative control
+
+Reverting only the `_unfinalized_residue()` call made three tests fail:
+`test_unfinalized_owner_with_expired_artifacts_is_reclaimed`,
+`test_unfinalized_owner_keeps_metadata_bytes_unchanged`, and
+`test_expired_metadata_alone_is_reclaimed_after_artifact_removal`. Restoring the
+call returned the file to 78 passed, which proves the tests observe the reclamation
+behaviour rather than the surrounding plumbing.
+
+### Residual limitation
+
+A hard-killed owner is reclaimed only after its artifacts pass the retention
+window, which defaults to seven days. Reclamation is therefore delayed, not
+immediate. If every non-metadata artifact is removed by another path while the
+metadata is still fresh, the record stays protected until the metadata itself
+expires, which is the conservative choice.
+
+### Commits
+
+- `1956f24a fix: reclaim unfinalized owner residue after its artifacts expire`
+- `986b6789 docs: close reaper sigkill orphan issue`

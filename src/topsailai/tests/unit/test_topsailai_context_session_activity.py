@@ -623,3 +623,134 @@ def test_one_changing_session_does_not_invalidate_its_neighbours(tmp_path, monke
 
     assert observations["stable"].state == State.STOPPED
     assert observations["changing"].state == State.UNKNOWN
+
+
+def _age(path, seconds):
+    """Move one artifact's timestamps into the past without touching content."""
+    stamp = time.time() - seconds
+    os.utime(path, (stamp, stamp))
+
+
+def _unfinalized(root, sid="a.b[1]", pid=123, status="running", artifacts=(),
+                 expired=True):
+    """Create an unfinalized owner record plus the named artifacts."""
+    path = record(root, sid=sid, pid=pid)
+    data = json.loads(path.read_text())
+    data["status"] = status
+    path.write_text(json.dumps(data))
+    for suffix in artifacts:
+        artifact = root / f"{sid}.{pid}.session.{suffix}"
+        artifact.write_text("x")
+        if expired:
+            _age(artifact, 30 * 86400)
+    return path
+
+
+def test_unfinalized_owner_with_expired_artifacts_is_reclaimed(tmp_path):
+    """A hard-killed owner becomes residue once its artifacts expire."""
+    _unfinalized(tmp_path, artifacts=("stdout",))
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=7 * 86400,
+    )
+
+    assert probe.observe("a.b[1]").state == State.STOPPED
+    assert probe.can_clean("a.b[1]") is True
+
+
+def test_unfinalized_owner_with_fresh_artifacts_stays_protected(tmp_path):
+    """A recently killed owner is still protected inside the retention window."""
+    _unfinalized(tmp_path, artifacts=("stdout",), expired=False)
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=7 * 86400,
+    )
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+    assert probe.can_clean("a.b[1]") is False
+
+
+def test_unfinalized_owner_without_artifacts_stays_protected(tmp_path):
+    """Metadata alone is not evidence of expiry, so the strict gate holds."""
+    _unfinalized(tmp_path)
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=7 * 86400,
+    )
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+
+
+def test_unfinalized_owner_with_one_fresh_artifact_stays_protected(tmp_path):
+    """Every surviving artifact must be expired, not merely one of them."""
+    _unfinalized(tmp_path, artifacts=("stdout",))
+    fresh = tmp_path / "a.b[1].123.session.stderr"
+    fresh.write_text("x")
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=7 * 86400,
+    )
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+
+
+def test_unfinalized_owner_with_live_pid_stays_protected(tmp_path):
+    """A live PID wins over expired artifacts, so residue never overrides liveness."""
+    _unfinalized(tmp_path, artifacts=("stdout",))
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.RUNNING, stdout_retention_seconds=7 * 86400,
+    )
+
+    assert probe.observe("a.b[1]").state == State.RUNNING
+    assert probe.can_clean("a.b[1]") is False
+
+
+def test_unfinalized_owner_keeps_metadata_bytes_unchanged(tmp_path):
+    """Reclaiming residue must never rewrite the recorded scene."""
+    path = _unfinalized(tmp_path, artifacts=("stdout",))
+    before = path.read_bytes()
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=7 * 86400,
+    )
+    assert probe.can_clean("a.b[1]") is True
+
+    assert path.read_bytes() == before
+    assert json.loads(path.read_text())["status"] == "running"
+
+
+def test_disabled_retention_keeps_the_strict_gate(tmp_path):
+    """A disabled retention window must not authorize residue reclamation."""
+    _unfinalized(tmp_path, artifacts=("stdout",))
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=0,
+    )
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
+
+
+def test_expired_metadata_alone_is_reclaimed_after_artifact_removal(tmp_path):
+    """Cleanup deletes metadata last, so an expired lone record must still pass."""
+    path = _unfinalized(tmp_path, artifacts=("stdout",))
+    (tmp_path / "a.b[1].123.session.stdout").unlink()
+    _age(path, 30 * 86400)
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=7 * 86400,
+    )
+
+    assert probe.observe("a.b[1]").state == State.STOPPED
+
+
+def test_fresh_metadata_alone_stays_protected(tmp_path):
+    """A lone fresh record still protects an owner killed moments ago."""
+    _unfinalized(tmp_path, artifacts=("stdout",))
+    (tmp_path / "a.b[1].123.session.stdout").unlink()
+
+    probe = SessionActivityProbe(
+        (tmp_path,), lambda pid: State.STOPPED, stdout_retention_seconds=7 * 86400,
+    )
+
+    assert probe.observe("a.b[1]").state == State.UNKNOWN
