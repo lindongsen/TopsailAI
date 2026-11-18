@@ -11,6 +11,15 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
+// followWriteTimeout bounds one write of a follow frame onto the shared channel.
+//
+// A follow frame is written to the same connection that carries heartbeats,
+// inventory reports, command receipts and every other response, so the write must
+// be bounded by its own budget rather than by the follow's lifetime. Without a
+// separate budget a stalled write would hold the connection's write lock and
+// delay every other frame on it.
+const followWriteTimeout = 10 * time.Second
+
 // startFollow admits one streaming output follow and runs it outside the channel
 // read loop. The read loop must never block on a follow: a follow stays open for
 // as long as the operator watches, so running it inline would stop command,
@@ -85,7 +94,7 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 		if chunk.ObservedAtMS == 0 {
 			chunk.ObservedAtMS = time.Now().UnixMilli()
 		}
-		return s.channel.SendFrame(ctx, channel.Frame{
+		return s.sendFollowFrame(ctx, channel.Frame{
 			Type:            channel.FrameOutputChunk,
 			ProtocolVersion: channel.ProtocolVersion,
 			RequestID:       requestID,
@@ -172,6 +181,32 @@ func providerStreamCode(err error) (string, bool) {
 	return streamErr.Code, true
 }
 
+// sendFollowFrame writes one follow frame onto the shared channel connection.
+//
+// The write deliberately does not use the follow's own context. The channel is one
+// websocket shared by every follow, heartbeat, inventory report, command receipt
+// and response, and the websocket library closes the whole connection on any error
+// from any method, including a context expiration. Writing with the follow's
+// context therefore made one follow's cancellation destroy the entire link: the
+// cancelled write failed, the library closed the connection, and every request in
+// the reconnect window was reported as endpoint_offline on a healthy Endpoint.
+//
+// Detaching the context keeps the two lifetimes separate. Cancelling a follow still
+// stops its provider child and its chunk loop, because those use the follow's own
+// context, but the frame write is bounded only by its own budget. A write that
+// genuinely fails still closes the connection, which is correct: a broken transport
+// is a real fault, and the library cannot be told to keep a connection it considers
+// unusable.
+//
+// The detached context is given a bounded budget rather than no deadline, because
+// an unbounded write would hold the connection's write lock and delay every other
+// frame on the same link.
+func (s *Service) sendFollowFrame(ctx context.Context, frame channel.Frame) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), followWriteTimeout)
+	defer cancel()
+	return s.channel.SendFrame(writeCtx, frame)
+}
+
 // sendFollowEnd emits the single terminal frame for a follow request.
 //
 // Delivery is best-effort. The Endpoint keeps no follow journal, so a terminal
@@ -191,7 +226,7 @@ func providerStreamCode(err error) (string, bool) {
 // as a deferred retry would be false, because no retry exists.
 func (s *Service) sendFollowEnd(ctx context.Context, requestID, code string, truncated bool) {
 	end := protocol.OutputEnd{ErrorCode: code, ObservedAtMS: time.Now().UnixMilli(), Truncated: truncated}
-	if err := s.channel.SendFrame(ctx, channel.Frame{
+	if err := s.sendFollowFrame(ctx, channel.Frame{
 		Type:            channel.FrameOutputEnd,
 		ProtocolVersion: channel.ProtocolVersion,
 		RequestID:       requestID,

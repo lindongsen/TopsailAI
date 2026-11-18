@@ -730,6 +730,17 @@ func (s *Server) RequestFollow(ctx context.Context, endpointID string, request p
 	s.Mu.Unlock()
 	if err := s.SendCommand(ctx, endpointID, Frame{Type: FrameOutputFollowRequest, ProtocolVersion: ProtocolVersion, RequestID: requestID, OutputFollowRequest: &request, EndpointToken: security.EndpointToken(ctx)}); err != nil {
 		s.releaseFollow(requestID)
+		// This path had no log, so a follow that never started left no trace on
+		// the Server at all. The operator saw endpoint_offline and the Server log
+		// was empty, which made the failure impossible to attribute: the same
+		// symptom is produced by a missing peer, a fenced generation and a failed
+		// write, and only the error value distinguishes them. The request ID is
+		// recorded because it is the only identity that ties this refusal to the
+		// operator's own command.
+		if s.Logger != nil {
+			s.Logger.Warn("output follow request could not be sent",
+				"endpoint_id", endpointID, "request_id", requestID, "error", err)
+		}
 		return nil, err
 	}
 	go func() {
