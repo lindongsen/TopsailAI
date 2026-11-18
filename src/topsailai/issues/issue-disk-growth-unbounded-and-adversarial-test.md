@@ -607,3 +607,105 @@ override an existing value, so the explicit setting wins.
 3. The two rejected configuration decisions are recorded as deliberate, not
    pending: the events count default stays unlimited and the meta retention
    window stays 7 days.
+
+## Required-behavior gaps 2 and 5 covered on 2026-11-18
+
+The Human authorized closing the two remaining test gaps: "如果是测试要补齐的话，就去补".
+Both were test gaps, not product defects. No production code was modified.
+
+### Gap 2: disk-full retains meta and stdout
+
+`tests/unit/test_topsailai_workspace_agent_agent_shell_base_db_io.py:498`
+`test_interactive_disk_full_retains_meta_and_stdout_artifacts`
+
+Creates a real `{session_id}.{pid}.session.meta` with `status: running` and
+`end_ts: null`, redirects the meta and tee folders to `tmp_path`, enables
+`TOPSAILAI_ENABLE_SESSION_TEE_OUT`, and drives `AgentChat.run()` with
+`ai_agent.run` raising `sqlite3.OperationalError(13, "database or disk is full")`
+on the first turn and returning a normal answer on the second.
+
+Asserts the session survives and reaches the next prompt
+(`input_mock.assert_called_once_with(hook=...)`), the meta file still exists and
+is finalized to `status: completed` with a non-null `end_ts`, and the stdout
+artifact still exists and contains both `Database write failed` and
+`database or disk is full`.
+
+The requirement wording says "meta and stdout retained". The real contract is
+that metadata is finalized rather than left `running`, because the session
+recovered and ended normally. The assertion targets the actual behavior and the
+docstring records the distinction, so a future reader does not mistake
+`completed` for a weakened assertion.
+
+### Gap 5: orphaned artifacts are actually removed
+
+`tests/unit/test_topsailai_session_cleanup_edges.py:97`
+`test_orphaned_artifacts_are_actually_removed_and_unrelated_data_survives`
+
+Builds one stopped owner whose stdout anchor is absent (three orphan artifacts
+plus its own meta) and one unrelated live owner (stdout anchor present), plus an
+unrelated plain file. Captures each orphan's size before cleanup, runs
+`clean_orphaned_session_files` with a probe reporting `STOPPED`, then asserts the
+reported deleted set equals the orphan set, every orphan path is gone, the
+unrelated owner's files and the plain file are byte-identical, and the owner's
+own meta is preserved because it is an owner record rather than a lifecycle
+artifact.
+
+`tests/unit/test_topsailai_session_cleanup_edges.py:161`
+`test_orphan_cleanup_reports_without_deleting_in_dry_run` asserts a dry run
+reports the orphan while leaving it on disk.
+
+Scope narrowing: the requirement also names "caches". No cache-cleanup API
+exists in this project (`grep` for `clean.*cache`, `purge`, `prune` across
+`workspace/`, `context/`, `utils/` returns nothing), so the assertion covers
+session lifecycle artifacts, which is the class that actually accumulated during
+the incident. A future cache-cleanup path needs its own assertion.
+
+### Negative controls
+
+Three deliberate regressions, each reverted from a backup:
+
+| Regression | Result |
+|---|---|
+| `TOPSAILAI_ENABLE_SESSION_TEE_OUT` forced to `False` | `1 failed, 17 passed` — stdout artifact missing |
+| `os.remove(full_path)` removed from `clean_orphaned_session_files` | `1 failed, 10 passed` — `orphan survived cleanup: a.123.session.stderr` |
+| Completion `update_session_meta_status` removed from `run()`'s `finally` | `1 failed, 17 passed` — `assert 'running' == 'completed'` |
+
+Each control proves the new test observes the behavior rather than passing
+vacuously.
+
+### Regression
+
+Six related files: **192 passed in 6.37s**.
+
+```
+tests/unit/test_topsailai_session_cleanup_edges.py
+tests/unit/test_topsailai_workspace_agent_agent_shell_base_db_io.py
+tests/unit/test_topsailai_disk_growth_adversarial.py
+tests/unit/test_topsailai_workspace_session_meta.py
+tests/unit/test_topsailai_context_session_activity.py
+tests/unit/test_topsailai_context_session_cleanup_guard.py
+```
+
+### Required-behavior coverage after this change
+
+| # | Requirement | Status |
+|---|---|---|
+| 1 | Bounded growth across a repeated lifecycle | covered |
+| 2 | Disk-full survives, reaches prompt, meta and stdout retained | covered |
+| 3 | Closed stdin exits, measured in bytes | covered |
+| 4 | Deleted-but-open detected, space measured | covered |
+| 5 | Orphans actually removed, unrelated data unaffected | covered |
+| 6 | Killed test run leaves no temp build tree | out of workspace, sibling Go project |
+| 7 | Dead-PID `running` meta becomes cleanable | covered |
+| 8 | `TOPSAILAI_EVENTS_FILE_MAX_COUNT` enforces a bound when set | covered |
+
+Seven of eight are covered. Only requirement 6 remains, and it cannot be
+implemented here because this workspace contains no Go sources.
+
+### Still open after this change
+
+1. Requirement 6, routed to the sibling Go project.
+2. Action 6, an operational Docker cleanup on `/opt`.
+3. The two rejected configuration decisions are recorded as deliberate, not
+   pending: the events count default stays unlimited and the meta retention
+   window stays 7 days.

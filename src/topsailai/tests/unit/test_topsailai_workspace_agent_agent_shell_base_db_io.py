@@ -6,7 +6,9 @@ turn is abandoned and the loop waits for the next user message. Non-interactive
 callers and worker threads cannot wait for a human, so they end with an explicit
 failure answer instead of an uncaught traceback.
 """
-
+import json
+import os
+import socket
 import sqlite3
 from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
@@ -14,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.exc import OperationalError
 
+from topsailai.workspace import print_tool, session_meta
 from topsailai.workspace.agent.agent_shell_base import (
     AgentChat,
     _resolve_db_io_failure,
@@ -486,3 +489,106 @@ def test_run_still_raises_for_unrelated_escaping_exception(agent_chat):
     ):
         with pytest.raises(ValueError):
             agent_chat.run(message="request", times=1)
+
+
+# --------------------------------------------------------------------------
+# F. A disk-full failure must leave the on-disk artifacts behind
+# --------------------------------------------------------------------------
+
+def test_interactive_disk_full_retains_meta_and_stdout_artifacts(
+    agent_chat, tmp_path, monkeypatch,
+):
+    """A disk-full failure must keep the metadata and the stdout artifact.
+
+    The requirement is that the interactive session survives a full disk and
+    that the diagnostic artifacts are still on disk afterwards, so an operator
+    can reconstruct what happened. The metadata is finalized rather than left
+    ``running``: the session recovered and ended normally, which is exactly the
+    survival the requirement asks for.
+    """
+    session_id = "db-io-session"
+    pid = os.getpid()
+    meta_path = tmp_path / f"{session_id}.{pid}.session.meta"
+    meta_path.write_text(json.dumps({
+        "session_id": session_id,
+        "pid": pid,
+        "hostname": socket.gethostname(),
+        "status": "running",
+        "end_ts": None,
+    }))
+    stdout_path = tmp_path / f"{session_id}.{pid}.session.stdout"
+
+    monkeypatch.setattr(session_meta, "FOLDER_WORKSPACE_TASK", str(tmp_path))
+    monkeypatch.setattr(print_tool, "FOLDER_WORKSPACE_TASK", str(tmp_path))
+    monkeypatch.setenv("TOPSAILAI_SESSION_ID", session_id)
+
+    io_error = _sqlite_error(13, "database or disk is full")
+    agent_chat.ai_agent.run.side_effect = [io_error, "recovered answer"]
+
+    env_values = {
+        "TOPSAILAI_INTERACTIVE_MODE": True,
+        "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": False,
+        "TOPSAILAI_ENABLE_SESSION_LOCK": False,
+        "TOPSAILAI_PRINT_TOOL_STAT": False,
+        "TOPSAILAI_ENABLE_SESSION_TEE_OUT": True,
+    }
+    with (
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.env_tool.EnvReaderInstance.check_bool",
+            side_effect=lambda key, default: env_values.get(key, default),
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.env_tool.is_debug_mode",
+            return_value=False,
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.env_tool.is_need_print",
+            return_value=False,
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.get_agent_runtime_input",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.input_message",
+            side_effect=("next request",),
+        ) as input_mock,
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.task_tool.ctxm_process_task",
+            side_effect=lambda _task: nullcontext(),
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.lock_tool.ctxm_void",
+            side_effect=lambda **_: nullcontext({}),
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.terminal_title.refresh_terminal_title",
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.get_agent_step_call",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.process_service",
+            side_effect=RuntimeError("statistics unavailable"),
+        ),
+    ):
+        result = agent_chat.run(
+            message="failed request", times=1, need_interactive=True,
+        )
+
+    # The session survived the failure and reached the next prompt.
+    assert result == "recovered answer"
+    input_mock.assert_called_once_with(hook=agent_chat.hook_instruction)
+
+    # The metadata file is retained and finalized, not left ``running``.
+    assert meta_path.exists()
+    meta = json.loads(meta_path.read_text())
+    assert meta["status"] == "completed"
+    assert meta["end_ts"]
+
+    # The stdout artifact is retained and keeps the diagnostic evidence.
+    assert stdout_path.exists()
+    stdout_text = stdout_path.read_text()
+    assert "Database write failed" in stdout_text
+    assert "database or disk is full" in stdout_text

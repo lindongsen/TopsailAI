@@ -92,3 +92,90 @@ def test_meta_count_preserves_live_owners(tmp_path, monkeypatch):
     monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "1")
     session_meta.cleanup_session_meta_files(SessionActivityProbe((tmp_path,), lambda pid: State.RUNNING))
     assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_orphaned_artifacts_are_actually_removed_and_unrelated_data_survives(
+    tmp_path, monkeypatch,
+):
+    """Orphaned artifacts must be deleted, and nothing else may be touched.
+
+    An orphan is a session-lifecycle file whose ``.session.stdout`` anchor is
+    gone. The requirement has two halves: the orphan must really disappear from
+    disk, and unrelated data must survive. Both halves are measured on the
+    filesystem before and after the call, so a no-op cleanup cannot pass.
+    """
+    monkeypatch.setattr(session_cleanup, "is_file_in_use", lambda path: False)
+
+    # Owner A: stopped, its stdout anchor is gone, so its artifacts are orphans.
+    orphaned = [
+        tmp_path / "a.123.session.stderr",
+        tmp_path / "a.123.session.pipe",
+        tmp_path / "a.123.session.agent2llm_inject_messages.jsonl",
+    ]
+    for path in orphaned:
+        path.write_text("orphan payload")
+    (tmp_path / "a.123.session.meta").write_text(json.dumps({
+        "session_id": "a",
+        "pid": 123,
+        "hostname": socket.gethostname(),
+        "status": "completed",
+    }))
+
+    # Owner B: unrelated session whose stdout anchor still exists.
+    unrelated_session = [
+        tmp_path / "b.456.session.stdout",
+        tmp_path / "b.456.session.stderr",
+    ]
+    for path in unrelated_session:
+        path.write_text("unrelated session payload")
+
+    # A file that is not part of any session lifecycle.
+    unrelated_plain = tmp_path / "notes.txt"
+    unrelated_plain.write_text("unrelated plain payload")
+
+    before = {path.name: path.stat().st_size for path in orphaned}
+    assert all(path.exists() for path in orphaned)
+
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+    deleted, failed = session_cleanup.clean_orphaned_session_files(
+        str(tmp_path), activity_probe=probe,
+    )
+
+    # The orphaned artifacts are really gone, and the reported list matches.
+    assert failed == []
+    assert sorted(os.path.basename(path) for path in deleted) == sorted(before)
+    for path in orphaned:
+        assert not path.exists(), f"orphan survived cleanup: {path.name}"
+
+    # Unrelated data is untouched, byte for byte.
+    for path in unrelated_session:
+        assert path.exists(), f"unrelated session file was deleted: {path.name}"
+        assert path.read_text() == "unrelated session payload"
+    assert unrelated_plain.exists()
+    assert unrelated_plain.read_text() == "unrelated plain payload"
+
+    # The owner record itself is not a lifecycle artifact, so it stays.
+    assert (tmp_path / "a.123.session.meta").exists()
+
+
+def test_orphan_cleanup_reports_without_deleting_in_dry_run(tmp_path, monkeypatch):
+    """A dry run must report the same orphans while leaving every file in place."""
+    monkeypatch.setattr(session_cleanup, "is_file_in_use", lambda path: False)
+
+    orphan = tmp_path / "a.123.session.stderr"
+    orphan.write_text("orphan payload")
+    (tmp_path / "a.123.session.meta").write_text(json.dumps({
+        "session_id": "a",
+        "pid": 123,
+        "hostname": socket.gethostname(),
+        "status": "completed",
+    }))
+
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+    deleted, failed = session_cleanup.clean_orphaned_session_files(
+        str(tmp_path), dry_run=True, activity_probe=probe,
+    )
+
+    assert failed == []
+    assert [os.path.basename(path) for path in deleted] == ["a.123.session.stderr"]
+    assert orphan.exists()
