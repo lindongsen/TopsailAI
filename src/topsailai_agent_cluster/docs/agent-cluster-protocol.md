@@ -137,7 +137,7 @@ instance of that pattern, and the Endpoint access policy is the reference for th
 
 Endpoint publishes standard versioned capabilities for itself, abstract resources and LaunchProfiles. Private adapter capabilities never appear on the wire. Minimum admission requirements are health and bounded discovery of at least one supported resource kind. The MVP platform must implement agent start/resume/stop. Endpoint reports precise standard resource/profile support; an unsupported lifecycle operation is an explicit integration gap, not a silent substitute. Task and output modes remain capability-dependent.
 
-Each advertised operation includes a stable semantic name/version, target kinds, request and result JSON Schemas, payload limits, safety class, required permissions, execution/acknowledgement meaning, deduplication scope and platform prerequisites. Capability revisions are bound to admitted commands; a changed descriptor triggers revalidation, not silent reinterpretation.
+Each advertised operation includes a stable semantic name/version, target kinds, request and result JSON Schemas, payload limits, safety class, required permissions, execution/acknowledgement meaning, deduplication scope and platform prerequisites. The revision string is carried on every admitted command and is part of the deduplication hash, but no admission path compares it against the Endpoint's current revision: an operation is served when its name and version are still advertised, whatever revision the command carries. A changed descriptor therefore does not trigger revalidation.
 
 ### Standard safety classes
 
@@ -197,7 +197,9 @@ actions + permissions"] --> Intersection
 - The Endpoint validates the payload against the effective advertised schema before invoking the
   provider CLI. An invalid payload is never passed through as an opaque provider instruction.
 - Actions that read conversation content require an explicit sensitive-data permission.
-- A descriptor or policy change produces a new Endpoint-computed effective capability revision.
+- A descriptor or policy change republishes the effective capability set. The advertised revision
+  string does not change unless the operator edits the Adapter configuration, so a changed descriptor
+  is not detectable from the revision alone.
 
 The target Endpoint configuration contains no provider argv template and no placeholder substitution.
 A remote request supplies only the advertised `ctl.<action>` name and its validated standard payload.
@@ -649,8 +651,9 @@ is understood; otherwise the invocation fails with `incompatible_protocol`.
 `describe` reports the supported major/minor range, provider descriptor revision, standard operations,
 standard queries, control actions, limits and concurrency constraints. The Endpoint intersects that
 descriptor with the Cluster registry, Endpoint-supported behavior, Adapter configuration revision and
-local policy. It hashes the normalized result into the effective capability revision advertised to the
-Server. The provider descriptor revision is input evidence, not the public capability revision.
+local policy. The advertised capability revision is the `revision` string the Adapter configuration
+declares, copied through unchanged; it is not derived from the intersected capability set. The provider
+descriptor revision is input evidence, not the public capability revision.
 
 The Endpoint refreshes an Adapter descriptor on Endpoint startup, Adapter add/change and provider
 executable-version switch. Periodic discovery uses the accepted cached descriptor and does not invoke
@@ -659,8 +662,9 @@ catalog is Provider-side configuration read by the Provider CLI at its own proce
 approval changes what the next Provider CLI invocation reads rather than what the Endpoint has cached. A failed refresh never converts the provider surface to an apparently healthy
 empty capability set and never leaves the old descriptor advertised as current: the Adapter instance becomes
 `degraded` or `unavailable`, its last valid inventory remains explicitly stale, and new mutating
-operations are refused until a compatible descriptor is accepted. Recovery computes and publishes a
-new effective capability revision before admitting new mutation.
+operations are refused until a compatible descriptor is accepted. Recovery re-describes the Adapter and
+republishes the inventory before admitting new mutation. The advertised revision string is unchanged by
+that recovery, because it comes from configuration rather than from the descriptor.
 
 ### Identity, generation and invocation rules
 
