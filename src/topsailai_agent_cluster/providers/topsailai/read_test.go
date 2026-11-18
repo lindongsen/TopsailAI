@@ -846,19 +846,28 @@ func TestSessionMetricsBatchDeduplicatesRepeatedSessions(t *testing.T) {
 	}
 }
 
-// TestSessionDetailForwardsProviderRecordVerbatim proves the metadata section is
-// the provider's own session record, unchanged.
+// TestSessionDetailForwardsProviderDocumentsVerbatim proves both detail seams
+// carry the provider's own documents unchanged.
 //
-// The Cluster deliberately does not model that record: it is provider detail and
-// it changes when the provider changes. Forwarding the document keeps the surface
-// honest, so this test compares the whole string rather than selected fields. A
-// Cluster type built from the provider's fields would pass a field-level check
-// while silently dropping every field it did not model.
-func TestSessionDetailForwardsProviderRecordVerbatim(t *testing.T) {
+// The Cluster deliberately does not model either document: they are provider
+// detail and they change when the provider changes. Forwarding them keeps the
+// surface honest, so this test compares whole strings rather than selected
+// fields. A Cluster type built from the provider's fields would pass a
+// field-level check while silently dropping every field it did not model, which
+// is why the runtime fixture carries `model` and `tokens`, two fields
+// workspaceRuntime does not declare.
+func TestSessionDetailForwardsProviderDocumentsVerbatim(t *testing.T) {
 	record := `{"session_id":"s-1","session_name":"demo","task":"work","status":"Idle","` +
 		`project_workspace":"/work/demo","create_time":"2026-11-15T09:12:23","total_tokens":1234}`
+	envelope := `{"state":"ok","error_code":"","pid":42,"model":"claude-sonnet",` +
+		`"data":{"ok":true,"agent2llm":{"messages":7},"user2agent":{"messages":3},` +
+		`"tokens":{"input":1200}}}`
+	inventory := `{"items":[{"session_id":"s-1","filename":"s-1.session.stdout","is_task":false,` +
+		`"pid":42,"runtime":` + envelope + `}],"total":1}`
 	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
-		"session\x00info\x00s-1\x00--json": answer(record)}}
+		"session\x00info\x00s-1\x00--json":                                         answer(record),
+		"workspace\x00list\x00--json\x00--local\x00-s\x00s-1\x00--include-runtime": answer(inventory),
+	}}
 	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
 		querySessionDetail, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
 	if !response.OK || len(response.QueryResult) == 0 {
@@ -871,10 +880,39 @@ func TestSessionDetailForwardsProviderRecordVerbatim(t *testing.T) {
 	if result.ProviderMetadata != record {
 		t.Fatalf("provider_metadata=%q, want the provider record verbatim", result.ProviderMetadata)
 	}
-	// provider_runtime is the reserved seam. This provider reports nothing for it,
-	// so an empty value is the correct answer and a placeholder would be a lie.
+	if result.ProviderRuntime != envelope {
+		t.Fatalf("provider_runtime=%q, want the provider envelope verbatim", result.ProviderRuntime)
+	}
+}
+
+// TestSessionDetailReportsNoRuntimeForAnUnobservableRow proves a session this
+// host cannot see is described without a runtime record.
+//
+// The metadata read omits --local so a session recorded on another host is still
+// described, while the runtime read is host-scoped. A row absent from the local
+// read therefore has no runtime envelope here. That is an unobservable row, not a
+// provider failure, so the seam stays empty and the surface reports it as not
+// reported instead of inventing an empty observation.
+func TestSessionDetailReportsNoRuntimeForAnUnobservableRow(t *testing.T) {
+	record := `{"session_id":"s-1","session_name":"demo","status":"Idle"}`
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		"session\x00info\x00s-1\x00--json":                                         answer(record),
+		"workspace\x00list\x00--json\x00--local\x00-s\x00s-1\x00--include-runtime": answer(`{"items":[],"total":0}`),
+	}}
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(
+		querySessionDetail, &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, `{}`))
+	if !response.OK || len(response.QueryResult) == 0 {
+		t.Fatalf("response=%+v", response)
+	}
+	var result detailResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ProviderMetadata != record {
+		t.Fatalf("provider_metadata=%q, want the provider record verbatim", result.ProviderMetadata)
+	}
 	if result.ProviderRuntime != "" {
-		t.Fatalf("provider_runtime=%q, want empty until a provider fills it", result.ProviderRuntime)
+		t.Fatalf("provider_runtime=%q, want empty for a row this host cannot observe", result.ProviderRuntime)
 	}
 }
 

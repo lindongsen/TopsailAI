@@ -5,15 +5,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 )
 
 // sharedBuildDirEnv overrides where the shared test binaries are built.
 //
 // It exists so a caller can point the cache at a directory with enough space, or
-// keep it across runs. The default is a per-process directory under the system
-// temporary directory, which is removed when the test process exits.
+// keep it across runs. The default is a fixed directory inside the project's
+// .tmp tree, so repeated runs reuse one bounded location instead of creating a
+// new directory per process.
 const sharedBuildDirEnv = "AGENT_CLUSTER_TEST_BUILD_DIR"
+
+// defaultSharedBuildDir is the project-relative default build location.
+//
+// It is fixed rather than per-process on purpose. os.MkdirTemp never removes
+// itself, so a per-process directory leaked one copy of the three binaries on
+// every run, including runs that ended normally. A fixed path is bounded by
+// construction: the same directory is reused, so the residue cannot grow with
+// the number of runs.
+const defaultSharedBuildDir = ".tmp/test-build"
 
 // sharedBuilds caches one compiled binary per package path for the whole test process.
 //
@@ -25,16 +37,23 @@ const sharedBuildDirEnv = "AGENT_CLUSTER_TEST_BUILD_DIR"
 //
 // The cache is process-scoped rather than test-scoped on purpose: a scenario's
 // t.TempDir() is removed when that scenario ends, so a binary stored there cannot
-// be reused. The directory is created lazily and removed by the process exit, and
-// a crash leaves at most one copy instead of one per scenario.
+// be reused. The directory itself lives at a fixed project-local path, so a
+// killed run leaves at most one copy that the next run reuses instead of adding
+// another.
 var sharedBuilds = struct {
-	mu    sync.Mutex
-	dir   string
-	built map[string]string
-	err   error
+	mu        sync.Mutex
+	dir       string
+	owned     bool
+	built     map[string]string
+	err       error
+	newest    time.Time
+	newestErr error
 }{built: make(map[string]string)}
 
-// sharedBuildDir returns the process-scoped directory that holds shared binaries.
+// sharedBuildDir returns the directory that holds shared binaries.
+//
+// owned records whether this process created the location, so cleanup never
+// removes a directory the caller supplied.
 //
 // The caller must hold sharedBuilds.mu.
 func sharedBuildDir() (string, error) {
@@ -46,13 +65,10 @@ func sharedBuildDir() (string, error) {
 	}
 	dir := os.Getenv(sharedBuildDirEnv)
 	if dir == "" {
-		created, err := os.MkdirTemp("", "agent-cluster-test-bin-")
-		if err != nil {
-			sharedBuilds.err = fmt.Errorf("create shared build directory: %w", err)
-			return "", sharedBuilds.err
-		}
-		dir = created
-	} else if err := os.MkdirAll(dir, 0o755); err != nil {
+		dir = filepath.Join(ModuleRootForBuild(), defaultSharedBuildDir)
+		sharedBuilds.owned = true
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		sharedBuilds.err = fmt.Errorf("create shared build directory %s: %w", dir, err)
 		return "", sharedBuilds.err
 	}
@@ -76,11 +92,117 @@ func SharedBinary(name, packagePath string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, name)
-	if err := Build(path, packagePath); err != nil {
-		return "", err
+	if !binaryIsFresh(path) {
+		if err := buildAtomically(path, packagePath); err != nil {
+			return "", err
+		}
 	}
 	sharedBuilds.built[packagePath] = path
 	return path, nil
+}
+
+// buildAtomically compiles into a process-private name and renames it into place.
+//
+// The shared directory is reused across processes, so two concurrent test binaries
+// can build the same output path. go build writes its output directly, so a reader
+// could otherwise execute a partially written file. A rename is atomic within one
+// filesystem, so a reader sees either the previous binary or the complete new one.
+func buildAtomically(path, packagePath string) error {
+	staged := fmt.Sprintf("%s.tmp-%d", path, os.Getpid())
+	if err := Build(staged, packagePath); err != nil {
+		os.Remove(staged)
+		return err
+	}
+	if err := os.Rename(staged, path); err != nil {
+		os.Remove(staged)
+		return fmt.Errorf("install %s: %w", path, err)
+	}
+	return nil
+}
+
+// binaryIsFresh reports whether path is at least as new as every build input.
+//
+// Reusing a fixed directory across runs means a binary from an earlier commit
+// could otherwise be executed against the current source, which would make a test
+// pass while verifying code that no longer exists. The check is a make-style
+// timestamp comparison against the module's Go sources and module files, so a
+// changed tree always rebuilds and an unchanged tree reuses.
+//
+// The newest input time is computed once per process, because the tree does not
+// change while one test binary runs and walking it per binary would add a full
+// source scan to every SharedBinary call.
+//
+// The caller must hold sharedBuilds.mu.
+func binaryIsFresh(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if sharedBuilds.newest.IsZero() && sharedBuilds.newestErr == nil {
+		sharedBuilds.newest, sharedBuilds.newestErr = newestBuildInput(ModuleRootForBuild())
+	}
+	if sharedBuilds.newestErr != nil {
+		return false
+	}
+	return !sharedBuilds.newest.After(info.ModTime())
+}
+
+// newestBuildInput returns the newest modification time among the module's build inputs.
+//
+// Only Go sources and module files can change a compiled binary, so testdata,
+// documentation and the .tmp tree are skipped. Skipping .tmp also keeps the walk
+// from descending into the build directory it is validating.
+func newestBuildInput(root string) (time.Time, error) {
+	var newest time.Time
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path == root {
+				return nil
+			}
+			switch entry.Name() {
+			case ".git", ".tmp", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") && name != "go.mod" && name != "go.sum" {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	return newest, err
+}
+
+// CleanupSharedBuildDir removes the shared build directory when this process created it.
+//
+// It reports whether anything was removed. A caller-supplied directory is never
+// removed: the Makefile points AGENT_CLUSTER_TEST_BUILD_DIR at .tmp/bdd-build so
+// six sequential BDD groups reuse one build, and deleting it after the first group
+// would force every later group to rebuild the same three binaries.
+func CleanupSharedBuildDir() (bool, error) {
+	sharedBuilds.mu.Lock()
+	defer sharedBuilds.mu.Unlock()
+	if !sharedBuilds.owned || sharedBuilds.dir == "" {
+		return false, nil
+	}
+	dir := sharedBuilds.dir
+	sharedBuilds.dir = ""
+	sharedBuilds.built = make(map[string]string)
+	if err := os.RemoveAll(dir); err != nil {
+		return false, fmt.Errorf("remove shared build directory %s: %w", dir, err)
+	}
+	return true, nil
 }
 
 // SharedBuildDir reports the directory holding the shared binaries, for diagnostics.

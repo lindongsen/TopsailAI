@@ -36,13 +36,6 @@ const (
 	// process starts, so this copy is a second line of defence rather than the
 	// only one.
 	maxMetricsBatchSessions = 200
-	// maxDetailBytes bounds one provider detail document. It is 1 MiB because a
-	// provider's `session info --json` record is provider detail: it grows with the
-	// provider's own schema, and a bound tuned to today's record would reject a
-	// legitimate document after a provider upgrade. The Cluster enforces the same
-	// bound before any provider process starts, so this copy is a second line of
-	// defence rather than the only one.
-	maxDetailBytes = 1 << 20
 	maxMessageCount         = 10000000
 )
 
@@ -510,6 +503,26 @@ func runtimeMessageCounts(items []workspaceItem, sessionID string) (messageCount
 	return rowMessageCounts(item)
 }
 
+// decodeRuntimeEnvelope decodes one row's runtime envelope from the provider's
+// own bytes.
+//
+// The envelope is kept as raw bytes on the row because the detail seam forwards
+// it verbatim, so this is the single place that interprets it. A row the provider
+// never described has no envelope at all, which is a different condition from an
+// envelope that cannot be decoded: the first means the provider did not collect
+// the row, the second means the provider's document changed shape. Sharing one
+// message would name neither.
+func decodeRuntimeEnvelope(raw json.RawMessage) (*workspaceRuntime, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, errorsNew("provider did not report runtime message counts")
+	}
+	var envelope workspaceRuntime
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, fmt.Errorf("decode provider runtime record: %w", err)
+	}
+	return &envelope, nil
+}
+
 // rowMessageCounts reads one row's message counts from its runtime record.
 //
 // Discovery and the metrics read both call this, so the periodic report and the
@@ -533,21 +546,22 @@ func rowMessageCounts(item workspaceItem) (messageCountsFact, error) {
 	// The provider's reason is interpolated rather than replaced by a Cluster
 	// sentence, because it is the only text that says why the read was refused. It
 	// is bounded provider text, not a payload, so it is safe to surface.
-	if item.Runtime == nil {
-		return messageCountsFact{}, errorsNew("provider did not report runtime message counts")
+	envelope, err := decodeRuntimeEnvelope(item.Runtime)
+	if err != nil {
+		return messageCountsFact{}, err
 	}
-	if item.Runtime.State != "ok" {
-		if item.Runtime.ErrorCode != "" {
+	if envelope.State != "ok" {
+		if envelope.ErrorCode != "" {
 			return messageCountsFact{}, errorsNew(fmt.Sprintf(
-				"provider runtime state %q refused the read: %s", item.Runtime.State, item.Runtime.ErrorCode))
+				"provider runtime state %q refused the read: %s", envelope.State, envelope.ErrorCode))
 		}
 		return messageCountsFact{}, errorsNew(fmt.Sprintf(
-			"provider runtime state %q refused the read without a reason", item.Runtime.State))
+			"provider runtime state %q refused the read without a reason", envelope.State))
 	}
-	if item.Runtime.Data == nil {
+	if envelope.Data == nil {
 		return messageCountsFact{}, errorsNew("provider did not report runtime message counts")
 	}
-	report := item.Runtime.Data
+	report := envelope.Data
 	if !report.OK {
 		return messageCountsFact{}, errorsNew("provider reported no active agent")
 	}
@@ -594,9 +608,16 @@ func runtimeRow(items []workspaceItem, sessionID string) (workspaceItem, bool) {
 // honest and lets a second provider report a different record without a contract
 // change.
 //
-// ProviderRuntime is the reserved seam. This provider reports nothing for it
-// today, so the field is left empty and the surface says it was not reported.
-// Filling it later is a provider change only.
+// ProviderRuntime is the provider's own runtime envelope, forwarded verbatim for
+// the same reason. It is read from the same `--include-runtime` document the
+// metrics read uses, so the detail surface and the MESSAGES column cannot
+// disagree about what a row's runtime record says.
+//
+// A session recorded on another host has no row in this host's local read, so it
+// has no runtime envelope to forward. That is an unobservable row rather than a
+// provider failure, so the field stays empty and the surface reports that it was
+// not reported. A provider call that actually fails is returned instead, because
+// an empty field would present a failed read as a row nobody measured.
 func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMessage) (detailResult, error) {
 	sessionID, err := sessionQueryTarget(requested)
 	if err != nil {
@@ -607,9 +628,6 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 		return detailResult{}, fmt.Errorf("%w: session.detail payload", errInvalidRequest)
 	}
 	stdout, stderr, runErr := p.runner.Run(ctx, []string{"session", "info", sessionID, "--json"}, nil)
-	if len(stdout) > maxDetailBytes {
-		return detailResult{}, errorsNew("provider session record exceeds the detail bound")
-	}
 	// The provider prints its own not-found document on stdout and exits non-zero,
 	// so the document is inspected before the exit status. Reading the status first
 	// would report a missing session as a provider failure.
@@ -633,7 +651,42 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 	if len(stdout) == 0 {
 		return detailResult{}, errorsNew("provider returned no session record")
 	}
-	return detailResult{ProviderSessionID: sessionID, ProviderMetadata: string(stdout), ObservedAtMS: p.now().UnixMilli()}, nil
+	runtime, err := p.runtimeEnvelope(ctx, sessionID)
+	if err != nil {
+		return detailResult{}, err
+	}
+	return detailResult{
+		ProviderSessionID: sessionID,
+		ProviderMetadata:  string(stdout),
+		ProviderRuntime:   string(runtime),
+		ObservedAtMS:      p.now().UnixMilli(),
+	}, nil
+}
+
+// runtimeEnvelope returns one session's runtime envelope exactly as the provider
+// published it.
+//
+// The bytes are returned rather than a decoded struct because the detail seam
+// forwards the envelope verbatim: re-encoding a struct this provider models would
+// silently drop every field it does not, and the operator would read a trimmed
+// record as the whole one.
+//
+// A session this host cannot see has no row in the local read, which is not a
+// failure. The metadata read deliberately omits --local so a session recorded on
+// another host is still described, and that row simply has no runtime record
+// here. An empty result therefore means "not observable from this host", and the
+// surface reports it as not reported rather than as an empty observation.
+func (p *provider) runtimeEnvelope(ctx context.Context, sessionID string) (json.RawMessage, error) {
+	args := []string{"workspace", "list", "--json", "--local", "-s", sessionID, "--include-runtime"}
+	var document workspaceResponse
+	if err := runJSON(ctx, p.runner, args, maxMetricsBytes, &document); err != nil {
+		return nil, err
+	}
+	item, found := runtimeRow(document.Items, sessionID)
+	if !found {
+		return nil, nil
+	}
+	return item.Runtime, nil
 }
 
 // sessionQueryTarget extracts the provider session identifier from a session-scoped

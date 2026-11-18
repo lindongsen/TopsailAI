@@ -369,6 +369,55 @@ Both routes are forwarded through the existing Endpoint channel, bound to the ex
 generation and request ID, and wait at most 10 seconds. The Endpoint bounds one batch read at 8
 seconds and the channel at 9, so the innermost component is always the one that reports the failure.
 
+## Session detail
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/detail` | Read one session's provider record and runtime observation |
+
+`GET /api/v1/detail` requires `endpoint_id` and `session_id`. The response `data` carries
+`provider_session_id`, `provider_metadata`, `provider_runtime` and `observed_at_ms`.
+
+This is a live provider read, not a stored projection. It never serves persisted inventory and never
+caches a result, so the documents describe the session at the moment the provider answered. The
+record is provider state, so the route answers for a session that is no longer running; that is
+precisely the case it exists for.
+
+`session_id` is the provider's own session identifier, not a Cluster resource ID. A session with no
+live process has no Cluster resource ID, so requiring one would make the route unusable for exactly
+the sessions an operator needs detail about. A Cluster resource ID is refused with `invalid_target`
+before any provider process starts.
+
+`provider_metadata` and `provider_runtime` are opaque provider documents. The Server forwards and
+returns them verbatim and never parses them, so adding or changing a provider requires no Server
+code, schema or API change. Both are optional: a provider that reports neither is honest about it,
+and a client must render the absence as `not reported` rather than as an empty record. Both are
+bounded by the Endpoint's configured bound (default 1 MiB, ceiling 2 MiB, set through
+`AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES` or `--detail-max-bytes`), and an oversized document is
+refused rather than truncated.
+
+Reading detail requires the `detail.read` operation permission on the Endpoint access policy. The
+check runs at the Endpoint, so the Server forwards the caller token without interpreting it.
+
+Failure outcomes keep their own status, because an unsupported adapter is not an outage, a refused
+caller is not a provider fault, and an oversized document is not a provider error:
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid_target` | `endpoint_id` or `session_id` is missing, or `session_id` is a Cluster resource ID |
+| 403 | `policy_denied` | The Endpoint token does not hold the `detail.read` permission |
+| 404 | `endpoint_not_found` | The endpoint identifier is not registered |
+| 404 | `session_not_found` | The provider does not know this session |
+| 501 | `detail_unsupported` | No configured adapter can read session detail |
+| 502 | `detail_response_too_large` | A provider document exceeded the configured bound |
+| 502 | `provider_error` | The provider call failed |
+| 503 | `unavailable` | The Server has no detail query channel configured |
+| 503 | `endpoint_unavailable` | The endpoint is registered but has no live connection |
+| 503 | `adapter_busy` | Adapter capacity was unavailable, so the read was not attempted |
+
+The route is forwarded through the existing Endpoint channel, bound to the exact connection
+generation and request ID, and waits at most 10 seconds.
+
 ## Events and manifest
 
 | Method | Path | Purpose |

@@ -350,6 +350,36 @@ signalling, and the receipt reports `binding=identity_recheck` instead of `bindi
 the pidfd here would hide an operation the deployment can serve, which is exactly what happened before
 this rule was written.
 
+## TopsailAI detail seam mapping
+
+The standard `session.detail` query carries two provider documents. This section is the only place
+that records which provider command produces each one, because that mapping is provider detail.
+
+| Standard seam | Provider entry | Constraint |
+|---|---|---|
+| `provider_metadata` | `topsailai session info <session_id> --json` | The whole stdout document is forwarded verbatim. The adapter does not decode it, so a field the provider adds or renames reaches the operator without an adapter change |
+| `provider_runtime` | `topsailai workspace list --json --local -s <session_id> --include-runtime`, the `items[row].runtime` envelope | Forwarded as raw bytes. The row is selected by the same `runtimeRow` selector the MESSAGES column uses, so the two surfaces cannot disagree about which row they read |
+
+Both are forwarded as raw bytes rather than through a typed round trip. The adapter models only the
+fields it needs to select a row; re-encoding a document from that model would silently drop every
+field it does not name, and the operator would read a trimmed record as the whole one.
+
+`provider_runtime` is host-scoped because the provider read passes `--local`, while
+`provider_metadata` is not. A session recorded on another host therefore has a metadata document and
+no runtime envelope. That is an unobservable row rather than a provider failure, so the seam stays
+empty and the surface reports `not reported`. A provider call that actually fails is returned as an
+error instead, because an empty field would present a failed read as a row nobody measured.
+
+The adapter enforces no size bound of its own. The bound is a Cluster contract, so a provider-side
+limit would create a second, invisible one: an operator who raised the Endpoint bound would still be
+refused by the adapter, and the refusal would arrive as a generic provider error that sends the
+investigation to a provider behaving correctly.
+
+`session info` is the metadata source rather than `workspace list`, because `workspace list` reports
+one row per output file and a session may own several rows, while `session info` answers for the
+session itself. The runtime envelope is the opposite case: it is a per-row observation, which is why
+it comes from the row the MESSAGES column already selected.
+
 ## Adapter execution policy
 
 - Configure the provider CLI executable and provider roots locally per Adapter instance, never from a remote command payload. The generic CLI Adapter checks the Adapter CLI protocol at Adapter initialization; `providers/topsailai` separately checks the TopsailAI business CLI version/schema and reports degraded health on incompatible output.

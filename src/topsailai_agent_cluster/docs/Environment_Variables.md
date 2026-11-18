@@ -591,6 +591,40 @@ File format constraints:
 - An unresolvable home directory is not an error. The per-user file is skipped
   silently and resolution continues to the built-in default.
 
+## Test-only variables
+
+These variables are read by the test harness and by the `Makefile`, never by a
+Server, Endpoint or CLI process. They exist so a test run cannot write outside the
+project tree, and so a killed run leaves its residue somewhere an operator can see
+and remove it.
+
+| Variable | Read by | Default | Purpose |
+|---|---|---|---|
+| `AGENT_CLUSTER_TEST_BUILD_DIR` | `tests/harness/sharedbuild.go` | `.tmp/test-build` | Directory holding the shared test binaries built once per run |
+| `TMPDIR` | Go runtime, `t.TempDir()` | system temporary directory | Root for every scenario directory a test creates |
+| `BDD_BUILD_DIR` | `Makefile` | `.tmp/test-build` | Passed to the BDD suite as `AGENT_CLUSTER_TEST_BUILD_DIR` |
+| `TEST_TMP_DIR` | `Makefile` | `.tmp/test-tmp` | Passed to every test target as `TMPDIR` |
+
+`AGENT_CLUSTER_TEST_BUILD_DIR` and `BDD_BUILD_DIR` default to the same path on
+purpose. A direct `go test ./tests/bdd` and `make test-bdd` therefore share one
+build location instead of creating two, and the harness reuses a binary that is
+newer than every build input rather than rebuilding it.
+
+The harness removes the build directory only when it created it. A directory named
+by `AGENT_CLUSTER_TEST_BUILD_DIR` belongs to the caller, so `make test-bdd` keeps
+its build across the six BDD groups and `make test-clean` is the only thing that
+deletes it. Without that rule the first group would delete the cache the next five
+groups depend on, and every group would pay the full build cost.
+
+`TMPDIR` matters because Go removes a `t.TempDir()` tree when the test function
+returns, so a killed, timed-out or interrupted run leaves the whole tree behind.
+Under the system temporary directory that residue is invisible to `du` on the
+project tree and accumulates until the filesystem fills. Pointing `TMPDIR` at
+`.tmp/test-tmp` keeps it where `make test-clean` can remove it.
+
+`make test-clean` removes both directories and refuses to run when either variable
+is empty, because `rm -rf $(TEST_TMP_DIR)` with an empty value becomes `rm -rf /`.
+
 ## Security consequences of leaving a value unset
 
 | Variable | Consequence |
