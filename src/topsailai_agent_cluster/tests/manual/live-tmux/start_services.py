@@ -233,6 +233,11 @@ def main() -> int:
         "AGENT_CLUSTER_SERVER_API_LISTEN_ADDR": f"127.0.0.1:{api_port}",
         "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR": f"127.0.0.1:{channel_port}",
         "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "server.db"),
+        # The bearer mode is selected explicitly. HMAC is the built-in default,
+        # and it requires a key_id.secret credential, so a script that supplies
+        # only a bare token would fail at startup instead of exercising the API
+        # it is meant to prove. The harness selects bearer for the same reason.
+        "AGENT_CLUSTER_SERVER_AUTH_MODE": "bearer",
         "AGENT_CLUSTER_SERVER_AUTH_TOKEN": token,
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "server.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "server.key"),
@@ -249,6 +254,7 @@ def main() -> int:
         "AGENT_CLUSTER_SERVER_API_LISTEN_ADDR": f"127.0.0.1:{secondary_api_port}",
         "AGENT_CLUSTER_SERVER_CHANNEL_LISTEN_ADDR": f"127.0.0.1:{secondary_channel_port}",
         "AGENT_CLUSTER_DATABASE_PATH": str(args.runtime / "server-secondary.db"),
+        "AGENT_CLUSTER_SERVER_AUTH_MODE": "bearer",
         "AGENT_CLUSTER_SERVER_AUTH_TOKEN": secondary_token,
         "AGENT_CLUSTER_TLS_CERTIFICATE_FILE": str(certs / "server.pem"),
         "AGENT_CLUSTER_TLS_KEY_FILE": str(certs / "server.key"),
@@ -305,7 +311,12 @@ def main() -> int:
     cli_environment.write_text(
         f"AGENT_CLUSTER_CLI_SERVER_PROFILES={profile_urls}\n"
         f"AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS={profile_tokens}\n"
-        "AGENT_CLUSTER_CLI_SERVER_PROFILE=primary\n",
+        "AGENT_CLUSTER_CLI_SERVER_PROFILE=primary\n"
+        # The CLI selects the same scheme the Servers above were started with.
+        # HMAC is the built-in default and requires a key_id.secret credential,
+        # so a bare token would be rejected before any request is sent. The
+        # harness sets this explicitly for the same reason.
+        "AGENT_CLUSTER_CLI_AUTH_MODE=bearer\n",
         encoding="utf-8",
     )
     cli_environment.chmod(0o600)
@@ -316,7 +327,7 @@ def main() -> int:
     launch = (
         "env -u AGENT_CLUSTER_CLI_SERVER_URL -u AGENT_CLUSTER_CLI_SERVER_TOKEN "
         "-u AGENT_CLUSTER_CLI_SERVER_PROFILES -u AGENT_CLUSTER_CLI_SERVER_PROFILE_TOKENS "
-        "-u AGENT_CLUSTER_CLI_SERVER_PROFILE "
+        "-u AGENT_CLUSTER_CLI_SERVER_PROFILE -u AGENT_CLUSTER_CLI_AUTH_MODE "
         + str(args.bin_dir / "agent-cluster-cli")
         + " interactive"
     )

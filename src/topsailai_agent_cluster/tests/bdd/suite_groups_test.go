@@ -90,6 +90,7 @@ var featureGroups = map[string][]string{
 		"lifecycle",
 		"real_boundary",
 		"bidirectional_channel",
+		"cli_server_failover",
 	},
 }
 

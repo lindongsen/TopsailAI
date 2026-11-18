@@ -38,6 +38,7 @@ var featurePaths = []string{
 	"../../features/endpoint_server_rehome_receipts.feature",
 	"../../features/endpoint_server_rehome_deployment.feature",
 	"../../features/endpoint_server_rehome_fallback.feature",
+	"../../features/cli_server_failover.feature",
 }
 
 // TestFeatures runs the strict real-boundary BDD suite.
@@ -104,6 +105,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerEndpointServerRehomeReceiptSteps(ctx)
 	registerEndpointServerRehomeDeploymentSteps(ctx)
 	registerEndpointServerRehomeFallbackSteps(ctx)
+	registerCLIFailoverSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone
