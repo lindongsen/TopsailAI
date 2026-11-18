@@ -17,6 +17,13 @@ RUN_DIR="${1:-${PROJECT_DIR}/.tmp/unit8/live-smoke}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-60}"
 RUN_TIMEOUT_SECONDS="${RUN_TIMEOUT_SECONDS:-45}"
 STOP_TIMEOUT_SECONDS="${STOP_TIMEOUT_SECONDS:-30}"
+# The Endpoint credential mode is opt-in. When it is unset the Endpoint keeps the
+# permissive configuration it always had, so the default smoke proves exactly what
+# it proved before and a mode regression cannot hide behind a changed default.
+ENDPOINT_AUTH_MODE="${ENDPOINT_AUTH_MODE:-}"
+# The Endpoint credential the probe presents. The pair form is required in HMAC
+# mode, because a bare token cannot be signed; bearer mode accepts either.
+ENDPOINT_CREDENTIAL="${ENDPOINT_CREDENTIAL:-live-tmux-endpoint-token}"
 
 log() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -33,6 +40,36 @@ log "BUILD_OK"
 
 log "== start =="
 START_LOG="${RUN_DIR}/start.log"
+# The mode arguments are assembled rather than always passed, because an empty
+# --endpoint-auth-mode would be rejected by the parser and an omitted flag is what
+# keeps the default scenario on the Endpoint's own default.
+MODE_ARGS=()
+if [ -n "${ENDPOINT_AUTH_MODE}" ]; then
+  POLICY_DIR="${RUN_DIR}/policy"
+  mkdir -p "${POLICY_DIR}"
+  # The policy file is written here rather than shipped as a fixture so the
+  # credential the probe presents and the secret the Endpoint verifies cannot
+  # drift apart. A fixture would be a second copy of the same secret.
+  #
+  # The grant is conditional because the two HMAC scenarios need different
+  # policies from the same credential. With the grant, a valid signature is
+  # accepted; without it, the same valid signature is refused by the policy. That
+  # pair is what proves the two refusal classes are distinguishable rather than
+  # collapsed into one.
+  {
+    printf '# Live smoke policy for the Endpoint credential probe.\n'
+    printf 'token %s\n' "${ENDPOINT_CREDENTIAL}"
+    printf 'endpoints live-tmux-endpoint\n'
+    if [ -z "${ENDPOINT_NO_GRANT:-}" ]; then
+      printf 'permissions launch.query\n'
+    else
+      printf '# No grant is declared, so a verified credential is refused by policy.\n'
+      printf 'permissions command.exec\n'
+    fi
+  } >"${POLICY_DIR}/probe.conf"
+  MODE_ARGS+=(--endpoint-auth-mode "${ENDPOINT_AUTH_MODE}" --endpoint-policy-dir "${POLICY_DIR}")
+  log "endpoint auth mode ${ENDPOINT_AUTH_MODE}"
+fi
 python3 "${PROJECT_DIR}/tests/manual/live-tmux/start_services.py" \
   --runtime "${RUN_DIR}/runtime" \
   --bin-dir "${RUN_DIR}/bin" \
@@ -41,6 +78,7 @@ python3 "${PROJECT_DIR}/tests/manual/live-tmux/start_services.py" \
   --provider "${RUN_DIR}/bin/agent-cluster-provider-topsailai" \
   --startup-timeout-seconds "${STARTUP_TIMEOUT_SECONDS}" \
   --timeout-seconds "${RUN_TIMEOUT_SECONDS}" \
+  ${MODE_ARGS[@]+"${MODE_ARGS[@]}"} \
   >"${START_LOG}" 2>&1 &
 START_PID=$!
 log "start_services pid ${START_PID}"
@@ -119,6 +157,24 @@ log "cli exit ${CLI_EXIT}"
 log "cli output: ${CLI_OUTPUT}"
 [ "${CLI_EXIT}" -eq 0 ] || die "agent-cluster-cli endpoints exited ${CLI_EXIT}"
 log "ASSERT_OK endpoint advertised"
+
+# The credential probe runs only when a mode was requested, because the default
+# scenario has no policy directory and therefore no credential to prove. Running it
+# unconditionally would either fail on a permissive Endpoint or force every existing
+# scenario to adopt a policy it never needed.
+if [ -n "${ENDPOINT_AUTH_MODE}" ]; then
+  log "== endpoint credential probe =="
+  PROBE_MODE="${ENDPOINT_AUTH_MODE}"
+  if [ "${ENDPOINT_AUTH_MODE}" = "hmac" ] && [ -n "${ENDPOINT_NO_GRANT:-}" ]; then
+    PROBE_MODE="hmac-no-grant"
+  fi
+  python3 "${PROJECT_DIR}/tests/manual/live-tmux/endpoint_credential_probe.py" \
+    --runtime "${RUN_DIR}/runtime" \
+    --mode "${PROBE_MODE}" \
+    --credential "${ENDPOINT_CREDENTIAL}" \
+    || die "the Endpoint credential probe failed in ${PROBE_MODE} mode"
+  log "PROBE_ASSERT_OK ${PROBE_MODE}"
+fi
 
 log "== stop =="
 PIDS_FILE="${RUN_DIR}/runtime/pids-both.json"

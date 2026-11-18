@@ -145,6 +145,8 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
         test-unit-endpoint test-unit-cli test-provider-schema test-conformance \
         test-provider-topsailai test-provider-topsailai-conformance \
         test-bdd test-integration test-packaging test-harness test-live-smoke \
+        test-live-smoke-bearer test-live-smoke-hmac test-live-smoke-hmac-no-grant \
+        test-live-smoke-modes \
         test-clean \
         bdd integration \
         deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint deb-provider \
@@ -409,6 +411,41 @@ test-packaging:
 # never leave an orphan behind. Artifacts live under .tmp/unit8/live-smoke.
 test-live-smoke:
 	bash tests/manual/live-tmux/bounded_smoke.sh $(abspath .tmp/unit8/live-smoke)
+
+# The Endpoint credential is proven in both modes, because the two modes are two
+# different contracts and one passing says nothing about the other. Bearer is the
+# compatibility form and HMAC is the default, so a regression in either would be
+# invisible to a suite that only ran the other.
+#
+# Each mode gets its own run directory so a failure names the mode that produced
+# it and the artifacts of one run cannot be read as evidence for another.
+#
+# The HMAC pair is a literal test credential, not a secret: it exists only inside
+# this throwaway run directory and is written into the policy file the same run
+# generates. It is deliberately not a realistic value, so it cannot be mistaken for
+# a deployed credential.
+LIVE_SMOKE_HMAC_CREDENTIAL := ops.live-smoke-secret
+
+test-live-smoke-bearer:
+	ENDPOINT_AUTH_MODE=bearer \
+	ENDPOINT_CREDENTIAL=$(LIVE_SMOKE_HMAC_CREDENTIAL) \
+	bash tests/manual/live-tmux/bounded_smoke.sh $(abspath .tmp/unit8/live-smoke-bearer)
+
+test-live-smoke-hmac:
+	ENDPOINT_AUTH_MODE=hmac \
+	ENDPOINT_CREDENTIAL=$(LIVE_SMOKE_HMAC_CREDENTIAL) \
+	bash tests/manual/live-tmux/bounded_smoke.sh $(abspath .tmp/unit8/live-smoke-hmac)
+
+test-live-smoke-hmac-no-grant:
+	ENDPOINT_AUTH_MODE=hmac \
+	ENDPOINT_NO_GRANT=1 \
+	ENDPOINT_CREDENTIAL=$(LIVE_SMOKE_HMAC_CREDENTIAL) \
+	bash tests/manual/live-tmux/bounded_smoke.sh $(abspath .tmp/unit8/live-smoke-hmac-no-grant)
+
+# The aggregate target runs every mode in sequence. It is separate from
+# test-live-smoke so the original single-mode smoke keeps its exact behaviour and
+# its exact run directory.
+test-live-smoke-modes: test-live-smoke-bearer test-live-smoke-hmac test-live-smoke-hmac-no-grant
 
 # tests/harness is test support rather than a component: its tests start real
 # Server, Endpoint and fixture processes, so it is verified on its own instead of
