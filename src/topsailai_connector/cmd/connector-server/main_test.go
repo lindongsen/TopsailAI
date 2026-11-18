@@ -1,8 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"topsailai_connector/internal/security"
 )
 
 // TestSplitCommand checks the subcommand split, which is the only place a typo
@@ -72,19 +76,95 @@ func TestRunRejectsAnUnknownCommand(t *testing.T) {
 // environment variable is the most likely way to accidentally disable
 // authentication, so it must be a startup failure rather than an "accept
 // anything" mode.
+//
+// Both Server-owned gates are covered. A test that clears only one of them proves
+// only that one of them is required, and the second gate fails differently: a
+// Server with a tunnel token and no client credential accepts a channel and then
+// refuses every caller, which looks like a working Server that denies everything.
 func TestRunServerRejectsAMissingSecret(t *testing.T) {
-	// The environment is cleared for the duration of the call, so a secret that
-	// happens to be set in the test runner's environment cannot make this pass.
-	t.Setenv("CONNECTOR_SERVER_TUNNEL_TOKEN", "")
-	t.Setenv("CONNECTOR_SERVER_CLIENT_TOKEN", "")
+	cases := []struct {
+		name        string
+		environment map[string]string
+		wantMessage string
+	}{
+		{
+			name: "no tunnel token",
+			environment: map[string]string{
+				"CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE": writeClientCredentialFile(t),
+			},
+			wantMessage: "CONNECTOR_SERVER_TUNNEL_TOKEN",
+		},
+		{
+			name: "no client credential file",
+			environment: map[string]string{
+				"CONNECTOR_SERVER_TUNNEL_TOKEN": strings.Repeat("a", 32),
+			},
+			wantMessage: "CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE",
+		},
+	}
 
-	err := runServer(nil)
-	if err == nil {
-		t.Fatal("runServer with no secrets = nil error, want a startup failure")
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			clearServerEnvironment(t)
+			for name, value := range testCase.environment {
+				t.Setenv(name, value)
+			}
+
+			err := runServer(nil)
+			if err == nil {
+				t.Fatal("runServer with a missing secret = nil error, want a startup failure")
+			}
+			if !strings.Contains(err.Error(), testCase.wantMessage) {
+				t.Fatalf("runServer = %v, want the message to name %s", err, testCase.wantMessage)
+			}
+		})
 	}
-	if !strings.Contains(err.Error(), "CONNECTOR_SERVER_TUNNEL_TOKEN") {
-		t.Fatalf("runServer = %v, want the message to name the missing variable", err)
+}
+
+// clearServerEnvironment unsets every variable LoadConfig reads, so a value that
+// happens to be set in the test runner's environment cannot decide the outcome.
+//
+// Clearing only the variable under test would leave the others ambient, and an
+// ambient CONNECTOR_SERVER_LISTEN would fail validation before the secret was
+// reached, so the test would pass while measuring a different refusal.
+func clearServerEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"CONNECTOR_SERVER_LISTEN",
+		"CONNECTOR_SERVER_TLS_CERT",
+		"CONNECTOR_SERVER_TLS_KEY",
+		"CONNECTOR_SERVER_TUNNEL_TOKEN",
+		"CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE",
+		"CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS",
+		"CONNECTOR_SERVER_REPLAY_CAPACITY",
+		"CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS",
+	} {
+		t.Setenv(name, "")
 	}
+}
+
+// writeClientCredentialFile writes a one-entry client credential file and returns
+// its path.
+//
+// The file is written with the mode the Server requires, so a test that needs a
+// valid credential measures the refusal it is about rather than a file-mode
+// refusal. The credential is generated rather than hardcoded, because a hardcoded
+// secret in a test file is a secret in the repository.
+func writeClientCredentialFile(t *testing.T) string {
+	t.Helper()
+	credential, err := security.NewCredentialWithKeyID("operator")
+	if err != nil {
+		t.Fatalf("NewCredentialWithKeyID() = %v", err)
+	}
+	content, err := security.FormatCredentialSet([]security.Credential{credential})
+	if err != nil {
+		t.Fatalf("FormatCredentialSet() = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "client-credentials.yaml")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write credential file: %v", err)
+	}
+	return path
 }
 
 // TestRunServerRejectsBadFlags checks that an unparsable flag is reported instead
@@ -99,9 +179,10 @@ func TestRunServerRejectsBadFlags(t *testing.T) {
 // TestRunServerRejectsAnInvalidListenAddress checks that a malformed listen
 // address fails startup rather than binding something unintended.
 func TestRunServerRejectsAnInvalidListenAddress(t *testing.T) {
+	clearServerEnvironment(t)
 	t.Setenv("CONNECTOR_SERVER_LISTEN", "not-an-address")
 	t.Setenv("CONNECTOR_SERVER_TUNNEL_TOKEN", strings.Repeat("a", 32))
-	t.Setenv("CONNECTOR_SERVER_CLIENT_TOKEN", strings.Repeat("b", 32))
+	t.Setenv("CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE", writeClientCredentialFile(t))
 
 	err := runServer(nil)
 	if err == nil {
