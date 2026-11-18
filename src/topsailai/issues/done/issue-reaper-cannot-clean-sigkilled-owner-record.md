@@ -217,3 +217,4 @@ expires, which is the conservative choice.
 ### Commits
 
 - `1956f24a fix: reclaim unfinalized owner residue after its artifacts expire`
+- `986b6789 docs: close reaper sigkill orphan issue`
