@@ -337,6 +337,19 @@ Prefer the unified `topsailai runtime` wrapper rather than the legacy `topsailai
 
 Platform distinction: network protocol and management services should be portable; the documented TopsailAI FIFO/Unix-domain control transports have platform constraints. Capabilities must reflect the actual host support. Do not advertise Windows delivery support on the strength of generic HTTP portability.
 
+"Actual host support" means reachability, not the strongest available guarantee. A host that can
+perform an operation through a weaker mechanism still supports it, and the weaker mechanism is
+reported in the result rather than used to withhold the capability. The rule and its consequences are
+stated in `docs/agent-cluster-protocol.md` under "A capability claim describes reachability, not the
+strongest available guarantee".
+
+The `agent.stop` gate is the worked example. It requires a readable process table, because the target
+identity must be verified before a signal is delivered. It does not require a pidfd: when the pidfd
+bindings are unavailable the provider CLI re-verifies the process identity immediately before
+signalling, and the receipt reports `binding=identity_recheck` instead of `binding=pidfd`. Requiring
+the pidfd here would hide an operation the deployment can serve, which is exactly what happened before
+this rule was written.
+
 ## Adapter execution policy
 
 - Configure the provider CLI executable and provider roots locally per Adapter instance, never from a remote command payload. The generic CLI Adapter checks the Adapter CLI protocol at Adapter initialization; `providers/topsailai` separately checks the TopsailAI business CLI version/schema and reports degraded health on incompatible output.

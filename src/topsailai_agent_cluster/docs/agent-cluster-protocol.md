@@ -139,6 +139,53 @@ Endpoint publishes standard versioned capabilities for itself, abstract resource
 
 Each advertised operation includes a stable semantic name/version, target kinds, request and result JSON Schemas, payload limits, safety class, required permissions, execution/acknowledgement meaning, deduplication scope and platform prerequisites. The revision string is carried on every admitted command and is part of the deduplication hash, but no admission path compares it against the Endpoint's current revision: an operation is served when its name and version are still advertised, whatever revision the command carries. A changed descriptor therefore does not trigger revalidation.
 
+### A capability claim describes reachability, not the strongest available guarantee
+
+A capability claim answers one question: can this Endpoint perform the operation at all? It must not
+answer a different question: can this Endpoint perform the operation in the best available way?
+
+The distinction is load-bearing because the two answers can disagree, and when they do, the stricter
+answer removes a capability that works. An operation may be reachable through a weaker mechanism while
+a stronger mechanism is unavailable, and the weaker mechanism is still a correct implementation of the
+contract. Advertising the operation is then accurate; withholding it is a false negative that the
+operator experiences as a missing feature rather than as a safety decision.
+
+The rule is stated as three requirements:
+
+| Requirement | Meaning |
+|---|---|
+| Advertise what can be performed | If the operation can be carried out correctly, it is advertised, whatever mechanism carries it out. |
+| Record the mechanism, do not gate on it | A weaker binding is reported as evidence of the guarantee actually provided, so a consumer can tell the two apart. It is never a precondition for advertising. |
+| Gate only on what makes the operation impossible | A precondition belongs in the gate only when its absence means the operation cannot be performed correctly at all. |
+
+Consequences that MUST hold for every capability:
+
+- A gate must be evaluated by the component that performs the work, or must be proven to agree with
+  that component. A gate that probes a different layer than the one that executes can pass while the
+  operation fails, or fail while the operation would succeed. Both directions are defects.
+- The guarantee actually provided is carried in the result, not inferred from the capability. A
+  receipt that says which mechanism was used lets an operator judge the evidence without the
+  capability set having to encode every strength.
+- A stricter gate is not automatically safer. It is safer only when the weaker path is incorrect; when
+  the weaker path is correct, the stricter gate is a capability loss with no safety gain.
+- A capability gap is reported as a gap. A missing capability must never be the way an implementation
+  limitation is expressed when the operation is in fact reachable.
+
+Why this is a contract rule rather than an implementation preference: the capability set is what the
+Server, the operator CLI and any future consumer read to decide what to offer. A false negative
+therefore propagates outward as an absent command, an absent action or a disabled control, and nothing
+downstream can recover the capability that was withheld. The failure is also silent in the direction
+that matters: no error is logged, because nothing was attempted. The only symptom is a feature that
+does not exist, which reads as "not implemented" rather than "implemented but hidden".
+
+This was learned by getting it wrong. The `agent.stop` gate probed whether the kernel could open a
+pidfd, while the signal was delivered by a provider CLI whose interpreter had no pidfd bindings. The
+gate passed on that host, so the capability was advertised and the operation failed at execution. The
+same gate would have failed on a host where the kernel probe was unavailable but the CLI could still
+signal after re-verifying the process identity, which would have hidden a working operation. The gate
+now requires only a readable process table, and the binding actually used is reported in the receipt.
+See `providers/topsailai/issues/stop-gate-probes-kernel-not-interpreter.md`.
+
 ### Standard safety classes
 
 `safety_class` is a closed vocabulary defined by the cluster, not a free-form provider label:

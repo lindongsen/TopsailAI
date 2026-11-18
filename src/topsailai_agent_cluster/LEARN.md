@@ -1620,3 +1620,46 @@ the ordering rather than a genuine leak.
 Why this prevents recurrence: a client-visible disconnect and the server-side bookkeeping that follows it are
 two different goroutines. Any assertion about post-disconnect server state must wait for that state with a
 deadline, and a probe that adds I/O to the path under test must not be trusted to reproduce a timing race.
+
+## A capability gate must probe the layer that performs the work
+
+Trigger: `agent.stop` was advertised, admitted, confirmed and then always failed with
+`safe_signal_unsupported`. The Provider gate (`providers/topsailai/platform_linux.go:39`) probed the
+kernel pidfd syscall for its own PID and passed, so `agent.stop` stayed in the descriptor. The signal
+is sent by the Python business CLI, which needs `os.pidfd_open` and `signal.pidfd_send_signal`
+(`cli/cli_topsailai/workspace_kill_cli.py:142-147`), and the interpreter the launcher selects through
+`uv run` exposes neither. The kernel could do it; the interpreter could not.
+
+Action: when a capability gate decides whether an operation is advertised, identify the component that
+actually performs the work and probe that component's own capability, not a lower layer that merely
+makes it possible. Here the Go Provider probes a syscall while a Python child sends the signal, so the
+probe answers a different question than the one the gate is asking. Prefer letting the performing
+component report its own capability in `describe` and intersecting it, because only that component can
+answer truthfully. Then verify the gate on the real deployment path: run the configured executable the
+way the launcher runs it, and confirm the advertised set matches what the operation actually does.
+
+Why this prevents recurrence: a lower-layer probe is the natural implementation because it is local,
+cheap and testable, and it passes on every host where the kernel is modern enough. The gap is invisible
+in review because the probe is correct about what it measures, and it is invisible in tests because the
+test injects a platform value rather than running the real interpreter. The failure then appears only
+at execution time, after the operator has already been told the capability exists, which is the worst
+place for a capability claim to be wrong. Probing the performing layer, or letting it report itself,
+makes the advertised set and the achievable set the same fact.
+
+## A single failure message for a family of errors misdirects the investigation
+
+Trigger: `workspace kill` reported `error_code: safe_signal_unsupported` together with
+`message: No exact verified session target` (`cli/cli_topsailai/workspace_kill_cli.py:203`). The code
+was raised at line 147, after `_resolve_target` had already found a live, generation-matched process,
+so the message described the opposite of what happened. The operator's report quoted the message, which
+pointed at target selection and generation mapping rather than at the interpreter.
+
+Action: when one handler maps several distinct error codes onto one exit path, check whether the
+message is still true for every code. A message that names a cause must be derived from the code, not
+fixed for the branch. Keep the machine code precise and let the human message name the same condition,
+because the message is what the operator quotes back in a bug report.
+
+Why this prevents recurrence: a fixed message is written once for the first error that needed it, and
+later codes are added to the same branch without revisiting the text. The code stays correct, so every
+test that asserts the code passes, and only the human-readable half is wrong. The cost is paid by the
+next investigation, which starts from a false premise supplied by the tool itself.

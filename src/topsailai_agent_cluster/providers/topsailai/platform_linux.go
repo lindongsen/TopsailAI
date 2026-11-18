@@ -16,18 +16,30 @@ const sysPidfdOpen = 434
 
 // platformCapabilities reports the host support agent.stop requires.
 //
-// Stopping a provider process safely needs two facts: the process table is
-// readable, and a pidfd can be opened so the signal cannot be delivered to a
-// recycled process identity. A host that cannot prove both is reported as
-// unsupported rather than assumed to work.
+// Stopping a provider process needs a readable process table, because the identity
+// of the target must be verified before a signal is delivered. A pidfd is recorded
+// as evidence of the stronger binding, but it is not a requirement: when the pidfd
+// bindings are unavailable the provider CLI re-verifies the process identity
+// immediately before signalling, so the operation is still reachable.
+//
+// The gate therefore describes reachability, not the strongest available guarantee.
+// A capability claim must reflect whether the operation can be performed at all, not
+// whether it can be performed in the best way. Requiring the stronger binding here
+// would hide an operation that works, and the operator would lose a capability the
+// deployment can actually serve.
 type platformCapabilities struct {
 	ProcAvailable  bool
 	PidfdAvailable bool
 }
 
-// stopSupported reports whether this host can stop a provider process safely.
+// stopSupported reports whether this host can stop a provider process.
+//
+// Only the process table is required. PidfdAvailable is not a precondition, because
+// the provider CLI falls back to an identity recheck when the pidfd bindings are
+// absent. The binding actually used is reported per invocation in the receipt, so
+// this field stays probe evidence and is never a second source of truth for it.
 func (c platformCapabilities) stopSupported() bool {
-	return c.ProcAvailable && c.PidfdAvailable
+	return c.ProcAvailable
 }
 
 // pidfdAvailable reports whether one syscall number opens a pidfd for this process.

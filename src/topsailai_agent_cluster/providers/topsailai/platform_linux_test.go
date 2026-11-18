@@ -38,17 +38,35 @@ func TestPidfdProbeRejectsAnImpossibleSyscallNumber(t *testing.T) {
 	}
 }
 
-// TestStopSupportedRequiresBothCapabilities proves neither half is enough.
+// TestStopSupportedRequiresOnlyTheProcessTable proves the gate describes
+// reachability rather than the strongest available binding.
 //
-// A readable process table without a pidfd cannot deliver a signal to a process
-// identity that is guaranteed not to have been recycled, so the pair is required.
-func TestStopSupportedRequiresBothCapabilities(t *testing.T) {
-	cases := map[string]platformCapabilities{
-		"neither":            {},
+// A readable process table is enough, because the provider CLI re-verifies the
+// process identity immediately before signalling when the pidfd bindings are
+// absent. A pidfd without a readable process table is still not enough, because
+// the target identity cannot be verified at all. Requiring the pidfd here would
+// hide an operation the deployment can serve, which is the defect this gate had.
+func TestStopSupportedRequiresOnlyTheProcessTable(t *testing.T) {
+	sufficient := map[string]platformCapabilities{
 		"process table only": {ProcAvailable: true},
-		"pidfd only":         {PidfdAvailable: true},
+		"process table and pidfd": {
+			ProcAvailable:  true,
+			PidfdAvailable: true,
+		},
 	}
-	for name, capabilities := range cases {
+	for name, capabilities := range sufficient {
+		t.Run(name, func(t *testing.T) {
+			if !capabilities.stopSupported() {
+				t.Fatalf("capabilities=%#v are reported as insufficient", capabilities)
+			}
+		})
+	}
+
+	insufficient := map[string]platformCapabilities{
+		"neither":    {},
+		"pidfd only": {PidfdAvailable: true},
+	}
+	for name, capabilities := range insufficient {
 		t.Run(name, func(t *testing.T) {
 			if capabilities.stopSupported() {
 				t.Fatalf("capabilities=%#v are reported as sufficient", capabilities)

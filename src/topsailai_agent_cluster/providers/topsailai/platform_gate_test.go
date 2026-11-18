@@ -27,13 +27,21 @@ func containsOperation(names []string, want string) bool {
 // TestAgentStopIsAdvertisedOnlyWhereTheHostCanStop proves the descriptor reports
 // the host rather than a compiled-in list.
 //
-// agent.stop terminates a provider process, so a host that cannot prove a readable
-// process table and a working pidfd must not advertise it. Advertising it would
-// claim a capability the executable cannot honour, and the operator would learn
-// about the gap only after the operation failed.
+// agent.stop terminates a provider process, so a host that cannot read the process
+// table must not advertise it: the target identity could not be verified at all.
+// Advertising it would claim a capability the executable cannot honour, and the
+// operator would learn about the gap only after the operation failed.
+//
+// A host that reads the process table but cannot open a pidfd must still advertise
+// it, because the provider CLI re-verifies the identity before signalling. That case
+// is the regression this gate had: the stronger binding was required, so a working
+// deployment lost the capability.
 func TestAgentStopIsAdvertisedOnlyWhereTheHostCanStop(t *testing.T) {
 	if !containsOperation(advertisedOperations(supportedPlatform), operationAgentStop) {
 		t.Fatal("agent.stop is missing on a host that can stop a provider process")
+	}
+	if !containsOperation(advertisedOperations(identityRecheckPlatform), operationAgentStop) {
+		t.Fatal("agent.stop is missing on a host that stops by re-verifying the identity")
 	}
 	if containsOperation(advertisedOperations(unsupportedPlatform), operationAgentStop) {
 		t.Fatal("agent.stop is advertised on a host that cannot stop a provider process")
@@ -98,6 +106,29 @@ func TestAgentStopStillRunsOnASupportedHost(t *testing.T) {
 	response := fixedProvider(runner).dispatch(context.Background(), mutationRequest(operationAgentStop, liveSessionTarget(t, "7"), `{}`))
 	if !response.OK {
 		t.Fatalf("response=%+v", response)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls=%v", runner.calls)
+	}
+}
+
+// TestAgentStopRunsOnAHostWithoutPidfd proves the relaxed gate serves the operation
+// rather than only advertising it.
+//
+// This is the deployment that reported safe_signal_unsupported: the kernel supports
+// pidfd_open, so the old gate passed, but the provider CLI had no pidfd bindings. The
+// gate must now admit the operation on a host that can only re-verify the identity,
+// and the provider must reach the kill call. Asserting the call count proves the
+// operation was not refused before any argv existed.
+func TestAgentStopRunsOnAHostWithoutPidfd(t *testing.T) {
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		authorityCall: answer(liveWorkspaceDocument("7")),
+		"workspace\x00kill\x00s-1\x00-g\x007\x00--json": answer(`{"ok":true}`),
+	}}
+	provider := &provider{runner: runner, now: fixedProvider(runner).now, platform: identityRecheckPlatform}
+	response := provider.dispatch(context.Background(), mutationRequest(operationAgentStop, liveSessionTarget(t, "7"), `{}`))
+	if !response.OK {
+		t.Fatalf("a host that stops by re-verifying the identity refused agent.stop: %+v", response)
 	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("calls=%v", runner.calls)

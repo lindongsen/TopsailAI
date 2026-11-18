@@ -35,13 +35,23 @@ func (r *scriptedRunner) Run(_ context.Context, args []string, _ []byte) ([]byte
 	return []byte(answer.stdout), []byte(answer.stderr), answer.err
 }
 
-// supportedPlatform is a host that can stop a provider process. It is the value
-// the startup probe reports on a Linux host with a readable process table and a
-// working pidfd, so a test that exercises agent.stop states the host it assumes
-// instead of inheriting whatever the test machine happens to be.
+// supportedPlatform is a host that can stop a provider process with the strongest
+// available binding. It is the value the startup probe reports on a Linux host with
+// a readable process table and a working pidfd, so a test that exercises agent.stop
+// states the host it assumes instead of inheriting whatever the test machine happens
+// to be.
 var supportedPlatform = platformCapabilities{ProcAvailable: true, PidfdAvailable: true}
 
-// unsupportedPlatform is a host that cannot stop a provider process.
+// identityRecheckPlatform is a host that can stop a provider process without a pidfd.
+//
+// This is the deployment that lost the capability: the kernel supports pidfd_open, so
+// the Go probe succeeded, but the interpreter running the provider CLI has no pidfd
+// bindings and signals after re-verifying the identity instead. The gate must still
+// advertise agent.stop here, because the operation is reachable.
+var identityRecheckPlatform = platformCapabilities{ProcAvailable: true}
+
+// unsupportedPlatform is a host that cannot stop a provider process, because the
+// process table is unreadable and the target identity cannot be verified at all.
 var unsupportedPlatform = platformCapabilities{}
 
 func fixedProvider(r commandRunner) *provider {
