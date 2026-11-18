@@ -845,3 +845,17 @@ the process predates the instruction. When reproducing such a rejection in a
 harness, mirror the real wiring including the registration call, because a
 harness that skips `load_instructions` fails for its own reason and will
 "confirm" any theory about the product.
+
+## Terminal input geometry must use visible columns consistently
+
+### Trigger
+
+The raw runtime editor stored Chinese input correctly, but moving or deleting characters produced misplaced cursors, hidden text, and sluggish repainting when an ANSI-colored prompt and double-width characters shared a line.
+
+### Action taken
+
+Unified wrapping and cursor placement around one ANSI-stripped, non-negative display-width model; represented an exactly full row as the start of the next row; moved the cursor without repainting unchanged text; and added unit plus real PTY checks for CJK movement, deletion, wrapping, and repaint count.
+
+### Why this prevents recurrence
+
+A terminal editor must calculate wrapping, repaint layout, and cursor movement from the same visible-column rules. Tests that assert only the final Unicode buffer cannot detect display corruption, so PTY output and terminal control sequences must also be verified.

@@ -622,7 +622,7 @@ def _display_width_str(text: str) -> int:
 
 
 def _char_display_width(ch: str) -> int:
-    """Return the display width of a single character.
+    """Return the non-negative display width of a single character.
 
     Uses ``wcwidth`` when available; otherwise falls back to
     ``unicodedata.east_asian_width`` so CJK characters are counted as two
@@ -633,13 +633,62 @@ def _char_display_width(ch: str) -> int:
     try:
         import wcwidth
 
-        return wcwidth.wcwidth(ch) or 0
+        return max(0, wcwidth.wcwidth(ch))
     except Exception:
         pass
+    if unicodedata.category(ch).startswith("C"):
+        return 0
     ea = unicodedata.east_asian_width(ch)
     if ea in ("F", "W"):
         return 2
     return 1
+
+
+def _display_position(text: str, width: int) -> tuple[int, int]:
+    """Return the row and column after rendering text at the given width."""
+    row = 0
+    column = 0
+    for ch in _strip_ansi(text):
+        char_width = _char_display_width(ch)
+        if char_width <= 0:
+            continue
+        if column and column + char_width > width:
+            row += 1
+            column = 0
+        column += char_width
+        if column >= width:
+            row += 1
+            column = 0
+    return row, column
+
+
+def _wrap_display_text(text: str, width: int) -> List[str]:
+    """Wrap text by terminal columns while preserving ANSI escape sequences."""
+    lines: List[str] = []
+    current_line = ""
+    current_width = 0
+    pos = 0
+    while pos < len(text):
+        match = _ANSI_ESCAPE_RE.match(text, pos)
+        if match:
+            current_line += match.group(0)
+            pos = match.end()
+            continue
+        ch = text[pos]
+        char_width = _char_display_width(ch)
+        if current_width and current_width + char_width > width:
+            lines.append(current_line)
+            current_line = ""
+            current_width = 0
+        current_line += ch
+        current_width += char_width
+        pos += 1
+        if current_width >= width:
+            lines.append(current_line)
+            current_line = ""
+            current_width = 0
+    lines.append(current_line)
+    return lines
 
 
 def _read_input_line(
@@ -724,11 +773,20 @@ def _read_input_line_tty(
     history_index = -1
     history_list: List[str] = list(history) if history else []
 
-    def display_width(chars: List[str]) -> int:
-        return sum(_char_display_width(c) for c in chars)
-
     last_total_rows = 1
     pending_redraw = False
+
+    def terminal_columns() -> int:
+        """Return a positive terminal width for wrapping calculations."""
+        try:
+            return max(1, os.get_terminal_size().columns)
+        except OSError:
+            return 80
+
+    def cursor_position() -> tuple[int, int]:
+        """Return the cursor row and column for the current input buffer."""
+        text_before_cursor = prompt + "".join(buffer[:cursor])
+        return _display_position(text_before_cursor, terminal_columns())
 
     def input_available() -> bool:
         """Return True if stdin has bytes waiting without blocking."""
@@ -754,73 +812,32 @@ def _read_input_line_tty(
             redraw()
             pending_redraw = False
 
+    def move_cursor(old_cursor: int) -> None:
+        """Move the visible cursor without repainting unchanged input text."""
+        old_position = cursor_position_for(old_cursor)
+        new_position = cursor_position()
+        row_delta = new_position[0] - old_position[0]
+        if row_delta < 0:
+            sys.stdout.write(f"\033[{-row_delta}A")
+        elif row_delta > 0:
+            sys.stdout.write(f"\033[{row_delta}B")
+        sys.stdout.write(f"\033[{new_position[1] + 1}G")
+        sys.stdout.flush()
+
+    def cursor_position_for(index: int) -> tuple[int, int]:
+        """Return the displayed cursor position for a buffer index."""
+        text_before_cursor = prompt + "".join(buffer[:index])
+        return _display_position(text_before_cursor, terminal_columns())
+
     def redraw() -> None:
         # Repaint the prompt and input buffer, wrapping long input across
-        # multiple terminal lines manually.  The terminal's auto-wrap is
-        # disabled during the repaint so the prompt is not duplicated when
-        # the input is wider than the screen; we emit explicit \r\n at the
-        # calculated wrap points instead.
+        # multiple terminal lines manually.  Auto-wrap is disabled during the
+        # repaint, so exact-width lines are followed by explicit line breaks.
         nonlocal last_total_rows
-        try:
-            cols = os.get_terminal_size().columns
-        except OSError:
-            cols = 80
-
+        cols = terminal_columns()
         full_text = prompt + "".join(buffer)
-
-        def _wrap_text(text: str, width: int) -> List[str]:
-            lines: List[str] = []
-            current_line = ""
-            current_width = 0
-            pos = 0
-            while pos < len(text):
-                m = _ANSI_ESCAPE_RE.match(text, pos)
-                if m:
-                    current_line += m.group(0)
-                    pos = m.end()
-                    continue
-                ch = text[pos]
-                w = _char_display_width(ch)
-                if current_width + w > width and current_line:
-                    lines.append(current_line)
-                    current_line = ch
-                    current_width = w
-                else:
-                    current_line += ch
-                    current_width += w
-                pos += 1
-            lines.append(current_line)
-            return lines
-
-        lines = _wrap_text(full_text, cols)
-        if not lines:
-            lines = [""]
-
-        prompt_width = _display_width_str(prompt)
-        cursor_offset = prompt_width + display_width(buffer[:cursor])
-
-        cursor_row = 0
-        cursor_col = 0
-        pos = 0
-        found = False
-        for i, line in enumerate(lines):
-            line_width = _display_width_str(line)
-            if pos + line_width >= cursor_offset:
-                cursor_row = i
-                remaining = cursor_offset - pos
-                cursor_col = 0
-                for ch in line:
-                    w = _char_display_width(ch)
-                    if remaining <= 0:
-                        break
-                    cursor_col += w
-                    remaining -= w
-                found = True
-                break
-            pos += line_width
-        if not found:
-            cursor_row = len(lines) - 1
-            cursor_col = _display_width_str(lines[-1])
+        lines = _wrap_display_text(full_text, cols)
+        cursor_row, cursor_col = cursor_position()
 
         sys.stdout.write("\033[?7l")
         try:
@@ -936,16 +953,18 @@ def _read_input_line_tty(
 
             # Ctrl+A (home)
             if byte == 0x01:
+                old_cursor = cursor
                 cursor = 0
                 _debug_input("Ctrl+A home")
-                redraw()
+                move_cursor(old_cursor)
                 continue
 
             # Ctrl+E (end)
             if byte == 0x05:
+                old_cursor = cursor
                 cursor = len(buffer)
                 _debug_input("Ctrl+E end")
-                redraw()
+                move_cursor(old_cursor)
                 continue
 
             # TAB completion
@@ -962,22 +981,26 @@ def _read_input_line_tty(
                     _debug_input(f"ESC [ seq2={seq2}")
                     if seq2 == 0x44:  # 'D' left
                         if cursor > 0:
+                            old_cursor = cursor
                             cursor -= 1
                             _debug_input(f"Left cursor={cursor}")
-                            redraw()
+                            move_cursor(old_cursor)
                     elif seq2 == 0x43:  # 'C' right
                         if cursor < len(buffer):
+                            old_cursor = cursor
                             cursor += 1
                             _debug_input(f"Right cursor={cursor}")
-                            redraw()
+                            move_cursor(old_cursor)
                     elif seq2 == 0x48:  # 'H' home
+                        old_cursor = cursor
                         cursor = 0
                         _debug_input("Home")
-                        redraw()
+                        move_cursor(old_cursor)
                     elif seq2 == 0x46:  # 'F' end
+                        old_cursor = cursor
                         cursor = len(buffer)
                         _debug_input("End")
-                        redraw()
+                        move_cursor(old_cursor)
                     elif seq2 == 0x33:  # '3' delete
                         seq3 = read_byte()
                         _debug_input(f"Delete seq3={seq3}")
@@ -996,20 +1019,24 @@ def _read_input_line_tty(
                     _debug_input(f"ESC O seq2={seq2}")
                     if seq2 == 0x44:  # 'D' left
                         if cursor > 0:
+                            old_cursor = cursor
                             cursor -= 1
                             _debug_input(f"SS3 Left cursor={cursor}")
-                            redraw()
+                            move_cursor(old_cursor)
                     elif seq2 == 0x43:  # 'C' right
                         if cursor < len(buffer):
+                            old_cursor = cursor
                             cursor += 1
                             _debug_input(f"SS3 Right cursor={cursor}")
-                            redraw()
+                            move_cursor(old_cursor)
                     elif seq2 == 0x48:  # home
+                        old_cursor = cursor
                         cursor = 0
-                        redraw()
+                        move_cursor(old_cursor)
                     elif seq2 == 0x46:  # end
+                        old_cursor = cursor
                         cursor = len(buffer)
-                        redraw()
+                        move_cursor(old_cursor)
                     elif seq2 == 0x41:  # 'A' up arrow
                         _debug_input("SS3 Up arrow")
                         recall_history(1)
@@ -1060,13 +1087,20 @@ def _read_input_line_tty(
                     _debug_input(f"UTF-8 decode error bytes={bytes_data!r}")
                     continue
 
+            appending = cursor == len(buffer)
+            old_position = cursor_position()
             buffer.insert(cursor, char)
             cursor += 1
             history_index = -1
             completion_index = -1
             _debug_input(f"Inserted char={char!r} cursor={cursor} buffer={''.join(buffer)!r}")
-            request_redraw()
-            maybe_redraw()
+            new_position = cursor_position()
+            if appending and not pending_redraw and old_position[0] == new_position[0]:
+                sys.stdout.write(char)
+                sys.stdout.flush()
+            else:
+                request_redraw()
+                maybe_redraw()
     finally:
         _debug_input("_read_input_line_tty finally")
         if old_settings is not None:
