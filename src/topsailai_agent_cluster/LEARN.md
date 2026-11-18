@@ -1689,3 +1689,25 @@ same trap applies to any relative path computed from `runtime.Caller` depth, to 
 built from a hardcoded `..` count, and to shell scripts that `cd ../..` before reading a file. Identity
 resolution makes the layout change a non-event, and the deliberate break is what separates "the path
 resolves" from "the path resolves to the file I meant".
+
+## A test fixture that no target builds is dead code that still compiles
+
+Trigger: while classifying `tests/` by owner, two fixtures (`topsailai_fixture`, 382 lines, and
+`topsailai_session_info_fixture`, 45 lines) turned out to have no build entry point in any Makefile,
+script or Go helper. `git log -S` traced the loss to `facaae86`, which removed the harness paths when
+the old TopsailAI adapter was deleted. Both still compiled cleanly, which is exactly why nothing
+failed and nobody noticed for many commits. The only remaining references were comments describing
+them in the past tense, one of which said "a binary the harness no longer builds".
+
+Action: before moving or reorganising a test artifact, prove it has a consumer. Search the build
+entry points for its path, not for its name: a fixture can be named in prose, in a comment and in an
+issue record while no target builds it. Then check whether it still compiles, because a compiling
+fixture looks alive. If no target builds it, treat it as dead code and delete it rather than
+relocating it, since a move preserves the defect and makes it look maintained.
+
+Why this prevents recurrence: a fixture is a program, so it keeps compiling after its consumer is
+deleted, and a compiler is the only check most people apply. The failure is silent in the direction
+that matters: the suite is green, the file is valid Go, and the folder looks complete. Relocating it
+into a provider workspace would have made it worse, because the new location implies ownership and
+maintenance that nobody provides. The tell is a comment written in the past tense about a binary the
+harness "no longer builds": that sentence is a defect report nobody acted on.

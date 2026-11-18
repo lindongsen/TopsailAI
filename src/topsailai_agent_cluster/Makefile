@@ -302,12 +302,15 @@ test-provider-topsailai:
 
 # The TopsailAI Provider is a separate executable, so the provider-neutral
 # conformance suite is driven against its real binary instead of the Mock. The
-# business CLI behind it is a conformance fixture, because the suite must not
-# require a real TopsailAI installation. Every generated binary, cache entry and
-# compiler temporary file stays under .tmp/.
+# business CLI behind it is a conformance fixture owned by the Provider
+# workspace, because the suite must not require a real TopsailAI installation.
+# The fixture lives in that workspace so the Provider's own dependency stand-in
+# is versioned, built and tested together with the Provider it stands in for.
+# Every generated binary, cache entry and compiler temporary file stays under
+# .tmp/.
 test-provider-topsailai-conformance:
 	mkdir -p $(TOPSAILAI_CONFORMANCE_DIR)/bin $(TOPSAILAI_CONFORMANCE_DIR)/go-cache $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp
-	GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/topsailai-provider-conformance-fixture) ./tests/fixtures/topsailai_provider_conformance
+	cd providers/topsailai && GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/topsailai-provider-conformance-fixture) ./tests/fixtures/topsailai_provider_conformance
 	cd providers/topsailai && GOCACHE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-cache) GOTMPDIR=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/go-tmp) go build -o $(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/agent-cluster-provider-topsailai) ./src
 	AGENT_CLUSTER_PROVIDER_EXECUTABLE=$(abspath $(TOPSAILAI_CONFORMANCE_DIR)/bin/agent-cluster-provider-topsailai) \
 	AGENT_CLUSTER_PROVIDER_ADAPTER_ID=topsailai \

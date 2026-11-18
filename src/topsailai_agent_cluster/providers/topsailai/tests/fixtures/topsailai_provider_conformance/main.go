@@ -7,11 +7,12 @@
 // mirror what the Provider parses, including the workspace `filename` field the
 // Provider needs to derive a stable provider resource key.
 //
-// This fixture is deliberately separate from tests/fixtures/topsailai_fixture.
-// That fixture stands in for the business CLI behind the Cluster adapter and is
-// driven by the BDD and integration suites, so extending it here would change
-// behaviour those suites depend on. A conformance fixture that only the Provider
-// conformance target builds keeps the two purposes apart.
+// This fixture lives in the Provider workspace because it stands in for the
+// Provider's own dependency, the TopsailAI business CLI. It imports only the
+// standard library, so it needs no Cluster package and cannot drift with the
+// Cluster's internal types. The Cluster's own test doubles stay under the
+// Cluster's tests/ tree, because they assert the Cluster contract rather than
+// this Provider's behaviour.
 package main
 
 import (

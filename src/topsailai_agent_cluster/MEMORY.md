@@ -538,3 +538,31 @@ Why this is recorded: the previous layout put 41 `.go` files at the root of `pro
 at the root of `providers/mock`, with no README, no Makefile and no workspace metadata. Nothing in
 either folder said how to build or test it, so the only way to learn was to read the cluster Makefile,
 which is the wrong place to look for a component that is supposed to be independent.
+
+## A provider owns its own test artifacts
+
+Directed by the human on 2026-11-18, wording normalized, meaning preserved:
+
+> 你再看看 tests 也要归类到各自的provider 里面去
+
+This extends the provider-workspace rule to tests. A test artifact belongs to a provider when it
+exists only to stand in for that provider's own dependency or to exercise that provider's own binary.
+It then lives in that provider's `tests/` directory, is built inside that provider's module, and is
+versioned with the provider it stands in for.
+
+Everything else stays in the cluster's `tests/` tree: the cluster contract, the cluster's packaging,
+cross-component behaviour, and the BDD specifications for the Adapter seam. The direction is the same
+one this project already applies to code. The cluster defines the abstraction and a provider
+implements it, so a cluster acceptance contract must never become the property of one provider; if it
+did, that provider would own a contract that has to outlive it.
+
+Consequences that MUST hold:
+
+- A provider's `tests/` holds only artifacts that provider owns. A cluster test double must not be
+  moved there to make a folder look tidy.
+- A moved artifact must build inside the provider module. The conformance fixture imports only the
+  standard library, which is why it could move without importing a cluster package.
+- A test artifact that no target builds is dead code, not a misplaced file. Moving it into a provider
+  workspace would relocate the problem, so it is deleted instead and git history keeps it recoverable.
+- The cluster Makefile may still drive a provider-owned fixture, but it must build it from inside the
+  provider module, so the fixture is compiled against the provider's own `go.mod`.

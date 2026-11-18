@@ -1,0 +1,6 @@
+# A fixture built without an explicit -o drops its binary in the workspace root,
+# because `go build` names the output after the package directory. The Makefile
+# always passes -o, so this rule only catches a hand-run build.
+#
+# `.tmp/` needs no rule here: the repository root already ignores it at any depth.
+/topsailai_provider_conformance

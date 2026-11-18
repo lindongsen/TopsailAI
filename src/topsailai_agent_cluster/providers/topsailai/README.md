@@ -15,8 +15,17 @@ providers/topsailai/
 ├── go.mod         # module agent-cluster-provider-topsailai
 ├── go.sum
 ├── issues/        # provider-owned issue records
-└── src/           # package main and its unit tests
+├── src/           # package main and its unit tests
+└── tests/         # test artifacts this provider owns
+    └── fixtures/
+        └── topsailai_provider_conformance/main.go
 ```
+
+`tests/` holds only artifacts this provider owns. The conformance fixture emulates the TopsailAI
+business CLI, which is this provider's own dependency, so it belongs here rather than in the cluster's
+`tests/` tree. It imports only the standard library, so it needs no cluster package and cannot drift
+with the cluster's internal types. The cluster's own test doubles stay in the cluster, because they
+assert the cluster contract rather than this provider's behaviour.
 
 `go.mod` sits at the workspace root because a Go module root must be the workspace root. The package
 and its tests live in `src/` because Go requires a test to live beside the package it tests.

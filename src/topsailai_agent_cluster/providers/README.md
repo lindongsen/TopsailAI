@@ -29,7 +29,8 @@ cluster target that happened to invoke it.
 ├── go.mod         # module root, so the workspace root is the module root
 ├── go.sum         # when the module has dependencies
 ├── issues/        # provider-owned issue records, when the provider has any
-└── src/           # package main sources and their unit tests
+├── src/           # package main sources and their unit tests
+└── tests/         # test artifacts this provider owns, when it has any
 ```
 
 Two rules decide this shape:
@@ -40,6 +41,13 @@ Two rules decide this shape:
 - Unit tests stay beside the source in `src/`, because Go requires a test to live in the package
   directory it tests. This is the one place where the project structure convention's `tests/unit/`
   layout does not apply, and it applies to every Go package in this repository.
+
+A third rule decides what belongs in `tests/`: a test artifact is provider-owned when it exists only
+to stand in for this provider's own dependency or to exercise this provider's own binary. Anything
+that asserts the cluster contract, the cluster's packaging or cross-component behaviour stays in the
+cluster's `tests/` tree. The direction matters, because the cluster defines the abstraction and a
+provider implements it: a cluster acceptance contract must not become the property of one provider,
+or that provider would own a contract that has to outlive it.
 
 No `docs/` directory is created. The cluster defines the contract, and
 `docs/agent-cluster-adapters.md` is the only place provider detail belongs. A provider-side copy of

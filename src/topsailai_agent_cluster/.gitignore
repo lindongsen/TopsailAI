@@ -1,13 +1,11 @@
 # Compiled command entry points built into the workspace bin folder
 /bin/
 
-# Binaries dropped in the project root by `go build ./tests/fixtures/<name>`.
-#
-# Root-anchored on purpose: `go build` names the output after the package
-# directory, so a bare pattern also matches the fixture source directory at any
-# depth and would silently exclude that source tree from version control.
-/topsailai_fixture
-/topsailai_session_info_fixture
+# No fixture binary rule is needed. The only remaining fixture is the TopsailAI
+# Provider's conformance stand-in, which lives inside that provider workspace and
+# is always built with an explicit -o under .tmp/, so it never drops a binary
+# beside its source. The two root-anchored rules that used to sit here named
+# fixtures that no longer exist.
 
 # Provider workspaces need no binary rule of their own. Each provider Makefile
 # passes an explicit -o under its own .tmp/bin, and .tmp/ is ignored at any
