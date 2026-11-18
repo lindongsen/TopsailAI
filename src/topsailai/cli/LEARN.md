@@ -859,3 +859,30 @@ Unified wrapping and cursor placement around one ANSI-stripped, non-negative dis
 ### Why this prevents recurrence
 
 A terminal editor must calculate wrapping, repaint layout, and cursor movement from the same visible-column rules. Tests that assert only the final Unicode buffer cannot detect display corruption, so PTY output and terminal control sequences must also be verified.
+
+## A privilege-dropping test must not exec `sys.executable` blindly
+
+### Trigger
+
+Three resume-boundary tests failed with `PermissionError: [Errno 13]` on
+`/root/ai/TopsailAI/.venv/bin/python`. The tests drop to `nobody` in
+`preexec_fn` and then exec `sys.executable`, but `pytest` is launched through
+that `/root/...` path and `/root` is mode `0700`, so the child was denied at
+interpreter startup and never reached the resume logic under test.
+
+### Action taken
+
+Added `_unprivileged_interpreter()`, which walks candidate interpreter paths and
+returns the first one a de-privileged user can actually traverse and execute,
+preferring the same virtual environment reached through a world-traversable
+path so the child keeps its site-packages. Verified with a negative control:
+restoring `sys.executable` reproduced exactly the same three failures.
+
+### Why this prevents recurrence
+
+A test that drops privileges must treat its own interpreter path as untrusted
+input. `sys.executable` describes how the test process was started, not what a
+lower-privileged child can execute, and the failure surfaces as an exec error
+that looks like a product defect. Keep the venv semantics when substituting the
+path, and prove the fix with a negative control so a passing run cannot be
+mistaken for a masked failure.

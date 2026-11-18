@@ -324,6 +324,38 @@ raise SystemExit(3)
                                 check=False, env={"PATH": os.environ["PATH"]})
     assert result.returncode == 0
     assert result.stdout.strip() == "13"
+
+
+def _is_world_traversable(path: str) -> bool:
+    """Return True when a de-privileged user can reach and execute a path."""
+    target = pathlib.Path(path)
+    try:
+        if not target.is_file() or not target.stat().st_mode & 0o001:
+            return False
+        for parent in pathlib.Path(os.path.abspath(path)).parents:
+            if not parent.stat().st_mode & 0o001:
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def _unprivileged_interpreter() -> str:
+    """Return an interpreter path that a de-privileged child can execute.
+
+    ``sys.executable`` can sit under a directory the dropped user cannot
+    traverse, which fails at exec before the test reaches the code under
+    test. Prefer the same virtual environment reached through a
+    world-traversable path so the child keeps its site-packages.
+    """
+    venv_python = os.path.join(os.path.realpath(sys.prefix), "bin", "python3")
+    candidates = (sys.executable, venv_python, os.path.realpath(sys.executable))
+    for candidate in candidates:
+        if _is_world_traversable(candidate):
+            return candidate
+    return sys.executable
+
+
 def _run_unprivileged_resume(
     workspace: pathlib.Path, fixture_root: pathlib.Path, *, cwd_eacces: bool = False
 ):
@@ -390,7 +422,7 @@ print(json.dumps({"uid": os.getuid(), "euid": os.geteuid(), "gid": os.getgid(),
     if cwd_eacces:
         environment["R08_CWD_EACCES"] = "1"
     return subprocess.run(
-        [sys.executable, "-c", script, str(workspace), str(fixture_root)],
+        [_unprivileged_interpreter(), "-c", script, str(workspace), str(fixture_root)],
         cwd=str(cli_root), env=environment, capture_output=True, text=True,
         check=False,
         preexec_fn=lambda: (os.setgroups([]), os.setgid(nobody.pw_gid),
