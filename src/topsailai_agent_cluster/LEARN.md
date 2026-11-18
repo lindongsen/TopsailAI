@@ -1553,3 +1553,70 @@ transaction budget means a single long transaction can hold the only connection 
 Endpoint's unhealthy window, so the defect is not theoretical. Check the persistence layer's worst-case
 hold time against the peer's liveness window whenever a loop both reads frames and writes durably; if the
 hold time can reach the window, the loop is a liveness bug regardless of how fast the average write is.
+
+## A test that reuses the loop context as the write context races the library's own close
+
+Trigger: a heartbeat or keepalive test fails intermittently with `use of closed network connection`, and the
+failure disappears when the test runs alone but returns when the whole package runs.
+
+`TestRunHeartbeatKeepsAcknowledgedServerHealthy` built its loop context with
+`context.WithTimeout(ctx, 600*time.Millisecond)` and then asserted `client.Ready()` after `RunHeartbeat`
+returned. `RunHeartbeat` passes that same context into `SendHeartbeat(ctx)` and from there into
+`wsjson.Write(ctx, ...)`. `coder/websocket` v1.8.14 `conn.go` `setupWriteTimeout` registers
+`context.AfterFunc(ctx, func(){ c.clearWriteTimeout(); c.close() })`, so the moment the loop context expires
+the library closes the socket. The assertion then raced that asynchronous shutdown: sometimes `Ready()` was
+still true, sometimes the reader had already detached.
+
+Action: assert readiness while the loop is still running. Use `context.WithCancel`, run `RunHeartbeat` in a
+goroutine, sleep past several beat intervals, assert the unhealthy counter and `Ready()`, then cancel and
+check the loop returned `context.Canceled`. Never let the loop context expire as the way to stop the loop
+when that context also reaches a write.
+
+Why this prevents recurrence: the probe showed eleven successful beats, then `READ_ERR ... use of closed
+network connection` with `ctxErr=<nil>`, then `SEND_HEARTBEAT ctxErr=context deadline exceeded`, with no
+`MARK_UNHEALTHY` and no `CLIENT_CLOSE`. A close that arrives while the read context is still alive cannot be
+ours, so the only remaining owner is a `context.AfterFunc` on another context. Inserting a 50 ms sleep before
+the assertion made the test fail 4/10 when run alone, which proves the race rather than a logic error. The
+fixed test still has teeth: breaking `awaitHeartbeatAck` makes it fail 3/3.
+
+## A follow frame must not enter the bounded business queue
+
+Trigger: a follow or tail test fails with `write: connection reset by peer`, and the Server log shows
+`SRV_QUEUE_FULL type=output_chunk`.
+
+`readLoop` dispatched follow frames with `s.deliverFollow(peer, frame)` and then fell through into
+`enqueueBusiness`. A follow tail is one frame per record, so a 300-line tail offers 300 frames to a queue
+that holds 16, and the overflow branch calls `peer.Conn.CloseNow()`. An ordinary tail therefore became an
+`endpoint_offline` failure on a healthy Endpoint. Queueing bought nothing either, because the worker's
+`OnFrame` hook ignores every frame that is not an inventory report.
+
+Action: `continue` after `deliverFollow` so a fully handled frame never reaches the business queue. Do not
+raise `businessQueueDepth` to absorb it: a depth of 512 made the pair pass 20/20, but that only hides the
+missing `continue` and leaves the queue carrying frames nobody reads.
+
+Why this prevents recurrence: the queue exists to bound work that can block on persistence or a network
+write. A frame already delivered synchronously has no such work left, so admitting it converts a healthy
+stream into a disconnect. Any dispatch branch that fully handles a frame must end with `continue`, and the
+queue depth must never be tuned to compensate for a frame that should not be there.
+
+## A disconnect assertion must poll the server-side cleanup, not read it once
+
+Trigger: a test closes a peer from the server side and then asserts that the peer is gone from `Server.Active`.
+
+Root cause: `enqueueBusiness` calls `peer.Conn.CloseNow()` and only then returns false, so `readLoop` returns
+and its `defer s.remove(peer)` deletes the peer from `Active`. The client observes the read error as soon as
+`CloseNow` lands, which is before the deferred cleanup runs on the server goroutine. A test that reads
+`Active` once immediately after the read error therefore races the cleanup and fails intermittently.
+
+Detection failure: the test passed almost always, so the race looked like unrelated flakiness. It reproduced
+at roughly 2.5% over 200 runs, and only when the assertion was left as a single read. Instrumenting the
+production path with file logging made it pass 100/100 because the added I/O latency widened the window past
+the race, which is why the probe initially "proved" the opposite.
+
+Action: poll `Active` with a bounded deadline instead of reading it once. Prove the fix by widening the window
+deliberately: inserting a 5 ms sleep at the top of `remove` made the single-read form fail 20/20, confirming
+the ordering rather than a genuine leak.
+
+Why this prevents recurrence: a client-visible disconnect and the server-side bookkeeping that follows it are
+two different goroutines. Any assertion about post-disconnect server state must wait for that state with a
+deadline, and a probe that adds I/O to the path under test must not be trusted to reproduce a timing race.

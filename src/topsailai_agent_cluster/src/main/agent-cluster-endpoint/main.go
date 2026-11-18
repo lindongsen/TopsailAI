@@ -301,20 +301,11 @@ func main() {
 			}
 			return commandAllowlist.Allowlist.Permit(payload.Argv)
 		}
-		executor.AdmissionHook = func(hookCtx context.Context, intent protocol.ImmutableIntent, requestHash string) error {
-			receipt := protocol.ExecutionReceipt{CommandID: intent.CommandID, RequestHash: requestHash, Phase: protocol.PhaseInvocationStarted, DeliveryBoundary: protocol.DeliveryNotStarted, EffectCertainty: protocol.EffectUnknown, Outcome: "endpoint_admitted"}
-			data, marshalErr := json.Marshal(receipt)
-			if marshalErr != nil {
-				return marshalErr
-			}
-			if err := client.SendFrame(hookCtx, channel.Frame{Type: channel.FrameReceipt, ProtocolVersion: channel.ProtocolVersion, FrameID: intent.CommandID, RequestID: intent.CommandID, Receipt: &receipt, Payload: json.RawMessage(data)}); err != nil {
-				return err
-			}
-			if err := runtime.announceHold("endpoint_admitted"); err != nil {
-				return err
-			}
-			return runtime.waitForRelease(logger, "endpoint_admitted")
-		}
+		// The admission notification is delegated so the transport-versus-hold
+		// decision is testable; see admission_notify.go for why a transport
+		// failure must not abort the command.
+		notifier := admissionNotifier{send: client.SendFrame, hold: runtime.announceHold, wait: runtime.waitForRelease, logger: logger}
+		executor.AdmissionHook = notifier.notify
 	}
 	if err != nil {
 		logger.Error("create command executor", "error", err)

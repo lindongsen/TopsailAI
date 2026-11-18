@@ -144,7 +144,7 @@ func newWithRunner(ctx context.Context, config Config, runner cliRunner) (*Adapt
 	candidate.descriptor = descriptor
 	candidate.version = version
 	candidate.scheduler = bounded
-	candidate.capability = intersectCapabilities(config.Capabilities, descriptor.Operations, descriptor.ControlActions)
+	candidate.capability = intersectCapabilities(config.Capabilities, descriptor)
 	return candidate, nil
 }
 
@@ -368,7 +368,15 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 	return a.runner.invokeStream(ctx, providerRequest, func(frame providercli.StreamFrame) error {
 		if frame.Type != providercli.FrameRecord {
 			if frame.Type == providercli.FrameEnd && frame.Error != nil {
-				return fmt.Errorf("provider stream ended: %s", frame.Error.Message)
+				// The Provider's own code is preserved instead of being flattened
+				// into a message. The Endpoint classifies a stream failure by
+				// matching sentinel errors, so a flattened message made every
+				// provider-reported condition indistinguishable: a provider that
+				// reported `cancelled` was reported to the operator as
+				// `provider_error`, which sent the investigation to a provider
+				// that had behaved correctly. The code is the only field that
+				// carries the classification, so it must survive this boundary.
+				return &adapter.StreamError{Code: frame.Error.Code, Message: frame.Error.Message}
 			}
 			return nil
 		}
@@ -844,16 +852,63 @@ type sessionAttributes struct {
 	Messages *protocol.MessageCounts `json:"messages,omitempty"`
 }
 
+// providerContractKind names one of the four contract lists a Provider CLI
+// advertises. A Cluster capability is served by exactly one of them.
+type providerContractKind int
+
+const (
+	// contractOperation is a standard mutating operation. The Provider names it
+	// with the Cluster capability name, so no translation is needed.
+	contractOperation providerContractKind = iota
+	// contractControlAction is one provider-specific ctl.<action>. It also
+	// carries the Cluster capability name.
+	contractControlAction
+	// contractFunction is a fixed Provider CLI function such as read_output. A
+	// function carries no version, so only its name is matched.
+	contractFunction
+	// contractQuery is one registered read-only query such as model.catalog. A
+	// query is versioned, so both name and version are matched.
+	contractQuery
+)
+
+// capabilityProviderContract maps one Cluster capability onto the Provider CLI
+// contract that implements it, for the capabilities whose contract is not an
+// operation.
+//
+// The Provider advertises four separate contract lists, and a Cluster capability
+// is served by exactly one of them. Operations and control actions carry the
+// capability name directly, so they need no entry here. A read surface is
+// different: the Cluster names the capability after what the operator asks for
+// ("output.follow"), while the Provider names the function after what it does
+// ("follow_output"). Comparing those two vocabularies directly matched nothing,
+// so every configured read capability was dropped and the Endpoint advertised no
+// output surface at all. A follow request was then refused as unsupported before
+// the adapter was ever consulted, which reads as "this provider cannot stream"
+// even when it can.
+//
+// The table lives in the adapter rather than in the protocol because translating
+// a Cluster capability onto a Provider contract is exactly the adapter's job. The
+// Cluster vocabulary stays closed and provider-neutral; only this file knows that
+// one Cluster read is reached through a Provider function.
+var capabilityProviderContract = map[string]struct {
+	kind providerContractKind
+	name string
+}{
+	protocol.OperationOutputRead:     {kind: contractFunction, name: providercli.FunctionReadOutput},
+	protocol.OperationOutputFollow:   {kind: contractFunction, name: providercli.FunctionFollowOutput},
+	protocol.OperationAgentModelList: {kind: contractQuery, name: providercli.QueryModelCatalog},
+}
+
 // intersectCapabilities keeps only the configured capabilities the provider
 // actually offers.
 //
-// The provider advertises two separate contract lists, and both are offers: the
-// fixed operation list and the control action family. Reading only the operation
-// list made every ctl. capability unreachable, because a provider reports its
-// control actions in their own field rather than as operations. The Endpoint then
-// advertised no ctl. capability at all and refused every control command as
-// unsupported before the policy hook could authorize it, so a configured catalog
-// had no effect.
+// The whole descriptor is taken rather than the individual contract lists,
+// because the lists are not interchangeable and a caller that passes three of
+// four silently drops the fourth. That is not hypothetical: the first version of
+// this function took the operation and control action lists only, so every
+// capability served by a function or a query was dropped even though the
+// provider advertised it. Taking the descriptor makes a fifth contract list
+// impossible to forget, because there is no argument list to extend.
 //
 // command.exec is the one configured capability that is not intersected. It is
 // Endpoint-native by contract: the Endpoint owns the allowlist, the
@@ -866,19 +921,30 @@ type sessionAttributes struct {
 //
 // The revision is carried through unchanged, which is what makes a published
 // effective revision meaningful.
-func intersectCapabilities(configured protocol.CapabilityDescriptor, offered []providercli.NamedContract, controlActions []providercli.NamedContract) protocol.CapabilityDescriptor {
-	allowed := make(map[string]struct{}, len(offered)+len(controlActions))
-	for _, item := range offered {
+func intersectCapabilities(configured protocol.CapabilityDescriptor, descriptor providercli.Descriptor) protocol.CapabilityDescriptor {
+	allowed := make(map[string]struct{}, len(descriptor.Operations)+len(descriptor.ControlActions))
+	for _, item := range descriptor.Operations {
 		allowed[item.Name+"\x00"+item.Version] = struct{}{}
 	}
 	// A control action also describes the capability it becomes, so the provider
 	// that implements it is the source of what it is. The configured descriptor
 	// still decides which actions are allowed, because the catalog is the
 	// operator's allowlist; the provider decides what an allowed action means.
-	declared := make(map[string]providercli.NamedContract, len(controlActions))
-	for _, item := range controlActions {
+	declared := make(map[string]providercli.NamedContract, len(descriptor.ControlActions))
+	for _, item := range descriptor.ControlActions {
 		allowed[item.Name+"\x00"+item.Version] = struct{}{}
 		declared[item.Name+"\x00"+item.Version] = item
+	}
+	// A function carries no version, so it is matched by name alone. Requiring a
+	// version would make every function-implemented capability unreachable,
+	// because the Provider has no version to report for one.
+	functions := make(map[string]struct{}, len(descriptor.Functions))
+	for _, function := range descriptor.Functions {
+		functions[function] = struct{}{}
+	}
+	queries := make(map[string]struct{}, len(descriptor.Queries))
+	for _, query := range descriptor.Queries {
+		queries[query.Name+"\x00"+query.Version] = struct{}{}
 	}
 	result := protocol.CapabilityDescriptor{Revision: configured.Revision}
 	for _, capability := range configured.Capabilities {
@@ -890,15 +956,44 @@ func intersectCapabilities(configured protocol.CapabilityDescriptor, offered []p
 			continue
 		}
 		key := capability.Name + "\x00" + capability.Version
-		if _, ok := allowed[key]; !ok {
+		if _, ok := allowed[key]; ok {
+			if contract, isControl := declared[key]; isControl {
+				capability = capabilityFromContract(capability, contract)
+			}
+			result.Capabilities = append(result.Capabilities, capability)
 			continue
 		}
-		if contract, isControl := declared[key]; isControl {
-			capability = capabilityFromContract(capability, contract)
+		if !providerOffersCapability(capability, functions, queries) {
+			continue
 		}
 		result.Capabilities = append(result.Capabilities, capability)
 	}
 	return result
+}
+
+// providerOffersCapability reports whether the provider advertises the contract
+// that implements one configured capability whose contract is not an operation.
+//
+// A capability with no entry in the table is not offered, which keeps the
+// intersection fail-closed: an unknown name is dropped rather than advertised on
+// the strength of a guess.
+func providerOffersCapability(capability protocol.Capability, functions, queries map[string]struct{}) bool {
+	mapped, ok := capabilityProviderContract[capability.Name]
+	if !ok {
+		return false
+	}
+	switch mapped.kind {
+	case contractFunction:
+		_, offered := functions[mapped.name]
+		return offered
+	case contractQuery:
+		_, offered := queries[mapped.name+"\x00"+capability.Version]
+		return offered
+	default:
+		// An operation or control action is matched by the caller, so reaching
+		// here means the table names a kind this function does not handle.
+		return false
+	}
 }
 
 // capabilityFromContract merges the provider-declared capability metadata into

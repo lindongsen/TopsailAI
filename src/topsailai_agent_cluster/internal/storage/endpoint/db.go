@@ -6,6 +6,9 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -20,6 +23,9 @@ type Store struct {
 
 // Open opens an Endpoint database and applies embedded migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
+	if err := prepareDatabaseFile(path); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open endpoint sqlite: %w", err)
@@ -42,6 +48,45 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+// prepareDatabaseFile creates the database file and its directory with modes that
+// keep Endpoint state unreadable to other local accounts.
+//
+// SQLite creates both with the process umask, which yields 0644 and 0755 on a
+// default host. Ownership alone does not isolate the file: the Server container
+// runs as a different uid but can still read a world-readable file, so the
+// permission bits are the layer that actually enforces the boundary. The modes are
+// applied to an existing file and directory as well, because every deployed
+// Endpoint already holds a 0644 database inside a 0755 directory, and a fix that
+// only affected new installs would leave the fleet exposed.
+func prepareDatabaseFile(path string) error {
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return nil
+	}
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return fmt.Errorf("create endpoint database directory: %w", err)
+		}
+		// MkdirAll leaves an existing directory's mode untouched, so the
+		// restrictive mode has to be applied explicitly for the upgrade path.
+		if err := os.Chmod(dir, 0o750); err != nil {
+			return fmt.Errorf("restrict endpoint database directory: %w", err)
+		}
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("create endpoint database file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close endpoint database file: %w", err)
+	}
+	// OpenFile applies its mode only when it creates the file, so an existing
+	// 0644 database keeps its mode until it is corrected here.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("restrict endpoint database file: %w", err)
+	}
+	return nil
 }
 
 // Close releases the Endpoint database connection.

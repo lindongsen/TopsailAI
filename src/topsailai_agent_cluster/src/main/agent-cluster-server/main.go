@@ -98,6 +98,12 @@ func main() {
 	}
 	channelService := channel.NewServer(tlsConfig)
 	channelService.Identity = serverIdentity
+	// Follow terminations are recorded by the channel, because a stream can end
+	// for reasons the operator never sees as an error: a slow consumer, a
+	// capacity refusal, or a disconnect that arrives after the Endpoint's own
+	// terminal frame was lost. Without this the only evidence is the operator's
+	// report, which names the symptom but not the Endpoint or the stream.
+	channelService.Logger = logger
 	// A shared certificate cannot bind a connection to one Endpoint identity, so
 	// the Server skips that check only when the operator explicitly enabled it.
 	channelService.SharedCertificate = cfg.TLSSharedCertificate

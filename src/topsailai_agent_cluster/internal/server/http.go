@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -232,6 +233,16 @@ func (h *Handler) outputFollow(w http.ResponseWriter, r *http.Request) {
 	}
 	events, err := follower.RequestFollow(r.Context(), endpointID, protocol.OutputFollowRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: q.Get("provider_generation"), MaxBytes: maxBytes, MaxLines: parseMaxLines(q.Get("max_lines"))})
 	if err != nil {
+		// A capacity refusal is this Server's own limit, so it must be reported as
+		// such. Reporting it as endpoint_offline told the operator the Endpoint was
+		// unreachable while it was healthy and answering, which sent every
+		// investigation to the transport instead of to the limit. Every other
+		// error here is a transport failure: either no authoritative peer exists
+		// or the write to it failed, and both mean the Endpoint is unreachable.
+		if errors.Is(err, channel.ErrFollowCapacity) {
+			h.writeError(w, http.StatusServiceUnavailable, "too_many_follows", err.Error())
+			return
+		}
 		h.writeError(w, http.StatusServiceUnavailable, "endpoint_offline", err.Error())
 		return
 	}

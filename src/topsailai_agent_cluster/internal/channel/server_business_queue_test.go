@@ -262,11 +262,22 @@ func TestServerFullBusinessQueueClosesPeer(t *testing.T) {
 	if readCtx.Err() != nil {
 		t.Fatal("the peer was not disconnected while its business queue was full")
 	}
-	server.Mu.RLock()
-	_, stillActive := server.Active["endpoint-1"]
-	server.Mu.RUnlock()
-	if stillActive {
-		t.Fatal("a peer with a full business queue must be removed from Active")
+	// The removal from Active happens in the read loop's deferred cleanup, which
+	// runs after CloseNow returns. The client therefore observes the read error
+	// before the peer is deleted, so this must poll rather than read Active once:
+	// a single read races the cleanup goroutine and fails intermittently.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		server.Mu.RLock()
+		_, stillActive := server.Active["endpoint-1"]
+		server.Mu.RUnlock()
+		if !stillActive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a peer with a full business queue must be removed from Active")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

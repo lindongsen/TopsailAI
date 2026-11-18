@@ -11,6 +11,15 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
+// followWriteTimeout bounds one write of a follow frame onto the shared channel.
+//
+// A follow frame is written to the same connection that carries heartbeats,
+// inventory reports, command receipts and every other response, so the write must
+// be bounded by its own budget rather than by the follow's lifetime. Without a
+// separate budget a stalled write would hold the connection's write lock and
+// delay every other frame on it.
+const followWriteTimeout = 10 * time.Second
+
 // startFollow admits one streaming output follow and runs it outside the channel
 // read loop. The read loop must never block on a follow: a follow stays open for
 // as long as the operator watches, so running it inline would stop command,
@@ -85,7 +94,7 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 		if chunk.ObservedAtMS == 0 {
 			chunk.ObservedAtMS = time.Now().UnixMilli()
 		}
-		return s.channel.SendFrame(ctx, channel.Frame{
+		return s.sendFollowFrame(ctx, channel.Frame{
 			Type:            channel.FrameOutputChunk,
 			ProtocolVersion: channel.ProtocolVersion,
 			RequestID:       requestID,
@@ -93,10 +102,35 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 		})
 	})
 	code := ""
+	// A Provider-reported code is the classification when this Endpoint
+	// recognises it. It is extracted once so the switch does not have to call the
+	// extractor twice, and so an unrecognised code falls through to the sentinel
+	// checks below instead of being forwarded as if it were a Cluster code.
+	providerCode, providerCoded := providerStreamCode(err)
 	switch {
 	case err == nil:
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		code = "cancelled"
+	case providerCoded && providerCode == "cancelled":
+		// The Provider reported its own cancellation, so the stream ended for a
+		// reason the Provider already classified. Reporting it as provider_error
+		// told the operator the Provider had failed when it had behaved correctly,
+		// and it hid the one fact that explains the empty tail: the stream was
+		// stopped rather than broken. This case must precede the default, because
+		// the default is what misreported it.
+		code = "cancelled"
+		s.logFollowFailure(requestID, request, code, err)
+	case providerCoded && providerCode == "unsupported":
+		// The Provider cannot tail this target. That is a capability answer, not a
+		// fault, so it keeps the same code the adapter-level sentinel produces.
+		code = "unsupported"
+		s.logFollowFailure(requestID, request, code, err)
+	case providerCoded && providerCode == "invalid_request":
+		// The Provider rejected the request it was given, so the fault is in the
+		// request rather than in the Provider. Naming it provider_error sent the
+		// operator to investigate a Provider that refused correctly.
+		code = "invalid_request"
+		s.logFollowFailure(requestID, request, code, err)
 	case errors.Is(err, adapter.ErrUnsupported):
 		// The adapter cannot stream. Reporting unsupported is honest; degrading
 		// the request into a snapshot would show a stream that never updates.
@@ -109,7 +143,7 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 		// This case must precede the default, because the default is what
 		// misreported it.
 		code = protocol.AdapterBusy
-		s.logError("follow provider output", err)
+		s.logFollowFailure(requestID, request, code, err)
 	case errors.Is(err, adapter.ErrOutputLimit):
 		// A local byte budget stopped the stream, so the provider was not at
 		// fault. Reporting it as provider_error sent the operator to investigate a
@@ -117,12 +151,60 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 		// smaller request. This case must precede the default, because the default
 		// is what misreported it.
 		code = protocol.OutputLimit
-		s.logError("follow provider output", err)
+		s.logFollowFailure(requestID, request, code, err)
 	default:
 		code = "provider_error"
-		s.logError("follow provider output", err)
+		s.logFollowFailure(requestID, request, code, err)
 	}
 	s.sendFollowEnd(ctx, requestID, code, truncated)
+}
+
+// providerStreamCode extracts the Provider's own error code from a stream failure.
+//
+// The code is the only field that carries the Provider's classification, so it is
+// read here rather than parsed out of the message. Parsing prose would make the
+// classification depend on wording, and the wording is the part a Provider is free
+// to change.
+//
+// The second return value reports whether a code was found at all, because an
+// empty code and an absent code are different facts: a Provider that reported no
+// code has not classified the failure, so the caller must fall back to its own
+// sentinel checks instead of treating the absence as a classification.
+func providerStreamCode(err error) (string, bool) {
+	var streamErr *adapter.StreamError
+	if !errors.As(err, &streamErr) {
+		return "", false
+	}
+	if streamErr.Code == "" {
+		return "", false
+	}
+	return streamErr.Code, true
+}
+
+// sendFollowFrame writes one follow frame onto the shared channel connection.
+//
+// The write deliberately does not use the follow's own context. The channel is one
+// websocket shared by every follow, heartbeat, inventory report, command receipt
+// and response, and the websocket library closes the whole connection on any error
+// from any method, including a context expiration. Writing with the follow's
+// context therefore made one follow's cancellation destroy the entire link: the
+// cancelled write failed, the library closed the connection, and every request in
+// the reconnect window was reported as endpoint_offline on a healthy Endpoint.
+//
+// Detaching the context keeps the two lifetimes separate. Cancelling a follow still
+// stops its provider child and its chunk loop, because those use the follow's own
+// context, but the frame write is bounded only by its own budget. A write that
+// genuinely fails still closes the connection, which is correct: a broken transport
+// is a real fault, and the library cannot be told to keep a connection it considers
+// unusable.
+//
+// The detached context is given a bounded budget rather than no deadline, because
+// an unbounded write would hold the connection's write lock and delay every other
+// frame on the same link.
+func (s *Service) sendFollowFrame(ctx context.Context, frame channel.Frame) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), followWriteTimeout)
+	defer cancel()
+	return s.channel.SendFrame(writeCtx, frame)
 }
 
 // sendFollowEnd emits the single terminal frame for a follow request.
@@ -144,7 +226,7 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 // as a deferred retry would be false, because no retry exists.
 func (s *Service) sendFollowEnd(ctx context.Context, requestID, code string, truncated bool) {
 	end := protocol.OutputEnd{ErrorCode: code, ObservedAtMS: time.Now().UnixMilli(), Truncated: truncated}
-	if err := s.channel.SendFrame(ctx, channel.Frame{
+	if err := s.sendFollowFrame(ctx, channel.Frame{
 		Type:            channel.FrameOutputEnd,
 		ProtocolVersion: channel.ProtocolVersion,
 		RequestID:       requestID,
@@ -170,6 +252,34 @@ func (s *Service) logFollowEndLost(requestID, code string, err error) {
 	}
 	s.logger.Log(context.Background(), level, "output follow terminal frame lost",
 		"request_id", requestID, "error_code", code, "error", err)
+}
+
+// logFollowFailure records why one follow stream ended abnormally, with the
+// fields needed to identify the affected session without re-running the code.
+//
+// The generic logError helper records only the error value, which made a
+// provider_error impossible to attribute: the operator could see that some
+// follow failed but not which Endpoint, request, resource or provider
+// generation it belonged to, so the only way to investigate was to reproduce
+// the failure and watch it happen. The request carries every one of those
+// identities, so they are recorded here instead of being discarded.
+//
+// The reported code is logged alongside the error because the code is the
+// classification the operator sees, and the error is the evidence behind it.
+// Logging only one of the two hides either the symptom or its cause.
+func (s *Service) logFollowFailure(requestID string, request protocol.OutputFollowRequest, code string, err error) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Error("output follow failed",
+		"request_id", requestID,
+		"endpoint_id", request.EndpointID,
+		"resource_id", request.ResourceID,
+		"provider_generation", request.ProviderGeneration,
+		"max_bytes", request.MaxBytes,
+		"max_lines", request.MaxLines,
+		"error_code", code,
+		"error", err)
 }
 
 // stopFollows cancels every active follow. It runs during shutdown so a provider

@@ -816,9 +816,19 @@ which changes on every recreate.
 
 The state directory is shared with the host Endpoint, so ownership is granted per entry rather than
 recursively. The directory and `server.sqlite` belong to uid `10001`, while `endpoint.sqlite` keeps
-its own owner, so the container cannot read it. A recursive `chown` would hand the endpoint database
-to the container and weaken the isolation that keeps it unreadable there. SQLite reports a permission
-failure as `out of memory (14)`, which hides the real cause.
+its own owner. A recursive `chown` would hand the endpoint database to the container and weaken the
+isolation that keeps it unreadable there.
+
+Ownership alone does not provide that isolation, and this document previously claimed it did. The
+Endpoint database was created by SQLite from the process umask, so it landed at mode `0644` inside a
+`0755` directory: the container could not read it through ownership, but it could read it through the
+world-readable bit, and the `cat` probe the runbook describes returned `READABLE`. The permission bits
+are the layer that actually enforces the boundary, so `endpointstorage.Open` now creates the file at
+`0600` and its directory at `0750`, and corrects an existing permissive file and directory on open so
+an upgraded node becomes compliant rather than only a new install. The mode is asserted by
+`internal/storage/endpoint/db_permissions_test.go`, because a documented expectation is not a check.
+
+SQLite reports a permission failure as `out of memory (14)`, which hides the real cause.
 
 The runtime stage installs no packages, because this host's resolver forwards
 `dl-cdn.alpinelinux.org` to unreachable public resolvers and `apk add` fails with a DNS lookup error.

@@ -11,6 +11,15 @@ var ErrFenced = errors.New("channel connection is fenced")
 // ErrOffline indicates that no authoritative Endpoint connection is available.
 var ErrOffline = errors.New("endpoint is offline")
 
+// ErrFollowCapacity indicates that the Server already holds the maximum number
+// of concurrent follow streams.
+//
+// It is a distinct value rather than a formatted string because the HTTP layer
+// must report it as its own condition. Reporting it as endpoint_offline told the
+// operator the Endpoint was unreachable while it was healthy and answering, which
+// sent every investigation to the transport instead of to the capacity limit.
+var ErrFollowCapacity = errors.New("follow capacity exceeded")
+
 // Fence assigns monotonically increasing authority independently per Endpoint.
 type Fence struct {
 	mu          sync.RWMutex

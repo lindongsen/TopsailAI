@@ -80,7 +80,7 @@ Feature: non-interactive TUI
     Given a running cluster with one endpoint
     And a session whose adapter does not support output reading
     When I run the tui logs command
-    Then the output contains "unsupported"
+    Then the logs command fails reporting "unsupported"
 
   Scenario: tui logs returns snapshot larger than websocket default read limit
     Given a running cluster with one endpoint
