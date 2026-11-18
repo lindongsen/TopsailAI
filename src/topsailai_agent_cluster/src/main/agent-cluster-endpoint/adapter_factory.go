@@ -36,12 +36,13 @@ const (
 	// provider payload. A detail document is carried inside a JSON envelope, so the
 	// bytes on stdout are larger than the document itself: escaping alone measured
 	// 1.114x on a real record, and a control character expands to six bytes as
-	// \u00XX. A 1 MiB detail bound therefore needs headroom above 1 MiB here, or the
-	// transport rejects the response before the document bound is ever consulted
-	// and the operator reads a generic stdout-limit failure instead of the real
-	// reason. 8 MiB covers the six-times worst case for the largest permitted
-	// document.
-	genericCLIMaxStdoutBytes = 8 << 20
+	// \u00XX. The budget is therefore derived from the contract ceiling rather than
+	// written as a second number, because two independent numbers drift: a ceiling
+	// raised without the budget would make the largest permitted document
+	// unreachable, and the operator would read a generic stdout-limit failure
+	// instead of the rejection the contract defines. Six times the ceiling is the
+	// worst-case expansion of the largest document the contract permits.
+	genericCLIMaxStdoutBytes = 6 * protocol.MaxDetailCeilingBytes
 	genericCLIMaxStderrBytes = 64 << 10
 	genericCLIMaxRecords     = 128
 )
@@ -89,7 +90,14 @@ const genericCLIReadConcurrency = 4
 // implements an action declares what the action is. The factory therefore only
 // builds the adapter from the document it is handed, so there is exactly one place
 // with the authority to publish a ctl. capability.
-func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store) error {
+//
+// detailMaxBytes is the operator-configured bound for one provider detail
+// document. It is passed in rather than read here, because the configuration
+// boundary already parsed and validated it: reading the environment again would
+// create a second source of truth for one setting, and a value that passed
+// validation at startup could then be replaced by a different value later. Zero
+// means the protocol default, which the adapter itself resolves.
+func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, detailMaxBytes int) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}
@@ -126,6 +134,7 @@ func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store) e
 			MaxStdoutBytes: genericCLIMaxStdoutBytes,
 			MaxStderrBytes: genericCLIMaxStderrBytes,
 			MaxRecords:     genericCLIMaxRecords,
+			MaxDetailBytes: detailMaxBytes,
 			EndpointLimits: genericCLIConcurrency,
 			AdapterLimits:  genericCLIConcurrency,
 			ReadLimit:      genericCLIReadConcurrency,

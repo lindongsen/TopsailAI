@@ -970,3 +970,70 @@ func TestReceiptFromProviderErrorCarriesTheProviderDiagnostic(t *testing.T) {
 		}
 	})
 }
+
+// TestDetailHonoursTheConfiguredBound proves the configured detail bound is the
+// bound the adapter actually enforces.
+//
+// The same provider document is read twice through two adapters that differ only
+// in MaxDetailBytes. A test that asserted only the rejection would pass with the
+// bound hardcoded, and a test that asserted only the acceptance would pass with
+// the bound ignored. Both halves are required because the defect this guards is a
+// configured value that is parsed, validated and then never read: every layer
+// forwards it faithfully and the behaviour never changes.
+func TestDetailHonoursTheConfiguredBound(t *testing.T) {
+	// The document is larger than the small bound and smaller than the large one,
+	// so the two adapters must disagree about it. A fixture that fits both bounds
+	// could not express the failure mode.
+	document := strings.Repeat("x", 4096)
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			response.Descriptor.Queries = []providercli.NamedContract{{Name: providercli.QuerySessionDetail, Version: "v1"}}
+			return response, nil
+		}
+		return providercli.Response{
+			Version: request.Version, RequestID: request.RequestID, OK: true,
+			QueryResult: json.RawMessage(`{"provider_session_id":"s-1","provider_metadata":` + strconv.Quote(document) + `,"observed_at_ms":42}`),
+		}, nil
+	}
+	limits := providercli.ConcurrencyLimits{Total: 2, Discovery: 1, Mutation: 1, Follow: 1}
+	build := func(t *testing.T, maxDetailBytes int) *Adapter {
+		t.Helper()
+		config := Config{
+			AdapterID: "a", DisplayName: "A", Timeout: time.Second,
+			MaxStdinBytes: 65536, MaxStdoutBytes: 65536, MaxStderrBytes: 4096, MaxRecords: 10,
+			MaxDetailBytes: maxDetailBytes,
+			EndpointLimits: limits, AdapterLimits: limits,
+			Mapper:       &fakeMapper{mappings: map[string]adapter.ResourceMapping{}},
+			Capabilities: protocol.CapabilityDescriptor{Revision: "r", Capabilities: []protocol.Capability{{Name: "agent.start", Version: "v1"}}},
+		}
+		binding, err := newWithRunner(context.Background(), config, runnerAdapter{provider})
+		if err != nil {
+			t.Fatalf("new adapter: %v", err)
+		}
+		return binding
+	}
+	// A bound below the document must refuse it with the specific machine code, so
+	// the operator reads "this record is larger than the configured bound" instead
+	// of "the provider is broken".
+	small := build(t, 1024)
+	_, err := small.Detail(context.Background(), protocol.SessionDetailQuery{ProviderSessionID: "s-1"})
+	if err == nil {
+		t.Fatal("a document above the configured bound was accepted")
+	}
+	var coded interface{ ErrorCode() string }
+	if !errors.As(err, &coded) || coded.ErrorCode() != protocol.DetailResponseTooLarge {
+		t.Fatalf("error = %v, want code %q", err, protocol.DetailResponseTooLarge)
+	}
+	// The same document must be accepted once the bound is raised, which is what
+	// proves the value reached the decoder rather than being ignored.
+	large := build(t, 8192)
+	result, err := large.Detail(context.Background(), protocol.SessionDetailQuery{ProviderSessionID: "s-1"})
+	if err != nil {
+		t.Fatalf("a document within the configured bound was refused: %v", err)
+	}
+	if result.ProviderMetadata != document {
+		t.Fatalf("provider_metadata length = %d, want %d", len(result.ProviderMetadata), len(document))
+	}
+}

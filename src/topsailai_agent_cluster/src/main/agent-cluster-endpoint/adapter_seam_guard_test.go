@@ -76,8 +76,12 @@ func TestAdapterFactoryTakesNoProviderTypeParameter(t *testing.T) {
 	}
 	fn := findFunc(t, file, "registerAdapter")
 	params := fn.Type.Params.List
-	if len(params) != 2 {
-		t.Fatalf("registerAdapter takes %d parameter groups, want 2 (registry and store): %s",
+	// Three parameter groups: the registry, the store and the configured detail
+	// bound. The count is pinned so a new parameter is a deliberate, reviewable
+	// change rather than something that appears silently; the string check below
+	// is what actually protects the seam this guard exists for.
+	if len(params) != 3 {
+		t.Fatalf("registerAdapter takes %d parameter groups, want 3 (registry, store and detail bound): %s",
 			len(params), nodeText(fset, source, fn.Type))
 	}
 	for _, field := range params {
@@ -271,8 +275,8 @@ func TestMainRegistersTheAdapterWithoutAProviderType(t *testing.T) {
 			return true
 		}
 		calls++
-		if len(call.Args) != 2 {
-			t.Fatalf("registerAdapter is called with %d arguments, want 2 (registry and store): %s",
+		if len(call.Args) != 3 {
+			t.Fatalf("registerAdapter is called with %d arguments, want 3 (registry, store and detail bound): %s",
 				len(call.Args), nodeText(fset, source, call))
 		}
 		return true
