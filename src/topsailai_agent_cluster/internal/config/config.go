@@ -62,6 +62,18 @@ type Config struct {
 	// quickly without shortening the tolerance for a transient lock.
 	WriteLivenessInterval time.Duration
 	CommandAllowlistFile  string
+	// CommandDir is the Endpoint-local working directory for a command.exec
+	// request that carries no session target, which is the endpoint-scope form of
+	// the operator `!` command. It exists because a session-scoped command takes
+	// its directory from provider evidence, and endpoint scope has no session to
+	// ask. An empty value disables the endpoint-scope form entirely: the Endpoint
+	// refuses the request instead of falling back to its own process working
+	// directory, because that directory is a location the operator never selected
+	// and running there would be a silent wrong-place execution rather than a
+	// visible failure. A configured value must be an absolute path to an existing
+	// directory, and it is validated at startup so a mistake fails once instead of
+	// on every command.
+	CommandDir string
 	// EndpointAccessPolicyDir is the Endpoint-local directory holding one access
 	// policy file per caller token. An empty value, or a directory that holds no
 	// policy file, permits every caller, which keeps existing deployments
@@ -248,6 +260,9 @@ func Load(args []string, role string) (Config, error) {
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE"); value != "" {
 			cfg.CommandAllowlistFile = value
 		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_COMMAND_DIR"); value != "" {
+			cfg.CommandDir = value
+		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"); value != "" {
 			cfg.EndpointAccessPolicyDir = value
 		}
@@ -387,6 +402,7 @@ func Load(args []string, role string) (Config, error) {
 	}
 	if endpointRole || genericRole {
 		flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
+		flags.StringVar(&cfg.CommandDir, "command-dir", cfg.CommandDir, "Endpoint-local working directory for a command.exec request that carries no session target")
 		flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
 		flags.StringVar(&cfg.ReplaceRequestFile, "replace-request-file", cfg.ReplaceRequestFile, "Endpoint-local request document that activates one Provider CLI version for one adapter")
 		flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Server WSS address the Endpoint dials")
@@ -468,6 +484,36 @@ func ParseAdapters(value string) ([]AdapterConfig, error) {
 	return adapters, nil
 }
 
+// validateCommandDir checks the endpoint-scope command working directory.
+//
+// An empty value is valid and disables the endpoint-scope form. A configured
+// value must be absolute and must resolve to an existing directory, because the
+// confinement check for command arguments is performed relative to this
+// directory: a path that does not exist would make every command fail with a
+// directory error that looks like a runtime fault instead of the configuration
+// mistake it is. Symlinks are resolved so the directory the operator configured
+// and the directory commands actually run in are the same fact.
+func validateCommandDir(directory string) error {
+	if directory == "" {
+		return nil
+	}
+	if !filepath.IsAbs(directory) {
+		return fmt.Errorf("command dir %q must be an absolute path", directory)
+	}
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return fmt.Errorf("command dir %q does not resolve: %w", directory, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("command dir %q cannot be inspected: %w", directory, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("command dir %q is not a directory", directory)
+	}
+	return nil
+}
+
 // Validate checks configuration values before service initialization.
 func (c Config) Validate() error {
 	if c.LogOutput != "stderr" && c.LogOutput != "file" {
@@ -509,6 +555,15 @@ func (c Config) Validate() error {
 	// turns a diagnostic into a load source on the very database it is watching.
 	if c.WriteLivenessInterval <= 0 {
 		return fmt.Errorf("write liveness interval must be positive")
+	}
+	// The endpoint-scope command directory is validated here rather than at first
+	// execution, because a wrong value is a configuration mistake and the operator
+	// who made it is looking at startup output. An empty value is valid and means
+	// the endpoint-scope form is disabled. A relative path is rejected because it
+	// would resolve against the process working directory, which is exactly the
+	// implicit location this setting exists to replace.
+	if err := validateCommandDir(c.CommandDir); err != nil {
+		return err
 	}
 	switch c.ChannelDirection {
 	case DirectionEndpointInitiated, DirectionServerInitiated, DirectionBidirectional:
