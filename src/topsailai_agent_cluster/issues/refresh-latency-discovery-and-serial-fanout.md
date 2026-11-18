@@ -81,10 +81,20 @@ Ordered by measured benefit and risk:
 1. Provider: skip the `lsof`/`fuser` fallback when `/proc/<pid>` is absent on a `/proc`-capable host.
    **DONE** in `6427f977`, which resolves holders from the process table before any external tool.
 2. Cluster: parallelize `forceCollection` with a bounded worker pool, preserving per-Endpoint error
-   isolation. Not implemented; deferred by the human on 2026-11-07.
-3. Cluster: move `publishRefresh` off the channel read loop. Not implemented; same deferral.
+   isolation. **DONE** in `8986a742`, which fans out one request per Endpoint through
+   `refreshConcurrency = 16` (`internal/tui/refresh.go:136`), stores results by Endpoint index so the
+   rendered order never depends on completion order, and keeps each Endpoint's failure a diagnostic
+   rather than a whole-command failure.
+3. Cluster: move `publishRefresh` off the channel read loop. **DONE** in `cd197c1a`, which introduced
+   `dispatchBusiness` (`internal/endpoint/service.go:513`) and now dispatches `publishRefresh` through
+   it (`:599`), so a forced collection no longer blocks heartbeats, commands or other reads on the
+   shared connection.
 4. Cluster: serialize and coalesce `Collect` cycles as the protocol already requires. Not implemented;
-   same deferral.
+   deferred by the human on 2026-11-07. `Collect` (`internal/endpoint/collector.go:84`) still has no
+   single-flight guard: `grep collectMu|singleflight|collectLock internal/endpoint/*.go` returns
+   nothing, so two overlapping refresh requests each run their own provider discovery. The composer
+   still prevents an older scan from publishing after a newer one, so the defect is duplicated cost
+   rather than stale data.
 5. Provider: batch liveness probing into one pass. Not implemented. The residual cost is a full `/proc`
    scan per dead row (mean 0.0417 s), which is negligible at the measured scale, so this is not
    recommended without a larger process count.
@@ -95,9 +105,17 @@ Ordered by measured benefit and risk:
   `6427f977`: `test_no_holder_does_not_spawn_a_tool` in
   `cli/tests/unit/topsailai/test_log_file_use.py` asserts `subprocess.Popen` is never called.
 - Regression test asserting workspace-scope refresh latency tracks the slowest Endpoint, not the sum.
-- Regression test asserting two overlapping refresh requests produce one provider discovery.
+  **DONE** in `8986a742`: `TestForceCollectionRunsEndpointsConcurrently` and
+  `TestForceCollectionBoundsConcurrency` in `internal/tui/refresh_concurrency_test.go`, plus
+  `TestForceCollectionIsolatesAHungEndpoint` for per-Endpoint error isolation.
+- Regression test asserting two overlapping refresh requests produce one provider discovery. **Still
+  open**, because item 4 is not implemented.
 - Regression test asserting command and heartbeat frames are served during a forced collection.
+  **DONE** in `cd197c1a`: `TestChannelLoopConsumesHeartbeatAckWhileCommandRuns` and
+  `TestChannelLoopKeepsReadingAfterBusinessHandlerReturns` in
+  `internal/endpoint/channel_loop_independence_test.go`.
 - Keep the 409 freshness guard reachable so a "fast" refresh can never silently return cached data.
+  Covered by `internal/server/refresh_test.go`.
 
 ## Cluster-side design
 
