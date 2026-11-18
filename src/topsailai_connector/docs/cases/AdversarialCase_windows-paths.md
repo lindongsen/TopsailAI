@@ -317,7 +317,9 @@ Node's user may read is readable.
 **Action:** `file.read` on its relative path.
 
 **Expected:** `denied`. This is the case that matters most on Windows too: the
-file holds the `node-token`.
+identity file holds the node id, which is an address rather than a secret, and the
+credential file beside it holds the secret that authorizes every operation. Both
+are denied by identity, so neither is readable through a scope.
 
 ### AC-WIN-41: The identity file reached by a junction
 

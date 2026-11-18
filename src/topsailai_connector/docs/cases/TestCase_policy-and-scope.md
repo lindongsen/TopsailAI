@@ -421,14 +421,34 @@ sets no ACL, so the directory inherits its parent's default descriptor, which
 grants `BUILTIN\Users` read access; the operator must choose a parent directory
 with a restrictive ACL.
 
-### TC-POL-51: A config directory readable by a group is refused or fixed
+### TC-POL-51: A config directory readable by a group is accepted
 
-**Precondition:** The config directory is `0755`.
+**Precondition:** The config directory is `0755` and the files inside it are `0600`.
 
 **Action:** Start the Node.
 
-**Expected:** Startup fails, or the mode is corrected and the change is logged. A
-group-readable config directory is a leaked `node-token`.
+**Expected:** Startup succeeds. The mode check is on the two files that hold
+secrets, not on the directory: `identity` and `credentials.yaml` each refuse
+`mode&0o077 != 0`, and a directory that is merely traversable discloses nothing by
+itself. Measured on Linux: a `0755` config directory holding `0600` files reached
+`connector-node ready`.
+
+**Why this case is written this way:** an earlier version expected startup to
+fail, on the reasoning that a group-readable config directory leaks the node
+credential. That reasoning was wrong twice: the directory holds no secret of its
+own, and the check that actually protects the secret is the file mode. A case that
+expects a refusal the code does not perform is a case that gets the code "fixed" to
+match the document.
+
+### TC-POL-51b: A credential file readable by a group is refused
+
+**Precondition:** `credentials.yaml` is `0644`.
+
+**Action:** Start the Node.
+
+**Expected:** Startup fails with `credential file "<path>" has mode 0644, want no
+group or other access; it holds secrets that never expire`. The message names the
+file and the mode, and never the secret.
 
 ### TC-POL-52: The policy file may live outside the config directory
 

@@ -530,9 +530,11 @@ startup, so the file is refused by identity rather than by name.
 
 **Action:** `file.read` on the identity file's relative path.
 
-**Expected:** `denied`. This is the case that matters most: the identity file
-holds the `node-token`, so reading it would hand the caller the secret that
-authorises the read.
+**Expected:** `denied`. The identity file holds the node id, which is an address
+rather than a secret, and it is still denied because the deny list answers by
+identity: the file is one of the Node's own files, so a scope that contains it cannot
+serve it. The credential file beside it holds the secret, and it is denied for the
+same reason.
 
 ### AC-PATH-61: Reaching the identity file through a symlink
 
@@ -581,8 +583,8 @@ directory.
 **Why this case exists:** the opt-in removes the startup refusal that used to make
 this situation impossible, so the deny list becomes load-bearing rather than
 redundant. A listing that reported the config directory's name and size would leak
-metadata the refusal used to hide, and a read of `identity` would hand the caller
-the `node-token` that authorizes every operation on this Node.
+metadata the refusal used to hide, and a read of `credentials.yaml` would hand the
+caller the secret that authorizes every operation on this Node.
 
 ### AC-PATH-65: A filesystem-root scope that opted in still refuses an escape
 

@@ -161,8 +161,10 @@ role claim is an unknown field rather than a privilege.
 
 **Action:** Send a request with `subject: root`.
 
-**Expected:** `invalid_argument` or `denied`. The decision depends on the
-`node-token` and the policy, not on a name the caller supplies.
+**Expected:** `invalid_argument`. The decision depends on the node proof and the
+policy, not on a name the caller supplies. A request carrying a field no enabled
+operation uses is refused rather than ignored, so a `subject` claim cannot be smuggled
+in beside a legitimate request.
 
 ### AC-NODE-20: Ask for an operation that is not implemented
 
@@ -264,11 +266,26 @@ widen authority, not that it cannot relay a request.
 
 ### AC-NODE-32: A compromised Server replays a captured request
 
-**Action:** Capture a valid request and replay it.
+**Action:** Capture a valid request and replay it byte for byte within the replay
+window.
 
-**Expected:** The replay succeeds while the `node-token` is valid. This is the
-accepted cost of the shared-secret model, and the case exists so the cost is measured
-rather than assumed.
+**Expected:** `unauthenticated`, with the reason `authentication proof was already
+used`. The nonce is recorded only after the signature verifies, so the first request
+reserves it and the replay finds it taken. The replay cache is per `key_id`, so a
+replay of one caller's request cannot be laundered through another caller's nonce
+space.
+
+**Why this case is written this way:** the earlier version of this case expected the
+replay to succeed, because a shared secret with no nonce has nothing to distinguish
+two identical requests. That was the accepted cost of the shared-secret model, and the
+HMAC model removes it. A case that still expected success would direct a future change
+to delete the replay cache, so the expectation is inverted here rather than softened.
+
+**What is still not covered:** a replay that arrives before the original. The nonce is
+recorded when the first request is admitted, so two copies racing each other can both
+pass if they are verified before either is recorded. That window is bounded by the
+verification path and is stated in `AdversarialCase_secrets.md` rather than claimed
+here as closed.
 
 ### AC-NODE-33: A compromised Server claims a Node is offline
 
@@ -287,19 +304,24 @@ cannot distinguish a fabricated response from a real one. The mitigation is that
 Server never holds the data it would have to fabricate convincingly, and the case is
 recorded so the risk is not forgotten.
 
-### AC-NODE-35: A compromised Server drops the `node-token`
+### AC-NODE-35: A compromised Server drops the node proof
 
-**Action:** Modify the Server to forward a request without the `node-token`.
+**Action:** Modify the Server to forward a request with an empty `NodeAuth`.
 
-**Expected:** `denied`. A missing secret is a refusal, not an anonymous request.
+**Expected:** `unauthenticated`. A missing proof is a refusal, not an anonymous
+request. The Node answers `unauthenticated` rather than `denied` because the caller
+never proved it may talk to this Node at all, which is a different answer from "you
+may talk to this Node but not do that".
 
-### AC-NODE-36: A compromised Server substitutes its own `client_token`
+### AC-NODE-36: A compromised Server substitutes its own client credential
 
-**Action:** Modify the Server to forward a request carrying `client_token` in the
-`node-token` field.
+**Action:** Modify the Server to forward a request whose `NodeAuth` carries the
+Server's own client `key_id` and a signature the Server can compute.
 
-**Expected:** `denied`. The Node compares against its own value, so the Server's
-secret is not a Node secret.
+**Expected:** `unauthenticated`. The Node looks the `key_id` up in its own credential
+set, and the Server's key id is not there, so the lookup fails before any signature is
+checked. The two credential namespaces are separate: a Server credential is not a Node
+credential even when both use the same `key_id.secret` shape.
 
 ### AC-NODE-37: A compromised Server asks the Node to reveal its policy
 
@@ -367,14 +389,23 @@ would live.
 
 **Action:** Set a scope path to the Node's config directory.
 
-**Expected:** Startup fails. A scope that can read its own `node-token` is a
-configuration mistake that turns one leaked secret into a permanent one.
+**Expected:** Startup fails with
+`scope "project": path "<config>" overlaps the Node's config directory "<config>"; a scope that can list its own credentials is a configuration mistake`.
+A scope that can list its own credential files discloses their names and sizes even
+when their contents are denied, so the refusal is at startup rather than per request.
 
 ### AC-NODE-47: A policy with a scope containing the config directory
 
 **Action:** Set a scope path to a directory that contains the config directory.
 
-**Expected:** Startup fails.
+**Expected:** Startup fails with the same message. The comparison is on path
+components rather than on a string prefix, so a sibling named `config-backup` is not
+mistaken for a child of `config`.
+
+**Exception:** with `allow_filesystem_root: true` the overlap refusal is relaxed,
+because a scope rooted at a volume necessarily contains the config directory. The
+deny list then carries the protection: the directory and everything inside it are
+refused, and a listing omits the entry. AC-PATH-64 measures that state.
 
 ### AC-NODE-48: A policy with a scope pointing at `/`
 
@@ -425,13 +456,33 @@ file that does hold a secret.
 
 ### AC-NODE-54: A config directory readable by another user
 
-**Precondition:** The config directory is `0755`.
+**Precondition:** The config directory is `0755`; `identity` and `credentials.yaml`
+are `0600`.
 
 **Action:** Start the Node.
 
-**Expected:** Startup fails, or the mode is corrected and the change is logged. A
-group-readable config directory is a leaked `node-token`, which is the one secret that
-authorizes operations.
+**Expected:** Startup succeeds. The directory mode is not checked, because the
+directory holds no secret of its own: the two files inside it are checked
+individually, and each refuses startup when a group or other user can read it.
+Measured on Linux: a `0755` config directory holding a `0600` identity and a `0600`
+credential file reached `connector-node ready`.
+
+**Why the check is on the files rather than the directory:** a directory mode is
+inherited by nothing and grants nothing by itself. Refusing a `0755` directory would
+refuse a layout that discloses nothing, while a `0600` file inside a `0755` directory
+is still unreadable to another user. The check that changes the outcome is the one on
+the file.
+
+### AC-NODE-54b: A credential file readable by another user
+
+**Precondition:** The config directory is `0700`; `credentials.yaml` is `0644`.
+
+**Action:** Start the Node.
+
+**Expected:** Startup fails with
+`credential file "<path>" has mode 0644, want no group or other access; it holds secrets that never expire`.
+Measured on Linux. The message names the file and the mode, so the operator can fix
+it without guessing which of the two files is wrong.
 
 ## Attacking the decision by racing it
 
@@ -501,12 +552,16 @@ shows a log entry the operator did not receive.
 **Expected:** The log rotates at its configured size and old files are retired. An
 unbounded log is a disk-filling denial of service that the refusal path itself enables.
 
-### AC-NODE-63: Trigger a refusal that logs the `node-token`
+### AC-NODE-63: Trigger a refusal that logs a credential secret
 
-**Action:** Send a wrong `node-token` and search every log, trace and error message.
+**Action:** Send a node proof whose signature does not verify, then search every log,
+trace and error message for the secret.
 
-**Expected:** The value appears nowhere. The `node-id` may appear, because that half is
-public.
+**Expected:** The secret appears nowhere. The `node-id` and the `key_id` may appear,
+because both are public: the `node-id` is an address and the `key_id` names which
+credential was presented. Measured: a refusal logs
+`msg="connector-node refused a node proof" node_id=… node_key_id=… reason="signature does not verify"`,
+which names the credential without disclosing it.
 
 ### AC-NODE-64: Trigger a refusal that logs an absolute path
 
