@@ -517,3 +517,33 @@ AI reflection archive, not here.
   `Get-Process connector-node | Stop-Process` would have killed someone else's
   work.
 
+
+## An orphan check that matches by name cannot tell whose process it found
+
+- `tests/e2e/reconnect.sh` ends with `pgrep -af 'bin/connector-(server|node)'` and
+  fails if anything matches. That check is correct in intent and wrong in
+  reach: it matches every connector process on the host, not the two this script
+  started. `make e2e` therefore failed with
+  `orphan processes are still running: 2684897 ... 2684911 ...` while the script's
+  own cleanup had worked perfectly.
+- The two processes were 1 hour 47 minutes old, started at 19:23:49 by an earlier
+  e2e run that had been interrupted. `ps -o lstart` is what showed it; `pgrep -af`
+  alone shows a command line and no age, so the output reads as if the current run
+  leaked them.
+- The consequence is worse than a false failure. A check that fails for a reason
+  outside the code under test teaches the operator to ignore it, and the next real
+  leak is then ignored too. It also cost a full e2e cycle to diagnose, because the
+  first hypothesis is always "the cleanup is broken".
+- The fix is to compare against the PIDs the script recorded, not against a name
+  pattern. `start.sh` already writes `E2E_SERVER_PID` and `E2E_NODE_PID` into
+  `$ENV_FILE`, so the check can ask whether those exact PIDs are still alive. A
+  name pattern can only answer "some connector process exists", which is a
+  different question.
+- Until that fix lands, the operational rule is: before reading an orphan failure
+  as a leak, check the age of every PID it names with `ps -o pid,lstart,etime`.
+  A process older than the run that reported it was not started by that run.
+- This is the same root cause as the Windows lesson above, seen from the other
+  side. There, a name-based kill would have destroyed someone else's work; here, a
+  name-based check reported someone else's work as this run's leak. Both are
+  answered by identifying a process by the PID that was recorded at creation, and
+  neither is answered by its name.
