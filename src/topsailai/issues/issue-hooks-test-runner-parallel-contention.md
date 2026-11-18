@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 author: DawsonLin
-status: open
+status: done
 ---
 
 # Issue: Hooks Test Runner Parallel Resource and Deadline Contention
@@ -332,3 +332,90 @@ Cause A is a separate defect from this issue and should not be fixed by widening
 Either the two test files must create a private temp root instead of relying on `tmp_path`
 ancestry, or the suite must document that it requires a non-world-writable `TMPDIR`. That
 choice is not authorized here and is recorded rather than implemented.
+
+## Resolved on 2026-11-18: cause A fixed in tests and docs, cause C fixed by a CPU cap
+
+The Human authorized both remaining repairs: cap the runner's worker count at the CPU
+count, and fix cause A in both the tests and the documentation.
+
+### Cause A: fixed by consuming the existing trust-eligible fixture
+
+The two files now override `tmp_path` to consume `trust_eligible_tmp_path` from
+`tests/unit/test_topsailai_hooks/conftest.py`, which creates a `0700` root under the
+workspace `.tmp` directory whose ancestry is `0755`. This mirrors the pattern already used
+by `test_summary_script_directory_lifecycle.py`, `test_deployment_script_authorization_capture.py`
+and `test_summary_events_observer_lifecycle.py`.
+
+```text
+before, no TMPDIR:   69 failed, 120 passed in 2.02s
+after,  no TMPDIR:  189 passed in 25.84s
+```
+
+The documentation section `## Test Temp Roots Must Satisfy Artifact Trust` in
+`docs/Hooks_API.md` records the ancestry rejection rule, the fixture, why the runner is
+unaffected, and the `TMPDIR` verification procedure.
+
+### Cause A was much wider than two files
+
+Running the whole `tests/unit/test_topsailai_hooks` directory directly, with no `TMPDIR`,
+produced **255 failed, 4652 passed**. The largest failing files all use `tmp_path` heavily
+and never reference the fixture:
+
+```text
+test_hook_artifact_leases.py     tmp_path 58,  trust_eligible_tmp_path 0
+test_hook_artifact_capture.py    tmp_path 52,  trust_eligible_tmp_path 0
+test_hook_artifact_retention.py  tmp_path 30,  trust_eligible_tmp_path 0
+```
+
+Pointing `TMPDIR` at a private `0700` directory collapsed that surface:
+
+```text
+test_hook_artifact_retention.py alone:              16 failed, 4 passed  ->  20 passed
+five largest failing files:                          ->  146 passed in 3.16s
+whole hooks directory:  255 failed, 4652 passed  ->  3 failed, 4904 passed
+```
+
+So the same `/tmp` ancestry defect accounted for 252 of the 255 failures. This is a test
+environment defect, not a product defect: `hooks/artifact_validation.py` correctly rejects
+a source-root ancestry directory with any `0o022` bit set, and this host's `/tmp` is `0777`.
+
+### The three residual failures are root-identity tests, not contention
+
+```text
+test_hook_artifact_cleanup_retry.py::test_nonprivileged_capture_dispose_removes_sealed_artifact
+test_hook_artifact_cleanup_retry.py::test_nonprivileged_public_capture_rejects_nonexecutable_source
+test_hook_temporary_isolation.py::test_read_only_plugin_inventory_is_unchanged_for_worker_identity
+```
+
+They fail identically with the default `TMPDIR` and with a private one, and they drop
+privileges with `setpriv --reuid=65534`. They are unrelated to this issue and are recorded
+here only so the residual count is not mistaken for contention.
+
+### Cause C: fixed by capping the effective worker count
+
+`tests/run_tests.py` gained `resolve_worker_count(requested)`, which returns
+`max(1, min(requested, os.cpu_count() or 1))`. `main()` resolves the count once and uses it
+for the mode string, the configuration summary and the dispatch call. The `--workers` help
+text now states the cap.
+
+```text
+--workers 20 on an 8-CPU host  ->  workers: 8  # max concurrent workers (requested 20)
+three contention files         ->  72 records, 0 failures, 3/3 files
+eleven hooks files             ->  432 records, 0 failures, 11/11 files
+```
+
+Six unit tests cover the cap, including the `main()` dispatch path. The negative control
+replaced the function body with `return requested` and turned four of the six red
+(`assert 20 == 8`, `assert 0 == 1`, `assert 20 == 8`), then the restored implementation
+returned 79 passed.
+
+No test budget was widened and no production deadline was changed. The product returns
+`timeout` because the child genuinely did not finish, which remains correct behaviour.
+
+### What remains open
+
+The three root-identity failures above are outside this issue. The `--workers` cap bounds
+oversubscription from the runner's own worker pool, but it cannot bound load created by
+other processes on the host, so a deadline-sensitive file can still fail when the machine
+is busy for reasons unrelated to the runner. That is a host-capacity condition, not a
+runner defect, and it is recorded rather than repaired.
