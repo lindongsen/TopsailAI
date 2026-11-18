@@ -288,7 +288,7 @@ only Seam B; it does not import or implement Agent Cluster's internal Go interfa
 
 | Layer | Owns | Must not own |
 |---|---|---|
-| Endpoint service | Authorization, local policy, command journal, deduplication, Cluster resource mapping, target preflight, effective capability revision and complete receipts | Provider commands, native state labels, provider files or provider business rules |
+| Endpoint service | Authorization, local policy, command journal, deduplication, Cluster resource mapping, target preflight, the effective capability set and complete receipts | Provider commands, native state labels, provider files or provider business rules |
 | Endpoint-internal Adapter contract | Provider-neutral functions and Endpoint-internal request/result DTOs | Public transport authority or provider-specific translation |
 | Generic CLI Adapter | Wire encoding/validation, bounded child execution, stderr diagnostics, deadlines, cancellation and exact-process cleanup | Provider business interpretation or Cluster resource minting |
 | Provider CLI | Translation from the standard Adapter CLI protocol to one provider's behavior; final provider-generation revalidation | Server routes, Cluster credentials, Endpoint database, Cluster authorization, journal state or Cluster resource IDs |
@@ -356,8 +356,10 @@ report the capability limitation rather than claim safe execution.
 ### Capability and policy composition
 
 The provider descriptor reports what the provider CLI implements. The Endpoint intersects that
-information with its own supported standard surface and local policy, then computes the effective
-capability revision advertised to the Server.
+information with its own supported standard surface and local policy, then publishes the effective
+capability set to the Server. The revision string published beside that set is the `revision` value
+the Adapter configuration declares, copied through unchanged; it is not computed from the set, so a
+changed capability set does not change the revision.
 
 ```mermaid
 flowchart LR
@@ -418,7 +420,7 @@ flowchart LR
     Install["Install versioned provider artifact"] --> Describe["Run describe and compatibility checks"]
     Describe --> Verify["Run conformance and bounded smoke checks"]
     Verify --> Switch["Atomically replace one Adapter instance"]
-    Switch --> Publish["Re-describe and publish effective capability revision"]
+    Switch --> Publish["Re-describe and publish the effective capability set"]
     Publish --> Accept{"Cutover accepted?"}
     Accept -->|"yes"| Retire["Retire old artifact under retention policy"]
     Accept -->|"no"| Rollback["Restore previous Provider CLI version"]
