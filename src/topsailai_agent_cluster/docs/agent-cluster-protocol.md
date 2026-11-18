@@ -392,6 +392,39 @@ verified the address.
 The full contract, directory layout, file format and enforcement points are in
 `docs/agent-cluster-endpoint-access-policy.md`.
 
+## Implemented signed Endpoint credential
+
+The Endpoint credential has two forms, and the Endpoint decides which one it accepts from its own
+configuration rather than from the caller's syntax.
+
+| Mode | What the caller presents | What the Endpoint verifies |
+|---|---|---|
+| `bearer` | The token itself, in `X-Endpoint-Auth` or the compatibility header `X-Endpoint-Token` | The token matches a declared `token` or `token-sha256` |
+| `hmac` | `key_id`, timestamp, nonce and signature in `X-Endpoint-Auth` | The signature over the canonical request, using the secret declared for that key identifier |
+
+The signed form proves possession without transmitting the secret, so the Server never needs the
+Endpoint secret and never becomes a second Endpoint authorizer. The Server parses the credential
+into a typed value, attaches it to the channel frame envelope as `endpoint_credential`, and
+forwards it verbatim. It never validates it and never decides what it permits.
+
+The signed string covers the operation, the Endpoint identity, the request digest, the timestamp
+and the nonce. It deliberately excludes `request_id`, because the Server mints that identifier and
+a CLI cannot predict it. Replay protection therefore rests on the request digest, the Endpoint's
+nonce cache and the existing `command_id` deduplication together, not on the timestamp alone.
+
+A signature that fails to verify is an authentication failure, never a policy decision, and the
+Endpoint never falls back to bearer when a signed credential is refused. A credential whose form
+does not match the configured mode is refused the same way. The two refusals carry different
+codes so an operator knows which remedy applies: `credential_rejected` with HTTP `401` when the
+caller could not be authenticated, and `policy_denied` with HTTP `403` when an authenticated caller
+was refused an operation. The credential is checked before the policy is consulted, so a caller
+that cannot prove possession never learns which operations exist.
+
+The policy file gains one additive directive, `key-id <id>`, which names the secret used to verify
+a signature. A file that declares only `token` or only `token-sha256` keeps loading unchanged and
+keeps accepting bearer callers, so an existing policy directory needs no edit. `key-id` cannot be
+combined with `token-sha256`, because a digest cannot verify a signature.
+
 ## Required agent lifecycle semantics
 
 - `agent.start` targets Endpoint and opaque launch_profile_id/profile_revision. Endpoint validates the standard intent and invokes its configured Adapter CLI start operation; the CLI/runtime controls how the independent Agent starts. No arbitrary shell or remote executable configuration is accepted.
@@ -997,7 +1030,7 @@ snapshot_revision and has_more; sorting is deterministic with ID as a tie-breake
 
 Enrollment, credential rotation and revocation are administrative operations specified in a later security contract. Endpoint local API exposes health/readiness, standard resources, command status and locally authorized command admission through the same internal services. Route naming can mirror the Server API under a local scope; exact local administration endpoints remain to be specified.
 
-A command request contains client-generated command_id, endpoint_id, target kind/ID/generation (or launch_profile_id/profile_revision for start), operation/version, capability_revision, typed payload, expiry, the caller's `endpoint_token` and optional expected_resource_revision. The Server derives the caller identity from the `server-token`, never from client-provided authority claims, and it forwards the `endpoint_token` without interpreting it. HTTP 202 means Server admission only, which is reachability rather than permission: the Endpoint may still refuse the operation. A repeated ID with identical canonical intent returns its prior state; changed intent returns conflict. Owner checks precede duplicate-result disclosure.
+A command request contains client-generated command_id, endpoint_id, target kind/ID/generation (or launch_profile_id/profile_revision for start), operation/version, capability_revision, typed payload, expiry, the caller's Endpoint credential and optional expected_resource_revision. The Server derives the caller identity from the `server-token`, never from client-provided authority claims, and it forwards the Endpoint credential without interpreting it. HTTP 202 means Server admission only, which is reachability rather than permission: the Endpoint may still refuse the operation. A repeated ID with identical canonical intent returns its prior state; changed intent returns conflict. Owner checks precede duplicate-result disclosure.
 
 ## Implemented resume by provider session handle
 
@@ -1153,7 +1186,7 @@ The receipt also carries the provider's own return document as `provider_respons
 End-to-end delivery is at-least-once with bounded deduplication, NOT exactly-once execution:
 
 - Server persists intent before replying 202. Endpoint persists admitted intent before invoking the provider.
-- IDs are bound to the presented `endpoint_token`, the canonical payload hash and the frozen target. Deduplicate repeated transport frames on both sides. The token is part of the binding because the same command ID presented by a different caller is a different intent, and treating it as a duplicate would let one caller observe another caller's result.
+- IDs are bound to the authenticated caller identity (`IssuerID`), the canonical payload hash and the frozen target. Deduplicate repeated transport frames on both sides. The caller is part of the binding because the same command ID presented by a different caller is a different intent, and treating it as a duplicate would let one caller observe another caller's result. The credential itself is deliberately excluded from `CanonicalHash`, so rotating a credential cannot change the deduplication identity of an unchanged command.
 - Endpoint crash after provider invocation but before result persistence is an uncertain boundary. Reconcile through QueryCommand if the provider supports a correlated ID; otherwise expose unknown and require an explicit new operator decision. Never replay side effects merely because no result was stored.
 - Reconnect resends retained intent with the same ID, never a new ID. Endpoint journal state decides whether to return the retained result, reconcile, or report unknown, not blindly execute again.
 - A duplicate after dedup history expiry is not safe to execute. Commands have immutable expiry and an endpoint-bound admission token/validity window; reject expired or unverifiable replays and require a new intent ID.

@@ -90,6 +90,11 @@ func (h *Handler) writeMetricsBatchResultFailure(w http.ResponseWriter, r *http.
 		h.writeError(w, 501, protocol.MetricsUnsupported, "endpoint has no batch metrics-capable adapter")
 	case "endpoint_unavailable":
 		h.writeError(w, 503, "endpoint_unavailable", "metrics batch query failed: endpoint is not connected")
+	case protocol.CredentialRejected:
+		// The Endpoint could not authenticate the caller, so the policy was never
+		// consulted. This is a credential problem, not a grant problem, so it must
+		// not share the policy refusal's status or message.
+		h.writeCredentialRejected(w, "metrics.read")
 	case protocol.PolicyDenied:
 		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation metrics.read is not permitted for this endpoint token")
 	case protocol.AdapterBusy:

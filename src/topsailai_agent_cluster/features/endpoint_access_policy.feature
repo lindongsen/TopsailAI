@@ -25,6 +25,39 @@ Feature: Endpoint access policy management
       | wrong      |
       | unlisted   |
 
+  Scenario: a valid signature reaches the provider
+    Given a real cluster whose Endpoint requires a signed credential
+    And the caller presents a valid Endpoint signature
+    When the caller reads session output with the signed credential
+    Then the signed read reaches the provider
+    And the Server never received the Endpoint secret
+
+  Scenario: a signature with the wrong secret is refused as a credential
+    Given a real cluster whose Endpoint requires a signed credential
+    And the caller presents an Endpoint signature with the wrong secret
+    When the caller reads session output with the signed credential
+    Then the signed read is refused for its credential
+    And the Server never received the Endpoint secret
+
+  Scenario: an unsigned credential is refused as a credential
+    Given a real cluster whose Endpoint requires a signed credential
+    And the caller presents no Endpoint signature
+    When the caller reads session output with the signed credential
+    Then the signed read is refused for its credential
+
+  Scenario: a replayed signature is refused as a credential
+    Given a real cluster whose Endpoint requires a signed credential
+    And the caller presents a valid Endpoint signature
+    When the caller reads session output with the signed credential
+    And the caller replays the previous Endpoint signature
+    Then the signed read is refused for its credential
+
+  Scenario: a verified signature without a grant is refused by policy
+    Given a real cluster whose Endpoint requires a signed credential but grants no output read
+    And the caller presents a valid Endpoint signature
+    When the caller reads session output with the signed credential
+    Then the signed read is refused by policy
+
   Scenario: an Endpoint declaration excludes a token from this Endpoint
     Given a real cluster whose token is restricted to another Endpoint
     When the policy probe reads session output

@@ -94,6 +94,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerFollowSteps(ctx)
 	registerOutputScopeSteps(ctx)
 	registerEndpointAccessPolicySteps(ctx)
+	registerEndpointHMACSteps(ctx)
 	registerQReturnsToWorkspaceSteps(ctx)
 	registerMessagesSteps(ctx)
 	registerModelSteps(ctx)

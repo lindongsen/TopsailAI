@@ -40,6 +40,12 @@ func (h *Handler) launchOptions(w http.ResponseWriter, r *http.Request) {
 	// answered the query rather than failing it. Reporting it as a successful
 	// empty catalog would tell the operator this machine has no launch handler,
 	// which is a different and false claim.
+	if result.ErrorCode == protocol.CredentialRejected {
+		// The Endpoint could not authenticate the caller, so the policy was never
+		// consulted. This is a credential problem, not a grant problem.
+		h.writeCredentialRejected(w, "launch.query")
+		return
+	}
 	if result.ErrorCode == protocol.PolicyDenied {
 		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation launch.query is not permitted for this endpoint token")
 		return

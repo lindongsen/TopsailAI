@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
@@ -104,9 +105,26 @@ func (c *APIClient) applyServerCredential(req *http.Request, body []byte) error 
 	}
 }
 
-// withEndpointToken attaches the token this Endpoint accepts to the request
-// context, so the transport can carry it without every call site handling
-// credentials.
+// endpointOperationContextKey is the private key type for the Endpoint operation
+// a request will exercise.
+type endpointOperationContextKey struct{}
+
+// endpointOperation names the Endpoint and the operation one request will
+// exercise.
+//
+// The operation travels with the request rather than being passed to the
+// transport, because the transport is shared by every read and write and must not
+// learn which one it is carrying. It is needed at signing time because a signed
+// Endpoint credential covers the operation name, so a credential captured for one
+// read cannot be replayed for a different one.
+type endpointOperation struct {
+	endpointID string
+	operation  string
+}
+
+// withEndpointOperation attaches the Endpoint and operation this request will
+// exercise, so the transport can sign the credential without every call site
+// handling cryptography.
 //
 // An Endpoint with no configured token is left untouched rather than refused
 // here. The client cannot know whether the target Endpoint requires a token,
@@ -114,12 +132,85 @@ func (c *APIClient) applyServerCredential(req *http.Request, body []byte) error 
 // locally would therefore break a deployment where only some machines enforce a
 // policy, and it would make the client a second authority that could disagree
 // with the Endpoint.
-func (c *APIClient) withEndpointToken(ctx context.Context, endpointID string) context.Context {
-	token := c.EndpointTokens[endpointID]
-	if token == "" {
+func (c *APIClient) withEndpointOperation(ctx context.Context, endpointID, operation string) context.Context {
+	if c.EndpointTokens[endpointID] == "" {
 		return ctx
 	}
-	return security.WithEndpointToken(ctx, token)
+	return context.WithValue(ctx, endpointOperationContextKey{}, endpointOperation{endpointID: endpointID, operation: operation})
+}
+
+// endpointOperationFrom returns the Endpoint and operation attached to a request
+// context, or the zero value when the request carries no Endpoint credential.
+func endpointOperationFrom(ctx context.Context) endpointOperation {
+	operation, ok := ctx.Value(endpointOperationContextKey{}).(endpointOperation)
+	if !ok {
+		return endpointOperation{}
+	}
+	return operation
+}
+
+// applyEndpointCredential attaches the caller's Endpoint credential to one
+// request in the configured mode.
+//
+// The credential is built here rather than at the call site because a signed
+// credential covers the request itself: its method, its target and its body. Only
+// this function sees all three, and a signature computed anywhere else would cover
+// a request the caller intended rather than the one that is sent.
+//
+// The two modes are exclusive, exactly as they are for the Server credential. A
+// request carries a signature or a bearer token, never both, because an Endpoint
+// configured for one mode refuses the other and a request carrying both would
+// leave the operator unable to tell which credential was accepted.
+//
+// A token that cannot be signed in HMAC mode is a local configuration error and is
+// reported as one. Sending it anyway would produce an Endpoint refusal that blames
+// the caller's grants, and the operator would investigate permissions instead of
+// the token format.
+func (c *APIClient) applyEndpointCredential(req *http.Request, ctx context.Context, body []byte) error {
+	operation := endpointOperationFrom(ctx)
+	if operation.endpointID == "" {
+		// No Endpoint credential was attached. A caller that set only a plain
+		// token still gets the legacy header, so an existing caller keeps
+		// working without adopting the operation carrier.
+		if token := security.EndpointToken(ctx); token != "" {
+			req.Header.Set(endpointTokenHeader, token)
+		}
+		return nil
+	}
+	token := c.EndpointTokens[operation.endpointID]
+	if token == "" {
+		return nil
+	}
+	mode := c.AuthMode
+	if mode == "" {
+		mode = security.DefaultAuthMode
+	}
+	switch mode {
+	case security.ModeBearer:
+		req.Header.Set(endpointTokenHeader, token)
+		return nil
+	case security.ModeHMAC:
+		parsed, err := security.ParseToken(token)
+		if err != nil {
+			return fmt.Errorf("endpoint %q credential must be in key_id.secret form for hmac mode: %w", operation.endpointID, err)
+		}
+		nonce := security.NewNonce()
+		if nonce == "" {
+			return fmt.Errorf("endpoint %q credential cannot be signed: no nonce available", operation.endpointID)
+		}
+		timestampMS := time.Now().UnixMilli()
+		digest := security.EndpointRequestDigest(req.Method, req.URL.RequestURI(), body)
+		credential := security.EndpointCredential{
+			KeyID:       parsed.KeyID,
+			TimestampMS: timestampMS,
+			Nonce:       nonce,
+			Signature:   security.Sign(parsed.Secret, security.CanonicalFrameRequest(operation.operation, operation.endpointID, digest, timestampMS, nonce)),
+		}
+		req.Header.Set(security.EndpointAuthHeader, credential.Header())
+		return nil
+	default:
+		return fmt.Errorf("unsupported endpoint authentication mode %q", mode)
+	}
 }
 
 // explainRefusal adds the local cause to a refusal that the Endpoint could only
@@ -200,7 +291,7 @@ type OutputSnapshot = protocol.OutputSnapshotResponse
 func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
 	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
 	var result protocol.OutputSnapshotResponse
-	err := c.get(c.withEndpointToken(ctx, endpointID), path, &result)
+	err := c.get(c.withEndpointOperation(ctx, endpointID, protocol.OperationOutputRead), path, &result)
 	return result, c.explainRefusal(err, endpointID)
 }
 
@@ -227,8 +318,8 @@ func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, ge
 	if err := c.applyServerCredential(req, nil); err != nil {
 		return nil, err
 	}
-	if token := security.EndpointToken(c.withEndpointToken(ctx, endpointID)); token != "" {
-		req.Header.Set(endpointTokenHeader, token)
+	if err := c.applyEndpointCredential(req, c.withEndpointOperation(ctx, endpointID, protocol.OperationOutputFollow), nil); err != nil {
+		return nil, err
 	}
 	httpClient := c.HTTPClient
 	if httpClient == nil {
@@ -292,7 +383,7 @@ func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, ge
 // refusal would look like a permission problem instead of a missing credential.
 func (c *APIClient) AdmitCommand(ctx context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {
 	var result map[string]any
-	err := c.request(c.withEndpointToken(ctx, intent.EndpointID), http.MethodPost, "/api/v1/commands", intent, &result)
+	err := c.request(c.withEndpointOperation(ctx, intent.EndpointID, intent.Operation), http.MethodPost, "/api/v1/commands", intent, &result)
 	return result, c.explainRefusal(err, intent.EndpointID)
 }
 
@@ -328,8 +419,8 @@ func (c *APIClient) request(ctx context.Context, method, path string, body any, 
 	if err := c.applyServerCredential(req, bodyBytes); err != nil {
 		return err
 	}
-	if token := security.EndpointToken(ctx); token != "" {
-		req.Header.Set(endpointTokenHeader, token)
+	if err := c.applyEndpointCredential(req, ctx, bodyBytes); err != nil {
+		return err
 	}
 	httpClient := c.HTTPClient
 	if httpClient == nil {

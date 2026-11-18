@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
@@ -20,24 +21,27 @@ import (
 // immutable intent. A stable name is still required, because a policy file has
 // to be able to grant or refuse them.
 const (
-	OperationLaunchQuery  = "launch.query"
-	OperationHistoryRead  = "history.read"
-	OperationMessagesRead = "messages.read"
-	// OperationMetricsRead reads one session's current message counts. It is a
-	// live observation of a running session, so it is a separate permission from
-	// messages.read: an operator may be allowed to see how much context a session
-	// holds without being allowed to read the conversation itself.
-	OperationMetricsRead = "metrics.read"
-	// OperationDetailRead reads one session's provider metadata and runtime
-	// document. The metadata is the provider's own session record, so it is a
-	// separate permission from messages.read for the same reason.
-	OperationDetailRead = "detail.read"
+	OperationLaunchQuery  = protocol.OperationLaunchQuery
+	OperationHistoryRead  = protocol.OperationHistoryRead
+	OperationMessagesRead = protocol.OperationMessagesRead
+	OperationMetricsRead  = protocol.OperationMetricsRead
+	OperationDetailRead   = protocol.OperationDetailRead
 )
 
 // Directives accepted in one access policy file.
 const (
-	accessPolicyTokenDirective       = "token"
-	accessPolicyTokenHashDirective   = "token-sha256"
+	accessPolicyTokenDirective     = "token"
+	accessPolicyTokenHashDirective = "token-sha256"
+	// accessPolicyKeyIDDirective names the public key identifier a signed
+	// credential is addressed by.
+	//
+	// It is a separate directive rather than a field derived from the token value
+	// because the two answer different questions. The token value is the secret a
+	// bearer caller presents; the key identifier is the public name a signing
+	// caller puts on the wire. A rule may legitimately need both, and deriving one
+	// from the other would make the policy file's meaning depend on the shape of a
+	// secret.
+	accessPolicyKeyIDDirective       = "key-id"
 	accessPolicyEndpointsDirective   = "endpoints"
 	accessPolicyScopesDirective      = "scopes"
 	accessPolicyPermissionsDirective = "permissions"
@@ -50,6 +54,11 @@ const (
 // editor scratch files beside the live policy without them taking effect. The
 // loader reports every skipped file, so the rule is visible rather than silent.
 const accessPolicyFileSuffix = ".conf"
+
+// maxAccessKeyIDBytes bounds a key identifier declared in a policy file. It
+// matches the bound the credential parser enforces, so a file cannot declare an
+// identifier that no credential could ever present.
+const maxAccessKeyIDBytes = 128
 
 // accessPolicyWildcard matches every operation or every scope, depending on the
 // declaration it appears in.
@@ -106,7 +115,27 @@ type AccessRule struct {
 	Token string
 	// TokenSHA256 is the lower-case hex digest of the secret, empty when the file
 	// declares the secret itself.
+	//
+	// A digest can only be compared against a presented secret, so a rule that
+	// declares a digest is usable in bearer mode only. HMAC verification needs the
+	// secret itself, because a digest cannot produce a signature; using the digest
+	// as the HMAC key would make the digest an equivalent credential and defeat the
+	// reason for storing a digest at all.
 	TokenSHA256 string
+	// KeyID is the public key identifier a signed credential is addressed by,
+	// empty when the file declares no key-id directive.
+	//
+	// It is public: it travels on the wire and may be logged. It is the identity
+	// the policy is evaluated against in HMAC mode, so a leaked policy file
+	// reveals which identifiers exist without revealing a usable secret.
+	KeyID string
+	// Secret is the HMAC secret used to verify a signed credential, empty when the
+	// rule cannot verify one.
+	//
+	// It is populated only when the file declares both key-id and a token in
+	// key_id.secret form, because those are the two facts verification needs: the
+	// identifier to look the rule up and the secret to check the signature.
+	Secret string
 	// Endpoints names the Endpoints that honour this token. Empty means every
 	// Endpoint that holds the file.
 	Endpoints []string
@@ -130,6 +159,14 @@ type AccessRule struct {
 // duplicate token, because the effective policy would otherwise depend on
 // directory read order.
 func (r AccessRule) identity() string {
+	// A rule that names a key identifier is identified by it, because that is the
+	// name a signed caller presents and therefore the name two files would
+	// collide on. Falling through to the token digest would let two files declare
+	// the same key identifier with different secrets and load without a conflict,
+	// and the effective policy would then depend on directory read order.
+	if r.KeyID != "" {
+		return "key-id:" + r.KeyID
+	}
 	if r.TokenSHA256 != "" {
 		return r.TokenSHA256
 	}
@@ -153,6 +190,9 @@ func (r AccessRule) Summary() string {
 	}
 	if len(r.Permissions) > 0 {
 		parts = append(parts, "permissions="+strings.Join(r.Permissions, ","))
+	}
+	if r.KeyID != "" {
+		parts = append(parts, "key-id="+r.KeyID)
 	}
 	if len(parts) == 0 {
 		return "no grants"
@@ -182,12 +222,24 @@ type AccessPolicy struct {
 	configured bool
 	byToken    map[string]AccessRule
 	byHash     map[string]AccessRule
+	// byKeyID indexes the rules a signed credential can be verified against. It
+	// is separate from byToken because the two are addressed by different names:
+	// a bearer caller presents a secret, while a signing caller presents a public
+	// key identifier. One map could not serve both without letting a caller
+	// present a key identifier as if it were a secret.
+	byKeyID map[string]AccessRule
+	// nonces remembers the nonces already accepted, so a correctly signed request
+	// cannot be replayed inside the signature window. It lives on the policy rather
+	// than on each verifier because a verifier is rebuilt whenever the declared
+	// secrets change, and a rebuilt verifier with a fresh cache would accept every
+	// previously seen nonce again.
+	nonces *security.NonceCache
 }
 
 // NewPermissiveAccessPolicy returns a policy that permits every caller. It is
 // the state of an Endpoint that was not pointed at a policy directory.
 func NewPermissiveAccessPolicy() *AccessPolicy {
-	return &AccessPolicy{byToken: map[string]AccessRule{}, byHash: map[string]AccessRule{}}
+	return &AccessPolicy{byToken: map[string]AccessRule{}, byHash: map[string]AccessRule{}, byKeyID: map[string]AccessRule{}}
 }
 
 // NewAccessPolicy builds a policy from already validated rules. An empty rule
@@ -201,6 +253,9 @@ func NewAccessPolicy(rules []AccessRule) *AccessPolicy {
 		}
 		if rule.TokenSHA256 != "" {
 			policy.byHash[rule.TokenSHA256] = rule
+		}
+		if rule.KeyID != "" {
+			policy.byKeyID[rule.KeyID] = rule
 		}
 	}
 	return policy
@@ -224,7 +279,7 @@ func (p *AccessPolicy) Len() int {
 	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return len(p.byToken) + len(p.byHash)
+	return len(p.byToken) + len(p.byHash) + len(p.byKeyID)
 }
 
 // Rules returns the rules in force, ordered by source file, for logging.
@@ -234,11 +289,14 @@ func (p *AccessPolicy) Rules() []AccessRule {
 	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	rules := make([]AccessRule, 0, len(p.byToken)+len(p.byHash))
+	rules := make([]AccessRule, 0, len(p.byToken)+len(p.byHash)+len(p.byKeyID))
 	for _, rule := range p.byToken {
 		rules = append(rules, rule)
 	}
 	for _, rule := range p.byHash {
+		rules = append(rules, rule)
+	}
+	for _, rule := range p.byKeyID {
 		rules = append(rules, rule)
 	}
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Source < rules[j].Source })
@@ -262,6 +320,7 @@ func (p *AccessPolicy) replace(next *AccessPolicy) {
 	p.configured = next.configured
 	p.byToken = next.byToken
 	p.byHash = next.byHash
+	p.byKeyID = next.byKeyID
 	p.mu.Unlock()
 }
 
@@ -297,6 +356,98 @@ func (p *AccessPolicy) Permit(endpointID, token, operation string) error {
 		return fmt.Errorf("operation %q is not permitted: the presented token is not configured on this endpoint", operation)
 	}
 	return rule.permit(endpointID, operation)
+}
+
+// PermitKeyID decides whether a caller that proved one key identifier may
+// exercise one operation on this Endpoint.
+//
+// It is separate from Permit because the two are addressed by different names. A
+// bearer caller presents a secret and is matched against the token indexes; a
+// signing caller presents a public key identifier and is matched against the
+// key-id index. Merging them would let a caller present a key identifier where a
+// secret is expected, and the lookup would then succeed for a value that was never
+// secret.
+//
+// The caller must have verified the signature before calling this, because this
+// function decides authority and never authenticity. Keeping the two apart is what
+// makes the ordering testable: a test can call PermitKeyID directly to prove the
+// grant table works, and a separate test proves the transport never reaches it
+// without a valid signature.
+func (p *AccessPolicy) PermitKeyID(endpointID, keyID, operation string) error {
+	if p == nil {
+		return nil
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if !p.configured {
+		return nil
+	}
+	if keyID == "" {
+		return fmt.Errorf("operation %q requires a signed endpoint credential", operation)
+	}
+	rule, ok := p.byKeyID[keyID]
+	if !ok {
+		return fmt.Errorf("operation %q is not permitted: the presented key identifier is not configured on this endpoint", operation)
+	}
+	return rule.permit(endpointID, operation)
+}
+
+// PermitCredential decides whether one already-verified credential may exercise
+// one operation.
+//
+// It takes both identities because the mode decides which one is meaningful, and
+// it dispatches on which one is present rather than on a mode argument. That keeps
+// the decision in one place: a caller that verified a signature passes the key
+// identifier, a caller that verified a bearer token passes the token, and neither
+// caller has to repeat the mode rules the verifier already applied.
+//
+// Exactly one identity is expected. Both being empty is refused by the branch that
+// runs, because an empty identity matches no rule; both being set is a programming
+// error in the caller, and it is refused rather than resolved by precedence,
+// because a precedence rule would silently ignore one of two credentials.
+func (p *AccessPolicy) PermitCredential(endpointID, keyID, token, operation string) error {
+	if keyID != "" && token != "" {
+		return fmt.Errorf("operation %q was presented with both a key identifier and a token", operation)
+	}
+	if keyID != "" {
+		return p.PermitKeyID(endpointID, keyID, operation)
+	}
+	return p.Permit(endpointID, token, operation)
+}
+
+// Verifier returns a verifier holding every secret this policy can check a
+// signature against.
+//
+// It is rebuilt from the rules in force rather than kept beside them, so a reload
+// cannot leave a verifier that still accepts a secret the policy no longer
+// declares. A rule with no secret is absent from the result, which means a
+// key-id-only rule can be granted authority but can never verify a signature; that
+// combination is rejected at load time instead of being silently unusable.
+func (p *AccessPolicy) Verifier(window time.Duration) *security.Verifier {
+	// The nonce cache is owned by the policy rather than by each verifier, so a
+	// reload that rebuilds the token set keeps the replay state. A fresh cache per
+	// verifier would accept every previously seen nonce again, which would turn a
+	// reload into a replay window.
+	p.mu.Lock()
+	if p.nonces == nil {
+		p.nonces = security.NewNonceCache(0, window)
+	}
+	nonces := p.nonces
+	p.mu.Unlock()
+	tokens := make(map[string]security.Token)
+	if p != nil {
+		p.mu.RLock()
+		for keyID, rule := range p.byKeyID {
+			if rule.Secret == "" {
+				continue
+			}
+			tokens[keyID] = security.Token{KeyID: keyID, Secret: rule.Secret}
+		}
+		p.mu.RUnlock()
+	}
+	verifier := security.NewVerifier(tokens, window)
+	verifier.Nonces = nonces
+	return verifier
 }
 
 // permit applies one rule to one operation.
@@ -401,6 +552,22 @@ func ParseAccessRule(data []byte, source string) (AccessRule, []string, error) {
 				return AccessRule{}, nil, fmt.Errorf("%s line %d: %q requires a hex digest: %w", source, lineNumber, directive, err)
 			}
 			rule.TokenSHA256 = digest
+		case accessPolicyKeyIDDirective:
+			if seen[directive] {
+				return AccessRule{}, nil, fmt.Errorf("%s line %d: %q may appear at most once", source, lineNumber, directive)
+			}
+			seen[directive] = true
+			if len(values) != 1 {
+				return AccessRule{}, nil, fmt.Errorf("%s line %d: %q requires exactly one value", source, lineNumber, directive)
+			}
+			keyID := values[0]
+			if len(keyID) > maxAccessKeyIDBytes {
+				return AccessRule{}, nil, fmt.Errorf("%s line %d: %q is longer than %d bytes", source, lineNumber, directive, maxAccessKeyIDBytes)
+			}
+			if strings.ContainsAny(keyID, " \t\r\n,") {
+				return AccessRule{}, nil, fmt.Errorf("%s line %d: %q must not contain whitespace or a comma", source, lineNumber, directive)
+			}
+			rule.KeyID = keyID
 		case accessPolicyEndpointsDirective:
 			if seen[directive] {
 				return AccessRule{}, nil, fmt.Errorf("%s line %d: %q may appear at most once", source, lineNumber, directive)
@@ -457,6 +624,38 @@ func ParseAccessRule(data []byte, source string) (AccessRule, []string, error) {
 	}
 	if rule.Token == "" && rule.TokenSHA256 == "" {
 		return AccessRule{}, nil, fmt.Errorf("%s: a %q or %q line is required", source, accessPolicyTokenDirective, accessPolicyTokenHashDirective)
+	}
+	// A key identifier is only useful if a signature can be checked against it, so
+	// the secret is resolved here rather than at verification time. Resolving it at
+	// verification time would make a misconfigured file look like a caller with a
+	// wrong secret, and the operator would rotate a credential that was never the
+	// problem.
+	if rule.KeyID != "" {
+		if rule.TokenSHA256 != "" {
+			return AccessRule{}, nil, fmt.Errorf("%s: %q cannot be combined with %q, because a digest cannot verify a signature; declare the secret with %q instead", source, accessPolicyKeyIDDirective, accessPolicyTokenHashDirective, accessPolicyTokenDirective)
+		}
+		parsed, parseErr := security.ParseToken(rule.Token)
+		if parseErr != nil {
+			return AccessRule{}, nil, fmt.Errorf("%s: %q requires a %q value in key_id.secret form: %w", source, accessPolicyKeyIDDirective, accessPolicyTokenDirective, parseErr)
+		}
+		if parsed.KeyID != rule.KeyID {
+			return AccessRule{}, nil, fmt.Errorf("%s: %q %q does not match the key identifier in the %q value %q", source, accessPolicyKeyIDDirective, rule.KeyID, accessPolicyTokenDirective, parsed.KeyID)
+		}
+		rule.Secret = parsed.Secret
+	} else if rule.Token != "" {
+		// A token in key_id.secret form names its own key identifier, so the
+		// identifier is derived from the value rather than required twice. This is
+		// the documented default: an operator who rotates a token to the pair form
+		// does not also have to add a directive that repeats the prefix.
+		//
+		// A token with no dot yields no identifier, so the rule stays bearer-only.
+		// That is the fail-closed direction: a deployment that has not rotated its
+		// tokens yet keeps working in bearer mode and is refused in HMAC mode,
+		// instead of being accepted with an identifier nobody declared.
+		if parsed, parseErr := security.ParseToken(rule.Token); parseErr == nil {
+			rule.KeyID = parsed.KeyID
+			rule.Secret = parsed.Secret
+		}
 	}
 	if rule.AllowAll && rule.DenyAll {
 		return AccessRule{}, nil, fmt.Errorf("%s: %q and %q may not be combined", source, accessPolicyAllowAllDirective, accessPolicyDenyAllDirective)

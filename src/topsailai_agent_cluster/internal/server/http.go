@@ -18,12 +18,14 @@ import (
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
 )
 
-// endpointTokenHeader carries the caller's Endpoint token on a read request.
+// endpointTokenHeader is the legacy header that carried the caller's Endpoint
+// token in the clear.
 //
-// A read is an HTTP GET, so it has no request body to carry the token. The token
-// travels in a header rather than a query parameter because a URL is recorded by
-// Server access logs, reverse proxies and shell history, while a header is not
-// recorded by default.
+// It is still accepted so an older CLI keeps working during the rollout, and it
+// always produces a bearer credential. It is never interpreted as a signature,
+// because a value in this header has no scheme prefix and treating an unprefixed
+// value as a signature would let a caller present a secret where a proof is
+// required.
 const endpointTokenHeader = "X-Endpoint-Token"
 
 // requireRegisteredEndpoint refuses an unknown endpoint identifier before the
@@ -142,12 +144,61 @@ func (h *Handler) authenticated(next http.Handler) http.Handler {
 			return
 		}
 		ctx := security.WithAuthenticatedIdentity(r.Context(), identity)
-		// The Endpoint token is carried, never validated here. Authorization
+		// The Endpoint credential is carried, never validated here. Authorization
 		// belongs to the Endpoint that owns the machine, so the Server only
 		// forwards this credential and never decides what it permits.
-		ctx = security.WithEndpointToken(ctx, r.Header.Get(endpointTokenHeader))
+		//
+		// The credential is parsed rather than copied as a string because the
+		// Endpoint must be able to tell a bearer token from a signature. A parse
+		// failure is reported here instead of being forwarded, because a
+		// malformed credential cannot be repaired by the Endpoint and forwarding
+		// it would turn a caller mistake into an Endpoint-side authentication
+		// failure that names the wrong party.
+		credential, credentialErr := h.endpointCredential(r)
+		if credentialErr != nil {
+			h.writeError(w, http.StatusUnauthorized, "unauthorized", credentialErr.Error())
+			return
+		}
+		ctx = security.WithEndpointCredential(ctx, credential)
+		// The digest binds the credential to this exact request. It is computed
+		// from the request as it arrived, so the Endpoint verifies what the
+		// Server received rather than what the caller claims to have sent.
+		//
+		// It is attached only for a signed credential: a bearer credential has no
+		// signature to bind, and computing a digest for it would suggest a
+		// binding that does not exist.
+		if credential.IsHMAC() {
+			body, bodyErr := security.ReadAndRestoreBody(r)
+			if bodyErr != nil {
+				h.writeError(w, http.StatusBadRequest, "invalid_request", "cannot read the request body")
+				return
+			}
+			ctx = security.WithEndpointRequestDigest(ctx, security.EndpointRequestDigest(r.Method, r.URL.RequestURI(), body))
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// endpointCredential reads the caller's Endpoint credential from the request.
+//
+// Two headers are accepted, and the precedence is deliberate. The signed header
+// wins when both are present, because a caller that signed must not have its
+// proof silently replaced by a weaker form; the legacy header is read only when
+// the signed one is absent, which is what keeps an older CLI working during the
+// rollout.
+//
+// A request with neither header yields the zero credential, which the Endpoint
+// refuses when it enforces a policy and ignores when it does not. That is the
+// existing behaviour and it is preserved: an Endpoint with no policy directory
+// accepts every caller, so the Server must not invent a credential.
+func (h *Handler) endpointCredential(r *http.Request) (security.EndpointCredential, error) {
+	if raw := r.Header.Get(security.EndpointAuthHeader); raw != "" {
+		return security.ParseEndpointCredential(raw)
+	}
+	if raw := r.Header.Get(endpointTokenHeader); raw != "" {
+		return security.EndpointCredential{Token: raw}, nil
+	}
+	return security.EndpointCredential{}, nil
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -196,6 +247,12 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 	// answered the request rather than failing it. Reporting it as a successful
 	// snapshot would hand the operator an empty panel and no reason, so the code
 	// is classified before the success path.
+	if response.ErrorCode == protocol.CredentialRejected {
+		// The Endpoint could not authenticate the caller, so the policy was never
+		// consulted. This is a credential problem, not a grant problem.
+		h.writeCredentialRejected(w, "output.read")
+		return
+	}
 	if response.ErrorCode == protocol.PolicyDenied {
 		h.writeError(w, http.StatusForbidden, protocol.PolicyDenied, "operation output.read is not permitted for this endpoint token")
 		return
@@ -491,6 +548,23 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any, max int64) e
 
 func (h *Handler) writeError(w http.ResponseWriter, status int, code, message string) {
 	h.write(w, status, code, message, nil)
+}
+
+// writeCredentialRejected reports that the Endpoint could not authenticate the
+// caller, so the request was refused before the access policy was consulted.
+//
+// It is a separate helper from the policy refusal because the two answers have
+// different remedies and different statuses. A policy refusal is 403: the caller
+// is authenticated and its grants do not cover the operation, so the operator
+// edits the policy file. A credential rejection is 401: the caller could not be
+// authenticated at all, so the operator fixes the credential itself. Reporting the
+// second as the first sends the operator to a policy file that is already correct.
+//
+// The message names the operation and never the credential, because a credential
+// is a secret and a response that echoes it turns every reader into a holder.
+func (h *Handler) writeCredentialRejected(w http.ResponseWriter, operation string) {
+	h.writeError(w, http.StatusUnauthorized, protocol.CredentialRejected,
+		"operation "+operation+" was refused: the endpoint could not authenticate the presented credential")
 }
 func (h *Handler) write(w http.ResponseWriter, status int, code any, message string, data any) {
 	w.Header().Set("Content-Type", "application/json")

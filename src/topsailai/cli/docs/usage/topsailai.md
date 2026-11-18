@@ -574,7 +574,7 @@ The UI handles terminal resizes automatically. If the terminal becomes too small
 
 #### Fallback mode
 
-If `curses` is unavailable or stdout is not a TTY (for example in a pipe or CI environment), the CLI automatically falls back to the legacy single-pane mode. In that mode the log and input share the same screen area and you press `q` then `Enter` to quit.
+If `curses` is unavailable or stdout is not a TTY (for example in a pipe or CI environment), the CLI automatically falls back to the legacy single-pane mode. In that mode the log and input share the same screen area and you press `q` then `Enter` to quit. When the fallback has a TTY, its raw single-line editor measures ANSI-colored prompts and double-width Unicode characters by visible terminal columns, so cursor movement, deletion, and wrapping remain aligned for CJK input.
 
 #### Windows support
 

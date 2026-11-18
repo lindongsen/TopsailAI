@@ -110,14 +110,29 @@ request shapes.
 
 | Hop | `server-token` | `endpoint-token` |
 |---|---|---|
-| CLI to Server, command admission | HTTP `Authorization: Bearer <server-token>` | Request body field `endpoint_token` |
-| CLI to Server, read query | HTTP `Authorization: Bearer <server-token>` | HTTP header `X-Endpoint-Token` |
-| Server to Endpoint | Not forwarded; it terminated at the Server | Channel frame field `endpoint_token`, forwarded verbatim |
+| CLI to Server, command admission | HTTP `Authorization: Bearer <server-token>` | HTTP header `X-Endpoint-Auth` |
+| CLI to Server, read query | HTTP `Authorization: Bearer <server-token>` | HTTP header `X-Endpoint-Auth` |
+| Server to Endpoint | Not forwarded; it terminated at the Server | Channel frame field `endpoint_credential`, forwarded verbatim |
 | Endpoint to provider | Never present | Never present; it is consumed by the policy check |
 
-A command is admitted with `POST /api/v1/commands`, which has a JSON body, so the token
-rides in that body as a field. The six read queries are `GET` routes, and a `GET` request
-has no body, so the token rides in a request header instead.
+Both request shapes now carry the credential in the same header, because the credential is a
+transport fact rather than part of the request meaning. It therefore lives on the channel frame
+envelope (`endpoint_credential`) instead of inside `ImmutableIntent` or inside each read request
+structure. Three consequences follow, and all three are deliberate:
+
+- The credential never enters `ImmutableIntent.CanonicalHash`, so rotating a credential cannot
+  change the deduplication identity of an unchanged command.
+- The credential never enters the command journal, which stores the intent, so the secret stays
+  out of the audit trail.
+- One envelope field covers every frame type, so a new request type cannot be added without a
+  place to carry the credential.
+
+`X-Endpoint-Auth` carries either form of the credential. A signed credential is the HMAC form
+described below. A plain bearer token is still accepted in `X-Endpoint-Auth`, and the older
+`X-Endpoint-Token` header is still accepted as a bearer compatibility form, so an existing
+deployment keeps working while it rotates to signed credentials. The Server reads
+`X-Endpoint-Auth` first and falls back to `X-Endpoint-Token`, so a caller that sends both is
+read as the signed form.
 
 The read queries do not use a query parameter. A query parameter would place the token in
 the URL, and a URL is written to the Server access log, to any reverse-proxy log in front
@@ -246,13 +261,14 @@ scopes read_output
 permissions agent.model.list
 ```
 
-### The three declarations
+### The declarations
 
 | Declaration | Meaning | Absent means |
 |---|---|---|
 | `endpoints <id...>` | The Endpoints that honour this token | Every Endpoint that holds the file |
 | `scopes <name...>` | Capability classes granted, using the five operator scope names | No scope is granted |
 | `permissions <op...>` | Individual operations granted, by name | No individual operation is granted |
+| `key-id <id>` | The key identifier whose secret verifies this caller's signature | The identifier is derived from a `key_id.secret` token, or no signature is accepted |
 
 `scopes` and `permissions` are both grants, and they combine by union: the token may exercise
 every operation its scopes cover and every operation its permissions name. Neither narrows the
@@ -271,6 +287,12 @@ is accepted, so it can only reduce what the token reaches. A file without it is 
 Endpoint that holds the file, which is the convenient default for a token meant to be fleet-wide;
 a file with it is honoured only where it names.
 
+`key-id` is not a grant. It names which secret the Endpoint must use to verify a signature, so it
+is the one declaration that makes the signed form usable at all. It is additive: a file that
+declares only `token` or only `token-sha256` keeps loading exactly as before and keeps accepting
+bearer callers, so an existing policy directory needs no edit to keep working. A file that adds
+`key-id` gains the ability to verify signatures in addition to whatever it already accepted.
+
 ### Parsing rules
 
 - A blank line and a line starting with `#` are ignored.
@@ -278,6 +300,21 @@ a file with it is honoured only where it names.
 - `token <value>` declares the token in plain text.
 - `token-sha256 <hex>` declares the SHA-256 of the token instead, so the file does not contain
   the secret. Either form identifies the token; a file may not use both.
+- `key-id <id>` declares the key identifier for a signed credential. It requires the `token` line
+  to hold a complete `key_id.secret` pair, because a signature can only be verified against the
+  secret itself. The identifier in `key-id` must equal the prefix of that pair, so a file cannot
+  claim one key while holding another key's secret.
+- `key-id` may not be combined with `token-sha256`. A digest cannot verify a signature, so the
+  combination would load a file that can never authenticate a signed caller. It is rejected at
+  load time rather than at verification time, because a misconfigured file would otherwise look
+  like a caller presenting a wrong secret and the operator would rotate a credential that was
+  never the problem.
+- A `token` value in `key_id.secret` form names its own key identifier, so `key-id` is optional
+  for it. The identifier is derived from the value rather than required twice, which is why
+  rotating a token to the pair form does not also require adding a directive that repeats the
+  prefix.
+- Two files declaring the same key identifier are rejected, because the Endpoint could not tell
+  which secret a signature was meant for.
 - `endpoints`, `scopes` and `permissions` may each appear at most once.
 - `allow-all` alone accepts every operation on every Endpoint for this token.
 - `deny-all` alone refuses every operation for this token.
@@ -296,7 +333,9 @@ a file with it is honoured only where it names.
   this build does not know.
 - A control character in a line is rejected.
 - Two files declaring the same token are rejected, because the effective policy would depend on
-  directory read order.
+  directory read order. A rule that names a key identifier is identified by that identifier, so two
+  files declaring the same `key-id` with different secrets are rejected as well; otherwise the
+  effective policy would depend on directory read order.
 
 ### Operation patterns
 
@@ -538,16 +577,54 @@ Endpoint, so it must exist on the wire, and the CLI must be able to supply it.
 
 | Surface | Change | Why it is required |
 |---|---|---|
-| Channel frame | A new `endpoint_token` field | The Endpoint cannot verify a credential it never receives |
-| Immutable intent | A new `endpoint_token` field | Every command already travels as an intent, so the token rides with it |
-| Six read request structures | A new `endpoint_token` field each | These bypass the intent path and carry their own request shape |
-| Six read HTTP routes | Read the `X-Endpoint-Token` header and copy it into the frame field | A `GET` has no body, so the header is the only carriage that keeps the token out of the URL |
+| Channel frame | A new `endpoint_credential` field on the envelope, plus `endpoint_request_digest` | The Endpoint cannot verify a credential it never receives, and a signature must cover the request it was made for |
+| Immutable intent | No change | The credential is a transport fact, so it must stay out of the canonical hash and out of the journal |
+| Six read request structures | No change | The envelope field covers every frame type, so no request structure needs its own copy |
+| Six read HTTP routes | Read the `X-Endpoint-Auth` header, falling back to `X-Endpoint-Token` for a bearer caller, and attach the parsed credential to the frame | A `GET` has no body, so the header is the only carriage that keeps the token out of the URL |
 | CLI | A new `--endpoint-token` flag and a per-Endpoint token map in the CLI configuration | A token names its Endpoints, so the CLI resolves the one for the addressed Endpoint |
-| Server handlers | Forward the field verbatim | The Server must not drop or rewrite it |
+| Server handlers | Parse the credential and forward it verbatim | The Server must not drop or rewrite it, and it must not validate it |
 
-The field is deliberately a plain string and not a structured credential. The Server
-must be able to forward it without understanding it, and a structured value would invite
-Server-side interpretation, which is exactly the authority this design removes.
+The envelope field is a structured credential, not a plain string, and that is a deliberate
+reversal of the earlier design. A single string would force the Endpoint to guess which form it
+received, and a guess is exactly how a caller downgrades a stronger mode by sending the weaker
+syntax: an Endpoint that cannot tell a signature from a bearer token must either reject both or
+accept the weaker one. The structure carries `token`, `key_id`, `ts`, `nonce` and `sig`, so the
+form is stated by the caller instead of inferred by the verifier.
+
+The Server still forwards the credential without interpreting it. Parsing is not interpretation:
+the Server reads the header into a typed value so a malformed credential is reported as a caller
+mistake instead of being forwarded as an Endpoint-side authentication failure. The Server never
+decides what the credential permits, and it never holds the secret needed to verify a signature.
+
+`endpoint_request_digest` travels beside the credential because the Endpoint never sees the HTTP
+request. The Server is the only party that can describe what actually arrived, and the Endpoint is
+the only party that verifies the signature. Without the digest the signature would cover the
+operation and the machine but not the request, so a captured signature could be replayed against a
+different target on the same machine. The digest is empty for a bearer credential, which has no
+signature to bind.
+
+Replay protection rests on three mechanisms together, and none of them is a timestamp alone:
+
+- The signed string covers the payload digest, so a proof made for one request cannot be reused
+  for a different one.
+- The Endpoint keeps a nonce cache, so a proof that is otherwise valid is refused the second time
+  it is presented.
+- The existing `command_id` deduplication still applies to commands, so a resent command is
+  answered from the journal rather than executed twice.
+
+The frame grammar deliberately excludes `request_id`. The Server mints that identifier, so a CLI
+cannot predict it and could not sign it. Including it would make every signature unverifiable
+rather than stronger.
+
+A failed signature is an authentication failure and never a policy decision. The Endpoint does not
+fall back to bearer when a signed credential fails to verify, and a credential whose form does not
+match the Endpoint's configured mode is refused as an authentication error. Falling back would let
+a caller strip the signature and be treated as a bearer caller, which would make the stronger mode
+optional for the attacker rather than mandatory for the operator. The two refusals are therefore
+reported as different codes: `credential_rejected` with HTTP `401` when the caller could not be
+authenticated, and `policy_denied` with HTTP `403` when an authenticated caller was refused an
+operation. A caller that cannot prove possession must not learn which operations exist, which is
+why the credential refusal is decided before the policy is consulted.
 
 The six read responses already carry an `ErrorCode` field, so a refusal needs no new
 response shape. Only the request side grows.

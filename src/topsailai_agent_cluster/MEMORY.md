@@ -3,6 +3,20 @@
 Facts and decisions the human directed to be recorded for this project. AI self-learned lessons
 belong in `LEARN.md`, not here.
 
+## Server never holds an Endpoint credential secret
+
+Directed by the human on 2026-11-18, wording normalized, meaning preserved:
+
+> BDD scenarios must cover both bearer and HMAC authentication comprehensively. The Server must never store an Endpoint token, and in HMAC mode it must never see the Endpoint token or secret.
+
+This is a standing trust-boundary rule. In bearer mode the Server may forward the presented Endpoint token opaquely for compatibility, but it must never persist it, index it, log it or use it as Server authority. In HMAC mode the CLI proves possession directly to the Endpoint: the Server may see and forward only the public key ID, timestamp, nonce, signature and request digest needed by the Endpoint to verify the proof. The full `key_id.secret` pair and its secret part remain exclusively in CLI configuration and the Endpoint-local policy file.
+
+Trigger: adding or changing Endpoint authentication, request envelopes, logs, persistence, tests or troubleshooting surfaces.
+
+Action: keep Server DTOs, storage and logs free of Endpoint tokens and secrets; verify bearer and HMAC independently in BDD; add negative assertions that HMAC requests and Server evidence contain neither the pair credential nor its secret; reject a signature failure as authentication without falling back to bearer or consulting policy.
+
+Why this prevents recurrence: a Server that can read or retain the Endpoint secret becomes a second Endpoint authorizer and can mint valid proofs, which breaks the architecture's separation of routing from local authority. Testing only success or only one mode can miss a transport field, diagnostic or persistence path that silently leaks the credential.
+
 ## StatusLabel hardcodes "stop" onto a generic delivery boundary
 
 Directed by the human on 2026-11-08: record the `StatusLabel` finding in the project memory

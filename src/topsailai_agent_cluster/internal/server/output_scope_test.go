@@ -38,13 +38,13 @@ type scopedOutputRequester struct {
 
 func (s *scopedOutputRequester) RequestOutput(ctx context.Context, _ string, _ protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
 	s.snapshotSeen = true
-	s.token = security.EndpointToken(ctx)
+	s.token = security.EndpointCredentialFrom(ctx).Token
 	return protocol.OutputSnapshotResponse{Data: "line\n", ObservedAtMS: 1}, nil
 }
 
 func (s *scopedOutputRequester) RequestFollow(ctx context.Context, _ string, _ protocol.OutputFollowRequest) (<-chan channel.FollowEvent, error) {
 	s.followSeen = true
-	s.token = security.EndpointToken(ctx)
+	s.token = security.EndpointCredentialFrom(ctx).Token
 	events := make(chan channel.FollowEvent, 1)
 	events <- channel.FollowEvent{End: &protocol.OutputEnd{}}
 	close(events)
@@ -225,6 +225,31 @@ func TestOutputSnapshotReportsRefusalAsForbidden(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"`+protocol.PolicyDenied+`"`) {
 		t.Fatalf("body=%s want code %q", rec.Body.String(), protocol.PolicyDenied)
+	}
+}
+
+// credentialOutputRequester answers every output read with the credential refusal
+// code, which is what an Endpoint returns when it could not authenticate the
+// caller at all.
+type credentialOutputRequester struct{ scopedOutputRequester }
+
+func (r *credentialOutputRequester) RequestOutput(context.Context, string, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{ErrorCode: protocol.CredentialRejected}, nil
+}
+
+// TestOutputSnapshotReportsCredentialRefusalAsUnauthorized proves the output read
+// path keeps the two refusal classes apart.
+//
+// The Endpoint answered, so this is not an outage, and the credential could not be
+// proven, so it is not a grant decision either. Reporting it as forbidden would
+// tell the operator to edit a policy file that is already correct.
+func TestOutputSnapshotReportsCredentialRefusalAsUnauthorized(t *testing.T) {
+	rec := callScopedOutput(t, scopedOutputHandler(&credentialOutputRequester{}), "/api/v1/output?endpoint_id=e1&resource_id=res_1")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s want 401", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"`+protocol.CredentialRejected+`"`) {
+		t.Fatalf("body=%s want code %q", rec.Body.String(), protocol.CredentialRejected)
 	}
 }
 

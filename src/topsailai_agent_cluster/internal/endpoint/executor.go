@@ -112,8 +112,14 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			// matches the read path's wording so one grep finds both, and the
 			// token is never logged because a log reader must not become a
 			// credential holder.
+			//
+			// The code names the refusal class rather than assuming a policy
+			// decision, because a credential that could not be proven is an
+			// authentication failure with a different remedy. Recording it as
+			// policy_denied would tell the operator to edit a policy file that is
+			// already correct.
 			e.logPolicyRefusal(intent, policyErr)
-			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "policy_denied"))
+			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, RefusalCode(policyErr)))
 		}
 	}
 	if intent.ExecuteBeforeAtMS > 0 && e.now().UnixMilli() > intent.ExecuteBeforeAtMS {
@@ -618,7 +624,15 @@ func (e *Executor) logPolicyRefusal(intent protocol.ImmutableIntent, err error) 
 	if e.Logger == nil {
 		return
 	}
-	e.Logger.Warn("endpoint access policy refused operation", "operation", intent.Operation, "command_id", intent.CommandID, "error", err.Error())
+	// The message names the refusal class, so one grep finds every refusal of the
+	// same kind on the machine. A credential that could not be proven is an
+	// authentication failure, and reporting it as a policy refusal would send the
+	// operator to a policy file that is already correct.
+	message := "endpoint access policy refused operation"
+	if RefusalCode(err) == credentialRejectedCode {
+		message = "endpoint rejected the caller credential"
+	}
+	e.Logger.Warn(message, "operation", intent.Operation, "command_id", intent.CommandID, "error", err.Error())
 }
 
 func rejectedReceipt(intent protocol.ImmutableIntent, hash, code string) protocol.ExecutionReceipt {

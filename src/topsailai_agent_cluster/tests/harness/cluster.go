@@ -544,7 +544,12 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 			addressVariable = "AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESSES=wss://127.0.0.1:1/channel," + primaryAddress
 		}
 	}
-	endpointEnv := []string{"AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
+	// The harness Endpoint selects bearer explicitly. Its policy files declare bare
+	// tokens, which are the bearer form, so the default HMAC mode would refuse every
+	// caller with a credential-form error before the policy was consulted. The mode
+	// is stated here rather than left to the default so a scenario that exercises
+	// HMAC can override it and be sure the other scenarios are unaffected.
+	endpointEnv := []string{"AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, "AGENT_CLUSTER_ENDPOINT_AUTH_MODE=bearer", args}
 	if addressVariable != "" {
 		endpointEnv = append(endpointEnv, addressVariable)
 	}

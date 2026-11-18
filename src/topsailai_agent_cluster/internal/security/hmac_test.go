@@ -173,14 +173,13 @@ func TestCanonicalHTTPRequestCoversEveryField(t *testing.T) {
 // TestCanonicalFrameRequestCoversEveryField is the same proof for the frame
 // grammar, which is the one the Endpoint verifies.
 func TestCanonicalFrameRequestCoversEveryField(t *testing.T) {
-	base := CanonicalFrameRequest("output_request", "output.read", "ai-dev", "digest", 1794470400000, "aabb")
+	base := CanonicalFrameRequest("output.read", "ai-dev", "digest", 1794470400000, "aabb")
 	variants := map[string]string{
-		"frame type": CanonicalFrameRequest("output_follow_request", "output.read", "ai-dev", "digest", 1794470400000, "aabb"),
-		"operation":  CanonicalFrameRequest("output_request", "output.follow", "ai-dev", "digest", 1794470400000, "aabb"),
-		"endpoint":   CanonicalFrameRequest("output_request", "output.read", "other", "digest", 1794470400000, "aabb"),
-		"payload":    CanonicalFrameRequest("output_request", "output.read", "ai-dev", "other", 1794470400000, "aabb"),
-		"timestamp":  CanonicalFrameRequest("output_request", "output.read", "ai-dev", "digest", 1794470400001, "aabb"),
-		"nonce":      CanonicalFrameRequest("output_request", "output.read", "ai-dev", "digest", 1794470400000, "aabc"),
+		"operation": CanonicalFrameRequest("output.follow", "ai-dev", "digest", 1794470400000, "aabb"),
+		"endpoint":  CanonicalFrameRequest("output.read", "other", "digest", 1794470400000, "aabb"),
+		"payload":   CanonicalFrameRequest("output.read", "ai-dev", "other", 1794470400000, "aabb"),
+		"timestamp": CanonicalFrameRequest("output.read", "ai-dev", "digest", 1794470400001, "aabb"),
+		"nonce":     CanonicalFrameRequest("output.read", "ai-dev", "digest", 1794470400000, "aabc"),
 	}
 	for name, variant := range variants {
 		if variant == base {
@@ -197,14 +196,30 @@ func TestCanonicalFrameRequestCoversEveryField(t *testing.T) {
 // sign. This test exists so a future edit cannot quietly reintroduce a field that
 // no caller can supply, which would make every frame signature unverifiable.
 func TestCanonicalFrameRequestExcludesRequestID(t *testing.T) {
-	message := CanonicalFrameRequest("output_request", "output.read", "ai-dev", "digest", 1794470400000, "aabb")
+	message := CanonicalFrameRequest("output.read", "ai-dev", "digest", 1794470400000, "aabb")
 	fields := strings.Split(message, "\n")
-	if len(fields) != 7 {
-		t.Fatalf("frame grammar has %d fields, want 7: %q", len(fields), message)
+	if len(fields) != 6 {
+		t.Fatalf("frame grammar has %d fields, want 6: %q", len(fields), message)
 	}
 	for _, field := range fields {
 		if strings.HasPrefix(field, "req_") {
 			t.Fatalf("frame grammar contains a request ID field %q", field)
+		}
+	}
+}
+
+// TestCanonicalFrameRequestExcludesFrameType pins the second uncomputable field.
+//
+// The frame type is chosen by the Server, not by the signer: the CLI never builds
+// a channel frame, and one operation can map to more than one frame type
+// (OperationMetricsRead is checked at both FrameMetricsRequest and
+// FrameMetricsBatchRequest). A grammar that required the frame type would be
+// unverifiable for exactly the same reason a request ID would be.
+func TestCanonicalFrameRequestExcludesFrameType(t *testing.T) {
+	message := CanonicalFrameRequest("metrics.read", "ai-dev", "digest", 1794470400000, "aabb")
+	for _, frameType := range []string{"metrics_request", "metrics_batch_request", "output_request"} {
+		if strings.Contains(message, frameType) {
+			t.Fatalf("frame grammar contains a frame type %q: %q", frameType, message)
 		}
 	}
 }

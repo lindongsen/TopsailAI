@@ -90,6 +90,11 @@ func (h *Handler) writeMetricsResultFailure(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, 409, protocol.MetricsUnavailable, "session "+result.ProviderSessionID+" has no live process to measure")
 	case "endpoint_unavailable":
 		h.writeError(w, 503, "endpoint_unavailable", "metrics query failed: endpoint is not connected")
+	case protocol.CredentialRejected:
+		// The Endpoint could not authenticate the caller, so the policy was never
+		// consulted. This is a credential problem, not a grant problem, so it must
+		// not share the policy refusal's status or message.
+		h.writeCredentialRejected(w, "metrics.read")
 	case protocol.PolicyDenied:
 		// The Endpoint refused the caller, so this is not a provider failure and
 		// not an outage. Reporting it as either would send the operator to

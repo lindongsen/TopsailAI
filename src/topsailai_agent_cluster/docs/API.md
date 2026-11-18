@@ -44,9 +44,13 @@ The Server token authenticates the CLI but does not grant operation permissions.
 that the requested Endpoint exists and has a live channel, then forwards the request without making
 an authorization decision.
 
-Operation authorization belongs to the target Endpoint. The CLI sends that Endpoint's token in
-`X-Endpoint-Token` for read requests and in the forwarded command frame for commands. An Endpoint
-policy refusal returns the machine code `policy_denied`; see
+Operation authorization belongs to the target Endpoint. The CLI presents that Endpoint's credential
+in the `X-Endpoint-Auth` header for read requests and in the forwarded command frame for commands.
+The header carries either a signed credential or, for compatibility, a plain bearer token; a plain
+token may also still be sent in `X-Endpoint-Token`. The Server forwards the credential without
+validating it. An Endpoint that cannot authenticate the credential returns the machine code
+`credential_rejected` with HTTP `401`; an Endpoint that authenticated the caller but refuses the
+operation returns `policy_denied` with HTTP `403`. See
 `docs/agent-cluster-endpoint-access-policy.md`.
 
 ## Health and readiness

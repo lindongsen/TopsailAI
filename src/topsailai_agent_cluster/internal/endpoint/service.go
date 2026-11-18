@@ -117,33 +117,46 @@ type ServiceDeps struct {
 	// declaration in a policy file. The Endpoint knows its own identity, so the
 	// comparison needs no claim from the caller.
 	EndpointID string
+	// AuthMode selects how a caller proves its Endpoint credential. An empty
+	// value selects the default, which is HMAC.
+	//
+	// It is a dependency rather than a package-level read of the environment
+	// because the mode decides whether a request is authenticated at all, and a
+	// value read deep inside a request path could not be varied per test.
+	AuthMode string
+	// SignatureWindow bounds how far a signed credential timestamp may differ
+	// from this Endpoint's clock. Zero selects the default.
+	SignatureWindow time.Duration
 }
 
 // Service owns Endpoint collection, channel handling, and graceful shutdown.
 type Service struct {
-	collector         ReportCollector
-	executor          CommandExecutor
-	channel           ChannelClient
-	heartbeat         Heartbeater
-	storage           *endpointstorage.Store
-	logger            *slog.Logger
-	collectionDelay   time.Duration
-	heartbeatInterval time.Duration
-	receiptDelay      time.Duration
-	accessPolicy      *AccessPolicy
-	endpointID        string
-	cancel            context.CancelFunc
-	wg                sync.WaitGroup
-	closeOnce         sync.Once
-	closeErr          error
-	receiptsMu        sync.Mutex
-	pendingReceipts   map[string]protocol.ExecutionReceipt
-	followMu          sync.Mutex
-	activeFollows     map[string]context.CancelFunc
-	followSlots       chan struct{}
-	inventoryTrigger  chan struct{}
-	inventoryMu       sync.Mutex
-	pendingInventory  *protocol.InventoryReport
+	collector          ReportCollector
+	executor           CommandExecutor
+	channel            ChannelClient
+	heartbeat          Heartbeater
+	storage            *endpointstorage.Store
+	logger             *slog.Logger
+	collectionDelay    time.Duration
+	heartbeatInterval  time.Duration
+	receiptDelay       time.Duration
+	accessPolicy       *AccessPolicy
+	endpointID         string
+	authMode           string
+	signatureWindow    time.Duration
+	credentialVerifier *security.Verifier
+	cancel             context.CancelFunc
+	wg                 sync.WaitGroup
+	closeOnce          sync.Once
+	closeErr           error
+	receiptsMu         sync.Mutex
+	pendingReceipts    map[string]protocol.ExecutionReceipt
+	followMu           sync.Mutex
+	activeFollows      map[string]context.CancelFunc
+	followSlots        chan struct{}
+	inventoryTrigger   chan struct{}
+	inventoryMu        sync.Mutex
+	pendingInventory   *protocol.InventoryReport
 }
 
 // NewService constructs an Endpoint lifecycle service from explicit dependencies.
@@ -157,7 +170,15 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.Heartbeater != nil && deps.HeartbeatInterval <= 0 {
 		deps.HeartbeatInterval = 5 * time.Second
 	}
-	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, accessPolicy: deps.AccessPolicy, endpointID: deps.EndpointID, pendingReceipts: make(map[string]protocol.ExecutionReceipt), activeFollows: make(map[string]context.CancelFunc), followSlots: make(chan struct{}, maxConcurrentFollows), inventoryTrigger: make(chan struct{}, 1)}, nil
+	mode := deps.AuthMode
+	if mode == "" {
+		mode = string(security.DefaultAuthMode)
+	}
+	window := deps.SignatureWindow
+	if window <= 0 {
+		window = security.DefaultSignatureWindow
+	}
+	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, accessPolicy: deps.AccessPolicy, endpointID: deps.EndpointID, authMode: mode, signatureWindow: window, credentialVerifier: security.NewVerifier(nil, window), pendingReceipts: make(map[string]protocol.ExecutionReceipt), activeFollows: make(map[string]context.CancelFunc), followSlots: make(chan struct{}, maxConcurrentFollows), inventoryTrigger: make(chan struct{}, 1)}, nil
 }
 
 // RefreshDescriptors updates cached capabilities for one provider and schedules
@@ -709,7 +730,12 @@ func (s *Service) executeFrame(ctx context.Context, frame channel.Frame) {
 	// rather than passed as a parameter because the executor already threads a
 	// context through every hop, and the token is a credential no layer between
 	// the frame and the policy hook interprets.
-	ctx = security.WithEndpointToken(ctx, frame.EndpointToken)
+	//
+	// The credential is attached in its parsed form so the policy hook can tell a
+	// bearer token from a signature, and the request digest travels with it so the
+	// hook can verify the signature over the request the Server actually received.
+	ctx = security.WithEndpointCredential(ctx, credentialOf(frame))
+	ctx = security.WithEndpointRequestDigest(ctx, frame.EndpointRequestDigest)
 	hash, err := protocol.CanonicalHash(*frame.Intent)
 	if err != nil {
 		s.logError("hash command intent", err)

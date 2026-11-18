@@ -21,7 +21,9 @@ sys.path.insert(
 import cli_topsailai.state as cli_state
 from cli_topsailai.streaming import (
     _build_runtime_prompt,
+    _char_display_width,
     _dispatch_input,
+    _display_position,
     _extract_session_id_from_path,
     _handle_stream_command,
     _handle_stream_ctx_btw,
@@ -33,6 +35,7 @@ from cli_topsailai.streaming import (
     _stream_file_legacy,
     _stream_file_raw,
     _tail_file,
+    _wrap_display_text,
 )
 class TestExtractSessionIdFromPath(unittest.TestCase):
     """Tests for _extract_session_id_from_path."""
@@ -624,6 +627,40 @@ class TestReadInputLineTty(unittest.TestCase):
         # Type a CJK character (3 bytes UTF-8), left, type "a", enter.
         result, _ = self._run_tty_input("中\x1b[Da\r".encode("utf-8"))
         self.assertEqual(result, "a中")
+
+    def test_display_position_ignores_ansi_and_counts_cjk_columns(self):
+        prompt = "\x1b[36m[r]> \x1b[0m"
+        self.assertEqual(_display_position(prompt + "中文", 80), (0, 9))
+
+    def test_display_position_moves_exact_width_to_next_row(self):
+        self.assertEqual(_display_position("ab中文", 6), (1, 0))
+
+    def test_wrap_display_text_preserves_exact_width_cursor_row(self):
+        lines = _wrap_display_text("\x1b[36m> \x1b[0m中文", 6)
+        self.assertEqual(lines, ["\x1b[36m> \x1b[0m中文", ""])
+
+    def test_control_character_width_is_never_negative(self):
+        self.assertEqual(_char_display_width("\x1b"), 0)
+
+    def test_colored_prompt_cjk_left_move_uses_visible_column(self):
+        prompt = "\x1b[36m[r]> \x1b[0m"
+        result, output = self._run_tty_input(
+            "中文\x1b[D\r".encode("utf-8"), prompt=prompt
+        )
+        self.assertEqual(result, "中文")
+        self.assertIn("\x1b[8G", output)
+        self.assertNotIn("\x1b[13G", output)
+
+    def test_cjk_backspace_redraw_keeps_remaining_character(self):
+        result, output = self._run_tty_input("中文\x7f\r".encode("utf-8"))
+        self.assertEqual(result, "中")
+        self.assertIn("中", output)
+        self.assertIn("\x1b[3G", output)
+
+    def test_plain_append_does_not_repaint_the_whole_line(self):
+        result, output = self._run_tty_input("中文测试\r".encode("utf-8"))
+        self.assertEqual(result, "中文测试")
+        self.assertEqual(output.count("\x1b[?7l"), 1)
 
 
 

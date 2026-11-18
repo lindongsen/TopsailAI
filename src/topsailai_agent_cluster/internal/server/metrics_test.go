@@ -165,6 +165,7 @@ func TestMetricsResultClassification(t *testing.T) {
 		{"unknown session", protocol.MetricsSessionNotFound, protocol.MetricsSessionNotFound, 404},
 		{"no live process", protocol.MetricsUnavailable, protocol.MetricsUnavailable, 409},
 		{"endpoint offline", "endpoint_unavailable", "endpoint_unavailable", 503},
+		{"credential rejected", protocol.CredentialRejected, protocol.CredentialRejected, 401},
 		{"policy refused", protocol.PolicyDenied, protocol.PolicyDenied, 403},
 		{"adapter busy", protocol.AdapterBusy, protocol.AdapterBusy, 503},
 		{"provider fault", "provider_failed", protocol.MetricsProviderError, 502},

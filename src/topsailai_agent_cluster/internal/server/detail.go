@@ -87,6 +87,11 @@ func (h *Handler) writeDetailResultFailure(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, 502, protocol.DetailResponseTooLarge, "provider detail response exceeded the configured bound")
 	case "endpoint_unavailable":
 		h.writeError(w, 503, "endpoint_unavailable", "detail query failed: endpoint is not connected")
+	case protocol.CredentialRejected:
+		// The Endpoint could not authenticate the caller, so the policy was never
+		// consulted. This is a credential problem, not a grant problem, so it must
+		// not share the policy refusal's status or message.
+		h.writeCredentialRejected(w, "detail.read")
 	case protocol.PolicyDenied:
 		// The Endpoint refused the caller, so this is not a provider failure and
 		// not an outage. Reporting it as either would send the operator to

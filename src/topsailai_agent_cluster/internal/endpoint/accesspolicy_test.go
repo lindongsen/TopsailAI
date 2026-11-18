@@ -446,3 +446,142 @@ func writePolicyFile(t *testing.T, dir, name, content string) {
 		t.Fatalf("write %s: %v", name, err)
 	}
 }
+
+// TestAccessPolicyAcceptsKeyIDDirective verifies that a policy file can declare a
+// signed caller by its public key identifier.
+//
+// The secret is declared with the existing token directive rather than a new one,
+// because the value is the same pair the caller holds. A second directive for the
+// same value would be a second spelling to keep in step, and the two would drift.
+func TestAccessPolicyAcceptsKeyIDDirective(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "signed.conf", "key-id ops\ntoken ops.s3cret\npermissions output.read\n")
+	loaded, err := LoadAccessPolicyDir(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := loaded.Policy.PermitKeyID("e1", "ops", protocol.OperationOutputRead); err != nil {
+		t.Fatalf("a declared key identifier must be granted its permission: %v", err)
+	}
+	if err := loaded.Policy.PermitKeyID("e1", "ops", OperationHistoryRead); err == nil {
+		t.Fatalf("a key identifier must not gain a permission the file did not declare")
+	}
+	if err := loaded.Policy.PermitKeyID("e1", "other", protocol.OperationOutputRead); err == nil {
+		t.Fatalf("an undeclared key identifier must be refused")
+	}
+}
+
+// TestAccessPolicyDerivesKeyIDFromPairToken verifies the documented default: a
+// token already in key_id.secret form names its own key identifier, so an operator
+// who rotates a token does not also have to add a directive that repeats the
+// prefix.
+func TestAccessPolicyDerivesKeyIDFromPairToken(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "signed.conf", "token ops.s3cret\npermissions output.read\n")
+	loaded, err := LoadAccessPolicyDir(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := loaded.Policy.PermitKeyID("e1", "ops", protocol.OperationOutputRead); err != nil {
+		t.Fatalf("a pair-form token must supply its own key identifier: %v", err)
+	}
+}
+
+// TestAccessPolicyBareTokenStaysBearerOnly verifies the fail-closed direction of
+// the same rule. A token with no dot yields no key identifier, so the rule can
+// never be reached by a signed caller. That keeps a deployment that has not
+// rotated its tokens working in bearer mode and refused in HMAC mode, instead of
+// being accepted under an identifier nobody declared.
+func TestAccessPolicyBareTokenStaysBearerOnly(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "legacy.conf", "token plain-secret\npermissions output.read\n")
+	loaded, err := LoadAccessPolicyDir(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := loaded.Policy.Permit("e1", "plain-secret", protocol.OperationOutputRead); err != nil {
+		t.Fatalf("a bare token must keep working in bearer mode: %v", err)
+	}
+	if err := loaded.Policy.PermitKeyID("e1", "plain-secret", protocol.OperationOutputRead); err == nil {
+		t.Fatalf("a bare token must not become a key identifier")
+	}
+}
+
+// TestAccessPolicyRejectsDuplicateKeyID verifies that two files cannot declare the
+// same key identifier.
+//
+// A duplicate would make the effective grant depend on file order, and the
+// operator would have no way to tell which file won. Refusing the load keeps one
+// identifier meaning one rule.
+func TestAccessPolicyRejectsDuplicateKeyID(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "a.conf", "key-id ops\ntoken ops.s3cret\nallow-all\n")
+	writePolicyFile(t, dir, "b.conf", "key-id ops\ntoken ops.other\nallow-all\n")
+	if _, err := LoadAccessPolicyDir(dir); err == nil {
+		t.Fatalf("two files declaring one key identifier must be rejected")
+	}
+}
+
+// TestAccessPolicyRejectsKeyIDWithTokenHash verifies that a digest cannot be used
+// to verify a signature.
+//
+// A SHA-256 digest is one-way, so it cannot be the HMAC key: using it as the key
+// would make the digest itself an equivalent credential, which is exactly the
+// pass-the-hash exposure HMAC mode exists to remove. The combination is refused at
+// load time so the operator learns it from the file rather than from a caller that
+// can never authenticate.
+func TestAccessPolicyRejectsKeyIDWithTokenHash(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "signed.conf", "key-id ops\ntoken-sha256 "+strings.Repeat("a", 64)+"\nallow-all\n")
+	if _, err := LoadAccessPolicyDir(dir); err == nil {
+		t.Fatalf("key-id combined with token-sha256 must be rejected")
+	}
+}
+
+// TestAccessPolicyRejectsKeyIDMismatch verifies that a declared key identifier must
+// match the one in the token value.
+//
+// A mismatch would leave the rule granted under one name while the verifier holds a
+// secret for another, so the caller would be refused with a message about its
+// secret when the real cause is the file.
+func TestAccessPolicyRejectsKeyIDMismatch(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "signed.conf", "key-id ops\ntoken other.s3cret\nallow-all\n")
+	if _, err := LoadAccessPolicyDir(dir); err == nil {
+		t.Fatalf("a key identifier that disagrees with the token prefix must be rejected")
+	}
+}
+
+// TestAccessPolicyRejectsKeyIDWithoutPairToken verifies that a key identifier
+// requires a secret a signature can be checked against.
+func TestAccessPolicyRejectsKeyIDWithoutPairToken(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "signed.conf", "key-id ops\ntoken plain-secret\nallow-all\n")
+	if _, err := LoadAccessPolicyDir(dir); err == nil {
+		t.Fatalf("a key identifier with a token that has no secret part must be rejected")
+	}
+}
+
+// TestAccessPolicyVerifierHoldsDeclaredSecrets verifies that the verifier is built
+// from the rules in force, so a reload cannot leave a verifier that still accepts a
+// rotated secret.
+func TestAccessPolicyVerifierHoldsDeclaredSecrets(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "signed.conf", "key-id ops\ntoken ops.s3cret\nallow-all\n")
+	loaded, err := LoadAccessPolicyDir(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	verifier := loaded.Policy.Verifier(security.DefaultSignatureWindow)
+	if _, ok := verifier.Tokens["ops"]; !ok {
+		t.Fatalf("the verifier must hold the declared key identifier")
+	}
+	writePolicyFile(t, dir, "signed.conf", "key-id ops\ntoken ops.rotated\nallow-all\n")
+	if err := loaded.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	rotated := loaded.Policy.Verifier(security.DefaultSignatureWindow)
+	if rotated.Tokens["ops"].Secret != "rotated" {
+		t.Fatalf("a reload must replace the secret the verifier checks against")
+	}
+}

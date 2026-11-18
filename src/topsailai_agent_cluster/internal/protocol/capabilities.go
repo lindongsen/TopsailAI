@@ -34,6 +34,35 @@ const (
 	// changes live agent behaviour, so it is advertised with SafetyClassMutating
 	// and needs the control scope.
 	OperationAgentModelSelect = "agent.model.select"
+
+	// The five names below are policy identifiers for the frame-level read
+	// queries that travel as their own frame type rather than as an immutable
+	// intent. They never appear on the wire as an operation field, but they are
+	// still operation names: an access policy grants or refuses them, and a
+	// signed Endpoint credential covers the name of the operation it authorizes.
+	//
+	// They live here rather than beside the policy loader because two independent
+	// components must agree on the exact string. The Endpoint verifies a signature
+	// over the name, and the operator client signs it, so a second definition in
+	// either component would let the two disagree and every signed read would fail
+	// with a message that blames the caller's secret.
+	//
+	// OperationLaunchQuery reads the start-capable adapter catalog and one
+	// adapter's managed projects.
+	OperationLaunchQuery = "launch.query"
+	// OperationHistoryRead reads provider session history.
+	OperationHistoryRead = "history.read"
+	// OperationMessagesRead reads one session's conversation context.
+	OperationMessagesRead = "messages.read"
+	// OperationMetricsRead reads one session's current message counts. It is a
+	// live observation of a running session, so it is a separate permission from
+	// messages.read: an operator may be allowed to see how much context a session
+	// holds without being allowed to read the conversation itself.
+	OperationMetricsRead = "metrics.read"
+	// OperationDetailRead reads one session's provider metadata and runtime
+	// document. The metadata is the provider's own session record, so it is a
+	// separate permission from messages.read for the same reason.
+	OperationDetailRead = "detail.read"
 )
 
 // PolicyDenied is the single refusal code for every operation an Endpoint access
@@ -50,6 +79,30 @@ const (
 // recognise the code to report it as a refusal instead of a provider failure, and
 // two literals in two packages would drift.
 const PolicyDenied = "policy_denied"
+
+// CredentialRejected reports that the Endpoint could not authenticate the caller,
+// so the request was refused before the access policy was consulted.
+//
+// It is deliberately distinct from PolicyDenied, because the two refusals have
+// different remedies and the same code would hide which one happened. A policy
+// refusal means the credential was proven and its grants do not cover the
+// operation, so the operator edits the policy file. A credential rejection means
+// the credential could not be proven at all, so the operator fixes the credential
+// itself: a missing signature, a wrong key identifier, a clock outside the
+// accepted window, a replayed nonce or a credential form the configured mode does
+// not accept. Reporting the second as the first sends the operator to a policy
+// file that is already correct.
+//
+// The distinction is also a security property, not only a diagnostic one. The
+// policy is consulted only after the credential is proven, so a caller that
+// cannot prove possession never learns which operations exist or which are
+// granted. Collapsing the two codes would let an unauthenticated caller infer a
+// grant decision from the answer it received.
+//
+// It lives here rather than in the Endpoint package because the Server must
+// recognise the code to report it as an authentication failure instead of a
+// provider failure, and two literals in two packages would drift.
+const CredentialRejected = "credential_rejected"
 
 // InvalidTarget reports that a request named an identity the addressed surface
 // cannot accept, so the request was rejected before any provider process started.
