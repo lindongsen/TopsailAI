@@ -401,19 +401,37 @@ Discovery without the flag 0.60-0.64 s, with the flag 0.90-0.93 s: about +0.30 s
 collection cycle. The cost moved from per-render to per-cycle, which is the correct trade under the
 rule, but the number is not recorded in the docs.
 
-### Blocking findings
+### Blocking findings, all three now closed
 
-1. **The inventory -> row link is untested.** Deleting `Messages: session.Messages`
-   (`internal/tui/model.go:91`) leaves the whole `internal/tui` suite green (37 s run, `ok`). The
-   existing tests build `SessionRow` literals directly (`table_messages_test.go:72`), so they prove
-   the cell renders a value that was handed to it, never that `ListRows` carries it from inventory.
-2. **The discovery -> report link is untested.** Replacing the attach with `_ = counts`
-   (`providers/topsailai/read.go:251`) leaves the whole provider suite green (`ok`, 0.5 s), i.e. the
-   feature can be silently disabled. The provider tests only changed the expected call string to
-   include `--include-runtime`; none asserts that counts appear in the observation.
-3. **`MEMORY.md` states a consequence that no test enforces.** It requires "a new `list` read surface
-   must be proven to issue zero Endpoint requests by counting provider invocations". No such test
-   exists.
+All three gaps were real when this section was written. They were closed by `59c1b3e3`
+(`test: cover inventory message counts and fix the heartbeat readiness race`), which added
+`internal/tui/list_messages_inventory_test.go` and `providers/topsailai/read_messages_test.go`.
+Each test was re-proven by deliberate breakage on 2026-11-18, because a test that has never been
+seen to fail certifies nothing.
+
+1. **The inventory -> row link is now tested.** `TestListRowsCarriesReportedMessageCounts`
+   (`internal/tui/list_messages_inventory_test.go:19`) builds a `protocol.InventoryReport` with one
+   measured and one unmeasured session, runs `ListRows`, and asserts both the carried value and the
+   absent value. Deleting `Messages: session.Messages` (`internal/tui/model.go:99`) now fails with
+   `measured row lost its reported counts`. The unmeasured half matters as much: substituting a zero
+   would state a measurement the provider never made.
+2. **The discovery -> report link is now tested.**
+   `TestDiscoverReportsMessageCountsFromTheSameDocument` (`providers/topsailai/read_messages_test.go:17`)
+   drives the real `Discover` and decodes the observation attributes. Replacing the attach with
+   `_ = counts` (`providers/topsailai/read.go:251`) now fails with
+   `measured row reported no message counts`. It also asserts exactly one provider call, which is what
+   proves the counts came from the discovery document rather than a second read. Two companion tests
+   cover the unmeasured row and the measured zero, so the three states stay distinguishable.
+3. **`MEMORY.md`'s zero-request consequence is now enforced.**
+   `TestListReadsOnlyPersistedInventory` (`internal/tui/list_messages_inventory_test.go:52`) records
+   every `CommandAPI` method the render asks for and asserts the exact set
+   `[GetInventory ListEndpoints]`. Adding one `GetCapabilities` call to `ListWithOptions` fails with
+   `list called [GetCapabilities GetInventory ListEndpoints] want [GetInventory ListEndpoints]`.
+   Counting calls is used rather than elapsed time, because a fast render is not evidence that nothing
+   was asked.
+
+Verification on 2026-11-18: `go test ./internal/tui/` ok 47.979s, `go test ./...` in
+`providers/topsailai` ok 0.626s, working tree clean after each break was restored.
 
 ### Non-blocking findings
 
