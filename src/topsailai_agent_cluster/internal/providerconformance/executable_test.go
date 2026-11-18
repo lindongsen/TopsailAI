@@ -130,15 +130,68 @@ func TestProviderTypedQueryConformance(t *testing.T) {
 				request.Payload = payload
 			}
 			response := invoke(t, runner, request)
-			if _, err := providercli.DecodeQueryResult(providercli.NamedContract{Name: query.Name, Version: query.Version}, response.QueryResult, protocol.DefaultMaxDetailBytes); err != nil {
+			decoded, err := providercli.DecodeQueryResult(providercli.NamedContract{Name: query.Name, Version: query.Version}, response.QueryResult, protocol.DefaultMaxDetailBytes)
+			if err != nil {
 				t.Fatalf("decode typed query result: %v", err)
 			}
+			// Decoding alone proves the document has the right shape, not that
+			// the Provider read the value it was asked for. A Provider that
+			// renamed a field inside its own envelope still decodes, because a
+			// missing member becomes a zero count and a zero count is a legal
+			// measurement. The counts are therefore asserted to be non-zero:
+			// every target answers a known session with real traffic, so a zero
+			// means the value never arrived. The exact numbers are not asserted
+			// because this sweep runs against more than one target.
+			assertMeasuredMessageCounts(t, query.Name, decoded)
 			for _, forbidden := range []string{"launch_profile_id", "resource_id", "model_profile_id", "cluster_session_id", "command_id"} {
 				if strings.Contains(string(response.QueryResult), `"`+forbidden+`"`) {
 					t.Fatalf("query result contains Cluster-owned field %q: %s", forbidden, response.QueryResult)
 				}
 			}
 		})
+	}
+}
+
+// assertMeasuredMessageCounts rejects a metrics answer whose counts never
+// arrived.
+//
+// A Provider that renamed a field inside its own envelope still decodes,
+// because the missing member becomes a zero count and a zero count is a legal
+// measurement. Only the value distinguishes "measured zero" from "never read",
+// so the sweep asserts the counts are non-zero rather than merely present. The
+// exact numbers are not asserted because this sweep runs against more than one
+// target, and each target answers with its own traffic.
+func assertMeasuredMessageCounts(t *testing.T, queryName string, decoded any) {
+	t.Helper()
+	switch queryName {
+	case providercli.QuerySessionMetrics:
+		result, ok := decoded.(providercli.SessionMetricsResult)
+		if !ok {
+			t.Fatalf("session.metrics decoded to %T, want SessionMetricsResult", decoded)
+		}
+		assertNonZeroCounts(t, result.Messages.Inbound, result.Messages.Outbound)
+	case providercli.QuerySessionMetricsBatch:
+		result, ok := decoded.(providercli.SessionMetricsBatchResult)
+		if !ok {
+			t.Fatalf("session.metrics.batch decoded to %T, want SessionMetricsBatchResult", decoded)
+		}
+		if len(result.Results) == 0 {
+			t.Fatal("session.metrics.batch answered no members, so no count was measured")
+		}
+		for _, member := range result.Results {
+			assertNonZeroCounts(t, member.Messages.Inbound, member.Messages.Outbound)
+		}
+	}
+}
+
+// assertNonZeroCounts rejects a pair of counts that cannot be a measurement.
+//
+// Both positions are checked separately, because a Provider that swapped the
+// two fields would still report two non-zero numbers.
+func assertNonZeroCounts(t *testing.T, inbound, outbound int) {
+	t.Helper()
+	if inbound == 0 || outbound == 0 {
+		t.Fatalf("message counts inbound=%d outbound=%d, want both non-zero: a zero count means the Provider never read the value", inbound, outbound)
 	}
 }
 

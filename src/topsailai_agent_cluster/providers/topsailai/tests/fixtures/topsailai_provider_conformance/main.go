@@ -30,6 +30,13 @@ const (
 	fixtureGeneration    = "fixture-generation"
 	fixturePID           = 4242
 	fixtureFollowRecords = 3
+	// The runtime counts are unequal and non-zero on purpose. A Provider that
+	// read the wrong field name would report a measured zero, and a zero is a
+	// legal count, so an envelope of zeros would let that defect pass while the
+	// value was silently blanked. Unequal values also keep the two layers from
+	// being mistaken for one another.
+	fixtureInboundMessages  = 5
+	fixtureOutboundMessages = 11
 )
 
 func main() {
@@ -60,21 +67,54 @@ func main() {
 // key from the session identity plus that row key. A row without it is rejected
 // with "workspace row requires session_id and filename", which is a fixture gap
 // rather than a Provider defect.
+//
+// The runtime envelope is emitted only when `--include-runtime` is passed,
+// because that is what the real business CLI does: the flag is what makes the
+// document carry the counts, and a fixture that always emitted them would let a
+// Provider that dropped the flag pass conformance while the MESSAGES column went
+// blank in production. The envelope is an envelope rather than the facts
+// themselves, so `state` and `data.ok` are both present: the Provider reads
+// `state` first and treats anything but "ok" as a refused read, so an envelope
+// without it would be reported as a refusal rather than as a measurement.
+//
+// The fixture publishes one row and applies no selector, because the Provider
+// sends none: the metrics read is `workspace list --json --local
+// --include-runtime`, and the row it needs is the only row there is. A fixture
+// that filtered on a selector the Provider never sends would be testing a
+// request shape that does not exist.
 func workspace(args []string) {
 	if len(args) == 0 || args[0] != "list" {
 		fail("unsupported workspace subcommand")
 	}
+	includeRuntime := false
+	for _, arg := range args[1:] {
+		if arg == "--include-runtime" {
+			includeRuntime = true
+		}
+	}
+	row := map[string]any{
+		"session_id":         fixtureSessionID,
+		"filename":           fixtureRowKey,
+		"session_name":       "fixture",
+		"process_generation": fixtureGeneration,
+		"state":              "idle",
+		"agent_id":           "fixture-agent",
+		"pid":                fixturePID,
+		"project_workspace":  "/fixture",
+	}
+	if includeRuntime {
+		row["runtime"] = map[string]any{
+			"state": "ok",
+			"pid":   fixturePID,
+			"data": map[string]any{
+				"ok":         true,
+				"user2agent": map[string]any{"messages": fixtureInboundMessages},
+				"agent2llm":  map[string]any{"messages": fixtureOutboundMessages},
+			},
+		}
+	}
 	emit(map[string]any{
-		"items": []map[string]any{{
-			"session_id":         fixtureSessionID,
-			"filename":           fixtureRowKey,
-			"session_name":       "fixture",
-			"process_generation": fixtureGeneration,
-			"state":              "idle",
-			"agent_id":           "fixture-agent",
-			"pid":                fixturePID,
-			"project_workspace":  "/fixture",
-		}},
+		"items": []map[string]any{row},
 		"total": 1,
 	})
 }
