@@ -750,7 +750,7 @@ func TestIntersectCapabilitiesAcceptsTheControlActionFamily(t *testing.T) {
 	offered := []providercli.NamedContract{{Name: "message.send", Version: "v1"}}
 	controlActions := []providercli.NamedContract{{Name: "ctl.fixture_probe", Version: "v1"}}
 
-	effective := intersectCapabilities(configured, offered, controlActions)
+	effective := intersectCapabilities(configured, providercli.Descriptor{Operations: offered, ControlActions: controlActions})
 	if effective.Revision != "rev-1" {
 		t.Fatalf("effective revision = %q, want the configured revision", effective.Revision)
 	}
@@ -775,7 +775,7 @@ func TestIntersectCapabilitiesDropsAnUnadvertisedControlAction(t *testing.T) {
 			{Name: "ctl.fixture_probe", Version: "v1", TargetKinds: []string{"session"}},
 		},
 	}
-	effective := intersectCapabilities(configured, nil, []providercli.NamedContract{{Name: "ctl.other_action", Version: "v1"}})
+	effective := intersectCapabilities(configured, providercli.Descriptor{ControlActions: []providercli.NamedContract{{Name: "ctl.other_action", Version: "v1"}}})
 	if len(effective.Capabilities) != 0 {
 		t.Fatalf("effective capabilities = %v, want none because the provider does not advertise the configured action", effective.Capabilities)
 	}
@@ -803,7 +803,7 @@ func TestIntersectCapabilitiesKeepsCommandExecWithoutAProviderOffer(t *testing.T
 	// shape a provider that reports only its own handlers produces.
 	offered := []providercli.NamedContract{{Name: "message.send", Version: "v1"}}
 
-	effective := intersectCapabilities(configured, offered, nil)
+	effective := intersectCapabilities(configured, providercli.Descriptor{Operations: offered})
 	if len(effective.Capabilities) != 2 {
 		t.Fatalf("effective capabilities = %v, want command.exec kept beside the offered operation", effective.Capabilities)
 	}
@@ -839,7 +839,7 @@ func TestIntersectCapabilitiesStillDropsAnUnadvertisedOperation(t *testing.T) {
 			{Name: "agent.stop", Version: "v1", TargetKinds: []string{"session"}},
 		},
 	}
-	effective := intersectCapabilities(configured, nil, nil)
+	effective := intersectCapabilities(configured, providercli.Descriptor{})
 	if len(effective.Capabilities) != 0 {
 		t.Fatalf("effective capabilities = %v, want none because the provider does not offer agent.stop", effective.Capabilities)
 	}
@@ -868,7 +868,7 @@ func TestIntersectCapabilitiesTakesTheActionMetadataFromTheProvider(t *testing.T
 		SafetyClass:   protocol.SafetyClassReadOnly,
 	}}
 
-	effective := intersectCapabilities(configured, nil, controlActions)
+	effective := intersectCapabilities(configured, providercli.Descriptor{ControlActions: controlActions})
 	if len(effective.Capabilities) != 1 {
 		t.Fatalf("effective capabilities = %v, want the configured action", effective.Capabilities)
 	}
@@ -902,7 +902,7 @@ func TestIntersectCapabilitiesKeepsTheConfiguredPermission(t *testing.T) {
 		RequiredPermission: "view",
 	}}
 
-	effective := intersectCapabilities(configured, nil, controlActions)
+	effective := intersectCapabilities(configured, providercli.Descriptor{ControlActions: controlActions})
 	if len(effective.Capabilities) != 1 {
 		t.Fatalf("effective capabilities = %v, want the configured action", effective.Capabilities)
 	}
@@ -927,7 +927,7 @@ func TestIntersectCapabilitiesKeepsConfiguredMetadataWhenTheProviderOmitsIt(t *t
 	}
 	controlActions := []providercli.NamedContract{{Name: "ctl.heartbeat", Version: "v1"}}
 
-	effective := intersectCapabilities(configured, nil, controlActions)
+	effective := intersectCapabilities(configured, providercli.Descriptor{ControlActions: controlActions})
 	if len(effective.Capabilities) != 1 {
 		t.Fatalf("effective capabilities = %v, want the configured action", effective.Capabilities)
 	}
