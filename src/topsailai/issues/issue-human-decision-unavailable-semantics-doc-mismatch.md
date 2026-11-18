@@ -5,7 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
-status: open  # findings 1+2 resolved; finding 3 carried forward
+status: done  # findings 1+2 fixed; finding 3 resolved by deprecating the two spawning sites
 references:
   - /TopsailAI/src/topsailai/tools/human_tool.py
   - /TopsailAI/src/topsailai/utils/env_tool.py
@@ -275,13 +275,33 @@ negative-control runs, which proves the guard does not swallow usable templates.
 `docs/Environment_Variables.md` now records both fallbacks in the two affected rows, without
 code, file paths, or implementation narrative.
 
-### Finding 3 remains open
+### Finding 3: resolved by deprecation, not by changing the guard
 
 The thread-scoped sub-agent guard is unchanged. `KEY_AGENT_DEEP` is thread-local, so a nested
 agent started in a new thread begins at depth `0`; a probe confirmed a new thread reaches depth
-`1` after one agent run and `_is_sub_agent_context()` still returns `False`. Fixing this means
-changing thread-local depth semantics or propagating depth across threads, which is a design
-decision rather than a mechanical repair, so it is carried forward separately.
+`1` after one agent run and `_is_sub_agent_context()` still returns `False`.
+
+A second probe found the more serious consequence: such a thread also has no runtime input
+channel, so it does not degrade to `unavailable` at all. With `sys.stdin.isatty()` forced true,
+`ask_decision` called from a worker thread that had run one agent entered the read path and was
+still blocked after 1.5 seconds. Fixing the guard alone would therefore not fix the blocking.
+
+Only two production sites spawn a thread that runs a nested agent:
+
+- `tools/agent_tool_utils/multitasks.py::async_multitasks_agent_writer`
+- `tools/agent_tool_utils/story.py::async_agent_memory_as_story`
+
+The Human decided on 2026-11-18 that both are deprecated and no longer maintained, and that the
+code stays for compatibility. Both now carry a deprecation comment stating that the spawned
+thread runs a nested agent with a fresh thread-local agent depth and no runtime input channel, so
+the guard cannot fire and `ask_decision` may block on a terminal read instead of degrading.
+
+No behaviour changed and no guard semantics were altered, so the `MAX_AGENT_DEEP` assert and the
+process-wide-versus-thread-local question are both left untouched. The only registered consumer,
+`plugins/tools/agent_tool.py`, already sets `FLAG_TOOL_ENABLED = False`, so the deprecated path is
+not reachable through the default tool registry.
+
+`tests/unit/test_topsailai_tools_agent_tool.py` -> **44 passed**, unchanged by the comments.
 
 ### Commits
 
