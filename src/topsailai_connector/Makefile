@@ -280,10 +280,11 @@ bdd:
 # none of which the unit test touches.
 #
 # manual_probe.sh is the only script that asserts the secrets never reach a log: it
-# greps the Server log for the node token, the client token and the tunnel token, and
-# asserts the node token appears exactly once in the Node log, from the first-run
-# print. It also covers a dot component being refused rather than normalised, which
-# no other script asserts. It is named "manual" because it was written to be read
+# greps the Server log for the node credential secret, the client credential secret
+# and the tunnel token, and asserts the node credential secret appears exactly once
+# in the Node log, from the first-run print. It also covers a dot component being
+# refused rather than normalised, which no other script asserts. It is named
+# "manual" because it was written to be read
 # line by line, not because it needs a human: it picks its own port, starts and stops
 # its own processes by exact PID, and exits non-zero on failure, so it runs here.
 #
@@ -343,12 +344,12 @@ test-windows-compile:
 # operator can address with the CLI immediately. Set PACKAGE_EMBED_CONFIG=0, or
 # run `make package-zip`, for a zip that a user unzips and starts instead.
 #
-# It depends on build-node because the zip mode generates the identity pair with
-# the host build of the Node. Generating the pair with a second implementation
-# here would be a second definition of the pair format, and the two would
-# eventually disagree about what a valid pair is. The default mode does not read
-# the host binary, because the identity is created on the target machine, so the
-# dependency is only load-bearing for the zip.
+# It depends on build-node because the zip mode generates the node id and the node
+# credential with the host build of the Node. Generating either with a second
+# implementation here would be a second definition of the credential format, and
+# the two would eventually disagree about what a valid credential is. The default
+# mode does not read the host binary, because the id and the credential are created
+# on the target machine, so the dependency is only load-bearing for the zip.
 #
 # The scope paths are not baked into a policy file. A policy requires absolute
 # paths, and the build host's paths are not the user's paths, so the bundle
