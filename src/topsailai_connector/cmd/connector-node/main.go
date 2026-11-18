@@ -418,4 +418,3 @@ func runCredentialRemove(arguments []string) error {
 
 	return node.SaveCredentials(path, remaining)
 }
-

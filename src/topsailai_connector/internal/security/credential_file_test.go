@@ -50,16 +50,16 @@ func TestParseCredentialSetRefusesMalformed(t *testing.T) {
 	valid := "version: 1\ncredentials:\n  - key_id: operator\n    secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n"
 
 	cases := map[string]string{
-		"empty":              "",
-		"no version":         "credentials:\n  - key_id: operator\n    secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n",
-		"wrong version":      strings.Replace(valid, "version: 1", "version: 2", 1),
-		"unknown key":        valid + "extra: 1\n",
-		"missing key id":     "version: 1\ncredentials:\n  - secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n",
-		"missing secret":     "version: 1\ncredentials:\n  - key_id: operator\n",
-		"duplicate key id":   "version: 1\ncredentials:\n  - key_id: operator\n    secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n  - key_id: operator\n    secret: " + strings.Repeat("b", MinCredentialSecretLength) + "\n",
-		"short secret":       "version: 1\ncredentials:\n  - key_id: operator\n    secret: short\n",
-		"uppercase key id":   "version: 1\ncredentials:\n  - key_id: Operator\n    secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n",
-		"two documents":      valid + "---\n" + valid,
+		"empty":            "",
+		"no version":       "credentials:\n  - key_id: operator\n    secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n",
+		"wrong version":    strings.Replace(valid, "version: 1", "version: 2", 1),
+		"unknown key":      valid + "extra: 1\n",
+		"missing key id":   "version: 1\ncredentials:\n  - secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n",
+		"missing secret":   "version: 1\ncredentials:\n  - key_id: operator\n",
+		"duplicate key id": "version: 1\ncredentials:\n  - key_id: operator\n    secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n  - key_id: operator\n    secret: " + strings.Repeat("b", MinCredentialSecretLength) + "\n",
+		"short secret":     "version: 1\ncredentials:\n  - key_id: operator\n    secret: short\n",
+		"uppercase key id": "version: 1\ncredentials:\n  - key_id: Operator\n    secret: " + strings.Repeat("a", MinCredentialSecretLength) + "\n",
+		"two documents":    valid + "---\n" + valid,
 	}
 	for name, content := range cases {
 		if _, err := ParseCredentialSet([]byte(content)); err == nil {
