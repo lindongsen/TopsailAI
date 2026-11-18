@@ -115,6 +115,7 @@ PACKAGE_SCOPES_FILE ?=
 PACKAGE_TUNNEL_TOKEN ?=
 PACKAGE_ALLOW_FILESYSTEM_ROOT ?=
 PACKAGE_EMBED_CONFIG ?= 1
+PACKAGE_NODE_KEY_ID ?= bundle-caller
 
 # The unit suite is what `go test ./...` runs. Integration and BDD suites are
 # behind build tags so a plain unit run stays fast and needs no built binary.
@@ -371,6 +372,7 @@ package: build-node
 	PACKAGE_TUNNEL_TOKEN='$(PACKAGE_TUNNEL_TOKEN)' \
 	PACKAGE_ALLOW_FILESYSTEM_ROOT='$(PACKAGE_ALLOW_FILESYSTEM_ROOT)' \
 	PACKAGE_EMBED_CONFIG='$(PACKAGE_EMBED_CONFIG)' \
+	PACKAGE_NODE_KEY_ID='$(PACKAGE_NODE_KEY_ID)' \
 	BIN_DIR='$(BIN_DIR)' \
 	TMP_DIR='$(TMP_DIR)' \
 	bash packaging/build-package.sh

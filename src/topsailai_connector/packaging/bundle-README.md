@@ -68,22 +68,28 @@ denies it by resolved path and omits it from a listing.
 | `scopes.txt` | The folders this Node exposes. Edit this one |
 | `allow_filesystem_root` | `1` when the operator allowed a whole-volume scope, `0` otherwise. Set at packaging time; do not edit |
 | `server_url` | The Server address the Node dials |
-| `config/identity` | This Node's `node-id.node-token` pair |
+| `config/identity` | This Node's `node_` identifier. An address, not a secret |
+| `config/credentials.yaml` | The node credentials this Node accepts, one `key_id` and secret per caller |
 | `config/tunnel_token` | The `tunnel_token` this Node presents, when the operator provisioned one |
 | `config/policy.yaml` | Generated on every start. Do not edit; edit `scopes.txt` |
 
 ## This folder holds credentials
 
-`config/identity` contains the `node-token` half of this Node's identity, and
-`config/tunnel_token` contains the shared secret that opens the channel. Both are
-credentials that never expire.
+`config/credentials.yaml` holds the node credentials this Node accepts: one
+`key_id` and one secret per caller. `config/tunnel_token` holds the shared secret
+that opens the channel. Both are credentials that never expire.
+
+`config/identity` holds only the `node_` identifier. It is an address, not a
+secret: knowing it grants nothing without a node credential and a client
+credential.
 
 - Do not put this folder in a public repository, a shared drive or a chat
   message.
-- Do not paste the contents of `config/identity` into a ticket or a retained
-  shell history.
-- If the folder leaks, the operator regenerates the pair and gives you a new
-  bundle. The old pair stops working within about a second.
+- Do not paste the contents of `config/credentials.yaml` or
+  `config/tunnel_token` into a ticket or a retained shell history.
+- If the folder leaks, the operator removes the exposed credential with
+  `connector-node credential remove --key-id <name>` and gives you a new one. The
+  old credential stops working at once.
 
 ## If it does not start
 
@@ -114,9 +120,10 @@ repetition is a reminder rather than a recovery.
 
 ## What the operator needs from you
 
-Nothing, if the bundle was built with the identity already inside it. The
-operator already holds the `node-id.node-token` pair and can call this Node as
-soon as it connects.
+Nothing, if the bundle was built with the credential already inside it. The
+packaging step printed the node id and one node credential in its summary, so the
+operator can call this Node as soon as it connects.
 
-If the operator asks for the pair, it is the single line in `config/identity`.
-Treat it as a password.
+If the operator asks for the node id, it is the single line in `config/identity`.
+That is an address, not a secret. The credential is in `config/credentials.yaml`
+and is the value to treat as a password.
