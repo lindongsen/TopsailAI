@@ -62,12 +62,14 @@ document and the `tunnel_token` are compiled in with `-ldflags -X`, so the
 recipient runs the binary and the Node is reachable. This is the default
 packaging mode; `make package-zip` produces the older zip instead.
 
-The identity pair is deliberately not embedded. It is generated on first start,
-polled every second and rewritten by `regenerate`, so an embedded pair would have
-no file to watch or rewrite; and two machines running the same binary would share
-one `node-id`, which the Server's `node_id -> connection` registry would resolve by
-evicting the first. The binary therefore still creates its own pair on first start
-and prints it once.
+The node id and the node credential are deliberately not embedded. The id is
+generated on first start, polled every second and rewritten by `regenerate`, so an
+embedded id would have no file to watch or rewrite; and two machines running the
+same binary would share one node id, which the Server's `node_id -> connection`
+registry would resolve by evicting the first. The credential is excluded for the
+same two reasons plus a third: it is a secret, and a secret compiled into a binary
+is readable by anyone holding the file. The binary therefore still creates its own
+id and its own credential on first start and prints both once.
 
 Environment variables win over embedded values field by field, so an operator can
 repoint the same binary without a rebuild. The policy is the exception: a build

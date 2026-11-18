@@ -21,7 +21,7 @@ make package-zip PACKAGE_SERVER_URL=wss://cloud.example.com:8443/channel \
                  PACKAGE_SCOPES='project=/home/me/project tool=/opt/tool'
 ```
 
-The command prints the `node-id.node-token` pair and a ready-to-paste CLI
+The command prints the node id, one node credential and a ready-to-paste CLI
 invocation, so the operator can make the first request without asking the user
 for anything.
 
@@ -34,10 +34,12 @@ for anything.
   target machine. A build host's absolute paths are not the user's paths, so
   baking them in would produce a bundle that fails on the machine it was built
   for.
-- The identity pair **is** generated at packaging time, by running the Node's own
-  `id` command. Otherwise the operator would have to wait for the user to read the
-  pair back before the CLI could reach the machine, which defeats the purpose of
-  a bundle that works on first start.
+- The node id and one node credential **are** generated at packaging time, by
+  running the Node's own `id` and `credential add` commands. Otherwise the
+  operator would have to wait for the user to read both values back before the
+  CLI could reach the machine, which defeats the purpose of a bundle that works
+  on first start. The two are generated separately because one is an address and
+  the other is a secret, and the packaging step reports them separately.
 - `PACKAGE_TUNNEL_TOKEN` is optional. When set, the token is written to
   `config/tunnel_token` with owner-only permissions and the start script exports
   it. When absent, the start script requires `CONNECTOR_NODE_TUNNEL_TOKEN` in the
