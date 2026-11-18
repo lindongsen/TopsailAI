@@ -29,17 +29,22 @@ type Collector struct {
 	timeout              time.Duration
 	store                *endpointstorage.Store
 	sourceCacheExpiry    time.Duration
+	commandJournalExpiry time.Duration
 	logCacheDeletion     func(string)
+	logJournalDeletion   func(endpointstorage.ExpiredJournalEntry, time.Duration)
 	logCollectionFailure func(string, string, string, int64)
 	mu                   sync.Mutex
 	sources              map[string]endpointstorage.SourceSnapshot
 	revision             int64
 }
 
-// CollectorOptions controls durable source-cache lifecycle and degraded-cycle reporting.
+// CollectorOptions controls durable source-cache lifecycle, command journal
+// retention and degraded-cycle reporting.
 type CollectorOptions struct {
 	SourceCacheExpiry    time.Duration
+	CommandJournalExpiry time.Duration
 	LogCacheDeletion     func(string)
+	LogJournalDeletion   func(endpointstorage.ExpiredJournalEntry, time.Duration)
 	LogCollectionFailure func(adapterID, errorCode, errorMessage string, lastSuccessAtMS int64)
 }
 
@@ -60,7 +65,10 @@ func NewCollectorWithOptions(ctx context.Context, bindings []Binding, timeout ti
 	for _, binding := range bindings {
 		configured[binding.AdapterID] = struct{}{}
 	}
-	c := &Collector{bindings: append([]Binding(nil), bindings...), timeout: timeout, store: store, sourceCacheExpiry: options.SourceCacheExpiry, logCacheDeletion: options.LogCacheDeletion, logCollectionFailure: options.LogCollectionFailure, sources: make(map[string]endpointstorage.SourceSnapshot)}
+	if options.CommandJournalExpiry < 0 {
+		return nil, fmt.Errorf("command journal expiry must not be negative")
+	}
+	c := &Collector{bindings: append([]Binding(nil), bindings...), timeout: timeout, store: store, sourceCacheExpiry: options.SourceCacheExpiry, commandJournalExpiry: options.CommandJournalExpiry, logCacheDeletion: options.LogCacheDeletion, logJournalDeletion: options.LogJournalDeletion, logCollectionFailure: options.LogCollectionFailure, sources: make(map[string]endpointstorage.SourceSnapshot)}
 	if store != nil {
 		items, err := store.ListSourceSnapshots(ctx)
 		if err != nil {
@@ -86,6 +94,9 @@ func (c *Collector) Collect(ctx context.Context, observedAtMS int64) (protocol.I
 		return protocol.InventoryReport{}, fmt.Errorf("observation time must be positive")
 	}
 	if err := c.expireSourceCache(ctx, observedAtMS); err != nil {
+		return protocol.InventoryReport{}, err
+	}
+	if err := c.expireCommandJournal(ctx, observedAtMS); err != nil {
 		return protocol.InventoryReport{}, err
 	}
 	c.mu.Lock()
@@ -134,6 +145,36 @@ func (c *Collector) expireSourceCache(ctx context.Context, observedAtMS int64) e
 		for _, adapterID := range adapterIDs {
 			c.logCacheDeletion(adapterID)
 		}
+	}
+	return nil
+}
+
+// expireCommandJournal removes settled receipts older than the configured
+// retention window. A disabled window is used only by tests and callers that have
+// not opted into lifecycle management.
+//
+// Retention runs on the collection cycle rather than on its own timer, because the
+// cycle is already the one place that owns durable Endpoint maintenance. A failure
+// is returned to the caller instead of being logged and ignored: retention is part
+// of the write contract, and continuing after it fails would leave a table that is
+// supposed to be bounded growing without limit while every cycle reports success.
+func (c *Collector) expireCommandJournal(ctx context.Context, observedAtMS int64) error {
+	if c.store == nil || c.commandJournalExpiry == 0 {
+		return nil
+	}
+	cutoffMS := observedAtMS - c.commandJournalExpiry.Milliseconds()
+	if cutoffMS < 1 {
+		return nil
+	}
+	expired, err := c.store.ExpireCommandJournal(ctx, cutoffMS)
+	if err != nil {
+		return fmt.Errorf("expire command journal: %w", err)
+	}
+	if c.logJournalDeletion == nil {
+		return nil
+	}
+	for _, entry := range expired {
+		c.logJournalDeletion(entry, c.commandJournalExpiry)
 	}
 	return nil
 }

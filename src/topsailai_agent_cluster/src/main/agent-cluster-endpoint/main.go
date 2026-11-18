@@ -192,8 +192,21 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
-	collector, err := endpointservice.NewCollectorWithOptions(ctx, bindings, 30*time.Second, store, endpointservice.CollectorOptions{SourceCacheExpiry: cacheExpiry, LogCacheDeletion: func(adapterID string) {
+	journalExpiry, err := commandJournalExpiry()
+	if err != nil {
+		logger.Error("load command journal expiry", "error", err)
+		_ = client.Close()
+		_ = store.Close()
+		os.Exit(1)
+	}
+	collector, err := endpointservice.NewCollectorWithOptions(ctx, bindings, 30*time.Second, store, endpointservice.CollectorOptions{SourceCacheExpiry: cacheExpiry, CommandJournalExpiry: journalExpiry, LogCacheDeletion: func(adapterID string) {
 		logger.Info("deleted expired source cache", "adapter_id", adapterID, "retention", cacheExpiry.String())
+	}, LogJournalDeletion: func(entry endpointstorage.ExpiredJournalEntry, retention time.Duration) {
+		// A deleted journal row is irreversible, so the log names the command, the
+		// phase and the effect certainty. Without the certainty an operator cannot
+		// tell whether the removed evidence described an applied or an unapplied
+		// command.
+		logger.Info("deleted expired command journal", "command_id", entry.CommandID, "phase", string(entry.Phase), "effect_certainty", entry.EffectCertainty, "age_ms", time.Now().UnixMilli()-entry.CreatedAtMS, "retention", retention.String())
 	}, LogCollectionFailure: func(adapterID, errorCode, errorMessage string, lastSuccessAtMS int64) {
 		// The error is otherwise only stored in the source cache, where the next
 		// successful cycle overwrites it. Logging it is the only durable evidence
