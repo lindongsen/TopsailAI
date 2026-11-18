@@ -1,6 +1,6 @@
 ---
 name: connector-server-operations
-description: Use when an operator needs to deploy, configure, run, monitor, rotate secrets for, package or troubleshoot the TopsailAI Connector Server in the cloud, i.e. when they ask how to start the Server, which environment variables it needs, how to rotate tunnel_token or client_token, how to expose only the channel and hide the CLI API, how to read its log, why a Node cannot connect, or how to hand a Node to someone else as a zip that unzips and starts. Covers the Server's configuration surface, its single listener with two surfaces, rotation procedure, the make package bundle and the limits that are constants rather than settings.
+description: Use when an operator needs to deploy, configure, run, monitor, rotate credentials for, package or troubleshoot the TopsailAI Connector Server in the cloud, i.e. when they ask how to start the Server, which environment variables it needs, how to rotate tunnel_token or a client credential, how to expose only the channel and hide the CLI API, how to read its log, why a Node cannot connect, or how to hand a Node to someone else as a zip that unzips and starts. Covers the Server's configuration surface, its single listener with two surfaces, rotation procedure, the make package bundle and the limits that are constants rather than settings.
 version: 1.0.0
 author: DawsonLin
 license: MIT
@@ -20,10 +20,11 @@ Node, so it needs no inbound path to a personal computer.
 Four properties of this Server shape every operational decision. Read them before
 advising anything, because each one is a rule rather than a preference.
 
-1. **The Server holds two secrets and no Node tokens.** It validates
-   `tunnel_token` and `client_token`, both its own. It forwards a Node's
-   `node-token` without ever learning the correct value, so it cannot validate it
-   and must not claim to.
+1. **The Server holds its own two secrets and never receives a node secret.** It
+   validates `tunnel_token` and the client credentials it is configured with, both
+   its own. A CLI request carries a client proof the Server verifies and a node
+   proof it forwards untouched; the Server never receives the node secret, so it
+   cannot validate the node proof and must not claim to.
 2. **The Server is not the permission authority.** It has no scope list and no
    permission list. A `denied` answer came from the Node. Nothing on the Server can
    be changed to grant access.
@@ -38,7 +39,7 @@ Use this skill when the operator asks to:
 
 - Deploy or start the Server, or write a systemd unit or container entrypoint.
 - Find out which environment variables the Server needs and what each does.
-- Rotate `tunnel_token` or `client_token`.
+- Rotate `tunnel_token` or a client credential.
 - Keep the CLI API unreachable from the internet while the channel stays open.
 - Diagnose "a Node cannot connect" or "the CLI gets `node_offline`".
 - Understand a limit, such as why a large read is truncated or a request times out.
@@ -97,8 +98,8 @@ appears on their machine instead of yours.
 The executable carries the `tunnel_token`, so it is a credential: a leaked binary
 opens a channel to the Server for every Node on it. If the recipient must edit the
 scopes themselves, or the policy must be reloadable on `SIGHUP`, build the zip
-instead with `make package-zip`. The zip carries the identity pair rather than the
-Server-wide token, so a leak exposes one Node.
+instead with `make package-zip`. The zip carries the node id and one node credential
+rather than the Server-wide token, so a leak exposes one Node.
 
 ### Inputs
 
@@ -124,7 +125,8 @@ The output is `bin/<PACKAGE_NAME>`, or `bin/<PACKAGE_NAME>.zip` when
 | `start.sh` / `start.ps1` | Rebuilds `policy.yaml` from `scopes.txt`, then starts the Node |
 | `scopes.txt` | The folders this Node exposes. The user edits this one |
 | `server_url` | The channel address the Node dials |
-| `config/identity` | The `node-id.node-token` pair, generated at packaging time |
+| `config/identity` | The node id, generated at packaging time. An address, not a secret |
+| `config/credentials.yaml` | One node credential, generated at packaging time. This is the secret |
 | `config/tunnel_token` | The `tunnel_token`, mode `0600`, when you supplied one |
 | `README.md` | The user-facing instructions |
 
@@ -137,19 +139,19 @@ start. That is what makes one zip usable on a machine whose folders this host ha
 never seen. Because the file is rebuilt rather than merged, a scope the user deletes
 stops being served.
 
-**The identity pair is generated at packaging time**, with the Node's own `id`
-command rather than a second implementation of the pair format. If the Node
-generated it on the user's machine, you would have to ask the user to read the pair
-back before the CLI could address the Node, which defeats the point of handing over
-a bundle. The consequence is that the pair is known to you before the user starts
-anything, and the packaging output prints it.
+**The node id and the node credential are generated at packaging time**, with the
+Node's own `id` and `credential add` commands rather than a second implementation
+of either format. If the Node generated them on the user's machine, you would have
+to ask the user to read them back before the CLI could address the Node, which
+defeats the point of handing over a bundle. The consequence is that both are known
+to you before the user starts anything, and the packaging output prints them.
 
 The same consequence has a second edge: **one zip is one machine.** Every copy of
 one bundle presents the same `node-id`, and the Server keeps one entry per `node-id`
 where a new connection replaces the previous one. Two machines running the same
 bundle therefore take turns being reachable, each start evicting the other, and a
 request lands on whichever connected last. Build a separate bundle per machine; each
-build generates its own pair and prints it.
+build generates its own node id and its own node credential, and prints both.
 
 **The tunnel token is written to a `0600` file** that the start script exports as
 `CONNECTOR_NODE_TUNNEL_TOKEN`. The Node still reads the documented environment
@@ -173,11 +175,11 @@ retyping it.
 
 ### The bundle is a credential
 
-It carries the Node's identity pair and, when you supply one, the `tunnel_token`.
+It carries the Node's node credential and, when you supply one, the `tunnel_token`.
 Hand it over the way you would hand over a password: not through a public
 repository, a shared drive or a chat message. If it leaks, run
-`connector-node regenerate` on that Node and hand over a new bundle; the old pair
-stops working within about a second.
+`connector-node credential remove --key-id <name>` on that Node and hand over a new
+bundle; the old credential stops working at once.
 
 ### What the start script refuses
 
@@ -272,12 +274,20 @@ place for the two to disagree.
 | Variable | Purpose |
 |---|---|
 | `CONNECTOR_SERVER_TUNNEL_TOKEN` | The secret a Node presents in `hello`. Gates the channel |
-| `CONNECTOR_SERVER_CLIENT_TOKEN` | The secret a CLI presents on every request. Gates the CLI API |
+| `CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE` | Path to the client credential file. The Server verifies every CLI proof against it |
 
 Both are required. An absent, empty, whitespace-padded or shorter-than-16-byte
-value is a **startup failure**, not an "authentication disabled" mode. That is
-deliberate: an unset secret is the most likely way to accidentally disable
-authentication, so the Server refuses to start rather than run unprotected.
+`tunnel_token` is a **startup failure**, not an "authentication disabled" mode. An
+absent or empty credential file path is a startup failure for the same reason: the
+Server would have no key to verify a proof with, and a Server that accepted proofs
+it could not check would be an open door. That is deliberate: an unset secret is
+the most likely way to accidentally disable authentication, so the Server refuses
+to start rather than run unprotected.
+
+The credential file is a file rather than an environment variable because it holds
+several credentials, each with a key id and a secret. A single environment variable
+cannot express a set, and a set is what makes independent rotation possible. The
+file format is the same one the Node writes, so one implementation defines it.
 
 ### Optional
 
@@ -287,6 +297,8 @@ authentication, so the Server refuses to start rather than run unprotected.
 | `CONNECTOR_SERVER_TLS_CERT` | none | Path to the TLS certificate |
 | `CONNECTOR_SERVER_TLS_KEY` | none | Path to the TLS private key |
 | `CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS` | `30` | How long to wait for a Node before answering `node_timeout` |
+| `CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS` | `60` | How long a client proof stays fresh. Maximum `600` |
+| `CONNECTOR_SERVER_REPLAY_CAPACITY` | `65536` | How many client nonces are remembered. A full cache refuses rather than evicts |
 
 TLS is required unless it is terminated in front of the Server. Setting one of the
 certificate variables without the other is a startup failure, because a key without
@@ -294,12 +306,12 @@ a certificate cannot serve TLS and a certificate without a key cannot either.
 
 ### What does not exist, and must not be invented
 
-There is **no** variable for a Node's `node-token`. No
-`CONNECTOR_SERVER_NODE_TOKEN`, no `CONNECTOR_SERVER_NODE_TOKENS_FILE`, no
-equivalent. If an operator asks for one, the model has been misunderstood: the
-Server forwards the token without knowing whether it is correct, and a Server that
-stored it would collapse the separation between the channel authority and the
-operation authority into one authority.
+There is **no** variable for a Node's secret. No `CONNECTOR_SERVER_NODE_TOKEN`, no
+`CONNECTOR_SERVER_NODE_CREDENTIALS_FILE`, no equivalent. If an operator asks for
+one, the model has been misunderstood: the Server never receives the node secret at
+all, because the CLI signs the node proof itself and the Server forwards that proof
+untouched. A Server that held the secret would collapse the separation between the
+channel authority and the operation authority into one authority.
 
 There is also no variable that grants a permission or defines a scope. Those live
 in the Node's policy file and nowhere else.
@@ -308,7 +320,7 @@ in the Node's policy file and nowhere else.
 
 ```
 CONNECTOR_SERVER_TUNNEL_TOKEN=<secret> \
-CONNECTOR_SERVER_CLIENT_TOKEN=<secret> \
+CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE=/etc/connector/client-credentials.yaml \
   connector-server run
 ```
 
@@ -351,9 +363,9 @@ isolate state, and it would cost a second certificate, a second firewall rule an
 second proxy entry for one service.
 
 The consequence to state plainly: **the CLI API is reachable by anyone who can
-reach the channel port.** That is acceptable because the API authenticates every
-request with `client_token` before it reads the `node-token`, and because a caller
-who can reach the port can already attempt a `hello`.
+reach the channel port.** That is acceptable because the API verifies a client proof
+before it looks at the node proof, and because a caller who can reach the port can
+already attempt a `hello`.
 
 A deployment that must keep the CLI API unreachable from the internet blocks
 `/v1/` at the reverse proxy. The path prefix is part of the contract, so a proxy
@@ -379,34 +391,38 @@ improvisation.
 | Secret | How to rotate | Blast radius | Downtime |
 |---|---|---|---|
 | `tunnel_token` | Change the environment, restart the Server, update every Node | Every Node | Every Node reconnects |
-| `client_token` | Change the environment, restart the Server, update every CLI | Every CLI | None for Nodes |
-| A Node's pair | `connector-node regenerate` on that Node | One Node | That Node reconnects |
+| A client credential | Remove its entry from the credential file, restart the Server, update that CLI | One CLI | None for Nodes |
+| A Node's node credential | `connector-node credential remove --key-id <name>` on that Node | One caller | None |
+| A Node's node id | `connector-node regenerate` on that Node | One Node | That Node reconnects |
 
 Two rules make rotation safe, and both are stated rather than softened:
 
-- **The Server accepts exactly one value per secret.** There is no "old and new
-  both work" window. A grace period would be a second valid credential, and the
-  point of rotating is to end the first one. The cost is that rotation is a
-  coordinated change.
+- **The Server accepts exactly the credentials in its file.** There is no "old and
+  new both work" window beyond the entries you leave in place. A grace period is a
+  second valid credential, and the point of rotating is to end the first one. The
+  cost is that rotation is a coordinated change.
 - **Rotation is not a hot reload.** The Server reads its secrets once at startup. A
   `SIGHUP` that reloaded them would let a running Server change its own authority
   without a restart, and a restart is the cheapest possible audit trail: it is
   visible in the process table and in the log.
 
-Rotating a Node's pair does **not** affect `tunnel_token` or `client_token`, and
-rotating those affects every Node and every CLI at once. Do not conflate them.
+Removing one client credential affects one caller, because each entry has its own
+key id. Removing a node credential affects one caller of one Node. Regenerating a
+node id affects only the address, and leaves every credential valid. Do not conflate
+the three.
 
 ## Secrets: what the Server must never do
 
 These are hard constraints. A change that violates one is a design regression.
 
-- Never write `tunnel_token`, `client_token` or a `node-token` to a log, a trace,
-  an audit record or an error message. An audit record names the `node-id`, which
-  is public, and never a secret.
-- Never store a `node-token`: no database row, no file, no cache, no in-memory map
-  keyed by token, and no derived value such as a hash, prefix or fingerprint. A
-  stored fingerprint is still a stored credential index.
-- Never keep `client_token` beyond the request it arrived with.
+- Never write `tunnel_token`, a client secret or a node secret to a log, a trace,
+  an audit record or an error message. An audit record names the `node-id` and the
+  key id, which are public, and never a secret.
+- Never receive a node secret. The Server has no field, no header and no
+  configuration entry for one: the CLI signs the node proof and the Server forwards
+  it untouched. A Server that received it would be able to forge an operation.
+- Never store a client secret outside the credential file it was configured with,
+  and never keep a presented proof beyond the request it arrived with.
 - Never echo a secret from a configuration dump or a startup banner. A startup log
   line may say a secret is set, never what it is.
 - Never place a secret in a URL, a query string or a path segment, because those
@@ -415,8 +431,8 @@ These are hard constraints. A change that violates one is a design regression.
 When you inspect a running Server, verify these rather than assume them:
 
 ```
-grep -c '<the node-token value>' /var/log/connector/server.log     # must be 0
-grep -c '<the client_token value>' /var/log/connector/server.log   # must be 0
+grep -c '<a node secret value>' /var/log/connector/server.log     # must be 0
+grep -c '<a client secret value>' /var/log/connector/server.log   # must be 0
 ```
 
 ## Limits that are constants, not settings
@@ -447,21 +463,21 @@ Work from the outside in. Each step rules out one layer.
 | Process exits immediately | A required secret is missing, empty or too short | The log names the variable |
 | Process alive, port closed | Bind failed | The log has the bind error; the process should have exited |
 | Node cannot connect | Wrong `tunnel_token`, or TLS mismatch | The Server logs `refusing a hello with a wrong tunnel token`; the Node logs `the server refused the handshake: unauthenticated` |
-| Node connects then drops repeatedly | The Node's pair was regenerated, or the Server restarted | Both logs show the reconnect |
-| CLI gets `node_offline` | No live connection for that `node_id` | Is the Node running? Did it regenerate its `node-id`? |
-| CLI gets `unauthenticated` | Wrong `client_token`, or the Node refused the `node-token` | The Server cannot tell these apart; see below |
+| Node connects then drops repeatedly | The Node's node id was regenerated, or the Server restarted | Both logs show the reconnect |
+| CLI gets `node_offline` | No live connection for that `node_id` | Is the Node running? Did it regenerate its node id? |
+| CLI gets `unauthenticated` | Wrong client credential, or the Node refused the node credential | The Server cannot tell these apart; see below |
 | CLI gets `node_timeout` | The Node did not answer within the timeout | Is the Node healthy? Is the file huge? |
 | CLI gets `denied` | The Node's policy refused | Nothing on the Server can fix this |
 
 ### The one ambiguous answer
 
-`unauthenticated` covers two causes: a wrong `client_token`, and a Node refusing
-the `node-token`. The Server cannot distinguish them, because it never learns the
-correct `node-token`. Do not claim to know which one it was.
+`unauthenticated` covers two causes: a wrong client credential, and a Node refusing
+the node credential. The Server cannot distinguish them, because it never receives
+the node secret and so cannot check a node proof.
 
-What you can say: if the request produced a JSON answer, the `client_token` was
-accepted and the Node refused the token. If it produced a connection error, the
-Server was unreachable or rejected the `client_token` before forwarding.
+What you can say: if the request produced a JSON answer, the client proof was
+accepted and the Node refused the node proof. If it produced a connection error, the
+Server was unreachable or rejected the client proof before forwarding.
 
 ### What the Server cannot answer
 
