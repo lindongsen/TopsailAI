@@ -1021,3 +1021,71 @@ and one grep for the control-server start call disproved it. Finally, make a
 descriptive field such as `is_task` describe the process that actually answered,
 not the row that was asked, so the field can never contradict the `pid` beside
 it.
+
+## A parity claim must name its reference command and reuse its builder
+
+### Trigger
+
+`topsailai runtime info` was first built to match
+`topsailai session info --include-runtime --json`, with a parity test asserting
+the two documents were byte-identical. The user then reversed the requirement:
+the reference should have been `workspace list --json --include-runtime`. The
+whole projection, the mandatory-selector rule and the documented contract had to
+be rebuilt, and two feature entries plus a cross-reference in another usage
+document had become wrong statements about the shipped command.
+
+### Action taken
+
+Rebuilt the command around the list's own item builder (`core._workspace_json_item`)
+and its own row pipeline (discovery, session-name enrichment, driver enrichment,
+hostname/metafile enrichment), then projected the item down to the three groups
+the user named. The parity test now compares against the list item restricted to
+the same three groups, so it states the relationship instead of freezing a copy.
+Swept `docs/usage/` and `features/` for the old claim and rewrote every hit,
+including the cross-reference in `topsailai_session_info.md` that still said the
+two commands print the same document.
+
+### Why this prevents recurrence
+
+"Matches command X" is a requirement with a name, and the name is the whole
+requirement: the same word "runtime" described two different documents, and only
+the reference command decided which fields, which selectors and which exit codes
+were correct. Before writing a projection, identify the reference command
+explicitly and call its own builder rather than re-deriving the shape, because a
+second builder is a second source of truth that will drift the moment the
+reference changes. When the reference changes, treat every sentence that names
+the old reference as part of the change: a stale cross-reference in a sibling
+document is as wrong as stale code, and it is the version a reader is most likely
+to trust.
+
+## A display identity and an on-disk identity are two different keys
+
+### Trigger
+
+`runtime info -s topsailai` failed with `session_not_found` even though the
+temporary session existed and `resolve_target` had just accepted the same
+spelling. `resolve_target` validated the identifier through
+`_on_disk_session_id`, which maps `(temp)`, `topsailai`, `None` and `""` to the
+reserved prefix `topsailai`, but `_workspace_row` then filtered discovery with
+the caller's raw spelling. Discovery reports a temporary row as `(temp)`, so the
+filter matched nothing.
+
+### Action taken
+
+Added `_display_session_id()`, which maps any identity whose on-disk form is the
+reserved prefix back to the `(temp)` marker, and used it as the discovery filter.
+The published `session_id` stays the empty string the list publishes for a
+temporary row, because that is the list's own value. Verified with a unit test
+asserting both spellings resolve the same row, and with a negative control that
+restores the raw filter and fails that test.
+
+### Why this prevents recurrence
+
+One session has at least three identities: the display label a human types, the
+filename prefix the storage layer writes, and the value the list publishes. A
+validation step and a lookup step that each translate a different one will
+disagree for exactly the rows that are hardest to test, because the common case
+has all three equal. Whenever a function accepts an identifier and then passes it
+to a second subsystem, translate it once at the boundary and pass the translated
+value, and keep the published value whatever the reference command publishes
+rather than the spelling the caller used.

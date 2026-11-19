@@ -1,5 +1,6 @@
 """Unit tests for workspace/task/cleanup.py."""
 
+import json
 import os
 import signal
 import tempfile
@@ -7,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from topsailai.workspace import session_meta as session_meta_module
 from topsailai.workspace.task import cleanup as cleanup_module
 from topsailai.workspace.task.cleanup import (
     cleanup_task_folder,
@@ -17,9 +19,15 @@ from topsailai.workspace.task.cleanup import (
 
 @pytest.fixture(autouse=True)
 def isolated_cleanup_state(monkeypatch):
-    """Use a temporary task folder and a clean registry for each test."""
+    """Use a temporary task folder and a clean registry for each test.
+
+    ``session_meta`` resolves the metadata path from its own module constant, so
+    both modules must point at the same temporary folder. Otherwise the exit
+    cleanup would read the real task folder and decide on unrelated sessions.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         monkeypatch.setattr(cleanup_module, "FOLDER_WORKSPACE_TASK", tmpdir)
+        monkeypatch.setattr(session_meta_module, "FOLDER_WORKSPACE_TASK", tmpdir)
         with cleanup_module._CLEANUP_LOCK:
             cleanup_module._CLEANUP_FILES.clear()
         yield tmpdir
@@ -278,16 +286,87 @@ def test_other_process_session_stdout_is_untouched(isolated_cleanup_state, count
     assert counters["seen"] == []
 
 
-def test_task_stdout_is_never_removed(isolated_cleanup_state, counters):
-    """Task stdout belongs to a child task process and is out of scope."""
-    counters["empty"] = True
-    path = os.path.join(isolated_cleanup_state, f"session.{os.getpid()}.task.stdout")
+def _write_task_artifact(tmpdir, session_id, pid, suffix):
+    """Create one task artifact named ``{session_id}.{pid}.{task_id}{suffix}``."""
+    path = os.path.join(tmpdir, f"{session_id}.{pid}.topsailai.1700000000.123456{suffix}")
     with open(path, "w", encoding="utf-8") as fp:
         fp.write("")
+    return path
+
+
+def _write_meta(tmpdir, session_id, pid, status):
+    """Write a session metadata file recording *status* for the given owner."""
+    path = os.path.join(tmpdir, f"{session_id}.{pid}.session.meta")
+    with open(path, "w", encoding="utf-8") as fp:
+        json.dump({"session_id": session_id, "pid": pid, "status": status}, fp)
+    return path
+
+
+def test_task_artifacts_are_preserved_when_the_session_did_not_complete(
+    isolated_cleanup_state, counters, monkeypatch
+):
+    """An abnormal exit must keep the task scene for diagnosis."""
+    counters["empty"] = True
+    session_id = "sess-abnormal"
+    pid = os.getpid()
+    monkeypatch.setattr(cleanup_module.env_tool, "get_session_id", lambda: session_id)
+    _write_meta(isolated_cleanup_state, session_id, pid, "interrupted")
+    task_path = _write_task_artifact(isolated_cleanup_state, session_id, pid, ".task")
+    stdout_path = _write_task_artifact(isolated_cleanup_state, session_id, pid, ".task.stdout")
 
     cleanup_task_folder()
 
-    assert os.path.exists(path)
+    assert os.path.exists(task_path)
+    assert os.path.exists(stdout_path)
+
+
+def test_task_artifacts_are_removed_after_a_normal_exit(
+    isolated_cleanup_state, counters, monkeypatch
+):
+    """A completed session removes both task artifacts on exit."""
+    counters["empty"] = True
+    session_id = "sess-completed"
+    pid = os.getpid()
+    monkeypatch.setattr(cleanup_module.env_tool, "get_session_id", lambda: session_id)
+    _write_meta(isolated_cleanup_state, session_id, pid, "completed")
+    task_path = _write_task_artifact(isolated_cleanup_state, session_id, pid, ".task")
+    stdout_path = _write_task_artifact(isolated_cleanup_state, session_id, pid, ".task.stdout")
+
+    cleanup_task_folder()
+
+    assert not os.path.exists(task_path)
+    assert not os.path.exists(stdout_path)
+
+
+def test_task_artifacts_are_preserved_without_metadata(
+    isolated_cleanup_state, counters, monkeypatch
+):
+    """Missing metadata cannot prove a normal exit, so the artifacts survive."""
+    counters["empty"] = True
+    session_id = "sess-no-meta"
+    pid = os.getpid()
+    monkeypatch.setattr(cleanup_module.env_tool, "get_session_id", lambda: session_id)
+    stdout_path = _write_task_artifact(isolated_cleanup_state, session_id, pid, ".task.stdout")
+
+    cleanup_task_folder()
+
+    assert os.path.exists(stdout_path)
+
+
+def test_task_artifacts_of_another_pid_are_never_removed(
+    isolated_cleanup_state, counters, monkeypatch
+):
+    """Cleanup is PID-scoped, so a foreign process's task artifacts survive."""
+    counters["empty"] = True
+    session_id = "sess-shared"
+    foreign_pid = os.getpid() + 1
+    monkeypatch.setattr(cleanup_module.env_tool, "get_session_id", lambda: session_id)
+    _write_meta(isolated_cleanup_state, session_id, os.getpid(), "completed")
+    foreign_path = _write_task_artifact(isolated_cleanup_state, session_id, foreign_pid, ".task.stdout")
+
+    cleanup_task_folder()
+
+    assert os.path.exists(foreign_path)
 
 
 def test_active_session_stdout_survives_regardless_of_content(isolated_cleanup_state, counters):

@@ -35,7 +35,12 @@ import threading
 from topsailai.utils import env_tool
 from topsailai.utils.file_tool import delete_file
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
-from topsailai.workspace.session_meta import get_session_meta_path
+from topsailai.workspace.session_meta import (
+    STATUS_COMPLETED,
+    TASK_ARTIFACT_SUFFIXES,
+    get_session_meta_path,
+    read_session_meta_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +177,52 @@ def _cleanup_empty_session_stdout(pid: int | None = None) -> None:
         delete_file(os.path.join(FOLDER_WORKSPACE_TASK, name))
 
 
+def _cleanup_completed_task_artifacts(pid: int | None = None) -> None:
+    """Remove this process's task artifacts after a normal exit.
+
+    A task artifact is a diagnostic record of one task execution. It is kept on
+    every abnormal exit so the scene survives, and removed only when the session
+    metadata proves the process ended normally. ``completed`` is that proof: a
+    normal return and a deliberate exit command both write it, while an uncaught
+    exception leaves ``running`` (rewritten to ``interrupted`` by the metadata
+    finalizer) and a controlled database failure records ``error``.
+
+    Only regular files carrying this process's ``{session_id}.{pid}.`` prefix are
+    touched, so another process's artifacts and unrelated files are never
+    removed.
+    """
+    if not os.path.isdir(FOLDER_WORKSPACE_TASK):
+        return
+    if pid is None:
+        pid = os.getpid()
+    session_id = env_tool.get_session_id() or "topsailai"
+    if read_session_meta_status(session_id) != STATUS_COMPLETED:
+        logger.debug(
+            "Preserving task artifacts for session %s: the session did not end normally",
+            session_id,
+        )
+        return
+    prefix = f"{session_id}.{pid}."
+    try:
+        names = os.listdir(FOLDER_WORKSPACE_TASK)
+    except OSError as exc:
+        logger.error("Failed to scan task folder for task artifacts: %s", exc)
+        return
+    for name in names:
+        if not name.startswith(prefix):
+            continue
+        if not name.endswith(TASK_ARTIFACT_SUFFIXES):
+            continue
+        path = os.path.join(FOLDER_WORKSPACE_TASK, name)
+        try:
+            if not os.path.isfile(path) or os.path.islink(path):
+                continue
+        except OSError as exc:
+            logger.error("Cannot inspect task artifact %s: %s", path, exc)
+            continue
+        delete_file(path)
+
+
 def cleanup_task_folder() -> None:
     """Remove all registered temporary files and PID-scoped pipes.
 
@@ -197,6 +248,7 @@ def cleanup_task_folder() -> None:
 
     _cleanup_pid_scoped_pipes()
     _cleanup_empty_session_stdout()
+    _cleanup_completed_task_artifacts()
 
 
 def print_session_meta_files_on_exit() -> None:

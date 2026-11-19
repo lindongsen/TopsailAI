@@ -920,3 +920,79 @@ def test_orphan_cleanup_uses_configured_retention(monkeypatch):
 
     assert removed == [stats_path]
     assert not os.path.exists(stats_path)
+
+
+def _write_task_artifact(session_id, pid, suffix, age_days=30):
+    """Create one task artifact sharing the metadata owner prefix."""
+    path = os.path.join(
+        session_meta.FOLDER_WORKSPACE_TASK,
+        f"{session_id}.{pid}.topsailai.1700000000.123456{suffix}",
+    )
+    with open(path, "w", encoding="utf-8") as fd:
+        fd.write("artifact")
+    stamp = time.time() - age_days * 86400
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_cleanup_reclaims_task_artifacts_with_the_metadata(monkeypatch):
+    """Task artifacts share the owner prefix, so they expire with the metadata."""
+    meta_path = session_meta.create_session_meta("task-reclaim")
+    pid = os.getpid()
+    task_path = _write_task_artifact("task-reclaim", pid, ".task")
+    stdout_path = _write_task_artifact("task-reclaim", pid, ".task.stdout")
+    old_time = time.time() - 10 * 86400
+    os.utime(meta_path, (old_time, old_time))
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(activity_probe=_stopped_probe())
+
+    assert not os.path.exists(meta_path)
+    assert not os.path.exists(task_path)
+    assert not os.path.exists(stdout_path)
+
+
+def test_cleanup_preserves_task_artifacts_of_another_pid(monkeypatch):
+    """Only the removed metadata's own owner prefix is reclaimed."""
+    meta_path = session_meta.create_session_meta("task-shared")
+    own_pid = os.getpid()
+    foreign_pid = own_pid + 1
+    foreign_path = _write_task_artifact("task-shared", foreign_pid, ".task.stdout")
+    old_time = time.time() - 10 * 86400
+    os.utime(meta_path, (old_time, old_time))
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(activity_probe=_stopped_probe())
+
+    assert not os.path.exists(meta_path)
+    assert os.path.exists(foreign_path)
+
+
+def test_cleanup_preserves_task_artifacts_when_metadata_is_unauthorized(monkeypatch):
+    """An unauthorized session keeps both its metadata and its task artifacts."""
+    meta_path = session_meta.create_session_meta("task-unauthorized")
+    pid = os.getpid()
+    stdout_path = _write_task_artifact("task-unauthorized", pid, ".task.stdout")
+    old_time = time.time() - 10 * 86400
+    os.utime(meta_path, (old_time, old_time))
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(
+        activity_probe=MagicMock(can_clean=MagicMock(return_value=False))
+    )
+
+    assert os.path.exists(meta_path)
+    assert os.path.exists(stdout_path)
+
+
+def test_owner_prefix_rejects_unexpected_metadata_names():
+    """An unexpected name must not produce a prefix that matches other files."""
+    assert session_meta._owner_prefix_from_meta("/tmp/abc.123.session.meta") == "abc.123."
+    assert session_meta._owner_prefix_from_meta("/tmp/bad.meta") is None
+    assert session_meta._owner_prefix_from_meta("/tmp/x.1.session.meta.tmp") is None
