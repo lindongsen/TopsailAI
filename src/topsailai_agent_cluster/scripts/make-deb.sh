@@ -504,9 +504,6 @@ function write_role_config() {
 # Warns about values a real deployment must replace before the package is used.
 function warn_placeholders() {
     local config="$1"
-    if grep -q "replace-with-a-real-token" "${config}"; then
-        warn "the configuration still holds the placeholder AUTH_TOKEN; pass --config with a real configuration"
-    fi
     if grep -q "127.0.0.1" "${config}"; then
         warn "the configuration still points at 127.0.0.1; pass --config with the site addresses"
     fi

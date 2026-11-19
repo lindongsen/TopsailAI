@@ -9,11 +9,17 @@
 # which gives a token rotation a supported path instead of hand-editing a file
 # the installer refuses to overwrite.
 #
-# Usage: agent-cluster-node-setup [--config <file>] [--home <dir>] [--force]
+# Usage: agent-cluster-node-setup [--config <file>] [--home <dir>] [--token <credential>] [--force]
 #
 #   --config  installed node configuration (default /opt/agent-cluster/conf/<role>/node.conf)
 #   --home    home directory that receives the env file (default $HOME)
+#   --token   Server credential to write; a key_id.secret pair in hmac mode
 #   --force   replace an existing env file whose content differs
+#
+# The credential is supplied on the command line rather than read from the node
+# configuration, because the node configuration carries no CLI credential: the
+# Endpoint daemon never reads one, and a value stored there would be a second
+# copy of a secret that the CLI already owns.
 #
 # Exit status: 0 when the file was written or already matched, 1 on failure,
 # 2 on a usage error.
@@ -23,6 +29,7 @@ set -uo pipefail
 CONFIG_FILE="/opt/agent-cluster/conf/endpoint/node.conf"
 TARGET_HOME="${HOME:-}"
 FORCE=0
+TOKEN=""
 CLI_ENV_LIB="/opt/agent-cluster/lib/cli-env.sh"
 
 function die() {
@@ -31,7 +38,7 @@ function die() {
 }
 
 function usage() {
-    echo "usage: $(basename "$0") [--config <file>] [--home <dir>] [--force]" >&2
+    echo "usage: $(basename "$0") [--config <file>] [--home <dir>] [--token <credential>] [--force]" >&2
     exit 2
 }
 
@@ -45,6 +52,11 @@ while [ $# -gt 0 ]; do
         --home)
             [ $# -ge 2 ] || usage
             TARGET_HOME="$2"
+            shift 2
+            ;;
+        --token)
+            [ $# -ge 2 ] || usage
+            TOKEN="$2"
             shift 2
             ;;
         --force) FORCE=1; shift ;;
@@ -65,11 +77,11 @@ set +a
 
 [ -n "${SERVER_API_URL:-}" ] ||
     die "SERVER_API_URL is not set in ${CONFIG_FILE}; the CLI has no Server to dial"
-[ -n "${AUTH_TOKEN:-}" ] ||
-    die "AUTH_TOKEN is not set in ${CONFIG_FILE}; the CLI has no credential"
+[ -n "${TOKEN}" ] ||
+    die "no credential supplied; pass --token <key_id.secret>"
 
 # shellcheck source=lib/cli-env.sh
 . "${CLI_ENV_LIB}"
 
-cli_env_write "${TARGET_HOME}" "${SERVER_API_URL}" "${AUTH_TOKEN}" "${FORCE}" ||
+cli_env_write "${TARGET_HOME}" "${SERVER_API_URL}" "${TOKEN}" "${FORCE}" ||
     die "cannot write the per-user CLI env file"
