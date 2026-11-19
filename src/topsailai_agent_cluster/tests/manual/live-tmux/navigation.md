@@ -58,6 +58,11 @@ Verified on 2026-11-07 in a 40x30 tmux pane against an isolated fixture endpoint
 | WCH-04 | any keypress during `watch` | the loop stops before the key is applied, `auto-refresh stopped` is printed, and the prompt returns usable |
 | WCH-05 | 100-column terminal, workspace `watch 60s` | a table is printed immediately on start, before any tick can arrive; the interval is far longer than the observation window, so a loop that still waits for its first tick prints nothing |
 | WCH-06 | 60-column terminal, workspace `watch 2s`, then widen the pane to 200 columns between ticks | the next render uses the new width, so the widest line grows past the narrow width; a layout sampled once at startup keeps the narrow width forever |
+| WCH-07 | workspace `watch 2s -b` | `bell: on any state change` is printed before the first table, so the scope of the bell is stated rather than inferred |
+| WCH-08 | workspace `watch 60s -b`, observe for 8s | no BEL byte reaches the terminal: the first collection describes what was already there, so a bell at arm time would fire for the whole fleet |
+| WCH-09 | workspace `watch 2s -b`, observe several ticks with no state change | no BEL byte reaches the terminal, even though the table reprints because `DATA_STATUS` timestamps move; a BEL stored in the payload baseline would reprint and ring on every tick |
+| WCH-10 | workspace `watch 2s` without `-b` | no BEL byte and no bell banner, so the flag is opt-in |
+| WCH-11 | workspace `watch 2s -b`, a session changes state | exactly one BEL byte per tick that observed a change, however many sessions changed |
 
 Verified on 2026-11-07 in 180x40 and 40x30 tmux panes against the live local cluster. WCH-01 reprinted 237 SGR sequences with cyan bold headers and per-state row colours; WCH-02 reprinted 0 SGR sequences with `SESSION_STATUS` present; WCH-03 bounded every table line to 40 columns with `S...`/`PR...`/`EN...`/`DA...` headers; WCH-04 printed `auto-refresh stopped` and returned a usable prompt. The same 40-column pane against the pre-fix binary printed 126-column lines, which is the regression this case guards. Evidence is retained under workspace `.tmp/live-tmux-audit/evidence/`.
 
