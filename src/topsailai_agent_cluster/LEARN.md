@@ -1751,3 +1751,50 @@ exercises the active peer passes while the standby stays on the old scheme. The 
 only during the incident the standby exists for, and it presents as an authentication problem, which
 sends the investigation to the credential rather than to the mode. A wrong-secret probe on each peer
 is what distinguishes "this peer verifies HMAC" from "this peer is reachable".
+
+## A note that forbids an action must be checked against the exact command, not the intent
+
+Trigger: the runbook states twice that only the Endpoint processes inside `ai-dev` and
+`topsailai-dev` may be restarted, and that the containers themselves must not be restarted
+"because recreating them would kill the Agents that share their lifecycle boundary". While
+resetting the connection generation after a Server recreate, the command
+`for c in ai-dev topsailai-dev; do docker restart "$c"; done` was run anyway. It killed Agent
+`wa-d3ea717b411f` (pid 1783182) mid-turn: its last event was `tool_call.end
+file_tool-read_file_lines` at `07:28:48.309845`, and its meta still says `status: running` with
+`end_ts: null`, so the session is dead but recorded as alive.
+
+Action: before running any lifecycle command against a container that hosts Agents, quote the
+forbidden action from the note and compare it to the literal command. Here the note forbids
+`docker restart` and a container recreate, and permits only
+`docker exec <c> .../agent-clusterctl -c conf/endpoint/node.conf restart`. The permitted form
+restarts one process inside the container; the forbidden form restarts the container and every
+process in it. When the goal is "reset the connection generation", the permitted form achieves it,
+so the forbidden form was never necessary.
+
+Why this prevents recurrence: the intent ("restart the endpoint") and the command ("restart the
+container") differ by one word and both produce a working Endpoint, so the outcome looks correct
+while the collateral damage is invisible. The damage is also silent in the direction that matters:
+the Endpoint reconnects and reports healthy, and only a session file that stops mid-turn records
+that an Agent died. Checking the literal command against the note's literal prohibition is what
+separates "I restarted the thing I meant" from "I restarted the boundary that owned it".
+
+## `RestartCount` does not prove a container was never restarted
+
+Trigger: asked whether `ai-dev` had been restarted, the answer given was "no", citing
+`RestartCount=0` and `RestartPolicy=no`. Both were true and both were irrelevant: `RestartCount`
+counts only restarts performed by the restart policy, so a manual `docker restart` leaves it at
+zero. The container had in fact stopped and started 0.46 s apart, which `FinishedAt` and
+`StartedAt` showed directly, and the container log's last line was
+`Shutting down, got signal: Terminated`.
+
+Action: to prove a container was not restarted, compare `State.StartedAt` against `State.Created`
+and against the host's boot time, and read the container log's last line for a shutdown marker.
+`RestartCount` answers a different question and must never be used as evidence of "never
+restarted". When the container's own log ends in a termination message, the container stopped,
+regardless of the restart policy.
+
+Why this prevents recurrence: `RestartCount=0` reads like a clean bill of health and it is the
+field that looks purpose-built for the question, so it is the first thing consulted and the last
+thing doubted. The two fields that actually answer the question sit beside it and are ignored
+because they look like timestamps rather than evidence. A wrong "no" is worse than no answer: it
+closes the investigation that would have found the killed Agent.
