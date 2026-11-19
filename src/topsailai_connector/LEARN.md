@@ -665,12 +665,25 @@ AI reflection archive, not here.
   `usage:`. Both halves were wrong in a way that only running the command revealed.
   A documented exit status is a claim like any other, so it is measured, not
   inferred from the error's type.
-- The `ErrUsage` wrapper on that path is decorative: `openDestination` wraps the
+- The `ErrUsage` wrapper on that path was decorative: `openDestination` wrapped the
   refusal, and `Run` returns `1` for every error from `writeToDestination` without
-  unwrapping it. The message prefix and the status disagree, and a script branching
-  on the status cannot tell "the command line was rejected" from "the request ran
-  and the write was refused". Recorded as
-  `issues/issue-output-refusal-exits-one-with-a-usage-message.md`.
+  unwrapping it. The message prefix and the status disagreed, and a script branching
+  on the status could not tell "the command line was rejected" from "the request ran
+  and the write was refused". Fixed by dropping the wrapper, so the message matches
+  the status; recorded in
+  `issues/done/issue-output-refusal-exits-one-with-a-usage-message.md`.
+- The same wrapper is still decorative in the other direction on the `Client.Send`
+  path: ten local checks wrap `ErrUsage` and `Run` returns `1`, so the prefix is right
+  and the status is wrong. Two defects of one shape, and fixing the first did not fix
+  the second because the correct answer differs: there the status must change, here
+  the message had to. Recorded as
+  `issues/issue-send-time-validation-exits-one-with-a-usage-message.md`.
+- A test that asserts the message and the status separately cannot see that the pair
+  is inconsistent. `TestOutputRefusesAnExistingDestination` checked that the message
+  contained `--force` and that the status was non-zero; each assertion passed while
+  the combination was wrong. The fix was to strengthen that test to read the pair,
+  not to add a second test beside it: a duplicate in another file would have left the
+  weak assertion in place and made the suite look better covered than it was.
 - A skill's `description` is what decides whether it is loaded at all. Adding a
   capability without adding it there means the skill is not selected for the
   request that needs it, so the feature stays undiscoverable even after the body

@@ -333,7 +333,18 @@ func TestOutputHonoursOffsetAndLength(t *testing.T) {
 }
 
 // TestOutputRefusesAnExistingDestination proves a read does not silently replace a
-// local file.
+// local file, and that the refusal is reported as a failed request rather than as a
+// malformed command line.
+//
+// The status and the message prefix are asserted together on purpose. The earlier
+// version of this test checked the message and the status separately — the message
+// contained `--force`, the status was merely non-zero — and each assertion was
+// individually plausible while the pair was inconsistent: the message began `usage:`
+// and the status was 1. Only a test that reads the pair can see that.
+//
+// Status 1 is correct in substance. The command line was accepted, the request ran,
+// and the result was refused at the moment of writing, so `2` would tell a script
+// that nothing was sent when something was.
 func TestOutputRefusesAnExistingDestination(t *testing.T) {
 	_, url := newChunkServer(t, []byte("new content"), -1)
 
@@ -345,8 +356,14 @@ func TestOutputRefusesAnExistingDestination(t *testing.T) {
 
 	fixture := runAgainst(t, url, outputArguments(t, destination))
 
-	if fixture.status == 0 {
-		t.Fatal("status = 0, want a refusal")
+	if fixture.status != 1 {
+		t.Errorf("status = %d, want 1 because the request ran and only the write was refused; stderr = %q", fixture.status, fixture.stderr)
+	}
+	if strings.Contains(fixture.stderr, "usage:") {
+		t.Errorf("stderr = %q, want no usage: prefix because the command line was accepted", fixture.stderr)
+	}
+	if !strings.Contains(fixture.stderr, "already exists") {
+		t.Errorf("stderr = %q, want it to name the refusal", fixture.stderr)
 	}
 	if !strings.Contains(fixture.stderr, "--force") {
 		t.Errorf("stderr = %q, want a hint about --force", fixture.stderr)

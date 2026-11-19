@@ -134,6 +134,12 @@ type destination struct {
 //
 // An existing destination is refused unless Force is set. A read tool that silently
 // replaced a local file would destroy work the caller never asked it to touch.
+//
+// The refusal is deliberately not wrapped in ErrUsage. The command line was accepted
+// and the request ran; only the write was refused, so the exit status is 1 and the
+// message must not claim otherwise. A `usage:` prefix here would send a reader looking
+// for a typo that does not exist, and it would break the invariant that a message
+// beginning `usage:` always accompanies status 2.
 func openDestination(options Options, stdout io.Writer) (*destination, error) {
 	if options.Output == "" || options.Output == stdoutDestination {
 		return &destination{writer: stdout}, nil
@@ -142,7 +148,7 @@ func openDestination(options Options, stdout io.Writer) (*destination, error) {
 	final := options.Output
 	if !options.Force {
 		if _, err := os.Lstat(final); err == nil {
-			return nil, fmt.Errorf("%w: %s already exists; pass --force to replace it", ErrUsage, final)
+			return nil, fmt.Errorf("%s already exists; pass --force to replace it", final)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("inspect %s: %w", final, err)
 		}

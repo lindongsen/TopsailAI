@@ -261,11 +261,17 @@ silently picking one.
 A shell script can branch on the status. The error code and message go to stderr;
 the payload goes to stdout.
 
-One case is worth calling out because it looks like a usage error and is not:
-**an existing `-o` destination exits `1`, not `2`**, even though the message begins
-with `usage:`. The refusal happens while the result is being written, after the
-command line was accepted. Treat `1` as "nothing was written" and `2` as "nothing
-was sent".
+One case is worth calling out because it is easy to misread: **an existing `-o`
+destination exits `1`, not `2`**, and its message carries no `usage:` prefix. The
+refusal happens while the result is being written, after the command line was
+accepted and the request ran. Treat `1` as "nothing was written" and `2` as
+"nothing was sent".
+
+The prefix is not a reliable signal on its own. A few values are checked after the
+command line is parsed but before the request is sent — a malformed `--node-id`, a
+scope name outside the alphabet, a `--server` URL that is not `http` or `https` —
+and those are reported with a `usage:` prefix while exiting `1`. Branch on the
+status, not on the prefix.
 
 ### Error codes
 
