@@ -46,6 +46,12 @@ SESSION_META_CLEANUP_SLOW_SECONDS = 5
 # whole session unauthorized forever.
 ARTIFACT_SUFFIXES = ("stdout", "events", "stats.jsonl")
 
+# Task artifacts share the ``{session_id}.{pid}.`` prefix of the metadata
+# basename instead of its full basename, because a task id is appended between
+# the PID and the suffix. They are declared here once so the exit cleanup and
+# the retention reclamation cannot drift apart.
+TASK_ARTIFACT_SUFFIXES = (".task", ".task.stdout")
+
 _META_LOCK = threading.RLock()
 
 
@@ -162,6 +168,29 @@ def _read_meta(path: str) -> dict | None:
             return json.load(fd)
     except Exception:
         return None
+
+
+def read_session_meta_status(session_id: str | None = None) -> str | None:
+    """Return the recorded status of this process's session metadata.
+
+    The status is the only authority for "did this process end normally?".
+    ``completed`` is written on a normal return and on a deliberate exit
+    command, while an uncaught exception leaves ``running`` until
+    ``_finalize_on_exit`` rewrites it to ``interrupted``, and a controlled
+    database failure records ``error``.
+
+    Args:
+        session_id: Optional session identifier. If not provided, read from env.
+
+    Returns:
+        The recorded status string, or None when the metadata is missing or
+        unreadable. None must be treated as "not a normal exit".
+    """
+    meta = _read_meta(get_session_meta_path(session_id))
+    if not isinstance(meta, dict):
+        return None
+    status = meta.get("status")
+    return status if isinstance(status, str) else None
 
 
 def _get_related_files(meta_basename: str) -> dict:
@@ -433,8 +462,100 @@ def _remove_session_artifacts(meta_path):
     return removed
 
 
-def _remove_cleanable_meta(paths, candidates, decisions, message):
-    """Delete authorized metadata only when its captured identity is unchanged."""
+def _owner_prefix_from_meta(meta_path):
+    """Return the ``{session_id}.{pid}.`` owner prefix of a metadata file.
+
+    The metadata basename is ``{session_id}.{pid}.session.meta`` while a task
+    artifact is ``{session_id}.{pid}.{task_id}.task``, so the shared owner prefix
+    is the basename with both the ``.session`` segment and the extension removed.
+    Returning ``None`` for an unexpected name keeps the caller from matching an
+    unrelated file by accident.
+    """
+    base = os.path.basename(meta_path)[: -len(f".{META_EXTENSION}")]
+    owner, separator, tail = base.rpartition(".session")
+    if not separator or tail or not owner:
+        return None
+    return f"{owner}."
+
+
+class _LazyTaskInventory:
+    """Scan the task folder at most once, and only when a removal needs it.
+
+    The retention pass usually removes nothing, so scanning the directory up
+    front would add startup work to every launch. The listing is therefore
+    produced on first use and cached for the rest of the pass, which keeps the
+    cost at one scan per pass that actually reclaims something.
+    """
+
+    def __init__(self):
+        self._names = None
+        self._scanned = False
+
+    def get(self):
+        """Return the cached directory listing, scanning it on first use."""
+        if self._scanned:
+            return self._names
+        self._scanned = True
+        listdir = getattr(os, "listdir", None)
+        if listdir is None:
+            self._names = []
+            return self._names
+        try:
+            self._names = listdir(FOLDER_WORKSPACE_TASK)
+        except OSError as exc:
+            logger.error("Failed to scan task folder for task artifacts: %s", exc)
+            self._names = []
+        return self._names
+
+
+def _remove_task_artifacts(meta_path, inventory=None):
+    """Remove the task artifacts that share one metadata file's owner prefix.
+
+    A task artifact is named ``{session_id}.{pid}.{task_id}.task`` (and
+    ``.task.stdout``), so it shares the ``{session_id}.{pid}.`` prefix of the
+    metadata basename rather than the full basename. Reclaiming it together with
+    the metadata keeps the owner record and its diagnostics in one lifecycle.
+
+    ``inventory`` is an optional :class:`_LazyTaskInventory` shared by the whole
+    retention pass, so reclaiming task artifacts does not rescan the directory
+    once per removed metadata file. Only regular files are touched, and a symlink
+    or a directory is left alone.
+    """
+    prefix = _owner_prefix_from_meta(meta_path)
+    if prefix is None:
+        logger.debug("Skipping task artifact reclamation for unexpected name: %s", meta_path)
+        return []
+    if inventory is None:
+        inventory = _LazyTaskInventory()
+    removed = []
+    for name in inventory.get():
+        if not name.startswith(prefix):
+            continue
+        if not name.endswith(TASK_ARTIFACT_SUFFIXES):
+            continue
+        path = os.path.join(FOLDER_WORKSPACE_TASK, name)
+        try:
+            current = _lstat(path)
+        except OSError:
+            continue
+        if not stat.S_ISREG(current.st_mode):
+            continue
+        try:
+            os.remove(path)
+            removed.append(path)
+            logger.debug("Removed task artifact: %s", path)
+        except OSError:
+            continue
+    return removed
+
+
+def _remove_cleanable_meta(paths, candidates, decisions, message, inventory=None):
+    """Delete authorized metadata only when its captured identity is unchanged.
+
+    ``inventory`` is an optional :class:`_LazyTaskInventory` shared by the whole
+    retention pass, so reclaiming task artifacts does not rescan the directory
+    once per removed metadata file.
+    """
     removed = set()
     for path in paths:
         candidate = candidates.get(path)
@@ -450,6 +571,7 @@ def _remove_cleanable_meta(paths, candidates, decisions, message):
         except OSError:
             continue
         _remove_session_artifacts(path)
+        _remove_task_artifacts(path, inventory)
     return removed
 
 
@@ -510,11 +632,13 @@ def cleanup_session_meta_files(activity_probe=None) -> None:
     candidate_paths = tuple(dict.fromkeys(old_paths + initial_excess_paths))
     candidates = _capture_cleanup_candidates(candidate_paths)
     decisions = _cleanable_sessions(candidates, activity_probe)
+    task_inventory = _LazyTaskInventory()
     removed = _remove_cleanable_meta(
         old_paths,
         candidates,
         decisions,
         "Removed old session meta file: %s",
+        inventory=task_inventory,
     )
     surviving = [item for item in ordered_files if item[0] not in removed]
 
@@ -527,6 +651,7 @@ def cleanup_session_meta_files(activity_probe=None) -> None:
             candidates,
             decisions,
             "Removed excess session meta file: %s",
+            inventory=task_inventory,
         )
 
     # Partial temporary records cannot prove stopped ownership; preserve them.
