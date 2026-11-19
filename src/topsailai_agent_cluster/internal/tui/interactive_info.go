@@ -36,7 +36,7 @@ func interactiveInfo(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return numericTokenHint(token, err)
 	}
-	read := readSessionDetail(ctx, api, endpoint.EndpointID, session.ProviderSessionID)
+	read := readSessionDetail(ctx, api, endpoint.EndpointID, session.ProviderSessionID, session.ProviderTarget)
 	return renderSessionInfoWithSections(out, endpoint, session, sessionDetailSections(read))
 }
 

@@ -20,6 +20,11 @@ type CommandAPI interface {
 	AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error)
 }
 
+// exactOutputReader preserves opaque Provider addressing evidence.
+type exactOutputReader interface {
+	GetOutputRequest(context.Context, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error)
+}
+
 // InteractiveAPI remains an alias for callers compiled against the original REPL seam.
 type InteractiveAPI = CommandAPI
 
@@ -200,28 +205,41 @@ func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, reso
 	if err != nil {
 		return err
 	}
-	generation := ""
+	generation, providerTarget := "", ""
 	for _, session := range report.Sessions {
 		if session.ClusterSessionID == resourceID {
 			generation = session.ProviderGeneration
+			providerTarget = session.ProviderTarget
 			break
 		}
 	}
 	if jsonMode {
-		snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
+		snapshot, err := r.getOutput(ctx, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, ProviderTarget: providerTarget, MaxBytes: maxBytes, MaxLines: maxLines})
 		if err != nil {
 			return err
 		}
 		return RenderJSON(out, snapshot)
 	}
-	return r.RenderSessionSnapshot(ctx, out, endpointID, resourceID, generation, maxBytes, maxLines, color)
+	return r.renderSessionSnapshotRequest(ctx, out, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, ProviderTarget: providerTarget, MaxBytes: maxBytes, MaxLines: maxLines}, color)
 }
 
 // RenderSessionSnapshot reads and renders one bounded output snapshot for an
 // already validated generation, so a caller that just validated the selection
 // does not repeat the inventory round trip.
 func (r CommandRunner) RenderSessionSnapshot(ctx context.Context, out io.Writer, endpointID, resourceID, generation string, maxBytes, maxLines int, color ColorPolicy) error {
-	snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
+	return r.renderSessionSnapshotRequest(ctx, out, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, MaxBytes: maxBytes, MaxLines: maxLines}, color)
+}
+
+func (r CommandRunner) getOutput(ctx context.Context, request protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	if exact, ok := r.API.(exactOutputReader); ok {
+		return exact.GetOutputRequest(ctx, request)
+	}
+	return r.API.GetOutput(ctx, request.EndpointID, request.ResourceID, request.ProviderGeneration, request.MaxBytes, request.MaxLines)
+}
+
+func (r CommandRunner) renderSessionSnapshotRequest(ctx context.Context, out io.Writer, request protocol.OutputSnapshotRequest, color ColorPolicy) error {
+	maxLines := request.MaxLines
+	snapshot, err := r.getOutput(ctx, request)
 	if err != nil {
 		return err
 	}

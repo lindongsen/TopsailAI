@@ -234,6 +234,7 @@ func shellActionRequest(ctx context.Context, api InteractiveAPI, state *interact
 		request.ResourceID = session.ClusterSessionID
 		request.ProviderDisplayName = session.ProviderDisplayName
 		request.ProviderSessionID = session.ProviderSessionID
+		request.ProviderTarget = session.ProviderTarget
 		request.ProviderGeneration = session.ProviderGeneration
 		return request, nil
 	}

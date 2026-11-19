@@ -460,26 +460,52 @@ def discover_workspace_log_files(
             session_candidates.setdefault(item.get("session_id"), set()).add(item.get("pid"))
     home = os.path.dirname(os.path.dirname(task_dir))
     metadata = {}
+
+    def read_meta(session_id: str, pid: int) -> Optional[dict]:
+        """Read one exact record once per scan, caching absence as ``None``."""
+        key = (session_id, pid)
+        if key not in metadata:
+            try:
+                metadata[key] = read_session_meta(home, session_id, pid).data
+            except SessionMetaError:
+                metadata[key] = None
+        return metadata[key]
+
     visible = []
     for item in files:
         session_id = item.get("session_id")
-        pid = item.get("session_pid")
-        # Generic discovery may guess a parent when multiple session PIDs exist.
-        if item.get("is_task") and len(session_candidates.get(session_id, ())) != 1:
-            pid = None
+        # A row describes the process that wrote its log file, so its own
+        # filename PID is the identity its record must match. A task row's
+        # ``session_pid`` names the parent session process, which is a different
+        # process and therefore a different record.
+        pid = item.get("pid")
         item["_workspace_meta_pid"] = pid
-        key = (session_id, pid)
-        if session_id not in (None, "", "(temp)") and type(pid) is int:
-            if key not in metadata:
-                try:
-                    metadata[key] = read_session_meta(home, session_id, pid).data
-                except SessionMetaError:
-                    metadata[key] = None
-            data = metadata[key]
-            item["_workspace_meta_snapshot"] = (home, session_id, pid, data)
-            if (not include_completed and data is not None
-                    and data.get("status") == "completed"):
-                continue
+        if session_id in (None, "", "(temp)") or type(pid) is not int:
+            visible.append(item)
+            if on_item is not None:
+                on_item(item)
+            continue
+        # Completion is a session-level fact: a worker that finished must not
+        # disappear while the session it belongs to is still running, so a task
+        # row is judged by its parent's record. An ambiguous parent is never
+        # guessed, because dropping a row on a guess would hide a live worker.
+        # The parent record is read first and cached across the session's rows,
+        # so a dropped worker costs one shared read instead of its own.
+        completion = None
+        if item.get("is_task"):
+            parent_pid = item.get("session_pid")
+            if (len(session_candidates.get(session_id, ())) == 1
+                    and type(parent_pid) is int):
+                completion = read_meta(session_id, parent_pid)
+        else:
+            completion = read_meta(session_id, pid)
+        if (not include_completed and completion is not None
+                and completion.get("status") == "completed"):
+            continue
+        # The row survives, so its own record is now needed for the hostname,
+        # the session-name fallback and the completion marker.
+        data = read_meta(session_id, pid)
+        item["_workspace_meta_snapshot"] = (home, session_id, pid, data)
         visible.append(item)
         if on_item is not None:
             on_item(item)

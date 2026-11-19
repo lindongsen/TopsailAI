@@ -566,3 +566,140 @@ Consequences that MUST hold:
   workspace would relocate the problem, so it is deleted instead and git history keeps it recoverable.
 - The cluster Makefile may still drive a provider-owned fixture, but it must build it from inside the
   provider module, so the fixture is compiled against the provider's own `go.mod`.
+
+## One step to the answer: never pay for an identity the caller already holds
+
+Directed by the human on 2026-11-19, wording normalized, meaning preserved:
+
+> 这一步要先做，把 provider 的 session_id 和 pid 传下去。"一步到位"为原则，不要做多余的事。
+
+This is a standing requirement for every read and every command, not a note about one
+command. A caller that already knows a value must pass it down instead of letting a lower
+layer reconstruct it. Reconstructing a value that was known at the top of the stack is
+duplicate work, and it is the most expensive kind: it hides inside a layer that looks like
+it is doing its own job.
+
+The rule is stated as three requirements:
+
+| Requirement | Meaning |
+|---|---|
+| Pass what the Provider supplied | Provider addressing data travels through one standard opaque Cluster slot. The Cluster never replaces that slot with Provider-specific fields and never drops and re-derives its content. |
+| One step to the answer | A read reaches its answer in one Provider call. A second call that exists only to translate an identity is a defect, not a design. |
+| No extra work | Do not add a cache, a second spelling or a compatibility branch to avoid the real fix. Fix the standard seam and data flow instead. |
+
+Consequences that MUST hold:
+
+- The Cluster defines the contract, seam, bound and standard `provider_target` slot. A Provider fills
+  that slot with its own addressing document; the Cluster stores and forwards the bytes unchanged.
+- Cluster protocol, Server, Endpoint and CLI code must not declare `session_id`, `pid` or another
+  Provider's address dimensions as Cluster target semantics. TopsailAI may place those values in its
+  opaque slot and only `providers/topsailai` may interpret them.
+- An opaque Cluster resource ID remains the routing and authority identity. The Provider slot is
+  supplementary addressing evidence, not Cluster authority, and it never replaces resource mapping,
+  policy, capability, journal or generation checks.
+- A digest that cannot be reversed must never be the only value sent when the Provider already
+  supplied an exact target slot. A reverse lookup by scanning every row is the symptom of a slot that
+  was dropped, not a cost the Provider has to pay.
+- A second Provider call whose only purpose is to translate an identity is removed, not optimised.
+  Optimising it keeps the extra step and makes the defect harder to see.
+- "One step" does not authorise skipping a required check. Authorization, generation revalidation,
+  policy and capability checks stay exactly where they are; only redundant identity reconstruction is
+  removed.
+
+Why this is recorded: `model.catalog` ran `workspace list --json --local` (1.77 s) purely to
+reverse-resolve a sha256 digest back into the provider session identifier, and then used only
+that one field. The identifier was already known by the CLI, which reads it from the committed
+inventory, and it was discarded when the target was minted as a digest. The provider paid 54%
+of the read to recover a value the caller had in hand. See
+`issues/model-catalog-reverses-a-digest-it-was-given.md`.
+
+
+## The Cluster defines standard seams and slots; Providers only fill them
+
+Directed by the human on 2026-11-19, wording normalized, meaning preserved:
+
+> Cluster is the contract and the seam. It defines standard interfaces, standard seams and standard
+> slots without changing Provider data. A Provider only fills those slots with its own data.
+
+This is an architecture floor for every integration path. The Cluster owns the shape around Provider
+content, never the Provider content itself.
+
+| Owner | Responsibility |
+|---|---|
+| Cluster | Define the resource, operation, seam name, slot position, byte/schema bound, forwarding rule and authority checks. |
+| Provider | Produce the slot content and interpret it when the request returns to that Provider. |
+| Server and Endpoint | Validate the standard envelope and bound, preserve the slot unchanged, and never derive Provider business meaning from it. |
+| CLI/TUI | Carry the slot belonging to the selected Cluster resource; never edit it or construct Provider-specific fields. |
+
+Consequences that MUST hold:
+
+- A standard slot is opaque to Cluster business logic. The Cluster may check presence, size and valid
+  JSON when the contract says the slot is a JSON document; it may not inspect keys to make routing,
+  display, authorization or behavior decisions.
+- Provider-specific address dimensions such as TopsailAI session IDs and PIDs belong inside the
+  Provider's target slot, not as new Cluster-wide target semantics.
+- The Provider fills the slot when it reports a resource. The same bytes follow that resource through
+  read and command seams and return to the Provider that produced them.
+- The Cluster never merges, trims, renames or re-encodes slot content. If a Provider needs a different
+  address document, the Provider changes what it emits while the standard slot remains unchanged.
+- The opaque slot is evidence used by the Provider to address its business resource. Cluster authority
+  remains the opaque Cluster resource ID, resource mapping, generation, policy, capability and journal.
+- A fallback may exist only when no Provider slot was reported, such as a historical handle or a
+  pre-migration record. It must be explicit and must not become the normal path for a resource whose
+  Provider already supplied an exact slot.
+
+## A seam's content belongs to the Provider; the Cluster only addresses it
+
+Directed by the human on 2026-11-19, wording normalized, meaning preserved:
+
+> `provider_metadata` and `provider_runtime` are both seams, standard interfaces, contracts. What
+> fills them is the Provider's business. The Cluster does no processing of the content at all; it
+> keeps it verbatim. This principle is a floor and it is very important.
+
+This is a floor, not a preference, and it applies to every seam the Cluster forwards, not only to
+`session.detail`. A seam fixes a **position** and a **bound**. It never fixes the content, and it
+never authorises the Cluster to reshape what arrives.
+
+Three prohibitions, because each one is a different way to break the rule:
+
+| Prohibited | Meaning |
+|---|---|
+| The Cluster decides what a seam contains | Which fields belong in `provider_metadata` is the Provider's decision, not the Cluster's. |
+| The Cluster edits a seam's bytes | Dropping a key, merging two documents or re-encoding a document is a content change, even when the result looks tidier. |
+| The Cluster interprets a seam to render it differently | A renderer may format bytes for a human; it may not decide one key is redundant with another field and hide it. |
+
+Consequences that MUST hold:
+
+- De-duplication between two seams is the Provider's job. If `provider_metadata` and
+  `provider_runtime` would carry the same object, the Provider decides which seam keeps it, and the
+  Cluster forwards both answers unchanged.
+- A Cluster-side "just drop this key" or "skip this key when rendering" is a defect, not a
+  convenience. It makes the Cluster a second author of a Provider document, and the two authors
+  disagree the moment the Provider changes.
+- The only Cluster-side work on a seam is **addressing**: which resource, which row, which bound.
+  That work belongs in `internal/protocol` and the adapter, and it never touches the document body.
+- A Provider that wants a different split changes its own project. `providers/<name>/` is an
+  independent module, so a content decision never requires a Cluster, Server, schema or CLI change.
+
+The worked example is `session.detail`. The Cluster forwards two seams, `provider_metadata` and
+`provider_runtime`. The Provider's `runtime info` command publishes one document containing both a
+session record and a `runtime` object, so the two seams overlap. The correct fix is inside
+`providers/topsailai`, where that Provider decides how the document is split between the two seams.
+The incorrect fix is in `internal/`: dropping the `runtime` key from `provider_metadata`, or teaching
+the TUI renderer to skip it. Both make the Cluster the author of a Provider document, and both
+diverge silently the first time the Provider changes its record.
+
+The same example marks where the Cluster's legitimate work stops. A `session.detail` read must name
+one row, because a session and its task children share one session identifier. Carrying that row
+identity is addressing and belongs in `SessionDetailQuery` and the adapter. Deciding what the row's
+document contains is not addressing and belongs to the Provider.
+
+Why this is a floor: a seam exists so a second Provider can be added without touching the Cluster.
+The moment the Cluster edits a seam, the seam describes the Cluster's opinion of one Provider instead
+of that Provider's own record, and the second Provider inherits an opinion that was never about it.
+The failure is also silent in the direction that matters: the edited document still renders and still
+looks complete, and only the dropped field is missing, which nobody can see because it is not there.
+
+Recorded in `docs/agent-cluster-protocol.md` under "A seam's content belongs to the Provider, and the
+Cluster never edits it" and in `docs/agent-cluster-architecture.md` under "A seam carries the
+Provider's content, and the Cluster only addresses it".

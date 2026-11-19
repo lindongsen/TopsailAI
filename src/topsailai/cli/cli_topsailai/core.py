@@ -77,6 +77,22 @@ _RL_PROMPT_END_IGNORE = "\x02"
 # option that would add a second contract to document and test.
 WATCH_REFRESH_INTERVAL_SECONDS = 5
 
+# Lookup-record keys that describe the session rather than one process inside
+# it. A task row is a different process in the same session, so it may receive
+# only these keys: the remaining fields are the session process's own lifetime,
+# liveness, model and usage counters, and publishing them on a worker row would
+# report the manager's numbers as the worker's own. A worker's real model is
+# available from its own ``metafile`` record instead.
+SESSION_SCOPED_RECORD_KEYS = frozenset({
+    "session_id",
+    "session_name",
+    "category",
+    "task",
+    "project_workspace",
+    "pwd",
+    "topsailai_home",
+})
+
 
 def _make_readline_safe_prompt(prompt: str) -> str:
     """Wrap ANSI escape sequences so readline ignores them for width calculations.
@@ -1499,6 +1515,7 @@ def _workspace_json_item(file_info: dict, index: int,
     """
     from cli_topsailai.agent_launch_process import _process_identity
     from cli_topsailai.log_files import is_process_holding_file
+    from cli_topsailai.session_stats import row_last_stats
 
     pid = file_info.get("workspace_display_pid", file_info.get("workspace_pid"))
     status = file_info.get("workspace_status", "idle")
@@ -1561,6 +1578,16 @@ def _workspace_json_item(file_info: dict, index: int,
     metafile = file_info.get("_workspace_session_meta_data")
     if not isinstance(metafile, dict):
         metafile = None
+    # The stats file is an append-only log of cumulative snapshots, so only its
+    # last complete record describes the current state. It is per-PID, so it is
+    # the one source that describes this exact agent rather than the session it
+    # belongs to: a task row receives its own counters here even though the
+    # session lookup record is filtered to session-scoped keys. The read is one
+    # bounded tail seek per row, so it costs no directory scan and never grows
+    # with the file. A row without a usable record reports ``null`` rather than
+    # an empty object, and the key is always present so the item schema never
+    # changes shape between row kinds.
+    last_stats = row_last_stats(file_info)
     item = {
         "no": index,
         "filename": file_info.get("filename", ""),
@@ -1577,17 +1604,27 @@ def _workspace_json_item(file_info: dict, index: int,
         "project_workspace": file_info.get("project_workspace"),
         "hostname": hostname,
         "metafile": metafile,
+        "last_stats": last_stats,
         "runtime": runtime,
     }
-    # The lookup record describes the same session's live state and is already
-    # in memory, so it is merged into the item body instead of being nested.
-    # The keys the body already owns are skipped: three of them carry identical
-    # values, while the lookup's ``status`` is coarser and capitalized, so it is
-    # exposed as ``status_raw`` rather than overwriting the finer-grained body
-    # value. When the lookup failed there is no record, so these fields stay
-    # absent instead of reporting a misleading ``null``.
+    # The lookup record describes the session's live state and is already in
+    # memory, so it is merged into the item body instead of being nested. A task
+    # row is a different process inside the same session, so it receives only the
+    # session-scoped keys: the record's lifetime, liveness and usage counters
+    # belong to the session process, and merging them would publish the
+    # manager's numbers as the worker's own. The keys the body already owns are
+    # skipped: three of them carry identical values, while the lookup's
+    # ``status`` is coarser and capitalized, so it is exposed as ``status_raw``
+    # rather than overwriting the finer-grained body value. When the lookup
+    # failed there is no record, so these fields stay absent instead of
+    # reporting a misleading ``null``.
     record = file_info.get("_workspace_session_record")
     if isinstance(record, dict):
+        if is_task:
+            record = {
+                key: value for key, value in record.items()
+                if key in SESSION_SCOPED_RECORD_KEYS
+            }
         for key, value in record.items():
             if key not in item:
                 item[key] = value

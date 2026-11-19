@@ -56,8 +56,14 @@ func (p *provider) workspaceAuthority(ctx context.Context, requested *target) (p
 	if err != nil {
 		return providerSessionTarget{}, "", err
 	}
+	args := []string{"workspace", "list", "--json", "--local"}
+	if exact, ok, decodeErr := decodeProviderTarget(requested.ProviderTarget); decodeErr != nil {
+		return providerSessionTarget{}, "", decodeErr
+	} else if ok {
+		args = append(args, "-s", exact.SessionID)
+	}
 	var document workspaceResponse
-	if err := runJSON(ctx, p.runner, []string{"workspace", "list", "--json", "--local"}, 1<<20, &document); err != nil {
+	if err := runJSON(ctx, p.runner, args, 1<<20, &document); err != nil {
 		return providerSessionTarget{}, "", err
 	}
 	if document.Items == nil {

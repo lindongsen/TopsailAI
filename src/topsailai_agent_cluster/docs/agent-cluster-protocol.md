@@ -724,7 +724,7 @@ a closed, versioned Cluster registry. Seven queries are registered, all at versi
 |---|---|---|---|
 | `launch.options` | a launch profile | no | no |
 | `history.messages` | a session | no | no |
-| `model.catalog` | a model profile | yes | no |
+| `model.catalog` | a session | yes | no |
 | `session.messages` | a session | yes | no |
 | `session.metrics` | a session | yes | no |
 | `session.metrics.batch` | a set of sessions | no | yes |
@@ -743,6 +743,31 @@ read as a Provider defect rather than as a gap in the test.
 A session-addressed query targets the Provider's own session identifier, not a Cluster resource ID,
 because a session with no live process has no Cluster resource ID and these reads exist precisely for
 such a session.
+
+### A read carries the exact-target evidence the caller already holds
+
+A read that addresses one session carries the Provider's own opaque exact-target evidence when the
+caller already holds it. The caller reads it from the committed inventory, so sending it costs
+nothing; omitting it forces the Provider to recover the same identity by scanning every workspace row
+and recomputing a digest for each one.
+
+The evidence travels in the standard `provider_target` slot. It is bounded, opaque to the Cluster and
+forwarded unchanged. The Cluster never models its contents, so a second Provider may fill the slot
+with an entirely different document and nothing above the adapter changes.
+
+| Field | Meaning | When absent |
+|---|---|---|
+| `provider_target` | opaque Provider-owned exact-target evidence | the Provider resolves the target from the opaque mapping key |
+
+It is optional, and the fallback is the previous behaviour rather than a second code path, so a caller
+with no inventory row keeps its reachability. The slot supplements Cluster identity: the Provider must
+bind it to the durable Provider resource key or session key it accompanies, and a slot that names a
+different resource is refused before any Provider process starts. Authorization, ownership, generation
+comparison and Provider same-path revalidation remain in force.
+
+This is the general rule, not a `model.catalog` detail: a value the caller holds travels down as one
+explicit slot, and a read reaches its answer in one Provider call. A second Provider call whose only
+purpose is to translate an identity is a defect, not a design.
 
 Query capabilities and mutating operation capabilities are separate typed descriptor collections, so
 a read cannot become a mutation through classification ambiguity.
@@ -821,6 +846,52 @@ The Provider side enforces no bound of its own. The bound is a Cluster contract,
 also rejected a document would create a second, invisible limit: an operator who raised the Endpoint
 bound would still be refused by the Provider, and the refusal would arrive as a generic provider
 error that sends the investigation to a Provider behaving correctly.
+
+### A seam's content belongs to the Provider, and the Cluster never edits it
+
+This is a floor, not a preference. A seam fixes a **position** and a **bound**. It never fixes the
+content, and it never authorises the Cluster to reshape what arrives.
+
+The rule is stated as three prohibitions, because each one is a different way to break it:
+
+| Prohibited | Meaning |
+|---|---|
+| The Cluster decides what a seam contains | Which fields belong in `provider_metadata` is the Provider's decision, not the Cluster's. |
+| The Cluster edits a seam's bytes | Removing a key, merging two documents, or re-encoding a document is a content change, even when the result looks tidier. |
+| The Cluster interprets a seam to render it differently | A renderer may format bytes for a human. It may not decide that one key is redundant with another field and hide it. |
+
+Consequences that MUST hold for every change:
+
+- De-duplication between two seams is the Provider's job. If `provider_metadata` and
+  `provider_runtime` would carry the same object, the Provider decides which seam keeps it, and the
+  Cluster forwards both answers unchanged.
+- A Cluster-side "just drop this key" or "skip this key when rendering" is a defect, not a
+  convenience. It makes the Cluster a second author of a Provider document, and the two authors will
+  disagree the moment the Provider changes.
+- The only Cluster-side work on a seam is addressing: which resource, which row, which bound. That
+  work belongs in `internal/protocol` and the adapter, and it never touches the document body.
+- A Provider that wants a different split changes its own project. `providers/<name>/` is an
+  independent module, so a content decision never requires a Cluster, Server, schema or CLI change.
+
+**The worked example is `session.detail`.** The Cluster forwards two seams, `provider_metadata` and
+`provider_runtime`. The Provider's `runtime info` command publishes one document that contains both a
+session record and a `runtime` object, so the two seams would overlap. The correct fix is inside
+`providers/topsailai`: that Provider decides how the document is split between the two seams. The
+incorrect fix is in `internal/`: dropping the `runtime` key from `provider_metadata`, or teaching the
+TUI renderer to skip it. Both of those make the Cluster the author of a Provider document, and both
+would silently diverge the first time the Provider changed its record.
+
+The same example shows where the Cluster's legitimate work stops. A `session.detail` read must name
+one row, because a session and its task children share one session identifier. Carrying that row
+identity is addressing, and it belongs in `SessionDetailQuery` and the adapter. Deciding what the row's
+document contains is not addressing, and it belongs to the Provider.
+
+Why this is a floor rather than a guideline: a seam exists so that a second Provider can be added
+without touching the Cluster. The moment the Cluster edits a seam, the seam describes the Cluster's
+opinion of one Provider instead of that Provider's own record, and the second Provider inherits an
+opinion that was never about it. The failure is also silent in the direction that matters: the edited
+document still renders, still looks complete, and only the field that was dropped is missing, which
+nobody can see because it is not there.
 
 ### The capability revision seam
 

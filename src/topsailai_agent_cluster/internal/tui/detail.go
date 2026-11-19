@@ -21,6 +21,11 @@ type detailReader interface {
 	GetDetail(context.Context, string, string) (protocol.SessionDetail, error)
 }
 
+// exactDetailReader preserves opaque Provider addressing evidence.
+type exactDetailReader interface {
+	GetDetailQuery(context.Context, string, protocol.SessionDetailQuery) (protocol.SessionDetail, error)
+}
+
 // detailBudget bounds one detail read. It is longer than a metrics read because
 // the document is larger and the operator asked for it explicitly, and shorter
 // than the command budget so a slow provider reports its own failure first.
@@ -55,7 +60,11 @@ type detailRead struct {
 }
 
 // readSessionDetail performs the one detail read both surfaces share.
-func readSessionDetail(ctx context.Context, api CommandAPI, endpointID, providerSessionID string) detailRead {
+func readSessionDetail(ctx context.Context, api CommandAPI, endpointID, providerSessionID string, providerTargets ...string) detailRead {
+	providerTarget := ""
+	if len(providerTargets) > 0 {
+		providerTarget = providerTargets[0]
+	}
 	reader, ok := api.(detailReader)
 	if !ok {
 		return detailRead{}
@@ -69,7 +78,13 @@ func readSessionDetail(ctx context.Context, api CommandAPI, endpointID, provider
 	}
 	readCtx, cancel := context.WithTimeout(ctx, detailBudget)
 	defer cancel()
-	detail, err := reader.GetDetail(readCtx, endpointID, providerSessionID)
+	var detail protocol.SessionDetail
+	var err error
+	if exact, ok := api.(exactDetailReader); ok {
+		detail, err = exact.GetDetailQuery(readCtx, endpointID, protocol.SessionDetailQuery{ProviderSessionID: providerSessionID, ProviderTarget: providerTarget})
+	} else {
+		detail, err = reader.GetDetail(readCtx, endpointID, providerSessionID)
+	}
 	if err != nil {
 		return detailRead{Available: true, Failure: "read failed: " + err.Error()}
 	}

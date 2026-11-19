@@ -19,6 +19,8 @@ type modelReadStub struct {
 	catalogEndpoint   string
 	catalogResource   string
 	catalogGeneration string
+	// catalogProviderTarget records the opaque slot unchanged.
+	catalogProviderTarget string
 }
 
 // GetCapabilities advertises the model operations so the command reaches the read
@@ -35,11 +37,12 @@ func (s *modelReadStub) GetCapabilities(context.Context, string) (protocol.Capab
 
 // GetModelCatalog records the exact arguments of the read and answers with one
 // selectable profile.
-func (s *modelReadStub) GetModelCatalog(_ context.Context, endpointID, resourceID, generation string) (protocol.ModelCatalog, error) {
+func (s *modelReadStub) GetModelCatalog(_ context.Context, endpointID string, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
 	s.catalogCalls++
 	s.catalogEndpoint = endpointID
-	s.catalogResource = resourceID
-	s.catalogGeneration = generation
+	s.catalogResource = query.Target.ResourceID
+	s.catalogGeneration = query.Target.ProviderGeneration
+	s.catalogProviderTarget = query.Target.ProviderTarget
 	return s.catalog, nil
 }
 
@@ -55,6 +58,7 @@ func modelReadStubFixture() *modelReadStub {
 			{
 				ClusterSessionID:    "res-unverified",
 				ProviderSessionID:   "20261111094237",
+				ProviderTarget:      `{"row":"unverified"}`,
 				ProviderDisplayName: "unverified work",
 				AdapterID:           "adapter-1",
 				ProviderGeneration:  "",
@@ -65,6 +69,7 @@ func modelReadStubFixture() *modelReadStub {
 			{
 				ClusterSessionID:    "res-live",
 				ProviderSessionID:   "20261111094238",
+				ProviderTarget:      `{"row":"live"}`,
 				ProviderDisplayName: "live work",
 				AdapterID:           "adapter-1",
 				ProviderGeneration:  "generation-live",

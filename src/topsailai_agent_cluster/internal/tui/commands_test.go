@@ -521,3 +521,28 @@ func TestPrepareActionCarriesOptionalFolder(t *testing.T) {
 		t.Fatal("whitespace-padded folder was accepted")
 	}
 }
+
+// TestPrepareActionPreservesProviderTarget proves a row-backed mutation carries
+// the Provider-owned exact-target slot into the immutable intent unchanged.
+func TestPrepareActionPreservesProviderTarget(t *testing.T) {
+	api := &runnerStubAPI{}
+	runner := CommandRunner{API: api, NewID: func() string { return "cmd-provider-target" }}
+	intent, err := runner.PrepareAction(context.Background(), ActionRequest{
+		Operation:          protocol.OperationMessageSend,
+		EndpointID:         "ep-1",
+		ResourceID:         "res-1",
+		ProviderGeneration: "gen-1",
+		ProviderTarget:     `{"session_id":"provider-1","pid":77}`,
+		Payload:            json.RawMessage(`{"text":"hello"}`),
+		Confirmed:          true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.Target == nil {
+		t.Fatal("target is nil")
+	}
+	if got, want := intent.Target.ProviderTarget, `{"session_id":"provider-1","pid":77}`; got != want {
+		t.Fatalf("provider_target=%q want=%q", got, want)
+	}
+}

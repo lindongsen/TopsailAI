@@ -315,6 +315,10 @@
           "not": {
             "type": "null"
           }
+        },
+        "provider_target": {
+          "type": "string",
+          "maxLength": 4096
         }
       }
     },

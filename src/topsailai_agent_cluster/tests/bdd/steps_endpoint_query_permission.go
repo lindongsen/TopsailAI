@@ -204,7 +204,7 @@ func performQueryRead(operation, credential string) error {
 	started := time.Now()
 	switch operation {
 	case queryModelCatalog:
-		result, err := api.GetModelCatalog(ctx, scopedEndpointID, queryMatrixResourceID, queryMatrixGeneration)
+		result, err := api.GetModelCatalog(ctx, scopedEndpointID, protocol.ModelCatalogQuery{Target: protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: queryMatrixResourceID, ProviderGeneration: queryMatrixGeneration}})
 		outcome.err = err
 		outcome.errorCode = result.ErrorCode
 		outcome.payloadSize = len(result.Profiles)

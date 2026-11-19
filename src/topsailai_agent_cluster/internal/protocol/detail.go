@@ -93,4 +93,7 @@ const MaxDetailCeilingBytes = 2 << 20
 // provider adds or renames a field.
 type SessionDetailQuery struct {
 	ProviderSessionID string `json:"provider_session_id"`
+	// ProviderTarget optionally selects the exact Provider row whose runtime
+	// document is requested. Metadata remains session-scoped.
+	ProviderTarget string `json:"provider_target,omitempty"`
 }

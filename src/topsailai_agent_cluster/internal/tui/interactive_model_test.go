@@ -258,7 +258,7 @@ func (s modelSelectStub) GetCapabilities(context.Context, string) (protocol.Capa
 }
 
 // GetModelCatalog answers the read seam with one selectable profile.
-func (s modelSelectStub) GetModelCatalog(context.Context, string, string, string) (protocol.ModelCatalog, error) {
+func (s modelSelectStub) GetModelCatalog(context.Context, string, protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
 	return s.catalog, nil
 }
 

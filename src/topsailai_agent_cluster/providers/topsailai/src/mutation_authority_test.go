@@ -161,3 +161,26 @@ func TestWorkspaceAuthorityRejectsNonSessionTarget(t *testing.T) {
 		})
 	}
 }
+
+// TestWorkspaceAuthorityScopesTheGenerationReadFromTheProviderTarget proves the
+// exact slot removes a global workspace scan without replacing generation proof.
+func TestWorkspaceAuthorityScopesTheGenerationReadFromTheProviderTarget(t *testing.T) {
+	target := liveSessionTarget(t, "7")
+	slot, err := encodeProviderTarget(providerSessionTarget{SessionID: "s-1", ProviderRowKey: "row", PID: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.ProviderTarget = slot
+	key := "workspace\x00list\x00--json\x00--local\x00-s\x00s-1"
+	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: answer(liveWorkspaceDocument("7"))}}
+	resolved, err := fixedProvider(runner).requireLiveGeneration(context.Background(), target)
+	if err != nil {
+		t.Fatalf("authority: %v", err)
+	}
+	if resolved.SessionID != "s-1" || resolved.PID != 42 {
+		t.Fatalf("resolved=%+v", resolved)
+	}
+	if len(runner.calls) != 1 || strings.Join(runner.calls[0].args, "\x00") != key {
+		t.Fatalf("calls=%v", runner.calls)
+	}
+}

@@ -1089,3 +1089,96 @@ has all three equal. Whenever a function accepts an identifier and then passes i
 to a second subsystem, translate it once at the boundary and pass the translated
 value, and keep the published value whatever the reference command publishes
 rather than the spelling the caller used.
+
+## A keep-list of published fields silently drops every field added later
+
+### Trigger
+
+`topsailai runtime info` published 10 keys while the workspace-list item it
+claimed to mirror carried 48. The user reported "显示内容少了". The 10 published
+values were all correct, so no test failed: `IDENTITY_KEYS` was a hand-written
+8-key tuple, and the 31 session-record fields the list carries were never named
+in it.
+
+### Action taken
+
+Replaced the keep-list with an exclusion set of the seven keys that exist only to
+render a listing (`no`, `filename`, `hostname`, `created_at`, `completed`,
+`driver`, `process_generation`), so the document is the list item minus those
+keys. The manager document went from 10 to 41 keys and the worker document from
+9 to 13, both byte-equal to the corresponding list item minus the exclusions.
+Rewrote the pinning test to assert the exclusion rule and to assert that a
+session-record field is published without being named, and proved it sensitive by
+restoring the old keep-list and watching it fail.
+
+### Why this prevents recurrence
+
+A keep-list is a second copy of a schema it does not own, so it is correct only
+on the day it is written: every field the source gains afterwards is dropped
+silently, and no test fails because the test asserts the same stale list. When a
+command claims to publish another command's record, state the rule as an
+exclusion — the few keys that must not appear — and let everything else pass
+through. Then a new source field appears automatically, and the only maintenance
+is deciding whether it belongs in the exclusion set. Also check the count, not
+just the parity: parity against a projection of the same item is trivially true
+when both sides use the same keep-list, which is exactly how a 10-key document
+passed a "matches the list item" test.
+
+## An append-only log of cumulative snapshots is read from its tail, not its head
+
+### Trigger
+
+Publishing per-agent counters required reading
+`{session_id}.{pid}.session.stats.jsonl`. The first instinct was to parse the
+whole file and sum the records, which would have multiplied every counter by the
+number of attempts.
+
+### Action taken
+
+Inspected the real files first: the manager's four records carried
+`attempt_seq` 1-4 with `total_prompt_tokens` 54595, 112796, 174931, 241051 and
+`total_requests` 2, 4, 6, 8, and `sources.scope` said
+`current_tracker_snapshot`. Each record restates the totals, so the last
+complete line is the current state and the earlier lines are history. The reader
+therefore does one bounded tail seek of two record caps, discards a trailing
+fragment without its newline because the writer may be mid-append, and falls
+back to the `{stem}.1.jsonl` rotation backup when the active file is empty after
+a rotation.
+
+### Why this prevents recurrence
+
+"Append-only log" says nothing about whether the records are deltas or
+snapshots, and the two readings produce opposite arithmetic: summing snapshots
+inflates every counter, while taking the last delta understates it. Read the
+writer and one real file before choosing, and look for an explicit field such as
+`attempt_seq` or `sources.scope` that states the intent. A cumulative log also
+makes the tail the cheapest correct read, so a bounded seek replaces a full-file
+parse and the cost stops growing with the file.
+
+## Enrichment must degrade to a missing field, never to a missing document
+
+### Trigger
+
+Adding `last_stats` broke `test_import_failure_keeps_the_document`, which pins
+the contract that an unimportable `cli_topsailai.workspace_runtime` still
+produces a complete workspace document with `runtime: null`. The new reader
+imported that module inside a helper and let the `ImportError` escape, so one
+optional dependency took down the whole listing.
+
+### Action taken
+
+Wrapped the identity-mapper import in `try/except ImportError` and the whole
+`row_last_stats` body in `try/except Exception`, both logging a warning and
+returning `None`, which is the same contract `core.py` already applies to the
+runtime collector. Added two tests that pin it, and proved them sensitive with a
+negative control that rebuilt the unguarded versions and showed both raising.
+
+### Why this prevents recurrence
+
+A field added to a listing is enrichment, and enrichment has one failure budget:
+the field. Any dependency it introduces — an import, a file read, a parse — must
+be caught at the boundary that produces the field, because the caller has no way
+to distinguish "this row has no stats" from "the document is broken". The
+existing test was the only thing that caught it, which is the argument for
+pinning an optional-dependency contract before adding a new consumer of that
+dependency.

@@ -691,6 +691,10 @@
         },
         "expected_generation": {
           "$ref": "#/$defs/identifier"
+        },
+        "provider_target": {
+          "type": "string",
+          "maxLength": 4096
         }
       }
     },
@@ -716,6 +720,10 @@
         },
         "expected_generation": {
           "$ref": "#/$defs/identifier"
+        },
+        "provider_target": {
+          "type": "string",
+          "maxLength": 4096
         }
       }
     },

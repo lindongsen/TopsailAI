@@ -27,28 +27,59 @@ func sessionIdentityLabel(name, providerSessionID, resourceID string) string {
 	return sanitizeInlineText(resourceID)
 }
 
+// providerIdentityFromInventory returns the provider's own identity for one
+// session together with the canonical operator-facing label, from one inventory
+// read.
+//
+// It delegates to SessionReadIdentity so the inventory lookup exists once. A
+// second copy would let the two callers disagree about which row they read, and
+// the disagreement would appear as a message naming one session while the read
+// addressed another.
+func providerIdentityFromInventory(ctx context.Context, api CommandAPI, endpointID, resourceID string) (string, string) {
+	identity := SessionReadIdentity(ctx, api, endpointID, resourceID)
+	return identity.ProviderTarget, identity.Label
+}
+
+// SessionReadIdentityResult is every fact one committed inventory row supplies
+// to session-addressed reads and commands. ProviderTarget is opaque to the CLI.
+type SessionReadIdentityResult struct {
+	ProviderSessionID string
+	ProviderPID       int64
+	ProviderTarget    string
+	Generation        string
+	Label             string
+}
+
+// SessionReadIdentity reads one session row once and returns its complete read identity.
+func SessionReadIdentity(ctx context.Context, api CommandAPI, endpointID, resourceID string) SessionReadIdentityResult {
+	fallback := SessionReadIdentityResult{Label: sessionIdentityLabel("", "", resourceID)}
+	if api == nil || endpointID == "" || resourceID == "" {
+		return fallback
+	}
+	report, err := api.GetInventory(ctx, endpointID)
+	if err != nil {
+		return fallback
+	}
+	for _, session := range report.Sessions {
+		if session.ClusterSessionID == resourceID {
+			return SessionReadIdentityResult{
+				ProviderSessionID: session.ProviderSessionID,
+				ProviderPID:       session.ProviderPID,
+				ProviderTarget:    session.ProviderTarget,
+				Generation:        session.ProviderGeneration,
+				Label:             sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, resourceID),
+			}
+		}
+	}
+	return fallback
+}
+
 // SessionIdentityLabelFromInventory renders the canonical expression of one
 // session by looking it up in the committed inventory.
 //
 // It exists for the messages that carry only the opaque cluster resource ID, such
 // as a model-catalog failure. The lookup happens only when such a message is
 // about to be rendered, so a successful read gains no extra request.
-//
-// A lookup failure or an absent row degrades to the resource ID rather than
-// suppressing the message, because a diagnostic that cannot be printed is worse
-// than one that names the session less precisely.
 func SessionIdentityLabelFromInventory(ctx context.Context, api CommandAPI, endpointID, resourceID string) string {
-	if api == nil || endpointID == "" || resourceID == "" {
-		return sessionIdentityLabel("", "", resourceID)
-	}
-	report, err := api.GetInventory(ctx, endpointID)
-	if err != nil {
-		return sessionIdentityLabel("", "", resourceID)
-	}
-	for _, session := range report.Sessions {
-		if session.ClusterSessionID == resourceID {
-			return sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, resourceID)
-		}
-	}
-	return sessionIdentityLabel("", "", resourceID)
+	return SessionReadIdentity(ctx, api, endpointID, resourceID).Label
 }

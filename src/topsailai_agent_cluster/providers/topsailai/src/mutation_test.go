@@ -178,7 +178,7 @@ func TestMutationArgvMatchesFixedProviderCommands(t *testing.T) {
 			target:    session,
 			payload:   `{"provider_resource_key":"model:fast"}`,
 			answers:   map[string][]runnerAnswer{authorityCall: answer(liveWorkspaceDocument("7"))},
-			want:      []string{"runtime", "control", "call_instruction", "-s", "s-1", "-a", `{"args":["fast"],"instruction":"agent.models"}`, "--json"},
+			want:      []string{"runtime", "control", "call_instruction", "-s", "s-1", "-p", "42", "-a", `{"args":["fast"],"instruction":"agent.models"}`, "--json"},
 		},
 		{
 			name:      "hard interrupt",

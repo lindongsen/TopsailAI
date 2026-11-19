@@ -281,6 +281,9 @@ type resumeSelection struct {
 	ProviderSessionID   string
 	ResourceID          string
 	ProviderDisplayName string
+	// ProviderTarget is opaque Provider-owned addressing evidence available only
+	// when the selection came from a committed inventory row.
+	ProviderTarget string
 	// Handle is the provider session identifier the operator named with -s. It is
 	// set only by the handle form, where no resource ID is known yet: the Endpoint
 	// mints the mapping when the command arrives, so the client never looks the
@@ -364,7 +367,7 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 		}
 		return invalidateResumeRowBindings(state, selection.Source, out)
 	}
-	target := confirmationTarget{ProviderDisplayName: selection.ProviderDisplayName, ProviderSessionID: selection.ProviderSessionID, ClusterSessionID: selection.ResourceID, ProviderSessionHandle: selection.Handle}
+	target := confirmationTarget{ProviderDisplayName: selection.ProviderDisplayName, ProviderSessionID: selection.ProviderSessionID, ClusterSessionID: selection.ResourceID, ProviderTarget: selection.ProviderTarget, ProviderSessionHandle: selection.Handle}
 	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentResume, "resume", target, "", json.RawMessage(`{}`), lines, out, trustedOut, options, revalidate, postSubmit)
 }
 
@@ -484,6 +487,7 @@ func resumeSelectionBySessionID(ctx context.Context, api InteractiveAPI, endpoin
 		ProviderSessionID:   session.ProviderSessionID,
 		ResourceID:          session.ClusterSessionID,
 		ProviderDisplayName: session.ProviderDisplayName,
+		ProviderTarget:      session.ProviderTarget,
 		Source:              resumeSourceSessionID,
 	}, nil
 }
@@ -542,7 +546,7 @@ func listResumeSelection(state *interactiveState, number int) (resumeSelection, 
 	if row.State != protocol.SessionStateUnknown {
 		return resumeSelection{}, fmt.Errorf("row %d is %q on endpoint %q, so it cannot be resumed; only an unknown session can be resumed from the list", number, row.State, row.EndpointID)
 	}
-	return resumeSelection{EndpointID: row.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.ClusterSessionID, ProviderDisplayName: row.ProviderDisplayName, Source: resumeSourceList}, nil
+	return resumeSelection{EndpointID: row.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.ClusterSessionID, ProviderDisplayName: row.ProviderDisplayName, ProviderTarget: row.ProviderTarget, Source: resumeSourceList}, nil
 }
 
 // uniqueUnknownResumeSelection resolves a bare resume to the only unknown session
@@ -569,7 +573,7 @@ func uniqueUnknownResumeSelection(state *interactiveState) (resumeSelection, err
 		return resumeSelection{}, fmt.Errorf("no unknown session is listed, so a bare resume has no target; run list and resume <row>")
 	case 1:
 		row := candidates[0]
-		return resumeSelection{EndpointID: row.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.ClusterSessionID, ProviderDisplayName: row.ProviderDisplayName, Source: resumeSourceList}, nil
+		return resumeSelection{EndpointID: row.EndpointID, ProviderSessionID: row.ProviderSessionID, ResourceID: row.ClusterSessionID, ProviderDisplayName: row.ProviderDisplayName, ProviderTarget: row.ProviderTarget, Source: resumeSourceList}, nil
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].No < candidates[j].No })
 	numbers := make([]string, len(candidates))

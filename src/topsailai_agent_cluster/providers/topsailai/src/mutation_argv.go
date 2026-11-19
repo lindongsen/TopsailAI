@@ -101,7 +101,7 @@ func mutationArgs(invocation mutationInvocation) ([]string, error) {
 	case operationAgentStart:
 		return agentStartArgs(invocation.Payload)
 	case operationAgentModelSelect:
-		return modelSelectArgs(invocation.Resolved.SessionID, invocation.Payload)
+		return modelSelectArgs(invocation.Resolved.SessionID, invocation.Resolved.PID, invocation.Payload)
 	case operationExecutionInterrupt:
 		return interruptArgs(invocation.Resolved.SessionID, invocation.Payload)
 	default:
@@ -134,8 +134,10 @@ func agentStartArgs(payload json.RawMessage) ([]string, error) {
 //
 // sessionID is the provider session identifier, not the opaque mapping key: the
 // provider CLI addresses a session by its own identifier, and the mapping key is a
-// Cluster-side spelling that never leaves the Endpoint.
-func modelSelectArgs(sessionID string, payload json.RawMessage) ([]string, error) {
+// Cluster-side spelling that never leaves the Endpoint. pid is the provider process
+// identifier of the exact row, because one session can own several rows and the
+// provider refuses an ambiguous target instead of choosing one.
+func modelSelectArgs(sessionID string, pid int64, payload json.RawMessage) ([]string, error) {
 	var value modelSelectPayload
 	if err := decodeStrict(payload, &value); err != nil {
 		return nil, fmt.Errorf("%w: decode agent.model.select payload: %v", errInvalidRequest, err)
@@ -147,7 +149,7 @@ func modelSelectArgs(sessionID string, payload json.RawMessage) ([]string, error
 	if name == "" {
 		return nil, fmt.Errorf("%w: model profile key is empty", errInvalidRequest)
 	}
-	return modelInstructionArgs(sessionID, "agent.models", []string{name})
+	return modelInstructionArgs(sessionID, pid, "agent.models", []string{name})
 }
 
 // runtimeMessage extracts the message text from one provider-neutral payload.

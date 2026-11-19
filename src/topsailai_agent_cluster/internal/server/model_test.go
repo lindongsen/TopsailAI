@@ -38,7 +38,7 @@ func TestModelCatalogHTTPClient(t *testing.T) {
 	server := httptest.NewServer(h)
 	defer server.Close()
 	api := newBearerAPIClient(server.URL, "test")
-	result, err := api.GetModelCatalog(context.Background(), "e /1", "s-1", "")
+	result, err := api.GetModelCatalog(context.Background(), "e /1", protocol.ModelCatalogQuery{Target: protocol.CommandTarget{Kind: "session", ResourceID: "s-1"}})
 	if err != nil || len(result.Profiles) != 1 || result.Profiles[0].ProviderDisplayName != "e /1" {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -247,8 +247,14 @@ func (r *modelCatalogTargetRequester) RequestModelCatalog(_ context.Context, _ s
 }
 
 // TestModelCatalogTargetReachesTheEndpoint proves the target travels from the HTTP
-// query string to the forwarded protocol query, and that an omitted generation
-// stays empty rather than being invented.
+// query string to the forwarded protocol query, that an omitted generation stays
+// empty rather than being invented, and that the provider's own identity reaches
+// the Endpoint unchanged.
+//
+// The identity is asserted here because it is the whole point of the field: the
+// provider addresses the exact row with it instead of reverse-resolving the
+// opaque mapping key, so a Server that dropped it would silently restore the
+// extra provider call this change removes.
 func TestModelCatalogTargetReachesTheEndpoint(t *testing.T) {
 	requester := &modelCatalogTargetRequester{}
 	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: requester}
@@ -256,24 +262,31 @@ func TestModelCatalogTargetReachesTheEndpoint(t *testing.T) {
 	defer server.Close()
 	api := newBearerAPIClient(server.URL, "test")
 	for _, item := range []struct {
-		resourceID string
-		generation string
+		resourceID     string
+		generation     string
+		providerTarget string
 	}{
-		{"s-1", ""},
-		{"s-2", "gen-7"},
+		{"s-1", "", ""},
+		{"s-2", "gen-7", `{"private":"wa-abc/4242"}`},
 	} {
-		if _, err := api.GetModelCatalog(context.Background(), "ep-1", item.resourceID, item.generation); err != nil {
+		query := protocol.ModelCatalogQuery{Target: protocol.CommandTarget{
+			Kind:               "session",
+			ResourceID:         item.resourceID,
+			ProviderGeneration: item.generation,
+			ProviderTarget:     item.providerTarget,
+		}}
+		if _, err := api.GetModelCatalog(context.Background(), "ep-1", query); err != nil {
 			t.Fatalf("%v", err)
 		}
-		query := requester.queries[len(requester.queries)-1]
-		if query.Target.ResourceID != item.resourceID {
-			t.Fatalf("resource=%q want=%q", query.Target.ResourceID, item.resourceID)
+		forwarded := requester.queries[len(requester.queries)-1]
+		if forwarded.Target.ResourceID != item.resourceID {
+			t.Fatalf("resource=%q want=%q", forwarded.Target.ResourceID, item.resourceID)
 		}
-		if query.Target.ProviderGeneration != item.generation {
-			t.Fatalf("generation=%q want=%q", query.Target.ProviderGeneration, item.generation)
+		if forwarded.Target.ProviderGeneration != item.generation {
+			t.Fatalf("generation=%q want=%q", forwarded.Target.ProviderGeneration, item.generation)
 		}
-		if query.Target.Kind != "session" {
-			t.Fatalf("kind=%q want=session", query.Target.Kind)
+		if forwarded.Target.ProviderTarget != item.providerTarget {
+			t.Fatalf("provider_target=%q want=%q", forwarded.Target.ProviderTarget, item.providerTarget)
 		}
 	}
 }

@@ -336,10 +336,7 @@ def _workspace_meta_fallback(file_info: dict) -> Tuple[Optional[str], Optional[s
         return None, None
     if not isinstance(session_id, str) or session_id != file_info.get("session_id"):
         return None, None
-    expected_pid = (
-        file_info.get("session_pid") if file_info.get("is_task")
-        else file_info.get("pid")
-    )
+    expected_pid = file_info.get("pid")
     if type(pid) is not int or pid != expected_pid:
         return None, None
     if data.get("session_id") != session_id or data.get("pid") != pid:

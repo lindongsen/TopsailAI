@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/model-catalog-request.schema.json",
   "title": "model-catalog-request payload",
-  "description": "The query name and v1 contract version are carried once by the common request envelope.",
+  "description": "The query name and v1 contract version are carried once by the common request envelope. Exact-target evidence travels in the envelope target's provider_target slot, so this payload is empty and closed.",
   "type": "object",
   "additionalProperties": false,
   "required": [],

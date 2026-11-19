@@ -357,7 +357,7 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	if lines > 10000 {
 		lines = 10000
 	}
-	result, err := instance.ReadOutput(ctx, adapter.OutputRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration}, MaxBytes: limit, MaxLines: lines})
+	result, err := instance.ReadOutput(ctx, adapter.OutputRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration, ProviderTarget: request.ProviderTarget}, MaxBytes: limit, MaxLines: lines})
 	if errors.Is(err, adapter.ErrUnsupported) {
 		return protocol.OutputSnapshotResponse{ErrorCode: "unsupported"}, nil
 	}

@@ -11,6 +11,7 @@ from typing import List
 from cli_topsailai.colors import Colors
 from cli_topsailai.log_files import _display_session_id, is_session_pipe_open
 from cli_topsailai.process_liveness import ProcessState, pid_state
+from cli_topsailai.workspace_hostname import _row_owns_filename
 
 # Match CSI/OSC escape sequences so remote text cannot recolor or clear the
 # terminal, and match control characters other than newline and tab.
@@ -133,6 +134,11 @@ def _meta_display_pid(file_info: dict) -> int | None:
     This value is display evidence only. It never grants signal authority, so
     ``workspace_pid`` and ``process_generation`` keep their liveness-gated
     meaning and a reused PID can never be signalled through this fallback.
+
+    The record must describe the row's own process, so the snapshot PID is
+    compared against the row's filename PID for both row kinds. A task row's
+    ``session_pid`` names its parent, which is a different process, so using it
+    here would publish the parent's PID on a worker row.
     """
     snapshot = file_info.get("_workspace_meta_snapshot")
     if not isinstance(snapshot, tuple) or len(snapshot) != 4:
@@ -142,11 +148,7 @@ def _meta_display_pid(file_info: dict) -> int | None:
         return None
     if not isinstance(session_id, str) or session_id != file_info.get("session_id"):
         return None
-    expected_pid = (
-        file_info.get("session_pid") if file_info.get("is_task")
-        else file_info.get("pid")
-    )
-    if pid != expected_pid or data.get("pid") != pid:
+    if pid != file_info.get("pid") or data.get("pid") != pid:
         return None
     return pid
 
@@ -194,15 +196,24 @@ def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entr
         # Identity uses the raw filename PID, not the liveness-probed one: the
         # discovery filter drops rows by metadata status regardless of liveness,
         # so a completed row whose process already exited must still be marked.
-        completed = (
-            not file_info.get("is_task")
-            and source_pid == file_info.get("pid")
-            and file_info.get("filename") in (
-                f"{session_id}.{source_pid}.session.stdout",
-                f"{session_id}.{source_pid}.session.stderr",
+        # A task row is marked from its own record, because a finished worker is
+        # a finished process even while the session it belongs to keeps running.
+        if file_info.get("is_task"):
+            completed = (
+                _row_owns_filename(file_info)
+                and (file_info.get("_workspace_session_meta_data") or {}).get("status")
+                == "completed"
             )
-            and (file_info.get("_workspace_session_meta_data") or {}).get("status") == "completed"
-        )
+        else:
+            completed = (
+                source_pid == file_info.get("pid")
+                and file_info.get("filename") in (
+                    f"{session_id}.{source_pid}.session.stdout",
+                    f"{session_id}.{source_pid}.session.stderr",
+                )
+                and (file_info.get("_workspace_session_meta_data") or {}).get("status")
+                == "completed"
+            )
         file_info["workspace_completed"] = completed
         if completed and file_info["workspace_status"] == "running":
             file_info["workspace_status"] = "idle"

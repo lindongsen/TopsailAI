@@ -3,10 +3,11 @@
 Author: DawsonLin
 
 ``topsailai runtime info`` publishes the workspace-list item for one exact
-process, restricted to three groups: the session identity, the ``runtime``
-object and the ``metafile`` object. The item is produced by the workspace list's
-own builder and the runtime record by the list's own collector, so the two
-commands cannot drift in fields, values, states or error codes.
+process, minus the keys that exist only to render a listing. The item is produced
+by the workspace list's own builder and the runtime record by the list's own
+collector, so the two commands cannot drift in fields, values, states or error
+codes. The rule is an exclusion rather than a keep-list, so a session-record
+field the list gains later is published here without a change.
 
 Both selectors are mandatory. One session may run several agents, so a session
 identity alone does not name the process whose runtime should be reported, and a
@@ -34,19 +35,26 @@ _EXIT_CODES = {
     "lookup_failed": 1,
 }
 
-#: Identity keys copied from the workspace-list item, in the list's own order.
-#: ``status_raw`` is copied only when the list item carries it, because the list
-#: omits it when the session lookup produced no record; emitting ``null`` here
-#: would claim an observation that never happened.
-IDENTITY_KEYS = (
-    "session_id",
-    "session_name",
-    "project_workspace",
-    "is_task",
-    "session_qualifier",
-    "pid",
-    "status",
-    "status_raw",
+#: List-presentation keys removed from the workspace-list item.
+#:
+#: The published document is the list item minus these keys, so every
+#: session-record field the list carries is published without being enumerated
+#: here. A keep-list would silently drop each field the session record gains
+#: later; an exclusion list cannot, because a new field is published by default.
+#:
+#: ``no``, ``filename``, ``created_at`` and ``completed`` describe the listing
+#: (row number, log file, file birth time, DONE marker). ``hostname`` is dropped
+#: because ``metafile.hostname`` already carries the same stored value.
+#: ``driver`` and ``process_generation`` are dropped because they are display
+#: and signal authority, and this command is read-only.
+EXCLUDED_KEYS = (
+    "no",
+    "filename",
+    "hostname",
+    "created_at",
+    "completed",
+    "driver",
+    "process_generation",
 )
 
 
@@ -200,10 +208,20 @@ def _workspace_row(session_id: str, pid: int, home: str) -> Dict[str, Any]:
 
 
 def _project(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Restrict one workspace-list item to identity, runtime and metafile."""
-    document = {key: item[key] for key in IDENTITY_KEYS if key in item}
-    document["runtime"] = item.get("runtime")
-    document["metafile"] = item.get("metafile")
+    """Return the list item minus the keys that only describe a listing.
+
+    Everything the list carries is published, so a session-record field the list
+    gains later appears here without a change. ``runtime`` and ``metafile`` are
+    guaranteed present because they are the two groups this command exists for,
+    and ``status_raw`` keeps its conditional presence: the list omits it when
+    the session lookup produced no record, and emitting ``null`` would claim an
+    observation that never happened.
+    """
+    document = {
+        key: value for key, value in item.items() if key not in EXCLUDED_KEYS
+    }
+    document.setdefault("runtime", None)
+    document.setdefault("metafile", None)
     return document
 
 

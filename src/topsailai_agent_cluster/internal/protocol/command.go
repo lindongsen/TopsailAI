@@ -46,6 +46,10 @@ type CommandTarget struct {
 	ResourceID            string `json:"resource_id"`
 	ProviderGeneration    string `json:"provider_generation"`
 	ProviderSessionHandle string `json:"provider_session_handle,omitempty"`
+	// ProviderTarget is optional Provider-owned exact-target evidence copied from
+	// the reported resource. It supplements, and never replaces, Cluster identity
+	// and generation checks.
+	ProviderTarget string `json:"provider_target,omitempty"`
 }
 
 // ValidateFolder accepts an omitted folder and rejects unsafe supplied values.
@@ -223,6 +227,7 @@ type OutputSnapshotRequest struct {
 	EndpointID         string `json:"endpoint_id"`
 	ResourceID         string `json:"resource_id"`
 	ProviderGeneration string `json:"provider_generation"`
+	ProviderTarget     string `json:"provider_target,omitempty"`
 	MaxBytes           int    `json:"max_bytes"`
 	MaxLines           int    `json:"max_lines"`
 }
@@ -243,6 +248,7 @@ type OutputFollowRequest struct {
 	EndpointID         string `json:"endpoint_id"`
 	ResourceID         string `json:"resource_id"`
 	ProviderGeneration string `json:"provider_generation"`
+	ProviderTarget     string `json:"provider_target,omitempty"`
 	MaxLines           int    `json:"max_lines"`
 	MaxBytes           int    `json:"max_bytes"`
 }

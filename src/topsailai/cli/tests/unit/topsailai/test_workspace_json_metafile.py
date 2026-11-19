@@ -89,13 +89,22 @@ def test_item_reports_null_when_the_metafile_is_not_an_object(tmp_path):
 
 
 def test_task_and_session_rows_share_the_item_schema(tmp_path):
-    """Both row kinds carry the key, so the schema never changes shape."""
-    record = {"status": "running", "session_name": "Parent Session",
-              "hostname": "origin-host", "project_workspace": "/work/project"}
+    """Both row kinds carry the key, so the schema never changes shape.
+
+    The values differ by design: each row publishes the record of the process
+    that wrote its log file, so a worker row carries the worker's record rather
+    than the parent session's.
+    """
+    session_record = {"status": "running", "session_name": "Parent Session",
+                      "hostname": "origin-host", "project_workspace": "/work/project",
+                      "agent_role": "manager", "task_id": ""}
+    task_record = {"status": "completed", "session_name": "Parent Session",
+                   "hostname": "origin-host", "project_workspace": "/work/project",
+                   "agent_role": "worker", "task_id": "topsailai.1.2"}
     rows = build_rows(
         tmp_path,
         ["sample.123.session.stdout", "sample.456.child.task.stdout"],
-        {("sample", 123): record},
+        {("sample", 123): session_record, ("sample", 456): task_record},
     )
     task = next(row for row in rows if row["is_task"])
     session = next(row for row in rows if not row["is_task"])
@@ -104,7 +113,31 @@ def test_task_and_session_rows_share_the_item_schema(tmp_path):
     session_item = core._workspace_json_item(session, 2)
 
     assert set(task_item) == set(session_item)
-    assert task_item["metafile"] == session_item["metafile"]
+    assert task_item["metafile"]["pid"] == 456
+    assert task_item["metafile"]["agent_role"] == "worker"
+    assert task_item["metafile"]["task_id"] == "topsailai.1.2"
+    assert session_item["metafile"]["pid"] == 123
+    assert session_item["metafile"]["agent_role"] == "manager"
+    assert task_item["pid"] == 456
+    assert task_item["completed"] is True
+    assert session_item["completed"] is False
+
+
+def test_task_row_without_its_own_record_reports_no_metafile(tmp_path):
+    """A worker row never publishes the parent's record as its own."""
+    session_record = {"status": "running", "session_name": "Parent Session",
+                      "hostname": "origin-host", "project_workspace": "/work/project"}
+    rows = build_rows(
+        tmp_path,
+        ["sample.123.session.stdout", "sample.456.child.task.stdout"],
+        {("sample", 123): session_record},
+    )
+    task = next(row for row in rows if row["is_task"])
+
+    task_item = core._workspace_json_item(task, 1)
+
+    assert task_item["metafile"] is None
+    assert task_item["pid"] == 456
 
 
 def test_metafile_grants_no_signal_authority(tmp_path):

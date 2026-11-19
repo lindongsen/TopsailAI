@@ -16,13 +16,21 @@ type sessionTarget struct {
 	endpointID        string
 	sessionID         string
 	providerSessionID string
-	displayName       string
-	generation        string
+	// providerPID is the provider process identifier the inventory reported for
+	// this exact row. It travels beside the provider session identifier because
+	// one provider session can own several rows, and a provider that receives only
+	// the session identifier must either choose a row or refuse an ambiguous
+	// target. A zero value means the inventory reported no process, which is the
+	// unverified case rather than a different target.
+	providerPID    int64
+	providerTarget string
+	displayName    string
+	generation     string
 }
 
 // confirmationTarget names this target for the confirmation question.
 func (t sessionTarget) confirmationTarget() confirmationTarget {
-	return confirmationTarget{ProviderDisplayName: t.displayName, ProviderSessionID: t.providerSessionID, ClusterSessionID: t.sessionID}
+	return confirmationTarget{ProviderDisplayName: t.displayName, ProviderSessionID: t.providerSessionID, ClusterSessionID: t.sessionID, ProviderTarget: t.providerTarget}
 }
 
 // resolveSessionTarget maps the operator argument to one exact session identity for
@@ -43,7 +51,7 @@ func resolveSessionTarget(ctx context.Context, api InteractiveAPI, state *intera
 		if err != nil {
 			return sessionTarget{}, err
 		}
-		return sessionTarget{endpointID: state.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
+		return sessionTarget{endpointID: state.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, providerPID: session.ProviderPID, providerTarget: session.ProviderTarget, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
 	}
 	var row SessionRow
 	var resolved bool
@@ -106,7 +114,7 @@ func resolveSessionTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI
 			continue
 		}
 		if _, _, session, findErr := findSessionInEndpoint(loaded, endpoint.EndpointID, token); findErr == nil {
-			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration})
+			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, providerPID: session.ProviderPID, providerTarget: session.ProviderTarget, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration})
 		}
 	}
 	switch len(matches) {
@@ -188,7 +196,7 @@ func sessionTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedG
 		if expectedGeneration != "" && session.ProviderGeneration != expectedGeneration {
 			return sessionTarget{}, fmt.Errorf("session %s generation changed; run list again", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, sessionID))
 		}
-		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
+		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, providerPID: session.ProviderPID, providerTarget: session.ProviderTarget, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
 	}
 	return sessionTarget{}, fmt.Errorf("session %q was not found on endpoint %q; run list again", sessionID, endpointID)
 }
@@ -220,7 +228,7 @@ func resolveReadTarget(ctx context.Context, api InteractiveAPI, state *interacti
 		if err != nil {
 			return sessionTarget{}, err
 		}
-		return sessionTarget{endpointID: state.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
+		return sessionTarget{endpointID: state.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, providerPID: session.ProviderPID, providerTarget: session.ProviderTarget, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
 	}
 	var row SessionRow
 	var resolved bool
@@ -284,7 +292,7 @@ func resolveReadTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI, c
 		}
 		_, _, session, findErr := findSessionInEndpoint(loaded, endpoint.EndpointID, token)
 		if findErr == nil {
-			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration})
+			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.ClusterSessionID, providerSessionID: session.ProviderSessionID, providerPID: session.ProviderPID, providerTarget: session.ProviderTarget, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration})
 			continue
 		}
 		if strings.Contains(findErr.Error(), "multiple sessions match") {
@@ -348,7 +356,7 @@ func readTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedGene
 		if expectedGeneration != "" && session.ProviderGeneration != expectedGeneration {
 			return sessionTarget{}, fmt.Errorf("session %s generation changed; run list again", sessionIdentityLabel(session.ProviderDisplayName, session.ProviderSessionID, sessionID))
 		}
-		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
+		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, providerPID: session.ProviderPID, providerTarget: session.ProviderTarget, displayName: session.ProviderDisplayName, generation: session.ProviderGeneration}, nil
 	}
 	return sessionTarget{}, fmt.Errorf("session %q was not found on endpoint %q; run list again", sessionID, endpointID)
 }

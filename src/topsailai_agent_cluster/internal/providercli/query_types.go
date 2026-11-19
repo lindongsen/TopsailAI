@@ -484,6 +484,7 @@ func (r SessionMetricsBatchResult) validate() error {
 	}
 	return nil
 }
+
 // validate rejects a detail result that cannot be presented as a real
 // observation.
 //
