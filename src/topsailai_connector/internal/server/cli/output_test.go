@@ -19,9 +19,12 @@ import (
 // chunkServer answers `file.read` from an in-memory file, honouring offset and length
 // the way the Node does, including the cap and the truncation flag.
 //
-// It reproduces the Node's own rule, including the known defect where a file whose
-// size is exactly the cap reports truncated=true. Reproducing the defect is deliberate:
-// the loop must be correct against the Node that exists, not against an ideal one.
+// It reproduces the Node's current rule by default: a file whose size is exactly the
+// cap reports truncated=false, because the read reached end of file. The
+// legacyTruncation field reproduces the older rule, which reported truncated=true for
+// that same file. Both are kept because the loop must be correct against a Node that
+// has not been upgraded, and a test that only exercised the current rule would not
+// show that it is.
 type chunkServer struct {
 	content []byte
 	// requests counts the requests received, so a test can assert the loop made the
@@ -30,7 +33,10 @@ type chunkServer struct {
 	// failAfter makes the server answer with a refusal after that many successful
 	// responses. A negative value never fails.
 	failAfter int
-	mu        sync.Mutex
+	// legacyTruncation reproduces the pre-fix rule, where a read that filled the
+	// buffer reported truncation without checking whether anything remained.
+	legacyTruncation bool
+	mu               sync.Mutex
 }
 
 // capBytes mirrors the Node's response cap.
@@ -71,7 +77,15 @@ func (s *chunkServer) handler(t *testing.T) http.HandlerFunc {
 			end = int64(len(s.content))
 		}
 		chunk := s.content[start:end]
-		truncated := int64(len(chunk)) == limit && limit == capBytes
+		// The current Node reports truncation only when data remains behind the cap,
+		// so a file whose size is exactly the cap is not truncated. The legacy rule
+		// compared the byte count against the cap and could not tell the two apart.
+		truncated := false
+		if s.legacyTruncation {
+			truncated = int64(len(chunk)) == limit && limit == capBytes
+		} else if limit == capBytes && int64(len(chunk)) == limit {
+			truncated = end < int64(len(s.content))
+		}
 
 		payload, err := json.Marshal(map[string]any{
 			"content":   chunk,
@@ -102,6 +116,18 @@ func (s *chunkServer) handler(t *testing.T) http.HandlerFunc {
 func newChunkServer(t *testing.T, content []byte, failAfter int) (*chunkServer, string) {
 	t.Helper()
 	state := &chunkServer{content: content, failAfter: failAfter}
+	server := httptest.NewServer(state.handler(t))
+	t.Cleanup(server.Close)
+	return state, server.URL
+}
+
+// newLegacyChunkServer starts a server that reproduces the pre-fix truncation rule,
+// where a read that filled the buffer reported truncation without checking whether
+// anything remained. It exists so the loop is proven correct against a Node that has
+// not been upgraded, not only against the current one.
+func newLegacyChunkServer(t *testing.T, content []byte, failAfter int) (*chunkServer, string) {
+	t.Helper()
+	state := &chunkServer{content: content, failAfter: failAfter, legacyTruncation: true}
 	server := httptest.NewServer(state.handler(t))
 	t.Cleanup(server.Close)
 	return state, server.URL
@@ -211,12 +237,9 @@ func TestOutputHandlesTheEmptyFile(t *testing.T) {
 	}
 }
 
-// TestOutputHandlesAFileOfExactlyTheCap proves the loop stops on a file whose size is
-// exactly the cap, even though the Node reports truncated=true for it.
-//
-// This is the case the known defect produces. The loop must not depend on the flag
-// being correct, so it stops on the zero-size response that follows instead of
-// looping or dropping data.
+// TestOutputHandlesAFileOfExactlyTheCap proves the loop stops after one request on a
+// file whose size is exactly the cap, because the current Node reports truncated=false
+// for it: the read reached end of file.
 func TestOutputHandlesAFileOfExactlyTheCap(t *testing.T) {
 	content := make([]byte, capBytes)
 	for index := range content {
@@ -232,9 +255,35 @@ func TestOutputHandlesAFileOfExactlyTheCap(t *testing.T) {
 	if !bytes.Equal([]byte(fixture.stdout), content) {
 		t.Errorf("stdout is %d bytes, want %d", len(fixture.stdout), len(content))
 	}
-	// One request returns the whole file with truncated=true, so a second request is
-	// needed to learn that nothing remains. Two requests is the cost of not trusting
-	// the flag; more than two would mean the loop is not terminating on size.
+	// The current Node answers truncated=false, so the loop learns that nothing
+	// remains from the first response and must not ask again.
+	if state.requests != 1 {
+		t.Errorf("requests = %d, want 1", state.requests)
+	}
+}
+
+// TestOutputHandlesAFileOfExactlyTheCapOnALegacyNode proves the loop still returns the
+// whole file when the Node reports truncated=true for a file whose size is exactly the
+// cap, which is what the pre-fix rule did.
+//
+// The loop must not depend on the flag being correct, so it stops on the zero-size
+// response that follows instead of looping or dropping data. Two requests is the cost
+// of not trusting the flag; more than two would mean the loop is not terminating.
+func TestOutputHandlesAFileOfExactlyTheCapOnALegacyNode(t *testing.T) {
+	content := make([]byte, capBytes)
+	for index := range content {
+		content[index] = byte(index % 249)
+	}
+	state, url := newLegacyChunkServer(t, content, -1)
+
+	fixture := runAgainst(t, url, outputArguments(t, "-"))
+
+	if fixture.status != 0 {
+		t.Fatalf("status = %d, want 0; stderr = %q", fixture.status, fixture.stderr)
+	}
+	if !bytes.Equal([]byte(fixture.stdout), content) {
+		t.Errorf("stdout is %d bytes, want %d", len(fixture.stdout), len(content))
+	}
 	if state.requests != 2 {
 		t.Errorf("requests = %d, want 2", state.requests)
 	}

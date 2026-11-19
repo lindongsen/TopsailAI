@@ -47,11 +47,12 @@ type readChunk struct {
 //   - the caller's `--length` budget is spent.
 //
 // `truncated` is trusted only in the safe direction. A false value always means the
-// read reached end of file, so stopping on it never drops data. A true value can be
-// reported for a file whose size is exactly the cap (see
-// issues/issue-truncated-flag-misreports-an-exact-cap-file.md), which costs one extra
-// request and never truncates the result. The loop therefore does not depend on the
-// direction that is known to be wrong.
+// read reached end of file, so stopping on it never drops data. A true value is
+// trustworthy too, but the loop is written so it does not depend on that: a Node
+// older than the fix in `a5b580e3` reported truncation for a file whose size is
+// exactly the cap, and a loop that treated a true value as proof of lost data would
+// have refused a complete file. The cost of not depending on it is one extra request
+// in that case, which is cheaper than a wrong refusal.
 //
 // Every chunk is a separately signed request with its own nonce and timestamp, so the
 // loop needs no protocol change and gains no replay weakness.

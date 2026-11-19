@@ -563,11 +563,14 @@ it reached end of file, when a response delivers zero bytes, or when the `--leng
 budget is spent.
 
 `truncated` is trusted only in the safe direction. A `false` value always means end
-of file, so stopping on it never drops data. A `true` value is reported for a file
-whose size is exactly the cap even though the content is complete, which costs one
-extra request and never truncates the result. That false positive is recorded in
-`issues/issue-truncated-flag-misreports-an-exact-cap-file.md`; the loop is written so
-it does not depend on the direction that is known to be wrong.
+of file, so stopping on it never drops data. A `true` value is trustworthy as well,
+but the loop is written so it does not depend on that: a Node older than the fix in
+`a5b580e3` reported truncation for a file whose size is exactly the cap even though
+the content was complete, and a loop that treated a `true` value as proof of lost
+data would have refused a complete file. The defect is recorded as fixed in
+`issues/done/issue-truncated-flag-misreports-an-exact-cap-file.md`; the loop keeps
+its independence from that direction so an older Node still yields a correct result
+at the cost of one extra request.
 
 A destination that exists always holds a complete result. The CLI writes to a
 temporary file in the same directory as the destination and renames it into place
