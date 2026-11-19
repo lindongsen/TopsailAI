@@ -915,3 +915,67 @@ which print the file's own numbering. For a small document the cheapest safe
 procedure is to read the whole file *with* line numbers, edit exactly one range,
 then read it whole again; for a ledger tick, prefer appending a status line over
 replacing the checkbox line, because an append cannot delete a neighbour.
+
+## A pathspec commit cannot include a file git has never seen
+
+### Trigger
+
+Committing one logical unit with `git commit -m <msg> -- <paths>` failed with
+`error: pathspec '.../runtime_info.py' did not match any file(s) known to git`
+for the two new files, while the four modified files were accepted. A second
+attempt from the repository root failed the same way, and the commit only
+succeeded after `git add` staged the two new files first.
+
+### Action taken
+
+Staged exactly the two untracked files, re-checked `git diff --cached
+--name-only` to confirm the index held only those two, then re-ran the same
+pathspec commit. Verified the result with `git show --name-only HEAD`: six files,
+no foreign file, and `git status --porcelain` still showing the parallel agent's
+changes untouched.
+
+### Why this prevents recurrence
+
+`git commit -- <path>` restricts the commit to paths already in the index; it
+does not add anything. An untracked file therefore has no index entry to
+restrict, so the pathspec is rejected rather than staged. The safe sequence is
+`git add` the new files, verify the index, then commit with the full pathspec so
+concurrent staging still cannot leak in. Also check `git check-ignore -v` before
+planning a commit: `.task/` is ignored in this repository, so task artifacts are
+local records and must not be forced into history with `git add -f`.
+
+## An ownership proof that reads one filename kind cannot see the other kind
+
+### Trigger
+
+`topsailai runtime info -p <worker-pid>` rejected a live task agent with
+`target_not_found` / "No session stdout file records this PID", even though the
+worker process was alive and its control channel answered `state=ok` with its own
+distinct data. The ownership scan enumerated only `*.session.stdout`, but a task
+agent runs with session tee disabled and writes
+`{session}.{pid}[.{task_id}].task.stdout` instead, so it never produces the file
+the scan looked for.
+
+### Action taken
+
+Moved the scan into `workspace_runtime._process_log_records()`, which returns
+`(session_id, pid, is_task)` for both log kinds in one pass, and had
+`runtime_info._process_records()` delegate to it so the filename convention has
+one definition. The file kind that proves ownership is the same evidence that
+answers the new `is_task` field, so the two cannot disagree, and the session log
+wins when a PID left both kinds behind. Verified live on a real two-agent session
+(both PIDs now succeed with distinct data), with a parity re-check against
+`session info --include-runtime --json`, and with three negative controls proving
+the new tests fail against each regressed implementation.
+
+### Why this prevents recurrence
+
+A filename convention is a contract with several producers, and a scan that
+enumerates one suffix silently defines "a process that exists" as "a process that
+wrote that suffix". Before trusting a discovery result as absence, enumerate the
+producers: a process launched with a different tee setting, a different role, or
+a different wrapper writes a different file, and the missing file then looks
+exactly like a missing process. Derive every related fact from the same evidence
+that established identity, because a second scan can disagree with the first, and
+keep the scan in one place so a new producer is added once rather than in every
+caller.

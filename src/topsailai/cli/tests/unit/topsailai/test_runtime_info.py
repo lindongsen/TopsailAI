@@ -47,6 +47,15 @@ def write_stdout(home: str, session_id: str, pid: int) -> Path:
     return path
 
 
+def write_task_stdout(home: str, session_id: str, pid: int,
+                      task_id: str = "topsailai.1795078235.630223") -> Path:
+    """Create the task log a child agent writes instead of a session log."""
+    path = (Path(home) / ri.TASK_SUBDIR
+            / f"{session_id}.{pid}.{task_id}.task.stdout")
+    path.write_text("", encoding="utf-8")
+    return path
+
+
 def manager_for(tmp_path: Path):
     """Return a session manager backed by an isolated SQLite file."""
     return get_session_manager(f"sqlite:///{tmp_path / 'sessions.db'}")
@@ -71,7 +80,7 @@ class TestResolveTarget:
 
         with patch("cli_topsailai.process_liveness.live_session_pid",
                    return_value=4242) as probe:
-            assert ri.resolve_target("s", None, home) == ("s", 4242)
+            assert ri.resolve_target("s", None, home) == ("s", 4242, False)
 
         probe.assert_called_once_with("s", home=home)
 
@@ -81,14 +90,36 @@ class TestResolveTarget:
 
         with patch("cli_topsailai.process_liveness.live_session_pid",
                    return_value=None):
-            assert ri.resolve_target("s", None, home) == ("s", None)
+            assert ri.resolve_target("s", None, home) == ("s", None, False)
 
     def test_explicit_pid_for_the_same_session(self, tmp_path: Path):
         """A PID recorded for the requested session is accepted unchanged."""
         home = make_home(tmp_path)
         write_stdout(home, "s", 4242)
 
-        assert ri.resolve_target("s", 4242, home) == ("s", 4242)
+        assert ri.resolve_target("s", 4242, home) == ("s", 4242, False)
+
+    def test_task_agent_pid_is_accepted_and_flagged(self, tmp_path: Path):
+        """A child agent writes only a task log, so that file must prove it."""
+        home = make_home(tmp_path)
+        write_task_stdout(home, "s", 4242)
+
+        assert ri.resolve_target("s", 4242, home) == ("s", 4242, True)
+
+    def test_task_agent_pid_is_reachable_without_a_session_id(self, tmp_path: Path):
+        """A worker PID alone must derive its session and its kind."""
+        home = make_home(tmp_path)
+        write_task_stdout(home, "s", 4242)
+
+        assert ri.resolve_target(None, 4242, home) == ("s", 4242, True)
+
+    def test_session_log_wins_when_a_pid_left_both_kinds(self, tmp_path: Path):
+        """The session process owns the session log, so it is not a task agent."""
+        home = make_home(tmp_path)
+        write_stdout(home, "s", 4242)
+        write_task_stdout(home, "s", 4242)
+
+        assert ri.resolve_target("s", 4242, home) == ("s", 4242, False)
 
     def test_explicit_pid_without_a_record_is_target_not_found(self, tmp_path: Path):
         """A PID with no stdout record cannot be attributed to any session."""
@@ -116,14 +147,14 @@ class TestResolveTarget:
         home = make_home(tmp_path)
         write_stdout(home, "s", 4242)
 
-        assert ri.resolve_target(None, 4242, home) == ("s", 4242)
+        assert ri.resolve_target(None, 4242, home) == ("s", 4242, False)
 
     def test_pid_only_maps_the_temp_prefix_to_the_display_sentinel(self, tmp_path: Path):
         """The storage prefix must never be published as a session identity."""
         home = make_home(tmp_path)
         write_stdout(home, "topsailai", 4242)
 
-        assert ri.resolve_target(None, 4242, home) == ("(temp)", 4242)
+        assert ri.resolve_target(None, 4242, home) == ("(temp)", 4242, False)
 
     def test_unusable_identifier_is_target_mismatch(self, tmp_path: Path):
         """An identifier that cannot name a file must fail instead of matching."""
@@ -143,7 +174,7 @@ class TestResolveTarget:
         (task_dir / "zero.0.session.stdout").write_text("", encoding="utf-8")
         write_stdout(home, "s", 4242)
 
-        assert ri.resolve_target("s", 4242, home) == ("s", 4242)
+        assert ri.resolve_target("s", 4242, home) == ("s", 4242, False)
 
 
 class TestBuildDocument:
@@ -225,7 +256,7 @@ class TestBuildDocument:
                    return_value=collected_record(4242)) as collect:
             ri.build_document("s", 4242, home)
 
-        assert collect.call_args.kwargs == {}
+        assert "timeout" not in collect.call_args.kwargs
 
     def test_explicit_timeout_is_forwarded(self, tmp_path: Path):
         """An explicit budget must reach the transport unchanged."""
@@ -239,7 +270,21 @@ class TestBuildDocument:
                    return_value=collected_record(4242)) as collect:
             ri.build_document("s", 4242, home, 0.25)
 
-        assert collect.call_args.kwargs == {"timeout": 0.25}
+        assert collect.call_args.kwargs["timeout"] == 0.25
+
+    def test_task_agent_flag_is_forwarded_to_the_collector(self, tmp_path: Path):
+        """The runtime record must state which kind of process answered."""
+        home = make_home(tmp_path)
+        manager = manager_for(tmp_path)
+        manager.create_session(SessionData(session_id="s", task="Task"))
+
+        with patch("topsailai.context.ctx_manager.get_session_manager",
+                   return_value=manager), \
+             patch("cli_topsailai.workspace_runtime.collect_session_runtime",
+                   return_value=collected_record(4242)) as collect:
+            ri.build_document("s", 4242, home, is_task=True)
+
+        assert collect.call_args.kwargs == {"is_task": True}
 
     def test_missing_session_is_session_not_found(self, tmp_path: Path):
         """A record cannot be produced without a stored session."""

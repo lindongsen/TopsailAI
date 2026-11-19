@@ -93,7 +93,7 @@ The record shape is:
 
 ## Related Command
 
-`topsailai runtime info` prints the same document for the same session, with one addition: `-p/--pid` selects which process answers the runtime query, because one session may run several agents at the same time. Without `-p` it resolves the answering PID exactly as this command does, so the default invocation is identical. See [topsailai](topsailai.md#session-record-with-runtime-data).
+`topsailai runtime info` prints the same document for the same session, with one addition: `-p/--pid` selects which process answers the runtime query, because one session may run several agents at the same time. Without `-p` it resolves the answering PID exactly as this command does, so the default invocation is identical. A task (child) agent writes only a `{session}.{pid}[.{task_id}].task.stdout` log, so `-p` accepts that file as ownership evidence and reports `is_task: true` in the `runtime` object; this command always queries the session process, so its own `runtime` never carries a worker's data. See [topsailai](topsailai.md#session-record-with-runtime-data).
 
 ## Failure Output
 

@@ -12,7 +12,7 @@ import json
 import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from cli_topsailai.constants import TEMP_SESSION_ID, TEMP_SESSION_MARKER
 
@@ -93,12 +93,51 @@ def _is_socket(path: str) -> bool:
     return stat.S_ISSOCK(info.st_mode)
 
 
-def _failure(state: str, error_code: str, pid: Optional[int]) -> Dict[str, Any]:
+def _process_log_records(task_dir: str) -> List[Tuple[str, int, bool]]:
+    """Return ``(session_id, pid, is_task)`` for every process log, in one scan.
+
+    A session process writes ``{session}.{pid}.session.stdout``. A task agent
+    runs with session tee disabled, so it writes
+    ``{session}.{pid}[.{task_id}].task.stdout`` instead and never creates a
+    session stdout file. Both files are created by the process itself, so both
+    prove which session owns the PID, and the file kind is the same evidence
+    that answers whether the process is a task agent.
+
+    The on-disk identity is used rather than the display identity, so a
+    temporary session is named ``topsailai`` here exactly as its filename says.
+    A file that does not parse into a positive PID is skipped instead of
+    aborting the scan, because one unusable leftover must not hide the rest.
+    """
+    from cli_topsailai.log_files import parse_stdout_filename
+
+    records: List[Tuple[str, int, bool]] = []
+    try:
+        entries = os.listdir(task_dir)
+    except OSError:
+        return records
+    for entry in entries:
+        is_task = entry.endswith(".task.stdout")
+        if not is_task and not entry.endswith(".session.stdout"):
+            continue
+        session_id, raw_pid = parse_stdout_filename(entry)
+        if session_id is None or raw_pid is None or not raw_pid.isdecimal():
+            continue
+        pid = int(raw_pid)
+        if pid <= 0:
+            continue
+        records.append((session_id, pid, is_task))
+    return records
+
+
+def _failure(state: str, error_code: str, pid: Optional[int],
+             is_task: bool = False) -> Dict[str, Any]:
     """Build one row result that carries no runtime data."""
-    return {"state": state, "error_code": error_code, "pid": pid, "data": None}
+    return {"state": state, "error_code": error_code, "pid": pid,
+            "is_task": is_task, "data": None}
 
 
-def _parse_result(response: Dict[str, Any], pid: Optional[int]) -> Dict[str, Any]:
+def _parse_result(response: Dict[str, Any], pid: Optional[int],
+                  is_task: bool = False) -> Dict[str, Any]:
     """Decode the instruction's ``result`` into the published runtime record.
 
     ``result`` is a JSON string produced by the answering process, not a nested
@@ -112,11 +151,11 @@ def _parse_result(response: Dict[str, Any], pid: Optional[int]) -> Dict[str, Any
         try:
             data = json.loads(result)
         except (ValueError, RecursionError):
-            return _failure("invalid_payload", "invalid_payload", pid)
+            return _failure("invalid_payload", "invalid_payload", pid, is_task)
         if not isinstance(data, dict):
-            return _failure("invalid_payload", "invalid_payload", pid)
+            return _failure("invalid_payload", "invalid_payload", pid, is_task)
     else:
-        return _failure("invalid_payload", "invalid_payload", pid)
+        return _failure("invalid_payload", "invalid_payload", pid, is_task)
     # ``state == "ok"`` must mean "usable runtime data is present", so an
     # instruction that answered with its own failure is reported as
     # unavailable while the raw payload stays available for diagnosis.
@@ -124,13 +163,20 @@ def _parse_result(response: Dict[str, Any], pid: Optional[int]) -> Dict[str, Any
         reported = data.get("error")
         error_code = reported if isinstance(reported, str) and reported else "no_data"
         return {"state": "unavailable", "error_code": error_code, "pid": pid,
-                "data": data}
-    return {"state": "ok", "error_code": None, "pid": pid, "data": data}
+                "is_task": is_task, "data": data}
+    return {"state": "ok", "error_code": None, "pid": pid,
+            "is_task": is_task, "data": data}
 
 
 def _collect_one(row: Dict[str, Any], task_dir: str, timeout: float,
-                 sender) -> Dict[str, Any]:
-    """Collect one row's runtime record, converting every failure to a state."""
+                 sender, is_task: bool = False) -> Dict[str, Any]:
+    """Collect one row's runtime record, converting every failure to a state.
+
+    *is_task* describes the process that owns the answering channel, not the
+    row that referenced it: a task row in the workspace list is answered by its
+    parent session, so it reports ``False`` there. The caller supplies the fact
+    because it already knows which PID it selected.
+    """
     from cli_topsailai.runtime_control import (
         ControlDeliveryError,
         build_socket_path,
@@ -139,25 +185,25 @@ def _collect_one(row: Dict[str, Any], task_dir: str, timeout: float,
     file_session_id = _file_session_id(row.get("session_id"))
     pid = _row_owner_pid(row)
     if file_session_id is None or pid is None:
-        return _failure("unavailable", "unsupported_row", pid)
+        return _failure("unavailable", "unsupported_row", pid, is_task)
     socket_path = build_socket_path(task_dir, file_session_id, str(pid))
     # A socket file outlives its owner process, so existence proves only that a
     # channel once existed. Probing a stale endpoint fails in about a
     # millisecond, so checking existence first is a cheap fast path rather than
     # a liveness claim.
     if not _is_socket(socket_path):
-        return _failure("unavailable", "endpoint_missing", pid)
+        return _failure("unavailable", "endpoint_missing", pid, is_task)
     payload = {"instruction": RUNTIME_INSTRUCTION, "args": [RUNTIME_JSON_ARGUMENT]}
     try:
         result = sender(socket_path, "call_instruction", payload, timeout=timeout)
     except ControlDeliveryError as exc:
         state = _STATE_BY_ERROR_CODE.get(exc.error_code, "unavailable")
-        return _failure(state, exc.error_code, pid)
+        return _failure(state, exc.error_code, pid, is_task)
     except Exception:
         # An unexpected failure is still one row's problem, never the
         # document's, so it is reported without a traceback.
-        return _failure("unavailable", "internal_error", pid)
-    return _parse_result(result.response, pid)
+        return _failure("unavailable", "internal_error", pid, is_task)
+    return _parse_result(result.response, pid, is_task)
 
 
 def collect_workspace_runtime(
@@ -221,6 +267,7 @@ def collect_session_runtime(
     *,
     timeout: float = DEFAULT_TIMEOUT,
     sender=None,
+    is_task: bool = False,
 ) -> Dict[str, Any]:
     """Collect one session's runtime record through its own control channel.
 
@@ -237,15 +284,19 @@ def collect_session_runtime(
         task_dir: Absolute task directory holding the control sockets.
         timeout: Transport budget in seconds.
         sender: Optional delivery seam, defaulting to the real transport.
+        is_task: Whether *pid* is a task (child) agent rather than the session
+            process. The caller knows this because it selected the PID, and the
+            record reports it so a consumer can tell the two agents of one
+            session apart.
 
     Returns:
-        One ``{state, error_code, pid, data}`` record. A row that cannot be
-        queried reports ``unsupported_row`` rather than raising, because
-        runtime data is an optional enrichment of the session record.
+        One ``{state, error_code, pid, is_task, data}`` record. A row that
+        cannot be queried reports ``unsupported_row`` rather than raising,
+        because runtime data is an optional enrichment of the session record.
     """
     row: Dict[str, Any] = {"session_id": session_id, "pid": pid}
     if sender is None:
         from cli_topsailai.runtime_control import send_to_control
 
         sender = send_to_control
-    return _collect_one(row, task_dir, timeout, sender)
+    return _collect_one(row, task_dir, timeout, sender, is_task)

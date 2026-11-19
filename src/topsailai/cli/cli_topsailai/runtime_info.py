@@ -63,32 +63,16 @@ class RuntimeInfoError(Exception):
         return _EXIT_CODES[self.error_code]
 
 
-def _stdout_records(task_dir: str) -> List[Tuple[str, int]]:
-    """Return ``(session_id, pid)`` for every session stdout file, in one scan.
+def _process_records(task_dir: str) -> List[Tuple[str, int, bool]]:
+    """Return ``(session_id, pid, is_task)`` for every process log.
 
-    The on-disk identity is used rather than the display identity, so a
-    temporary session is named ``topsailai`` here exactly as its filename says.
-    A file that does not parse into a positive PID is skipped instead of
-    aborting the scan, because one unusable leftover must not hide the rest.
+    The scan lives in the collector module because the collector owns the
+    socket-path contract, and a second copy here would be a second place for
+    the filename convention to drift.
     """
-    from cli_topsailai.log_files import parse_stdout_filename
+    from cli_topsailai.workspace_runtime import _process_log_records
 
-    records: List[Tuple[str, int]] = []
-    try:
-        entries = os.listdir(task_dir)
-    except OSError:
-        return records
-    for entry in entries:
-        if not entry.endswith(".session.stdout"):
-            continue
-        session_id, raw_pid = parse_stdout_filename(entry)
-        if session_id is None or raw_pid is None or not raw_pid.isdecimal():
-            continue
-        pid = int(raw_pid)
-        if pid <= 0:
-            continue
-        records.append((session_id, pid))
-    return records
+    return _process_log_records(task_dir)
 
 
 def _on_disk_session_id(session_id: Optional[str]) -> Optional[str]:
@@ -118,18 +102,20 @@ def _display_session_id(on_disk_session_id: str) -> str:
 
 def resolve_target(
     session_id: Optional[str], pid: Optional[int], home: str
-) -> Tuple[str, Optional[int]]:
-    """Return the exact ``(session_id, pid)`` pair to query.
+) -> Tuple[str, Optional[int], bool]:
+    """Return the exact ``(session_id, pid, is_task)`` triple to query.
 
     Without an explicit PID the answer is the one ``session info`` already
     produces: the PID that proved the session live. An idle or unverifiable
-    session therefore yields ``(session_id, None)`` and is never probed, so a
-    process that does not exist is not reported as a collection failure.
+    session therefore yields ``(session_id, None, False)`` and is never probed,
+    so a process that does not exist is not reported as a collection failure.
 
     With an explicit PID the caller asserted a specific process, so it is
     queried even when the session looks idle. The PID is first proven to belong
-    to the requested session through its stdout filename, because reporting
-    another session's runtime data would be worse than failing.
+    to the requested session through a process log it wrote itself, because
+    reporting another session's runtime data would be worse than failing. A
+    task agent writes only a task log, so accepting that file is what makes a
+    worker PID reachable at all.
 
     Args:
         session_id: Display session identity, or ``None`` when only a PID was
@@ -138,40 +124,44 @@ def resolve_target(
         home: Absolute ``TOPSAILAI_HOME`` directory.
 
     Returns:
-        The session identity and the PID to query, which is ``None`` when no
-        live owner was resolved.
+        The session identity, the PID to query (``None`` when no live owner was
+        resolved), and whether that PID is a task agent rather than the session
+        process.
 
     Raises:
-        RuntimeInfoError: ``target_not_found`` when no stdout file records the
+        RuntimeInfoError: ``target_not_found`` when no process log records the
             PID, or ``target_mismatch`` when it records another session.
     """
     if pid is None:
         from cli_topsailai.process_liveness import live_session_pid
 
-        return session_id or "", live_session_pid(session_id or "", home=home)
+        return session_id or "", live_session_pid(session_id or "", home=home), False
 
     task_dir = os.path.join(home, TASK_SUBDIR)
-    owners = [owner for owner, record_pid in _stdout_records(task_dir)
-              if record_pid == pid]
+    owners = [(owner, is_task) for owner, record_pid, is_task
+              in _process_records(task_dir) if record_pid == pid]
     if not owners:
         raise RuntimeInfoError(
-            "target_not_found", "No session stdout file records this PID"
+            "target_not_found", "No process log records this PID"
         )
+    # A session process writes a session log, so its own record wins when a PID
+    # somehow left both kinds behind; the session log is the stronger identity.
+    is_task = all(record_is_task for _owner, record_is_task in owners)
     if session_id is None:
         # Only a PID was given, so the filename is the only identity evidence.
         # The on-disk prefix is translated back to the display identity, so a
         # temporary session is reported as ``(temp)`` like every other command.
-        return _display_session_id(owners[0]), pid
+        return _display_session_id(owners[0][0]), pid, is_task
     expected = _on_disk_session_id(session_id)
     if expected is None:
         raise RuntimeInfoError(
             "target_mismatch", "The session identifier cannot name a process"
         )
-    if expected not in owners:
+    if expected not in [owner for owner, _is_task in owners]:
         raise RuntimeInfoError(
             "target_mismatch", "The PID belongs to another session"
         )
-    return session_id, pid
+    return session_id, pid, is_task
 
 
 def build_document(
@@ -179,6 +169,7 @@ def build_document(
     pid: Optional[int],
     home: str,
     timeout: Optional[float] = None,
+    is_task: bool = False,
 ) -> str:
     """Return the session record document as one JSON string.
 
@@ -186,6 +177,10 @@ def build_document(
     document is identical to ``session info --include-runtime --json`` for the
     same session. ``runtime`` is ``None`` when no PID was resolved, which is the
     same "not running" answer that command publishes.
+
+    *is_task* is forwarded to the collector so the runtime record states which
+    kind of process answered; the session record itself is unchanged, which is
+    what keeps the two commands byte-identical.
 
     Raises:
         RuntimeInfoError: ``session_not_found`` when the session has no stored
@@ -205,10 +200,12 @@ def build_document(
     if pid is not None:
         task_dir = os.path.join(home, TASK_SUBDIR)
         if timeout is None:
-            runtime = collect_session_runtime(session_id, pid, task_dir)
+            runtime = collect_session_runtime(
+                session_id, pid, task_dir, is_task=is_task
+            )
         else:
             runtime = collect_session_runtime(
-                session_id, pid, task_dir, timeout=timeout
+                session_id, pid, task_dir, timeout=timeout, is_task=is_task
             )
     return session_info._format_session_json(session, home, runtime)
 
@@ -230,11 +227,11 @@ def run_info(request: RuntimeInfoRequest, *, home: str) -> int:
     """
     session_id = request.session_id or ""
     try:
-        resolved_session, resolved_pid = resolve_target(
+        resolved_session, resolved_pid, is_task = resolve_target(
             request.session_id, request.pid, home
         )
         document = build_document(
-            resolved_session, resolved_pid, home, request.timeout
+            resolved_session, resolved_pid, home, request.timeout, is_task
         )
     except RuntimeInfoError as error:
         print(_failure_document(session_id, error.error_code, error.message))

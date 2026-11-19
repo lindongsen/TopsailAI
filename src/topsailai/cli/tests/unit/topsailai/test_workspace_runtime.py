@@ -629,3 +629,61 @@ def test_single_session_collector_accepts_the_temp_sentinel(tmp_path):
 
     assert record["state"] == "ok"
     assert record["data"]["model"]["name"] == "example-model"
+
+
+def test_single_session_collector_publishes_is_task_false_by_default(tmp_path):
+    """A session process is not a task agent, so the flag defaults to false."""
+    make_socket(str(tmp_path), "sample", 123)
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=ok_sender(),
+    )
+
+    assert record["is_task"] is False
+
+
+def test_single_session_collector_publishes_is_task_true(tmp_path):
+    """A worker PID must be reported as a task agent, not as the session."""
+    make_socket(str(tmp_path), "sample", 123)
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=ok_sender(), is_task=True,
+    )
+
+    assert record["is_task"] is True
+    assert record["state"] == "ok"
+
+
+def test_is_task_is_published_on_every_failure_record(tmp_path):
+    """A failure must still state which kind of process was asked."""
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=ok_sender(), is_task=True,
+    )
+
+    assert record["state"] == "unavailable"
+    assert record["error_code"] == "endpoint_missing"
+    assert record["is_task"] is True
+
+
+def test_process_log_records_accepts_both_log_kinds(tmp_path):
+    """A session log and a task log must both prove a PID's ownership."""
+    (tmp_path / "s.111.session.stdout").touch()
+    (tmp_path / "s.222.topsailai.1795078235.630223.task.stdout").touch()
+
+    records = workspace_runtime._process_log_records(str(tmp_path))
+
+    assert sorted(records) == [
+        ("s", 111, False),
+        ("s", 222, True),
+    ]
+
+
+def test_process_log_records_skips_unusable_names(tmp_path):
+    """One leftover must not hide the record that does match."""
+    (tmp_path / "broken.notapid.session.stdout").touch()
+    (tmp_path / "zero.0.session.stdout").touch()
+    (tmp_path / "s.111.session.stdout").touch()
+
+    assert workspace_runtime._process_log_records(str(tmp_path)) == [
+        ("s", 111, False),
+    ]
