@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -71,27 +70,20 @@ func fetchWholeFile(client *Client, options Options, write func([]byte) error) (
 		chunkOptions.Offset = offset
 		chunkOptions.Length = requested
 
-		envelope, err := client.Send(chunkOptions)
+		chunk, err := client.SendRaw(chunkOptions)
 		if err != nil {
 			return total, err
 		}
-		if !envelope.Succeeded() {
-			return total, fmt.Errorf("%s: %s", envelope.Code.Name(), envelope.Message)
-		}
 
-		var chunk readChunk
-		if err := json.Unmarshal(envelope.Data, &chunk); err != nil {
-			return total, fmt.Errorf("decode read result: %w", err)
-		}
-
-		if chunk.Size > 0 {
+		if len(chunk.Content) > 0 {
 			if err := write(chunk.Content); err != nil {
 				return total, err
 			}
-			total += chunk.Size
-			offset += chunk.Size
+			size := int64(len(chunk.Content))
+			total += size
+			offset += size
 			if remaining > 0 {
-				remaining -= chunk.Size
+				remaining -= size
 			}
 		}
 
@@ -100,7 +92,7 @@ func fetchWholeFile(client *Client, options Options, write func([]byte) error) (
 		// response that claims more remains but delivered nothing, which would
 		// otherwise spin forever. It is checked before the budget so a spent budget
 		// cannot turn a contradictory response into another request.
-		if chunk.Size == 0 || !chunk.Truncated {
+		if len(chunk.Content) == 0 || !chunk.Truncated {
 			return total, nil
 		}
 		if options.Length > 0 && remaining == 0 {
@@ -122,6 +114,8 @@ type destination struct {
 	temporary string
 	// final is the destination path, renamed into place on success.
 	final string
+	// program is the name used as the prefix of every message this destination writes.
+	program string
 }
 
 // openDestination prepares the output for one invocation.
@@ -140,9 +134,9 @@ type destination struct {
 // message must not claim otherwise. A `usage:` prefix here would send a reader looking
 // for a typo that does not exist, and it would break the invariant that a message
 // beginning `usage:` always accompanies status 2.
-func openDestination(options Options, stdout io.Writer) (*destination, error) {
+func openDestination(options Options, stdout io.Writer, program string) (*destination, error) {
 	if options.Output == "" || options.Output == stdoutDestination {
-		return &destination{writer: stdout}, nil
+		return &destination{writer: stdout, program: program}, nil
 	}
 
 	final := options.Output
@@ -159,7 +153,7 @@ func openDestination(options Options, stdout io.Writer) (*destination, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create a temporary file in %s: %w", directory, err)
 	}
-	return &destination{writer: temporary, file: temporary, temporary: temporary.Name(), final: final}, nil
+	return &destination{writer: temporary, file: temporary, temporary: temporary.Name(), final: final, program: program}, nil
 }
 
 // commit finishes the write.
@@ -199,7 +193,7 @@ func (d *destination) abort() {
 	}
 	if d.temporary != "" {
 		if err := os.Remove(d.temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "connector-server cli: could not remove %s: %v\n", d.temporary, err)
+			fmt.Fprintf(os.Stderr, "%s: could not remove %s: %v\n", d.program, d.temporary, err)
 		}
 		d.temporary = ""
 	}
@@ -214,8 +208,8 @@ func (d *destination) abort() {
 //
 // The first request is issued here rather than by the caller, so a whole-file read
 // does not fetch its first chunk twice.
-func writeToDestination(client *Client, options Options, stdout, stderr io.Writer) error {
-	target, err := openDestination(options, stdout)
+func writeToDestination(client *Client, options Options, stdout, stderr io.Writer, program string) error {
+	target, err := openDestination(options, stdout, program)
 	if err != nil {
 		return err
 	}
@@ -233,7 +227,7 @@ func writeToDestination(client *Client, options Options, stdout, stderr io.Write
 			return err
 		}
 		if options.Output != "" && options.Output != stdoutDestination {
-			fmt.Fprintf(stderr, "connector-server cli: wrote %d bytes to %s\n", total, options.Output)
+			fmt.Fprintf(stderr, "%s: wrote %d bytes to %s\n", program, total, options.Output)
 		}
 		return nil
 	}
@@ -247,7 +241,7 @@ func writeToDestination(client *Client, options Options, stdout, stderr io.Write
 		target.abort()
 		return fmt.Errorf("%s: %s", envelope.Code.Name(), envelope.Message)
 	}
-	if err := writeResult(target.writer, stderr, options.Operation, envelope, false); err != nil {
+	if err := writeResult(target.writer, stderr, program, options.Operation, envelope, false); err != nil {
 		target.abort()
 		return err
 	}

@@ -303,6 +303,56 @@ grow the log line it appears in.
 `link_target` describe the link itself. Following it is exactly the operation the
 path fence refuses.
 
+### Opting in to the raw byte stream
+
+The envelope above is the contract, and it stays the contract. A caller that wants
+the file bytes without the base64 field asks for them with one request header:
+
+```text
+Accept: application/octet-stream
+```
+
+The operation, the proofs, the scope and the path are unchanged. Only the encoding
+of the answer differs, which is why this is a header rather than a second endpoint
+or a second operation: a second endpoint would be a second place to authenticate,
+and a second operation would be a second thing the Node's policy has to grant.
+
+A caller that sends no `Accept` header, or any other value, receives the envelope
+described above, byte for byte. The header is parsed rather than compared as a
+whole string, so `application/octet-stream; q=1` and a list containing it both
+count as the opt-in.
+
+On the opt-in path the response is the file bytes as the body, with the metadata
+in headers:
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `application/octet-stream` |
+| `Content-Length` | The exact number of bytes in the body |
+| `X-Request-Id` | The caller's correlation id, as in the envelope |
+| `X-Connector-Truncated` | `true` when the read stopped at the response cap, `false` otherwise |
+
+`Content-Length` is set explicitly so a short write is detectable by the client
+instead of arriving as a body that looks complete. `X-Connector-Truncated` carries
+the same meaning as the `truncated` field in the envelope: it reports whether
+content was left behind, not whether the response reached the cap.
+
+Three conditions must all hold for the raw shape, and each one is a refusal rather
+than a fallback:
+
+- The caller asked for it. A client that expected JSON must not receive a file.
+- The answer is a success. A refusal keeps the envelope, because an empty
+  octet-stream body with status `200` reads as a successful read of an empty file.
+- There are bytes to send. A success with no bytes is the JSON transport, where the
+  Node sent the whole result as JSON and there is nothing to stream.
+
+A refusal on the opt-in path therefore returns the envelope with its non-zero
+`code`, never an empty body. A caller can always tell "the file is empty" from "the
+request was refused" by the status and the `code`.
+
+The raw shape is a caller-facing encoding only. It does not change what the Server
+validates, what the Node authorizes, or which transport the channel negotiated.
+
 ## Error codes
 
 A caller must be able to tell "you may not" from "it is not there" from "the Node
@@ -321,6 +371,7 @@ is why the codes are enumerated.
 | `1007` | `unsupported_operation` | The operation is unknown or declared but not enabled in this version | No |
 | `1008` | `too_large` | The response exceeds the cap, or the request body exceeds the limit | No |
 | `1009` | `internal` | The Server failed. Details are logged, not returned | Yes |
+| `1010` | `overloaded` | The Server is at its admission limit for this caller, this Node or the whole process, and refused the request instead of queueing it without a bound | Yes |
 
 `denied` and `not_found` are deliberately distinct. Collapsing them would let a
 caller probe for the existence of a file it may not read, which is an information
@@ -469,11 +520,58 @@ they were last seen, which is a privacy decision this design does not make.
 
 - Requests to one Node are multiplexed over its single channel by `request_id`.
   The Node may answer out of order.
-- The Server bounds in-flight requests per Node. A Node that stops answering must
-  not accumulate unbounded pending state on the Server.
+- The Server bounds in-flight requests on three dimensions at once: per caller,
+  per Node and for the whole process. A request must satisfy all three. The
+  defaults are 2, 4 and 64, configurable through
+  `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_CALLER`,
+  `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_NODE` and
+  `CONNECTOR_SERVER_MAX_IN_FLIGHT`.
+- The per-Node bound is the one that protects the personal computer the Node runs
+  on. The per-caller bound stops one caller from occupying every slot, and the
+  process bound stops unbounded growth.
+- Admission runs after authentication and after the Node is known to be online, so
+  an unauthenticated request cannot occupy a slot and an offline Node cannot hold
+  one.
+- A request that cannot be admitted waits up to
+  `CONNECTOR_SERVER_ADMISSION_WAIT_MS` and is then refused with `overloaded`,
+  which is retryable. A wait of `0` refuses immediately.
+- `overloaded` is distinct from `internal` on purpose: the condition is temporary
+  and the same request will succeed later, while `internal` means the Server has a
+  defect and retrying is pointless.
+- The counters are per process. Several Server processes enforce the bound per
+  process, not across the fleet.
 - A request that exceeds `CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS` is answered
   with `node_timeout` and its pending entry is removed. The Node's eventual answer
   is discarded, because the caller has already been told the request failed.
+
+## File content transport
+
+The channel carries file content in one of two transports, negotiated once per
+connection during the handshake. The transport decides how bytes are framed; it
+carries no authority, so authentication, authorization and the path fence are
+identical either way.
+
+| Transport | Content encoding | When it is used |
+|---|---|---|
+| `binary-v1` | Raw bytes in a WebSocket binary frame, with a small JSON header | Both peers offer it |
+| JSON (unnamed) | Base64 inside the JSON frame payload | A peer does not offer `binary-v1` |
+
+- The Node advertises the transports it supports in `hello`. The Server selects
+  the first version in its own preference order that the Node offered, and reports
+  the choice in `hello_confirm`.
+- A peer that does not offer `binary-v1` falls back to the JSON transport rather
+  than being refused, so an upgrade does not break a deployment whose two halves
+  are replaced at different times.
+- A peer that offers only a version the Server does not know is refused with
+  `invalid_argument` and a message naming both sides, rather than being silently
+  treated as JSON.
+- The Server records the selected transport in its log as `file_transport=`, so an
+  operator can tell which one a connection is using without inspecting traffic.
+- The transport is not visible to the CLI. A caller sends the same request and
+  receives the same response either way, so a client does not need to know which
+  transport is in force. The caller-facing shape is decided by the `Accept` header
+  alone, not by the transport: a JSON-transport answer and a `binary-v1` answer are
+  both delivered as the envelope unless the caller opted in to the raw stream.
 
 ## CLI surface
 
@@ -504,6 +602,31 @@ connector-server cli --server https://cloud.example:8443 \
 | `--json` | none | no | Print the whole response envelope instead of the payload |
 | `-o`, `--output` | none | no | Write the result to `-` (stdout) or to a local file path |
 | `--force` | none | no | Allow `-o` to replace an existing destination file |
+
+### How a caller learns a scope name
+
+`--scope` is required on every request, and there is no API that lists scopes. That
+is deliberate rather than an omission: the Node answers `denied` for a scope the
+policy does not define and for a scope without a grant alike, so a caller cannot
+probe for names. An answer that distinguished the two would let anyone holding a
+node credential enumerate the scopes on a machine they have no permission on.
+
+The names therefore come from the machine that defines them. The operator who owns
+the policy file reads them with:
+
+```
+connector-node scope list
+```
+
+It prints one name per line in sorted order and never prints a path. It reads the
+policy document only, so it does not dial the Server, does not need the tunnel
+token, and works before the first start and on a machine where a scope directory
+has not been created yet. A policy that defines no scope prints nothing and exits
+`0`; a missing or malformed policy exits `1`; a rejected command line exits `2`.
+
+A caller who does not own the Node must ask the operator for the name. That is the
+same trust relationship as the node credential itself: the operator who can issue a
+credential can also state the scope it is for.
 
 The operation name is the one positional argument: `file.list`, `file.stat` or
 `file.read`. A second positional argument is refused rather than ignored, because

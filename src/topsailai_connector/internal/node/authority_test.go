@@ -632,3 +632,156 @@ func TestAuthorizeRefusesAnAbsentScopeWithoutAGrant(t *testing.T) {
 		t.Fatalf("CodeOf(List()) = %s, want not_found", code.Name())
 	}
 }
+
+// TestListScopeNamesReturnsThePolicyNames checks that the listing answers with the
+// names the policy defines, in sorted order.
+//
+// The order is asserted rather than left to the map, because a listing whose order
+// varies between runs is a listing a script cannot diff.
+func TestListScopeNamesReturnsThePolicyNames(t *testing.T) {
+	fixture := newAuthorityFixture(t)
+
+	names, err := ListScopeNames(lookupFrom(map[string]string{
+		"CONNECTOR_NODE_CONFIG_DIR":  fixture.base,
+		"CONNECTOR_NODE_POLICY_FILE": fixture.policyPath,
+	}))
+	if err != nil {
+		t.Fatalf("ListScopeNames() = %v, want nil", err)
+	}
+
+	want := []security.Scope{"project", "scratch"}
+	if len(names) != len(want) {
+		t.Fatalf("ListScopeNames() = %v, want %v", names, want)
+	}
+	for index, name := range want {
+		if names[index] != name {
+			t.Fatalf("ListScopeNames()[%d] = %q, want %q", index, names[index], name)
+		}
+	}
+}
+
+// TestListScopeNamesDefaultsToThePolicyFileInTheConfigDirectory checks the default
+// path, because an operator who never set CONNECTOR_NODE_POLICY_FILE is the common
+// case and a listing that required the variable would be unusable for them.
+func TestListScopeNamesDefaultsToThePolicyFileInTheConfigDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	project := filepath.Join(configDir, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatalf("mkdir %q: %v", project, err)
+	}
+	writeFile(t, filepath.Join(configDir, "policy.yaml"), "version: 1\n"+
+		"scopes:\n"+
+		"  project:\n"+
+		"    path: "+project+"\n"+
+		"grants:\n"+
+		"  - scope: project\n"+
+		"    permissions: [read]\n")
+
+	names, err := ListScopeNames(lookupFrom(map[string]string{
+		"CONNECTOR_NODE_CONFIG_DIR": configDir,
+	}))
+	if err != nil {
+		t.Fatalf("ListScopeNames() = %v, want nil", err)
+	}
+	if len(names) != 1 || names[0] != "project" {
+		t.Fatalf("ListScopeNames() = %v, want [project]", names)
+	}
+}
+
+// TestListScopeNamesListsAScopeWhoseDirectoryIsAbsent checks the property that makes
+// the command usable before the first start.
+//
+// A policy may name a directory that has not been created yet, and the Node tolerates
+// that at startup. A listing that opened the scopes would inherit the fence's startup
+// rules and refuse, which would hide the names exactly when the operator is trying to
+// learn them.
+func TestListScopeNamesListsAScopeWhoseDirectoryIsAbsent(t *testing.T) {
+	base := t.TempDir()
+	absent := filepath.Join(base, "not-created-yet")
+	policyPath := filepath.Join(base, "policy.yaml")
+	writeFile(t, policyPath, "version: 1\n"+
+		"scopes:\n"+
+		"  later:\n"+
+		"    path: "+absent+"\n"+
+		"grants:\n"+
+		"  - scope: later\n"+
+		"    permissions: [read]\n")
+
+	names, err := ListScopeNames(lookupFrom(map[string]string{
+		"CONNECTOR_NODE_CONFIG_DIR":  base,
+		"CONNECTOR_NODE_POLICY_FILE": policyPath,
+	}))
+	if err != nil {
+		t.Fatalf("ListScopeNames() = %v, want nil for an absent scope directory", err)
+	}
+	if len(names) != 1 || names[0] != "later" {
+		t.Fatalf("ListScopeNames() = %v, want [later]", names)
+	}
+}
+
+// TestListScopeNamesReturnsNothingForAnEmptyPolicy checks that a policy with no scope
+// is a valid document that lists nothing, rather than an error.
+//
+// An empty policy refuses every request, which is a working Node that denies
+// everything. Reporting it as a failure would send the operator looking for a broken
+// file when the file says exactly what they wrote.
+func TestListScopeNamesReturnsNothingForAnEmptyPolicy(t *testing.T) {
+	base := t.TempDir()
+	policyPath := filepath.Join(base, "policy.yaml")
+	writeFile(t, policyPath, "version: 1\nscopes: {}\ngrants: []\n")
+
+	names, err := ListScopeNames(lookupFrom(map[string]string{
+		"CONNECTOR_NODE_CONFIG_DIR":  base,
+		"CONNECTOR_NODE_POLICY_FILE": policyPath,
+	}))
+	if err != nil {
+		t.Fatalf("ListScopeNames() = %v, want nil for an empty policy", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("ListScopeNames() = %v, want no names", names)
+	}
+}
+
+// TestListScopeNamesRejectsAMissingPolicyFile checks that a missing file is reported
+// rather than read as an empty policy.
+//
+// The Node refuses to start without a policy, so a listing that answered "no scopes"
+// would describe a Node that cannot run and would hide the real problem.
+func TestListScopeNamesRejectsAMissingPolicyFile(t *testing.T) {
+	base := t.TempDir()
+
+	_, err := ListScopeNames(lookupFrom(map[string]string{
+		"CONNECTOR_NODE_CONFIG_DIR":  base,
+		"CONNECTOR_NODE_POLICY_FILE": filepath.Join(base, "absent.yaml"),
+	}))
+	if err == nil {
+		t.Fatal("ListScopeNames() = nil error, want a failure for a missing policy file")
+	}
+}
+
+// TestListScopeNamesRejectsAMalformedPolicy checks that the listing uses the same
+// strict decoding the Node uses at startup.
+//
+// A looser parser here would list names the Node would refuse to serve, so the
+// operator would write a request against a scope that cannot work.
+func TestListScopeNamesRejectsAMalformedPolicy(t *testing.T) {
+	base := t.TempDir()
+	policyPath := filepath.Join(base, "policy.yaml")
+	writeFile(t, policyPath, "version: 1\nscopes:\n  project:\n    path: relative/path\n")
+
+	_, err := ListScopeNames(lookupFrom(map[string]string{
+		"CONNECTOR_NODE_CONFIG_DIR":  base,
+		"CONNECTOR_NODE_POLICY_FILE": policyPath,
+	}))
+	if err == nil {
+		t.Fatal("ListScopeNames() = nil error, want a failure for a relative scope path")
+	}
+}
+
+// TestListScopeNamesRejectsNilLookup checks the guard clause, because a nil lookup
+// would panic inside the config resolution and a panic is not an error message.
+func TestListScopeNamesRejectsNilLookup(t *testing.T) {
+	if _, err := ListScopeNames(nil); err == nil {
+		t.Fatal("ListScopeNames(nil) = nil error, want a failure")
+	}
+}

@@ -47,6 +47,7 @@ from topsailai.ai_base.llm_control.exception import (
     LLMProviderReadError,
     LLMProviderTimeoutError,
     LLMRequestTimeoutError,
+    LLMSevereRepetitionError,
 )
 from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
 from topsailai.hooks.points.workspace.after_attempt_settle_user2agent import (
@@ -96,6 +97,16 @@ RECOVERABLE_REQUEST_ERRORS = (
     LLMRequestTimeoutError,
 )
 
+# Content verdicts that leave the conversation intact. A severe-repetition
+# verdict is computed from the response content, so the response is unusable
+# while the session, the messages and the user's intent are all still valid.
+# It is declared separately from the request-level set because the two describe
+# different failures: a spent wall-clock budget says nothing about the content,
+# and a content verdict says nothing about the request budget.
+RECOVERABLE_CONTENT_ERRORS = (
+    LLMSevereRepetitionError,
+)
+
 
 def _resolve_recoverable_turn_error(error):
     """Return the error that makes a turn recoverable, else ``None``.
@@ -112,6 +123,12 @@ def _resolve_recoverable_turn_error(error):
     and is recoverable for the same reason: the request is unusable, but the
     session, the messages and the user's intent are intact.
 
+    A content verdict such as ``LLMSevereRepetitionError`` is raised inside the
+    retry loop and re-raised immediately, because resending the identical
+    request cannot change a verdict computed from the response content. It is
+    recoverable for the same reason as the others: only the response is
+    unusable, so the turn is abandoned instead of the process being terminated.
+
     An explicit Exit choice in the retry-exhaustion menu raises the same
     ``LLMRetryExhaustedError`` with the same ``last_error``, but it is a human
     decision to stop rather than a recoverable failure, so it must stay fatal.
@@ -123,15 +140,24 @@ def _resolve_recoverable_turn_error(error):
         BaseException | None: The recoverable error, or ``None`` when the
         failure must stay fatal.
     """
-    if isinstance(error, RECOVERABLE_PROVIDER_ERRORS + RECOVERABLE_REQUEST_ERRORS):
+    recoverable_errors = (
+        RECOVERABLE_PROVIDER_ERRORS
+        + RECOVERABLE_REQUEST_ERRORS
+        + RECOVERABLE_CONTENT_ERRORS
+    )
+    if isinstance(error, recoverable_errors):
         return error
     if not isinstance(error, LLMRetryExhaustedError):
         return None
     if getattr(error, "explicit_exit", False):
         return None
+    # Only provider and content failures are unwrapped. A wrapped request-budget
+    # failure keeps its original fatal outcome, because widening this loop is a
+    # separate decision from adding the content verdict.
+    unwrappable_errors = RECOVERABLE_PROVIDER_ERRORS + RECOVERABLE_CONTENT_ERRORS
     candidates = [getattr(error, "last_error", None), error.__cause__]
     for candidate in candidates:
-        if isinstance(candidate, RECOVERABLE_PROVIDER_ERRORS):
+        if isinstance(candidate, unwrappable_errors):
             return candidate
     return None
 
@@ -716,17 +742,44 @@ class AgentChat(AgentChatBase):
                             task.tool_call_count = 0
                         task.executor = getattr(self.ai_agent, "agent_name", "") or ""
 
+            # User2Agent exception outcome map (keep this synchronized with the
+            # except branches below whenever an exception type or policy changes):
+            #
+            # 1. LLMBackToChatError and errors resolved through the RECOVERABLE_*
+            #    allowlists abandon only the current turn on the interactive main
+            #    thread and wait for fresh input. Non-interactive and worker-thread
+            #    recoverable errors are re-raised; workers must not read main-chat
+            #    input. LLM-layer automatic retries and Retry / Back / Exit menus
+            #    happen before this boundary and must not be confused with it.
+            # 2. HardInterruptError pauses the conversation; AgentEndProcess uses
+            #    the Agent-provided final message; KeyboardInterrupt and EOFError
+            #    follow the human-abort path.
+            # 3. ContextWindowLimitError, HeavyTaskError and
+            #    SummaryWindowLimitError terminate the session in a controlled
+            #    way: they set terminal failure and break without an uncaught
+            #    traceback.
+            # 4. Database I/O failures recover the interactive main-thread turn.
+            #    A non-interactive main thread calls _exit_after_db_io_failure()
+            #    because a lost durable write must never look successful; a worker
+            #    thread returns a controlled terminal failure instead of exiting
+            #    its owning process.
+            # 5. Every other Exception is re-raised. AgentChat.run() marks the
+            #    session as error and re-raises it; the agent_chats CLI catches only
+            #    EOFError, so such an exception reaches that entry point as a
+            #    traceback and non-zero worker-process exit.
             except (
                 (LLMBackToChatError, LLMRetryExhaustedError)
                 + RECOVERABLE_PROVIDER_ERRORS
                 + RECOVERABLE_REQUEST_ERRORS
+                + RECOVERABLE_CONTENT_ERRORS
             ) as e:
-                # Back, a recoverable provider failure and an expired request
-                # budget all abandon this User2Agent turn: the session, the
-                # messages and the user's intent stay intact, so the turn simply
-                # ends and the loop waits for the next user message instead of
-                # terminating the process. Retry stays inside LLMModel.chat and
-                # resends the same request, so it never reaches this branch.
+                # Back, a recoverable provider failure, an expired request
+                # budget and a content verdict all abandon this User2Agent
+                # turn: the session, the messages and the user's intent stay
+                # intact, so the turn simply ends and the loop waits for the
+                # next user message instead of terminating the process. Retry
+                # stays inside LLMModel.chat and resends the same request, so it
+                # never reaches this branch.
                 if not isinstance(e, LLMBackToChatError):
                     # The bounded retry loop may already have consumed the
                     # provider failure and raised LLMRetryExhaustedError, so

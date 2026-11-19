@@ -12,27 +12,71 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"topsailai_connector/internal/helpdispatch"
 	"topsailai_connector/internal/node"
+	"topsailai_connector/internal/nodehelp"
 	"topsailai_connector/internal/protocol"
 	"topsailai_connector/internal/security"
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "connector-node: %v\n", err)
-		os.Exit(1)
+	os.Exit(exitStatus(run(os.Args[1:])))
+}
+
+// exitStatus maps the result of run to a process exit status.
+//
+// The mapping lives here rather than inside run so run can stay a function that returns
+// an error, which is what makes it testable. The three statuses are the ones the help
+// text promises: 0 for success, 1 for a failure, 2 for a command line that was rejected
+// before anything was done. A usage error must be 2 and not 1, because the message
+// begins with "usage:" and a script branches on the status rather than on the text.
+func exitStatus(err error) int {
+	if err == nil {
+		return 0
 	}
+
+	// A refusal that already wrote its own message carries only a status, so it must not
+	// be printed again. Printing it twice would show the operator the same sentence in
+	// two places and make the second copy look like a second failure.
+	var printed *helpdispatch.PrintedError
+	if errors.As(err, &printed) {
+		return printed.Status
+	}
+
+	fmt.Fprintf(os.Stderr, "connector-node: %v\n", err)
+	if helpdispatch.IsUsage(err) {
+		return 2
+	}
+	return 1
 }
 
 // run is the whole process, separated from main so a test can call it and so every
 // failure returns an error instead of calling os.Exit in the middle.
 func run(arguments []string) error {
+	// The informational forms are answered before the subcommand is split, because
+	// `--help` is not a flag of any subcommand: it is a request about the program. Doing
+	// it first also means `connector-node --help` works without naming `run`, which is
+	// what an operator types when they do not yet know that `run` exists.
+	if result := helpdispatch.Resolve(programName, arguments, catalog()); result.Handled {
+		if result.Stdout != "" {
+			fmt.Fprint(os.Stdout, result.Stdout)
+		}
+		if result.Stderr != "" {
+			fmt.Fprint(os.Stderr, result.Stderr)
+		}
+		if result.Status != 0 {
+			return &helpdispatch.PrintedError{Status: result.Status}
+		}
+		return nil
+	}
+
 	command, rest := splitCommand(arguments)
 
 	switch command {
@@ -44,8 +88,44 @@ func run(arguments []string) error {
 		return runRegenerate(rest)
 	case "credential":
 		return runCredential(rest)
+	case "scope":
+		return runScope(rest)
 	default:
-		return fmt.Errorf("unknown command %q; want run, id, regenerate or credential", command)
+		return helpdispatch.Usagef("unknown command %q; want run, id, regenerate, credential or scope", command)
+	}
+}
+
+// programName is the name used as the prefix of every message and in the help text.
+//
+// It is a constant rather than the executable's base name, because the help text names
+// the program in every synopsis line and a renamed copy would then print a synopsis the
+// operator cannot type. The CLI reads its own base name because it is meant to be copied
+// and renamed; this binary is installed under one name.
+const programName = "connector-node"
+
+// catalog is the set of pages this binary can print.
+//
+// The command list is the same set splitCommand accepts, and the page keys are the words
+// an operator types. Keeping both here means a new subcommand that is added to
+// splitCommand without a page is visible in one place rather than discovered by a user
+// who asked for help and received the main page.
+func catalog() helpdispatch.Catalog {
+	return helpdispatch.Catalog{
+		Main:    nodehelp.Main(programName),
+		Version: helpdispatch.Version(programName),
+		Pages: map[string]string{
+			"run":               nodehelp.Run(programName),
+			"id":                nodehelp.ID(programName),
+			"regenerate":        nodehelp.Regenerate(programName),
+			"credential":        nodehelp.Credential(programName),
+			"credential add":    nodehelp.Credential(programName),
+			"credential list":   nodehelp.Credential(programName),
+			"credential remove": nodehelp.Credential(programName),
+			"scope":             nodehelp.Scope(programName),
+			"scope list":        nodehelp.Scope(programName),
+		},
+		Commands:   []string{"run", "id", "regenerate", "credential", "scope"},
+		ValueFlags: []string{"--key-id"},
 	}
 }
 
@@ -60,7 +140,7 @@ func splitCommand(arguments []string) (string, []string) {
 		return "", nil
 	}
 	switch arguments[0] {
-	case "run", "id", "regenerate", "credential":
+	case "run", "id", "regenerate", "credential", "scope":
 		return arguments[0], arguments[1:]
 	}
 	if strings.HasPrefix(arguments[0], "-") {
@@ -81,7 +161,7 @@ func rejectStrayArguments(flags *flag.FlagSet) error {
 	if flags.NArg() == 0 {
 		return nil
 	}
-	return fmt.Errorf("unexpected argument %q; want flags only", flags.Arg(0))
+	return helpdispatch.Usagef("unexpected argument %q; want flags only", flags.Arg(0))
 }
 
 // runNode starts the Node: configuration, identity, credentials, policy, scopes, then
@@ -110,8 +190,9 @@ func runNode(arguments []string) error {
 // binary instead of failing the test.
 func runNodeWithSignals(arguments []string, signals <-chan os.Signal) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
 	if err := flags.Parse(arguments); err != nil {
-		return err
+		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
 		return err
@@ -213,8 +294,9 @@ func contextFromSignals(signals <-chan os.Signal) (context.Context, context.Canc
 // believes it is serving something it is not.
 func runID(arguments []string) error {
 	flags := flag.NewFlagSet("id", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
 	if err := flags.Parse(arguments); err != nil {
-		return err
+		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
 		return err
@@ -243,8 +325,9 @@ func runID(arguments []string) error {
 // regeneration could also force a denial of service.
 func runRegenerate(arguments []string) error {
 	flags := flag.NewFlagSet("regenerate", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
 	if err := flags.Parse(arguments); err != nil {
-		return err
+		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
 		return err
@@ -278,7 +361,7 @@ func runRegenerate(arguments []string) error {
 // commands.
 func runCredential(arguments []string) error {
 	if len(arguments) == 0 {
-		return fmt.Errorf("credential needs a subcommand: add, list or remove")
+		return helpdispatch.Usagef("credential needs a subcommand: add, list or remove")
 	}
 	subcommand := arguments[0]
 	rest := arguments[1:]
@@ -291,7 +374,7 @@ func runCredential(arguments []string) error {
 	case "remove":
 		return runCredentialRemove(rest)
 	default:
-		return fmt.Errorf("unknown credential subcommand %q; want add, list or remove", subcommand)
+		return helpdispatch.Usagef("unknown credential subcommand %q; want add, list or remove", subcommand)
 	}
 }
 
@@ -302,9 +385,10 @@ func runCredential(arguments []string) error {
 // is lost.
 func runCredentialAdd(arguments []string) error {
 	flags := flag.NewFlagSet("credential add", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
 	keyID := flags.String("key-id", "", "public key id to name the credential; empty generates one")
 	if err := flags.Parse(arguments); err != nil {
-		return err
+		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
 		return err
@@ -347,8 +431,9 @@ func runCredentialAdd(arguments []string) error {
 // a secret is a file that can leak one.
 func runCredentialList(arguments []string) error {
 	flags := flag.NewFlagSet("credential list", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
 	if err := flags.Parse(arguments); err != nil {
-		return err
+		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
 		return err
@@ -369,6 +454,65 @@ func runCredentialList(arguments []string) error {
 	return nil
 }
 
+// runScope dispatches the scope subcommand.
+//
+// There is one subcommand today, and it is still a subcommand rather than a bare
+// `scope` command because the word names a noun: an operator who types `scope` is
+// asking about scopes, not asking for a listing, and a future `scope show` would
+// have nowhere to go if `scope` itself printed the list.
+func runScope(arguments []string) error {
+	if len(arguments) == 0 {
+		return helpdispatch.Usagef("scope needs a subcommand: list")
+	}
+	subcommand := arguments[0]
+	rest := arguments[1:]
+
+	switch subcommand {
+	case "list":
+		return runScopeList(rest)
+	default:
+		return helpdispatch.Usagef("unknown scope subcommand %q; want list", subcommand)
+	}
+}
+
+// runScopeList prints the scope names the policy defines, one per line.
+//
+// It exists because `--scope` is a required argument on every CLI request and the
+// only way to learn a scope name was to open the policy file or read a log. The
+// caller cannot ask the Node: the Node answers `denied` for an undefined scope and
+// for a scope without a grant alike, so a caller cannot probe for names. The
+// operator, who owns the policy file, can read the names here instead of opening
+// the file by hand.
+//
+// It prints names and never paths. A name is public and already appears in the
+// Node's startup log; a path is the Node's filesystem layout, which the design
+// keeps off the wire.
+//
+// It does not dial the Server and does not need the tunnel token, so it works
+// before the first start. It does not open a scope either, so a policy naming a
+// directory that does not exist still lists: the names are what the operator
+// wrote, and refusing to show them because a directory is absent would hide the
+// one thing this command is for.
+func runScopeList(arguments []string) error {
+	flags := flag.NewFlagSet("scope list", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	if err := flags.Parse(arguments); err != nil {
+		return helpdispatch.Usagef("%v", err)
+	}
+	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
+
+	names, err := node.ListScopeNames(os.Getenv)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		fmt.Println(name)
+	}
+	return nil
+}
+
 // runCredentialRemove removes one credential by key identifier.
 //
 // The removal is a rewrite of the file rather than an in-place edit, so a failure leaves
@@ -378,15 +522,16 @@ func runCredentialList(arguments []string) error {
 // the policy instead of the credential file.
 func runCredentialRemove(arguments []string) error {
 	flags := flag.NewFlagSet("credential remove", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
 	keyID := flags.String("key-id", "", "public key id to remove")
 	if err := flags.Parse(arguments); err != nil {
-		return err
+		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
 		return err
 	}
 	if *keyID == "" {
-		return fmt.Errorf("--key-id is required")
+		return helpdispatch.Usagef("--key-id is required")
 	}
 
 	configDir, err := node.ResolveConfigDir(os.Getenv)

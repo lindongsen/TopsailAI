@@ -85,6 +85,27 @@ func (c *SocketFrameConn) WriteFrame(frame protocol.Frame) error {
 	return c.conn.WriteMessage(websocket.TextMessage, encoded)
 }
 
+// WriteContentFrame sends one content frame as a binary websocket message.
+//
+// The message is binary rather than text because the payload is file bytes: a text
+// message would have to be valid UTF-8, and file content is not. The frame is built
+// by EncodeContentFrame, so the header and the content share one length-prefixed
+// layout and the receiver never has to guess where the bytes start.
+func (c *SocketFrameConn) WriteContentFrame(header protocol.ContentHeader, content []byte) error {
+	if c == nil || c.conn == nil {
+		return errors.New("frame connection is not writable")
+	}
+
+	encoded, err := protocol.EncodeContentFrame(header, content)
+	if err != nil {
+		return fmt.Errorf("encode content frame: %w", err)
+	}
+	if err := c.conn.SetWriteDeadline(time.Now().Add(socketWriteTimeout)); err != nil {
+		return fmt.Errorf("set write deadline: %w", err)
+	}
+	return c.conn.WriteMessage(websocket.BinaryMessage, encoded)
+}
+
 // Close releases the connection.
 func (c *SocketFrameConn) Close() error {
 	if c == nil || c.conn == nil {

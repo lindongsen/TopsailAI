@@ -33,9 +33,10 @@ SHELL := /bin/bash
 # over a `?=` default, and a plain `:=` would silently ignore it.
 BIN_DIR ?= bin
 TMP_DIR ?= .tmp
-
 SERVER_PKG := ./cmd/connector-server
 NODE_PKG := ./cmd/connector-node
+CLI_PKG := ./cmd/connector-cli
+
 
 # Component package groups. A component-level test target runs only the packages
 # that belong to that component, so a change to the Node can be verified without
@@ -122,14 +123,14 @@ PACKAGE_NODE_KEY_ID ?= bundle-caller
 UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
-
-.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile package package-windows
+.PHONY: help build build-server build-node build-cli vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e measure measure-optin check fmt clean build-windows test-windows-compile package package-windows
 
 help:
 	@echo "Targets:"
-	@echo "  build           Build connector-server and connector-node into $(BIN_DIR)/"
+	@echo "  build           Build connector-server, connector-node and connector-cli into $(BIN_DIR)/"
 	@echo "  build-server    Build only connector-server into $(BIN_DIR)/"
 	@echo "  build-node      Build only connector-node into $(BIN_DIR)/"
+	@echo "  build-cli       Build only connector-cli into $(BIN_DIR)/"
 	@echo "  vet             Run go vet on every package"
 	@echo "  test            Run the unit test suite"
 	@echo "  test-unit       Run the unit test suite"
@@ -142,6 +143,8 @@ help:
 	@echo "  integration     Build the binaries, then run the integration suite"
 	@echo "  bdd             Run the Gherkin scenarios in tests/bdd/"
 	@echo "  e2e             Build the binaries, then drive real processes and a real bundle"
+	@echo "  measure         Measure one file.read on both sides and fail on a budget regression"
+	@echo "  measure-optin   Measure the raw byte stream against the JSON envelope on one process pair"
 	@echo "  check           vet, unit, coverage, race, integration, bdd and e2e in that order"
 	@echo "  fmt             Format every Go source file"
 	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
@@ -174,7 +177,7 @@ help:
 	@echo "  PACKAGE_GOOS        Target OS. Default this host"
 	@echo "  PACKAGE_GOARCH      Target architecture. Default this host"
 
-build: build-server build-node
+build: build-server build-node build-cli
 
 build-server:
 	@mkdir -p $(BIN_DIR)
@@ -183,6 +186,10 @@ build-server:
 build-node:
 	@mkdir -p $(BIN_DIR)
 	go build -o $(BIN_DIR)/connector-node $(NODE_PKG)
+
+build-cli:
+	@mkdir -p $(BIN_DIR)
+	go build -o $(BIN_DIR)/connector-cli $(CLI_PKG)
 
 vet:
 	go vet ./...
@@ -310,6 +317,51 @@ e2e: build
 	bash tests/e2e/deep_nesting.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/manual_probe.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/verify_package.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+
+# `measure` is the resource check, and it is deliberately not part of `check`.
+#
+# A 64 MiB measurement takes minutes and its absolute numbers move with host load,
+# so putting it in `check` would make the standard suite slow and flaky. It is a
+# separate target so it is discoverable in `help` and runnable on demand and in a
+# release check.
+#
+# The two scripts are separate on purpose. `measure_read.sh` measures and reports;
+# it does not judge, because a threshold with no baseline is a guess with a test
+# around it. `check_budget.sh` reads that report and compares it with the rule in
+# `docs/resource-baseline.md`. Merging them would make the report unusable as raw
+# evidence and would put the threshold somewhere other than next to the baseline it
+# implements.
+#
+# No cleanup is added here. `measure_read.sh` already stops the exact PIDs that
+# `start.sh` recorded, through its own EXIT trap. A second cleanup path in this
+# recipe could disagree with that one, and a cleanup that reports success is not a
+# cleanup that happened.
+#
+# Sizes are overridable so a quick run and a release run can differ without editing
+# this file: `make measure MEASURE_SIZES="1 16 64"`.
+MEASURE_SIZES ?= 1 16 64
+measure: build
+	@mkdir -p $(TMP_DIR)
+	bash tests/e2e/start.sh 2>&1 | tee $(TMP_DIR)/measure.log
+	bash tests/e2e/measure_read.sh $(MEASURE_SIZES) 2>&1 | tee -a $(TMP_DIR)/measure.log
+	bash tests/e2e/check_budget.sh 2>&1 | tee -a $(TMP_DIR)/measure.log
+
+# `measure-optin` measures the raw byte stream against the JSON envelope on the
+# same two processes, so the difference between the two reports is the cost of the
+# envelope and nothing else.
+#
+# It is a separate target rather than a mode of `measure` because it answers a
+# different question. `measure` asks "does one file.read stay inside the budget";
+# this asks "did opting in to the raw stream actually remove the envelope". Merging
+# them would make the budget report contain two ratios that mean different things.
+#
+# The wrapper owns the process lifetime. `measure_optin.sh` deliberately does not,
+# because it must run twice against one pair of processes, so a target calling it
+# directly would leak the Server and the Node on every run.
+MEASURE_OPTIN_SIZE ?= 16
+measure-optin: build
+	@mkdir -p $(TMP_DIR)
+	bash tests/e2e/measure_optin_pair.sh $(MEASURE_OPTIN_SIZE) 2>&1 | tee $(TMP_DIR)/measure-optin.log
 
 # Windows is a supported platform for the Node, so the Node must be compiled for
 # it on every check. The Server is deployed on Linux and is not built here: a

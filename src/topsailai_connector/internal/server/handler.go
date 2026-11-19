@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,6 +76,11 @@ type Handler struct {
 	// cache and the check.
 	window time.Duration
 	now    func() time.Time
+	// admission bounds concurrent requests on three dimensions. It is built here
+	// rather than read from config per request, for the same reason the window is:
+	// one value resolved once, so the bound that is enforced is the bound that was
+	// validated.
+	admission *admission
 }
 
 // NewHandler builds the CLI API handler.
@@ -104,6 +110,10 @@ func NewHandler(config Config, registry *Registry, forwarder Forwarder, logger *
 	if err != nil {
 		return nil, fmt.Errorf("build the client replay cache: %w", err)
 	}
+	admissionController, err := newAdmission(resolveAdmissionLimits(config))
+	if err != nil {
+		return nil, fmt.Errorf("build the admission controller: %w", err)
+	}
 	return &Handler{
 		config:    config,
 		registry:  registry,
@@ -112,7 +122,40 @@ func NewHandler(config Config, registry *Registry, forwarder Forwarder, logger *
 		replay:    replay,
 		window:    window,
 		now:       time.Now,
+		admission: admissionController,
 	}, nil
+}
+
+// resolveAdmissionLimits substitutes the defaults for unset fields.
+//
+// The substitution happens here rather than in LoadConfig because a Config built by
+// a test or by another entry point may leave the fields zero, and a zero limit
+// would refuse every request. One place resolves the values, so a handler cannot be
+// wired to a limit the configuration never stated.
+//
+// The wait is deliberately not substituted. Zero is a meaningful value for it: it
+// means "refuse immediately rather than wait", which is the correct setting for a
+// Node that must not queue work. Substituting a default would make that setting
+// unexpressible, so an operator who wrote CONNECTOR_SERVER_ADMISSION_WAIT_MS=0
+// would silently get a wait they did not ask for. LoadConfig resolves the default
+// at the boundary, so the production path never reaches here with an unset wait.
+func resolveAdmissionLimits(config Config) admissionLimits {
+	limits := admissionLimits{
+		perCaller: config.MaxInFlightPerCaller,
+		perNode:   config.MaxInFlightPerNode,
+		total:     config.MaxInFlight,
+		wait:      config.AdmissionWait,
+	}
+	if limits.perCaller == 0 {
+		limits.perCaller = DefaultMaxInFlightPerCaller
+	}
+	if limits.perNode == 0 {
+		limits.perNode = DefaultMaxInFlightPerNode
+	}
+	if limits.total == 0 {
+		limits.total = DefaultMaxInFlight
+	}
+	return limits
 }
 
 // envelope is the project-wide response format.
@@ -187,7 +230,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	if err := h.verifyClientProof(request, payload, nodeAuthHeader, requestID); err != nil {
+	callerKeyID, err := h.verifyClientProof(request, payload, nodeAuthHeader, requestID)
+	if err != nil {
 		h.refuse(writer, requestID, protocol.CodeUnauthenticated, "client proof is missing or does not verify")
 		return
 	}
@@ -214,6 +258,23 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	// Admission runs after authentication and after the liveness check, so a slot
+	// is only taken by work that will actually be forwarded. Taking a slot before
+	// the proof verifies would let an unauthenticated caller occupy capacity, which
+	// is a denial of service reachable without a credential.
+	//
+	// The release is deferred so every path below it returns the slot, including a
+	// panic in the forwarder. A slot leaked on one path is a permanent reduction in
+	// capacity that no restart-free operation can recover.
+	release, err := h.admission.acquire(callerKeyID, nodeID)
+	if err != nil {
+		h.logger.Warn("connector-server refused a request at admission",
+			"request_id", requestID, "client_key_id", callerKeyID, "node_id", nodeID, "reason", err.Error())
+		h.refuse(writer, requestID, CodeOfForwardError(err), "the server is at its concurrency limit; retry shortly")
+		return
+	}
+	defer release()
+
 	forwarded.NodeID = nodeID
 	forwarded.NodeAuth = nodeAuth
 	// The caller's request id is forwarded because both proofs sign it: the Node
@@ -228,7 +289,36 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	h.write(writer, requestID, response)
+	h.write(writer, requestID, wantsRawContent(request), response)
+}
+
+// rawContentMediaType is the media type a caller sends to receive file bytes
+// without the JSON envelope.
+//
+// It is the standard type for opaque bytes, so a caller does not need a
+// project-specific spelling to ask for the cheaper shape.
+const rawContentMediaType = "application/octet-stream"
+
+// wantsRawContent reports whether the caller opted in to the raw byte stream.
+//
+// The opt-in is a request header rather than a new endpoint or a new operation,
+// because the operation is the same read: only the encoding of the answer differs.
+// A second endpoint would be a second place to authenticate, and a second operation
+// would be a second thing the Node's policy has to grant.
+//
+// The header is parsed rather than compared as a whole string, because a caller may
+// send several acceptable types and may add parameters. A whole-string comparison
+// would refuse `application/octet-stream; q=1`, which is the same request.
+func wantsRawContent(request *http.Request) bool {
+	for _, value := range request.Header.Values("Accept") {
+		for _, candidate := range strings.Split(value, ",") {
+			mediaType := strings.TrimSpace(strings.Split(candidate, ";")[0])
+			if strings.EqualFold(mediaType, rawContentMediaType) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // verifyClientProof verifies the client HMAC proof and records its nonce.
@@ -242,23 +332,23 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 // exact Node proof header digest, the caller request id, the timestamp and the nonce.
 // Binding the Node proof header is what stops an attacker from keeping a valid client
 // proof and replacing the Node proof it travels with.
-func (h *Handler) verifyClientProof(request *http.Request, payload []byte, nodeAuthHeader string, requestID string) error {
+func (h *Handler) verifyClientProof(request *http.Request, payload []byte, nodeAuthHeader string, requestID string) (string, error) {
 	proof, err := security.ParseProof(request.Header.Get(security.ClientAuthHeader), security.SchemeClient)
 	if err != nil {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "reason", "malformed proof")
-		return err
+		return "", err
 	}
 
 	secret, present := h.config.ClientCredentials.Lookup(proof.KeyID)
 	if !present {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "unknown key id")
-		return security.ErrProofMismatch
+		return "", security.ErrProofMismatch
 	}
 
 	nowMS := h.now().UnixMilli()
 	if !security.TimestampWithinWindow(nowMS, proof.TimestampMS, h.window.Milliseconds()) {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "timestamp outside the window")
-		return security.ErrProofMismatch
+		return "", security.ErrProofMismatch
 	}
 
 	bodyPresent := request.Body != nil && request.ContentLength != 0
@@ -273,14 +363,14 @@ func (h *Handler) verifyClientProof(request *http.Request, payload []byte, nodeA
 	)
 	if err := security.VerifySignature(secret, canonical, proof.Signature); err != nil {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "signature does not verify")
-		return err
+		return "", err
 	}
 
 	if err := h.replay.Admit(proof.KeyID, proof.Nonce); err != nil {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", err.Error())
-		return err
+		return "", err
 	}
-	return nil
+	return proof.KeyID, nil
 }
 
 // forward sends the request with the configured timeout.
@@ -410,18 +500,106 @@ func decodeRequest(payload []byte) (protocol.Request, error) {
 	}, nil
 }
 
-// write relays a Node answer in the envelope.
-func (h *Handler) write(writer http.ResponseWriter, requestID string, response protocol.Response) {
+// write relays a Node answer, in the shape the caller asked for.
+//
+// Two shapes exist and the caller chooses between them with Accept:
+//
+//   - The JSON envelope, which is the documented contract and carries the read
+//     result as one object with a base64 content field.
+//   - The raw byte stream, which carries the file bytes as the body and the
+//     metadata in headers, so no encoder ever touches the content.
+//
+// The raw shape is used only when all three conditions hold: the caller asked for
+// it, the answer is a success, and there are bytes to send. Each condition is a
+// refusal rather than a fallback for a reason:
+//
+//   - A caller that did not ask for bytes must not receive them, because a client
+//     that expected JSON would try to parse a file as JSON.
+//   - A refusal must not become an empty body, because an empty octet stream with
+//     status 200 reads as a successful read of an empty file. A refusal keeps the
+//     envelope, where the code is visible.
+//   - A success with no bytes is the JSON transport, where the Node sent the whole
+//     result as JSON. There is nothing to stream, so the envelope is the answer.
+func (h *Handler) write(writer http.ResponseWriter, requestID string, raw bool, response protocol.Response) {
+	if raw && response.Code == protocol.CodeSuccess && len(response.Content) > 0 {
+		h.writeRawContent(writer, requestID, response)
+		return
+	}
+
+	// The legacy shape is rebuilt here, and only here, so a caller that did not ask
+	// for bytes still receives the documented object with a base64 content field.
+	// The merge is what pays the encoding cost, which is why it is on this branch
+	// rather than in attachContent: a caller that asked for bytes must not pay it.
+	//
+	// A merge failure is refused as internal rather than published as metadata
+	// without content, because a caller that receives size and truncated but no
+	// content has no way to tell a short file from a broken answer.
+	data := response.Data
+	if len(response.Content) > 0 && response.Code == protocol.CodeSuccess {
+		merged, err := mergeReadContent(response.Data, response.Content)
+		if err != nil {
+			h.logger.Warn("connector-server refused to publish content that did not match its metadata",
+				"request_id", requestID, "error", err)
+			h.refuse(writer, requestID, protocol.CodeInternal, "the read result did not match its metadata")
+			return
+		}
+		data = merged
+	}
+
 	body := envelope{
 		Code:      response.Code,
 		Message:   messageOf(response.Code),
 		RequestID: requestID,
 		Timestamp: time.Now().UnixMilli(),
 	}
-	if len(response.Data) > 0 {
-		body.Data = json.RawMessage(response.Data)
+	if len(data) > 0 {
+		body.Data = json.RawMessage(data)
 	}
 	writeJSON(writer, statusOf(response.Code), body)
+}
+
+// writeRawContent writes the file bytes as the response body.
+//
+// Content-Length is set explicitly rather than left to the server, so a truncated
+// write is detectable by the client instead of arriving as a short body that looks
+// complete. The length is the length of the bytes in hand, which the size check in
+// attachContent has already compared with the metadata the Node sent.
+//
+// The metadata travels in headers because the body is entirely file content. A
+// header is the only place left for it, and putting it in the body would mean
+// prefixing the file with a JSON object the caller has to strip.
+//
+// The truncated flag is reported rather than acted on: a truncated read is a
+// successful read of the first part of a file, which is what the caller asked for
+// when it set a length. Hiding the flag would leave the caller unable to tell a
+// complete file from a prefix.
+func (h *Handler) writeRawContent(writer http.ResponseWriter, requestID string, response protocol.Response) {
+	truncated := false
+	if meta, err := validateReadContent(response.Data, response.Content); err == nil {
+		truncated = meta.Truncated
+	} else {
+		// The size check already ran in attachContent, so reaching here means the
+		// metadata changed between the two checks. Refusing is the only safe answer:
+		// publishing bytes whose description does not match is the defect the check
+		// exists to prevent.
+		h.logger.Warn("connector-server refused to stream content that did not match its metadata",
+			"request_id", requestID, "error", err)
+		h.refuse(writer, requestID, protocol.CodeInternal, "the read result did not match its metadata")
+		return
+	}
+
+	writer.Header().Set("Content-Type", rawContentMediaType)
+	writer.Header().Set("Content-Length", strconv.Itoa(len(response.Content)))
+	writer.Header().Set(security.RequestIDHeader, requestID)
+	writer.Header().Set("X-Connector-Truncated", strconv.FormatBool(truncated))
+	writer.WriteHeader(http.StatusOK)
+	if _, err := writer.Write(response.Content); err != nil {
+		// The status and headers are already sent, so the caller cannot be told. The
+		// log is the only record, and it is written because a failed write is a
+		// truncated response the caller will see as a short file.
+		h.logger.Warn("connector-server could not write the whole content",
+			"request_id", requestID, "error", err)
+	}
 }
 
 // refuse logs the reason and answers with the code and no data.
@@ -473,7 +651,7 @@ func statusOf(code protocol.Code) int {
 		return http.StatusNotFound
 	case protocol.CodeTooLarge:
 		return http.StatusRequestEntityTooLarge
-	case protocol.CodeNodeOffline:
+	case protocol.CodeNodeOffline, protocol.CodeOverloaded:
 		return http.StatusServiceUnavailable
 	case protocol.CodeNodeTimeout:
 		return http.StatusGatewayTimeout
@@ -507,6 +685,8 @@ func messageOf(code protocol.Code) string {
 		return "the operation is not supported in this version"
 	case protocol.CodeTooLarge:
 		return "the request or response exceeds the limit"
+	case protocol.CodeOverloaded:
+		return "the server is at its concurrency limit, retry later"
 	default:
 		return "the server failed"
 	}
@@ -550,6 +730,12 @@ var errBodyUnreadable = errors.New("request body could not be read")
 //
 // An unclassified failure is internal rather than a guess, because a guessed code
 // tells the caller something the Server does not know.
+//
+// Overload is classified separately from internal because the two ask the caller to
+// do opposite things. An internal failure is a defect and a retry repeats it; an
+// overload is a temporary shortage and a retry is the correct response. Reporting
+// one as the other either sends a caller into a retry loop that cannot succeed or
+// tells it to give up on a condition that clears by itself.
 func CodeOfForwardError(err error) protocol.Code {
 	switch {
 	case err == nil:
@@ -562,6 +748,10 @@ func CodeOfForwardError(err error) protocol.Code {
 		return protocol.CodeNodeTimeout
 	case errors.Is(err, ErrNodeOffline):
 		return protocol.CodeNodeOffline
+	case errors.Is(err, ErrOverloaded):
+		return protocol.CodeOverloaded
+	case errors.Is(err, ErrChannelBusy):
+		return protocol.CodeOverloaded
 	default:
 		return protocol.CodeInternal
 	}

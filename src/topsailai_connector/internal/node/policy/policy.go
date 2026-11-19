@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 
 	"topsailai_connector/internal/security"
@@ -154,6 +155,16 @@ func parseScopes(definitions map[string]ScopeDefinition) (map[security.Scope]str
 		}
 		if definition.Path == "" {
 			return nil, fmt.Errorf("scope %q: path is required", name)
+		}
+		// The path must be absolute. A relative path resolves against whatever
+		// working directory the process happened to start in, so the same policy
+		// would mean a different directory per launch. The rule is checked here
+		// rather than only in the fence because the fence is reached by `run` and
+		// not by `scope list`: a listing that accepted a relative path would print
+		// a scope name the Node then refuses to serve, which is the divergence the
+		// shared decoder exists to prevent.
+		if !filepath.IsAbs(definition.Path) {
+			return nil, fmt.Errorf("scope %q: path %q is relative; a relative path resolves differently per launch", name, definition.Path)
 		}
 		scopes[scope] = definition.Path
 	}

@@ -122,6 +122,7 @@ that names a credential, and both are described in their own sections.
 | `connector-node` | `credential add` | Generate one caller credential, append it to the credential file and print it once. `--key-id` names it; empty generates one |
 | `connector-node` | `credential list` | Print the key identifiers in the credential file, never a secret |
 | `connector-node` | `credential remove` | Remove one caller credential by `--key-id`. Refuses to remove the last one |
+| `connector-node` | `scope list` | Print the scope names the policy defines, one per line, in sorted order. Never prints a path. Reads `CONNECTOR_NODE_CONFIG_DIR` and `CONNECTOR_NODE_POLICY_FILE` |
 | `connector-server` | `cli` | Call one operation on one Node and print the result |
 
 The Server validates `CONNECTOR_SERVER_TUNNEL_TOKEN` at startup and refuses to run
@@ -133,10 +134,11 @@ can verify no proof at all. The Node validates
 loads the credential file and the policy file and opens every scope the policy
 defines.
 
-`id`, `regenerate` and the `credential` subcommands are the exception, and the
-exception is deliberate. None of them dials the Server, so none requires
-`CONNECTOR_NODE_SERVER_URL` or `CONNECTOR_NODE_TUNNEL_TOKEN`; all read only
-`CONNECTOR_NODE_CONFIG_DIR`. The first-run order depends on this: the operator runs
+`id`, `regenerate`, the `credential` subcommands and `scope list` are the
+exception, and the exception is deliberate. None of them dials the Server, so none
+requires `CONNECTOR_NODE_SERVER_URL` or `CONNECTOR_NODE_TUNNEL_TOKEN`; all read only
+`CONNECTOR_NODE_CONFIG_DIR`, and `scope list` also reads the policy file. The
+first-run order depends on this: the operator runs
 `id` to learn the node id before the tunnel token exists, so a full configuration
 load would make the documented order impossible. The dial path keeps the strict
 load, because a Node that started without a secret would be a Node whose operator
@@ -171,6 +173,36 @@ not: those variables are named but read by nothing, and the section says so.
 | `CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS` | `60` | How far a client proof timestamp may differ from the Server's clock. At least 1, at most 600 |
 | `CONNECTOR_SERVER_REPLAY_CAPACITY` | `65536` | Number of unexpired client nonces the Server records. A full cache refuses new proofs rather than evicting a live nonce |
 | `CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS` | `30` | How long the Server waits for a Node response before reporting `node_timeout`. At least 1, at most 3600 |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_CALLER` | `2` | How many requests one caller may have in flight at once. At least 1 |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_NODE` | `4` | How many requests one Node may have in flight at once. At least 1 |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT` | `64` | How many requests the whole Server may have in flight at once. At least 1 |
+| `CONNECTOR_SERVER_ADMISSION_WAIT_MS` | `200` | How long a request may wait for a slot before it is refused with `overloaded`. Zero or more, at most 5000 |
+
+The three in-flight limits answer three different questions, and one limit cannot
+answer all of them. A Server-wide bound alone stops unbounded growth but lets one
+caller occupy every slot, so a second caller waits behind work it did not cause. A
+per-caller bound alone lets many callers aimed at one Node saturate that Node. The
+per-Node bound is the one that protects the personal computer the Node runs on,
+which is the machine this system exists to keep usable.
+
+A value below one is refused at startup rather than clamped. A zero limit would
+refuse every request, and a Server that refuses everything looks like a Server that
+is working and denying, which is the most expensive kind of misconfiguration to
+diagnose.
+
+`CONNECTOR_SERVER_ADMISSION_WAIT_MS` is in milliseconds because the useful range is
+a fraction of a second: the wait absorbs a burst, it does not queue work. A
+seconds-based variable would make the smallest useful value one second, which is
+already a queue. **Zero is a meaningful setting**, not "unset": it means refuse
+immediately rather than wait, and it is the correct value for a deployment that
+would rather answer fast than hold a request. The default is applied only when the
+variable is absent, so an operator who writes `0` gets `0`.
+
+A request that waits the full budget and still finds no slot is refused with
+`overloaded` (`1010`), which is retryable. It is deliberately not `internal`
+(`1009`): an internal failure is a defect and a retry repeats it, while an overload
+is a temporary shortage and a retry is the correct response. Admission runs after
+the client proof verifies, so an unauthenticated caller cannot occupy capacity.
 
 `CONNECTOR_SERVER_TUNNEL_TOKEN` is the only secret the Server reads from the
 environment, and it is read there by explicit human decision. The cost of that
@@ -198,14 +230,14 @@ it does not hold the secret that produced it.
 | `CONNECTOR_NODE_TUNNEL_TOKEN` | none | `run` | The `tunnel_token` this Node presents in `hello` |
 | `CONNECTOR_NODE_CONFIG_DIR` | platform config directory | all subcommands | Where the Node keeps its identity file, credential file and policy file |
 | `CONNECTOR_NODE_CREDENTIALS_FILE` | `<config>/credentials.yaml` | `run` | Path to the caller credentials the Node accepts. A relative path is refused |
-| `CONNECTOR_NODE_POLICY_FILE` | `<config>/policy.yaml` | `run` | Path to the policy file. A missing file is a startup failure |
+| `CONNECTOR_NODE_POLICY_FILE` | `<config>/policy.yaml` | `run`, `scope list` | Path to the policy file. A missing file is a startup failure |
 | `CONNECTOR_NODE_REPLAY_WINDOW_SECONDS` | `60` | `run` | How far a node proof timestamp may differ from the Node's clock. At least 1, at most 600 |
 | `CONNECTOR_NODE_REPLAY_CAPACITY` | `65536` | `run` | Number of unexpired node nonces the Node records. A full cache refuses new proofs rather than evicting a live nonce |
 
-`id`, `regenerate` and the `credential` subcommands read only
-`CONNECTOR_NODE_CONFIG_DIR`. They never dial, so they never need a dial target or a
-tunnel token, and requiring one would make the documented first-run order
-impossible.
+`id`, `regenerate`, the `credential` subcommands and `scope list` read only
+`CONNECTOR_NODE_CONFIG_DIR`, and `scope list` also reads the policy file. They never
+dial, so they never need a dial target or a tunnel token, and requiring one would
+make the documented first-run order impossible.
 
 The Node's identity and its credentials are two different values in two different
 files, because they answer two different questions.

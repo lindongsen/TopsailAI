@@ -114,32 +114,9 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
-	policyBytes, err := embedded.Policy()
+	policyPath, policyBytes, err := resolvePolicySource(lookup, configDir)
 	if err != nil {
 		return Config{}, err
-	}
-
-	policyPath := lookup("CONNECTOR_NODE_POLICY_FILE")
-	if policyBytes != nil {
-		if policyPath != "" {
-			return Config{}, fmt.Errorf("CONNECTOR_NODE_POLICY_FILE is set but this build compiled its policy in; a build that carries a policy cannot also read one from a file, because the two would disagree about every scope and every grant")
-		}
-		return Config{
-			ServerURL:       serverURL,
-			TunnelToken:     tunnelToken,
-			ConfigDir:       configDir,
-			CredentialsPath: credentialsPath,
-			PolicyBytes:     policyBytes,
-			ReplayWindow:    window,
-			ReplayCapacity:  capacity,
-		}, nil
-	}
-
-	if policyPath == "" {
-		policyPath = filepath.Join(configDir, "policy.yaml")
-	}
-	if !filepath.IsAbs(policyPath) {
-		return Config{}, fmt.Errorf("CONNECTOR_NODE_POLICY_FILE %q is relative; a relative path resolves differently per launch", policyPath)
 	}
 
 	return Config{
@@ -148,9 +125,45 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 		ConfigDir:       configDir,
 		CredentialsPath: credentialsPath,
 		PolicyPath:      policyPath,
+		PolicyBytes:     policyBytes,
 		ReplayWindow:    window,
 		ReplayCapacity:  capacity,
 	}, nil
+}
+
+// resolvePolicySource decides where the policy comes from: the document compiled
+// into the binary, or a file. Exactly one of the two results is set.
+//
+// It is a separate function because two callers need the same decision. The dial
+// path needs it to build a Config, and `scope list` needs it to read the policy
+// without dialling. A second copy of the rule would be a second definition of
+// which policy is in force, and the two would eventually disagree about a build
+// that embedded one.
+//
+// The refusal of CONNECTOR_NODE_POLICY_FILE on an embedded build lives here rather
+// than in either caller, so a build that carries a policy cannot be made to read a
+// different one through a path that forgot the check.
+func resolvePolicySource(lookup func(string) string, configDir string) (string, []byte, error) {
+	policyBytes, err := embedded.Policy()
+	if err != nil {
+		return "", nil, err
+	}
+
+	policyPath := lookup("CONNECTOR_NODE_POLICY_FILE")
+	if policyBytes != nil {
+		if policyPath != "" {
+			return "", nil, fmt.Errorf("CONNECTOR_NODE_POLICY_FILE is set but this build compiled its policy in; a build that carries a policy cannot also read one from a file, because the two would disagree about every scope and every grant")
+		}
+		return "", policyBytes, nil
+	}
+
+	if policyPath == "" {
+		policyPath = filepath.Join(configDir, "policy.yaml")
+	}
+	if !filepath.IsAbs(policyPath) {
+		return "", nil, fmt.Errorf("CONNECTOR_NODE_POLICY_FILE %q is relative; a relative path resolves differently per launch", policyPath)
+	}
+	return policyPath, nil, nil
 }
 
 // ResolveConfigDir returns the absolute config directory from a lookup function,

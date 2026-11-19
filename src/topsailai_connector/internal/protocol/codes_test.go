@@ -20,6 +20,7 @@ func TestCodeNamesMatchDocumentation(t *testing.T) {
 		{code: CodeUnsupportedOperation, name: "unsupported_operation"},
 		{code: CodeTooLarge, name: "too_large"},
 		{code: CodeInternal, name: "internal"},
+		{code: CodeOverloaded, name: "overloaded"},
 	}
 
 	for _, testCase := range cases {
@@ -49,6 +50,7 @@ func TestCodeNumbersMatchDocumentation(t *testing.T) {
 		{code: CodeUnsupportedOperation, number: 1007},
 		{code: CodeTooLarge, number: 1008},
 		{code: CodeInternal, number: 1009},
+		{code: CodeOverloaded, number: 1010},
 	}
 
 	for _, testCase := range cases {
@@ -65,7 +67,7 @@ func TestCodeNamesAreUnique(t *testing.T) {
 	all := []Code{
 		CodeSuccess, CodeInvalidArgument, CodeUnauthenticated, CodeNodeOffline,
 		CodeNodeTimeout, CodeDenied, CodeNotFound, CodeUnsupportedOperation,
-		CodeTooLarge, CodeInternal,
+		CodeTooLarge, CodeInternal, CodeOverloaded,
 	}
 
 	for _, code := range all {
@@ -108,6 +110,7 @@ func TestRetryableCodes(t *testing.T) {
 		{code: CodeUnsupportedOperation, retryable: false},
 		{code: CodeTooLarge, retryable: false},
 		{code: CodeInternal, retryable: true},
+		{code: CodeOverloaded, retryable: true},
 	}
 
 	for _, testCase := range cases {

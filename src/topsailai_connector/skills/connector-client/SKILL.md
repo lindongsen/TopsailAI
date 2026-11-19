@@ -1,7 +1,7 @@
 ---
 name: connector-client
-description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, copy a file down to their own machine, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next. Covers the connector-server cli command, its flags including -o for a whole-file copy, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
-version: 2.1.0
+description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, copy a file down to their own machine, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next, or when they do not know which scope name to pass as --scope. Covers the connector-server cli command, its flags including -o for a whole-file copy, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
+version: 2.2.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -108,6 +108,14 @@ positional argument and refuses it. This is the single most common usage mistake
 | `--json` | none | no | Print the whole response envelope instead of the payload |
 | `-o`, `--output` | none | no | Where the result goes: `-` for stdout, or a local file path |
 | `--force` | none | no | Replace an existing local file named by `-o` |
+
+**No API lists scope names.** `--scope` is required, and neither the Server nor the
+Node will tell you which names exist. A request naming a scope the policy does not
+define is refused with `denied`, and so is a request naming a scope you have no
+permission on, so the two answers cannot be told apart. The names come from the
+person who runs the Node, who reads them with `connector-node scope list`: one name
+per line, sorted, and no paths. If you do not run the Node, ask its operator for the
+names before you build a request.
 
 A flag wins over its environment variable. The environment exists so a script can
 export a value once instead of repeating it on every line.
@@ -267,11 +275,12 @@ refusal happens while the result is being written, after the command line was
 accepted and the request ran. Treat `1` as "nothing was written" and `2` as
 "nothing was sent".
 
-The prefix is not a reliable signal on its own. A few values are checked after the
-command line is parsed but before the request is sent — a malformed `--node-id`, a
-scope name outside the alphabet, a `--server` URL that is not `http` or `https` —
-and those are reported with a `usage:` prefix while exiting `1`. Branch on the
-status, not on the prefix.
+The prefix and the status agree. Every message beginning `usage:` exits `2`,
+including the values checked after the command line is parsed but before the
+request is sent — a malformed `--node-id`, a scope name outside the alphabet, a
+`--server` URL that is not `http` or `https`. Nothing was sent in any of those
+cases, so `2` is the honest answer and a script may branch on either the status or
+the prefix.
 
 ### Error codes
 
@@ -287,6 +296,7 @@ status, not on the prefix.
 | `1007` | `unsupported_operation` | Unknown operation, or declared but not enabled in this version | Use one of the three read operations |
 | `1008` | `too_large` | The response or request exceeds the cap | Use `--offset` and `--length` to read a range |
 | `1009` | `internal` | The Server failed | Retry; if it repeats, the Server operator must read the log |
+| `1010` | `overloaded` | The Server is at its admission limit and refused the request instead of queueing it | Retry after a short wait; the work already admitted finishes and capacity returns |
 
 `denied` and `not_found` are deliberately different. `denied` means the policy
 refused; `not_found` means the policy allowed it and the file is not there. Do not
@@ -342,7 +352,8 @@ answer from a credential that is actually correct.
   component is rejected rather than normalised. Use an empty `--path` to list the
   root.
 - **Retrying `denied` or `unauthenticated`.** Neither becomes true by trying
-  again. Only `node_offline`, `node_timeout` and `internal` are worth a retry.
+  again. Only `node_offline`, `node_timeout`, `overloaded` and `internal` are worth
+  a retry.
 - **Reporting a secret.** Never print the secret half of either credential in a
   message, a log or a ticket. The `key_id` half and the node id are public and are
   fine to show.

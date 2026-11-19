@@ -716,3 +716,161 @@ AI reflection archive, not here.
   that the repo copy lacks. Editing the repo file does not deploy anything, and
   editing the deployed file does not update the repo. Compare the two before
   assuming a one-line change is complete.
+
+## A guard that has never failed is not evidence
+
+- Four help guards passed for many commits while asserting nothing. Each used
+  `strings.Contains(page, name)`, which a *mention* satisfies: the name appears in
+  prose, in an example, or in the SYNOPSIS, so deleting the documentation entry
+  left the guard green. Reading the test source would not have found it, because
+  each test reads correctly on its own; only mutating the help text did.
+- The fix is a structural assertion, not a stronger substring. `hasEntry` requires
+  a two-space-indented line beginning with the name, `hasFlagEntry` a line
+  beginning with the flag, `section` one upper-case section, `exampleBlock` a
+  command line recognised by content. A substring cannot tell an entry from a
+  sentence about the entry.
+- Every helper must fail loudly when it finds nothing. The wrong-page defect was
+  caught by `t.Fatalf("... this guard is measuring nothing")`, not by the
+  assertion that followed it. A helper that returns an empty string on a miss
+  turns the guard into a test of the empty string.
+- Mutate the artifact, not the test. Renaming `--force` to `--forceX` in the help
+  text is what proved the guard works; editing the test proves only that the test
+  can be edited.
+- A mutation whose new value contains the old value is not a mutation.
+  `REPLAY_CAPACITY` to `REPLAY_CAPACITYX` stayed green because the substring was
+  still present; `QUEUE_DEPTH` failed correctly. Check that the mutation actually
+  removes what the guard looks for.
+- A guard that enforces one wording tests style, not the rule. Requiring the word
+  `absolute` failed on entries saying "A relative path is refused", which is the
+  same rule. Accept every spelling that states it, and refuse only an entry that
+  states none.
+- Restore from a backup and compare `md5sum` after every mutation. A mutation left
+  in place is a product change nobody reviewed, and the next run would measure the
+  mutated text.
+
+## A documented rule the help omits is learned from a startup failure
+
+- Six path variables are refused when relative, and neither help page said so. The
+  operator who exported a relative `CONFIG_DIR` met the rule as
+  `is relative; a relative path resolves differently per launch`, which reads as a
+  bug rather than as a documented constraint.
+- The gap is invisible to a completeness guard that counts variables, because the
+  variable *is* documented; only the constraint on its value is missing. A guard
+  for this must assert the rule inside the entry, which is why `entryFor` isolates
+  one entry rather than searching the page: "absolute" appears elsewhere on the
+  page in the policy description, and a whole-page search would pass on that
+  unrelated sentence.
+- Ask what the operator must know to make the value work, not only which values
+  exist. A variable with a constraint and no stated constraint is documented in
+  name only.
+
+## A skill update is not delivered until its version and its evidence exist
+
+- `scope list` was implemented, tested, documented in `docs/API.md`, recorded in
+  `features/90ai-added.md`, and added to both skills — and the skills still said
+  `version: 1.0.0` and `version: 2.1.0`. The body was correct and the version was
+  stale, so a reader had no way to tell that the capability was new.
+- The version is the only signal a skill consumer has that the document changed.
+  A skill is loaded by description and read as current, so a stale version makes a
+  new capability indistinguishable from one that was always there. Bump it in the
+  same change that adds the capability, not afterwards.
+- The larger gap was that no executed evidence existed for the skill's claims. The
+  claims were true, but "true" was established by reading the source, which is
+  exactly what a skill reader cannot do. `skills/tests/{skill-name}/findings.md`
+  is where a claim becomes a measurement, and the folder did not exist.
+- The claim that failed on execution was small and real: the skill said a malformed
+  policy "fails here with the message the Node would print". Measured, `scope list`
+  prints `connector-node: scope "bad": ...` while `run` prints
+  `connector-node: load authority: scope "bad": ...`. The reason is identical and
+  the prefix is not, so the sentence was wrong in the way that sends a reader
+  searching for text that does not exist.
+- A security claim needs a control, not just two matching failures. "An undefined
+  scope and a missing grant cannot be told apart" was measured with two requests
+  that both returned `denied`, and a third request on the same scope with a granted
+  operation returned the file. Without the third, two identical failures are also
+  what a wrong credential produces.
+- The distinction the caller cannot see is visible in the Node log, and that is the
+  evidence the property is deliberate rather than accidental: the log names
+  `scope "absent" does not grant "read"` and `scope "readonly" does not grant
+  "list"`, while `protocol.Response` has no message field to carry either.
+- Producing the two cases needed a policy with two scopes, because one scope cannot
+  be both undefined and defined-without-a-grant. The Node has no `SIGHUP` reload,
+  so the Node had to be restarted with an edited policy — which is itself a
+  confirmation that a running Node cannot gain a scope.
+
+## A second embedded Node on one machine silently inherits the first one's identity
+
+- The embedded mode compiles the Server URL, the policy and the `tunnel_token` into
+  the binary, and deliberately embeds neither the identity nor the credential. Both
+  live in the platform config directory, which defaults to
+  `%APPDATA%\topsailai-connector` on Windows. That default is a single path per
+  user, so a second embedded binary started on the same machine reads the first
+  one's `identity` file and reports the same `node_id`.
+- Measured: a freshly built binary for a different scope set, run with `id` and no
+  `CONNECTOR_NODE_CONFIG_DIR`, printed `node_ysj64hfylk2ke3aui65fygln2e` — the
+  identity of the Node already running from `C:\connector-embedded`. Nothing
+  warned. The binary was correct; the default directory was shared.
+- The consequence is the channel flap recorded earlier in this file: two processes
+  under one `node_id` evict each other in the Server's registry, so the log shows
+  `replacing a live connection` every few seconds and `generation` climbs. It looks
+  like a network fault and is a configuration collision.
+- The fix is to give every delivery its own config directory through
+  `CONNECTOR_NODE_CONFIG_DIR`, and to set it in the launcher rather than in the
+  shell that happens to start the process. A launcher that forgets it produces a
+  Node that connects, serves nothing new, and quietly takes over the identity of a
+  Node someone else is using.
+- Check the identity before starting, not after: run `<binary> id` with the
+  intended config directory and compare the printed value with every `node_id`
+  already in the Server log. Two deliveries that print the same value are one
+  delivery with two processes.
+- A per-delivery config directory also keeps the credentials separate, which is
+  what makes revocation precise. Sharing the directory shares the credential file,
+  so removing one caller's credential removes it for both Nodes.
+
+## A drive-root scope set is mostly absent scopes, and that is the designed answer
+
+- A policy naming `C:\` through `Z:\` on a machine that has only `C:` defines 24
+  scopes and finds 23 absent directories. The Node starts, reports every absent
+  scope at WARN with its path, lists them in `absent_scopes` on the ready line, and
+  answers `not_found` for all three read operations on each one.
+- Measured on Windows Server 2022 with `Get-PSDrive` returning only `C`: the ready
+  line carried `scopes="[c d e f g h i j k l m n o p q r s t u v w x y z]"` and
+  `absent_scopes="[d e f g h i j k l m n o p q r s t u v w x y z]"`, and `file.list`
+  on `d` and on `z` both returned `not_found`.
+- This is the tolerance working as designed rather than a defect, and the reason it
+  matters is that a drive letter with no volume behind it is the normal case on a
+  machine that will later gain one. A policy that refused startup would make the
+  binary unusable until every drive existed.
+- The tolerance is fail-closed across restarts: when a volume appears, the next
+  startup sees a real filesystem root and refuses it unless the policy states
+  `allow_filesystem_root: true`. A drive-root set therefore needs the opt-in, or it
+  works today and refuses to start tomorrow.
+- A path inside a drive-root scope is still subject to the wire grammar, so
+  `Windows\win.ini` is `invalid_argument` and `Windows/win.ini` is the accepted
+  spelling. The backslash rule is not relaxed by the scope being a volume root, and
+  a caller who writes a Windows path the way Windows writes it gets a shape refusal
+  rather than a file.
+
+## The opt-in moves the credential protection to the deny list, and that must be measured
+
+- With `allow_filesystem_root: true`, a scope rooted at `C:\` necessarily contains
+  the Node's config directory, so the startup overlap refusal cannot apply. The
+  deny list is then the only thing between a remote caller and `identity` and
+  `credentials.yaml`.
+- Measured on the running Node: `file.read` on `connector-drives/config/identity`
+  and on `connector-drives/config/credentials.yaml` both returned `denied`,
+  `file.stat` on the directory returned `denied`, and `file.list` on the parent
+  omitted `config` entirely rather than reporting its name and size.
+- The binary itself was also refused, because a build that carries the
+  `tunnel_token` adds its own executable to the deny list. Measured:
+  `file.read` and `file.stat` on `connector-drives/connector-node.exe` both
+  returned `denied` with the reason `is one of the Node's own files`, and the
+  executable was absent from the directory listing.
+- That second refusal is what makes the opt-in survivable. A whole-volume scope
+  contains the install directory, so without the executable deny entry a caller
+  could read the `tunnel_token` out of the binary and open a channel as any Node on
+  that Server.
+- Verify the opt-in by attempting the reads, not by reading the policy. A policy
+  that says `allow_filesystem_root: true` and a deny list that does not cover the
+  config directory produce a Node that starts, serves the volume, and hands over
+  its own credential.

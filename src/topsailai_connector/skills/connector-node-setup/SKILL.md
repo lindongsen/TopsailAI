@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
-description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to start a Node from a zip they were handed, how to add or remove a caller credential, or how to revoke a leaked credential. Covers the first-run order, the policy file schema and its startup failures, scope path rules, the ready-to-run bundle, credential management and regeneration.
-version: 1.0.0
+description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, or how to revoke a leaked credential. Covers the first-run order, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management and regeneration.
+version: 1.1.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -438,6 +438,7 @@ whatever process launched it.
 | `credential add` | Add a caller credential; `--key-id` names it, and a name is generated when omitted |
 | `credential list` | Print the key identifiers and never a secret |
 | `credential remove` | Remove one credential by `--key-id`; the last one cannot be removed |
+| `scope list` | Print the scope names the policy defines, one per line, in sorted order |
 
 `connector-node id` prints the node id and nothing else, so it can be copied into a
 script. It is an address, not a secret, so it is safe to show. The secret is the
@@ -528,6 +529,56 @@ rename during runtime does not silently change what a scope means.
 
 On Windows the comparison is case-insensitive, so `c:\users\me` is recognised as the
 home directory even when the policy spells it differently from the system.
+
+### How to learn a scope name
+
+`--scope` is required on every CLI request, and no API lists the names. The Node
+refuses a request naming a scope the policy does not define with `denied`, and it
+refuses a request naming a scope you have no permission on with `denied` too, so a
+caller cannot tell the two apart and cannot enumerate names by guessing.
+
+The names come from the policy file, and this command prints them:
+
+```
+connector-node scope list
+```
+
+The output is one name per line, sorted, and nothing else:
+
+```
+pending
+project
+tool
+```
+
+What it does and does not do:
+
+- It reads the policy document only. It does not dial the Server, so it needs no
+  `CONNECTOR_NODE_SERVER_URL` and no `CONNECTOR_NODE_TUNNEL_TOKEN`.
+- It does not open a scope, so it works before the first start and on a machine
+  where a scope directory does not exist yet.
+- It prints names, never paths. The path is the Node's own filesystem layout and
+  does not help anyone fill `--scope`.
+- It prints no permission and no secret.
+- It uses the same strict decoder the Node uses at startup, so a malformed policy
+  fails here with the same reason `run` reports, and the command doubles as a policy
+  check. The prefix differs: this command prints
+  `connector-node: scope "bad": path "rel/path" is relative; ...` while `run` prints
+  the same reason after `connector-node: load authority: `.
+- It reads `CONNECTOR_NODE_CONFIG_DIR` and `CONNECTOR_NODE_POLICY_FILE`, exactly as
+  `run` does. A build with an embedded policy reads the embedded document and
+  refuses `CONNECTOR_NODE_POLICY_FILE`.
+
+Exit status:
+
+| Status | Meaning |
+|---|---|
+| `0` | The names were printed |
+| `1` | The policy could not be read or is invalid; the message names the reason |
+| `2` | The command line was rejected, for example `scope` with no subcommand |
+
+Give the names to whoever calls this Node. They cannot discover them from the CLI,
+because the answer would tell an unauthorized caller which areas exist.
 
 ## Starting the Node
 
