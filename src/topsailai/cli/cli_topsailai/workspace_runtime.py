@@ -65,23 +65,55 @@ def _file_session_id(session_id: Any) -> Optional[str]:
     return session_id
 
 
-def _row_owner_pid(row: Dict[str, Any]) -> Optional[int]:
-    """Return the PID of the session process that owns the row's socket.
-
-    A task row is a child process log, so its own PID never owns a control
-    channel; only the parent session PID does. A task row whose parent is not
-    resolvable reports no owner rather than probing the child's PID, which
-    would silently describe a different process.
-    """
-    pid = row.get("session_pid")
-    if type(pid) is int and pid > 0:
-        return pid
-    if row.get("is_task"):
-        return None
-    pid = row.get("pid")
-    if type(pid) is int and pid > 0:
-        return pid
+def _positive_pid(value: Any) -> Optional[int]:
+    """Return *value* when it is a usable positive integer PID."""
+    if type(value) is int and value > 0:
+        return value
     return None
+
+
+def _resolve_owner(row: Dict[str, Any],
+                   task_dir: str) -> Tuple[Optional[int], bool]:
+    """Return ``(pid, is_task)`` for the process that should answer the row.
+
+    Every agent process starts its own control server keyed by its own PID, so
+    a live task agent owns ``{session}.{task_pid}.session.sock`` exactly as a
+    session process owns its own. The row's own PID is therefore the primary
+    owner, and the parent session PID is only a fallback for a task row whose
+    own channel is absent.
+
+    *is_task* describes the process that answered, not the row kind. A task row
+    answered by its parent reports ``False`` because the parent is a session
+    process, and a task row that shares its parent's process reports ``False``
+    for the same reason.
+    """
+    from cli_topsailai.runtime_control import build_socket_path
+
+    own_pid = _positive_pid(row.get("pid"))
+    parent_pid = _positive_pid(row.get("session_pid"))
+    # A task row whose own PID equals its parent's PID is a subagent running
+    # inside the session process, so the answering process is the session.
+    own_is_task = bool(row.get("is_task")) and own_pid != parent_pid
+    file_session_id = _file_session_id(row.get("session_id"))
+    if file_session_id is not None:
+        for candidate, candidate_is_task in (
+            (own_pid, own_is_task),
+            (parent_pid, False),
+        ):
+            if candidate is None:
+                continue
+            socket_path = build_socket_path(
+                task_dir, file_session_id, str(candidate)
+            )
+            if _is_socket(socket_path):
+                return candidate, candidate_is_task
+    # No channel exists for either candidate. Report the row's own PID so the
+    # failure names the process the row actually describes.
+    if own_pid is not None:
+        return own_pid, own_is_task
+    if parent_pid is not None:
+        return parent_pid, False
+    return None, False
 
 
 def _is_socket(path: str) -> bool:
@@ -169,13 +201,14 @@ def _parse_result(response: Dict[str, Any], pid: Optional[int],
 
 
 def _collect_one(row: Dict[str, Any], task_dir: str, timeout: float,
-                 sender, is_task: bool = False) -> Dict[str, Any]:
+                 sender, pid: Optional[int],
+                 is_task: bool = False) -> Dict[str, Any]:
     """Collect one row's runtime record, converting every failure to a state.
 
-    *is_task* describes the process that owns the answering channel, not the
-    row that referenced it: a task row in the workspace list is answered by its
-    parent session, so it reports ``False`` there. The caller supplies the fact
-    because it already knows which PID it selected.
+    *pid* and *is_task* describe the process that owns the answering channel,
+    not the row that referenced it, so the caller resolves them first. Keeping
+    the transport free of ownership rules means the workspace list and the
+    single-session command cannot disagree about which process answers.
     """
     from cli_topsailai.runtime_control import (
         ControlDeliveryError,
@@ -183,7 +216,6 @@ def _collect_one(row: Dict[str, Any], task_dir: str, timeout: float,
     )
 
     file_session_id = _file_session_id(row.get("session_id"))
-    pid = _row_owner_pid(row)
     if file_session_id is None or pid is None:
         return _failure("unavailable", "unsupported_row", pid, is_task)
     socket_path = build_socket_path(task_dir, file_session_id, str(pid))
@@ -241,10 +273,17 @@ def collect_workspace_runtime(
 
         sender = send_to_control
     workers = max(1, min(int(max_workers), len(rows)))
+    # Ownership is resolved once per row before the pool starts, because the
+    # decision reads the task directory and must not be repeated inside a
+    # worker thread that also owns the transport budget.
+    owners = {id(row): _resolve_owner(row, task_dir) for row in rows}
     collected: Dict[str, Dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_collect_one, row, task_dir, timeout, sender): row
+            pool.submit(
+                _collect_one, row, task_dir, timeout, sender,
+                owners[id(row)][0], owners[id(row)][1],
+            ): row
             for row in rows
         }
         for future, row in futures.items():
@@ -254,8 +293,9 @@ def collect_workspace_runtime(
             try:
                 collected[filename] = future.result()
             except Exception:
+                owner_pid, owner_is_task = owners[id(row)]
                 collected[filename] = _failure(
-                    "unavailable", "internal_error", _row_owner_pid(row),
+                    "unavailable", "internal_error", owner_pid, owner_is_task,
                 )
     return collected
 
@@ -299,4 +339,4 @@ def collect_session_runtime(
         from cli_topsailai.runtime_control import send_to_control
 
         sender = send_to_control
-    return _collect_one(row, task_dir, timeout, sender, is_task)
+    return _collect_one(row, task_dir, timeout, sender, pid, is_task)

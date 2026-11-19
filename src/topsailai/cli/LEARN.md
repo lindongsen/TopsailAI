@@ -979,3 +979,45 @@ exactly like a missing process. Derive every related fact from the same evidence
 that established identity, because a second scan can disagree with the first, and
 keep the scan in one place so a new producer is added once rather than in every
 caller.
+
+## A row's owner is not the row's parent
+
+### Trigger
+
+`topsailai workspace list --json --include-runtime` published the manager's
+runtime payload for every row of a session that ran several agents. All three
+rows of session `20261119T165005` reported `runtime.pid=214141` with the
+manager's 11 Agent2LLM / 5 User2Agent / 1 tool-call numbers, while the live
+worker `230926` actually held 10 / 6 / 0. Direct `runtime.static-data` probes on
+both sockets returned different payloads, so the list was not merely mislabeling
+a PID — it was reporting another process's data as this row's data.
+
+### Action taken
+
+Traced ownership to `_row_owner_pid()`, which returned `row["session_pid"]`
+first, and to `log_files.py`, which deliberately sets a task row's `session_pid`
+to its parent session PID. The docstring justified that with "a task row is a
+child process log, so its own PID never owns a control channel", which is false:
+`agent_shell_base.py` calls `get_or_start_control_server(session_id=...,
+pid=os.getpid())`, so every agent process owns `{session}.{pid}.session.sock`.
+Replaced the resolver with `_resolve_owner()`, which probes the row's own PID
+first and falls back to the parent session PID only when the row's own channel
+is absent, and made `is_task` describe the answering process rather than the row
+kind. Verified with 43 tests in the module, 166 in the targeted set, 4605 in the
+full unit suite, three negative controls that each went red and were reverted,
+and a live re-read where the worker row reported its own `pid`, `is_task=true`
+and its own 10 / 6 / 0.
+
+### Why this prevents recurrence
+
+A row's `session_pid` answers "which session owns this row", not "which process
+should answer for this row", and the two differ exactly when one session runs
+several agents. Any per-row enrichment must resolve the row's own process first
+and treat the parent as a fallback, because a parent-first rule silently
+attributes one process's state to every sibling and the numbers still look
+plausible. Also distrust a docstring that explains why a capability is
+unavailable: the claim "this process never owns a channel" was the whole bug,
+and one grep for the control-server start call disproved it. Finally, make a
+descriptive field such as `is_task` describe the process that actually answered,
+not the row that was asked, so the field can never contradict the `pid` beside
+it.
