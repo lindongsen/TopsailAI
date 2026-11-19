@@ -287,6 +287,13 @@ carries no envelope fields of its own:
 | `file.stat` | `type`, `size`, `mode`, `modified_at`, `is_symlink`, `link_target` |
 | `file.read` | `content` (base64), `size`, `truncated` |
 
+`truncated` reports whether the content was cut off, not whether the response
+reached the cap. A file whose size is exactly the cap is returned in full and
+reports `false`, because nothing was left behind; a file one byte larger returns
+the same number of bytes and reports `true`. The distinction matters to a caller
+that stops on `truncated`: deriving the flag from the byte count alone told it a
+complete file was partial.
+
 The `request_id` is the caller's correlation id, echoed in the envelope. It is
 generated as `req_` followed by 32 lowercase hexadecimal characters, which encode
 128 random bits, and it is capped at 128 bytes so a caller-supplied value cannot
@@ -495,6 +502,8 @@ connector-server cli --server https://cloud.example:8443 \
 | `--length` | none | no | Byte count for `file.read`; `0` means up to the cap |
 | `--request-id` | none | no | Correlation id signed by both proofs; generated when absent |
 | `--json` | none | no | Print the whole response envelope instead of the payload |
+| `-o`, `--output` | none | no | Write the result to `-` (stdout) or to a local file path |
+| `--force` | none | no | Allow `-o` to replace an existing destination file |
 
 The operation name is the one positional argument: `file.list`, `file.stat` or
 `file.read`. A second positional argument is refused rather than ignored, because
@@ -530,6 +539,66 @@ Rules:
 - The CLI's own timeout is longer than the Server's forward timeout, so the CLI
   receives the Server's `node_timeout` answer instead of giving up first and
   reporting a network error that hides the real cause.
+
+### Reading a whole file with `-o`
+
+`file.read` returns at most 256 KiB per request, because the Node caps a single
+response. Without `-o` the CLI sends exactly one request and prints a truncation
+notice on stderr when the file is larger, which is the historical behaviour and is
+unchanged.
+
+`-o` changes the question from "give me one chunk" to "give me the whole thing":
+
+| Invocation | Requests | Result |
+|---|---|---|
+| `file.read` | one | At most 256 KiB, truncation notice on stderr |
+| `-o -` `file.read` | until end of file | The whole file on stdout as raw bytes |
+| `-o /path/out.bin` `file.read` | until end of file | The whole file written to `/path/out.bin` |
+| `--offset 100 --length 5000 -o out` | until the range is read | Bytes `[100, 5100)` written to `out` |
+| `-o -` `file.list` / `file.stat` | one | The listing or the metadata, written to the destination |
+
+The loop is driven by the response, not by a hardcoded step size, so a change to the
+Node's cap does not require a change in the CLI. It stops when the Node reports that
+it reached end of file, when a response delivers zero bytes, or when the `--length`
+budget is spent.
+
+`truncated` is trusted only in the safe direction. A `false` value always means end
+of file, so stopping on it never drops data. A `true` value is trustworthy as well,
+but the loop is written so it does not depend on that: a Node older than the fix in
+`a5b580e3` reported truncation for a file whose size is exactly the cap even though
+the content was complete, and a loop that treated a `true` value as proof of lost
+data would have refused a complete file. The defect is recorded as fixed in
+`issues/done/issue-truncated-flag-misreports-an-exact-cap-file.md`; the loop keeps
+its independence from that direction so an older Node still yields a correct result
+at the cost of one extra request.
+
+A destination that exists always holds a complete result. The CLI writes to a
+temporary file in the same directory as the destination and renames it into place
+only after every chunk has arrived, so a failure part way through leaves the
+destination untouched rather than half written. An existing destination is refused
+unless `--force` is given, because replacing a local file is a destructive act the
+caller did not ask for by naming a path.
+
+Two path rules appear on one command line and they are not the same rule:
+
+- `--path` is a **remote** path. It is resolved inside the Node's scope and must
+  satisfy the Node's path grammar: relative, no `..`, no `.`, no colon, no
+  backslash.
+- `-o` is a **local** path. It is resolved by the CLI on the caller's machine, so it
+  may be absolute and may contain `..`.
+
+`--json` and `-o` are refused together, because one asks for the response envelope
+and the other asks for the payload, and a single invocation cannot honour both.
+`--force` without `-o` is refused for the same reason: it names a behaviour that
+would not happen.
+
+Each chunk is a separately signed request with its own nonce and timestamp, so the
+loop needs no protocol change and gains no replay weakness. The one ceiling worth
+stating is the Server's replay cache: it holds 65536 nonces for a 60 second window,
+so a whole-file read of more than about 16 GiB within one minute would fill it and
+the Server would refuse further requests rather than evict an unexpired nonce. That
+is a fail-closed limit, not a corruption risk, and it is far beyond a read a person
+performs interactively.
 
 ## How the operator learns the credentials
 

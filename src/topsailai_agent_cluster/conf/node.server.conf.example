@@ -11,8 +11,22 @@ ROLE=server
 API_LISTEN_ADDR=127.0.0.1:53680
 CHANNEL_LISTEN_ADDR=127.0.0.1:53943
 
-# Pre-provisioned bearer token that endpoints must present.
+# Pre-provisioned credential the operator CLI presents. In hmac mode this must be
+# exactly one key_id.secret pair; in bearer mode it is the plaintext token.
 AUTH_TOKEN=replace-with-a-real-token
+
+# How the Server verifies the operator credential: hmac (default) or bearer.
+# The launcher maps this value onto AGENT_CLUSTER_SERVER_AUTH_MODE, because the
+# binary reads the mode from the environment and has no flag for it. A malformed
+# value is rejected at startup rather than falling back to the default, so a
+# verifier never silently runs a different mode than the one configured here.
+# This setting governs operator authentication only; the Server/Endpoint channel
+# is mTLS and is unaffected by it.
+AUTH_MODE=bearer
+
+# Accepted clock skew for signed requests, as a Go duration. Only meaningful in
+# hmac mode. The launcher maps it onto AGENT_CLUSTER_SERVER_SIGNATURE_WINDOW.
+# SIGNATURE_WINDOW=2m
 
 # TLS material, relative to the bundle root.
 TLS_CA_FILE=../../certs/server/ca.pem

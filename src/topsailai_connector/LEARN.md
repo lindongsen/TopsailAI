@@ -547,3 +547,131 @@ AI reflection archive, not here.
   name-based check reported someone else's work as this run's leak. Both are
   answered by identifying a process by the PID that was recorded at creation, and
   neither is answered by its name.
+
+## A cleanup that reports success is not a cleanup that happened
+
+- The Windows cleanup script printed `removed cfgalias` and `removed escape`, and
+  the very next listing still showed both entries. The script ran with
+  `$ErrorActionPreference = "Continue"`, so `Remove-Item` failed silently and the
+  `Write-Output "removed ..."` line ran anyway. The success message was written by
+  the script, not by the operation.
+- Re-running with `-ErrorAction Stop` produced the real errors, and both were
+  PowerShell 5.1 defects rather than permission problems:
+  `Remove-Item` on a directory symlink throws `System.NullReferenceException`, and
+  on a directory containing a symlink it throws
+  `There is a mismatch between the tag specified in the request and the tag present
+  in the reparse point`.
+- The second failure was protective. `Remove-Item -Recurse` follows a reparse
+  point, so the `escape` directory containing `out -> C:\Windows` was one retry
+  away from deleting the Windows directory. The tag mismatch stopped it. A
+  cleanup script must never retry a `-Recurse` deletion of a directory it did not
+  create, and must never treat a failure as "try harder".
+- `cmd /c rmdir` removes the link itself and does not follow it, so it is the
+  correct tool for a directory symlink on Windows. It succeeded on all three
+  entries where `Remove-Item` failed twice.
+- Verify a destructive cleanup by measuring what must survive, not by reading the
+  script's own output. The count of `C:\Windows\System32` entries was 4099 before
+  and 4099 after, which is the evidence that the link target was untouched. A
+  script that only asserts its own artifacts are gone cannot distinguish "cleaned
+  up" from "deleted too much".
+- The general rule: a cleanup script's log line is a claim, and a claim needs a
+  measurement. Print the resolved path, then re-read the directory and print what
+  is actually there. If the two disagree, the script is wrong, not the listing.
+
+## Decompress straight to the destination
+
+- A Server binary was transferred as gzip, decompressed to `connector-server.new`,
+  and then overwritten by `mv connector-server.new connector-server` after the
+  decompression had already written the correct file. The result was a truncated
+  5931008-byte binary where a 7626936-byte one had existed, and the container
+  failed to start.
+- The cause is a two-step rename around a step that already produced the final
+  file. `gunzip -c x.gz > x` writes the destination directly and atomically enough
+  for this purpose; adding a `.new` intermediate creates a second name that can be
+  moved over the good file by mistake.
+- Verify a transferred binary by size and sha256 against the build host before
+  starting it. The truncated file was caught by `ls -l` showing a size that did not
+  match the local artifact, which is cheaper than reading a container log.
+
+## A launcher script is the configuration, not a convenience
+
+- Running `connector-node.exe run` directly on the Windows host failed with
+  `CONNECTOR_NODE_SERVER_URL is empty`, because `start.ps1` is what exports the
+  environment variables and generates `policy.yaml` from `scopes.txt`. The binary
+  has no defaults for either.
+- The failure looks like a broken binary and is actually a missing launcher. When a
+  bundle ships a start script, the script is part of the contract: the documented
+  way to start the Node is the script, and invoking the executable directly is an
+  undocumented path that is not required to work.
+- Start it through WMI rather than `Start-Process`, so the process is not a child
+  of the SSH session and does not die when the session closes. A log line saying
+  `ready` proves it started, not that it is still there; check the PID and its
+  start time afterwards.
+
+## A container that runs as an unprivileged user needs the credential file's owner changed
+
+- The Server container runs as `65534:65534`. A `client-credentials.yaml` created
+  by root with mode `0600` is unreadable inside the container, so the Server
+  refuses to start even though the file looks correctly protected from the host.
+- Mode and owner are two halves of one permission. `chmod 600` on a root-owned file
+  protects it from other host users and simultaneously locks out the process that
+  must read it. The fix is `chown 65534:65534` plus `chmod 600`, and the reason the
+  mode check exists is unchanged: the file holds secrets that never expire.
+- Mount the credential file as a single file rather than mounting its directory.
+  A directory mount would expose `server.env` and the rollback copies inside the
+  container for no benefit.
+
+## A proof that binds another header must be tested by substituting that header
+
+- The client proof includes the digest of the node proof header, so a valid client
+  proof cannot be reused with a different node proof. That property is invisible to
+  a test that only sends correct proofs, and it is the property that stops a caller
+  from keeping a client proof while swapping in a node proof for another scope.
+- The test that proves it signs one path and sends another, and the Node refuses
+  with `signature does not verify`. A test that only checks "a wrong secret is
+  refused" measures the HMAC, not the binding.
+- Reproduce the canonical signing string in a second implementation before trusting
+  a hand-built proof. The Python probe returned 200 on its first call, which is the
+  evidence that the canonical form was read correctly from the code rather than
+  guessed; a probe that fails on its first call proves nothing about the product.
+
+## A skill is documentation for someone who cannot read the code
+
+- The `-o` feature was implemented, documented in `docs/API.md`, recorded in
+  `features/90ai-added.md`, tested and committed — and `skills/connector-client/`
+  still taught `file.read > notes.md` as the way to read a file. That example
+  writes one capped response, so a user following it on a large file gets the
+  first 256 KiB and a stderr notice they may have redirected away.
+- The gap is structural rather than careless. `docs/API.md` is written for a
+  reader who can open the source; a skill is read by someone who has only the
+  binary. The two audiences need different sentences, so updating one does not
+  update the other. A feature is not delivered until the skill names it, because
+  the skill is the only documentation its reader will ever open.
+- The detection failure is that nothing links the two. No test reads the skill, no
+  checklist item asks whether the skill mentions the new flag, and the skill's own
+  text was internally consistent — it described the old behaviour accurately. A
+  document that is correct about a superseded interface reads as correct.
+- Check by grepping the skill for the flag name after adding a flag:
+  `grep -n -- '--output' skills/*/SKILL.md`. An empty result on a flag the binary
+  accepts is the defect, and it is invisible in every other artifact.
+- Write the observable result, not the mechanism. The Operations table said
+  `file.list` returns `entries`: name, type, size, mode, modified_at — field names
+  from a struct the reader cannot see. It now says "one line per entry: name, type,
+  size", which is what appears on their terminal. The first version is a claim
+  about code; the second is a claim about output, and only the second can be acted
+  on.
+- Quote the message and the status together. The skill said an existing `-o`
+  destination exits `2`; the binary exits `1` while printing a message that begins
+  `usage:`. Both halves were wrong in a way that only running the command revealed.
+  A documented exit status is a claim like any other, so it is measured, not
+  inferred from the error's type.
+- The `ErrUsage` wrapper on that path is decorative: `openDestination` wraps the
+  refusal, and `Run` returns `1` for every error from `writeToDestination` without
+  unwrapping it. The message prefix and the status disagree, and a script branching
+  on the status cannot tell "the command line was rejected" from "the request ran
+  and the write was refused". Recorded as
+  `issues/issue-output-refusal-exits-one-with-a-usage-message.md`.
+- A skill's `description` is what decides whether it is loaded at all. Adding a
+  capability without adding it there means the skill is not selected for the
+  request that needs it, so the feature stays undiscoverable even after the body
+  documents it.

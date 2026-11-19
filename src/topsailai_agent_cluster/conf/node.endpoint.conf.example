@@ -18,7 +18,24 @@ CHANNEL_ADDRESS=wss://127.0.0.1:53943
 # the endpoint moves to the next instead of staying offline. Order is the
 # preference, and this list takes precedence over CHANNEL_ADDRESS above.
 # CHANNEL_ADDRESSES=wss://server-a:53943,wss://server-b:53943
+# Pre-provisioned credential the operator CLI presents to this Endpoint. In hmac
+# mode this must be exactly one key_id.secret pair; in bearer mode it is the
+# plaintext token. The Endpoint verifies it independently of the Server, so this
+# value is not the Server credential.
 AUTH_TOKEN=replace-with-a-real-token
+
+# How the Endpoint verifies the endpoint-token: hmac (default) or bearer. The
+# launcher maps this value onto AGENT_CLUSTER_ENDPOINT_AUTH_MODE, because the
+# binary reads the mode from the environment and has no flag for it. A malformed
+# value is rejected at startup rather than falling back to the default, so the
+# authorization boundary never silently runs a different mode than the one
+# configured here. This setting governs operator authentication only; the
+# Server/Endpoint channel is mTLS and is unaffected by it.
+AUTH_MODE=bearer
+
+# Accepted clock skew for signed requests, as a Go duration. Only meaningful in
+# hmac mode. The launcher maps it onto AGENT_CLUSTER_ENDPOINT_SIGNATURE_WINDOW.
+# SIGNATURE_WINDOW=2m
 
 # Server HTTP API the installed CLI dials. Use the address the server API is
 # reachable at from this node; it is written into the per-user CLI env file.

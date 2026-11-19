@@ -106,3 +106,32 @@ The human stated these requirements explicitly:
   `node-token` immediately and drops the live channel.
 - The human asked for test cases to be written, including adversarial cases. They
   live in `docs/cases/`.
+
+## Skill documentation is written for someone who cannot see the code
+
+The human stated this requirement explicitly:
+
+> skill的更新这件事，你要顺便写到项目记忆里，要注意：使用skill的人是完全看不到代码的，要站在使用者的角度去写。
+
+- A skill is read by a person who has only the binary. They cannot read the Go
+  source, cannot see a struct field, cannot follow a call chain, and cannot check
+  what a function does. Anything a skill says must be verifiable from the command
+  line alone.
+- Write from the user's side of the boundary: what to type, what appears on the
+  screen, what the exit status is, and what to do next. Never explain a behaviour
+  by naming an internal function, a struct field, a package or a file.
+- Describe the observable result, not the mechanism. "One line per entry: name,
+  type, size" is usable; "the `Entry` struct serialises `Name`, `Type`, `Size`" is
+  not, because the reader has no way to act on it.
+- Quote the message the program actually prints, and state the exit status that
+  accompanies it. A paraphrase sends the reader searching a log for text that does
+  not exist, and a missing status leaves a script unable to branch.
+- Every command shown must be one the binary accepts, in the order it accepts it.
+  A documented command is a claim, so it is executed before it is published and
+  again after the interface it names changes.
+- When a feature is added or changed, the skill is part of the change, not a
+  follow-up. A feature the user cannot discover from the skill is a feature that
+  does not exist for them, because the skill is the only documentation they read.
+- State a limit where the user meets it. A cap, a refusal or a required flag
+  belongs next to the command that hits it, not in a design document the reader
+  will never open.

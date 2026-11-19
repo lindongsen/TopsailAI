@@ -138,7 +138,7 @@ The platform config directory is:
 Two consequences, and both bite in practice:
 
 - **Looking for `config/identity` beside a single executable finds nothing.** The
-  file is in the platform config directory. `connector-node id` prints the pair
+  file is in the platform config directory. `connector-node id` prints the node id
   without you needing to know the path, which is the reliable way to read it.
 - **A deny rule must name the directory that actually holds the credentials.** On a
   bundle, denying `<bundle>/config` covers it. On a single executable the
@@ -156,9 +156,9 @@ predictable. A relative path is refused, because it resolves differently per lau
 
 ### Supplying one yourself
 
-The identity is not in the environment table below, so there is nothing to export.
-The only way to choose a pair is to put it in `<config>/identity` yourself, which is
-exactly what a bundle does:
+The node id is not in the environment table below, so there is nothing to export.
+The only way to choose a node id is to put it in `<config>/identity` yourself, which
+is exactly what a bundle does:
 
 ```
 printf '%s\n' 'node_....' > <config>/identity
@@ -186,26 +186,29 @@ run `connector-node regenerate` if you want a new node id.
 A group- or world-readable identity file is refused:
 
 ```
-connector-node: identity file "...": has mode 0644, want no group or other access;
-  it holds a credential that never expires
+connector-node: identity file "...": has mode 0644, want no group or other access
 ```
 
 `chmod 600` fixes it. The check is skipped on Windows, where the permission bits Go
 reports are synthesised from the read-only attribute and carry no ownership
 information; a check that cannot answer the question does not pretend to.
 
-### A generated pair is printed once
+### A generated node id and credential are printed once
 
-`connector-node id` always prints the pair. `connector-node run` prints it **only on
-the start that created it**, to stdout rather than to the log:
+`connector-node id` always prints the node id. `connector-node run` prints the node
+id and the credential **only on the start that created them**, to stdout rather than
+to the log:
 
 ```
-node identity generated: node_....
+node id generated: node_....
+node credential generated: <key_id>.<secret>
+copy it into the CLI now; it is not printed again
 ```
 
-That is the one moment the pair is available without reading the file, and it is
-printed once so a log file does not accumulate credentials. Copy it then; a later
-start prints nothing.
+The node id is an address, so losing it costs only a lookup. The credential is a
+secret that never expires, so losing it costs a rotation: `credential add` issues a
+replacement and `credential remove` retires the lost one. Both lines are printed once
+so a log file does not accumulate secrets; a later start prints neither.
 
 ## Build and install
 
@@ -330,8 +333,10 @@ set. Copy the file, run it, and the Node connects.
 connector-node.exe                                  # Windows
 ```
 
-The first start generates this machine's identity, prints the pair once, and
-connects. Everything after that behaves exactly as a bundle does: the same
+The first start generates this machine's node id and its first credential, prints
+both once, and connects. The node id is an address; the credential is a secret
+that is never printed again, so copy it into the CLI before the output scrolls
+away. Everything after that behaves exactly as a bundle does: the same
 subcommands, the same policy vocabulary, the same refusals.
 
 ### What you cannot change, and what you can
@@ -642,21 +647,24 @@ reachable surface depends on which line happened to parse.
   a listing omits it.
 - **Expecting `write` to work because the policy grants it.** `file.write` is not
   enabled in this version and is refused at dispatch.
-- **Assuming a regeneration needs a restart.** A running Node adopts the new pair
+- **Assuming a regeneration needs a restart.** A running Node adopts the new node id
   within about one second and reconnects on its own.
 - **Assuming a regeneration revokes the Server's secrets.** It does not. Those are
   Server-wide.
-- **Pasting `connector-node id` output into a ticket.** It is a secret with no
-  expiry. Treat it as one.
-- **Trimming whitespace from a copied pair.** Whitespace is refused rather than
+- **Pasting `connector-node id` output into a ticket.** The node id is an address, so
+  that is harmless. The credential is the secret: never paste it into a ticket, a
+  chat message or a retained shell history.
+- **Trimming whitespace from a copied node id.** Whitespace is refused rather than
   trimmed, because trimming would hide a copy-paste error.
 - **Using a relative config directory.** Refused, because it resolves differently
   per launch.
 
 ## Verification Checklist
 
-- [ ] `connector-node id` printed a pair with exactly one dot and a `node_` prefix.
-- [ ] The pair was copied whole and stored as a secret, not in a ticket or history.
+- [ ] `connector-node id` printed a node id with a `node_` prefix and a 26 character
+      body.
+- [ ] The node credential was copied whole and stored as a secret, not in a ticket or
+      history.
 - [ ] `CONNECTOR_NODE_CONFIG_DIR` is an absolute path.
 - [ ] The policy file exists, is non-empty, and has `version: 1`.
 - [ ] Every scope has an absolute `path` that exists and is a directory.
@@ -665,7 +673,8 @@ reachable surface depends on which line happened to parse.
 - [ ] Every grant names a defined scope and a known permission.
 - [ ] `run` has `CONNECTOR_NODE_SERVER_URL` and `CONNECTOR_NODE_TUNNEL_TOKEN` set.
 - [ ] The log shows a handshake accepted, not a refusal followed by silence.
-- [ ] After a regeneration, the CLI was given the new pair.
+- [ ] After a regeneration, the CLI was given the new node id. The credential is
+      unchanged, because regeneration replaces the address and not the secret.
 - [ ] For a single-executable build, the file was stored as a credential, because it
       carries the Server-wide `tunnel_token` in plain text.
 - [ ] For a single-executable build, `CONNECTOR_NODE_POLICY_FILE` is unset, because

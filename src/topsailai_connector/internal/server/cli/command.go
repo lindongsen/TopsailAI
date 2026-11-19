@@ -45,6 +45,19 @@ func Run(arguments []string, lookup func(string) string, stdout, stderr io.Write
 	}
 
 	client := &Client{}
+
+	// A destination changes the whole shape of the invocation: `file.read` loops until
+	// end of file and the result is written atomically. Without one, the historical
+	// single-request behaviour is kept exactly, so an existing script that relies on
+	// one chunk and a truncation notice is unaffected.
+	if options.Output != "" {
+		if err := writeToDestination(client, options, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "connector-server cli: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	envelope, err := client.Send(options)
 	if err != nil {
 		fmt.Fprintf(stderr, "connector-server cli: %v\n", err)
@@ -85,9 +98,30 @@ func parseArguments(arguments []string, lookup func(string) string) (Options, bo
 	length := flags.Int64("length", 0, "byte count for file.read; 0 means up to the cap")
 	requestID := flags.String("request-id", "", "correlation id signed by both proofs")
 	jsonOutput := flags.Bool("json", false, "print the whole response envelope as JSON")
-
+	// -o and --output are two registrations of one variable, because Go's flag
+	// package treats them as unrelated names. Registering only one would make the
+	// other an unknown flag, and the documented short form is the one an operator
+	// types.
+	output := flags.String("o", "", "local destination for the result, or - for stdout")
+	flags.StringVar(output, "output", "", "local destination for the result, or - for stdout")
+	force := flags.Bool("force", false, "replace an existing destination file")
 	if err := flags.Parse(arguments); err != nil {
 		return Options{}, false, fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+
+	// A flag that was written with an empty value is not the same as a flag that was
+	// omitted. `-o ""` asks for a destination and names none, so treating it as "no
+	// destination" would run the single-request path while the caller believed a
+	// whole-file read was requested. Visit reports only the flags actually set, which
+	// is the distinction the default value cannot express.
+	outputGiven := false
+	flags.Visit(func(visited *flag.Flag) {
+		if visited.Name == "o" || visited.Name == "output" {
+			outputGiven = true
+		}
+	})
+	if outputGiven && *output == "" {
+		return Options{}, false, fmt.Errorf("%w: -o needs a destination; use - for stdout or a file path", ErrUsage)
 	}
 
 	operation, err := parseOperation(flags.Args())
@@ -107,6 +141,8 @@ func parseArguments(arguments []string, lookup func(string) string) (Options, bo
 		Offset:    *offset,
 		Length:    *length,
 		RequestID: *requestID,
+		Output:    *output,
+		Force:     *force,
 	}
 
 	if options.ServerURL == "" {
@@ -129,6 +165,17 @@ func parseArguments(arguments []string, lookup func(string) string) (Options, bo
 	}
 	if options.Length < 0 {
 		return Options{}, false, fmt.Errorf("%w: --length must not be negative", ErrUsage)
+	}
+	// --json and -o describe two different output contracts: one wraps the envelope,
+	// the other writes the payload. Accepting both would mean one of them silently
+	// wins, so the combination is refused instead of resolved.
+	if *jsonOutput && options.Output != "" {
+		return Options{}, false, fmt.Errorf("%w: --json and -o cannot be combined; --json prints the envelope and -o writes the payload", ErrUsage)
+	}
+	// --force without a destination has nothing to force. Accepting it would let a
+	// caller believe a protection was in effect when no file was ever written.
+	if options.Force && options.Output == "" {
+		return Options{}, false, fmt.Errorf("%w: --force requires -o", ErrUsage)
 	}
 
 	parsedClient, err := security.ParseCredential(clientValue)

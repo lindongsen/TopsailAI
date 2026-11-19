@@ -1213,6 +1213,7 @@ These are accepted for the first version and must be stated rather than hidden.
 | A leaked `tunnel_token` never expires | Anyone holding it can open a channel and impersonate a Node | Rotate the Server's environment and restart; the blast radius is every Node |
 | A captured proof can be replayed first on a plaintext link | The attacker's copy is accepted and the legitimate copy is refused as a replay | Use TLS. Timestamps and nonces cannot order two identical requests, so HMAC does not replace transport encryption |
 | A proof is not a private message | Anyone who can read the link sees the operation, the scope and the path | Use TLS. HMAC proves origin and integrity, not confidentiality |
+| `tunnel_token` crosses the wire as a value, not as a proof | Anyone who can observe the segment reads the token and can open a channel and impersonate a Node; the blast radius is every Node on that Server | Measured on the wire, not inferred: the `hello` frame carries `tunnel_token` base64-encoded inside its payload, and base64 is an encoding rather than encryption. The HMAC migration covered the two CLI-facing gates and left the channel handshake as a bearer value. The only real fix is TLS or a proof-based handshake; see `issues/issue-tunnel-token-travels-in-plaintext.md` |
 | Server sees the node proof in transit | A compromised Server can replay it within its window | The Server never receives the node secret and never stores the proof; the value lives only for the request being forwarded, and the Node's nonce cache refuses a second use |
 | Node host compromised | The fence is gone entirely | Host security; nothing in this design helps |
 | Secret in a shell history or log | Credential leak with no expiry to bound it | Never log a secret or a signature; audit records name the `node-id` and the `key_id` only; `connector-node credential add` prints a secret once, so its output must not be pasted into a ticket or a retained history |
@@ -1261,6 +1262,17 @@ request path.
 
 - [ ] No code path writes `tunnel_token`, a credential secret or a proof signature
       to a log, trace, audit record or error message.
+- [ ] A secret that crosses the wire is checked for whether it crosses as a value
+      or as a proof. `tunnel_token` crosses as a value inside the `hello` frame,
+      base64-encoded, so anyone observing the segment can read it. A reviewer
+      must not conclude that a secret is protected because the two CLI-facing
+      gates are proof-based; the channel handshake is a separate gate with a
+      separate mechanism.
+- [ ] A capture-based claim about a secret is measured after unmasking the
+      WebSocket frame and decoding the `payload` field. A grep over the raw
+      capture cannot find a masked frame's content, and the `hello` payload is
+      base64 inside base64, so a raw search reports zero hits for a value that is
+      present.
 - [ ] No code path receives the node credential secret. The Server handles a
       signature, never a secret.
 - [ ] No code path stores a proof in a struct field that outlives the request

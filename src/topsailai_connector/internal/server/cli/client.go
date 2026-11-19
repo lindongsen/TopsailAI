@@ -73,6 +73,19 @@ type Options struct {
 	// one, which is the ordinary case: the id is signed by both proofs, so it must be
 	// known before the proofs are built.
 	RequestID string
+	// Output is the local destination for the result. An empty value keeps the
+	// historical behaviour: the payload goes to stdout and a `file.read` fetches one
+	// chunk. "-" means stdout with a whole-file read, and any other value is a local
+	// file path.
+	//
+	// It is a local path, not a remote one. It is not subject to the Node's path
+	// grammar, so an absolute path and a `..` component are both legal here while
+	// Path refuses them.
+	Output string
+	// Force permits Output to replace an existing file. Without it a destination that
+	// already exists is refused, because a read tool that silently overwrites a local
+	// file destroys work the caller did not ask it to touch.
+	Force bool
 }
 
 // Envelope is the response shape the Server returns.

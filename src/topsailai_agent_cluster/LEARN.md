@@ -1711,3 +1711,141 @@ that matters: the suite is green, the file is valid Go, and the folder looks com
 into a provider workspace would have made it worse, because the new location implies ownership and
 maintenance that nobody provides. The tell is a comment written in the past tense about a binary the
 harness "no longer builds": that sentence is a defect report nobody acted on.
+
+## A failover feature configured with one candidate has nothing to fail over to
+
+Trigger: the DR test stopped the primary Server and the CLI printed a raw
+`dial tcp 172.19.1.1:53680: connect: connection refused` instead of falling back. The failover code
+was correct and fully tested. `AGENT_CLUSTER_CLI_SERVER_PROFILE` was set to the single name
+`primary`, and `parseServerProfileGroup` (`src/main/agent-cluster-cli/cli_server_profile.go:118`)
+treats one name as a group of one, which is deliberate: it keeps an existing single-Server deployment
+unchanged. So the deployment had one candidate and the feature had nothing to choose between.
+
+Action: when a failover or retry feature is deployed, verify the configured candidate list has more
+than one member before testing the failure path. Read the resolved list, not the variable: a
+comma-separated group and a single name are the same variable with different arity, and the arity is
+what the feature needs. Here the fix was `primary,secondary`, and the same command then reported
+`server "primary" skipped: unreachable` followed by `using server profile "secondary"`.
+
+Why this prevents recurrence: a group-of-one is a supported configuration, so nothing rejects it and
+no test fails. The feature is then present, tested and inert, and the failure it produces is the
+generic transport error the feature exists to replace. The tell is that the error names a URL rather
+than a skipped candidate: a working failover always reports which candidate it skipped, because
+skipping is the decision it made.
+
+## A fallback peer left in the old auth mode turns a failover into a credential error
+
+Trigger: after the CLI switched to HMAC, stopping the primary made the CLI fall back to the secondary
+and receive `401 unauthorized: authentication required`. The credential was correct. The secondary
+Server was still `AUTH_MODE=bearer` while the CLI signed its request, so the fallback reached a peer
+that could not verify the new scheme.
+
+Action: when a credential scheme changes, treat every peer that can answer a request as a boundary to
+migrate, including peers that are only reachable on a failure path. Enumerate them from the failover
+configuration rather than from the list of machines currently serving traffic, because a standby
+receives no requests until the moment it matters. Verify each peer independently with a positive call
+and a wrong-secret call before declaring the migration complete.
+
+Why this prevents recurrence: the standby is invisible during normal operation, so every check that
+exercises the active peer passes while the standby stays on the old scheme. The failure then appears
+only during the incident the standby exists for, and it presents as an authentication problem, which
+sends the investigation to the credential rather than to the mode. A wrong-secret probe on each peer
+is what distinguishes "this peer verifies HMAC" from "this peer is reachable".
+
+## A note that forbids an action must be checked against the exact command, not the intent
+
+Trigger: the runbook states twice that only the Endpoint processes inside `ai-dev` and
+`topsailai-dev` may be restarted, and that the containers themselves must not be restarted
+"because recreating them would kill the Agents that share their lifecycle boundary". While
+resetting the connection generation after a Server recreate, the command
+`for c in ai-dev topsailai-dev; do docker restart "$c"; done` was run anyway. It killed Agent
+`wa-d3ea717b411f` (pid 1783182) mid-turn: its last event was `tool_call.end
+file_tool-read_file_lines` at `07:28:48.309845`, and its meta still says `status: running` with
+`end_ts: null`, so the session is dead but recorded as alive.
+
+Action: before running any lifecycle command against a container that hosts Agents, quote the
+forbidden action from the note and compare it to the literal command. Here the note forbids
+`docker restart` and a container recreate, and permits only
+`docker exec <c> .../agent-clusterctl -c conf/endpoint/node.conf restart`. The permitted form
+restarts one process inside the container; the forbidden form restarts the container and every
+process in it. When the goal is "reset the connection generation", the permitted form achieves it,
+so the forbidden form was never necessary.
+
+Why this prevents recurrence: the intent ("restart the endpoint") and the command ("restart the
+container") differ by one word and both produce a working Endpoint, so the outcome looks correct
+while the collateral damage is invisible. The damage is also silent in the direction that matters:
+the Endpoint reconnects and reports healthy, and only a session file that stops mid-turn records
+that an Agent died. Checking the literal command against the note's literal prohibition is what
+separates "I restarted the thing I meant" from "I restarted the boundary that owned it".
+
+## `RestartCount` does not prove a container was never restarted
+
+Trigger: asked whether `ai-dev` had been restarted, the answer given was "no", citing
+`RestartCount=0` and `RestartPolicy=no`. Both were true and both were irrelevant: `RestartCount`
+counts only restarts performed by the restart policy, so a manual `docker restart` leaves it at
+zero. The container had in fact stopped and started 0.46 s apart, which `FinishedAt` and
+`StartedAt` showed directly, and the container log's last line was
+`Shutting down, got signal: Terminated`.
+
+Action: to prove a container was not restarted, compare `State.StartedAt` against `State.Created`
+and against the host's boot time, and read the container log's last line for a shutdown marker.
+`RestartCount` answers a different question and must never be used as evidence of "never
+restarted". When the container's own log ends in a termination message, the container stopped,
+regardless of the restart policy.
+
+Why this prevents recurrence: `RestartCount=0` reads like a clean bill of health and it is the
+field that looks purpose-built for the question, so it is the first thing consulted and the last
+thing doubted. The two fields that actually answer the question sit beside it and are ignored
+because they look like timestamps rather than evidence. A wrong "no" is worse than no answer: it
+closes the investigation that would have found the killed Agent.
+
+## A rollout checklist that names roles misses the per-node instances of a role
+
+Trigger: the HMAC cutover checklist named three boundaries — Server, Endpoint, CLI — and I switched
+gd-dev's Server verifier and Endpoint verifier but left gd-dev's CLI caller on the pre-HMAC form. That
+CLI then rejected its own credential locally, before sending anything:
+`server credential is not in key_id.secret form required by hmac mode`. The other three nodes were
+correct, so every check I ran on the host I was working on passed.
+
+Action: when a checklist names a role, enumerate the instances of that role before executing. Here the
+role "CLI" has four instances, one per node, and all four environment files live at the identical path
+`/root/.topsailai/.topsailai_agent_cluster.env`, which is exactly why reading "the CLI environment file"
+on one host looks like a complete check. Write the instance list into the checklist itself, and verify
+each instance by its own rendered output rather than by a shared probe.
+
+Why this prevents recurrence: a role name reads as a single thing, so a checklist that is correct at the
+role level is silently incomplete at the instance level. The identical path removes the last cue that
+would prompt a second look, and the nodes that are skipped are the ones that serve no traffic during
+normal operation, so their failure surfaces only during the incident they exist for.
+
+## A credential rejection that exits zero certifies a CLI that did nothing
+
+Trigger: the gd-dev CLI printed `server credential is not in key_id.secret form required by hmac mode`
+and exited **0**. Any script testing `$?` reported a working CLI while the CLI had sent no request at
+all.
+
+Action: verify a CLI by its rendered output, never by its exit status alone. When a CLI prints a
+diagnostic and exits 0, treat the exit code as a defect rather than as evidence of success, and check
+the exit code of the failure path explicitly when adding a credential or configuration validation.
+
+Why this prevents recurrence: the message reads like usage text, which is conventionally paired with a
+zero exit, so the pairing looks normal. The exit code is the cheapest automation guard, so a zero exit
+propagates into every script and check that trusts it, and the CLI's own silence is indistinguishable
+from a command that legitimately produced no rows.
+
+## A Server-side projection cannot prove an Endpoint-side check
+
+Trigger: while verifying the HMAC cutover, `agent-cluster-cli endpoints` was used as the negative probe
+for the Endpoint boundary. It passed with a deliberately wrong Endpoint secret, which looked like the
+policy was not verifying. It was not verifying because it was never reached: `endpoints` renders the
+Server's persisted inventory and never contacts an Endpoint, so the wrong credential was never used.
+
+Action: before using a probe as evidence for a boundary, trace which component consumes the credential.
+A Server-side projection proves the Server boundary only. Use a live provider read such as
+`history <endpoint>` to reach the Endpoint policy, and state in the evidence which component the probe
+actually exercised.
+
+Why this prevents recurrence: a probe that passes for the wrong reason is worse than no probe, because
+it certifies a check nobody performed. The failure direction is the dangerous one: a correct
+implementation looks broken, and the natural response is to weaken the verifier that was never
+consulted.
