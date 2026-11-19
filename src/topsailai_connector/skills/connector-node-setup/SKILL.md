@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
-description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, or how to revoke a leaked credential. Covers the first-run order, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management and regeneration.
-version: 1.1.0
+description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, or how to find the node id, key id and secret after starting the Node. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management and regeneration.
+version: 1.2.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -60,8 +60,17 @@ The order is fixed and getting it wrong produces a confusing error:
 
 3. Node operator:   write the policy file, then start the Node
                     connector-node run
-                    -> node credential generated: bundle-caller.<secret>
-                       copy it into the CLI now; it is not printed again
+                    -> === connector-node ===
+                       server        : wss://host/channel
+                       node id       : node_7f3a...9c1e
+                       ...
+                       key id        : bundle-caller
+                       secret        : <43 characters>
+                       credential    : bundle-caller.<secret>
+                       ...
+                       CONNECTOR_CLI_SERVER_URL=https://host
+                       CONNECTOR_CLI_NODE_ID=node_7f3a...9c1e
+                       CONNECTOR_CLI_NODE_CREDENTIAL=bundle-caller.<secret>
 
 4. CLI operator:    give the CLI the client credential, the node credential
                     and the node id
@@ -73,8 +82,20 @@ requires learning the node id before the tunnel token exists, so requiring a ful
 configuration would make the order impossible.
 
 Step 3 is where the node credential appears. The Node writes one on its first
-start and prints it once, because a Node with no credential refuses every caller.
-That credential is what the CLI presents; the node id alone is not enough.
+start, because a Node with no credential refuses every caller, and it prints the
+whole summary on **every** start, not only the first. That credential is what the
+CLI presents; the node id alone is not enough.
+
+The summary is printed on every start because an operator who restarts a Node has
+the same question as one who started it. If you lost the scroll, restart the Node
+and read it again; you do not have to open the credential file by hand.
+
+**The secret appears in full only when stdout is a terminal.** If you redirect
+stdout to a file or a pipe, the summary still prints but the secret is replaced by
+`<secret:N bytes>` and a line explains why. That is deliberate: a launcher that
+writes stdout to a log would otherwise append a credential that never expires to
+that log on every start. To see the secret, run the Node in a terminal, or read
+the file the summary names (`credentials`).
 
 If a user reports that `connector-node id` fails with
 `CONNECTOR_NODE_SERVER_URL is empty`, they are running a build older than this
@@ -193,22 +214,59 @@ connector-node: identity file "...": has mode 0644, want no group or other acces
 reports are synthesised from the read-only attribute and carry no ownership
 information; a check that cannot answer the question does not pretend to.
 
-### A generated node id and credential are printed once
+### Every start prints the summary
 
-`connector-node id` always prints the node id. `connector-node run` prints the node
-id and the credential **only on the start that created them**, to stdout rather than
-to the log:
+`connector-node id` always prints the node id. `connector-node run` prints a
+summary on **every** start, to stdout rather than to the log:
 
 ```
-node id generated: node_....
-node credential generated: <key_id>.<secret>
-copy it into the CLI now; it is not printed again
+=== connector-node ===
+server        : wss://host/channel
+node id       : node_....
+config dir    : /etc/connector/node
+credentials   : /etc/connector/node/credentials.yaml
+policy        : /etc/connector/node/policy.yaml
+scopes        : project tool
+key id        : bundle-caller
+secret        : <43 characters>
+credential    : bundle-caller.<secret>
+
+To reach this node from a CLI, set:
+  CONNECTOR_CLI_SERVER_URL=https://host
+  CONNECTOR_CLI_NODE_ID=node_....
+  CONNECTOR_CLI_NODE_CREDENTIAL=bundle-caller.<secret>
+  CONNECTOR_CLI_CLIENT_CREDENTIAL=<the server's client credential>
 ```
+
+A first start also prints two lines above the summary saying that a node id and a
+credential were generated by this start. A restart prints the summary without those
+lines, because nothing was generated.
 
 The node id is an address, so losing it costs only a lookup. The credential is a
 secret that never expires, so losing it costs a rotation: `credential add` issues a
-replacement and `credential remove` retires the lost one. Both lines are printed once
-so a log file does not accumulate secrets; a later start prints neither.
+replacement and `credential remove` retires the lost one. You do not have to rotate
+just because you lost the scroll, because the summary prints the same value again on
+the next start.
+
+**The secret is withheld when stdout is not a terminal.** Redirect stdout to a file
+and you get:
+
+```
+secret        : <secret:43 bytes>
+credential    : bundle-caller.<secret:43 bytes>
+                (withheld because stdout is not a terminal; run the node in a
+                 terminal to see it, or read the credentials file named above)
+```
+
+That is deliberate. A launcher that writes stdout to a log would otherwise append a
+credential that never expires to that log on every start. The rest of the summary
+still prints, so a log still records which node id, which scopes and which key id
+are in force. To see the secret, run the Node in a terminal, or read the file named
+on the `credentials` line.
+
+`connector-node credential add` is different: it prints the new credential once and
+never again, because it is a management command whose output is the only copy. If
+you lose that output, add another credential and remove the lost one.
 
 ## Build and install
 
@@ -441,9 +499,19 @@ whatever process launched it.
 | `scope list` | Print the scope names the policy defines, one per line, in sorted order |
 
 `connector-node id` prints the node id and nothing else, so it can be copied into a
-script. It is an address, not a secret, so it is safe to show. The secret is the
-credential printed once by `credential add` or by the first start, and that output
-must not be pasted into a ticket, a chat message or a retained shell history.
+script. It is an address, not a secret, so it is safe to show.
+
+The secret appears in two places, and the two behave differently:
+
+- `run` prints it in the startup summary on **every** start, but only when stdout is
+  a terminal. Redirect stdout and the summary still prints with the secret replaced
+  by `<secret:N bytes>`, so a launcher that logs stdout does not accumulate a
+  credential that never expires.
+- `credential add` prints the new credential **once**, because that output is the
+  only copy. If you lose it, add another credential and remove the lost one.
+
+Either way, a secret must not be pasted into a ticket, a chat message or a retained
+shell history.
 
 ## The policy file
 

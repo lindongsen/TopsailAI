@@ -281,8 +281,10 @@ binary would share a node id, and the Server's `node_id -> connection` registry
 would evict the first. The credentials are a set the operator adds to and revokes
 from, which a compiled-in value cannot express. The recipient therefore runs the
 binary once with `id` to create the identity, and the first `run` creates one
-caller credential and prints it once, exactly as with a zip bundle. `credential
-add` is how a second caller is added, not a required first-run step.
+caller credential. Every `run` then prints the node id, the key id and the secret
+in its startup summary, exactly as with a zip bundle, so the operator can read them
+off the terminal at any time. `credential add` is how a second caller is added, not
+a required first-run step.
 
 The policy is stored base64 encoded. That is a **quoting** decision, not a secrecy
 one: a YAML document contains newlines, quotes and spaces, and the linker splits

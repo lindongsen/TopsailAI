@@ -419,13 +419,20 @@ creates the credential:
     -> node_...            the address; safe to record
 
   $OUTPUT_PATH run
-    -> node credential generated: <key_id>.<secret>
-       copy it into the CLI now; it is not printed again
+    -> === connector-node ===
+       server        : ...
+       node id       : node_...
+       key id        : <key_id>
+       secret        : <secret>
+       credential    : <key_id>.<secret>
 
-Run the second step in a terminal you can read. The credential goes to standard
-output exactly once, and "credential list" shows only the key id, so a redirected
-or scrolled-away line loses the secret for good. If that happens, issue a
-replacement and retire the lost one:
+The summary is printed on every start, so a restart shows the same values again.
+The secret is printed in full only when standard output is a terminal. A launcher
+that redirects standard output to a log receives the redacted form
+"<secret:N bytes>" instead, because a log file would otherwise accumulate a
+credential that never expires. To see the secret, run the binary in a terminal, or
+read the credentials file named in the summary. "credential list" shows only the
+key id, so a lost secret is replaced rather than recovered:
 
   $OUTPUT_PATH credential add --key-id <name>
   $OUTPUT_PATH credential remove --key-id <key_id>

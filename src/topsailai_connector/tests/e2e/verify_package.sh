@@ -419,12 +419,17 @@ echo "verify: the embedded policy, Server URL and scopes all reached the binary"
 EMBEDDED_CONFIG_DIR="$EMBEDDED_WORK/home/.config/topsailai-connector"
 EMBEDDED_NODE_ID=$(tr -d '\r\n' <"$EMBEDDED_CONFIG_DIR/identity")
 [ -n "$EMBEDDED_NODE_ID" ] || fail "the default artifact created no identity in the platform config directory"
-
-# The credential is printed once, at creation, and no command reads a secret back.
-# It is captured from the artifact's own log for the same reason the bundle's value
-# comes from the packaging summary: that print is the only copy that exists.
-EMBEDDED_NODE_CREDENTIAL=$(sed -n 's/^node credential generated: //p' "$EMBEDDED_WORK/node.log" | head -n 1)
-[ -n "$EMBEDDED_NODE_CREDENTIAL" ] || fail "the default artifact printed no node credential"
+# The credential is read from the file the artifact wrote, not from its log. The
+# startup summary withholds the secret when stdout is not a terminal, and this script
+# redirects stdout to a log, so the log holds the redacted form.
+EMBEDDED_CREDENTIALS_FILE="$EMBEDDED_CONFIG_DIR/credentials.yaml"
+[ -f "$EMBEDDED_CREDENTIALS_FILE" ] ||
+	fail "the default artifact wrote no credential file at $EMBEDDED_CREDENTIALS_FILE"
+EMBEDDED_KEY_ID=$(sed -n 's/^ *- key_id: *//p' "$EMBEDDED_CREDENTIALS_FILE" | head -n 1)
+EMBEDDED_SECRET=$(sed -n 's/^ *secret: *//p' "$EMBEDDED_CREDENTIALS_FILE" | head -n 1)
+[ -n "$EMBEDDED_KEY_ID" ] || fail "the default artifact's credential file holds no key id"
+[ -n "$EMBEDDED_SECRET" ] || fail "the default artifact's credential file holds no secret"
+EMBEDDED_NODE_CREDENTIAL="$EMBEDDED_KEY_ID.$EMBEDDED_SECRET"
 
 echo "--- file.read project hello.txt through the default artifact ---"
 CONNECTOR_CLI_SERVER_URL="http://127.0.0.1:$PORT" \

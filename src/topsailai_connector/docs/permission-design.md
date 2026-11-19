@@ -465,12 +465,22 @@ and exits. It is stated here because the reverse order looks natural and fails w
 a confusing error, since the Server cannot route to a Node whose name it has never
 been told.
 
-Two rules follow:
+Three rules follow:
 
 - `connector-node id` prints the public address and nothing else, so it can be
   pasted anywhere. `connector-node credential add` prints a secret once, so its
   output must be treated as one: it must not be pasted into a ticket, a chat
   message or a shell history that is retained.
+- `connector-node run` prints a startup summary on **every** start: the Server
+  address, the node id, the config directory, the credential and policy paths, the
+  scope names, the key id and the secret, followed by the `CONNECTOR_CLI_*`
+  variables a caller needs. The secret appears in full only when stdout is a
+  terminal; when stdout is redirected the summary still prints with the secret
+  replaced by `<secret:N bytes>`, so a launcher that logs stdout does not append a
+  credential that never expires to that log on every start. This is why the
+  summary can print on every start at all: the earlier print-once rule existed to
+  keep a secret out of a log, and the terminal check keeps that property while
+  letting an operator who lost the scroll read the value again.
 - The Server never mints, assigns or overrides a `node-id`. If an operator asks the
   Server for "the node id of my machine", the answer is that the machine must be
   asked. A Server-assigned identifier would make the Server the identity authority,
@@ -1217,7 +1227,7 @@ deliveries of the same Node; the permission model does not change between them.
 | Policy document | Yes, base64 | A YAML document does not survive a shell, Makefile or linker flag; base64 is a quoting decision, not a secrecy one |
 | `tunnel_token` | Yes, by operator decision | The Node cannot dial without it, so "start it and it works" is unmet otherwise |
 | `node-id` | **No** | Generated on first start, polled every second, rewritten by `regenerate` |
-| Node credential | **No** | Generated on the target machine, printed once, and removable only there |
+| Node credential | **No** | Generated on the target machine, removable only there, and printed in the startup summary on every `run` |
 
 The identity and the credential are both excluded, and both are refusals rather
 than limitations to work around:

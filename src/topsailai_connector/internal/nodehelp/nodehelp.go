@@ -69,8 +69,21 @@ SUBCOMMANDS
         prepare the identity and the credentials, then dial the Server. This is the
         default, so a bare {{program}} with no subcommand runs it.
 
+        Every start prints a summary to stdout: the Server address, the node id, the
+        config directory, the credential and policy paths, the scope names, the key
+        id and the secret, followed by the CONNECTOR_CLI_* variables a caller needs.
+        A first start also says that it generated the node id and the credential.
+
+        The secret is printed in full only when stdout is a terminal. When stdout is
+        redirected the summary still appears, with the secret replaced by
+        <secret:N bytes> and a line saying why, so a launcher that logs stdout does
+        not append a credential that never expires to that log on every start. Run
+        the Node in a terminal to see the secret, or read the credentials file named
+        on the credentials line.
+
         A missing policy file is a startup failure, not an implicit allow-all, so
         the Node refuses to start until the file exists.
+
 
   id
         Print this Node's identifier and nothing else, so it can be pasted into a
@@ -343,10 +356,20 @@ DESCRIPTION
   appears connected. A Node that connected first and then discovered it had nothing to
   serve would look healthy to the Server while refusing every request.
 
-  A generated identity is printed once, at the moment it is created, because the
-  operator has to copy it into a CLI and there is no lookup endpoint. A generated
-  credential is printed once for the same reason, with a stronger warning: it is a
-  secret that never expires.
+  Every start prints a summary of what this Node is and how to reach it: the Server
+  address, the node id, the config directory, the policy source, the scopes, the key
+  id and the credential, followed by the CONNECTOR_CLI_* variables a CLI needs. It is
+  printed on every start rather than only the first, because an operator who restarts
+  a Node has the same question as one who started it.
+
+  The secret appears in full only when stdout is a terminal. When stdout is redirected
+  to a file or a pipe the summary still prints, with the secret replaced by its
+  redacted form and a line saying why. A launcher that writes stdout to a log would
+  otherwise append a credential that never expires to that log on every start.
+
+  A generated identity and a generated credential are announced above the summary, so
+  an operator can tell a first start from a restart. The values themselves are in the
+  summary either way.
 
   The process stops on SIGINT or SIGTERM. The shutdown closes the channel, so a Node
   that is mid-request is answered instead of being cut off.

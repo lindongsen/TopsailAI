@@ -8,14 +8,18 @@ author: DawsonLin
 ## What an operator sees
 
 A Node owns its own name. On first start it generates a node id, stores it in
-`<config>/identity` and prints it once. The node id is an address, not a
+`<config>/identity` and prints it. The node id is an address, not a
 credential: it appears in URLs, logs and audit records, and knowing it grants
 nothing.
 
 The credential that authorizes a caller to talk to this Node is a separate value
 in a separate file, `<config>/credentials.yaml`. On first start the Node also
-generates one credential, prints it once and never prints it again. The operator
-copies it into the CLI.
+generates one credential. Every `run` prints a startup summary naming the Server
+address, the node id, the key id and the secret, so the operator can read the value
+off the terminal at any time rather than only on the start that created it. The
+secret is printed in full only when stdout is a terminal; a redirected stdout gets
+`<secret:N bytes>` instead, so a launcher that logs stdout does not accumulate a
+credential that never expires.
 
 Two files, two jobs. Regenerating the address does not revoke a caller, and
 revoking a caller does not change the address.

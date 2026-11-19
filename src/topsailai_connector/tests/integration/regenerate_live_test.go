@@ -111,17 +111,22 @@ func newRegenerateFixture(t *testing.T) *regenerateFixture {
 		stop(t, command)
 	})
 
-	// The first start generates the credential, and the line naming it is the only
-	// place the secret is printed. It is captured here because the CLI must present
-	// it, and there is no command that reads a secret back.
-	text := waitForOutput(t, output, "node credential generated: ", 30*time.Second)
-	credentialLine := lineAfter(text, "node credential generated: ")
-	nodeCredential, err := security.ParseCredential(credentialLine)
-	if err != nil {
-		t.Fatalf("parse the generated node credential %q: %v", credentialLine, err)
-	}
-
+	// The first start generates the credential. The secret is read from the file
+	// rather than from stdout, because the summary withholds it when stdout is not a
+	// terminal and this child's stdout is a pipe. The file is the documented place to
+	// read it, and reading it here keeps the fixture independent of how the summary
+	// chooses to render a secret.
 	waitForOutput(t, output, "connector-node ready", 30*time.Second)
+
+	credentials, err := node.LoadCredentialList(node.CredentialsPath(configDir))
+	if err != nil {
+		t.Fatalf("load the generated credential file: %v", err)
+	}
+	if len(credentials) == 0 {
+		t.Fatalf("the first start wrote no credential to %s", node.CredentialsPath(configDir))
+	}
+	nodeCredential := credentials[0]
+
 	waitForRegistration(t, registry)
 
 	return &regenerateFixture{
@@ -135,24 +140,6 @@ func newRegenerateFixture(t *testing.T) *regenerateFixture {
 		nodeCommand:      command,
 		nodeOutput:       output,
 	}
-}
-
-// lineAfter returns the first line that follows the marker, trimmed.
-//
-// The generated credential is printed on the same line as its marker, so the value
-// is the remainder of that line. Splitting on the marker rather than scanning for a
-// pattern keeps the helper from matching a different line that happens to look like
-// a credential.
-func lineAfter(text string, marker string) string {
-	index := strings.Index(text, marker)
-	if index < 0 {
-		return ""
-	}
-	remainder := text[index+len(marker):]
-	if newline := strings.IndexByte(remainder, '\n'); newline >= 0 {
-		remainder = remainder[:newline]
-	}
-	return strings.TrimSpace(remainder)
 }
 
 // vars returns the environment the child process needs, so a second invocation

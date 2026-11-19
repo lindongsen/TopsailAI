@@ -874,3 +874,37 @@ AI reflection archive, not here.
   that says `allow_filesystem_root: true` and a deny list that does not cover the
   config directory produce a Node that starts, serves the volume, and hands over
   its own credential.
+
+## A pty capture that redirects the ssh client is not a pty capture
+
+- The startup summary was reported as missing on Windows twice, and both reports
+  were wrong. The process was healthy — it reached `ready`, `handshake accepted`
+  and `channel established` — while the captured output contained no
+  `=== connector-node ===` line at all. `grep -c 'connector-node ==='` returned
+  `0` on a run that had printed it.
+- The cause was the capture, not the product. `ssh -tt ... > file` gives the
+  remote side a pty, but the pty is a screen: the client renders it into a
+  terminal emulator and writes the rendered result to the file. The summary was
+  printed, then overwritten by the cursor-positioning sequences that followed, so
+  the file held the final screen rather than the stream. `cat -A` showed
+  `^[[85;1H` followed by blank lines, which is a cleared screen, not a missing
+  print.
+- Run the process inside tmux and read `tmux capture-pane -p -S -300`. tmux keeps
+  a scrollback buffer, so lines that scrolled off the visible screen are still
+  retrievable, and the capture is the text rather than a re-render of it.
+- The same trap applies to any long-lived process whose output matters: a
+  redirected pty is a screenshot, and a screenshot of a scrolling log is the last
+  screenful. Redirect a pipe when the stream is what matters, and use a pty with
+  scrollback when the terminal-ness is what matters. The two requirements are
+  different and cannot be satisfied by one redirect.
+- Before concluding that a program did not print something, check whether the
+  binary contains the string: `strings bin/connector-node-windows-amd64.exe |
+  grep -c 'connector-node ==='` returned `1`, which located the defect in the
+  capture within one command instead of another deploy cycle.
+- A harness bug that produces a plausible product bug is the expensive kind. The
+  first two attempts also carried a real harness defect — `set VAR=value && ...`
+  in `cmd` captures the space before `&&` into the value, so the config path
+  became `C:\connector-drives\config ` with a trailing space and the Node
+  correctly refused a path that does not exist. That failure looked like a
+  product defect too. Write a `.cmd` file and run the file, rather than composing
+  a `cmd` command line inside an ssh argument.

@@ -180,11 +180,16 @@ CONNECTOR_NODE_SERVER_URL="$CHANNEL_URL" \
 NODE_PID=$!
 wait_for_log "$SERVER_LOG" 'msg="channel established"' "$ESTABLISHED_BASELINE" ||
 	fail "the Node did not register within ${READY_TIMEOUT}s; see $SERVER_LOG"
-
-# The node credential is printed once, when it is created, and no command reads a
-# secret back. It is captured from the log because the CLI must present it.
-NODE_CREDENTIAL=$(sed -n 's/^node credential generated: //p' "$NODE_LOG" | head -n 1)
-[ -n "$NODE_CREDENTIAL" ] || fail "the Node printed no credential; see $NODE_LOG"
+# The node credential is read from the file the Node wrote, not from its log. The
+# startup summary withholds the secret when stdout is not a terminal, and this script
+# redirects stdout to a log, so the log holds the redacted form.
+CREDENTIALS_FILE="$WORK/node-config/credentials.yaml"
+[ -f "$CREDENTIALS_FILE" ] || fail "$CREDENTIALS_FILE is missing; the Node wrote no credential"
+NODE_KEY_ID=$(sed -n 's/^ *- key_id: *//p' "$CREDENTIALS_FILE" | head -n 1)
+NODE_SECRET=$(sed -n 's/^ *secret: *//p' "$CREDENTIALS_FILE" | head -n 1)
+[ -n "$NODE_KEY_ID" ] || fail "$CREDENTIALS_FILE holds no key id"
+[ -n "$NODE_SECRET" ] || fail "$CREDENTIALS_FILE holds no secret"
+NODE_CREDENTIAL="$NODE_KEY_ID.$NODE_SECRET"
 
 IDENTITY_FILE="$WORK/node-config/identity"
 [ -f "$IDENTITY_FILE" ] || fail "$IDENTITY_FILE is missing; the Node did not write an identity"
@@ -368,13 +373,16 @@ if grep -qF "$TUNNEL_TOKEN" "$SERVER_LOG"; then
 	fail "the tunnel token reached the Server log"
 fi
 
-echo "manual: probe 13: the node credential appears once, from the first-run print" >&2
+echo "manual: probe 13: a redirected stdout never receives the node credential secret" >&2
 COUNT=$(grep -cF "$NODE_SECRET" "$NODE_LOG" || true)
-if [ "$COUNT" -ne 1 ]; then
-	fail "the node credential secret appears $COUNT times in the Node log, want exactly 1 from the first-run print"
+if [ "$COUNT" -ne 0 ]; then
+	fail "the node credential secret appears $COUNT times in the Node log, want 0 because stdout is not a terminal"
 fi
-if ! grep -q 'node credential generated' "$NODE_LOG"; then
-	fail "the single occurrence is not the first-run credential print"
+if ! grep -q '<secret:' "$NODE_LOG"; then
+	fail "the Node log carries neither the secret nor the redacted form; the summary did not run"
+fi
+if ! grep -q 'withheld because stdout is not a terminal' "$NODE_LOG"; then
+	fail "the Node log does not explain why the secret is withheld"
 fi
 
 echo "manual: probe 14: a killed Node makes the next request fail fast" >&2

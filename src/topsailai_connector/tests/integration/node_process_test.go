@@ -211,74 +211,96 @@ func TestNodeStartsAndReportsReadiness(t *testing.T) {
 	}
 }
 
-// TestNodePrintsTheGeneratedIdentityOnce proves a first start prints the node id,
-// and that the printed value is the value the identity file now holds.
+// TestNodePrintsTheNodeIDOnEveryStart proves every start prints the node id, and
+// that the printed value is the value the identity file holds.
 //
-// The identifier is an address, not a secret, so printing it once is a convenience
-// for the operator rather than a leak. It is still printed only when it is created,
-// because printing it on every start would fill a log with a value that never
-// changes.
-func TestNodePrintsTheGeneratedIdentityOnce(t *testing.T) {
+// The identifier is an address, not a secret, so printing it on every start is a
+// convenience for the operator rather than a leak. It is printed on every start
+// because an operator who restarts a Node has the same question as the operator who
+// started it: what do I put in the CLI.
+func TestNodePrintsTheNodeIDOnEveryStart(t *testing.T) {
 	env := newEnvironment(t)
 	command, output := start(t, env.vars(), "run")
 	defer stop(t, command)
 
-	text := waitForOutput(t, output, "node id generated: ", 20*time.Second)
-	if strings.Count(text, "node id generated: ") != 1 {
-		t.Fatalf("node id printed %d times, want once; got:\n%s",
-			strings.Count(text, "node id generated: "), text)
-	}
+	text := waitForOutput(t, output, "node id       : ", 20*time.Second)
 
 	identity, err := os.ReadFile(filepath.Join(env.configDir, "identity"))
 	if err != nil {
 		t.Fatalf("read identity file: %v", err)
 	}
-	printed := strings.SplitN(text, "node id generated: ", 2)[1]
+	printed := strings.SplitN(text, "node id       : ", 2)[1]
 	printed = strings.SplitN(printed, "\n", 2)[0]
 	if printed != strings.TrimSpace(string(identity)) {
 		t.Fatalf("printed node id %q differs from the stored value %q", printed, strings.TrimSpace(string(identity)))
 	}
 }
 
-// TestNodePrintsTheGeneratedCredentialOnce proves a first start prints the
-// credential, and that the printed value is the credential the file now holds.
+// TestNodePrintsTheCredentialOnEveryStart proves every start names the credential,
+// and that the key id it names is a credential the file holds.
 //
-// The credential is a secret that never expires, so it is printed exactly once, at
-// the moment it is created. A second print would put it into a log.
-func TestNodePrintsTheGeneratedCredentialOnce(t *testing.T) {
+// The secret is withheld because the child's stdout is a pipe rather than a
+// terminal, which is the property the next test asserts. This test therefore proves
+// the summary reaches a redirected stream at all, which is what a launcher that logs
+// stdout depends on.
+func TestNodePrintsTheCredentialOnEveryStart(t *testing.T) {
 	env := newEnvironment(t)
 	command, output := start(t, env.vars(), "run")
 	defer stop(t, command)
 
-	text := waitForOutput(t, output, "node credential generated: ", 20*time.Second)
-	if strings.Count(text, "node credential generated: ") != 1 {
-		t.Fatalf("credential printed %d times, want once; got:\n%s",
-			strings.Count(text, "node credential generated: "), text)
-	}
+	text := waitForOutput(t, output, "key id        : ", 20*time.Second)
 
-	printed := strings.SplitN(text, "node credential generated: ", 2)[1]
+	printed := strings.SplitN(text, "key id        : ", 2)[1]
 	printed = strings.SplitN(printed, "\n", 2)[0]
+	printed = strings.TrimSpace(printed)
 
-	// The printed value must be a credential the Node actually accepts, which is
-	// proved by parsing it and by finding its key identifier in the file. Comparing
-	// the whole value against the file would require reading a secret back, which the
-	// credential set deliberately does not allow.
-	credential, err := security.ParseCredential(strings.TrimSpace(printed))
-	if err != nil {
-		t.Fatalf("the printed credential %q does not parse: %v", printed, err)
-	}
 	stored, err := node.LoadCredentials(node.CredentialsPath(env.configDir))
 	if err != nil {
 		t.Fatalf("load the credential file: %v", err)
 	}
-	if _, present := stored.Lookup(credential.KeyID); !present {
-		t.Fatalf("the printed credential names key id %q, which the file does not hold", credential.KeyID)
+	if _, present := stored.Lookup(printed); !present {
+		t.Fatalf("the summary names key id %q, which the file does not hold", printed)
 	}
 }
 
-// TestNodeDoesNotPrintTheCredentialOnASecondStart proves the credential is printed
-// only when it is created. Printing it on every start would put it into every log.
-func TestNodeDoesNotPrintTheCredentialOnASecondStart(t *testing.T) {
+// TestNodeWithholdsTheSecretWhenStdoutIsNotATerminal proves a redirected stdout
+// receives the redacted form rather than the secret.
+//
+// This is the property that lets the summary print on every start without turning a
+// launcher's log file into a store of credentials that never expire. The child's
+// stdout is a pipe here, so the withheld branch is the one under test.
+func TestNodeWithholdsTheSecretWhenStdoutIsNotATerminal(t *testing.T) {
+	env := newEnvironment(t)
+	command, output := start(t, env.vars(), "run")
+	defer stop(t, command)
+
+	text := waitForOutput(t, output, "secret        : ", 20*time.Second)
+
+	if !strings.Contains(text, "<secret:") {
+		t.Fatalf("redirected stdout did not receive the redacted secret; got:\n%s", text)
+	}
+	if !strings.Contains(text, "withheld because stdout is not a terminal") {
+		t.Fatalf("redirected stdout did not explain the withholding; got:\n%s", text)
+	}
+
+	// The real secret must not appear anywhere in the captured output. Reading it
+	// back is the only way to prove the redaction, and this test is allowed to do so
+	// because it is the test that exists to check the redaction.
+	credentials, err := node.LoadCredentialList(node.CredentialsPath(env.configDir))
+	if err != nil {
+		t.Fatalf("load the credential file: %v", err)
+	}
+	for _, credential := range credentials {
+		if strings.Contains(text, string(credential.Secret)) {
+			t.Fatalf("the secret for key id %q reached a redirected stdout", credential.KeyID)
+		}
+	}
+}
+
+// TestNodePrintsTheSummaryOnASecondStart proves a restart prints the same summary,
+// so an operator who lost the first scroll does not have to read the credential file
+// by hand.
+func TestNodePrintsTheSummaryOnASecondStart(t *testing.T) {
 	env := newEnvironment(t)
 	first, firstOutput := start(t, env.vars(), "run")
 	defer stop(t, first)
@@ -287,11 +309,18 @@ func TestNodeDoesNotPrintTheCredentialOnASecondStart(t *testing.T) {
 	second, secondOutput := start(t, env.vars(), "run")
 	defer stop(t, second)
 	text := waitForOutput(t, secondOutput, "connector-node ready", 20*time.Second)
-	if strings.Contains(text, "node credential generated: ") {
-		t.Fatalf("second start printed the credential again; got:\n%s", text)
+
+	if !strings.Contains(text, "=== connector-node ===") {
+		t.Fatalf("second start printed no summary; got:\n%s", text)
 	}
-	if strings.Contains(text, "node id generated: ") {
-		t.Fatalf("second start printed the node id again; got:\n%s", text)
+	if !strings.Contains(text, "key id        : ") {
+		t.Fatalf("second start did not name the credential; got:\n%s", text)
+	}
+	if strings.Contains(text, "a new credential was generated by this start") {
+		t.Fatalf("second start claimed it generated a credential; got:\n%s", text)
+	}
+	if strings.Contains(text, "a new node id was generated by this start") {
+		t.Fatalf("second start claimed it generated a node id; got:\n%s", text)
 	}
 }
 

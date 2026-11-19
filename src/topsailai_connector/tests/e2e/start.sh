@@ -180,12 +180,19 @@ wait_for_log "$SERVER_LOG" 'msg="channel established"' ||
 wait_for_log "$NODE_LOG" 'msg="handshake accepted"' ||
 	fail "the Node did not accept the handshake within ${READY_TIMEOUT}s; see $NODE_LOG"
 
-# The node credential is printed once, at the moment it is created, and there is no
-# command that reads a secret back. It is captured from the log here because the CLI
-# must present it and the operator would otherwise have to copy it by hand.
-NODE_CREDENTIAL=$(sed -n 's/^node credential generated: //p' "$NODE_LOG" | head -n 1)
-[ -n "$NODE_CREDENTIAL" ] ||
-	fail "the Node printed no credential; see $NODE_LOG"
+# The node credential is read from the file the Node wrote, not from its log. The
+# startup summary withholds the secret when stdout is not a terminal, and this
+# launcher redirects stdout to a log, so the log holds the redacted form. The file is
+# the documented place to read a secret, and reading it here keeps this script
+# independent of how the summary chooses to render one.
+CREDENTIALS_FILE="$WORK/node-config/credentials.yaml"
+[ -f "$CREDENTIALS_FILE" ] ||
+	fail "$CREDENTIALS_FILE is missing; the Node wrote no credential"
+NODE_KEY_ID=$(sed -n 's/^ *- key_id: *//p' "$CREDENTIALS_FILE" | head -n 1)
+NODE_SECRET=$(sed -n 's/^ *secret: *//p' "$CREDENTIALS_FILE" | head -n 1)
+[ -n "$NODE_KEY_ID" ] || fail "$CREDENTIALS_FILE holds no key id"
+[ -n "$NODE_SECRET" ] || fail "$CREDENTIALS_FILE holds no secret"
+NODE_CREDENTIAL="$NODE_KEY_ID.$NODE_SECRET"
 
 # The node id is an address, so it is read from the identity file the Node wrote.
 # Reading it here proves the file is usable, not just that the Node started.

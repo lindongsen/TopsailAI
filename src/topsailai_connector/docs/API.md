@@ -731,8 +731,17 @@ lookup endpoint would let any caller enumerate which Nodes exist.
 | Credential | Created by | Command | Shown |
 |---|---|---|---|
 | Client credential | Server operator | `connector-node credential add` with `CONNECTOR_NODE_CONFIG_DIR` pointing at a Server-side directory | Once, at creation |
-| Node credential | Node operator | `connector-node credential add` | Once, at creation |
-| Node id | The Node, at first start | `connector-node id` | Every time, it is public |
+| Node credential | Node operator | `connector-node credential add`, and in the startup summary of every `connector-node run` | Every start, in full on a terminal |
+| Node id | The Node, at first start | `connector-node id`, and in the startup summary of every `connector-node run` | Every time, it is public |
+
+The Node credential row has two sources because they answer two different
+questions. `credential add` is how a caller is created, and its output is the only
+copy at that moment. The startup summary is how an operator who lost that output
+recovers the value without reading the file by hand, which is why it repeats on
+every start rather than only on the start that created the credential. The secret
+inside the summary is printed in full only when stdout is a terminal; a redirected
+stdout gets `<secret:N bytes>` and a line saying why, so a launcher that writes the
+summary to a log does not accumulate a credential that never expires.
 
 The Server binary has no `credential` subcommand. Its client credential file is
 written by the Node binary's `credential add`, pointed at a Server-side directory
