@@ -16,9 +16,14 @@ Assemble environment variables based on --item argument, read configured
 context files into TOPSAILAI_CONTEXT_USER_MESSAGE, and launch the subprocess
 via os.system (default) or subprocess.run (with --subprocess).
 
+AGENTS.md, LEARN.md, and MEMORY.md are injected into the default context
+automatically when they exist in the workspace (or in TOPSAILAI_PROJECT_FOLDER),
+unless the same file is already configured in settings.yaml.
+
 Pass --no-base-context to ignore the shared base context sources configured
-under context._ (and the legacy context._default), so only the selected item's
-own sources are injected. Base environment variables are still merged.
+under context._ (and the legacy context._default) together with the automatic
+workspace instruction files, so only the selected item's own sources are
+injected. Base environment variables are still merged.
 
 Pass --non-interactive to run the launcher itself without any prompt: a missing
 settings file uses the built-in default configuration, an existing configuration
@@ -287,6 +292,28 @@ def _get_base_env(env_map):
     return merged
 
 
+def _resolve_project_folder(env_map, item_name):
+    """Return the absolute ``TOPSAILAI_PROJECT_FOLDER`` value, or "" when unset.
+
+    The value is read with the same precedence as the merged environment: the
+    selected item wins over the base ``_``/``_default`` section, which wins over
+    the OS environment. A relative value is resolved against the current working
+    directory, matching the launcher's other relative-path handling.
+    """
+    base_env = _get_base_env(env_map)
+    item_env = env_map.get(item_name, {}) if not _is_base_item(item_name) else {}
+    value = (
+        item_env.get("TOPSAILAI_PROJECT_FOLDER")
+        or base_env.get("TOPSAILAI_PROJECT_FOLDER")
+        or os.environ.get("TOPSAILAI_PROJECT_FOLDER")
+    )
+    if not value:
+        return ""
+    if value[0] != "/":
+        value = os.path.abspath(os.path.join(os.getcwd(), value))
+    return value
+
+
 def _apply_self_environs(settings):
     """Load the top-level ``self_environs`` section into the process environment.
 
@@ -382,6 +409,92 @@ def _normalize_context_source(source, workspace=""):
         cwd=cwd,
         environ=dict(source.get("environ", {}) or {}),
     )
+
+# Project instruction files that are injected automatically when they exist in
+# the workspace (or in TOPSAILAI_PROJECT_FOLDER). They are part of the default
+# context, so --no-base-context suppresses them together with the shared base
+# sources. The order is fixed so the agent always reads them in the same order.
+_AUTO_CONTEXT_FILENAMES = ("AGENTS.md", "LEARN.md", "MEMORY.md")
+
+
+def _auto_context_roots(workspace, project_folder=None):
+    """Return the directories searched for automatic context files.
+
+    The workspace root is searched first, then ``project_folder`` when it names
+    a different directory. Roots are compared by real path so a project folder
+    that is the workspace (or a symlink to it) is never searched twice.
+    """
+    roots = []
+    for candidate in (workspace, project_folder):
+        if not candidate:
+            continue
+        resolved = os.path.realpath(candidate)
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
+def _configured_file_paths(sources, workspace):
+    """Return the real paths of every file source already configured.
+
+    Relative paths are resolved against ``workspace`` exactly like
+    ``_read_context_blocks`` does, and symlinks are resolved so two different
+    spellings of the same file are recognized as one file.
+    """
+    paths = set()
+    for source in sources:
+        if source.type != "file":
+            continue
+        path = source.value
+        if not os.path.isabs(path):
+            path = os.path.join(workspace, path)
+        paths.add(os.path.realpath(path))
+    return paths
+
+
+def _discover_auto_context_files(workspace, project_folder=None, existing_sources=()):
+    """Return context sources for workspace instruction files not yet configured.
+
+    ``AGENTS.md``, ``LEARN.md``, and ``MEMORY.md`` are project-level instruction
+    files, so an agent should always receive them. Each one is injected only
+    when it exists as a regular file in a searched root and is not already
+    configured in ``settings.yaml``; deduplication uses the resolved real path,
+    so a relative path, an absolute path, and a symlink to the same file all
+    count as one source and the file is never injected twice.
+
+    Args:
+        workspace (str): Workspace root, already absolute.
+        project_folder (str|None): Optional ``TOPSAILAI_PROJECT_FOLDER`` value.
+        existing_sources (iterable): Already-normalized context sources.
+
+    Returns:
+        list: New ``ContextSource`` objects, in ``_AUTO_CONTEXT_FILENAMES`` order.
+    """
+    configured = _configured_file_paths(existing_sources, workspace)
+    discovered = []
+    for root in _auto_context_roots(workspace, project_folder):
+        for name in _AUTO_CONTEXT_FILENAMES:
+            path = os.path.join(root, name)
+            if not os.path.isfile(path):
+                continue
+            real_path = os.path.realpath(path)
+            if real_path in configured:
+                continue
+            configured.add(real_path)
+            discovered.append(ContextSource(type="file", value=path))
+    return discovered
+
+
+def _merge_auto_context_sources(sources, workspace, project_folder=None):
+    """Append discovered workspace instruction files to ``sources``.
+
+    Returns:
+        tuple: ``(merged, added)`` where ``merged`` is the original list plus the
+        discovered sources and ``added`` holds only the new ones, so the caller
+        can report exactly what was injected automatically.
+    """
+    added = _discover_auto_context_files(workspace, project_folder, sources)
+    return list(sources) + added, added
 
 
 def _execute_context_command(source, workspace):
@@ -2243,9 +2356,10 @@ def main():
         dest="no_base_context",
         help=(
             "Ignore the shared base context sources configured under context._ "
-            "(and the legacy context._default). Only the selected item's own "
-            "context sources are injected. Base environment variables are "
-            "still merged."
+            "(and the legacy context._default), and skip the automatic workspace "
+            "instruction files (AGENTS.md, LEARN.md, MEMORY.md). Only the selected "
+            "item's own context sources are injected. Base environment variables "
+            "are still merged."
         ),
     )
     parser.add_argument(
@@ -2556,6 +2670,10 @@ def main():
     merged_context = list(base_context)
     merged_context.extend(item_context)
 
+    # Resolve TOPSAILAI_PROJECT_FOLDER before context assembly so the automatic
+    # workspace instruction files can be discovered in the active project too.
+    project_folder = _resolve_project_folder(env_map, item_name)
+
     # Normalize sources and resolve relative file paths against workspace.
     normalized_context = []
     for ctx in merged_context:
@@ -2565,6 +2683,22 @@ def main():
                 source, value=os.path.join(workspace, source.value)
             )
         normalized_context.append(source)
+
+    # 2.1 Inject AGENTS.md / LEARN.md / MEMORY.md when they exist in the
+    # workspace (or the project folder) and are not already configured in
+    # settings.yaml. They belong to the default context, so --no-base-context
+    # suppresses them together with the shared base sources.
+    if args.no_base_context:
+        auto_context = []
+    else:
+        normalized_context, auto_context = _merge_auto_context_sources(
+            normalized_context, workspace, project_folder
+        )
+        if auto_context:
+            print(
+                "[TopsailAI-Launcher] Auto context files: "
+                + ", ".join(source.value for source in auto_context)
+            )
 
     # 2.5 Read context source contents and format them (skipped in dry-run mode
     # so commands are not actually executed).
@@ -2597,14 +2731,10 @@ def main():
     # 3.5 Append context file contents and workspace folder structure to
     # TOPSAILAI_CONTEXT_USER_MESSAGE. When TOPSAILAI_PROJECT_FOLDER is set
     # (either in the OS environment or in the merged environment), restrict
-    # the scanned folder tree to that project folder.
+    # the scanned folder tree to that project folder. The value was already
+    # resolved above for automatic context discovery, so it is reused here
+    # instead of being recomputed from a different source order.
     original_user_message = merged_env.get("TOPSAILAI_CONTEXT_USER_MESSAGE", "")
-    project_folder = merged_env.get("TOPSAILAI_PROJECT_FOLDER") or os.environ.get(
-        "TOPSAILAI_PROJECT_FOLDER"
-    )
-    if project_folder and project_folder[0] != "/":
-        project_folder = os.path.join(os.getcwd(), project_folder)
-        project_folder = os.path.abspath(project_folder)
     if project_folder:
         merged_env["TOPSAILAI_PROJECT_FOLDER"] = project_folder
         os.environ["TOPSAILAI_PROJECT_FOLDER"] = project_folder
@@ -2713,7 +2843,12 @@ def main():
         if args.no_base_context:
             print("\nContext sources (selected item only; base ignored):")
         else:
-            print("\nContext sources (base + selected item):")
+            print("\nContext sources (base + selected item + auto workspace files):")
+        if auto_context:
+            print(
+                "  auto: "
+                + ", ".join(os.path.basename(source.value) for source in auto_context)
+            )
         if normalized_context:
             for source in normalized_context:
                 if source.type == "command":

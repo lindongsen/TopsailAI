@@ -13,7 +13,20 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 
 ## Purpose
 
-Reads `.topsailai/settings.yaml` from the current working directory, resolves the agent driver, merges environment variables, reads configured context files, appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`, and launches the configured driver.
+Reads `.topsailai/settings.yaml` from the current working directory, resolves the agent driver, merges environment variables, reads configured context files, injects the workspace instruction files described in "Automatic Workspace Context Files", appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`, and launches the configured driver.
+
+## Automatic Workspace Context Files
+
+`AGENTS.md`, `LEARN.md`, and `MEMORY.md` are project-level instruction files, so the launcher injects them into the default context automatically whenever they exist. No `settings.yaml` entry is required.
+
+- **Search roots:** the workspace root first, then `TOPSAILAI_PROJECT_FOLDER` when it names a different directory. Roots are compared by real path, so a project folder that is the workspace (or a symlink to it) is searched once.
+- **Order:** `AGENTS.md`, then `LEARN.md`, then `MEMORY.md`, within each root.
+- **Regular files only:** a directory named `AGENTS.md` is not a context file.
+- **No duplicates:** a file already configured in `settings.yaml` is skipped. Deduplication compares resolved real paths, so `LEARN.md`, `./LEARN.md`, an absolute path, and a symlink to the same file all count as one source and the content appears exactly once.
+- **Default context:** these files belong to the default context, so `--no-base-context` suppresses them together with the shared `_`/`_default` sources.
+- **Reporting:** the launcher prints `[TopsailAI-Launcher] Auto context files: <paths>` when it injects at least one file, and `--dry-run` adds an `auto:` line above the context source list.
+
+Because the files are discovered rather than configured, deleting one stops its injection without any configuration change, and adding one starts it on the next launch.
 
 ## Project Folder Scoping
 
@@ -65,7 +78,7 @@ topsailai_launch_agent
 |--------|-------------|
 | `--item <name>` | Select a context/environment item defined in `settings.yaml`. |
 | `--task <message>` | Supply the initial user task through the existing `TOPSAILAI_TASK` startup channel so the agent starts without waiting for manual task input. The selected driver still determines whether the process runs one turn or continues interactively. |
-| `--no-base-context` | Ignore the shared base context sources configured under `context._` (and the legacy `context._default`). Only the selected item's own context sources are injected. Base environment variables are still merged. |
+| `--no-base-context` | Ignore the shared base context sources configured under `context._` (and the legacy `context._default`), and skip the automatic workspace instruction files (`AGENTS.md`, `LEARN.md`, `MEMORY.md`). Only the selected item's own context sources are injected. Base environment variables are still merged. |
 | `--driver <command>` | Override the `ai_agent_driver` value. |
 | `--select-driver` | Open the interactive agent-driver menu before launching, even when the context-item page is not shown. The chosen driver overrides `--driver` and every `settings.yaml` source for this run. Ignored with a warning when stdin is not a terminal. |
 | `--dry-run` | Print the resolved command, working directory, and merged environment variables without executing. |
@@ -350,6 +363,7 @@ Context sources are read in the same order: `_` first, then `_default` for legac
 - Selects a configured context item via `--item`, or automatically chooses one based on the `context` section.
 - Merges environment variables in the order described above.
 - Reads the configured context sources. Each source is either a file path or a command whose stdout is captured.
+- Appends `AGENTS.md`, `LEARN.md`, and `MEMORY.md` from the workspace (and `TOPSAILAI_PROJECT_FOLDER`) when they exist and are not already configured. See "Automatic Workspace Context Files".
 - Appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`.
 - Writes the assembled context message to a temporary file under `{workspace}/.tmp/` to avoid exceeding environment-variable size limits.
 - Launches the configured `ai_agent_driver` using `os.system` by default, or `subprocess.run` when `--subprocess` is passed.
@@ -436,6 +450,8 @@ topsailai_launch_agent --item memo --no-base-context
 Behavior:
 
 - Only the selected item's own context sources are read and injected into `TOPSAILAI_CONTEXT_USER_MESSAGE`.
+- The automatic workspace instruction files (`AGENTS.md`, `LEARN.md`, `MEMORY.md`) are suppressed as well, because they
+  belong to the default context. See "Automatic Workspace Context Files".
 - Base environment variables from `environment._` / `environment._default` are still merged, so driver resolution and
   runtime settings are unchanged. The flag affects context sources only.
 - When `--item` is omitted and only `_` is configured, the auto-selected item is `_`; with the flag the injected context
