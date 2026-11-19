@@ -1,7 +1,7 @@
 ---
 name: connector-server-operations
-description: Use when an operator needs to deploy, configure, run, monitor, rotate credentials for, package or troubleshoot the TopsailAI Connector Server in the cloud, i.e. when they ask how to start the Server, which environment variables it needs, how to rotate tunnel_token or a client credential, how to expose only the channel and hide the CLI API, how to read its log, why a Node cannot connect, or how to hand a Node to someone else as a zip that unzips and starts. Covers the Server's configuration surface, its single listener with two surfaces, rotation procedure, the make package bundle and the limits that are constants rather than settings.
-version: 1.0.0
+description: Use when an operator needs to deploy, configure, run, monitor, rotate credentials for, package or troubleshoot the TopsailAI Connector Server in the cloud, i.e. when they ask how to start the Server, which environment variables it needs, how to rotate tunnel_token or a client credential, how to expose only the channel and hide the CLI API, how to read its log, why a Node cannot connect, why a caller gets overloaded, how many concurrent requests the Server allows, or how to hand a Node to someone else as a zip that unzips and starts. Covers the Server's configuration surface, its single listener with two surfaces, rotation procedure, admission limits per caller per Node and per process, the make package bundle and the limits that are constants rather than settings.
+version: 1.1.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -300,6 +300,29 @@ file format is the same one the Node writes, so one implementation defines it.
 | `CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS` | `30` | How long to wait for a Node before answering `node_timeout` |
 | `CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS` | `60` | How long a client proof stays fresh. Maximum `600` |
 | `CONNECTOR_SERVER_REPLAY_CAPACITY` | `65536` | How many client nonces are remembered. A full cache refuses rather than evicts |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_CALLER` | `2` | How many requests one caller may have running at once. At least 1 |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_NODE` | `4` | How many requests one Node may be serving at once. At least 1 |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT` | `64` | How many requests the whole Server may have running at once. At least 1 |
+| `CONNECTOR_SERVER_ADMISSION_WAIT_MS` | `200` | How long a request may wait for a free slot before it is refused with `overloaded`. `0` refuses immediately. At most `5000` |
+
+The three in-flight limits apply at the same time, and a request must fit all
+three. They cover every forwarded request, not only `file.read`, because every
+operation occupies a slot on the same Node.
+The per-Node limit is the one that matters to the person whose computer runs the
+Node: it is what stops several callers from together saturating one machine. The
+per-caller limit stops one caller from taking every slot, and the whole-Server
+limit stops the process growing without bound.
+
+A request that cannot get a slot waits up to `CONNECTOR_SERVER_ADMISSION_WAIT_MS`
+and is then refused with `overloaded`. That answer is retryable, and it is
+deliberately different from `internal`: `overloaded` means "busy, try again", while
+`internal` means the Server has a defect and retrying will not help. Setting the
+wait to `0` refuses immediately, which is the right choice when the Node's machine
+is already busy and a caller would rather learn at once than wait.
+
+The counters are per process. If you run several Server processes, each enforces
+the limit on its own, so the effective bound is the configured value multiplied by
+the number of processes.
 
 TLS is required unless it is terminated in front of the Server. Setting one of the
 certificate variables without the other is a startup failure, because a key without
@@ -450,6 +473,12 @@ will be raised, and each of these exists to bound a failure rather than to be tu
 | `shutdownTimeout` | 10 s | How long a graceful shutdown waits |
 | `maxInFlight` | 64 | Requests one channel may have outstanding |
 
+`maxInFlight` is a per-channel bound and is not the same thing as
+`CONNECTOR_SERVER_MAX_IN_FLIGHT`, which is the whole-process admission limit. The
+channel bound stops one connection accumulating unbounded pending state; the
+admission limit decides whether a request is accepted at all. Both apply, and the
+smaller one wins for a given request.
+
 The Server's HTTP server deliberately has **no** write timeout. A forwarded request
 is already bounded by `CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS`, and a second bound
 would cut a slow but healthy answer short with a transport error instead of the
@@ -469,6 +498,7 @@ Work from the outside in. Each step rules out one layer.
 | CLI gets `unauthenticated` | Wrong client credential, or the Node refused the node credential | The Server cannot tell these apart; see below |
 | CLI gets `node_timeout` | The Node did not answer within the timeout | Is the Node healthy? Is the file huge? |
 | CLI gets `denied` | The Node's policy refused | Nothing on the Server can fix this |
+| CLI gets `overloaded` | The Server is at an admission limit: this caller, this Node, or the whole process | The log line `connector-server refused a request at admission` carries the `client_key_id` and `node_id`, so you can see which caller and which Node were involved. It does not say which of the three limits was reached, because the refusal is one answer for all three. This is not a defect; the caller should retry. Raise a limit only if the Node's machine can take more |
 
 ### The one ambiguous answer
 

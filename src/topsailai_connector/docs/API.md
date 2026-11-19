@@ -470,11 +470,56 @@ they were last seen, which is a privacy decision this design does not make.
 
 - Requests to one Node are multiplexed over its single channel by `request_id`.
   The Node may answer out of order.
-- The Server bounds in-flight requests per Node. A Node that stops answering must
-  not accumulate unbounded pending state on the Server.
+- The Server bounds in-flight requests on three dimensions at once: per caller,
+  per Node and for the whole process. A request must satisfy all three. The
+  defaults are 2, 4 and 64, configurable through
+  `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_CALLER`,
+  `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_NODE` and
+  `CONNECTOR_SERVER_MAX_IN_FLIGHT`.
+- The per-Node bound is the one that protects the personal computer the Node runs
+  on. The per-caller bound stops one caller from occupying every slot, and the
+  process bound stops unbounded growth.
+- Admission runs after authentication and after the Node is known to be online, so
+  an unauthenticated request cannot occupy a slot and an offline Node cannot hold
+  one.
+- A request that cannot be admitted waits up to
+  `CONNECTOR_SERVER_ADMISSION_WAIT_MS` and is then refused with `overloaded`,
+  which is retryable. A wait of `0` refuses immediately.
+- `overloaded` is distinct from `internal` on purpose: the condition is temporary
+  and the same request will succeed later, while `internal` means the Server has a
+  defect and retrying is pointless.
+- The counters are per process. Several Server processes enforce the bound per
+  process, not across the fleet.
 - A request that exceeds `CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS` is answered
   with `node_timeout` and its pending entry is removed. The Node's eventual answer
   is discarded, because the caller has already been told the request failed.
+
+## File content transport
+
+The channel carries file content in one of two transports, negotiated once per
+connection during the handshake. The transport decides how bytes are framed; it
+carries no authority, so authentication, authorization and the path fence are
+identical either way.
+
+| Transport | Content encoding | When it is used |
+|---|---|---|
+| `binary-v1` | Raw bytes in a WebSocket binary frame, with a small JSON header | Both peers offer it |
+| JSON (unnamed) | Base64 inside the JSON frame payload | A peer does not offer `binary-v1` |
+
+- The Node advertises the transports it supports in `hello`. The Server selects
+  the first version in its own preference order that the Node offered, and reports
+  the choice in `hello_confirm`.
+- A peer that does not offer `binary-v1` falls back to the JSON transport rather
+  than being refused, so an upgrade does not break a deployment whose two halves
+  are replaced at different times.
+- A peer that offers only a version the Server does not know is refused with
+  `invalid_argument` and a message naming both sides, rather than being silently
+  treated as JSON.
+- The Server records the selected transport in its log as `file_transport=`, so an
+  operator can tell which one a connection is using without inspecting traffic.
+- The transport is not visible to the CLI. A caller sends the same request and
+  receives the same response either way, so a client does not need to know which
+  transport is in force.
 
 ## CLI surface
 

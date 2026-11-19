@@ -221,12 +221,73 @@ common version produce an explicit incompatibility. Version names are public
 protocol identifiers and may appear in upgrade guidance; credentials, proofs,
 paths and file content may not.
 
-The shared negotiation model exists before live activation, but `binary-v1` is not
-advertised in `hello` or selected in `hello_confirm` until its binary frame behavior
-is implemented on both sides. Advertising a mode before implementing it would
-make a compatible-looking connection misinterpret content. Live negotiation and
-the binary frame therefore activate in one atomic protocol change, and no legacy
-fallback is implied by an absent or incompatible offer.
+`binary-v1` is advertised in `hello` and selected in `hello_confirm`, and the
+binary frame is implemented on both sides, so the advertisement and the behaviour
+landed together. Advertising a mode before implementing it would make a
+compatible-looking connection misinterpret content.
+
+A peer that does not offer `binary-v1` is not refused. It falls back to the
+original JSON transport, which is what an older binary speaks, so an upgrade does
+not break a deployment whose two halves are replaced at different times. The
+fallback is safe because the transport carries no authority: it decides how bytes
+are framed, not who may read them, and the HMAC proofs, replay protection,
+Node-only authorization and path fence are identical on both transports. The
+selected transport is recorded in the Server log as `file_transport=` so an
+operator can tell which one a connection is using.
+
+A peer that offers only a version the Server does not know is refused with an
+explicit message naming both sides, rather than being silently treated as JSON.
+That is the fail-closed case: an unknown version means the two halves disagree
+about the contract, and guessing would hide the disagreement.
+
+## Admission control
+
+A forwarded request costs resources on three machines at once: the Server that
+relays it, the Node that serves it, and the caller's own host. The Node is the one
+that matters most, because it runs on a personal computer that its owner is also
+using. An unbounded number of concurrent requests therefore degrades a machine the
+operator does not control, which is why admission is bounded rather than left to
+the operating system to sort out.
+
+Three limits apply at once, and a request must satisfy all three. They cover every
+forwarded request, not only `file.read`, because every operation occupies a slot on
+the same Node:
+
+| Dimension | Default | What it protects |
+|---|---|---|
+| Per caller | 2 | One caller cannot occupy every slot and make the others wait |
+| Per Node | 4 | Several callers cannot together saturate one personal computer |
+| Whole Server | 64 | The process cannot grow without bound |
+
+The per-Node limit is the one that answers the product requirement. The per-caller
+limit alone would let eight callers each take two slots and put sixteen concurrent
+requests on one Node; the whole-Server limit alone would let a single caller take
+all sixty-four.
+
+Admission runs after authentication and after the Node is known to be online, and
+before any work is forwarded. The order is a security property rather than a
+convenience: an unauthenticated request must not be able to occupy a slot, because
+that would let an anonymous caller deny service to an authenticated one. A request
+for an offline Node is refused before admission for the same reason, since it
+would hold a slot while doing nothing.
+
+A request that cannot be admitted waits for a bounded interval and is then refused
+with `overloaded`, which is retryable. The wait is bounded because queueing is
+itself a resource: an unbounded queue converts a fast refusal into a slow timeout,
+and a caller learns about the failure later for no benefit. A wait of zero is a
+valid configuration and means "refuse immediately", which is the right choice for
+a Node on a machine that is already busy.
+
+`overloaded` is deliberately distinct from `internal`. The condition is temporary
+and the same request will succeed later, so a caller that retries is doing the
+right thing; `internal` says the Server has a defect and retrying is pointless.
+Reporting a busy Server as broken sends an operator looking for a bug that does
+not exist.
+
+The counters are per process. A deployment that runs several Server processes
+enforces each limit per process, not across the fleet, so the effective bound is
+the configured value multiplied by the process count. Stating this is better than
+implying a global limit that no single process can enforce.
 
 ## Flow
 
