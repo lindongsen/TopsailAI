@@ -153,3 +153,82 @@ func TestContentFrameRefusesNegativeSize(t *testing.T) {
 		t.Fatal("expected an error for a negative size")
 	}
 }
+
+// TestContentFramePreservesEveryByteValue checks that every one of the 256 byte
+// values survives the frame unchanged.
+//
+// The bytes that matter are the ones a text-mode layer rewrites: 0x0d and 0x0a
+// become CRLF, 0x1a ends a read, and 0x80-0xff are rewritten by a code-page
+// conversion. Windows is a supported platform, so a transport that mangles these
+// would corrupt a file while reporting success. The frame is written as a
+// WebSocket binary message and the content is copied verbatim, so the expected
+// behaviour is byte transparency; this test is what holds that expectation.
+//
+// The test carries no build tag, so it runs on every host. The rule it protects
+// is platform-independent, and a Windows-only test would never run here.
+func TestContentFramePreservesEveryByteValue(t *testing.T) {
+	content := make([]byte, 256)
+	for index := range content {
+		content[index] = byte(index)
+	}
+	header := ContentHeader{
+		RequestID:     "req_0123456789abcdef0123456789abcdef",
+		Size:          int64(len(content)),
+		ContentLength: int64(len(content)),
+	}
+
+	frame, err := EncodeContentFrame(header, content)
+	if err != nil {
+		t.Fatalf("encode content frame: %v", err)
+	}
+
+	_, decodedContent, err := DecodeContentFrame(frame)
+	if err != nil {
+		t.Fatalf("decode content frame: %v", err)
+	}
+	if len(decodedContent) != len(content) {
+		t.Fatalf("decoded %d bytes, want %d", len(decodedContent), len(content))
+	}
+	for index := range content {
+		if decodedContent[index] != content[index] {
+			t.Fatalf("byte %d = 0x%02x, want 0x%02x", index, decodedContent[index], content[index])
+		}
+	}
+}
+
+// TestContentFramePreservesEveryByteValueAcrossChunkBoundary checks byte
+// transparency when the payload spans more than one chunk.
+//
+// A per-chunk encoder can be transparent inside one chunk and lossy at a
+// boundary, so a single-chunk test would not see the defect. The payload repeats
+// the full byte range so that every value also lands on a chunk boundary.
+func TestContentFramePreservesEveryByteValueAcrossChunkBoundary(t *testing.T) {
+	const chunkSize = 256 * 1024
+	content := make([]byte, chunkSize*2+1)
+	for index := range content {
+		content[index] = byte(index % 256)
+	}
+	header := ContentHeader{
+		RequestID:     "req_0123456789abcdef0123456789abcdef",
+		Size:          int64(len(content)),
+		ContentLength: int64(len(content)),
+	}
+
+	frame, err := EncodeContentFrame(header, content)
+	if err != nil {
+		t.Fatalf("encode content frame: %v", err)
+	}
+
+	_, decodedContent, err := DecodeContentFrame(frame)
+	if err != nil {
+		t.Fatalf("decode content frame: %v", err)
+	}
+	if len(decodedContent) != len(content) {
+		t.Fatalf("decoded %d bytes, want %d", len(decodedContent), len(content))
+	}
+	for index := range content {
+		if decodedContent[index] != content[index] {
+			t.Fatalf("byte %d = 0x%02x, want 0x%02x", index, decodedContent[index], content[index])
+		}
+	}
+}
