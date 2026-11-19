@@ -603,6 +603,31 @@ connector-server cli --server https://cloud.example:8443 \
 | `-o`, `--output` | none | no | Write the result to `-` (stdout) or to a local file path |
 | `--force` | none | no | Allow `-o` to replace an existing destination file |
 
+### How a caller learns a scope name
+
+`--scope` is required on every request, and there is no API that lists scopes. That
+is deliberate rather than an omission: the Node answers `denied` for a scope the
+policy does not define and for a scope without a grant alike, so a caller cannot
+probe for names. An answer that distinguished the two would let anyone holding a
+node credential enumerate the scopes on a machine they have no permission on.
+
+The names therefore come from the machine that defines them. The operator who owns
+the policy file reads them with:
+
+```
+connector-node scope list
+```
+
+It prints one name per line in sorted order and never prints a path. It reads the
+policy document only, so it does not dial the Server, does not need the tunnel
+token, and works before the first start and on a machine where a scope directory
+has not been created yet. A policy that defines no scope prints nothing and exits
+`0`; a missing or malformed policy exits `1`; a rejected command line exits `2`.
+
+A caller who does not own the Node must ask the operator for the name. That is the
+same trust relationship as the node credential itself: the operator who can issue a
+credential can also state the scope it is for.
+
 The operation name is the one positional argument: `file.list`, `file.stat` or
 `file.read`. A second positional argument is refused rather than ignored, because
 an ignored argument is a command that did something other than what it looked like

@@ -1,6 +1,6 @@
 ---
 name: connector-client
-description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, copy a file down to their own machine, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next. Covers the connector-server cli command, its flags including -o for a whole-file copy, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
+description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, copy a file down to their own machine, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next, or when they do not know which scope name to pass as --scope. Covers the connector-server cli command, its flags including -o for a whole-file copy, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
 version: 2.1.0
 author: DawsonLin
 license: MIT
@@ -108,6 +108,14 @@ positional argument and refuses it. This is the single most common usage mistake
 | `--json` | none | no | Print the whole response envelope instead of the payload |
 | `-o`, `--output` | none | no | Where the result goes: `-` for stdout, or a local file path |
 | `--force` | none | no | Replace an existing local file named by `-o` |
+
+**No API lists scope names.** `--scope` is required, and neither the Server nor the
+Node will tell you which names exist. A request naming a scope the policy does not
+define is refused with `denied`, and so is a request naming a scope you have no
+permission on, so the two answers cannot be told apart. The names come from the
+person who runs the Node, who reads them with `connector-node scope list`: one name
+per line, sorted, and no paths. If you do not run the Node, ask its operator for the
+names before you build a request.
 
 A flag wins over its environment variable. The environment exists so a script can
 export a value once instead of repeating it on every line.

@@ -126,3 +126,28 @@ without `-o` is refused, because each combination names two incompatible outputs
 The change is confined to the CLI. The Node's cap is a denial-of-service boundary and
 is not relaxed, and each chunk is a separately signed request with its own nonce, so
 no protocol change was needed and no replay weakness was introduced.
+
+## A local command that prints the scope names a policy defines
+
+`connector-node scope list` prints the scope names the policy defines, one per line,
+sorted, and nothing else. It exists because `--scope` is required on every CLI
+request and no API lists the names: the Node answers `denied` for a scope the policy
+does not define and for a scope without a grant alike, so a caller cannot enumerate
+names by guessing, and the Server holds no scope list by design.
+
+The command reads the policy document only. It does not dial the Server, so it needs
+no `CONNECTOR_NODE_SERVER_URL` and no `CONNECTOR_NODE_TUNNEL_TOKEN`; it does not open
+a scope, so it works before the first start and on a machine where a scope directory
+has not been created yet. It prints names and never paths, because a path is the
+Node's own filesystem layout and does not help anyone fill `--scope`.
+
+It uses the same strict decoder the Node uses at startup, so a malformed policy fails
+here with the message the Node would print and the command doubles as a policy check.
+That sharing is what exposed a real gap: the absolute-path rule for a scope path lived
+only in the fence, so the listing path never applied it and printed a name `run`
+refuses to serve. The rule moved into the decoder, so every reader applies it; see
+`issues/done/issue-scope-list-skips-the-absolute-path-rule.md`.
+
+The command adds no authority and no wire surface. The operator already owns the
+policy file, so printing its scope names grants nothing that opening the file does not
+already grant, and the Node stays the only authority for permissions.

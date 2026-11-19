@@ -560,3 +560,259 @@ func TestRunStillRejectsAnIncompleteEnvironment(t *testing.T) {
 		t.Fatalf("run(run) = %v, want a message naming the missing dial target", err)
 	}
 }
+
+// TestRunScopeListPrintsThePolicyNames checks the whole point of the command: an
+// operator who does not want to open the policy file by hand gets the names.
+//
+// The assertion is on the exact printed text, not on a substring. A listing that
+// printed a path, a grant or a heading would still contain the name, so a
+// substring check would pass for output the operator cannot paste into --scope.
+func TestRunScopeListPrintsThePolicyNames(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", writeNodePolicy(t, configDir))
+
+	printed, err := captureStdout(t, func() error {
+		return run([]string{"scope", "list"})
+	})
+	if err != nil {
+		t.Fatalf("run(scope list) = %v, want success", err)
+	}
+	if printed != "project\n" {
+		t.Fatalf("run(scope list) printed %q, want %q", printed, "project\n")
+	}
+}
+
+// TestRunScopeListPrintsEveryNameInSortedOrder checks that the listing is the
+// whole set and that the order is stable.
+//
+// A listing that printed one name would satisfy a single-scope fixture, so this
+// fixture defines three scopes whose file order is not their sorted order. The
+// expected text is the sorted order, which is what the Node's startup report uses
+// too, so an operator comparing the two sees the same sequence.
+func TestRunScopeListPrintsEveryNameInSortedOrder(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	first := t.TempDir()
+	second := t.TempDir()
+	third := t.TempDir()
+
+	policyPath := filepath.Join(configDir, "policy.yaml")
+	policy := "version: 1\n" +
+		"scopes:\n" +
+		"  zebra:\n" +
+		"    path: " + first + "\n" +
+		"  alpha:\n" +
+		"    path: " + second + "\n" +
+		"  mike:\n" +
+		"    path: " + third + "\n" +
+		"grants:\n" +
+		"  - scope: alpha\n" +
+		"    permissions: [read]\n"
+	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", policyPath)
+
+	printed, err := captureStdout(t, func() error {
+		return run([]string{"scope", "list"})
+	})
+	if err != nil {
+		t.Fatalf("run(scope list) = %v, want success", err)
+	}
+	if printed != "alpha\nmike\nzebra\n" {
+		t.Fatalf("run(scope list) printed %q, want %q", printed, "alpha\nmike\nzebra\n")
+	}
+}
+
+// TestRunScopeListPrintsNoPaths checks that the listing does not disclose the
+// filesystem layout.
+//
+// A scope path is the Node's own directory structure, which the design keeps off
+// the wire and out of the Server's knowledge. Printing it here would hand the
+// operator's terminal a value the design deliberately withholds, and the operator
+// does not need it: --scope takes a name.
+func TestRunScopeListPrintsNoPaths(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	scopeDir := t.TempDir()
+
+	policyPath := filepath.Join(configDir, "policy.yaml")
+	policy := "version: 1\n" +
+		"scopes:\n" +
+		"  project:\n" +
+		"    path: " + scopeDir + "\n"
+	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", policyPath)
+
+	printed, err := captureStdout(t, func() error {
+		return run([]string{"scope", "list"})
+	})
+	if err != nil {
+		t.Fatalf("run(scope list) = %v, want success", err)
+	}
+	if strings.Contains(printed, scopeDir) {
+		t.Fatalf("run(scope list) printed the scope path %q in %q", scopeDir, printed)
+	}
+}
+
+// TestRunScopeListListsAScopeWhoseDirectoryIsAbsent checks the case the command
+// exists for: an operator writing a policy before the directories exist.
+//
+// Opening the scope would refuse here, because a scope root that is absent is
+// tolerated at startup but a listing that opened scopes would still have to
+// decide what to do with the handle. The names are what the operator wrote, so
+// they are printed regardless.
+func TestRunScopeListListsAScopeWhoseDirectoryIsAbsent(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	absent := filepath.Join(t.TempDir(), "not-created-yet")
+
+	policyPath := filepath.Join(configDir, "policy.yaml")
+	policy := "version: 1\n" +
+		"scopes:\n" +
+		"  pending:\n" +
+		"    path: " + absent + "\n"
+	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", policyPath)
+
+	printed, err := captureStdout(t, func() error {
+		return run([]string{"scope", "list"})
+	})
+	if err != nil {
+		t.Fatalf("run(scope list) = %v, want success for an absent scope directory", err)
+	}
+	if printed != "pending\n" {
+		t.Fatalf("run(scope list) printed %q, want %q", printed, "pending\n")
+	}
+}
+
+// TestRunScopeListPrintsNothingForAnEmptyPolicy checks that a policy with no
+// scopes prints nothing and still succeeds.
+//
+// An empty policy is valid and refuses everything, so the listing must be empty
+// rather than an error. Printing a heading or a "no scopes" line would make the
+// output unusable as a list, and a script that reads it would treat the heading
+// as a scope name.
+func TestRunScopeListPrintsNothingForAnEmptyPolicy(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	policyPath := filepath.Join(configDir, "policy.yaml")
+	if err := os.WriteFile(policyPath, []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", policyPath)
+
+	printed, err := captureStdout(t, func() error {
+		return run([]string{"scope", "list"})
+	})
+	if err != nil {
+		t.Fatalf("run(scope list) = %v, want success for an empty policy", err)
+	}
+	if printed != "" {
+		t.Fatalf("run(scope list) printed %q, want no output", printed)
+	}
+}
+
+// TestRunScopeListRejectsAMissingPolicy checks that a missing policy file is a
+// failure rather than an empty listing.
+//
+// The distinction matters: an empty listing reads as "this Node defines no
+// scopes", which is a working Node that denies everything. A missing file is a
+// configuration mistake, and reporting it as an empty list would send the
+// operator looking for a policy problem in the wrong place.
+func TestRunScopeListRejectsAMissingPolicy(t *testing.T) {
+	setNodeEnvironment(t)
+
+	_, err := captureStdout(t, func() error {
+		return run([]string{"scope", "list"})
+	})
+	if err == nil {
+		t.Fatal("run(scope list) = nil error, want a failure for a missing policy file")
+	}
+}
+
+// TestRunScopeListRejectsAMalformedPolicy checks that the listing uses the same
+// strict decoder the Node uses at startup.
+//
+// A second, looser parser would list names the Node then refuses to serve, which
+// is the divergence the shared decoder exists to prevent. The fixture is a
+// relative scope path, which the decoder refuses and the fence also refuses.
+func TestRunScopeListRejectsAMalformedPolicy(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	policyPath := filepath.Join(configDir, "policy.yaml")
+	policy := "version: 1\nscopes:\n  project:\n    path: relative/path\n"
+	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", policyPath)
+
+	_, err := captureStdout(t, func() error {
+		return run([]string{"scope", "list"})
+	})
+	if err == nil {
+		t.Fatal("run(scope list) = nil error, want a failure for a relative scope path")
+	}
+	if !strings.Contains(err.Error(), "is relative") {
+		t.Fatalf("run(scope list) = %v, want a message naming the relative path", err)
+	}
+}
+
+// TestRunScopeNeedsASubcommand checks that a bare `scope` is a usage error.
+//
+// The word names a noun, so an operator who types it is asking about scopes
+// rather than asking for a listing. Printing the list would make a future
+// `scope show` unreachable, and exiting 0 would tell a script the command
+// succeeded when it never ran.
+func TestRunScopeNeedsASubcommand(t *testing.T) {
+	setNodeEnvironment(t)
+
+	err := run([]string{"scope"})
+	if err == nil {
+		t.Fatal("run(scope) = nil error, want a usage refusal")
+	}
+	if !strings.HasPrefix(err.Error(), "usage:") {
+		t.Fatalf("run(scope) = %v, want a message beginning with usage:", err)
+	}
+}
+
+// TestRunScopeRejectsAnUnknownSubcommand checks that a typo is refused rather
+// than treated as a listing.
+//
+// A command that fell through to the listing would print names for `scope lst`,
+// so the operator would believe the typo worked and never learn the correct
+// spelling.
+func TestRunScopeRejectsAnUnknownSubcommand(t *testing.T) {
+	setNodeEnvironment(t)
+
+	err := run([]string{"scope", "lst"})
+	if err == nil {
+		t.Fatal("run(scope lst) = nil error, want a usage refusal")
+	}
+	if !strings.HasPrefix(err.Error(), "usage:") {
+		t.Fatalf("run(scope lst) = %v, want a message beginning with usage:", err)
+	}
+	if !strings.Contains(err.Error(), "lst") {
+		t.Fatalf("run(scope lst) = %v, want a message naming the rejected subcommand", err)
+	}
+}
+
+// TestRunScopeListRejectsStrayArguments checks that an extra positional argument
+// is refused.
+//
+// `scope list project` looks like a filter, and silently ignoring the word would
+// teach the operator that a filter exists. Refusing it keeps the accepted
+// grammar small enough to state in the help page.
+func TestRunScopeListRejectsStrayArguments(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", writeNodePolicy(t, configDir))
+
+	_, err := captureStdout(t, func() error {
+		return run([]string{"scope", "list", "project"})
+	})
+	if err == nil {
+		t.Fatal("run(scope list project) = nil error, want a usage refusal")
+	}
+	if !strings.HasPrefix(err.Error(), "usage:") {
+		t.Fatalf("run(scope list project) = %v, want a message beginning with usage:", err)
+	}
+}

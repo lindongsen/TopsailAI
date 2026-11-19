@@ -36,6 +36,7 @@ SYNOPSIS
   {{program}} credential add [--key-id NAME]
   {{program}} credential list
   {{program}} credential remove --key-id NAME
+  {{program}} scope list
   {{program}} help [SUBCOMMAND]
   {{program}} --help
   {{program}} --version
@@ -119,6 +120,22 @@ SUBCOMMANDS
         credential file.
 
         Reads only CONNECTOR_NODE_CONFIG_DIR.
+
+  scope list
+        Print the scope names the policy defines, one per line, in sorted order.
+
+        Every CLI request carries a scope name, and a caller cannot ask this Node for
+        the list: the Node answers "denied" for a scope the policy does not define
+        and for a scope without a grant alike, so an answer that distinguished them
+        would let anyone enumerate the scopes on a machine they have no permission
+        on. The names come from the machine that defines them, which is this one.
+
+        Names are printed, never paths. A name is public and already appears in the
+        startup log; a path is this machine's filesystem layout.
+
+        Reads CONNECTOR_NODE_CONFIG_DIR and CONNECTOR_NODE_POLICY_FILE. It never
+        dials and never opens a scope, so it works before the first start and on a
+        machine where a scope directory has not been created yet.
 
   help [SUBCOMMAND]
         Print this help, or the help for one subcommand.
@@ -519,6 +536,79 @@ EXAMPLES
   -> automation-backup
 
   {{program}} credential remove --key-id automation-backup
+`)
+}
+
+// Scope is the help page for the scope subcommand.
+//
+// It is written for the operator who owns the policy file and cannot remember which
+// scope names they wrote. The page states the one thing that makes the command
+// necessary: a caller cannot ask the Node, because the Node answers `denied` for an
+// undefined scope and for a scope without a grant alike, so the names have to come
+// from the machine that defines them.
+func Scope(program string) string {
+	return replaceProgram(program, `NAME
+  {{program}} scope - show the scope names this Node's policy defines
+
+SYNOPSIS
+  {{program}} scope list
+
+DESCRIPTION
+  Every CLI request carries a scope name, and the name must be one the policy
+  defines. Without this command the only way to learn a name is to open the policy
+  file or read a log line, which is why it exists.
+
+  A caller cannot ask the Node. The Node answers "denied" for a scope the policy
+  does not define and for a scope without a grant alike, so a caller cannot probe
+  for names: an answer that distinguished the two would let anyone enumerate the
+  scopes on a machine they have no permission on. The names therefore come from the
+  machine that defines them, which is this one.
+
+  The names are read from the policy document, which is the only place a scope is
+  defined. The answer is exactly the set the Node would serve, not a second list
+  that could drift from it.
+
+  Names are printed, never paths. A scope name is public and already appears in the
+  Node's startup log. A scope path is this machine's filesystem layout, which the
+  design keeps off the wire and out of the Server's knowledge.
+
+  The command does not dial the Server, does not need the tunnel token and does not
+  open a scope, so it works before the first start and on a machine where a scope
+  directory has not been created yet.
+
+SUBCOMMANDS
+  list
+        Print the scope names the policy defines, one per line, in sorted order.
+
+        A policy that defines no scope prints nothing and exits 0. That is an empty
+        policy, which refuses every request, and it is a valid document rather than
+        an error.
+
+ENVIRONMENT
+  CONNECTOR_NODE_CONFIG_DIR    default: platform config directory
+  CONNECTOR_NODE_POLICY_FILE   default: CONNECTOR_NODE_CONFIG_DIR/policy.yaml
+
+  Both must be absolute when set. A relative path resolves differently per launch,
+  so it is refused rather than resolved.
+
+  A build that compiled its policy in refuses CONNECTOR_NODE_POLICY_FILE, because
+  the two would disagree about every scope and every grant. Such a build lists the
+  scopes it carries.
+
+EXIT STATUS
+  0   The names were printed. An empty policy prints nothing and still exits 0.
+  1   The policy file could not be read, or it is malformed, or the config directory
+      could not be resolved.
+  2   The command line was rejected. The message begins "usage:", so a script can
+      tell a rejected command line from a failed operation without parsing the text.
+
+EXAMPLES
+  {{program}} scope list
+  -> project
+     tool
+
+  Then use one of those names on a request:
+  connector-server cli --scope project --path notes.md file.read
 `)
 }
 

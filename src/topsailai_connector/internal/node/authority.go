@@ -58,6 +58,70 @@ func LoadAuthority(policyPath string, denyPaths []string, configDir string) (*Au
 	return buildAuthority(loaded, denyPaths, configDir)
 }
 
+// LoadPolicyForListing reads the policy document without opening any scope.
+//
+// It exists for `scope list`, which answers "which scope names does this policy
+// define" and nothing else. Opening the scopes would apply the fence's startup
+// rules, so a listing would fail on a machine where a scope directory is absent or
+// where the config directory overlaps a scope. Those are refusals the Node must
+// make before it serves, not conditions that should stop an operator from reading
+// the names they wrote.
+//
+// The decoding is the same strict decoding the Node uses at startup, so a
+// malformed policy fails here with the same message it would fail with at `run`
+// time. A second, looser parser would be a second definition of a valid policy,
+// and the listing would then report names the Node would refuse to serve.
+//
+// Exactly one of policyPath and policyBytes is used, matching Config: a build that
+// compiled its policy in has no file to name.
+func LoadPolicyForListing(policyPath string, policyBytes []byte) (*policy.Policy, error) {
+	if policyBytes != nil {
+		loaded, err := policy.ParseBytes(policyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("embedded policy: %w", err)
+		}
+		return loaded, nil
+	}
+	return policy.Load(policyPath)
+}
+
+// ListScopeNames returns the scope names the Node's policy defines, in sorted
+// order, without opening any scope.
+//
+// It is the whole of `scope list`. The names come from the policy document, which
+// is the only place a scope is defined, so the answer is exactly the set the Node
+// would serve rather than a second list that could drift from it.
+//
+// It reads the config directory and the policy source and nothing else. It does
+// not dial the Server, does not load the tunnel token, and does not open a scope,
+// so it works on a machine where the Node has never connected and where a scope
+// directory is absent. An operator who needs the names before the first start is
+// the operator this exists for.
+//
+// It prints names, never paths. A scope name is public: it appears in the Node's
+// startup log and in the Server's connection log. A scope path is the Node's
+// filesystem layout, which the design keeps off the wire and out of the Server's
+// knowledge, so a listing that printed paths would disclose more than the policy
+// file's owner already knows.
+func ListScopeNames(lookup func(string) string) ([]security.Scope, error) {
+	if lookup == nil {
+		return nil, fmt.Errorf("environment lookup is nil")
+	}
+	configDir, err := ResolveConfigDir(lookup)
+	if err != nil {
+		return nil, err
+	}
+	policyPath, policyBytes, err := resolvePolicySource(lookup, configDir)
+	if err != nil {
+		return nil, err
+	}
+	loaded, err := LoadPolicyForListing(policyPath, policyBytes)
+	if err != nil {
+		return nil, err
+	}
+	return loaded.ScopeNames(), nil
+}
+
 // LoadAuthorityBytes builds an Authority from a policy document already in
 // memory, which is how a build that compiled its policy in starts.
 //

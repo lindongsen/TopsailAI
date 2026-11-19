@@ -178,7 +178,7 @@ func TestMainHelpDocumentsEverySubcommand(t *testing.T) {
 	text := Main("connector-node")
 	entries := section(t, text, "SUBCOMMANDS")
 
-	subcommands := []string{"run", "id", "regenerate", "credential", "help"}
+	subcommands := []string{"run", "id", "regenerate", "credential", "scope", "help"}
 	for _, name := range subcommands {
 		if !strings.Contains(text, "connector-node "+name) {
 			t.Errorf("Main help has no synopsis line for %q", name)
@@ -271,6 +271,7 @@ func TestEveryPageNamesTheProgram(t *testing.T) {
 		"ID":         ID("connector-node"),
 		"Regenerate": Regenerate("connector-node"),
 		"Credential": Credential("connector-node"),
+		"Scope":      Scope("connector-node"),
 	}
 
 	for name, text := range pages {
@@ -295,6 +296,7 @@ func TestEveryPageHasTheRequiredSections(t *testing.T) {
 		"ID":         ID("connector-node"),
 		"Regenerate": Regenerate("connector-node"),
 		"Credential": Credential("connector-node"),
+		"Scope":      Scope("connector-node"),
 	}
 
 	for name, text := range pages {
@@ -317,6 +319,7 @@ func TestEveryPageStatesTheUsageStatus(t *testing.T) {
 		"ID":         ID("connector-node"),
 		"Regenerate": Regenerate("connector-node"),
 		"Credential": Credential("connector-node"),
+		"Scope":      Scope("connector-node"),
 	}
 
 	for name, text := range pages {
@@ -338,6 +341,7 @@ func TestPagesDoNotNameInternalPackages(t *testing.T) {
 		"ID":         ID("connector-node"),
 		"Regenerate": Regenerate("connector-node"),
 		"Credential": Credential("connector-node"),
+		"Scope":      Scope("connector-node"),
 	}
 
 	forbidden := []string{"internal/", "os.Root", "func ", "struct"}

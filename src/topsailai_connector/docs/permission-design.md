@@ -481,6 +481,47 @@ and the command that lists credentials prints only the key identifiers. The answ
 is to add a new credential and remove the old one, which is also the rotation
 procedure.
 
+### How the operator learns a scope name
+
+Every request carries a scope name, and the name must be one the policy defines.
+There is no API that lists scopes, and that is a decision rather than a gap.
+
+The Node cannot answer the question. It returns `denied` for a scope the policy
+does not define and for a scope without a grant alike, because an answer that
+distinguished the two would let anyone holding a node credential enumerate the
+scopes on a machine they have no permission on. That is the same scope-name oracle
+the adversarial cases AC-NODE-1, AC-NODE-2 and AC-NODE-3 exist to forbid.
+
+The Server cannot answer it either. It holds no scope list, so any answer it gave
+would be a guess, and storing one to answer it would violate the hard constraint
+that the Node is the only authority for permissions.
+
+The names therefore come from the machine that defines them:
+
+```
+connector-node scope list
+```
+
+It reads the policy document and prints the scope names, one per line, in sorted
+order. It prints names and never paths, because a name is public and already
+appears in the startup log while a path is the machine's filesystem layout.
+
+Three properties make it safe rather than a new disclosure:
+
+- **It grants nothing.** The operator running it already owns the policy file, so
+  the command prints what opening that file already shows. It is a convenience for
+  the file's owner, not a new authority.
+- **It is local.** It does not dial the Server, does not need the tunnel token and
+  does not open a scope, so it works before the first start and on a machine where
+  a scope directory has not been created yet.
+- **It cannot drift from what the Node serves.** It decodes with the same strict
+  decoder `run` uses, so a policy the listing accepts is a policy the Node accepts.
+  A second, looser parser would print names the Node then refuses to serve.
+
+A caller who does not own the Node asks the operator for the name. That is the same
+trust relationship as the node credential: whoever can issue a credential can also
+state the scope it is for.
+
 ### CLI access path
 
 The CLI is a thin client of an HTTP JSON API on the Server. It is not a third
@@ -1121,7 +1162,11 @@ exposes a whole volume still cannot read `config/identity`.
 Validation rules, all of which fail startup rather than warn:
 
 - `version` is required, so a future format change is detectable.
-- Every scope needs an absolute `path`.
+- Every scope needs an absolute `path`. The rule is enforced in the policy decoder,
+  not only in the fence, because the fence is reached by `run` and not by
+  `scope list`: a decoder that accepted a relative path would let the listing print
+  a scope name the Node then refuses to serve. One rule, one place, both entry
+  points.
 - A scope name must pass the identifier rule: letters, digits, `-` and `_` only.
   `security.ValidateScopeName` is a whitelist, so a space, a tab, a NUL byte, a
   colon and a trailing dot are refused because they are not in the alphabet
@@ -1491,6 +1536,11 @@ request path.
       case that can never succeed.
 - [ ] `connector-node id` prints the node id and nothing else, and the Server has
       no endpoint that assigns, overrides or looks up a `node-id`.
+- [ ] No API lists scope names. `connector-node scope list` is the only way to learn
+      them, it runs on the Node, it prints names and never paths, and it decodes
+      with the same strict decoder `run` uses so a name it prints is a name the Node
+      serves. A listing that accepted a policy `run` refuses would send a caller to
+      a scope that answers `denied`.
 - [ ] The channel and the CLI API are served from one listener, and the CLI API
       path prefix is `/v1/` so a reverse proxy can block it without a second port.
 - [ ] The Node's policy file is the only place a scope or a permission is

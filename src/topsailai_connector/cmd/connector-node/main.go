@@ -88,8 +88,10 @@ func run(arguments []string) error {
 		return runRegenerate(rest)
 	case "credential":
 		return runCredential(rest)
+	case "scope":
+		return runScope(rest)
 	default:
-		return helpdispatch.Usagef("unknown command %q; want run, id, regenerate or credential", command)
+		return helpdispatch.Usagef("unknown command %q; want run, id, regenerate, credential or scope", command)
 	}
 }
 
@@ -119,8 +121,10 @@ func catalog() helpdispatch.Catalog {
 			"credential add":    nodehelp.Credential(programName),
 			"credential list":   nodehelp.Credential(programName),
 			"credential remove": nodehelp.Credential(programName),
+			"scope":             nodehelp.Scope(programName),
+			"scope list":        nodehelp.Scope(programName),
 		},
-		Commands:   []string{"run", "id", "regenerate", "credential"},
+		Commands:   []string{"run", "id", "regenerate", "credential", "scope"},
 		ValueFlags: []string{"--key-id"},
 	}
 }
@@ -136,7 +140,7 @@ func splitCommand(arguments []string) (string, []string) {
 		return "", nil
 	}
 	switch arguments[0] {
-	case "run", "id", "regenerate", "credential":
+	case "run", "id", "regenerate", "credential", "scope":
 		return arguments[0], arguments[1:]
 	}
 	if strings.HasPrefix(arguments[0], "-") {
@@ -446,6 +450,65 @@ func runCredentialList(arguments []string) error {
 	}
 	for _, keyID := range credentials.KeyIDs() {
 		fmt.Println(keyID)
+	}
+	return nil
+}
+
+// runScope dispatches the scope subcommand.
+//
+// There is one subcommand today, and it is still a subcommand rather than a bare
+// `scope` command because the word names a noun: an operator who types `scope` is
+// asking about scopes, not asking for a listing, and a future `scope show` would
+// have nowhere to go if `scope` itself printed the list.
+func runScope(arguments []string) error {
+	if len(arguments) == 0 {
+		return helpdispatch.Usagef("scope needs a subcommand: list")
+	}
+	subcommand := arguments[0]
+	rest := arguments[1:]
+
+	switch subcommand {
+	case "list":
+		return runScopeList(rest)
+	default:
+		return helpdispatch.Usagef("unknown scope subcommand %q; want list", subcommand)
+	}
+}
+
+// runScopeList prints the scope names the policy defines, one per line.
+//
+// It exists because `--scope` is a required argument on every CLI request and the
+// only way to learn a scope name was to open the policy file or read a log. The
+// caller cannot ask the Node: the Node answers `denied` for an undefined scope and
+// for a scope without a grant alike, so a caller cannot probe for names. The
+// operator, who owns the policy file, can read the names here instead of opening
+// the file by hand.
+//
+// It prints names and never paths. A name is public and already appears in the
+// Node's startup log; a path is the Node's filesystem layout, which the design
+// keeps off the wire.
+//
+// It does not dial the Server and does not need the tunnel token, so it works
+// before the first start. It does not open a scope either, so a policy naming a
+// directory that does not exist still lists: the names are what the operator
+// wrote, and refusing to show them because a directory is absent would hide the
+// one thing this command is for.
+func runScopeList(arguments []string) error {
+	flags := flag.NewFlagSet("scope list", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	if err := flags.Parse(arguments); err != nil {
+		return helpdispatch.Usagef("%v", err)
+	}
+	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
+
+	names, err := node.ListScopeNames(os.Getenv)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		fmt.Println(name)
 	}
 	return nil
 }
