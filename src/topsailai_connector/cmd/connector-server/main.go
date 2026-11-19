@@ -10,23 +10,74 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"topsailai_connector/internal/helpdispatch"
 	"topsailai_connector/internal/protocol"
 	"topsailai_connector/internal/server"
 	"topsailai_connector/internal/server/cli"
+	"topsailai_connector/internal/serverhelp"
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "connector-server: %v\n", err)
-		os.Exit(1)
+	os.Exit(exitStatus(run(os.Args[1:])))
+}
+
+// exitStatus maps the result of run to a process exit status.
+//
+// The mapping lives here rather than inside run so run can stay a function that returns
+// an error, which is what makes it testable. The three statuses are the ones the help
+// text promises: 0 for success, 1 for a failure, 2 for a command line that was rejected
+// before anything was done. A usage error must be 2 and not 1, because the message
+// begins with "usage:" and a script branches on the status rather than on the text.
+func exitStatus(err error) int {
+	if err == nil {
+		return 0
 	}
+
+	// A refusal that already wrote its own message carries only a status, so it must not
+	// be printed again. Printing it twice would show the operator the same sentence in
+	// two places and make the second copy look like a second failure.
+	var printed *helpdispatch.PrintedError
+	if errors.As(err, &printed) {
+		return printed.Status
+	}
+
+	// A subcommand that reports its own status carries it here. The `cli` subcommand is
+	// the one such case: it must exit non-zero on an error code so a shell script can
+	// branch on it, and it has already written its own message.
+	var status *statusError
+	if errors.As(err, &status) {
+		return status.Status
+	}
+
+	fmt.Fprintf(os.Stderr, "connector-server: %v\n", err)
+	if helpdispatch.IsUsage(err) {
+		return 2
+	}
+	return 1
+}
+
+// statusError carries an exit status from a subcommand that decides its own.
+//
+// It exists so `cli` can return a status through the error-returning shape of run
+// instead of calling os.Exit in the middle. A subcommand that exits the process cannot
+// be tested, and it also skips every deferred cleanup between it and main.
+type statusError struct {
+	// Status is the exit status the subcommand decided.
+	Status int
+}
+
+// Error returns an empty message, because the subcommand already wrote its own.
+func (e *statusError) Error() string {
+	return ""
 }
 
 // run is the whole process, separated from main so a test can call it and so
@@ -36,16 +87,56 @@ func main() {
 // returns an exit status instead, because a CLI must exit non-zero on an error
 // code so a shell script can branch on it.
 func run(arguments []string) error {
+	// The informational forms are answered before the subcommand is split, because
+	// `--help` is not a flag of any subcommand: it is a request about the program. Doing
+	// it first also means `connector-server --help` works without naming `run`, which is
+	// what an operator types when they do not yet know that `run` exists.
+	if result := helpdispatch.Resolve(programName, arguments, catalog()); result.Handled {
+		if result.Stdout != "" {
+			fmt.Fprint(os.Stdout, result.Stdout)
+		}
+		if result.Stderr != "" {
+			fmt.Fprint(os.Stderr, result.Stderr)
+		}
+		if result.Status != 0 {
+			return &helpdispatch.PrintedError{Status: result.Status}
+		}
+		return nil
+	}
+
 	command, rest := splitCommand(arguments)
 
 	switch command {
 	case "", "run":
 		return runServer(rest)
 	case "cli":
-		os.Exit(cli.Run(rest, os.Getenv, os.Stdout, os.Stderr))
-		return nil
+		return &statusError{Status: cli.Run(rest, os.Getenv, os.Stdout, os.Stderr)}
 	default:
-		return fmt.Errorf("unknown command %q; want run or cli", command)
+		return helpdispatch.Usagef("unknown command %q; want run or cli", command)
+	}
+}
+
+// programName is the name used as the prefix of every message and in the help text.
+//
+// It is a constant rather than the executable's base name, because the help text names
+// the program in every synopsis line and a renamed copy would then print a synopsis the
+// operator cannot type.
+const programName = "connector-server"
+
+// catalog is the set of pages this binary can print.
+//
+// The `cli` page points at the CLI's own help rather than repeating it. That subcommand
+// has a complete help covering every flag, every environment variable, every error code
+// and every exit status, and two copies of one interface drift apart.
+func catalog() helpdispatch.Catalog {
+	return helpdispatch.Catalog{
+		Main:    serverhelp.Main(programName),
+		Version: helpdispatch.Version(programName),
+		Pages: map[string]string{
+			"run": serverhelp.Run(programName),
+			"cli": serverhelp.CLI(programName),
+		},
+		Commands: []string{"run", "cli"},
 	}
 }
 
@@ -78,8 +169,9 @@ func splitCommand(arguments []string) (string, []string) {
 // would surface as a successful request rather than as a refusal.
 func runServer(arguments []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
 	if err := flags.Parse(arguments); err != nil {
-		return err
+		return helpdispatch.Usagef("%v", err)
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
