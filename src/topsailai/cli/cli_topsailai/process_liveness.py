@@ -202,6 +202,23 @@ def socket_heartbeat_alive(
     return True
 
 
+def _candidate_liveness(session_id: str, pid: Optional[int], base: str) -> str:
+    """Classify one stdout candidate as ``live``, ``dead`` or ``unknown``.
+
+    The control channel answers for its own process, so a successful heartbeat
+    is the strongest available proof of a live session; the process table is
+    the fallback for a session whose channel is absent or unresponsive.
+    """
+    if socket_heartbeat_alive(session_id, pid, home=base) is True:
+        return "live"
+    state = pid_state(pid)
+    if state is ProcessState.ALIVE:
+        return "live"
+    if state is ProcessState.UNKNOWN:
+        return "unknown"
+    return "dead"
+
+
 def session_liveness(session_id: str, *, home: Optional[str] = None) -> str:
     """Return ``live``, ``idle`` or ``unknown`` for one session identity.
 
@@ -222,13 +239,33 @@ def session_liveness(session_id: str, *, home: Optional[str] = None) -> str:
     unknown = False
     for path in candidates:
         pid = _get_pid_from_stdout_path(path)
-        # The control channel answers for its own process, so a successful
-        # heartbeat is the strongest available proof of a live session.
-        if socket_heartbeat_alive(session_id, pid, home=base) is True:
+        state = _candidate_liveness(session_id, pid, base)
+        if state == "live":
             return "live"
-        state = pid_state(pid)
-        if state is ProcessState.ALIVE:
-            return "live"
-        if state is ProcessState.UNKNOWN:
+        if state == "unknown":
             unknown = True
     return "unknown" if unknown else "idle"
+
+
+def live_session_pid(session_id: str, *, home: Optional[str] = None) -> Optional[int]:
+    """Return the PID that proves *session_id* is live, or ``None``.
+
+    The PID is resolved with exactly the same rule as :func:`session_liveness`,
+    so a caller that reports a session as running queries the process that
+    produced that answer instead of guessing from the newest stdout file. A
+    session that is idle or unverifiable yields ``None``, because neither state
+    names a process worth contacting.
+    """
+    if not session_id:
+        return None
+    base = home or get_topsailai_home()
+    task_dir = os.path.join(base, "workspace", "task")
+    try:
+        candidates = _session_stdout_candidates(task_dir, session_id)
+    except OSError:
+        return None
+    for path in candidates:
+        pid = _get_pid_from_stdout_path(path)
+        if _candidate_liveness(session_id, pid, base) == "live":
+            return pid
+    return None

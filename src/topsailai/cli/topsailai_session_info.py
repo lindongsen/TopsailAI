@@ -103,7 +103,10 @@ def _is_session_running(home: str, session_id: str) -> bool:
 
 
 def _session_to_dict(
-    session: SessionData, home: str, running: Optional[bool] = None
+    session: SessionData,
+    home: str,
+    running: Optional[bool] = None,
+    runtime: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Convert a SessionData object into a JSON-serializable dictionary.
 
@@ -113,6 +116,11 @@ def _session_to_dict(
     *running* lets a batch caller inject a status it already resolved with one
     directory scan; when it is ``None`` the status is resolved here, which is
     the single-session behaviour.
+
+    *runtime* is the collected runtime record, or ``None`` when runtime data was
+    not requested or the session is not running. The key is always present so
+    the record shape never changes between invocations, which lets a consumer
+    tell "not requested" from "requested but unavailable".
     """
     session_id = str(session.session_id) if session.session_id else ""
     if running is None:
@@ -147,13 +155,46 @@ def _session_to_dict(
         "status": "Running" if running else "Idle",
         "is_running": running,
         "create_time_relative": _relative_time(session.create_time),
+        # Optional enrichment, always present so the record shape is stable.
+        "runtime": runtime,
     }
 
 
-def _format_session_json(session: SessionData, home: str) -> str:
+def _format_session_json(
+    session: SessionData,
+    home: str,
+    runtime: Optional[dict[str, Any]] = None,
+) -> str:
     """Format a single session as a JSON string."""
-    data = _session_to_dict(session, home)
+    data = _session_to_dict(session, home, runtime=runtime)
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _collect_runtime(
+    session: SessionData, home: str, running: bool
+) -> Optional[dict[str, Any]]:
+    """Collect runtime data for a running session, or return ``None``.
+
+    Runtime data is fetched only when the session is running, because an idle
+    session has no process to answer and probing one would report a failure for
+    a state that is not a failure. Collection is best effort: any failure here
+    leaves ``runtime`` null instead of breaking the record the caller asked for,
+    matching the workspace list contract.
+    """
+    if not running:
+        return None
+    session_id = str(session.session_id) if session.session_id else ""
+    try:
+        from cli_topsailai.process_liveness import live_session_pid
+        from cli_topsailai.workspace_runtime import collect_session_runtime
+
+        pid = live_session_pid(session_id, home=home)
+        if pid is None:
+            return None
+        task_dir = os.path.join(home, TASK_SUBDIR)
+        return collect_session_runtime(session_id, pid, task_dir)
+    except Exception:
+        return None
 
 
 def _format_failure_json(session_id: str, error_code: str, message: str) -> str:
@@ -311,6 +352,16 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Output the session information as JSON.",
     )
+    parser.add_argument(
+        "--include-runtime",
+        dest="include_runtime",
+        action="store_true",
+        help=(
+            "Add a runtime object collected from the running session process. "
+            "Selects JSON output by itself, because runtime data has no card "
+            "representation."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -325,11 +376,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if home is None:
         home = get_topsailai_home()
 
+    # Runtime data has no card representation, so asking for it selects the
+    # JSON document instead of being rejected or silently dropped. The flag is
+    # therefore a request for the data, not a modifier of an already-chosen
+    # format, which is the same contract ``workspace list`` applies.
+    json_output = bool(args.json or args.include_runtime)
+
     try:
         manager = get_session_manager(args.db_conn)
         session = manager.get_session(args.session_id)
     except Exception as e:
-        if args.json:
+        if json_output:
             print(_format_failure_json(args.session_id, "lookup_failed", str(e)))
         else:
             print(f"{Colors.RED}[ERROR] {e}{Colors.RESET}")
@@ -337,14 +394,19 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if session is None:
         message = f"Session not found: {args.session_id}"
-        if args.json:
+        if json_output:
             print(_format_failure_json(args.session_id, "session_not_found", message))
         else:
             print(f"{Colors.YELLOW}[INFO] {message}{Colors.RESET}")
         return 1
 
-    if args.json:
-        print(_format_session_json(session, home))
+    if json_output:
+        runtime = None
+        if args.include_runtime:
+            runtime = _collect_runtime(
+                session, home, _is_session_running(home, str(session.session_id or ""))
+            )
+        print(_format_session_json(session, home, runtime))
     else:
         color_enabled = _supports_color()
         print(_format_session(session, home, color_enabled))

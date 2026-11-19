@@ -386,5 +386,98 @@ class TestMain:
         capsys.readouterr()
 
 
+class TestIncludeRuntime:
+    """Pin the `--include-runtime` contract of the batch command."""
+
+    def test_flag_defaults_to_false(self):
+        """Runtime collection is opt-in, so the default must not query anything."""
+        assert ssi._parse_args(["s1"]).include_runtime is False
+        assert ssi._parse_args(["s1", "--include-runtime"]).include_runtime is True
+
+    def test_records_carry_runtime_null_when_not_requested(self, db_conn: str, capsys):
+        """Every record keeps the key so the array shape never changes."""
+        assert ssi.main(["s1", "s2", "--db-conn", db_conn, "--json"]) == 0
+        parsed = json.loads(capsys.readouterr().out)
+
+        assert [item["runtime"] for item in parsed] == [None, None]
+
+    def test_flag_alone_selects_json(self, db_conn: str, capsys):
+        """Runtime data has no card representation, so the flag selects JSON."""
+        assert ssi.main(["s1", "--db-conn", db_conn, "--include-runtime"]) == 0
+        parsed = json.loads(capsys.readouterr().out)
+
+        assert parsed[0]["session_id"] == "s1"
+        assert parsed[0]["runtime"] is None
+
+    def test_only_live_sessions_are_queried(self, tmp_path: Path, capsys):
+        """An idle session has no process, so it must never be contacted."""
+        db_conn = f"sqlite:///{tmp_path / 'sessions.db'}"
+        manager = get_session_manager(db_conn)
+        manager.create_session(SessionData(session_id="live1", task="Task"))
+        manager.create_session(SessionData(session_id="idle1", task="Task"))
+        task_dir = tmp_path / si.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        (task_dir / f"live1.{os.getpid()}.session.stdout").write_text("")
+        collected = {"live1": {"state": "ok", "error_code": None,
+                               "pid": os.getpid(), "data": {"ok": True}}}
+
+        with patch("cli_topsailai.workspace_runtime.collect_workspace_runtime",
+                   return_value=collected) as collect:
+            assert ssi.main([
+                "live1", "idle1", "--db-conn", db_conn, "--home", str(tmp_path),
+                "--include-runtime",
+            ]) == 0
+        parsed = json.loads(capsys.readouterr().out)
+
+        rows = collect.call_args.args[0]
+        assert [row["session_id"] for row in rows] == ["live1"]
+        assert rows[0]["pid"] == os.getpid()
+        by_id = {item["session_id"]: item for item in parsed}
+        assert by_id["live1"]["runtime"] == collected["live1"]
+        assert by_id["idle1"]["runtime"] is None
+
+    def test_status_and_pid_come_from_one_scan(self, tmp_path: Path):
+        """Asking for runtime data must not double the directory scan."""
+        task_dir = tmp_path / si.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        (task_dir / f"live1.{os.getpid()}.session.stdout").write_text("")
+
+        with patch.object(ssi.os, "listdir", wraps=os.listdir) as listdir:
+            running, live_pid = ssi._status_and_pid_maps(str(tmp_path))
+
+        assert listdir.call_count == 1
+        assert running["live1"] is True
+        assert live_pid["live1"] == os.getpid()
+
+    def test_collection_failure_leaves_runtime_null(self, tmp_path: Path, capsys):
+        """Runtime data is optional enrichment, so a failure must not raise."""
+        db_conn = f"sqlite:///{tmp_path / 'sessions.db'}"
+        get_session_manager(db_conn).create_session(
+            SessionData(session_id="live1", task="Task")
+        )
+        task_dir = tmp_path / si.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        (task_dir / f"live1.{os.getpid()}.session.stdout").write_text("")
+
+        with patch("cli_topsailai.workspace_runtime.collect_workspace_runtime",
+                   side_effect=RuntimeError("boom")):
+            assert ssi.main([
+                "live1", "--db-conn", db_conn, "--home", str(tmp_path),
+                "--include-runtime",
+            ]) == 0
+        parsed = json.loads(capsys.readouterr().out)
+
+        assert parsed[0]["runtime"] is None
+
+    def test_text_mode_is_unchanged(self, db_conn: str, capsys):
+        """Without the flag the table is printed exactly as before."""
+        assert ssi.main(["s1", "--db-conn", db_conn, "--no-color"]) == 0
+        text = capsys.readouterr().out
+
+        assert "s1" in text
+        assert "runtime" not in text
+
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "--color=no"])

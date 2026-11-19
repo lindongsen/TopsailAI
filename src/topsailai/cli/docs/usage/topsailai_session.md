@@ -52,9 +52,13 @@ and exit with status 0.
 ```bash
 topsailai session info 20261107021807
 topsailai session info 20261107021807 20261106093012 --json
+topsailai session info 20261107021807 --include-runtime
 ```
 
-Options: `--json`, `--no-color`, `--db-conn <string>`, `--home <path>`.
+Options: `--json`, `--include-runtime`, `--no-color`, `--db-conn <string>`, `--home <path>`.
+
+`--include-runtime` fetches live runtime data for a running session and selects
+JSON output by itself; see [`topsailai_session_info`](topsailai_session_info.md).
 
 ### `list`
 

@@ -25,6 +25,7 @@ from cli_topsailai.agent_launch_process import _process_state
 from cli_topsailai.process_liveness import (
     ProcessState,
     is_pid_alive,
+    live_session_pid,
     pid_state,
     session_liveness,
 )
@@ -250,6 +251,106 @@ class TestSessionLiveness(unittest.TestCase):
         """A named session must not absorb a temporary session's file."""
         self._touch(f"topsailai.{os.getpid()}.session.stdout", 1000)
         self.assertEqual(session_liveness("sess-1", home=self.home), "idle")
+
+
+class TestLiveSessionPid(unittest.TestCase):
+    """Pin the PID that proves a session live.
+
+    The PID must come from the same rule ``session_liveness`` applies, so a
+    caller that reports a session as running queries the process that produced
+    that answer instead of guessing from the newest stdout file.
+    """
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="live-pid-")
+        self.task_dir = os.path.join(self.home, "workspace", "task")
+        os.makedirs(self.task_dir)
+
+    def tearDown(self):
+        for entry in os.listdir(self.task_dir):
+            os.unlink(os.path.join(self.task_dir, entry))
+        os.rmdir(self.task_dir)
+        os.rmdir(os.path.join(self.home, "workspace"))
+        os.rmdir(self.home)
+
+    def _touch(self, name, mtime):
+        """Create one stdout candidate with an explicit modification time."""
+        path = os.path.join(self.task_dir, name)
+        Path(path).write_text("", encoding="utf-8")
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def test_no_candidate_has_no_pid(self):
+        """An idle session names no process worth contacting."""
+        self.assertIsNone(live_session_pid("sess-1", home=self.home))
+
+    def test_empty_session_id_has_no_pid(self):
+        """An empty identity cannot be answered, so it fails closed."""
+        self.assertIsNone(live_session_pid("", home=self.home))
+
+    def test_live_candidate_returns_its_pid(self):
+        """The live candidate's own PID is the answer."""
+        self._touch(f"sess-1.{os.getpid()}.session.stdout", 1000)
+        self.assertEqual(live_session_pid("sess-1", home=self.home), os.getpid())
+
+    def test_dead_candidate_has_no_pid(self):
+        """A dead PID proves nothing, so no target is invented."""
+        self._touch(f"sess-1.{_absent_pid()}.session.stdout", 1000)
+        self.assertIsNone(live_session_pid("sess-1", home=self.home))
+
+    def test_older_live_candidate_beats_newer_dead_one(self):
+        """The returned PID must be the one that proved liveness."""
+        self._touch(f"sess-1.{os.getpid()}.session.stdout", 1000)
+        self._touch(f"sess-1.{_absent_pid()}.session.stdout", 2000)
+        self.assertEqual(live_session_pid("sess-1", home=self.home), os.getpid())
+
+    def test_zombie_candidate_has_no_pid(self):
+        """A zombie must not be reported as a queryable owner."""
+        pid = _spawn_zombie()
+        try:
+            self._touch(f"sess-1.{pid}.session.stdout", 1000)
+            self.assertIsNone(live_session_pid("sess-1", home=self.home))
+        finally:
+            _reap(pid)
+
+    def test_heartbeat_answer_proves_liveness_without_the_process_table(self):
+        """A channel reply is proof of life even when the PID is not local.
+
+        A session owned by a sibling container shares the task directory but
+        not the process namespace, so the process table cannot confirm it.
+        """
+        absent = _absent_pid()
+        self._touch(f"sess-1.{absent}.session.stdout", 1000)
+
+        with patch.object(process_liveness, "socket_heartbeat_alive",
+                          return_value=True):
+            self.assertEqual(live_session_pid("sess-1", home=self.home), absent)
+
+    def test_unknown_state_has_no_pid(self):
+        """An unverifiable state must not name a process."""
+        self._touch(f"sess-1.{os.getpid()}.session.stdout", 1000)
+
+        with patch.object(process_liveness, "socket_heartbeat_alive",
+                          return_value=False), \
+             patch.object(process_liveness, "pid_state",
+                          return_value=ProcessState.UNKNOWN):
+            self.assertIsNone(live_session_pid("sess-1", home=self.home))
+
+    def test_missing_task_directory_has_no_pid(self):
+        """An absent task directory is not an error, just no answer."""
+        missing = os.path.join(self.home, "absent")
+        self.assertIsNone(live_session_pid("sess-1", home=missing))
+
+    def test_agrees_with_session_liveness(self):
+        """Both answers must come from one rule, so they cannot disagree."""
+        self._touch(f"sess-1.{os.getpid()}.session.stdout", 1000)
+        self._touch(f"sess-2.{_absent_pid()}.session.stdout", 1000)
+
+        self.assertEqual(session_liveness("sess-1", home=self.home), "live")
+        self.assertIsNotNone(live_session_pid("sess-1", home=self.home))
+        self.assertEqual(session_liveness("sess-2", home=self.home), "idle")
+        self.assertIsNone(live_session_pid("sess-2", home=self.home))
+
 
 
 if __name__ == "__main__":

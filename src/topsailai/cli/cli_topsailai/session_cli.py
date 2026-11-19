@@ -97,6 +97,8 @@ def _info_options(args) -> List[str]:
     options: List[str] = []
     if getattr(args, "json", False):
         options.append("--json")
+    if getattr(args, "include_runtime", False):
+        options.append("--include-runtime")
     if getattr(args, "no_color", False):
         options.append("--no-color")
     db_conn = getattr(args, "db_conn", None)
@@ -469,6 +471,11 @@ def build_parser() -> SessionParser:
     info_parser.add_argument("session_ids", nargs="+", metavar="SESSION_ID",
                              help="one or more session identifiers")
     _add_detail_options(info_parser)
+    info_parser.add_argument(
+        "--include-runtime", dest="include_runtime", action="store_true",
+        help=("add a runtime object collected from each running session "
+              "process; selects JSON output by itself"),
+    )
 
     list_parser = subparsers.add_parser(
         "list", help="list stored sessions",
