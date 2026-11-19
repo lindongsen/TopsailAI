@@ -35,12 +35,19 @@ func TestReadOutputUsesTheExactProviderTarget(t *testing.T) {
 	}
 }
 
-// TestDetailUsesTheExactProviderTargetForRuntime proves metadata remains
-// session-scoped while runtime addresses the exact process row.
+// TestDetailUsesTheExactProviderTargetForRuntime proves one exact row costs one
+// provider call, and that the call's document is split across both seams.
+//
+// `runtime info` publishes the row's whole record and its runtime observation in
+// one document, so asking `session info` first would spend a second call to
+// recover fields the first document already carried. The `runtime` member is the
+// runtime seam and every other member is the metadata seam.
 func TestDetailUsesTheExactProviderTargetForRuntime(t *testing.T) {
+	document := `{"session_id":"s-1","session_name":"demo","pid":77,` +
+		`"metafile":{"pid":77,"status":"running"},` +
+		`"runtime":{"state":"ok","pid":77,"data":{"ok":true}}}`
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
-		"session\x00info\x00s-1\x00--json":         answer(`{"session_id":"s-1"}`),
-		"runtime\x00info\x00-s\x00s-1\x00-p\x0077": answer(`{"state":"ok","pid":77}`),
+		"runtime\x00info\x00-s\x00s-1\x00-p\x0077": answer(document),
 	}}
 	target := &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}
 	slot, err := encodeProviderTarget(providerSessionTarget{SessionID: "s-1", ProviderRowKey: "row", PID: 77})
@@ -53,8 +60,21 @@ func TestDetailUsesTheExactProviderTargetForRuntime(t *testing.T) {
 	if !response.OK || len(response.QueryResult) == 0 {
 		t.Fatalf("response=%+v", response)
 	}
-	if len(runner.calls) != 2 {
-		t.Fatalf("calls=%v", runner.calls)
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls=%v, want one runtime info call", runner.calls)
+	}
+	var result detailResult
+	if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+		t.Fatal(err)
+	}
+	wantMetadata := `{"session_id":"s-1","session_name":"demo","pid":77,` +
+		`"metafile":{"pid":77,"status":"running"}}`
+	if result.ProviderMetadata != wantMetadata {
+		t.Fatalf("provider_metadata=%q, want the document minus runtime", result.ProviderMetadata)
+	}
+	wantRuntime := `{"state":"ok","pid":77,"data":{"ok":true}}`
+	if result.ProviderRuntime != wantRuntime {
+		t.Fatalf("provider_runtime=%q, want the runtime member verbatim", result.ProviderRuntime)
 	}
 }
 

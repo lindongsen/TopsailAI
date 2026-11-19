@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -692,38 +693,70 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 	if err := decodeStrict(raw, &payload); err != nil {
 		return detailResult{}, fmt.Errorf("%w: session.detail payload", errInvalidRequest)
 	}
-	if exact, ok, decodeErr := decodeProviderTarget(requested.ProviderTarget); decodeErr != nil {
-		return detailResult{}, decodeErr
-	} else if ok {
+	exact, hasExact, err := decodeProviderTarget(requested.ProviderTarget)
+	if err != nil {
+		return detailResult{}, err
+	}
+	if hasExact {
 		if err := validateExactSessionTarget(sessionID, exact); err != nil {
 			return detailResult{}, err
 		}
 	}
+	// A caller that already named the exact row needs one provider call, because
+	// `runtime info` publishes that row's whole record and its runtime observation
+	// together. Asking `session info` first would spend a second call to recover
+	// fields the first document already carried.
+	if hasExact && exact.PID > 0 {
+		return p.detailFromRuntimeInfo(ctx, sessionID, exact.PID)
+	}
+	return p.detailFromSessionRecord(ctx, sessionID, requested.ProviderTarget)
+}
+
+// detailFromRuntimeInfo fills both seams from one `runtime info` call.
+//
+// The command publishes the workspace-list item for one exact process, so it
+// carries the session record and the runtime observation in one document. The
+// `runtime` member is the runtime seam and every other member is the metadata
+// seam, which is why this path costs one call instead of two.
+//
+// Both halves are forwarded as bytes. The Cluster does not model either document,
+// so decoding one into a struct here would silently drop every field the struct
+// does not name, and the operator would read a trimmed record as the whole one.
+func (p *provider) detailFromRuntimeInfo(ctx context.Context, sessionID string, pid int64) (detailResult, error) {
+	args := []string{"runtime", "info", "-s", sessionID, "-p", fmt.Sprint(pid)}
+	stdout, stderr, runErr := p.runner.Run(ctx, args, nil)
+	if len(stdout) > maxMetricsBytes {
+		return detailResult{}, fmt.Errorf("provider response exceeds %d bytes", maxMetricsBytes)
+	}
+	if err := providerDocumentFailure(stdout, stderr, runErr); err != nil {
+		return detailResult{}, err
+	}
+	metadata, runtime, err := splitRuntimeMember(stdout)
+	if err != nil {
+		return detailResult{}, err
+	}
+	return detailResult{
+		ProviderSessionID: sessionID,
+		ProviderMetadata:  string(metadata),
+		ProviderRuntime:   string(runtime),
+		ObservedAtMS:      p.now().UnixMilli(),
+	}, nil
+}
+
+// detailFromSessionRecord fills the two seams from the session-scoped record.
+//
+// This is the path for a caller that named no exact row, so there is no PID to
+// address `runtime info` with. The metadata read deliberately omits --local so a
+// session recorded on another host is still described, while the runtime read is
+// host-scoped: such a row has no runtime record here, which is an unobservable row
+// rather than a provider failure, so the seam stays empty and the surface reports
+// it as not reported.
+func (p *provider) detailFromSessionRecord(ctx context.Context, sessionID, providerTarget string) (detailResult, error) {
 	stdout, stderr, runErr := p.runner.Run(ctx, []string{"session", "info", sessionID, "--json"}, nil)
-	// The provider prints its own not-found document on stdout and exits non-zero,
-	// so the document is inspected before the exit status. Reading the status first
-	// would report a missing session as a provider failure.
-	var probe struct {
-		ErrorCode string `json:"error_code"`
+	if err := providerDocumentFailure(stdout, stderr, runErr); err != nil {
+		return detailResult{}, err
 	}
-	if len(stdout) > 0 {
-		if err := decodeJSONDocument(stdout, &probe, false); err != nil {
-			if runErr != nil {
-				return detailResult{}, fmt.Errorf("TopsailAI CLI failed: %w: %s", runErr, boundedText(stderr, 4096))
-			}
-			return detailResult{}, fmt.Errorf("decode TopsailAI CLI response: %w", err)
-		}
-	}
-	if probe.ErrorCode == providerSessionNotFoundCode {
-		return detailResult{}, codedError{code: providerSessionNotFoundCode, message: "provider session does not exist"}
-	}
-	if runErr != nil {
-		return detailResult{}, fmt.Errorf("TopsailAI CLI failed: %w: %s", runErr, boundedText(stderr, 4096))
-	}
-	if len(stdout) == 0 {
-		return detailResult{}, errorsNew("provider returned no session record")
-	}
-	runtime, err := p.runtimeEnvelope(ctx, sessionID, requested.ProviderTarget)
+	runtime, err := p.runtimeEnvelope(ctx, sessionID, providerTarget)
 	if err != nil {
 		return detailResult{}, err
 	}
@@ -735,6 +768,102 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 	}, nil
 }
 
+// providerDocumentFailure classifies a provider read that produced a document.
+//
+// The provider prints its own not-found document on stdout and exits non-zero, so
+// the document is inspected before the exit status. Reading the status first would
+// report a missing session as a provider failure, which sends the operator to the
+// wrong problem: the session does not exist, and nothing about the provider is
+// broken.
+func providerDocumentFailure(stdout, stderr []byte, runErr error) error {
+	var probe struct {
+		ErrorCode string `json:"error_code"`
+	}
+	if len(stdout) > 0 {
+		if err := decodeJSONDocument(stdout, &probe, false); err != nil {
+			if runErr != nil {
+				return fmt.Errorf("TopsailAI CLI failed: %w: %s", runErr, boundedText(stderr, 4096))
+			}
+			return fmt.Errorf("decode TopsailAI CLI response: %w", err)
+		}
+	}
+	if probe.ErrorCode == providerSessionNotFoundCode {
+		return codedError{code: providerSessionNotFoundCode, message: "provider session does not exist"}
+	}
+	if runErr != nil {
+		return fmt.Errorf("TopsailAI CLI failed: %w: %s", runErr, boundedText(stderr, 4096))
+	}
+	if len(stdout) == 0 {
+		return errorsNew("provider returned no session record")
+	}
+	return nil
+}
+
+// splitRuntimeMember separates one provider document into the two detail seams.
+//
+// The `runtime` member becomes the runtime seam and every other member becomes the
+// metadata seam, in the order the provider published them. Each member's value is
+// carried as raw bytes, so a field this provider does not model still reaches the
+// operator unchanged.
+//
+// A document with no `runtime` member is returned whole as metadata with an empty
+// runtime seam, because that is the provider reporting no observation rather than
+// a document that lost a field.
+func splitRuntimeMember(document []byte) (json.RawMessage, json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode TopsailAI CLI response: %w", err)
+	}
+	if delimiter, ok := opening.(json.Delim); !ok || delimiter != '{' {
+		return nil, nil, errorsNew("provider runtime document is not a JSON object")
+	}
+	type member struct {
+		key   string
+		value json.RawMessage
+	}
+	var members []member
+	var runtimeValue json.RawMessage
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode TopsailAI CLI response: %w", err)
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return nil, nil, errorsNew("provider runtime document has a non-string key")
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, nil, fmt.Errorf("decode TopsailAI CLI response: %w", err)
+		}
+		if key == "runtime" {
+			runtimeValue = value
+			continue
+		}
+		members = append(members, member{key: key, value: value})
+	}
+	if runtimeValue == nil {
+		return document, nil, nil
+	}
+	var rebuilt bytes.Buffer
+	rebuilt.WriteByte('{')
+	for index, entry := range members {
+		if index > 0 {
+			rebuilt.WriteByte(',')
+		}
+		keyBytes, err := json.Marshal(entry.key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode provider metadata key: %w", err)
+		}
+		rebuilt.Write(keyBytes)
+		rebuilt.WriteByte(':')
+		rebuilt.Write(entry.value)
+	}
+	rebuilt.WriteByte('}')
+	return rebuilt.Bytes(), runtimeValue, nil
+}
+
 // runtimeEnvelope returns one session's runtime envelope exactly as the provider
 // published it.
 //
@@ -743,11 +872,11 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 // silently drop every field it does not, and the operator would read a trimmed
 // record as the whole one.
 //
-// A session this host cannot see has no row in the local read, which is not a
-// failure. The metadata read deliberately omits --local so a session recorded on
-// another host is still described, and that row simply has no runtime record
-// here. An empty result therefore means "not observable from this host", and the
-// surface reports it as not reported rather than as an empty observation.
+// This is the fallback for a caller that named no exact row, so the row is chosen
+// by the same selector the MESSAGES column uses. A session this host cannot see has
+// no row in the local read, which is not a failure: an empty result means "not
+// observable from this host", and the surface reports it as not reported rather
+// than as an empty observation.
 func (p *provider) runtimeEnvelope(ctx context.Context, sessionID, providerTarget string) (json.RawMessage, error) {
 	resolved, exact, err := decodeProviderTarget(providerTarget)
 	if err != nil {
@@ -757,13 +886,6 @@ func (p *provider) runtimeEnvelope(ctx context.Context, sessionID, providerTarge
 		if err := validateExactSessionTarget(sessionID, resolved); err != nil {
 			return nil, err
 		}
-	}
-	if exact && resolved.PID > 0 {
-		var document json.RawMessage
-		if err := runJSON(ctx, p.runner, []string{"runtime", "info", "-s", resolved.SessionID, "-p", fmt.Sprint(resolved.PID)}, maxMetricsBytes, &document); err != nil {
-			return nil, err
-		}
-		return document, nil
 	}
 	args := []string{"workspace", "list", "--json", "--local", "-s", sessionID, "--include-runtime"}
 	var document workspaceResponse
