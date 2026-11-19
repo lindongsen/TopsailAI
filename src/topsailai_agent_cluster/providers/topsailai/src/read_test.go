@@ -962,3 +962,93 @@ func TestSessionReadsRejectAnUnscopedTarget(t *testing.T) {
 		})
 	}
 }
+
+// TestSplitRuntimeMemberPreservesEveryOtherMember proves the split keeps each
+// member's bytes and the provider's own key order.
+//
+// The metadata seam is the provider's document minus one member, so a field this
+// provider does not model must still reach the operator unchanged. Rebuilding the
+// object from a decoded map would reorder keys and re-encode numbers, which is a
+// content change the Cluster is not allowed to make.
+func TestSplitRuntimeMemberPreservesEveryOtherMember(t *testing.T) {
+	document := `{"session_id":"s-1","pid":77,"total_tokens":1234,` +
+		`"runtime":{"state":"ok","pid":77},` +
+		`"metafile":{"pid":77,"status":"running"},"ratio":0.5}`
+	metadata, runtime, err := splitRuntimeMember([]byte(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMetadata := `{"session_id":"s-1","pid":77,"total_tokens":1234,` +
+		`"metafile":{"pid":77,"status":"running"},"ratio":0.5}`
+	if string(metadata) != wantMetadata {
+		t.Fatalf("metadata=%s, want every other member in the provider's order", metadata)
+	}
+	if string(runtime) != `{"state":"ok","pid":77}` {
+		t.Fatalf("runtime=%s, want the runtime member verbatim", runtime)
+	}
+}
+
+// TestSplitRuntimeMemberReportsNoRuntimeMemberAsEmpty proves a document without a
+// runtime member is the provider reporting no observation, not a lost field.
+//
+// Returning the whole document as metadata with an empty runtime seam keeps the
+// distinction the surface needs: an absent observation is reported as not
+// reported, while a document that lost a member would be indistinguishable from a
+// provider that never published one.
+func TestSplitRuntimeMemberReportsNoRuntimeMemberAsEmpty(t *testing.T) {
+	document := `{"session_id":"s-1","pid":77,"status":"running"}`
+	metadata, runtime, err := splitRuntimeMember([]byte(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(metadata) != document {
+		t.Fatalf("metadata=%s, want the whole document", metadata)
+	}
+	if len(runtime) != 0 {
+		t.Fatalf("runtime=%s, want empty when the provider published no runtime member", runtime)
+	}
+}
+
+// TestSplitRuntimeMemberRejectsANonObjectDocument proves the split fails closed on
+// a document it cannot separate.
+//
+// A JSON array or scalar has no members to divide, so accepting it would put the
+// whole document in one seam and leave the other empty while claiming the split
+// succeeded. The operator would then read a partial answer as a complete one.
+func TestSplitRuntimeMemberRejectsANonObjectDocument(t *testing.T) {
+	for _, document := range []string{`[{"runtime":{}}]`, `"text"`, `42`} {
+		t.Run(document, func(t *testing.T) {
+			if _, _, err := splitRuntimeMember([]byte(document)); err == nil {
+				t.Fatalf("splitRuntimeMember(%s) accepted a document with no members", document)
+			}
+		})
+	}
+}
+
+// TestDetailFromRuntimeInfoReportsMissingSessionFromStdout proves the single-call
+// path also reads the not-found document before the exit status.
+//
+// `runtime info` prints its own not-found document on stdout and exits non-zero,
+// exactly as `session info` does. Classifying the exit status first would report a
+// missing session as a provider failure on the path that now serves every exact
+// target, which is the path an operator reaches most often.
+func TestDetailFromRuntimeInfoReportsMissingSessionFromStdout(t *testing.T) {
+	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
+		"runtime\x00info\x00-s\x00s-1\x00-p\x0077": {{stdout: `{"error_code":"session_not_found"}`, err: errors.New("exit status 1")}}}}
+	target := &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}
+	slot, err := encodeProviderTarget(providerSessionTarget{SessionID: "s-1", ProviderRowKey: "row", PID: 77})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.ProviderTarget = slot
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(querySessionDetail, target, `{}`))
+	if response.OK || response.Error == nil {
+		t.Fatalf("response=%+v", response)
+	}
+	if response.Error.Code != providerSessionNotFoundCode {
+		t.Fatalf("code=%q, want %q", response.Error.Code, providerSessionNotFoundCode)
+	}
+	if len(r.calls) != 1 {
+		t.Fatalf("calls=%v, want one runtime info call", r.calls)
+	}
+}
