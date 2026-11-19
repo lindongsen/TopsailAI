@@ -101,9 +101,66 @@ Compared with the baseline table above, which was measured at `29d3634f+dirty`:
 
 The final run happened at a higher load than the baseline run (8.54 against
 2.06–3.91), so the throughput and CPU improvements are understated rather than
-inflated. The budget check reported the six absolute CPU rows as `INCONCLUSIVE` for
-that reason and passed every ratio and RSS rule, which is the correct outcome: the
-ratios are load-independent and are what the budget asserts.
+inflated. That run reported the six absolute CPU rows as `INCONCLUSIVE` because the
+host was too busy to compare them. A later run at a comparable load resolved them;
+see the next section.
+
+### Absolute CPU verified at a comparable load
+
+The `INCONCLUSIVE` verdict above was a property of the host, not of the code, so it
+was re-measured once the load fell below the script's ceiling. The ceiling is
+`BASELINE_LOAD_MAX + LOAD_MARGIN` = 3.91 + 1.0 = 4.91, read from the 1-minute
+average.
+
+Command: `make measure MEASURE_SIZES="1 16 64"`, revision `cb316b68`, transport
+`binary-v1`, TLS disabled.
+
+| Property | Value |
+|---|---|
+| Load before the run | 2.26 / 4.89 / 7.34 |
+| Load during the run | 2.72 / 4.94 / 7.35 |
+| Load after the run | 2.32 / 4.63 / 7.16 |
+| Ceiling | 4.91 |
+| Verdict | **PASS**, 0 inconclusive, 0 rule failed |
+
+| Size | Wall | Throughput | Server CPU | Node CPU | Server peak RSS | Node peak RSS | Content |
+|---|---|---|---|---|---|---|---|
+| 1 MiB | 0.018 s | 55.56 MiB/s | 0.010 s | 0.010 s | 20,556 KB | 16,308 KB | yes |
+| 16 MiB | 0.164 s | 97.56 MiB/s | 0.110 s | 0.070 s | 23,980 KB | 21,556 KB | yes |
+| 64 MiB | 0.563 s | 113.68 MiB/s | 0.440 s | 0.300 s | 24,172 KB | 21,816 KB | yes |
+
+Protocol bytes, unchanged from the earlier runs:
+
+| Size | Server wire bytes | Server ratio | Node wire bytes | Node ratio |
+|---|---|---|---|---|
+| 1 MiB | 1,052,097 | 1.0034 | 1,051,841 | 1.0031 |
+| 16 MiB | 16,834,153 | 1.0034 | 16,829,441 | 1.0031 |
+| 64 MiB | 67,336,633 | 1.0034 | 67,317,761 | 1.0031 |
+
+CPU per 16 MiB, which is the quantity the budget asserts:
+
+| Size | Server s/16MiB | Node s/16MiB | Server regression limit | Node regression limit |
+|---|---|---|---|---|
+| 1 MiB | 0.1600 | 0.1600 | 0.7600 | 0.2200 |
+| 16 MiB | 0.1100 | 0.0700 | 0.7600 | 0.2200 |
+| 64 MiB | 0.1100 | 0.0750 | 0.7600 | 0.2200 |
+
+Every regression row passed with wide margin: Server 0.1100 against a 0.7600 limit,
+Node 0.0700 against 0.2200. The PRD target of 0.25 s/16MiB for the Server passed at
+all three sizes.
+
+One row is reported `TARGET-MISSED` rather than `PASS`: Node CPU at 1 MiB, 0.1600
+s/16MiB against the 0.10 PRD budget. That number is a measurement artifact rather
+than a cost. `CLK_TCK` is 100, so the smallest observable CPU interval is 0.010 s,
+and the 1 MiB read consumed exactly one tick. Normalising one tick to 16 MiB
+multiplies the quantisation error by 16, which is why the same Node measures 0.0700
+at 16 MiB and 0.0750 at 64 MiB — the two sizes where the tick count is large enough
+to divide. The 16 MiB and 64 MiB rows are the ones that describe the Node's real
+cost, and both pass the PRD budget.
+
+The absolute CPU budget is therefore verified, not merely asserted: at a load inside
+the documented margin, every regression row and every Server target row passed, and
+the single target miss is explained by timer granularity at the smallest size.
 
 ## What counts as a regression
 
@@ -151,6 +208,11 @@ absolute number. The absolute numbers move with host load; the ratios do not.
 - **Concurrency is measured separately** and recorded in the Unit 6a evidence file:
   8 concurrent 16 MiB reads took 2.16 s against 0.69 s at 2, because the per-caller
   default of 2 serializes them into about four waves.
+- **Absolute CPU is verified only at a comparable load.** The rows are comparable
+  when the 1-minute load is at or below 4.91, and the verification run met that
+  condition (2.26 before, 2.72 during). A run above the ceiling reports
+  `INCONCLUSIVE` by design, so a future verification must wait for a quiet host
+  rather than relax the ceiling.
 
 ## Open decision carried into the next unit
 

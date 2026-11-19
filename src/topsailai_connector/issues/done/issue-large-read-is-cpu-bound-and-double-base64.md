@@ -192,6 +192,36 @@ inherit a constraint that no longer exists.
   rather than from a script nobody invokes.
 - `docs/resource-baseline.md` records the numbers and the regression rule.
 
+### The absolute CPU budget is verified, not only asserted
+
+The first close-out run happened at `/proc/loadavg` 8.54, above the script's 4.91
+ceiling, so its six absolute CPU rows were reported `INCONCLUSIVE`. That was a
+property of the host rather than of the code, so the measurement was repeated once
+the load fell inside the documented margin.
+
+| Property | Value |
+|---|---|
+| Load before / during / after | 2.26 / 2.72 / 2.32 (1-minute average) |
+| Ceiling | 4.91 |
+| Verdict | **PASS**, 0 inconclusive, 0 rule failed |
+
+| Size | Server s/16MiB | Node s/16MiB | Server regression limit | Node regression limit |
+|---|---|---|---|---|
+| 1 MiB | 0.1600 | 0.1600 | 0.7600 | 0.2200 |
+| 16 MiB | 0.1100 | 0.0700 | 0.7600 | 0.2200 |
+| 64 MiB | 0.1100 | 0.0750 | 0.7600 | 0.2200 |
+
+Every regression row passed with wide margin, and the Server PRD target of 0.25
+s/16MiB passed at all three sizes. One row is `TARGET-MISSED`: Node CPU at 1 MiB,
+0.1600 s/16MiB against the 0.10 budget. That is timer granularity rather than cost —
+`CLK_TCK` is 100, so the smallest observable interval is 0.010 s and the 1 MiB read
+consumed exactly one tick, which normalising to 16 MiB multiplies by 16. The 16 MiB
+and 64 MiB rows, where the tick count is large enough to divide, measure 0.0700 and
+0.0750 and both pass.
+
+The absolute CPU budget is therefore verified at a comparable load. The earlier
+`INCONCLUSIVE` was resolved by re-measuring, not by relaxing the ceiling.
+
 ### What remains open
 
 - The chunk size is still 256 KiB. Raising it is now possible and is a separate
