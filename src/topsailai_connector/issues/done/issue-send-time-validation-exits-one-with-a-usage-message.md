@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
 created: 2026-11-19
 ---
 
@@ -92,3 +92,35 @@ either fix lands.
 
 - `issues/done/issue-output-refusal-exits-one-with-a-usage-message.md` — the same
   family, opposite direction, fixed by removing the prefix.
+
+## Resolution
+
+Fixed by option 1: `RunAs` returns `2` when the error from `Client.Send` wraps
+`ErrUsage`, because nothing was sent, so `2` is substantively correct. The message
+is unchanged, so only the status moved.
+
+The test that could not be written before the fix now exists, and it was written by
+strengthening `TestRunRefusesMissingConfiguration` rather than adding a second test
+beside it. That test asserted `status != 0`, which passes for both `1` and `2`; it
+now asserts the pair — status `2` **and** a message containing `usage:` — because
+each half alone passes while the combination is wrong. A duplicate in another file
+would have left the weak assertion in place and made the suite look better covered
+than it was.
+
+Mutation evidence: reverting the branch to `return 1` fails with
+`status = 1, want 2` on the `malformed_node_id` case, which is the only case in that
+table that reaches `Send`. The other twelve are refused by `parseArguments`, which
+already returned `2`, and that is precisely why the defect was invisible: the
+majority of the cases were correct, so the table looked correct.
+
+Live evidence after the fix:
+
+```
+connector-cli --node-id abc --scope project --path notes.md file.read
+  -> connector-cli: usage: --node-id node id "abc" does not start with "node_"
+  -> rc=2
+```
+
+`skills/connector-client/SKILL.md` was updated in the same change: the caveat that
+said these values exit `1` is replaced by the statement that the prefix and the
+status agree.

@@ -267,11 +267,12 @@ refusal happens while the result is being written, after the command line was
 accepted and the request ran. Treat `1` as "nothing was written" and `2` as
 "nothing was sent".
 
-The prefix is not a reliable signal on its own. A few values are checked after the
-command line is parsed but before the request is sent — a malformed `--node-id`, a
-scope name outside the alphabet, a `--server` URL that is not `http` or `https` —
-and those are reported with a `usage:` prefix while exiting `1`. Branch on the
-status, not on the prefix.
+The prefix and the status agree. Every message beginning `usage:` exits `2`,
+including the values checked after the command line is parsed but before the
+request is sent — a malformed `--node-id`, a scope name outside the alphabet, a
+`--server` URL that is not `http` or `https`. Nothing was sent in any of those
+cases, so `2` is the honest answer and a script may branch on either the status or
+the prefix.
 
 ### Error codes
 
@@ -287,6 +288,7 @@ status, not on the prefix.
 | `1007` | `unsupported_operation` | Unknown operation, or declared but not enabled in this version | Use one of the three read operations |
 | `1008` | `too_large` | The response or request exceeds the cap | Use `--offset` and `--length` to read a range |
 | `1009` | `internal` | The Server failed | Retry; if it repeats, the Server operator must read the log |
+| `1010` | `overloaded` | The Server is at its admission limit and refused the request instead of queueing it | Retry after a short wait; the work already admitted finishes and capacity returns |
 
 `denied` and `not_found` are deliberately different. `denied` means the policy
 refused; `not_found` means the policy allowed it and the file is not there. Do not
@@ -342,7 +344,8 @@ answer from a credential that is actually correct.
   component is rejected rather than normalised. Use an empty `--path` to list the
   root.
 - **Retrying `denied` or `unauthenticated`.** Neither becomes true by trying
-  again. Only `node_offline`, `node_timeout` and `internal` are worth a retry.
+  again. Only `node_offline`, `node_timeout`, `overloaded` and `internal` are worth
+  a retry.
 - **Reporting a secret.** Never print the secret half of either credential in a
   message, a log or a ticket. The `key_id` half and the node id are public and are
   fine to show.

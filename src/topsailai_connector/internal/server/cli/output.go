@@ -122,6 +122,8 @@ type destination struct {
 	temporary string
 	// final is the destination path, renamed into place on success.
 	final string
+	// program is the name used as the prefix of every message this destination writes.
+	program string
 }
 
 // openDestination prepares the output for one invocation.
@@ -140,9 +142,9 @@ type destination struct {
 // message must not claim otherwise. A `usage:` prefix here would send a reader looking
 // for a typo that does not exist, and it would break the invariant that a message
 // beginning `usage:` always accompanies status 2.
-func openDestination(options Options, stdout io.Writer) (*destination, error) {
+func openDestination(options Options, stdout io.Writer, program string) (*destination, error) {
 	if options.Output == "" || options.Output == stdoutDestination {
-		return &destination{writer: stdout}, nil
+		return &destination{writer: stdout, program: program}, nil
 	}
 
 	final := options.Output
@@ -159,7 +161,7 @@ func openDestination(options Options, stdout io.Writer) (*destination, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create a temporary file in %s: %w", directory, err)
 	}
-	return &destination{writer: temporary, file: temporary, temporary: temporary.Name(), final: final}, nil
+	return &destination{writer: temporary, file: temporary, temporary: temporary.Name(), final: final, program: program}, nil
 }
 
 // commit finishes the write.
@@ -199,7 +201,7 @@ func (d *destination) abort() {
 	}
 	if d.temporary != "" {
 		if err := os.Remove(d.temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "connector-server cli: could not remove %s: %v\n", d.temporary, err)
+			fmt.Fprintf(os.Stderr, "%s: could not remove %s: %v\n", d.program, d.temporary, err)
 		}
 		d.temporary = ""
 	}
@@ -214,8 +216,8 @@ func (d *destination) abort() {
 //
 // The first request is issued here rather than by the caller, so a whole-file read
 // does not fetch its first chunk twice.
-func writeToDestination(client *Client, options Options, stdout, stderr io.Writer) error {
-	target, err := openDestination(options, stdout)
+func writeToDestination(client *Client, options Options, stdout, stderr io.Writer, program string) error {
+	target, err := openDestination(options, stdout, program)
 	if err != nil {
 		return err
 	}
@@ -233,7 +235,7 @@ func writeToDestination(client *Client, options Options, stdout, stderr io.Write
 			return err
 		}
 		if options.Output != "" && options.Output != stdoutDestination {
-			fmt.Fprintf(stderr, "connector-server cli: wrote %d bytes to %s\n", total, options.Output)
+			fmt.Fprintf(stderr, "%s: wrote %d bytes to %s\n", program, total, options.Output)
 		}
 		return nil
 	}
@@ -247,7 +249,7 @@ func writeToDestination(client *Client, options Options, stdout, stderr io.Write
 		target.abort()
 		return fmt.Errorf("%s: %s", envelope.Code.Name(), envelope.Message)
 	}
-	if err := writeResult(target.writer, stderr, options.Operation, envelope, false); err != nil {
+	if err := writeResult(target.writer, stderr, program, options.Operation, envelope, false); err != nil {
 		target.abort()
 		return err
 	}

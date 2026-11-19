@@ -107,14 +107,20 @@ func TestRunRefusesMissingConfiguration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			result := runCLI(t, http.StatusOK, readEnvelope, arguments, nil)
 
-			if result.status == 0 {
-				t.Error("status = 0, want non-zero")
+			// The status and the message are asserted as a pair, because each one alone
+			// passes while the combination is wrong. A refusal that prints `usage:` and
+			// exits 1 leaves a script unable to tell "the command line was rejected" from
+			// "the request ran and failed", and an assertion of `status != 0` cannot see
+			// that. Every case here is refused before anything is sent, so every case
+			// must exit 2.
+			if result.status != 2 {
+				t.Errorf("status = %d, want 2", result.status)
 			}
 			if result.stdout != "" {
 				t.Errorf("stdout = %q, want empty", result.stdout)
 			}
-			if result.stderr == "" {
-				t.Error("stderr is empty, want a usage message")
+			if !strings.Contains(result.stderr, "usage:") {
+				t.Errorf("stderr = %q, want a message containing %q", result.stderr, "usage:")
 			}
 		})
 	}

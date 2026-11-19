@@ -33,9 +33,10 @@ SHELL := /bin/bash
 # over a `?=` default, and a plain `:=` would silently ignore it.
 BIN_DIR ?= bin
 TMP_DIR ?= .tmp
-
 SERVER_PKG := ./cmd/connector-server
 NODE_PKG := ./cmd/connector-node
+CLI_PKG := ./cmd/connector-cli
+
 
 # Component package groups. A component-level test target runs only the packages
 # that belong to that component, so a change to the Node can be verified without
@@ -122,14 +123,14 @@ PACKAGE_NODE_KEY_ID ?= bundle-caller
 UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
-
-.PHONY: help build build-server build-node vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile package package-windows
+.PHONY: help build build-server build-node build-cli vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile package package-windows
 
 help:
 	@echo "Targets:"
-	@echo "  build           Build connector-server and connector-node into $(BIN_DIR)/"
+	@echo "  build           Build connector-server, connector-node and connector-cli into $(BIN_DIR)/"
 	@echo "  build-server    Build only connector-server into $(BIN_DIR)/"
 	@echo "  build-node      Build only connector-node into $(BIN_DIR)/"
+	@echo "  build-cli       Build only connector-cli into $(BIN_DIR)/"
 	@echo "  vet             Run go vet on every package"
 	@echo "  test            Run the unit test suite"
 	@echo "  test-unit       Run the unit test suite"
@@ -174,7 +175,7 @@ help:
 	@echo "  PACKAGE_GOOS        Target OS. Default this host"
 	@echo "  PACKAGE_GOARCH      Target architecture. Default this host"
 
-build: build-server build-node
+build: build-server build-node build-cli
 
 build-server:
 	@mkdir -p $(BIN_DIR)
@@ -183,6 +184,10 @@ build-server:
 build-node:
 	@mkdir -p $(BIN_DIR)
 	go build -o $(BIN_DIR)/connector-node $(NODE_PKG)
+
+build-cli:
+	@mkdir -p $(BIN_DIR)
+	go build -o $(BIN_DIR)/connector-cli $(CLI_PKG)
 
 vet:
 	go vet ./...
