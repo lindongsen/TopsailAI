@@ -140,7 +140,10 @@ def test_unselected_rows_cost_no_metadata_read(task_dir, monkeypatch):
 
     log_files.discover_workspace_log_files(str(task_dir), session_ids=["alpha"])
 
-    assert [call.args[1] for call in spy.call_args_list] == ["alpha"]
+    # No read may name an unselected session. The selected session costs two
+    # reads: its own record, plus the task row's own record, which that row
+    # needs for its own hostname and completion marker.
+    assert [call.args[1] for call in spy.call_args_list] == ["alpha", "alpha"]
 
 
 def test_include_completed_still_applies_inside_the_subset(task_dir):

@@ -78,14 +78,16 @@ def _resolve_owner(row: Dict[str, Any],
 
     Every agent process starts its own control server keyed by its own PID, so
     a live task agent owns ``{session}.{task_pid}.session.sock`` exactly as a
-    session process owns its own. The row's own PID is therefore the primary
-    owner, and the parent session PID is only a fallback for a task row whose
-    own channel is absent.
+    session process owns its own. The row's own PID is therefore the only owner:
+    a row describes the process that wrote its log file, and a different process
+    reports different counters, so substituting the parent would publish another
+    agent's data under this row's identity.
 
-    *is_task* describes the process that answered, not the row kind. A task row
-    answered by its parent reports ``False`` because the parent is a session
-    process, and a task row that shares its parent's process reports ``False``
-    for the same reason.
+    The one exception is a task row whose own PID equals its parent's PID, which
+    is a subagent running inside the session process; there the two identities
+    name the same process, so the session answers.
+
+    *is_task* describes the process that answered, not the row kind.
     """
     from cli_topsailai.runtime_control import build_socket_path
 
@@ -95,20 +97,13 @@ def _resolve_owner(row: Dict[str, Any],
     # inside the session process, so the answering process is the session.
     own_is_task = bool(row.get("is_task")) and own_pid != parent_pid
     file_session_id = _file_session_id(row.get("session_id"))
-    if file_session_id is not None:
-        for candidate, candidate_is_task in (
-            (own_pid, own_is_task),
-            (parent_pid, False),
-        ):
-            if candidate is None:
-                continue
-            socket_path = build_socket_path(
-                task_dir, file_session_id, str(candidate)
-            )
-            if _is_socket(socket_path):
-                return candidate, candidate_is_task
-    # No channel exists for either candidate. Report the row's own PID so the
-    # failure names the process the row actually describes.
+    if file_session_id is not None and own_pid is not None:
+        socket_path = build_socket_path(task_dir, file_session_id, str(own_pid))
+        if _is_socket(socket_path):
+            return own_pid, own_is_task
+    # No channel exists for this row's own process. Report that PID so the
+    # failure names the process the row actually describes, instead of silently
+    # answering with a different process's data.
     if own_pid is not None:
         return own_pid, own_is_task
     if parent_pid is not None:

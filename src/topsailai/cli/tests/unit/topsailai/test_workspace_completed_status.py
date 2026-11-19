@@ -122,7 +122,6 @@ def test_input_remains_input(session_row, tmp_path):
 
 @pytest.mark.parametrize("changes", [
     {"filename": "sample.5678.child.task.stdout", "pid": 5678, "is_task": True},
-    {"filename": "sample.1234.child.task.stdout", "is_task": True},
     {"filename": "sample.1234.stdout"},
     {"session_pid": 4321},
 ])
@@ -132,6 +131,23 @@ def test_task_generic_or_mismatched_row_not_overridden(session_row, tmp_path, ch
     session_row.update(changes)
     formatting.enrich_workspace_rows([session_row], str(tmp_path))
     assert session_row["workspace_status"] == "running"
+
+
+def test_task_row_owning_its_filename_is_marked_from_its_own_record(session_row, tmp_path):
+    """A finished worker is a finished process even while its session runs.
+
+    A task agent writes ``{session}.{pid}[.{task_id}].task.stdout`` and its own
+    ``{session}.{pid}.session.meta``, so a task row whose filename carries its
+    own PID has a record of its own. That record decides the row's completion,
+    because the parent session may still be running.
+    """
+    write_meta(tmp_path, completed())
+    session_row.update(
+        filename="sample.1234.child.task.stdout", pid=1234, is_task=True,
+    )
+    formatting.enrich_workspace_rows([session_row], str(tmp_path))
+    assert session_row["workspace_completed"] is True
+    assert session_row["workspace_status"] == "idle"
 
 
 @pytest.mark.parametrize("session_id", [None, "../unsafe", "(temp)"])

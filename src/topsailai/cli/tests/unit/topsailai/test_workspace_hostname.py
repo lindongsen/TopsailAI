@@ -101,16 +101,31 @@ def test_reader_failure_logged_and_empty(tmp_path, monkeypatch, caplog, error):
 
 
 @pytest.mark.parametrize("parents", [[], [123], [123, 789]])
-def test_task_owner_uniqueness(tmp_path, monkeypatch, parents):
-    """Never use a child PID, and never choose among ambiguous parents."""
+def test_task_row_reads_its_own_record(tmp_path, monkeypatch, parents):
+    """A task row reads the record of the process that wrote its log file.
+
+    The parent session is a different process, so its record describes the
+    parent. A worker's own record is the only record that can describe the
+    worker, and an ambiguous parent must never be guessed.
+    """
     write_meta(tmp_path, hostname="parent-host")
-    write_meta(tmp_path, pid=456, hostname="wrong-child-host")
+    write_meta(tmp_path, pid=456, hostname="child-host")
     reader = Mock(wraps=session_meta.read_session_meta)
     monkeypatch.setattr(session_meta, "read_session_meta", reader)
     rows = [row(pid) for pid in parents] + [row(456, task=True)]
     formatting.enrich_workspace_rows(rows, str(tmp_path))
-    assert rows[-1]["hostname"] == ("parent-host" if len(parents) == 1 else "")
-    assert all(call.args[2] != 456 for call in reader.call_args_list)
+    assert rows[-1]["hostname"] == "child-host"
+    assert any(call.args[2] == 456 for call in reader.call_args_list)
+
+
+def test_task_row_without_its_own_record_stays_empty(tmp_path):
+    """A task row never borrows the parent's record when its own is absent."""
+    write_meta(tmp_path, hostname="parent-host")
+    rows = [row(123), row(456, task=True)]
+    formatting.enrich_workspace_rows(rows, str(tmp_path))
+    assert rows[0]["hostname"] == "parent-host"
+    assert rows[1]["hostname"] == ""
+    assert rows[1]["_workspace_session_meta_data"] is None
 
 
 def test_discovery_snapshot_reused_and_refresh_rereads(tmp_path, monkeypatch):
@@ -120,17 +135,20 @@ def test_discovery_snapshot_reused_and_refresh_rereads(tmp_path, monkeypatch):
     for name in ("sample.123.session.stdout", "sample.123.session.stderr",
                  "sample.456.child.task.stdout"):
         (directory / name).touch()
+    write_meta(tmp_path, pid=456, hostname="child-first")
     reader = Mock(wraps=session_meta.read_session_meta)
     monkeypatch.setattr(session_meta, "read_session_meta", reader)
     rows = log_files.discover_workspace_log_files(str(directory))
     formatting.enrich_workspace_rows(rows, str(tmp_path))
-    assert reader.call_count == 1
-    assert [r["hostname"] for r in rows] == ["first"] * 3
+    # One read per distinct process: the session process and the task process.
+    assert reader.call_count == 2
+    assert [r["hostname"] for r in rows] == ["first", "first", "child-first"]
     write_meta(tmp_path, hostname="second")
+    write_meta(tmp_path, pid=456, hostname="child-second")
     rows = log_files.discover_workspace_log_files(str(directory))
     formatting.enrich_workspace_rows(rows, str(tmp_path))
-    assert reader.call_count == 2
-    assert all(r["hostname"] == "second" for r in rows)
+    assert reader.call_count == 4
+    assert [r["hostname"] for r in rows] == ["second", "second", "child-second"]
 
 
 def test_complete_name_cache_does_not_suppress_hostname(tmp_path, monkeypatch):

@@ -219,8 +219,13 @@ def test_task_row_queries_its_own_pid_when_it_owns_a_channel(tmp_path):
     assert record["is_task"] is True
 
 
-def test_task_row_falls_back_to_the_parent_session_pid(tmp_path):
-    """A task row without its own channel is read through its parent session."""
+def test_task_row_never_borrows_the_parent_session_channel(tmp_path):
+    """A task row is answered only by its own process, never by its parent.
+
+    The parent is a different process, so its counters describe the parent. A
+    task row whose own channel is absent reports that absence against its own
+    PID instead of publishing another agent's data under this row's identity.
+    """
     make_socket(str(tmp_path), "sample", 900)
     probed = []
 
@@ -234,11 +239,13 @@ def test_task_row_falls_back_to_the_parent_session_pid(tmp_path):
         str(tmp_path), sender=send,
     )
 
-    assert probed == [os.path.join(str(tmp_path), "sample.900.session.sock")]
+    assert probed == []
     record = collected["sample.901.task.stdout"]
-    assert record["state"] == "ok"
-    assert record["pid"] == 900
-    assert record["is_task"] is False
+    assert record["state"] == "unavailable"
+    assert record["error_code"] == "endpoint_missing"
+    assert record["pid"] == 901
+    assert record["is_task"] is True
+    assert record["data"] is None
 
 
 def test_task_row_without_any_channel_reports_its_own_pid(tmp_path):

@@ -6,17 +6,30 @@ Author: DawsonLin
 from cli_topsailai import session_meta
 
 
+def _row_owns_filename(row: dict) -> bool:
+    """Report whether the row's filename was written by the row's own PID.
+
+    A session process writes ``{session}.{pid}.session.stdout`` and a task agent
+    writes ``{session}.{pid}[.{task_id}].task.stdout``. Both files are created
+    by the process whose PID they carry, so the filename is the evidence that
+    ties a row to one exact metadata record. A row whose filename does not carry
+    its own PID has no record of its own and must not borrow another process's.
+    """
+    sid, pid = row.get("session_id"), row.get("pid")
+    filename = row.get("filename")
+    if not isinstance(sid, str) or not sid or type(pid) is not int or pid <= 0:
+        return False
+    if not isinstance(filename, str):
+        return False
+    prefix = "topsailai" if sid == "(temp)" else sid
+    if row.get("is_task"):
+        return filename.startswith(f"{prefix}.{pid}.") and filename.endswith(".task.stdout")
+    return filename in (f"{prefix}.{pid}.session.stdout",
+                        f"{prefix}.{pid}.session.stderr")
+
+
 def enrich_workspace_hostnames(files: list[dict], home: str) -> None:
     """Reuse discovery snapshots and read each exact session at most once."""
-    owners = {}
-    for row in files:
-        sid, pid = row.get("session_id"), row.get("pid")
-        filename_sid = "topsailai" if sid == "(temp)" else sid
-        if (not row.get("is_task") and type(pid) is int and pid > 0
-                and row.get("filename") in (
-                    f"{filename_sid}.{pid}.session.stdout", f"{filename_sid}.{pid}.session.stderr")):
-            owners.setdefault(sid, set()).add(pid)
-
     cache = {}
     for row in files:
         snapshot = row.get("_workspace_meta_snapshot")
@@ -27,17 +40,7 @@ def enrich_workspace_hostnames(files: list[dict], home: str) -> None:
         sid, pid = row.get("session_id"), row.get("pid")
         row["hostname"] = ""
         row["_workspace_session_meta_data"] = None
-        if row.get("is_task"):
-            candidates = owners.get(sid, set())
-            pid = (next(iter(candidates)) if len(candidates) == 1 else None)
-            # Discovery retains ambiguity even when filtering removes a parent.
-            if "_workspace_meta_pid" in row:
-                pid = row["_workspace_meta_pid"]
-        elif row.get("filename") not in (
-                f"{'topsailai' if sid == '(temp)' else sid}.{pid}.session.stdout",
-                f"{'topsailai' if sid == '(temp)' else sid}.{pid}.session.stderr"):
-            continue
-        if not isinstance(sid, str) or not sid or type(pid) is not int or pid <= 0:
+        if not _row_owns_filename(row):
             continue
         key = (sid, pid)
         if key not in cache:

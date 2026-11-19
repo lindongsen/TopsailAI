@@ -77,6 +77,22 @@ _RL_PROMPT_END_IGNORE = "\x02"
 # option that would add a second contract to document and test.
 WATCH_REFRESH_INTERVAL_SECONDS = 5
 
+# Lookup-record keys that describe the session rather than one process inside
+# it. A task row is a different process in the same session, so it may receive
+# only these keys: the remaining fields are the session process's own lifetime,
+# liveness, model and usage counters, and publishing them on a worker row would
+# report the manager's numbers as the worker's own. A worker's real model is
+# available from its own ``metafile`` record instead.
+SESSION_SCOPED_RECORD_KEYS = frozenset({
+    "session_id",
+    "session_name",
+    "category",
+    "task",
+    "project_workspace",
+    "pwd",
+    "topsailai_home",
+})
+
 
 def _make_readline_safe_prompt(prompt: str) -> str:
     """Wrap ANSI escape sequences so readline ignores them for width calculations.
@@ -1579,15 +1595,24 @@ def _workspace_json_item(file_info: dict, index: int,
         "metafile": metafile,
         "runtime": runtime,
     }
-    # The lookup record describes the same session's live state and is already
-    # in memory, so it is merged into the item body instead of being nested.
-    # The keys the body already owns are skipped: three of them carry identical
-    # values, while the lookup's ``status`` is coarser and capitalized, so it is
-    # exposed as ``status_raw`` rather than overwriting the finer-grained body
-    # value. When the lookup failed there is no record, so these fields stay
-    # absent instead of reporting a misleading ``null``.
+    # The lookup record describes the session's live state and is already in
+    # memory, so it is merged into the item body instead of being nested. A task
+    # row is a different process inside the same session, so it receives only the
+    # session-scoped keys: the record's lifetime, liveness and usage counters
+    # belong to the session process, and merging them would publish the
+    # manager's numbers as the worker's own. The keys the body already owns are
+    # skipped: three of them carry identical values, while the lookup's
+    # ``status`` is coarser and capitalized, so it is exposed as ``status_raw``
+    # rather than overwriting the finer-grained body value. When the lookup
+    # failed there is no record, so these fields stay absent instead of
+    # reporting a misleading ``null``.
     record = file_info.get("_workspace_session_record")
     if isinstance(record, dict):
+        if is_task:
+            record = {
+                key: value for key, value in record.items()
+                if key in SESSION_SCOPED_RECORD_KEYS
+            }
         for key, value in record.items():
             if key not in item:
                 item[key] = value

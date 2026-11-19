@@ -209,7 +209,9 @@ def test_complete_cache_still_reads_noncompleted_metadata(task_dir, monkeypatch,
     rows = log_files.discover_workspace_log_files(str(task_dir))
 
     assert len(rows) == 3
-    assert reader.call_count == 1
+    # One shared read for the parent record plus one read of the task row's own
+    # record, which the row needs for its own hostname and completion marker.
+    assert reader.call_count == 2
 
 
 def test_completed_status_is_rechecked_for_each_parent_pid(task_dir, monkeypatch):
@@ -231,7 +233,9 @@ def test_completed_status_is_rechecked_for_each_parent_pid(task_dir, monkeypatch
 
     assert len(rows) == 3
     assert {row["pid"] for row in rows if not row["is_task"]} == {123}
-    assert reader.call_count == 2
+    # Two parent records plus the task row's own record: the parent decides
+    # completion, the own record supplies the row's hostname and marker.
+    assert reader.call_count == 3
 @pytest.mark.parametrize("reverse", [False, True])
 def test_ambiguous_task_parent_kept_in_both_directory_orders(task_dir, monkeypatch, reverse):
     """Keep ambiguous tasks regardless of conflicting parent metadata or scan order."""
@@ -290,7 +294,9 @@ def test_cache_does_not_hide_noncompleted_rows(task_dir, monkeypatch, cached):
     rows = log_files.discover_workspace_log_files(str(task_dir))
 
     assert len(rows) == 3
-    assert reader.call_count == 1
+    # The parent record decides completion and the task row's own record
+    # supplies its hostname and marker, so the session costs two reads.
+    assert reader.call_count == 2
 
 
 def test_each_parent_pid_is_checked_without_session_cache_shortcut(task_dir, monkeypatch):
@@ -312,7 +318,9 @@ def test_each_parent_pid_is_checked_without_session_cache_shortcut(task_dir, mon
 
     assert len(rows) == 3
     assert {row["pid"] for row in rows if not row["is_task"]} == {123}
-    assert reader.call_count == 2
+    # Two parent records plus the task row's own record: the parent decides
+    # completion, the own record supplies the row's hostname and marker.
+    assert reader.call_count == 3
 
 
 def test_all_named_completed_rows_are_filtered(task_dir, monkeypatch):
