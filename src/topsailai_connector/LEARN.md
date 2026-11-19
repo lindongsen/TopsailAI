@@ -908,3 +908,66 @@ AI reflection archive, not here.
   correctly refused a path that does not exist. That failure looked like a
   product defect too. Write a `.cmd` file and run the file, rather than composing
   a `cmd` command line inside an ssh argument.
+
+## A deny list that answers by identity protects the file, not the secret
+
+- The executable deny entry was written as the mitigation for an embedded
+  `tunnel_token`, and it works exactly as written: `file.read` on the running
+  binary returned `denied` and `file.list` omitted it. A byte-identical **copy**
+  beside it returned `rc=0` and 262144 bytes, because a copy is a different inode
+  and the deny list compares identity.
+- The secret is not in the first 256 KiB. It sits near offset 4.28 MB, so a casual
+  read of a copy returns bytes that look harmless and the defect survives a
+  verification round that only reads the beginning. `grep -abo` on the local
+  artifact located the offsets, and `--offset`/`--length` then read exactly that
+  region back through the fence, which is what turned a suspicion into a measured
+  remote recovery of both the node secret and the `tunnel_token`.
+- The escalation is the part that matters: the `tunnel_token` is Server-wide, so one
+  node credential becomes a credential for every Node. A mitigation that protects a
+  file while the secret is copyable is a mitigation for a different threat than the
+  one the document describes.
+- Ask of any identity-based rule: what happens to a copy? A copy, a backup, a
+  downloaded artifact and a `.bak` sibling are all different inodes, and all of them
+  are served. The rule answers "is this the object I know", not "does this object
+  contain what I am protecting".
+- State the limitation where the mitigation is stated. The design document said the
+  deny entry "is what keeps the embedded secret from becoming a remotely
+  extractable one", which reads as complete and is not. A reviewer who trusts that
+  sentence stops looking.
+
+## A platform difference in `Lstat` changes the reported type, not the fence
+
+- On Windows `os.Lstat` on a junction sets `ModeIrregular`, never `ModeSymlink`, so
+  `typeOf` fell through to `unknown` and `IsSymlink` stayed false. The same code on
+  Linux reports `symlink` correctly, because `Lstat` sets `ModeSymlink` there.
+- The fence was unaffected: `file.read` and `file.list` through the junction were
+  `denied` on both platforms. Only the metadata was wrong, which is why the severity
+  is low and why no security test noticed.
+- A probe binary built for `windows/amd64` and run on the host is what produced the
+  cause: `mode=?rw-rw-rw- isSymlink=false ModeIrregular=true`. Reading the Go source
+  would have shown a correct-looking `ModeSymlink` test; only the platform's answer
+  showed that the test never matches there.
+- A test that asserts `IsSymlink` on Linux cannot cover this. The property differs by
+  platform, so the assertion has to run on the platform where it differs, or the
+  document has to state the difference.
+- The design document's Windows table said "a junction is a directory symlink",
+  which is true of the fence and false of the metadata. A table that describes
+  behaviour must say which behaviour: refusing, or reporting.
+
+## A cleanup must remove a reparse point before the directory that contains it
+
+- `win-scope` contained a junction to `C:\Windows` at depth 4 and a junction to a
+  plain outside directory at depth 1. `Remove-Item -Recurse` follows a reparse point,
+  so deleting the tree in one call was one retry away from deleting the Windows
+  directory.
+- The order that worked: enumerate every reparse point under the tree, sort by path
+  length descending, and remove each with `cmd /c rmdir`, which removes the link and
+  does not follow it. Only then delete the tree.
+- Verify by measuring what must survive, not by reading the script's own output. The
+  count of `C:\Windows\System32` entries was 4099 before and 4099 after, which is the
+  evidence that the junction target was untouched. A script that only asserts its own
+  artifacts are gone cannot distinguish "cleaned up" from "deleted too much".
+- The junction to `C:\Windows` also contained a second reparse point inside it
+  (`Content.IE5`), which appeared in the enumeration because the walk followed the
+  first junction. Removing the outer link first made the inner one unreachable, so
+  the enumeration must be re-read after each removal rather than trusted once.

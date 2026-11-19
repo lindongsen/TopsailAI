@@ -970,6 +970,16 @@ The deny-list comparison is the one place where platform behaviour changes a
 decision rather than a rule: on Windows a path comparison must be case-insensitive,
 otherwise a deny-list entry for `config.yaml` is bypassed by `CONFIG.YAML`.
 
+A junction is refused like a symlink, but it is not **reported** like one. On Windows
+`os.Lstat` on a junction sets `ModeIrregular`, never `ModeSymlink`, so `file.stat`
+returns `type unknown` and `is_symlink false` with `size 0`, and `link_target` is
+never populated. Measured on the Windows host on a junction to a plain outside
+directory and on a junction at depth 4 to `C:\Windows`: both reported `unknown`,
+while `file.read` and `file.list` through them were `denied`. The fence holds; the
+metadata is wrong. On Linux the same code reports `symlink` correctly, because
+`os.Lstat` sets `ModeSymlink` there. Recorded as
+`issues/issue-a-junction-is-reported-as-unknown-on-windows.md`.
+
 ### Scope to directory mapping
 
 A scope name maps to a directory. The mapping is validated once at startup, and the
@@ -1326,6 +1336,18 @@ launcher typed — a relative path, a symlink, or a bare name resolved through
 `PATH` — and the deny list compares by file identity, so a name that does not
 resolve to the running file would not match.
 
+The deny entry protects the running file, not the secret. A **copy** of the binary is
+a different inode, so it is not refused, and a caller with a valid node credential
+reads the copy in full. Measured on the Windows host with a byte-identical copy
+beside the running file: `file.read` on the running file returned `denied`, and
+`file.read` on the copy returned `rc=0`; reading the region at offset 4.28 MB
+recovered both the node secret and the `tunnel_token`. The escalation is from one
+node credential to every Node on the Server, because the `tunnel_token` is
+Server-wide. This is recorded as
+`issues/issue-a-copy-of-the-binary-leaks-the-tunnel-token.md` with the options and
+their costs; no option is chosen, because the choice trades a per-request hash
+against a Server-wide blast radius.
+
 ### What embedding does not protect
 
 `-X` stores the value as plain text in the binary's data section, so
@@ -1606,6 +1628,10 @@ request path.
       list, so a scope that contains the binary cannot serve it. The entry uses
       `os.Executable()`, not `os.Args[0]`, because the deny list compares by file
       identity.
+- [ ] A reviewer does not read that deny entry as protecting the secret. It refuses
+      the running file only; a copy is a different inode and is served in full,
+      which leaks the node secret and the Server-wide `tunnel_token`. Measured on
+      Windows; see `issues/issue-a-copy-of-the-binary-leaks-the-tunnel-token.md`.
 - [ ] The executable deny entry is conditional on the token being present, so a
       normal build still serves its own install directory.
 - [ ] An embedded policy is decoded by the same strict decoder as the policy file,
