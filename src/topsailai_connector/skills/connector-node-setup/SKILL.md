@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
 description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, or how to find the node id, key id and secret after starting the Node. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management and regeneration.
-version: 1.2.0
+version: 1.3.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -167,6 +167,13 @@ Two consequences, and both bite in practice:
   user's profile exposes them unless that directory is denied. The Node denies its
   own config directory by resolved path, so the protection follows the real
   location rather than a guessed one.
+- **A copy of the config directory is not protected.** The deny rule answers by
+  identity, so it refuses the real directory and serves a copy of it. If you copy
+  the config directory before an upgrade, or a script leaves a
+  `topsailai-connector.bak-<date>` sibling, that copy sits inside a scope and a
+  caller with a valid node credential reads its `credentials.yaml` in full. Keep a
+  backup outside every scope, or delete it once the upgrade is confirmed. See
+  `issues/issue-a-copy-of-the-config-directory-is-served.md`.
 
 The directory is created with mode `0700` and the identity file with `0600`. An
 existing directory is not re-permissioned, because changing the mode of a directory

@@ -555,3 +555,57 @@ sides.
 A document that tells the reader to copy a line the product no longer prints is the
 same class of defect as the original: the reader follows the document, not the
 binary.
+
+## Finding: a copy of the config directory is served in full
+
+The deny list refuses the Node's own config directory by identity, so the real
+directory and everything inside it are refused. A **copy** of that directory is a
+different inode, so it is not refused, and a caller with a valid node credential
+reads the copy in full.
+
+Measured on the Windows host with the drive-root Node, scope `c` covering `C:\`:
+
+```
+file.list  Users/Administrator/AppData/Roaming
+  -> topsailai-connector.bak-bearer-20261111   dir   0
+     (the real topsailai-connector is correctly omitted)
+
+file.read  .../topsailai-connector.bak-bearer-20261111/identity
+  -> node_3var5wpfhv5w7h7xsw7hdnhffi.wo42vslxitw3472xjvo5vegyvk4mwp3elddiqcit3m3jbhxvo5ca
+  rc=0
+```
+
+That copy held a pre-HMAC bearer credential, which is dead: using it returns
+`unauthenticated`. The mechanism is not limited to that copy, so the live
+`credentials.yaml` was copied into the backup directory and read back through the
+fence:
+
+```
+file.read  .../topsailai-connector.bak-bearer-20261111/credentials.yaml
+  -> version: 1
+     credentials:
+         - key_id: key_ncofi1iiwzmd-vphaz4xuq
+           secret: 9FakrYd6-B1UFcAGNDvs6N-nYUyTuUUNuVtPMPNWcik
+  rc=0
+```
+
+That is the operator's live secret, and it never expires. The copy was removed after
+the measurement; the backup directory now holds only `identity`.
+
+The behaviour is a deliberate consequence of answering by identity rather than by
+name, and `docs/permission-design.md` states it for a look-alike that holds nothing.
+It does not cover the case that occurs in operation: an operator copies the config
+directory before an upgrade, or a packaging script leaves a `.bak-<date>` sibling,
+and the copy holds a real credential. The rule then protects the original and serves
+the copy.
+
+Recorded as `issues/issue-a-copy-of-the-config-directory-is-served.md` with four
+options and no decision, because every option trades a false refusal against a real
+leak. The skill now warns the operator, which is the only option with no false
+refusal.
+
+The detection gap is worth stating: no test creates a copy of the config directory,
+the design document presents the look-alike behaviour as settled, and the skill did
+not mention backups at all before this change. A hazard that is documented as a
+consequence reads as reviewed, and a reviewer who reads it as reviewed does not ask
+what happens when the look-alike holds a credential.
