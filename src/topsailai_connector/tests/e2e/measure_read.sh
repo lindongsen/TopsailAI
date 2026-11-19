@@ -122,7 +122,24 @@ peak_rss_kb() {
 	[ -n "$value" ] || fail "peak RSS for pid $pid was empty"
 	echo "$value"
 }
-
+# wire_bytes prints the bytes one process has written to its file descriptors.
+#
+# wchar is the count of bytes written, including bytes written to a socket, so the
+# delta across one read is the protocol bytes that process put on the wire. It is
+# the only per-process wire counter the kernel exposes without a packet capture, and
+# a packet capture would need privileges the harness must not require.
+#
+# The ratio against the content size is the number the PRD bounds at 1.10. A ratio
+# near 1.33 means the payload is still base64 encoded on that hop, which is a
+# different defect from a slow read and must not be reported as one.
+wire_bytes() {
+	local pid=$1
+	local value
+	value=$(awk '/^wchar:/ {print $2}' "/proc/$pid/io" 2>/dev/null) ||
+		fail "could not read wire bytes for pid $pid"
+	[ -n "$value" ] || fail "wire bytes for pid $pid was empty"
+	echo "$value"
+}
 CLK_TCK=$(getconf CLK_TCK)
 [ -n "$CLK_TCK" ] || fail "could not determine CLK_TCK"
 
@@ -159,9 +176,11 @@ measure_one() {
 	size_bytes=$(wc -c <"$source")
 	[ "$size_bytes" -gt 0 ] || fail "the generated file is empty"
 
-	local server_cpu_before node_cpu_before
+	local server_cpu_before node_cpu_before server_wire_before node_wire_before
 	server_cpu_before=$(cpu_seconds "$E2E_SERVER_PID")
 	node_cpu_before=$(cpu_seconds "$E2E_NODE_PID")
+	server_wire_before=$(wire_bytes "$E2E_SERVER_PID")
+	node_wire_before=$(wire_bytes "$E2E_NODE_PID")
 
 	echo "measure: reading $size_bytes bytes through the CLI" >&2
 	local start_ns end_ns
@@ -176,16 +195,25 @@ measure_one() {
 		fail "the read failed: $(cat "$WORK/measure-cli.err")"
 	end_ns=$(date +%s%N)
 
-	local server_cpu_after node_cpu_after
+	local server_cpu_after node_cpu_after server_wire_after node_wire_after
 	server_cpu_after=$(cpu_seconds "$E2E_SERVER_PID")
 	node_cpu_after=$(cpu_seconds "$E2E_NODE_PID")
+	server_wire_after=$(wire_bytes "$E2E_SERVER_PID")
+	node_wire_after=$(wire_bytes "$E2E_NODE_PID")
 
 	local wall_seconds server_cpu node_cpu throughput
+	local server_wire_bytes node_wire_bytes server_wire_ratio node_wire_ratio
 	wall_seconds=$(awk -v s="$start_ns" -v e="$end_ns" 'BEGIN { printf "%.3f", (e - s) / 1000000000 }')
 	server_cpu=$(awk -v a="$server_cpu_before" -v b="$server_cpu_after" 'BEGIN { printf "%.3f", b - a }')
 	node_cpu=$(awk -v a="$node_cpu_before" -v b="$node_cpu_after" 'BEGIN { printf "%.3f", b - a }')
 	throughput=$(awk -v bytes="$size_bytes" -v wall="$wall_seconds" \
 		'BEGIN { if (wall <= 0) { print "0.00" } else { printf "%.2f", (bytes / 1048576) / wall } }')
+	server_wire_bytes=$((server_wire_after - server_wire_before))
+	node_wire_bytes=$((node_wire_after - node_wire_before))
+	server_wire_ratio=$(awk -v w="$server_wire_bytes" -v b="$size_bytes" \
+		'BEGIN { printf "%.4f", w / b }')
+	node_wire_ratio=$(awk -v w="$node_wire_bytes" -v b="$size_bytes" \
+		'BEGIN { printf "%.4f", w / b }')
 
 	# The content check is a byte comparison, not a size comparison. A truncated
 	# transfer of the right length is not a correct transfer, and only cmp can tell
@@ -207,6 +235,10 @@ measure_one() {
 		echo "throughput_mib_s=$throughput"
 		echo "server_cpu_seconds=$server_cpu"
 		echo "node_cpu_seconds=$node_cpu"
+		echo "server_wire_bytes=$server_wire_bytes"
+		echo "node_wire_bytes=$node_wire_bytes"
+		echo "server_wire_ratio=$server_wire_ratio"
+		echo "node_wire_ratio=$node_wire_ratio"
 		echo "server_rss_baseline_kb=$SERVER_RSS_BASELINE"
 		echo "node_rss_baseline_kb=$NODE_RSS_BASELINE"
 		echo "server_peak_rss_kb=$(peak_rss_kb "$E2E_SERVER_PID")"
