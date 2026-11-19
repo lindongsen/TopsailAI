@@ -152,11 +152,11 @@ see the effect.
   primary action may already have exhausted.
 - A follow-up step is interactive-only. The standalone surface keeps one command
   per action, so a script never receives extra output it did not ask for.
-- Four interactive steps arm a live tail: entering a session, `send`, `btw` and
-  `start`. They share one arm-or-snapshot helper, so the four cannot drift into
-  four copies of the capability check, the announcement or the degradation
-  wording. `interrupt` is deliberately excluded, because stopping a turn is not a
-  reason to expect new output.
+- Five interactive steps arm a live tail: entering a session, `send`, `btw`,
+  `start` and a completed `resume`. They share one arm-or-snapshot helper, so the
+  five cannot drift into five copies of the capability check, the announcement or
+  the degradation wording. `interrupt` is deliberately excluded, because stopping
+  a turn is not a reason to expect new output.
 - The tail's trailing line count is a per-step budget, not one global value.
   Entering a session and `start` read the REPL budget, because the operator is
   looking at a session for the first time and wants its recent context. `send` and
@@ -200,6 +200,35 @@ see the effect.
 - A launched session whose generation is empty is not followed, because liveness
   was never verified and the Endpoint would refuse the stream. The diagnostic names
   the next collection instead of arming a tail that fails on the next prompt.
+- A completed `resume` enters the resumed session scope and then arms the same
+  live tail as `logs -f`, so the operator does not type `cd` afterwards. The entry
+  is a convenience layered on the durable receipt, never a second authority: the
+  resume already succeeded, so every failure in the entry is a diagnostic and the
+  scope is left unchanged.
+- The entry happens **after** a forced collection for the resumed endpoint, and
+  that order is the same as `start` and the opposite of `send`. `resume` submits no
+  generation, because it addresses a session whose process is gone, so the
+  generation only exists once a collection proves a process holds the session.
+  Entering earlier would bind an empty generation, which the Endpoint rejects with
+  `generation_required`. The collection is scoped to the one endpoint the resume
+  addressed, because a workspace-wide collection would multiply provider discovery
+  cost by the fleet size for a single resume.
+- The resumed session is located by the cluster resource ID the resume addressed,
+  falling back to the provider session identifier for the `-s` handle form, which
+  has no resource ID at all. A provider session identifier matching several rows is
+  refused rather than resolved to the first row, because entering the wrong session
+  is worse than entering none.
+- No entry happens when the receipt proves the effect was not applied, when the
+  collection fails, when the session is not visible yet, when its generation is
+  unverified, or when the client cannot force a collection. Each case is reported
+  as a diagnostic naming `resume completed`, and the accepted resume still stands.
+  A client without the forced-collection seam stays silent, because it cannot mint
+  the generation the entry needs and a diagnostic would make every such resume
+  noisy.
+- A successful entry suppresses the stale-row notice, because the transition
+  clears both row namespaces and telling the operator to re-render a table they
+  have left would describe a step that no longer applies. A skipped entry keeps the
+  notice, because the numbers really are stale.
 - The automatic tail degrades to one bounded snapshot, with a diagnostic that says
   so, when the client cannot stream or the input mode cannot observe a keypress.
   A live tail that cannot be stopped would be worse than a snapshot, and a
