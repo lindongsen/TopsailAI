@@ -265,7 +265,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		// The trigger runner is wired here, at the process boundary, because it is
 		// the only place that may own a child process. The REPL receives it as an
 		// injected dependency, so a test never spawns a real script.
-		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors, TriggerRunner: tui.NewExecTriggerRunner()}
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors, TriggerRunner: tui.NewExecTriggerRunner(), ShellHistory: shellHistorySource(inputHistory)}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	// A negative numeric option is rejected at the boundary rather than passed

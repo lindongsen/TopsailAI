@@ -184,3 +184,17 @@ func wireEditorReaders(options tui.InteractiveOptions, editor *tui.TerminalEdito
 	options.EchoReader = editor
 	return options
 }
+
+// shellHistorySource adapts the resolved store to the REPL's bare-prefix menu.
+//
+// A nil store yields a nil seam, which keeps the usage error instead of turning a
+// bare prefix into a silent no-op. The adapter is a function rather than the store
+// itself because the REPL must not depend on a file: the menu reads whatever the
+// store currently holds, so a command recorded in this session is offered without
+// a reload.
+func shellHistorySource(history *tui.InputHistory) func() []string {
+	if history == nil {
+		return nil
+	}
+	return history.RecentCommands
+}

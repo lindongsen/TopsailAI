@@ -167,6 +167,11 @@ def main() -> int:
     )
     parser.add_argument("--role", choices=("both", "server", "endpoint"), default="both")
     parser.add_argument("--allowlist", type=Path, help="optional command allowlist file for the endpoint")
+    parser.add_argument(
+        "--command-dir",
+        type=Path,
+        help="optional working directory for endpoint-scope command execution",
+    )
     parser.add_argument("--capabilities", type=Path, help="optional capability descriptor file the endpoint declares")
     parser.add_argument("--startup-timeout-seconds", type=float, default=30.0, help="how long to wait for the API port to accept a connection")
     parser.add_argument("--timeout-seconds", type=float, default=0.0, help="stop after this many seconds; zero waits until interrupted")
@@ -321,6 +326,15 @@ def main() -> int:
         if not args.allowlist.is_file():
             parser.error("--allowlist must name an existing file")
         endpoint_env["AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE"] = str(args.allowlist)
+    # A command directory is optional so the same harness can prove the refusal an
+    # operator gets when the endpoint-scope form is not configured. It must be an
+    # existing directory because the Endpoint rejects a missing one at startup.
+    if args.command_dir is not None:
+        if not args.command_dir.is_absolute():
+            parser.error("--command-dir must be an absolute path")
+        if not args.command_dir.is_dir():
+            parser.error("--command-dir must name an existing directory")
+        endpoint_env["AGENT_CLUSTER_ENDPOINT_COMMAND_DIR"] = str(args.command_dir)
     # The CLI loads .env.local from the directory of its own executable, so the
     # isolated configuration must live beside the binary rather than in runtime.
     #

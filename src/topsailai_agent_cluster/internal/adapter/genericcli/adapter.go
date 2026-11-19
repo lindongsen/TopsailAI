@@ -55,6 +55,13 @@ type Config struct {
 	// It is a field rather than a package-level call so a test can observe the
 	// exact argv, directory and executable without running a real program.
 	CommandRunner commandexec.Runner
+	// CommandDir is the Endpoint-local working directory for a command.exec
+	// request that carries no session target. It is Endpoint configuration rather
+	// than provider evidence, because endpoint scope has no session to ask. An
+	// empty value disables that form: the adapter refuses the request instead of
+	// running in the Endpoint process working directory, which is a location the
+	// operator never selected.
+	CommandDir string
 }
 
 type cliRunner interface {

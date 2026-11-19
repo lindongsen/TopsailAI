@@ -76,14 +76,23 @@ func TestAdapterFactoryTakesNoProviderTypeParameter(t *testing.T) {
 	}
 	fn := findFunc(t, file, "registerAdapter")
 	params := fn.Type.Params.List
-	// Three parameter groups: the registry, the store and the configured detail
-	// bound. The count is pinned so a new parameter is a deliberate, reviewable
-	// change rather than something that appears silently; the string check below
-	// is what actually protects the seam this guard exists for.
-	if len(params) != 3 {
-		t.Fatalf("registerAdapter takes %d parameter groups, want 3 (registry, store and detail bound): %s",
+	// Four parameter groups: the registry, the store, the configured detail bound
+	// and the configured command directory. The count is pinned so a new parameter
+	// is a deliberate, reviewable change rather than something that appears
+	// silently; the string check below is what actually protects the seam this
+	// guard exists for.
+	if len(params) != 4 {
+		t.Fatalf("registerAdapter takes %d parameter groups, want 4 (registry, store, detail bound and command directory): %s",
 			len(params), nodeText(fset, source, fn.Type))
 	}
+	// allowedStringParams names the string parameters that are not a provider-type
+	// seam. A filesystem path cannot select an implementation: it is a location the
+	// operator configured, and the adapter uses it as a working directory rather
+	// than branching on it. Every other string parameter is still refused, and a
+	// second string parameter is refused even when it is named here, so the
+	// exception cannot grow into a general allowance.
+	allowedStringParams := map[string]bool{"commandDir": true}
+	stringParams := 0
 	for _, field := range params {
 		// A variadic string is the same seam in a different spelling, so the
 		// ellipsis is unwrapped before the type is inspected.
@@ -92,8 +101,21 @@ func TestAdapterFactoryTakesNoProviderTypeParameter(t *testing.T) {
 			fieldType = ellipsis.Elt
 		}
 		if ident, ok := fieldType.(*ast.Ident); ok && ident.Name == "string" {
-			t.Fatalf("registerAdapter takes a string parameter, so a provider type can select an implementation: %s",
-				nodeText(fset, source, fn.Type))
+			stringParams++
+			if stringParams > 1 {
+				t.Fatalf("registerAdapter takes more than one string parameter, so a provider type can select an implementation: %s",
+					nodeText(fset, source, fn.Type))
+			}
+			allowed := false
+			for _, name := range field.Names {
+				if allowedStringParams[name.Name] {
+					allowed = true
+				}
+			}
+			if !allowed {
+				t.Fatalf("registerAdapter takes a string parameter that is not a configured path, so a provider type can select an implementation: %s",
+					nodeText(fset, source, fn.Type))
+			}
 		}
 		for _, name := range field.Names {
 			if strings.Contains(strings.ToLower(name.Name), "provider") {
@@ -252,7 +274,7 @@ func TestValidateProviderTypeHasNoFallbackPath(t *testing.T) {
 // a provider type either.
 //
 // Guarding the signature alone is not enough: a caller could pass a value through a
-// package-level variable. Requiring the call to have exactly two arguments pins the
+// package-level variable. Requiring the call to have exactly four arguments pins the
 // call site to the same shape as the signature.
 func TestMainRegistersTheAdapterWithoutAProviderType(t *testing.T) {
 	fset := token.NewFileSet()
@@ -275,8 +297,8 @@ func TestMainRegistersTheAdapterWithoutAProviderType(t *testing.T) {
 			return true
 		}
 		calls++
-		if len(call.Args) != 3 {
-			t.Fatalf("registerAdapter is called with %d arguments, want 3 (registry, store and detail bound): %s",
+		if len(call.Args) != 4 {
+			t.Fatalf("registerAdapter is called with %d arguments, want 4 (registry, store, detail bound and command directory): %s",
 				len(call.Args), nodeText(fset, source, call))
 		}
 		return true

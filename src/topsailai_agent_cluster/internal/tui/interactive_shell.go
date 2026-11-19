@@ -108,19 +108,48 @@ func ExecPayload(argv []string) (json.RawMessage, error) {
 	return commandExecPayload(argv)
 }
 
-// runShellCommand executes one allowlisted command in the selected session.
+// runShellCommand executes one allowlisted command for the current scope.
 //
 // The command is one-shot: it submits one command.exec intent, waits for the
 // durable result and renders one bounded snapshot. It never starts a periodic
 // refresh, because the design forbids periodic stdout snapshot polling.
 //
+// Two scopes can run the form, and they differ in what the command addresses.
+// Session scope addresses one session, so the working directory comes from that
+// session's provider evidence. Endpoint scope addresses the machine itself, so
+// the intent carries no target and the Endpoint resolves the working directory
+// from its own configuration. Workspace scope is refused, because a command has
+// to run somewhere and the workspace names no machine: choosing one would run the
+// operator's command on a host they never selected.
+//
+// A bare prefix opens the recent-command menu instead of reporting usage. The
+// scope is checked before the menu is printed, because offering a command that
+// cannot run would make the operator choose a row only to be refused afterwards.
+// An empty answer cancels, which is a decision rather than a failure, so it
+// returns no error and submits nothing.
+//
 // The allowlist decision belongs to the Endpoint policy hook, so this path never
 // decides policy locally. A denied command therefore surfaces as a durable
 // rejected receipt with policy_denied, which is the same evidence an operator
 // would see for any other admission refusal.
-func runShellCommand(parent context.Context, api InteractiveAPI, state *interactiveState, line string, out io.Writer, options InteractiveOptions) error {
-	if err := state.requireUsable(); err != nil {
-		return err
+func runShellCommand(parent context.Context, api InteractiveAPI, state *interactiveState, line string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+	if isBareShellLine(line) {
+		if err := requireShellScope(state); err != nil {
+			return err
+		}
+		// A caller that supplies no history seam keeps the usage error, so the
+		// menu can never become a silent no-op.
+		if options.ShellHistory == nil {
+			return fmt.Errorf("%s", shellUsage)
+		}
+		chosen, err := promptShellHistory(parent, options.ShellHistory(), lines, out, out, options.Color)
+		if err != nil {
+			return err
+		}
+		if chosen == "" {
+			return nil
+		}
+		line = chosen
 	}
 	argv, err := shellArgv(line)
 	if err != nil {
@@ -132,23 +161,11 @@ func runShellCommand(parent context.Context, api InteractiveAPI, state *interact
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	_, _, session, err := findSelected(ctx, api, state)
+	actionRequest, err := shellActionRequest(ctx, api, state, payload, options)
 	if err != nil {
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	actionRequest := ActionRequest{
-		Operation:           protocol.OperationCommandExec,
-		OperationLabel:      "exec",
-		EndpointID:          state.EndpointID,
-		ResourceID:          session.ClusterSessionID,
-		ProviderDisplayName: session.ProviderDisplayName,
-		ProviderSessionID:   session.ProviderSessionID,
-		ProviderGeneration:  session.ProviderGeneration,
-		Payload:             payload,
-		Confirmed:           true,
-		WaitTimeoutMS:       options.WaitTimeoutMS,
-	}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)
 	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {
@@ -165,6 +182,70 @@ func runShellCommand(parent context.Context, api InteractiveAPI, state *interact
 		return fmt.Errorf("command %s status unavailable; use status %s to query; %w", state.commandID, state.commandID, err)
 	}
 	return renderCommandExecResult(out, result, options.Color)
+}
+
+// isBareShellLine reports whether a line is the prefix with no program after it.
+// Trailing whitespace is trimmed, so "!  " is the same request as "!".
+func isBareShellLine(line string) bool {
+	return strings.TrimSpace(line) == shellPrefix
+}
+
+// requireShellScope refuses the prefix form when no machine is selected.
+//
+// It is one function rather than two copies of the message, because the menu path
+// and the command path must refuse for the same reason and with the same wording.
+// A second copy would let the two surfaces drift into describing the same rule
+// differently.
+func requireShellScope(state *interactiveState) error {
+	if state.ClusterSessionID != "" || state.EndpointID != "" {
+		return nil
+	}
+	return fmt.Errorf("%s requires a session or endpoint scope; use cd <number> to select a session row, or cd <endpoint-id> to run the command on an endpoint", shellUsage)
+}
+
+// shellActionRequest builds the command.exec request for the current scope.
+//
+// The selected identity decides the target, and the decision is made here rather
+// than in the caller so both the interactive form and any future caller cannot
+// disagree about which scope addresses what.
+//
+// A selected session addresses that session, and it is revalidated through the
+// same check every scoped command uses, so a command cannot address a session the
+// scope no longer proves. A selected endpoint with no session addresses the
+// machine itself, and it passes the same queryable gate the other endpoint-scope
+// commands apply, so a degraded or offline endpoint is refused before a frame is
+// sent instead of failing later with a transport error that describes the wrong
+// problem. Neither selected means workspace scope, which is refused: a command has
+// to run somewhere, and the workspace names no machine.
+func shellActionRequest(ctx context.Context, api InteractiveAPI, state *interactiveState, payload json.RawMessage, options InteractiveOptions) (ActionRequest, error) {
+	request := ActionRequest{
+		Operation:      protocol.OperationCommandExec,
+		OperationLabel: "exec",
+		EndpointID:     state.EndpointID,
+		Payload:        payload,
+		Confirmed:      true,
+		WaitTimeoutMS:  options.WaitTimeoutMS,
+	}
+	if state.ClusterSessionID != "" {
+		_, _, session, err := findSelected(ctx, api, state)
+		if err != nil {
+			return ActionRequest{}, err
+		}
+		request.ResourceID = session.ClusterSessionID
+		request.ProviderDisplayName = session.ProviderDisplayName
+		request.ProviderSessionID = session.ProviderSessionID
+		request.ProviderGeneration = session.ProviderGeneration
+		return request, nil
+	}
+	if err := requireShellScope(state); err != nil {
+		return ActionRequest{}, err
+	}
+	if err := requireQueryableEndpointByID(ctx, api, state.EndpointID); err != nil {
+		return ActionRequest{}, err
+	}
+	// No resource ID and no generation: the command addresses this machine, so
+	// there is no session identity to carry and no process to prove.
+	return request, nil
 }
 
 // renderCommandExecResult writes the durable receipt and, when the command

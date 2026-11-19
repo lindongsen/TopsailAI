@@ -246,21 +246,99 @@ func TestExecuteInteractiveLineRunsShellCommand(t *testing.T) {
 	}
 }
 
-// TestExecuteInteractiveLineShellRequiresSelection proves the prefix form fails
-// with the same actionable message as other session-scoped commands.
-func TestExecuteInteractiveLineShellRequiresSelection(t *testing.T) {
+// TestExecuteInteractiveLineShellRequiresScope proves the prefix form fails in
+// workspace scope with an actionable message, because a command has to run on a
+// machine and the workspace names none.
+//
+// The form used to be session-only, so this case previously reported a missing
+// selection. It now reports the scope rule instead, because endpoint scope is a
+// valid place to run the same form and a message that asked for a session would
+// hide that.
+func TestExecuteInteractiveLineShellRequiresScope(t *testing.T) {
 	stub := shellStub(map[string]any{"status": string(protocol.StatusFinished)})
 	state := &interactiveState{}
 	var output, diagnostics strings.Builder
 	_, err := executeInteractiveLine(context.Background(), stub, state, "!echo hello", nil, &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
 	if err == nil {
-		t.Fatal("shell line without a selection must fail")
+		t.Fatal("shell line in workspace scope must fail")
 	}
-	if !strings.Contains(err.Error(), "no session selected") {
-		t.Fatalf("error = %q, want a selection hint", err.Error())
+	if !strings.Contains(err.Error(), "requires a session or endpoint scope") {
+		t.Fatalf("error = %q, want a scope hint", err.Error())
 	}
 	if stub.admit != 0 {
-		t.Fatalf("admitted %d commands without a selection", stub.admit)
+		t.Fatalf("admitted %d commands without a scope", stub.admit)
+	}
+}
+
+// TestExecuteInteractiveLineShellRunsInEndpointScope proves the prefix form runs
+// on the Endpoint itself when the operator is in endpoint scope.
+//
+// The intent must carry no target at all. A target would name a session, and the
+// Endpoint would then resolve the working directory from provider evidence for a
+// session that does not exist, so the command would be refused for a reason that
+// has nothing to do with the operator's request.
+func TestExecuteInteractiveLineShellRunsInEndpointScope(t *testing.T) {
+	document := execResultDocument(t, protocol.CommandExecResult{
+		Argv:     []string{"echo", "hello"},
+		ExitCode: 0,
+		Stdout:   "hello\n",
+	})
+	stub := shellStub(map[string]any{
+		"command_id":        "cmd-1",
+		"status":            string(protocol.StatusFinished),
+		"delivery_boundary": string(protocol.DeliverySubmitted),
+		"effect_certainty":  string(protocol.EffectAcknowledged),
+		"provider_response": document,
+	})
+	state := &interactiveState{}
+	state.enterEndpoint(protocol.Endpoint{EndpointID: "endpoint-1", ConnectionState: "online"})
+	var output, diagnostics strings.Builder
+	if _, err := executeInteractiveLine(context.Background(), stub, state, "!echo hello", nil, &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
+		t.Fatalf("executeInteractiveLine: %v", err)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Operation != protocol.OperationCommandExec {
+		t.Fatalf("operation = %q, want %q", intent.Operation, protocol.OperationCommandExec)
+	}
+	if intent.EndpointID != "endpoint-1" {
+		t.Fatalf("endpoint = %q, want endpoint-1", intent.EndpointID)
+	}
+	if intent.Target != nil {
+		t.Fatalf("target = %+v, want no target for an endpoint-scoped command", intent.Target)
+	}
+	var request protocol.CommandExecRequest
+	if err := json.Unmarshal(intent.Payload, &request); err != nil {
+		t.Fatalf("decode intent payload: %v", err)
+	}
+	if len(request.Argv) != 2 || request.Argv[0] != "echo" || request.Argv[1] != "hello" {
+		t.Fatalf("payload argv = %q, want [echo hello]", request.Argv)
+	}
+	if !strings.Contains(output.String(), "stdout:\nhello\n") {
+		t.Fatalf("output missing the snapshot: %q", output.String())
+	}
+}
+
+// TestExecuteInteractiveLineShellRefusesDegradedEndpoint proves the endpoint gate
+// runs before a frame is sent, so a degraded endpoint is reported by its own state
+// instead of by a transport failure that describes the wrong problem.
+func TestExecuteInteractiveLineShellRefusesDegradedEndpoint(t *testing.T) {
+	stub := shellStub(map[string]any{"status": string(protocol.StatusFinished)})
+	stub.endpoints = []protocol.Endpoint{{EndpointID: "endpoint-1", ConnectionState: "degraded"}}
+	state := &interactiveState{}
+	state.enterEndpoint(protocol.Endpoint{EndpointID: "endpoint-1", ConnectionState: "degraded"})
+	var output, diagnostics strings.Builder
+	_, err := executeInteractiveLine(context.Background(), stub, state, "!echo hello", nil, &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
+	if err == nil {
+		t.Fatal("shell line on a degraded endpoint must fail")
+	}
+	if !strings.Contains(err.Error(), "degraded") {
+		t.Fatalf("error = %q, want the degraded state", err.Error())
+	}
+	if stub.admit != 0 {
+		t.Fatalf("admitted %d commands to a degraded endpoint", stub.admit)
 	}
 }
 

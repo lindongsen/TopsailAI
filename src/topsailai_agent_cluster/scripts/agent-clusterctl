@@ -197,6 +197,13 @@ function load_config() {
     # The command allowlist is optional. An unset value disables command.exec
     # entirely, so it is resolved only when the configuration names a file.
     COMMAND_ALLOWLIST_FILE=$(resolve_path "${COMMAND_ALLOWLIST_FILE:-}")
+    # The endpoint-scope command directory is optional in the same way: an unset
+    # value disables the endpoint-scope form of the operator `!` command, and the
+    # Endpoint refuses that form instead of running in its own process working
+    # directory. A node that names the directory and never forwards it would
+    # therefore lose the capability while the configuration says it is available,
+    # so the value is resolved here and passed as a flag below.
+    COMMAND_DIR=$(resolve_path "${COMMAND_DIR:-}")
     # The access policy directory is optional in the same way, but its absence is
     # not fail-closed: an Endpoint with no policy directory permits every caller.
     # A node that names the directory and never forwards it therefore loses the
@@ -285,6 +292,7 @@ function doctor() {
         # node down instead of restarted.
         echo "channel    : ${CHANNEL_ADDRESS:-${CHANNEL_ADDRESSES:-}}"
         echo "allowlist  : ${COMMAND_ALLOWLIST_FILE:-<disabled>}"
+        echo "command dir: ${COMMAND_DIR:-<disabled>}"
         # Printed because an absent policy directory is not fail-closed: it means
         # every caller is permitted, which an operator must be able to see before
         # trusting a node's authorization boundary.
@@ -374,6 +382,10 @@ function start_node() {
         # The allowlist is optional. Without it the endpoint refuses command.exec
         # rather than falling back to an unrestricted shell.
         [ -n "${COMMAND_ALLOWLIST_FILE:-}" ] && args+=(--command-allowlist-file "${COMMAND_ALLOWLIST_FILE}")
+        # The endpoint-scope command directory is optional. Without it the endpoint
+        # refuses a command.exec request that carries no session target instead of
+        # running in its own process working directory.
+        [ -n "${COMMAND_DIR:-}" ] && args+=(--command-dir "${COMMAND_DIR}")
         # The access policy directory is optional, and its absence is the one
         # optional value that widens authority instead of narrowing it: an
         # Endpoint with no policy directory permits every caller. Forwarding it

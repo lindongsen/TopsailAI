@@ -82,7 +82,12 @@ type InteractiveOptions struct {
 	// because the REPL must never spawn a process directly: a test needs to
 	// observe the invocation and its environment without running a real script,
 	// and the production runner is the only place that owns process lifetime.
-	TriggerRunner     TriggerRunner
+	TriggerRunner TriggerRunner
+	// ShellHistory returns the recorded REPL commands, oldest first. It is a
+	// function rather than the store so the REPL never depends on a file and a
+	// test can supply a fixed list. A nil seam disables the bare-prefix menu and
+	// keeps the usage error, so a caller that supplies none loses nothing.
+	ShellHistory      func() []string
 	watcherExit       func(bool)
 	watcherBeforeDone func()
 }
@@ -493,7 +498,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	// would let "!git status" reach the dispatcher as a command named "!git" and
 	// report an unknown command instead of running the command.
 	if isShellLine(line) {
-		return false, runShellCommand(ctx, api, state, line, trustedOut, options)
+		return false, runShellCommand(ctx, api, state, line, lineResults, trustedOut, options)
 	}
 	rawName, rest := commandToken(line)
 	// The dotted control spelling is resolved before alias and scope resolution,

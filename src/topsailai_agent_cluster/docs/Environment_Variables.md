@@ -158,6 +158,7 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW` | `--unhealthy-window` | `30s` | Positive duration of consecutive unacknowledged heartbeats after which the Endpoint declares the Server unhealthy and closes the connection so the ordered address list is walked again |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
+| `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` | `--command-dir` | empty | Endpoint-local working directory for a `command.exec` request that carries no session target; empty disables the endpoint-scope form |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `--endpoint-access-policy-dir` | empty | Endpoint-local directory holding one access policy file per caller token; empty means every caller is permitted |
 | `AGENT_CLUSTER_ENDPOINT_REPLACE_REQUEST_FILE` | `--replace-request-file` | empty | Endpoint-local request document that activates one Provider CLI version for one adapter; empty disables activation entirely |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | none | `5000` | Positive post-collection delay in milliseconds; launcher value is `COLLECTION_DELAY_MS` |
@@ -327,6 +328,37 @@ The file is reloaded on `SIGHUP`. A reload parses the whole file before replacin
 the active set, so a malformed edit keeps the previous entries in force and is
 logged. A reload that would remove every entry is refused unless the file contains
 the explicit empty directive. Each successful reload logs the entry count.
+
+### `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR`
+
+Sets the working directory for a `command.exec` request that carries no session
+target, which is the endpoint-scope form of the operator `!` command. Paths are
+resolved relative to the bundle root by the launcher.
+
+A session-scoped `command.exec` takes its directory from provider evidence: the
+Endpoint asks the provider where the session lives. Endpoint scope has no session to
+ask, so the directory has to be Endpoint configuration instead. This setting is that
+configuration, and it is the only source: the Endpoint never falls back to its own
+process working directory, because that directory is a location the operator never
+selected and running there would be a silent wrong-place execution rather than a
+visible failure.
+
+An unset value disables the endpoint-scope form. The Endpoint refuses the request with
+an explicit error naming this setting, so an operator learns the remedy instead of
+reading a directory failure. Session-scope behaviour is unaffected by this setting.
+
+A configured value must be an absolute path to an existing directory. A relative path
+is rejected at startup, because it would resolve against the process working directory,
+which is exactly the implicit location this setting exists to replace. Symlinks are
+resolved once at startup, so the directory the operator configured and the directory
+commands run in are the same fact.
+
+Argument confinement is computed relative to this directory, so the choice of directory
+decides how much of the filesystem an argument can address. A narrow directory keeps
+`df /` and `cat /etc/passwd` refused; a directory at the filesystem root would make
+every absolute path confined and remove that protection. The allowlist is still
+consulted first, so this setting widens the reachable paths and never the permitted
+programs.
 
 ### Control actions
 
@@ -632,6 +664,7 @@ is empty, because `rm -rf $(TEST_TMP_DIR)` with an empty value becomes `rm -rf /
 | `AGENT_CLUSTER_SERVER_AUTH_TOKEN` | The known development token is accepted |
 | `AGENT_CLUSTER_CLI_SERVER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
+| `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` | The endpoint-scope form of `command.exec` is unavailable; session-scope execution is unaffected |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` with no `ctl.` capability | No `ctl.` action is advertised and every `ctl.` operation is refused |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | Every caller is permitted, so the Endpoint has no authorization boundary |
 | `AGENT_CLUSTER_TLS_*` | Remote listeners cannot verify peers |

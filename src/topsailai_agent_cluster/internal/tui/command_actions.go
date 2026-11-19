@@ -81,6 +81,16 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 	}
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: id, IssuerID: "operator", Scope: "operator", EndpointID: request.EndpointID, Operation: request.Operation, OperationVersion: operationVersion, CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Folder: request.Folder, Payload: request.Payload, Budget: protocol.Budget{WaitTimeoutMS: request.WaitTimeoutMS}, ExecuteBeforeAtMS: now.UnixMilli() + 5*60*1000}
 	if request.Operation != "agent.start" {
+		// A command.exec request that names no session addresses the Endpoint
+		// itself, so it carries no target at all. The Endpoint runs the command
+		// on this machine and resolves the working directory from its own
+		// configuration, so inventing a target here would make the request
+		// address a session that does not exist. Every other operation keeps its
+		// target, because a missing target for them is a defect the Endpoint must
+		// report rather than a form the client may produce.
+		if request.Operation == protocol.OperationCommandExec && request.ResourceID == "" && request.ProviderSessionHandle == "" {
+			return intent, nil
+		}
 		// A target named by a provider session handle carries no resource ID: the
 		// Endpoint mints the mapping when the command arrives, so the client must
 		// not look the session up first. Exactly one of the two is set, because
