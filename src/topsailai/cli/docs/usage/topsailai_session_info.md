@@ -91,6 +91,10 @@ The record shape is:
 
 `--include-runtime` selects JSON output by itself, because runtime data has no card representation. It is therefore a request for the data rather than a modifier of an already-chosen format, which is the same contract `workspace list` applies. The failure paths honour it too, so a machine consumer always receives parseable JSON.
 
+## Related Command
+
+`topsailai runtime info` prints the same document for the same session, with one addition: `-p/--pid` selects which process answers the runtime query, because one session may run several agents at the same time. Without `-p` it resolves the answering PID exactly as this command does, so the default invocation is identical. See [topsailai](topsailai.md#session-record-with-runtime-data).
+
 ## Failure Output
 
 `--json` always prints exactly one JSON object on stdout, including when the lookup fails. A failure object carries only the identity and the failure facts, because a session that was never found has no name, task, or token totals:

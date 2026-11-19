@@ -658,7 +658,7 @@ topsailai runtime send -s SESSION --message='--literal text'
 
 At least session or PID is required. Providing both means strict intersection: neither may be relaxed. Discovery considers session stdout records under `{TOPSAILAI_HOME}/workspace/task/`, not task stdout as parent identities. For send/btw/control, no match, stale target, mismatch or multiple live candidates fails; the CLI never chooses the newest, falls back to another target, filters ambiguity by endpoint availability, or broadcasts.
 
-Common options may appear before or after the structured action. Identical repeated value options are permitted; conflicting repeated values are rejected. Unknown options, leftover arguments and option abbreviations are rejected. Runtime `-m raw` and `-m tmux` are literal messages. Use `--message=VALUE` (or `-m=VALUE`) when a body starts with `--`. Help is offline: `runtime --help`, `runtime send --help`, `runtime btw --help`, `runtime control --help`, and `runtime logs --help` do not resolve a target, read stdin, or load control handlers/injection writers.
+Common options may appear before or after the structured action. Identical repeated value options are permitted; conflicting repeated values are rejected. Unknown options, leftover arguments and option abbreviations are rejected. Runtime `-m raw` and `-m tmux` are literal messages. Use `--message=VALUE` (or `-m=VALUE`) when a body starts with `--`. Help is offline: `runtime --help`, `runtime send --help`, `runtime btw --help`, `runtime control --help`, `runtime logs --help`, and `runtime info --help` do not resolve a target, read stdin, or load control handlers/injection writers.
 
 ### Recent session and task logs
 
@@ -703,6 +703,24 @@ Appends after snapshot capture are excluded. Rotation keeps reading the opened d
 - Follow prints only records and never a JSON document, so `-f` with `--json` is rejected with exit `2`. It is also rejected for `send`, `btw`, `control` and the instruction form.
 - A scan-limited initial tail warns on stderr exactly as in snapshot mode. Follow output is unbounded in duration but not in memory: no file content is accumulated beyond the bounded pending buffer.
 
+### Session record with runtime data
+
+```bash
+topsailai runtime info -s SESSION
+topsailai runtime info -s SESSION -p PID
+topsailai runtime info -p PID
+```
+
+`info` prints exactly the document that `topsailai session info --include-runtime --json` prints for the same session, with one addition: the process that answers the runtime query can be selected by PID, because one session may run several agents at the same time. The record projection and the runtime transport are both reused from those commands, so fields, ordering, states and error codes cannot drift between them.
+
+The document is always JSON, so `--json` is accepted and changes nothing. Without `-p/--pid` the answering PID is resolved exactly as `session info` resolves it, which makes the default invocation identical to the reference command; an idle or unverifiable session therefore reports `runtime: null` instead of a collection failure. With `-p/--pid` the caller asserted a specific process, so it is queried even when the session looks idle.
+
+An explicit PID is ownership-checked against the session stdout filename before anything is queried. A PID with no stdout record is `target_not_found`, and a PID recorded for another session is `target_mismatch`; both exit `3`. Reporting another session's runtime data would be worse than failing. `-p` alone derives the session identity from that filename, so a caller who knows only the PID does not have to look the session up first; the reserved `topsailai` prefix is reported as the `(temp)` display identity.
+
+`info` accepts only the selectors and `--timeout`. Message, stdin, payload, instruction, line-count, follow and `--is-task` options are rejected with exit `2`, following the same "log options apply only to logs" pattern. `--timeout` is forwarded to the collector; omitting it keeps the collector's own budget, which is the same transport cost the reference command pays.
+
+Every failure prints one JSON object with `session_id`, `error_code` and `message`, never a text line, so a machine consumer always receives a parseable document. Exit `0` is success, `1` is `session_not_found` or `lookup_failed`, `2` is `usage_error`, and `3` is `target_not_found` or `target_mismatch`. A temporary session has no stored session record, so it reports `session_not_found`, exactly as the reference command does.
+
 ### Literal input and bounds
 
 Send/btw require exactly one body source: structured message, instruction body, or explicit stdin. With instruction plus stdin, the instruction must be only `/send` or `/ctx.btw`, without an inline body. Control does not support stdin or message arguments; there is no message-file option.
@@ -743,7 +761,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 
 | Command | Description |
 |---------|-------------|
-| `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
+| `runtime` | Execute one exact send, btw, control, logs or info operation; see the contract above. |
 | `session <ACTION>` | Inspect or update one session without entering session scope: `info`, `list`, `status`, `history`, `search`, `add-msg`, `delete`. See [topsailai_session](topsailai_session.md). |
 | `workspace [-f json] [list [-s ID1,ID2] [--json]]` | Display the workspace task list and exit. The default is the human-readable table; `-f/--format json` sets the workspace-scope format, while `list --json` explicitly selects JSON and takes precedence. `list -s/--session ID1,ID2` restricts the output to the named comma-separated sessions, including their task rows, and is applied before any metadata read. |
 | `workspace kill <session_id> -g GENERATION [--json]` | Send SIGTERM without confirmation only when the exact session process generation is still verified. Obtain `GENERATION` from `workspace list --json` or `workspace -f json`; success means the OS accepted the signal, not that process exit was confirmed. |

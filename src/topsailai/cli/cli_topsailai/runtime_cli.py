@@ -11,6 +11,7 @@ import re
 import sys
 
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.runtime_info import RuntimeInfoRequest, run_info
 from cli_topsailai.runtime_operations import (
     MESSAGE_LIMIT, RuntimeRequest, RuntimeResult, execute_log_follow,
     execute_runtime_request,
@@ -74,7 +75,7 @@ def build_parser(control_actions=None):
     handler_list = ", ".join(handlers)
     parser = RuntimeParser(
         prog="topsailai runtime", allow_abbrev=False,
-        description="Execute one exact send, btw, control or logs operation",
+        description="Execute one exact send, btw, control, logs or info operation",
         epilog=(
             "Examples:\n"
             "  topsailai runtime send -s SESSION -p PID -m 'hello'\n"
@@ -82,6 +83,7 @@ def build_parser(control_actions=None):
             "  topsailai runtime control get_session_messages -s SESSION -a '{}' --json\n"
             "  topsailai runtime logs -s SESSION -p PID -n 100 --json\n"
             "  topsailai runtime logs -s SESSION -p PID -n 100 -f\n"
+            "  topsailai runtime info -s SESSION -p PID\n"
             "  topsailai runtime -s SESSION -i '/send hello'\n\n"
             f"Supported control handlers: {handler_list}\n"
             "The list is queried from the live registry when help is requested; "
@@ -110,7 +112,7 @@ def build_parser(control_actions=None):
                         help="keep printing appended log records until interrupted")
     parser.add_argument(
         "positionals", nargs="*", metavar="ACTION",
-        help="send, btw, control ACTION_NAME, or logs",
+        help="send, btw, control ACTION_NAME, logs, or info",
     )
     return parser
 
@@ -163,6 +165,17 @@ def normalize(args):
     instruction = getattr(args, "instruction", None)
     message = getattr(args, "message", None)
     payload_text = getattr(args, "payload_text", None)
+    if args.positionals and args.positionals[0] == "info":
+        # ``info`` publishes a session record document, so it accepts only the
+        # selectors and the transport budget. Every delivery and log option is
+        # rejected instead of being silently ignored.
+        if (len(args.positionals) != 1 or instruction is not None
+                or message is not None or payload_text is not None
+                or args.stdin or hasattr(args, "lines") or args.follow
+                or args.is_task):
+            raise RuntimeUsageError("Invalid info arguments")
+        return RuntimeInfoRequest(session_id=session_id, pid=pid,
+                                  timeout=getattr(args, "timeout", None))
     control_action = None
     if args.positionals and args.positionals[0] == "logs":
         count = getattr(args, "lines", 20)
@@ -266,6 +279,11 @@ def run_runtime_cli(argv, *, stdin=None, executor=None, home_resolver=None,
         args = parser.parse_intermixed_args(argv)
         json_mode = args.json
         request = normalize(args)
+        if isinstance(request, RuntimeInfoRequest):
+            # ``info`` prints the session record document itself, so it returns
+            # before the delivery envelope is built. Its document is always
+            # JSON, which makes ``--json`` a no-op rather than a second format.
+            return run_info(request, home=(home_resolver or get_topsailai_home)())
         follow_mode = request.follow
         if args.stdin:
             request.message = _read_stdin(sys.stdin if stdin is None else stdin)
