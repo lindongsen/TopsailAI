@@ -171,6 +171,36 @@ not: those variables are named but read by nothing, and the section says so.
 | `CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS` | `60` | How far a client proof timestamp may differ from the Server's clock. At least 1, at most 600 |
 | `CONNECTOR_SERVER_REPLAY_CAPACITY` | `65536` | Number of unexpired client nonces the Server records. A full cache refuses new proofs rather than evicting a live nonce |
 | `CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS` | `30` | How long the Server waits for a Node response before reporting `node_timeout`. At least 1, at most 3600 |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_CALLER` | `2` | How many requests one caller may have in flight at once. At least 1 |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_NODE` | `4` | How many requests one Node may have in flight at once. At least 1 |
+| `CONNECTOR_SERVER_MAX_IN_FLIGHT` | `64` | How many requests the whole Server may have in flight at once. At least 1 |
+| `CONNECTOR_SERVER_ADMISSION_WAIT_MS` | `200` | How long a request may wait for a slot before it is refused with `overloaded`. Zero or more, at most 5000 |
+
+The three in-flight limits answer three different questions, and one limit cannot
+answer all of them. A Server-wide bound alone stops unbounded growth but lets one
+caller occupy every slot, so a second caller waits behind work it did not cause. A
+per-caller bound alone lets many callers aimed at one Node saturate that Node. The
+per-Node bound is the one that protects the personal computer the Node runs on,
+which is the machine this system exists to keep usable.
+
+A value below one is refused at startup rather than clamped. A zero limit would
+refuse every request, and a Server that refuses everything looks like a Server that
+is working and denying, which is the most expensive kind of misconfiguration to
+diagnose.
+
+`CONNECTOR_SERVER_ADMISSION_WAIT_MS` is in milliseconds because the useful range is
+a fraction of a second: the wait absorbs a burst, it does not queue work. A
+seconds-based variable would make the smallest useful value one second, which is
+already a queue. **Zero is a meaningful setting**, not "unset": it means refuse
+immediately rather than wait, and it is the correct value for a deployment that
+would rather answer fast than hold a request. The default is applied only when the
+variable is absent, so an operator who writes `0` gets `0`.
+
+A request that waits the full budget and still finds no slot is refused with
+`overloaded` (`1010`), which is retryable. It is deliberately not `internal`
+(`1009`): an internal failure is a defect and a retry repeats it, while an overload
+is a temporary shortage and a retry is the correct response. Admission runs after
+the client proof verifies, so an unauthenticated caller cannot occupy capacity.
 
 `CONNECTOR_SERVER_TUNNEL_TOKEN` is the only secret the Server reads from the
 environment, and it is read there by explicit human decision. The cost of that

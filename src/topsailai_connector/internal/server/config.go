@@ -74,6 +74,17 @@ type Config struct {
 	ReplayCapacity int
 	// RequestTimeout bounds one forwarded request.
 	RequestTimeout time.Duration
+	// MaxInFlightPerCaller bounds one caller's concurrent requests. Zero means
+	// the default, which is substituted in NewHandler.
+	MaxInFlightPerCaller int
+	// MaxInFlightPerNode bounds one Node's concurrent requests. Zero means the
+	// default.
+	MaxInFlightPerNode int
+	// MaxInFlight bounds the whole process. Zero means the default.
+	MaxInFlight int
+	// AdmissionWait is how long a request may wait for a slot before it is
+	// refused with overloaded. Zero means the default.
+	AdmissionWait time.Duration
 }
 
 // LoadConfig builds a Config from a lookup function.
@@ -125,16 +136,85 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
+	perCaller, err := resolveAdmissionLimit("CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_CALLER", lookup("CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_CALLER"), DefaultMaxInFlightPerCaller)
+	if err != nil {
+		return Config{}, err
+	}
+
+	perNode, err := resolveAdmissionLimit("CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_NODE", lookup("CONNECTOR_SERVER_MAX_IN_FLIGHT_PER_NODE"), DefaultMaxInFlightPerNode)
+	if err != nil {
+		return Config{}, err
+	}
+
+	total, err := resolveAdmissionLimit("CONNECTOR_SERVER_MAX_IN_FLIGHT", lookup("CONNECTOR_SERVER_MAX_IN_FLIGHT"), DefaultMaxInFlight)
+	if err != nil {
+		return Config{}, err
+	}
+
+	wait, err := resolveAdmissionWait(lookup("CONNECTOR_SERVER_ADMISSION_WAIT_MS"))
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
-		Listen:            listen,
-		TLSCert:           certPath,
-		TLSKey:            keyPath,
-		TunnelToken:       tunnelToken,
-		ClientCredentials: credentials,
-		ReplayWindow:      window,
-		ReplayCapacity:    capacity,
-		RequestTimeout:    timeout,
+		Listen:               listen,
+		TLSCert:              certPath,
+		TLSKey:               keyPath,
+		TunnelToken:          tunnelToken,
+		ClientCredentials:    credentials,
+		ReplayWindow:         window,
+		ReplayCapacity:       capacity,
+		RequestTimeout:       timeout,
+		MaxInFlightPerCaller: perCaller,
+		MaxInFlightPerNode:   perNode,
+		MaxInFlight:          total,
+		AdmissionWait:        wait,
 	}, nil
+}
+
+// resolveAdmissionLimit parses one admission limit, applying the default when the
+// variable is unset.
+//
+// A value below one is refused rather than clamped. A zero limit refuses every
+// request, and a Server that refuses everything looks like a Server that is
+// working and denying, which is the most expensive kind of misconfiguration to
+// diagnose.
+func resolveAdmissionLimit(name, value string, fallback int) (int, error) {
+	if value == "" {
+		return fallback, nil
+	}
+	limit, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q is not a whole number", name, value)
+	}
+	if limit < 1 {
+		return 0, fmt.Errorf("%s is %d, want at least 1", name, limit)
+	}
+	return limit, nil
+}
+
+// resolveAdmissionWait parses the admission wait in milliseconds.
+//
+// The unit is milliseconds rather than seconds because the useful range is a
+// fraction of a second: the wait absorbs a burst, it does not queue work. A
+// seconds-based variable would make the smallest useful value one second, which is
+// already a queue.
+func resolveAdmissionWait(value string) (time.Duration, error) {
+	if value == "" {
+		return DefaultAdmissionWait, nil
+	}
+	milliseconds, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("CONNECTOR_SERVER_ADMISSION_WAIT_MS %q is not a whole number of milliseconds", value)
+	}
+	if milliseconds < 0 {
+		return 0, fmt.Errorf("CONNECTOR_SERVER_ADMISSION_WAIT_MS is %d, want zero or more", milliseconds)
+	}
+	wait := time.Duration(milliseconds) * time.Millisecond
+	if wait > MaxAdmissionWait {
+		return 0, fmt.Errorf("CONNECTOR_SERVER_ADMISSION_WAIT_MS is %d, want at most %d", milliseconds, int(MaxAdmissionWait/time.Millisecond))
+	}
+	return wait, nil
 }
 
 // loadClientCredentials reads the client credential set.

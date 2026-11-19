@@ -75,6 +75,11 @@ type Handler struct {
 	// cache and the check.
 	window time.Duration
 	now    func() time.Time
+	// admission bounds concurrent requests on three dimensions. It is built here
+	// rather than read from config per request, for the same reason the window is:
+	// one value resolved once, so the bound that is enforced is the bound that was
+	// validated.
+	admission *admission
 }
 
 // NewHandler builds the CLI API handler.
@@ -104,6 +109,10 @@ func NewHandler(config Config, registry *Registry, forwarder Forwarder, logger *
 	if err != nil {
 		return nil, fmt.Errorf("build the client replay cache: %w", err)
 	}
+	admissionController, err := newAdmission(resolveAdmissionLimits(config))
+	if err != nil {
+		return nil, fmt.Errorf("build the admission controller: %w", err)
+	}
 	return &Handler{
 		config:    config,
 		registry:  registry,
@@ -112,7 +121,40 @@ func NewHandler(config Config, registry *Registry, forwarder Forwarder, logger *
 		replay:    replay,
 		window:    window,
 		now:       time.Now,
+		admission: admissionController,
 	}, nil
+}
+
+// resolveAdmissionLimits substitutes the defaults for unset fields.
+//
+// The substitution happens here rather than in LoadConfig because a Config built by
+// a test or by another entry point may leave the fields zero, and a zero limit
+// would refuse every request. One place resolves the values, so a handler cannot be
+// wired to a limit the configuration never stated.
+//
+// The wait is deliberately not substituted. Zero is a meaningful value for it: it
+// means "refuse immediately rather than wait", which is the correct setting for a
+// Node that must not queue work. Substituting a default would make that setting
+// unexpressible, so an operator who wrote CONNECTOR_SERVER_ADMISSION_WAIT_MS=0
+// would silently get a wait they did not ask for. LoadConfig resolves the default
+// at the boundary, so the production path never reaches here with an unset wait.
+func resolveAdmissionLimits(config Config) admissionLimits {
+	limits := admissionLimits{
+		perCaller: config.MaxInFlightPerCaller,
+		perNode:   config.MaxInFlightPerNode,
+		total:     config.MaxInFlight,
+		wait:      config.AdmissionWait,
+	}
+	if limits.perCaller == 0 {
+		limits.perCaller = DefaultMaxInFlightPerCaller
+	}
+	if limits.perNode == 0 {
+		limits.perNode = DefaultMaxInFlightPerNode
+	}
+	if limits.total == 0 {
+		limits.total = DefaultMaxInFlight
+	}
+	return limits
 }
 
 // envelope is the project-wide response format.
@@ -187,7 +229,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	if err := h.verifyClientProof(request, payload, nodeAuthHeader, requestID); err != nil {
+	callerKeyID, err := h.verifyClientProof(request, payload, nodeAuthHeader, requestID)
+	if err != nil {
 		h.refuse(writer, requestID, protocol.CodeUnauthenticated, "client proof is missing or does not verify")
 		return
 	}
@@ -213,6 +256,23 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		h.refuse(writer, requestID, protocol.CodeNodeOffline, "no live connection for that node id")
 		return
 	}
+
+	// Admission runs after authentication and after the liveness check, so a slot
+	// is only taken by work that will actually be forwarded. Taking a slot before
+	// the proof verifies would let an unauthenticated caller occupy capacity, which
+	// is a denial of service reachable without a credential.
+	//
+	// The release is deferred so every path below it returns the slot, including a
+	// panic in the forwarder. A slot leaked on one path is a permanent reduction in
+	// capacity that no restart-free operation can recover.
+	release, err := h.admission.acquire(callerKeyID, nodeID)
+	if err != nil {
+		h.logger.Warn("connector-server refused a request at admission",
+			"request_id", requestID, "client_key_id", callerKeyID, "node_id", nodeID, "reason", err.Error())
+		h.refuse(writer, requestID, CodeOfForwardError(err), "the server is at its concurrency limit; retry shortly")
+		return
+	}
+	defer release()
 
 	forwarded.NodeID = nodeID
 	forwarded.NodeAuth = nodeAuth
@@ -242,23 +302,23 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 // exact Node proof header digest, the caller request id, the timestamp and the nonce.
 // Binding the Node proof header is what stops an attacker from keeping a valid client
 // proof and replacing the Node proof it travels with.
-func (h *Handler) verifyClientProof(request *http.Request, payload []byte, nodeAuthHeader string, requestID string) error {
+func (h *Handler) verifyClientProof(request *http.Request, payload []byte, nodeAuthHeader string, requestID string) (string, error) {
 	proof, err := security.ParseProof(request.Header.Get(security.ClientAuthHeader), security.SchemeClient)
 	if err != nil {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "reason", "malformed proof")
-		return err
+		return "", err
 	}
 
 	secret, present := h.config.ClientCredentials.Lookup(proof.KeyID)
 	if !present {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "unknown key id")
-		return security.ErrProofMismatch
+		return "", security.ErrProofMismatch
 	}
 
 	nowMS := h.now().UnixMilli()
 	if !security.TimestampWithinWindow(nowMS, proof.TimestampMS, h.window.Milliseconds()) {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "timestamp outside the window")
-		return security.ErrProofMismatch
+		return "", security.ErrProofMismatch
 	}
 
 	bodyPresent := request.Body != nil && request.ContentLength != 0
@@ -273,14 +333,14 @@ func (h *Handler) verifyClientProof(request *http.Request, payload []byte, nodeA
 	)
 	if err := security.VerifySignature(secret, canonical, proof.Signature); err != nil {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", "signature does not verify")
-		return err
+		return "", err
 	}
 
 	if err := h.replay.Admit(proof.KeyID, proof.Nonce); err != nil {
 		h.logger.Warn("connector-server refused a client proof", "request_id", requestID, "client_key_id", proof.KeyID, "reason", err.Error())
-		return err
+		return "", err
 	}
-	return nil
+	return proof.KeyID, nil
 }
 
 // forward sends the request with the configured timeout.
@@ -552,6 +612,12 @@ var errBodyUnreadable = errors.New("request body could not be read")
 //
 // An unclassified failure is internal rather than a guess, because a guessed code
 // tells the caller something the Server does not know.
+//
+// Overload is classified separately from internal because the two ask the caller to
+// do opposite things. An internal failure is a defect and a retry repeats it; an
+// overload is a temporary shortage and a retry is the correct response. Reporting
+// one as the other either sends a caller into a retry loop that cannot succeed or
+// tells it to give up on a condition that clears by itself.
 func CodeOfForwardError(err error) protocol.Code {
 	switch {
 	case err == nil:
@@ -564,6 +630,10 @@ func CodeOfForwardError(err error) protocol.Code {
 		return protocol.CodeNodeTimeout
 	case errors.Is(err, ErrNodeOffline):
 		return protocol.CodeNodeOffline
+	case errors.Is(err, ErrOverloaded):
+		return protocol.CodeOverloaded
+	case errors.Is(err, ErrChannelBusy):
+		return protocol.CodeOverloaded
 	default:
 		return protocol.CodeInternal
 	}
