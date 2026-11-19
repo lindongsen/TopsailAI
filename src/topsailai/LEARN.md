@@ -693,3 +693,58 @@ path that happened to be under investigation. Enumerate all decode sites of the
 same stream in one pass, and prefer a probe that truncates a real multi-byte
 character over a mock, because a mock returns whole characters and can never
 reproduce the failure.
+
+## A comment that promises retention is not retention, and the owner prefix is not the metadata basename
+
+Trigger: a team member agent exited normally (`status: completed`) but left
+`20261119T165005.214401.topsailai.1795078235.630223.task.stdout` in
+`{TOPSAILAI_HOME}/workspace/task/`. `workspace/task/task_tool.py::ctxm_process_task()`
+never registers task stdout for deletion and justified it with the comment
+"Retention is handled by the session meta cleanup instead". That retention was never
+implemented: `ARTIFACT_SUFFIXES` only builds `{session_id}.{pid}.session.*` paths and
+`context/session_activity.py::_OWNER_PATTERN` requires `.session.` in the name, so a
+grep for `task.stdout` across `context/`, `workspace/`, `utils/`, `ai_base/`,
+`ai_team/` and `scripts/` returned zero hits. The comment arrived in commit `87791479`,
+which only added `stats.jsonl` to `ARTIFACT_SUFFIXES`; task artifacts were never added.
+
+Action: when a comment claims another component owns a lifecycle, verify that the
+named component actually matches the artifact's name before trusting it. Then derive
+the shared owner prefix from the real filenames rather than from the metadata basename:
+metadata is `{session_id}.{pid}.session.meta` while a task artifact is
+`{session_id}.{pid}.{task_id}.task`, so the prefix is the basename with **both** the
+`.session` segment and the extension stripped. The first implementation used the full
+basename and would have matched nothing.
+
+Why this prevents recurrence: the defect is invisible in two independent ways. The
+comment reads as a completed design, so a reviewer sees an intentional decision instead
+of a missing implementation; and the two filename shapes differ in the middle, so a
+prefix copied from the metadata looks correct and silently matches zero files. A
+real-filename probe caught the prefix error before any test was written, which is the
+only reason it did not ship as a green-but-inert feature. The same reasoning applies to
+the exit path: `atexit` is LIFO, so the cleanup registered at module import runs
+**after** `_finalize_on_exit` registered at session creation, which is what makes the
+final `completed` status readable. Registering the cleanup later would have read
+`running` and preserved every artifact forever, and no unit test of the cleanup function
+alone could observe that ordering.
+
+## A retention pass must not add startup work when it reclaims nothing
+
+Trigger: the first implementation of task-artifact reclamation called
+`os.listdir(FOLDER_WORKSPACE_TASK)` eagerly inside `cleanup_session_meta_files()`. That
+broke `test_cleanup_failure_preserves_owned_files[old|count]`, which replaces `meta.os`
+with a `SimpleNamespace(path=..., remove=...)` double: the unconditional `listdir`
+raised `AttributeError`, `safe_session_meta` swallowed it, and the expected `remove`
+never ran. It also added a directory scan to every launch even though the retention pass
+usually removes nothing.
+
+Action: make the scan lazy and shared per pass. `_LazyTaskInventory` scans on first use
+and caches the listing, uses `getattr(os, "listdir", None)` so a partial `os` double
+degrades instead of raising, and is created once in `cleanup_session_meta_files()` and
+passed to every `_remove_cleanable_meta()` call site.
+
+Why this prevents recurrence: a startup-path cleanup runs on every launch, so an eager
+scan is a permanent cost paid for an event that is rare. The laziness is also what keeps
+the function compatible with the existing test doubles, and the probe proves it rather
+than assuming it: with nothing to remove, the `os.listdir` call count is 0. A test that
+only asserts "artifacts are removed when metadata is old" passes with the eager version
+too, so the call-count probe is the only evidence that the cost is actually gone.
