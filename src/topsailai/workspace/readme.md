@@ -161,7 +161,7 @@ Modular `/` commands registered via `INSTRUCTIONS` dict.
 | Module | Commands | Purpose |
 |--------|----------|---------|
 | `env.py` | `/set`, `/get`, `/print_step_mode` | Environment variable management; `/print_step_mode` lists supported step modes with `*` marking the current one and selects by index or name |
-| `agent.py` | `/system_prompt`, `/tool_prompt`, `/tools`, `/set_llm`, `/llm`, `/agent.tokens [json=1]` | Agent introspection and LLM switching; `/agent.tokens` reports real-time message counts and estimated tokens for Agent2LLM and User2Agent plus available model-context capacity, and `json=1` returns a stable JSON document instead of text |
+| `agent.py` | `/system_prompt`, `/tool_prompt`, `/tools`, `/set_llm`, `/llm`, `/agent.models [json=1]`, `/agent.tokens [json=1]` | Agent introspection and LLM switching; `/agent.models` lists the model registry or selects one by name or index, and `/agent.tokens` reports real-time message counts and estimated tokens for Agent2LLM and User2Agent plus available model-context capacity; for both, `json=1` returns a stable JSON document instead of text |
 | `skill.py` | `/show`, `/load`, `/unload`, `/hooks` | Skill hub management |
 | `skill_repo.py` | `/list`, `/install`, `/uninstall` | Skill repository operations |
 | `stat.py` | `/tool_call`, `/tool_call_errors`, `/tool_call_reset`, `/tool_call_log` | Tool call statistics |
