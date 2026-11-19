@@ -13,7 +13,7 @@ func TestCurrentModelNameReadsTheRegisteredInstruction(t *testing.T) {
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		"runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-a\x00{\"args\":null,\"instruction\":\"agent.llm\"}\x00--json": answer(`{"ok":true,"response":{"status":"ok","result":"fast"}}`),
 	}}
-	got := fixedProvider(runner).currentModelName(context.Background(), "s-1")
+	got := fixedProvider(runner).currentModelName(context.Background(), "s-1", 0)
 	if got != "fast" {
 		t.Fatalf("currentModelName = %q, want %q", got, "fast")
 	}
@@ -41,7 +41,7 @@ func TestCurrentModelNameIsUnavailableRatherThanFatal(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{key: {testCase.answer}}}
-			if got := fixedProvider(runner).currentModelName(context.Background(), "s-1"); got != "" {
+			if got := fixedProvider(runner).currentModelName(context.Background(), "s-1", 0); got != "" {
 				t.Fatalf("currentModelName = %q, want an empty name", got)
 			}
 		})
@@ -78,7 +78,7 @@ func TestModelCatalogReportsTheObservedCurrentModel(t *testing.T) {
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		"workspace\x00list\x00--json\x00--local": answer(`{"items":[{"session_id":"s-1","filename":"row","pid":77}]}`),
 		"models\x00list\x00--json":               answer(`[{"name":"fast","protocol":"openai-compatible"},{"name":"slow","protocol":"openai-compatible"}]`),
-		"runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-a\x00{\"args\":null,\"instruction\":\"agent.llm\"}\x00--json": answer(`{"ok":true,"response":{"status":"ok","result":"slow"}}`),
+		"runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-p\x0077\x00-a\x00{\"args\":null,\"instruction\":\"agent.llm\"}\x00--json": answer(`{"ok":true,"response":{"status":"ok","result":"slow"}}`),
 	}}
 	result, err := fixedProvider(runner).models(context.Background(), sessionTarget(t), json.RawMessage(`{}`))
 	if err != nil {
@@ -103,7 +103,7 @@ func TestModelCatalogStaysUsableWhenTheObservationIsUnavailable(t *testing.T) {
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		"workspace\x00list\x00--json\x00--local": answer(`{"items":[{"session_id":"s-1","filename":"row","pid":77}]}`),
 		"models\x00list\x00--json":               answer(`[{"name":"fast","protocol":"openai-compatible"}]`),
-		"runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-a\x00{\"args\":null,\"instruction\":\"agent.llm\"}\x00--json": {runnerAnswer{err: errors.New("boom")}},
+		"runtime\x00control\x00call_instruction\x00-s\x00s-1\x00-p\x0077\x00-a\x00{\"args\":null,\"instruction\":\"agent.llm\"}\x00--json": {runnerAnswer{err: errors.New("boom")}},
 	}}
 	result, err := fixedProvider(runner).models(context.Background(), sessionTarget(t), json.RawMessage(`{}`))
 	if err != nil {

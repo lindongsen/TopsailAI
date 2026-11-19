@@ -296,14 +296,39 @@ func (p *provider) history(ctx context.Context, requested *target, raw json.RawM
 	return result, nil
 }
 
+// modelsPayload is the closed model.catalog payload.
+//
+// ProviderSessionID and ProviderPID carry the provider's own identity for the
+// session, which the Endpoint already holds from the committed inventory. When they
+// are supplied the read addresses the exact session directly; when they are absent
+// the provider resolves the target from the opaque mapping key, which is the
+// previous behaviour rather than a second code path.
+type modelsPayload struct {
+	ProviderSessionID string `json:"provider_session_id"`
+	ProviderPID       int64  `json:"provider_pid"`
+}
+
 func (p *provider) models(ctx context.Context, requested *target, raw json.RawMessage) (modelResult, error) {
-	var payload struct{}
+	var payload modelsPayload
 	if err := decodeStrict(raw, &payload); err != nil {
 		return modelResult{}, fmt.Errorf("%w: model.catalog payload", errInvalidRequest)
 	}
-	resolved, err := p.resolveWorkspaceTarget(ctx, requested)
-	if err != nil {
-		return modelResult{}, err
+	// A negative process identifier cannot name a process, so it is refused rather
+	// than silently dropped: dropping it would address the session without the row
+	// the caller meant, which is the ambiguity the identifier exists to remove.
+	if payload.ProviderPID < 0 {
+		return modelResult{}, fmt.Errorf("%w: provider_pid must not be negative", errInvalidRequest)
+	}
+	// The identity the caller supplied is used as given. Resolving it again would
+	// scan every workspace row to recover a value that was already known, which is
+	// the whole cost this field exists to remove.
+	sessionID, pid := payload.ProviderSessionID, payload.ProviderPID
+	if sessionID == "" {
+		resolved, err := p.resolveWorkspaceTarget(ctx, requested)
+		if err != nil {
+			return modelResult{}, err
+		}
+		sessionID, pid = resolved.SessionID, resolved.PID
 	}
 	var entries []modelEntry
 	if err := runJSON(ctx, p.runner, []string{"models", "list", "--json"}, maxModelBytes, &entries); err != nil {
@@ -317,7 +342,7 @@ func (p *provider) models(ctx context.Context, requested *target, raw json.RawMe
 	// the current model is a second read. It is deliberately non-fatal: a catalog
 	// that cannot prove the current model is still a usable menu, and failing the
 	// whole read would take the menu away because one observation was unavailable.
-	currentName := p.currentModelName(ctx, resolved.SessionID)
+	currentName := p.currentModelName(ctx, sessionID, pid)
 	result := modelResult{Profiles: make([]modelProfileFact, 0, len(entries)), ObservedAtMS: p.now().UnixMilli()}
 	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {

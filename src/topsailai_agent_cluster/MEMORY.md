@@ -566,3 +566,46 @@ Consequences that MUST hold:
   workspace would relocate the problem, so it is deleted instead and git history keeps it recoverable.
 - The cluster Makefile may still drive a provider-owned fixture, but it must build it from inside the
   provider module, so the fixture is compiled against the provider's own `go.mod`.
+
+## One step to the answer: never pay for an identity the caller already holds
+
+Directed by the human on 2026-11-19, wording normalized, meaning preserved:
+
+> 这一步要先做，把 provider 的 session_id 和 pid 传下去。"一步到位"为原则，不要做多余的事。
+
+This is a standing requirement for every read and every command, not a note about one
+command. A caller that already knows a value must pass it down instead of letting a lower
+layer reconstruct it. Reconstructing a value that was known at the top of the stack is
+duplicate work, and it is the most expensive kind: it hides inside a layer that looks like
+it is doing its own job.
+
+The rule is stated as three requirements:
+
+| Requirement | Meaning |
+|---|---|
+| Pass what you know | A value the caller holds travels down as an explicit field. It is never dropped and re-derived. |
+| One step to the answer | A read reaches its answer in one provider call. A second call that exists only to translate an identity is a defect, not a design. |
+| No extra work | Do not add a fallback path, a cache, a second spelling or a compatibility branch to avoid the real fix. Fix the data flow instead. |
+
+Consequences that MUST hold:
+
+- An opaque identifier minted by the cluster is not a substitute for the provider identifier
+  the provider needs. When a provider call needs the provider's own session identifier and
+  process identifier, both travel on the wire.
+- A digest that cannot be reversed must never be sent where the plain value is available.
+  A reverse lookup by scanning every row is the symptom of a value that was dropped, not a
+  cost the provider has to pay.
+- A second provider call whose only purpose is to translate an identity is removed, not
+  optimised. Optimising it keeps the extra step and makes the defect harder to see.
+- The exact target travels as an exact target. A session identifier alone is ambiguous when
+  one session can own several rows, so the process identifier travels with it.
+- "One step" does not authorise skipping a required check. Authorization, generation
+  revalidation, policy and capability checks stay exactly where they are; only redundant
+  identity reconstruction is removed.
+
+Why this is recorded: `model.catalog` ran `workspace list --json --local` (1.77 s) purely to
+reverse-resolve a sha256 digest back into the provider session identifier, and then used only
+that one field. The identifier was already known by the CLI, which reads it from the committed
+inventory, and it was discarded when the target was minted as a digest. The provider paid 54%
+of the read to recover a value the caller had in hand. See
+`issues/model-catalog-reverses-a-digest-it-was-given.md`.

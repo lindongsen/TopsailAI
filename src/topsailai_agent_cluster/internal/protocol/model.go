@@ -46,8 +46,24 @@ type ModelProfile struct {
 // exactly the way every other session-scoped operation does. A catalog read is
 // read-only, so it does not require a generation: an unverified session can still
 // be asked which profiles it offers, and only a selection needs a live target.
+//
+// ProviderSessionID and ProviderPID carry the provider's own identity for the
+// session, which the caller already holds from the committed inventory. They travel
+// because the alternative is worse in both directions: an adapter that receives only
+// the opaque cluster identifier must reverse-resolve it, and a provider that receives
+// only a session identifier cannot address a session that owns several rows. The two
+// are optional so a caller that has no inventory row still reaches the adapter, which
+// then resolves the target itself.
 type ModelCatalogQuery struct {
 	Target CommandTarget `json:"target"`
+	// ProviderSessionID is the provider's own session identifier, descriptive of
+	// the target rather than an addressing key of its own: the cluster still
+	// addresses the session by Target.ResourceID.
+	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	// ProviderPID is the provider process identifier that makes the session an
+	// exact target. One provider session identifier can own several rows, so the
+	// identifier alone does not identify which process to ask.
+	ProviderPID int64 `json:"provider_pid,omitempty"`
 }
 
 // ModelCatalog is one bounded read of the profiles a session can select.

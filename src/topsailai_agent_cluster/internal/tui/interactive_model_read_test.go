@@ -19,6 +19,13 @@ type modelReadStub struct {
 	catalogEndpoint   string
 	catalogResource   string
 	catalogGeneration string
+	// catalogProviderSessionID and catalogProviderPID record the provider's own
+	// identity the read carried. They are asserted because that identity is what
+	// lets the provider address the exact row instead of reverse-resolving the
+	// opaque mapping key, so a read that dropped it would still render a correct
+	// table while paying for an extra provider call.
+	catalogProviderSessionID string
+	catalogProviderPID       int64
 }
 
 // GetCapabilities advertises the model operations so the command reaches the read
@@ -35,11 +42,13 @@ func (s *modelReadStub) GetCapabilities(context.Context, string) (protocol.Capab
 
 // GetModelCatalog records the exact arguments of the read and answers with one
 // selectable profile.
-func (s *modelReadStub) GetModelCatalog(_ context.Context, endpointID, resourceID, generation string) (protocol.ModelCatalog, error) {
+func (s *modelReadStub) GetModelCatalog(_ context.Context, endpointID string, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
 	s.catalogCalls++
 	s.catalogEndpoint = endpointID
-	s.catalogResource = resourceID
-	s.catalogGeneration = generation
+	s.catalogResource = query.Target.ResourceID
+	s.catalogGeneration = query.Target.ProviderGeneration
+	s.catalogProviderSessionID = query.ProviderSessionID
+	s.catalogProviderPID = query.ProviderPID
 	return s.catalog, nil
 }
 

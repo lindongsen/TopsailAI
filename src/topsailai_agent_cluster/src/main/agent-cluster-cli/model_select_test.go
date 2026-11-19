@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,6 +21,13 @@ type modelSelectStub struct {
 	profiles      []protocol.ModelProfile
 	capabilities  []protocol.Capability
 	admittedCount int
+	// providerSessionID and providerPID are the provider's own identity the
+	// inventory reports for the session. They are recorded on every catalog read
+	// because that identity is what lets the provider address the exact row
+	// instead of reverse-resolving the opaque mapping key.
+	providerSessionID string
+	providerPID       int64
+	catalogIdentities []string
 }
 
 // ListEndpoints returns one endpoint so the model command has a target.
@@ -27,7 +35,8 @@ func (s *modelSelectStub) ListEndpoints(context.Context) ([]protocol.Endpoint, e
 	return []protocol.Endpoint{{EndpointID: "ep"}}, nil
 }
 
-// GetInventory returns one session carrying the configured generation.
+// GetInventory returns one session carrying the configured generation and the
+// configured provider identity.
 func (s *modelSelectStub) GetInventory(context.Context, string) (protocol.InventoryReport, error) {
 	if s.inventoryErr != nil {
 		return protocol.InventoryReport{}, s.inventoryErr
@@ -37,6 +46,8 @@ func (s *modelSelectStub) GetInventory(context.Context, string) (protocol.Invent
 		CollectionStatus: protocol.CollectionSucceeded,
 		Sessions: []protocol.Session{{
 			ClusterSessionID:   "session",
+			ProviderSessionID:  s.providerSessionID,
+			ProviderPID:        s.providerPID,
 			AdapterID:          "adapter-1",
 			ProviderGeneration: s.generation,
 			State:              "running",
@@ -76,10 +87,11 @@ func (s *modelSelectStub) AdmitCommand(_ context.Context, intent protocol.Immuta
 	return map[string]any{"command_id": "cmd-1"}, nil
 }
 
-// GetModelCatalog records the generation it was asked with, so a test can prove
-// the catalog read already carried the resolved generation.
-func (s *modelSelectStub) GetModelCatalog(_ context.Context, _, _, generation string) (protocol.ModelCatalog, error) {
-	s.catalogReads = append(s.catalogReads, generation)
+// GetModelCatalog records the generation and the provider identity it was asked
+// with, so a test can prove the catalog read already carried both.
+func (s *modelSelectStub) GetModelCatalog(_ context.Context, _ string, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
+	s.catalogReads = append(s.catalogReads, query.Target.ProviderGeneration)
+	s.catalogIdentities = append(s.catalogIdentities, query.ProviderSessionID+"/"+strconv.FormatInt(query.ProviderPID, 10))
 	if s.catalogErr != nil {
 		return protocol.ModelCatalog{}, s.catalogErr
 	}
@@ -112,6 +124,30 @@ func TestModelSelectResolvesTheGenerationBeforeAskingForConfirmation(t *testing.
 	}
 	if got := stub.intents[0].Target.ProviderGeneration; got != "gen-7" {
 		t.Fatalf("the admitted intent must carry the resolved generation, got %q", got)
+	}
+}
+
+// TestModelSelectCarriesTheProviderIdentity proves the catalog read carries the
+// provider's own session identifier and process identifier, taken from the same
+// inventory read that supplied the generation.
+//
+// The identity is the whole point of the field: without it the provider
+// reverse-resolves the opaque mapping key by scanning every workspace row, which
+// is an extra provider call for a value the caller already held. A read that
+// dropped it would still render a correct catalog, so only an assertion on the
+// wire can tell the two apart.
+func TestModelSelectCarriesTheProviderIdentity(t *testing.T) {
+	stub := &modelSelectStub{generation: "gen-7", providerSessionID: "wa-abc", providerPID: 4242}
+	var output, diagnostics strings.Builder
+	err := modelSelectWithProgress(context.Background(), stub, &output, &diagnostics, "ep", "session", "mp-1", true, false, 0, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stub.catalogIdentities) != 1 {
+		t.Fatalf("expected one catalog read, got %d", len(stub.catalogIdentities))
+	}
+	if stub.catalogIdentities[0] != "wa-abc/4242" {
+		t.Fatalf("the catalog read must carry the provider identity, got %q", stub.catalogIdentities[0])
 	}
 }
 

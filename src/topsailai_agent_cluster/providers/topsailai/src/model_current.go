@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -59,8 +60,8 @@ type instructionEnvelope struct {
 // answer: the operator learns that the Endpoint did not observe the current model,
 // rather than being told the session uses nothing. Failing the whole catalog read
 // would take the menu away because one observation was unavailable.
-func (p *provider) currentModelName(ctx context.Context, sessionID string) string {
-	args, err := modelInstructionArgs(sessionID, "agent.llm", nil)
+func (p *provider) currentModelName(ctx context.Context, sessionID string, pid int64) string {
+	args, err := modelInstructionArgs(sessionID, pid, "agent.llm", nil)
 	if err != nil {
 		return ""
 	}
@@ -103,7 +104,13 @@ func modelCurrentState(profileName, currentName string) string {
 // so the argv shape is built in one place. A second copy would let the two call
 // sites drift in flag order or in the payload envelope, and the drift would only
 // appear as a provider parse failure at runtime.
-func modelInstructionArgs(sessionID, instruction string, args []string) ([]string, error) {
+//
+// The process identifier travels with the session identifier whenever the caller
+// knows it. One session can own several workspace rows, and the provider refuses an
+// ambiguous target rather than choosing a row, so a session identifier alone is not
+// an exact target. A non-positive pid omits the flag, which keeps the session-only
+// form available for a caller that genuinely has no row.
+func modelInstructionArgs(sessionID string, pid int64, instruction string, args []string) ([]string, error) {
 	document, err := json.Marshal(map[string]any{
 		"instruction": instruction,
 		"args":        args,
@@ -111,7 +118,11 @@ func modelInstructionArgs(sessionID, instruction string, args []string) ([]strin
 	if err != nil {
 		return nil, fmt.Errorf("encode %s instruction: %w", instruction, err)
 	}
-	return []string{"runtime", "control", "call_instruction", "-s", sessionID, "-a", string(document), "--json"}, nil
+	argv := []string{"runtime", "control", "call_instruction", "-s", sessionID}
+	if pid > 0 {
+		argv = append(argv, "-p", strconv.FormatInt(pid, 10))
+	}
+	return append(argv, "-a", string(document), "--json"), nil
 }
 
 // modelInstructionKwargs builds the provider argv for one instruction whose

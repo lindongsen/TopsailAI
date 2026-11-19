@@ -457,12 +457,21 @@ func (a *Adapter) History(ctx context.Context, query protocol.HistoryQuery) (pro
 }
 
 // ModelCatalog maps provider-private profile keys to opaque Cluster profile IDs.
+//
+// The provider identity the caller supplied travels into the payload, so the
+// provider addresses the exact session instead of reverse-resolving the opaque
+// mapping key. Both fields are optional: a caller with no inventory row omits them
+// and the provider resolves the target itself.
 func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
 	target, err := a.providerTarget(ctx, query.Target, false)
 	if err != nil {
 		return protocol.ModelCatalog{}, err
 	}
-	value, err := a.typedQuery(ctx, providercli.QueryModelCatalog, target, json.RawMessage(`{}`))
+	payload, err := json.Marshal(providercli.ModelCatalogPayload{ProviderSessionID: query.ProviderSessionID, ProviderPID: query.ProviderPID})
+	if err != nil {
+		return protocol.ModelCatalog{}, fmt.Errorf("encode model catalog payload: %w", err)
+	}
+	value, err := a.typedQuery(ctx, providercli.QueryModelCatalog, target, payload)
 	if err != nil {
 		return protocol.ModelCatalog{}, err
 	}

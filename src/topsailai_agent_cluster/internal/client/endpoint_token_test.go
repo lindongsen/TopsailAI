@@ -39,7 +39,7 @@ func TestReadRequestsCarryTheEndpointToken(t *testing.T) {
 	if _, err := api.GetMessages(ctx, "gd-dev", "s1", 0, 0); err != nil {
 		t.Fatalf("GetMessages: %v", err)
 	}
-	if _, err := api.GetModelCatalog(ctx, "gd-dev", "res_1", "g1"); err != nil {
+	if _, err := api.GetModelCatalog(ctx, "gd-dev", protocol.ModelCatalogQuery{Target: protocol.CommandTarget{Kind: "session", ResourceID: "res_1", ProviderGeneration: "g1"}}); err != nil {
 		t.Fatalf("GetModelCatalog: %v", err)
 	}
 	if _, err := api.GetLaunchOptions(ctx, "gd-dev", "topsailai"); err != nil {

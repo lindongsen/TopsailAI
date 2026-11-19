@@ -17,8 +17,14 @@ import (
 // force every existing test double to implement a method it never calls. A client
 // that cannot answer is reported explicitly instead of rendering an empty table,
 // because an empty table would read as "this session offers no profile".
+//
+// The query is one value rather than a list of positional strings, because the
+// catalog read now carries the provider's own session identifier and process
+// identifier beside the cluster target. Two adjacent string parameters can be
+// swapped without a compile error, and a swapped identity would address a different
+// session while looking correct.
 type ModelCatalogQuerier interface {
-	GetModelCatalog(context.Context, string, string, string) (protocol.ModelCatalog, error)
+	GetModelCatalog(context.Context, string, protocol.ModelCatalogQuery) (protocol.ModelCatalog, error)
 }
 
 // ModelCatalogViewRow is one rendered model profile row.
@@ -221,12 +227,23 @@ func (r CommandRunner) ModelCatalog(ctx context.Context, out, errors io.Writer, 
 	if err != nil {
 		return err
 	}
-	catalog, err := querier.GetModelCatalog(ctx, endpoint.EndpointID, resourceID, generation)
+	// The provider's own identity and the operator-facing label come from one
+	// inventory read, so a catalog read performs one lookup instead of one per
+	// fact. The identity travels with the query because the provider would
+	// otherwise reverse-resolve the opaque mapping key by scanning every workspace
+	// row, which is the cost this field exists to remove.
+	providerSessionID, providerPID, label := providerIdentityFromInventory(ctx, r.API, endpoint.EndpointID, resourceID)
+	query := protocol.ModelCatalogQuery{
+		Target:            protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: resourceID, ProviderGeneration: generation},
+		ProviderSessionID: providerSessionID,
+		ProviderPID:       providerPID,
+	}
+	catalog, err := querier.GetModelCatalog(ctx, endpoint.EndpointID, query)
 	if err != nil {
 		return err
 	}
 	if catalog.ErrorCode != "" {
-		return modelCatalogError(SessionIdentityLabelFromInventory(ctx, r.API, endpoint.EndpointID, resourceID), catalog.ErrorCode)
+		return modelCatalogError(label, catalog.ErrorCode)
 	}
 	view := NewModelCatalogView(endpoint.EndpointID, resourceID, catalog)
 	if jsonMode {
@@ -241,7 +258,7 @@ func (r CommandRunner) ModelCatalog(ctx context.Context, out, errors io.Writer, 
 		// An empty catalog is a real answer, not a failure and not an unsupported
 		// adapter, so it is stated plainly instead of rendering an empty table that
 		// looks like a rendering fault.
-		_, err := fmt.Fprintf(out, "session %s offers no selectable model profile\n", SessionIdentityLabelFromInventory(ctx, r.API, endpoint.EndpointID, resourceID))
+		_, err := fmt.Fprintf(out, "session %s offers no selectable model profile\n", label)
 		return err
 	}
 	return RenderModelCatalog(out, view, options)

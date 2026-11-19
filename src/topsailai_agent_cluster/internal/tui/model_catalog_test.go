@@ -51,15 +51,14 @@ func (s *modelCatalogStubAPI) AdmitCommand(context.Context, protocol.ImmutableIn
 	return nil, nil
 }
 
-func (s *modelCatalogStubAPI) GetModelCatalog(_ context.Context, endpointID, resourceID, generation string) (protocol.ModelCatalog, error) {
-	s.calls = append(s.calls, endpointID+"/"+resourceID)
-	s.generations = append(s.generations, generation)
+func (s *modelCatalogStubAPI) GetModelCatalog(_ context.Context, endpointID string, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
+	s.calls = append(s.calls, endpointID+"/"+query.Target.ResourceID)
+	s.generations = append(s.generations, query.Target.ProviderGeneration)
 	if s.err != nil {
 		return protocol.ModelCatalog{}, s.err
 	}
 	return s.catalog, nil
 }
-
 // modelCataloglessAPI implements CommandAPI without the catalog seam, so the
 // runner must report the missing capability instead of rendering an empty table.
 // It deliberately does not embed modelCatalogStubAPI, because an embedded

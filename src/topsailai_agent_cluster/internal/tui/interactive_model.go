@@ -112,8 +112,16 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 	// The generation is deliberately empty: a catalog read addresses the session
 	// record, not a live process, so requiring a generation would refuse to list
 	// profiles for exactly the sessions an operator may want to inspect before
-	// resuming them.
-	catalog, err := querier.GetModelCatalog(ctx, target.endpointID, target.sessionID, "")
+	// resuming them. The provider's own identity travels instead, because the
+	// target was already resolved from the committed inventory and the provider
+	// would otherwise reverse-resolve the opaque mapping key by scanning every
+	// workspace row.
+	query := protocol.ModelCatalogQuery{
+		Target:            protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: target.sessionID},
+		ProviderSessionID: target.providerSessionID,
+		ProviderPID:       target.providerPID,
+	}
+	catalog, err := querier.GetModelCatalog(ctx, target.endpointID, query)
 	if err != nil {
 		return err
 	}

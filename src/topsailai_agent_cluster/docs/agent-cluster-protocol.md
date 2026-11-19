@@ -724,7 +724,7 @@ a closed, versioned Cluster registry. Seven queries are registered, all at versi
 |---|---|---|---|
 | `launch.options` | a launch profile | no | no |
 | `history.messages` | a session | no | no |
-| `model.catalog` | a model profile | yes | no |
+| `model.catalog` | a session | yes | no |
 | `session.messages` | a session | yes | no |
 | `session.metrics` | a session | yes | no |
 | `session.metrics.batch` | a set of sessions | no | yes |
@@ -744,6 +744,30 @@ A session-addressed query targets the Provider's own session identifier, not a C
 because a session with no live process has no Cluster resource ID and these reads exist precisely for
 such a session.
 
+### A read carries the identity the caller already holds
+
+A read that addresses one session carries the Provider's own session identifier and process
+identifier in its payload when the caller already holds them. The caller reads both from the
+committed inventory, so sending them costs nothing; omitting them forces the Provider to recover the
+same values by scanning every workspace row and recomputing a digest for each one.
+
+| Field | Meaning | When absent |
+|---|---|---|
+| `provider_session_id` | the Provider's own session identifier | the Provider resolves the target from the opaque mapping key |
+| `provider_pid` | the Provider's own process identifier for the exact row | the Provider selects the row itself, which is ambiguous when one session owns several rows |
+
+Both are optional, and the fallback is the previous behaviour rather than a second code path, so a
+caller with no inventory row keeps its reachability. The process identifier travels with the session
+identifier because one session can own several rows: a session identifier alone is not an exact
+target, and the Provider's own liveness selection would then choose a row the caller did not mean.
+
+A negative `provider_pid` is refused as an invalid payload rather than dropped, because dropping it
+would silently address the session without the row the caller named.
+
+This is the general rule, not a `model.catalog` detail: a value the caller holds travels down as an
+explicit field, and a read reaches its answer in one Provider call. A second Provider call whose only
+purpose is to translate an identity is a defect, not a design.
+
 Query capabilities and mutating operation capabilities are separate typed descriptor collections, so
 a read cannot become a mutation through classification ambiguity.
 
@@ -758,7 +782,10 @@ a read cannot become a mutation through classification ambiguity.
     "provider_resource_key": "provider-private-key",
     "expected_generation": "generation-7"
   },
-  "payload": {}
+  "payload": {
+    "provider_session_id": "s-1",
+    "provider_pid": 77
+  }
 }
 ```
 

@@ -440,6 +440,55 @@ caller is not a provider fault, and an oversized document is not a provider erro
 The route is forwarded through the existing Endpoint channel, bound to the exact connection
 generation and request ID, and waits at most 10 seconds.
 
+## Model catalog
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/model-catalog` | Read the model profiles one session can select |
+
+`GET /api/v1/model-catalog` requires `endpoint_id` and `resource_id`. The response `data` carries
+`profiles` and `observed_at_ms`; each profile carries `model_profile_id`, `provider_display_name`,
+`current_state` (`yes`, `no` or `unknown`) and `available` with its `unavailable_reason`.
+
+Two optional parameters carry the provider's own identity for the session:
+
+| Parameter | Meaning |
+|---|---|
+| `provider_session_id` | the provider's own session identifier |
+| `provider_pid` | the provider's own process identifier for the exact row |
+
+Both are read from the committed inventory by the caller, so supplying them costs nothing. When they
+are present the provider addresses the exact session directly; when they are absent the provider
+resolves the target from the opaque mapping key, which scans every workspace row to recover the same
+values. The process identifier travels with the session identifier because one session can own several
+rows, so a session identifier alone is not an exact target. A negative or non-numeric `provider_pid`
+is refused with `invalid_target` before any provider process starts.
+
+This is a live provider read, not a stored projection. It never serves persisted inventory and never
+caches a result, so the catalog describes the registry at the moment the provider answered. The
+current-model column is a second provider observation and is deliberately non-fatal: an unavailable
+observation reports every profile as `unknown` rather than failing the read, because a catalog that
+cannot prove the current model is still a usable menu.
+
+Reading the catalog requires the `agent.model.list` operation permission on the Endpoint access
+policy. The check runs at the Endpoint, so the Server forwards the caller token without interpreting
+it.
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid_target` | `endpoint_id` or `resource_id` is missing, or `provider_pid` is not a non-negative integer |
+| 403 | `policy_denied` | The Endpoint token does not hold the `agent.model.list` permission |
+| 404 | `endpoint_not_found` | The endpoint identifier is not registered |
+| 501 | `model_catalog_unsupported` | No configured adapter can read a model catalog |
+| 502 | `model_catalog_too_large` | The provider catalog exceeded the configured bound |
+| 502 | `provider_error` | The provider call failed |
+| 503 | `unavailable` | The Server has no model catalog channel configured |
+| 503 | `endpoint_unavailable` | The endpoint is registered but has no live connection |
+| 503 | `adapter_busy` | Adapter capacity was unavailable, so the read was not attempted |
+
+The route is forwarded through the existing Endpoint channel, bound to the exact connection
+generation and request ID, and waits at most 10 seconds.
+
 ## Events and manifest
 
 | Method | Path | Purpose |
