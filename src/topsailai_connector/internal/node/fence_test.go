@@ -430,6 +430,193 @@ func TestScopeReadExplicitLengthBelowCap(t *testing.T) {
 	}
 }
 
+// TestScopeReadTruncationAtTheCapBoundary checks the truncation flag at the one
+// size where the byte count cannot answer the question.
+//
+// A file of exactly MaxResponseBytes fills the buffer and has nothing behind it,
+// so it is complete. A file one byte larger fills the same buffer and does have
+// something behind it, so it is partial. Both reads return MaxResponseBytes
+// bytes, so a flag derived from the count alone reported both as truncated and
+// told a caller that a complete file was partial.
+//
+// The three sizes are asserted together because the defect lives at the
+// boundary: a test that used only a smaller or a larger file passed before the
+// fix and would pass again if the fix were reverted.
+func TestScopeReadTruncationAtTheCapBoundary(t *testing.T) {
+	root, _ := newScopeFixture(t)
+	scope := openFixtureScope(t, root)
+
+	cases := []struct {
+		name      string
+		size      int
+		wantBytes int
+		wantTrunc bool
+	}{
+		{"one byte below the cap", MaxResponseBytes - 1, MaxResponseBytes - 1, false},
+		{"exactly the cap", MaxResponseBytes, MaxResponseBytes, false},
+		{"one byte above the cap", MaxResponseBytes + 1, MaxResponseBytes, true},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			name := strings.ReplaceAll(testCase.name, " ", "-") + ".bin"
+			writeFile(t, filepath.Join(root, name), strings.Repeat("x", testCase.size))
+
+			data, truncated, err := scope.Read(name, 0, 0)
+			if err != nil {
+				t.Fatalf("Read(%q) = %v, want nil", name, err)
+			}
+			if len(data) != testCase.wantBytes {
+				t.Fatalf("Read(%q) returned %d bytes, want %d", name, len(data), testCase.wantBytes)
+			}
+			if truncated != testCase.wantTrunc {
+				t.Fatalf("Read(%q) truncated = %t, want %t", name, truncated, testCase.wantTrunc)
+			}
+		})
+	}
+}
+
+// TestScopeReadTruncationAtTheCapBoundaryWithOffset checks the same boundary
+// when the cap is reached partway into a larger file.
+//
+// The read stops at the cap with data behind it, so the answer is truncation
+// even though the file is larger than the cap. This is the case an offset makes
+// easy to get wrong: the remaining byte count is what the cap applies to, not
+// the file size.
+func TestScopeReadTruncationAtTheCapBoundaryWithOffset(t *testing.T) {
+	root, _ := newScopeFixture(t)
+	scope := openFixtureScope(t, root)
+
+	// A file of cap+100 bytes read from offset 100 leaves exactly cap bytes, so
+	// the read fills the buffer and reaches end of file at the same time.
+	writeFile(t, filepath.Join(root, "offset-exact.bin"), strings.Repeat("x", MaxResponseBytes+100))
+
+	data, truncated, err := scope.Read("offset-exact.bin", 100, 0)
+	if err != nil {
+		t.Fatalf("Read(offset-exact.bin) = %v, want nil", err)
+	}
+	if len(data) != MaxResponseBytes {
+		t.Fatalf("Read returned %d bytes, want %d", len(data), MaxResponseBytes)
+	}
+	if truncated {
+		t.Fatal("Read reported truncation for a read that reached end of file exactly at the cap")
+	}
+
+	// The same file read from offset 99 leaves cap+1 bytes, so one byte remains
+	// behind the cap and the answer is truncation.
+	data, truncated, err = scope.Read("offset-exact.bin", 99, 0)
+	if err != nil {
+		t.Fatalf("Read(offset-exact.bin, 99) = %v, want nil", err)
+	}
+	if len(data) != MaxResponseBytes {
+		t.Fatalf("Read returned %d bytes, want %d", len(data), MaxResponseBytes)
+	}
+	if !truncated {
+		t.Fatal("Read reported no truncation for a read that stopped one byte short of end of file")
+	}
+}
+
+// TestMoreDataRemainsReportsAProbeFailure checks that a genuine failure while
+// probing for one more byte is reported as an internal error rather than as
+// "no data remains".
+//
+// The two answers are not interchangeable. "No data remains" tells a caller the
+// response is complete, so a probe that failed for an I/O reason would turn a
+// partial read into a silent success. The probe therefore has to distinguish
+// end of file, which is the normal answer, from every other failure, which is a
+// Node defect.
+//
+// A closed file is the portable way to provoke the failure: reading it returns
+// os.ErrClosed, which is not io.EOF.
+func TestMoreDataRemainsReportsAProbeFailure(t *testing.T) {
+	root, _ := newScopeFixture(t)
+	scope := openFixtureScope(t, root)
+
+	file, _, err := scope.openValidated("inside.txt", false)
+	if err != nil {
+		t.Fatalf("openValidated(inside.txt) = %v, want nil", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	truncated, err := moreDataRemains(file, "inside.txt", MaxResponseBytes, MaxResponseBytes)
+	if err == nil {
+		t.Fatalf("moreDataRemains(closed file) = %v, want an error", truncated)
+	}
+	if code := CodeOf(err); code != protocol.CodeInternal {
+		t.Fatalf("moreDataRemains(closed file) code = %s, want internal", code.Name())
+	}
+}
+
+// TestMoreDataRemainsSkipsTheProbeAfterAShortRead checks that the probe is not
+// attempted when the read already reached end of file.
+//
+// A read shorter than the limit means the file ended before the buffer filled,
+// so there is nothing behind it and the answer is already known. Probing anyway
+// would be a wasted syscall, and on a file that has since become unreadable it
+// would turn a complete response into an internal error.
+//
+// The file is closed before the call so a probe that ran would fail. A nil error
+// therefore proves the probe was skipped rather than attempted and tolerated,
+// which is the property the guard exists to provide.
+func TestMoreDataRemainsSkipsTheProbeAfterAShortRead(t *testing.T) {
+	root, _ := newScopeFixture(t)
+	scope := openFixtureScope(t, root)
+
+	file, _, err := scope.openValidated("inside.txt", false)
+	if err != nil {
+		t.Fatalf("openValidated(inside.txt) = %v, want nil", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// read is below the cap, so the read reached end of file and the answer is
+	// known without consulting the file again.
+	truncated, err := moreDataRemains(file, "inside.txt", 6, MaxResponseBytes)
+	if err != nil {
+		t.Fatalf("moreDataRemains(short read) = %v, want nil", err)
+	}
+	if truncated {
+		t.Fatal("moreDataRemains(short read) reported truncation, want false")
+	}
+}
+
+// TestMoreDataRemainsSkipsTheProbeForAnExplicitLength checks that an explicit
+// length below the cap is never truncation, even when the read filled it.
+//
+// The caller asked for that many bytes and received them, so the answer is
+// complete by construction. Only the cap cuts a response short, because only the
+// cap is a limit the caller did not choose. Probing here would also read a byte
+// the caller did not ask for.
+//
+// The file is closed so a probe that ran would fail, which makes a nil error
+// proof that the guard skipped it.
+func TestMoreDataRemainsSkipsTheProbeForAnExplicitLength(t *testing.T) {
+	root, _ := newScopeFixture(t)
+	scope := openFixtureScope(t, root)
+
+	file, _, err := scope.openValidated("inside.txt", false)
+	if err != nil {
+		t.Fatalf("openValidated(inside.txt) = %v, want nil", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// read equals limit, so the buffer filled, but limit is an explicit length
+	// rather than the cap. inside.txt has more bytes behind it, so a probe that
+	// ran would report truncation.
+	truncated, err := moreDataRemains(file, "inside.txt", 6, 6)
+	if err != nil {
+		t.Fatalf("moreDataRemains(explicit length) = %v, want nil", err)
+	}
+	if truncated {
+		t.Fatal("moreDataRemains(explicit length) reported truncation, want false")
+	}
+}
+
 // TestScopeListRoot checks that the empty path lists the scope root, which is
 // the one place the empty path is allowed.
 func TestScopeListRoot(t *testing.T) {

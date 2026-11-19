@@ -180,6 +180,24 @@ the content is not a NUL in a path.
 
 **Expected:** The response is capped at 256 KiB and the truncation is reported.
 
+### TC-OP-22a: Read a file whose size is exactly the cap
+
+**Precondition:** A file of exactly 262144 bytes, and two neighbours of 262143 and
+262145 bytes.
+
+**Action:** `file.read` on each, with no `--length`.
+
+**Expected:** 262143 bytes returns `size: 262143, truncated: false`; 262144 bytes
+returns `size: 262144, truncated: false`, because the whole file was returned and
+nothing was left behind; 262145 bytes returns `size: 262144, truncated: true`.
+The middle case is the one a flag derived from the byte count gets wrong: it fills
+the buffer and reaches end of file at the same time, so the count alone cannot
+distinguish it from a file with data behind the cap.
+
+**Regression:** A caller that stops on `truncated` must not be told a complete file
+is partial, and a caller that issues one more read at `offset=262144` must receive
+`size: 0, truncated: false` rather than a second full response.
+
 ### TC-OP-23: Read a missing file
 
 **Action:** `file.read` on `missing`.

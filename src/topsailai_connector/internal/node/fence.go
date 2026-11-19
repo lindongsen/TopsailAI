@@ -723,8 +723,44 @@ func (s *Scope) Read(path string, offset int64, length int64) ([]byte, bool, err
 		return nil, false, newError(protocol.CodeInternal, "read %q: %v", path, err)
 	}
 
-	truncated := int64(read) == limit && limit == MaxResponseBytes
+	truncated, err := moreDataRemains(file, path, int64(read), limit)
+	if err != nil {
+		return nil, false, err
+	}
 	return buffer[:read], truncated, nil
+}
+
+// moreDataRemains reports whether a read stopped because the cap was reached
+// rather than because the file ended.
+//
+// The byte count alone cannot answer that question. A file whose size is exactly
+// the cap fills the buffer and has nothing behind it, while a file one byte
+// larger fills the same buffer and does have something behind it. Deciding from
+// the count alone reported both as truncated, so a caller was told that a
+// complete file was partial and had to issue one more read to find out.
+//
+// The answer is therefore taken from the file rather than from the count, by
+// attempting one more byte. That is exact even when the file grows during the
+// read, which a comparison against the size reported by the earlier FileInfo
+// would not be: the FileInfo describes the file when it was opened, not when the
+// read finished.
+//
+// An explicit length below the cap is never truncation, because the caller asked
+// for that many bytes and received them. Only the cap itself cuts a response
+// short, so the probe is skipped when the cap was not the binding limit.
+func moreDataRemains(file *os.File, path string, read int64, limit int64) (bool, error) {
+	if limit != MaxResponseBytes || read < limit {
+		return false, nil
+	}
+	var probe [1]byte
+	n, err := file.Read(probe[:])
+	if n > 0 {
+		return true, nil
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, newError(protocol.CodeInternal, "read %q: %v", path, err)
+	}
+	return false, nil
 }
 
 // List returns the entries of one directory, sorted by name so the result is

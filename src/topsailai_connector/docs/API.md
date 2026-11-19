@@ -287,6 +287,13 @@ carries no envelope fields of its own:
 | `file.stat` | `type`, `size`, `mode`, `modified_at`, `is_symlink`, `link_target` |
 | `file.read` | `content` (base64), `size`, `truncated` |
 
+`truncated` reports whether the content was cut off, not whether the response
+reached the cap. A file whose size is exactly the cap is returned in full and
+reports `false`, because nothing was left behind; a file one byte larger returns
+the same number of bytes and reports `true`. The distinction matters to a caller
+that stops on `truncated`: deriving the flag from the byte count alone told it a
+complete file was partial.
+
 The `request_id` is the caller's correlation id, echoed in the envelope. It is
 generated as `req_` followed by 32 lowercase hexadecimal characters, which encode
 128 random bits, and it is capped at 128 bytes so a caller-supplied value cannot
