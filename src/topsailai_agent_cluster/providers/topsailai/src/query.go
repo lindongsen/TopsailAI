@@ -297,15 +297,15 @@ func (p *provider) history(ctx context.Context, requested *target, raw json.RawM
 }
 
 // modelsPayload is the closed model.catalog payload.
-//
-// ProviderSessionID and ProviderPID carry the provider's own identity for the
-// session, which the Endpoint already holds from the committed inventory. When they
-// are supplied the read addresses the exact session directly; when they are absent
-// the provider resolves the target from the opaque mapping key, which is the
-// previous behaviour rather than a second code path.
-type modelsPayload struct {
-	ProviderSessionID string `json:"provider_session_id"`
-	ProviderPID       int64  `json:"provider_pid"`
+type modelsPayload struct{}
+
+type agentModelsDocument struct {
+	OK           bool   `json:"ok"`
+	CurrentModel string `json:"current_model"`
+	Models       []struct {
+		Name    string `json:"name"`
+		Current bool   `json:"current"`
+	} `json:"models"`
 }
 
 func (p *provider) models(ctx context.Context, requested *target, raw json.RawMessage) (modelResult, error) {
@@ -313,36 +313,73 @@ func (p *provider) models(ctx context.Context, requested *target, raw json.RawMe
 	if err := decodeStrict(raw, &payload); err != nil {
 		return modelResult{}, fmt.Errorf("%w: model.catalog payload", errInvalidRequest)
 	}
-	// A negative process identifier cannot name a process, so it is refused rather
-	// than silently dropped: dropping it would address the session without the row
-	// the caller meant, which is the ambiguity the identifier exists to remove.
-	if payload.ProviderPID < 0 {
-		return modelResult{}, fmt.Errorf("%w: provider_pid must not be negative", errInvalidRequest)
+	resolved, exact, err := decodeProviderTarget(requested.ProviderTarget)
+	if err != nil {
+		return modelResult{}, err
 	}
-	// The identity the caller supplied is used as given. Resolving it again would
-	// scan every workspace row to recover a value that was already known, which is
-	// the whole cost this field exists to remove.
-	sessionID, pid := payload.ProviderSessionID, payload.ProviderPID
-	if sessionID == "" {
-		resolved, err := p.resolveWorkspaceTarget(ctx, requested)
+	if exact {
+		key, keyErr := validateSessionTarget(requested)
+		if keyErr != nil {
+			return modelResult{}, keyErr
+		}
+		if err := validateExactRowTarget(key, resolved); err != nil {
+			return modelResult{}, err
+		}
+	}
+	if exact && resolved.PID > 0 {
+		return p.onlineModels(ctx, resolved)
+	}
+	return p.offlineModels(ctx, requested, resolved, exact)
+}
+
+func (p *provider) onlineModels(ctx context.Context, target providerSessionTarget) (modelResult, error) {
+	args, err := modelInstructionKwargsWithPID(target.SessionID, target.PID, "agent.models", map[string]string{"json": "1"})
+	if err != nil {
+		return modelResult{}, err
+	}
+	var envelope instructionEnvelope
+	if err := runJSON(ctx, p.runner, args, maxModelBytes, &envelope); err != nil {
+		return modelResult{}, err
+	}
+	if !envelope.OK || envelope.ErrorCode != "" || envelope.Response == nil || envelope.Response.Status != "ok" {
+		return modelResult{}, errorsNew("agent.models returned invalid response")
+	}
+	var document agentModelsDocument
+	if err := decodeJSONDocument([]byte(envelope.Response.Result), &document, false); err != nil {
+		return modelResult{}, fmt.Errorf("decode agent.models result: %w", err)
+	}
+	if !document.OK {
+		return modelResult{}, errorsNew("agent.models rejected catalog read")
+	}
+	entries := make([]modelEntry, 0, len(document.Models))
+	enabled := true
+	for _, item := range document.Models {
+		entries = append(entries, modelEntry{Name: item.Name, Enabled: &enabled})
+	}
+	return p.modelResult(entries, document.CurrentModel, true)
+}
+
+func (p *provider) offlineModels(ctx context.Context, requested *target, resolved providerSessionTarget, exact bool) (modelResult, error) {
+	if !exact {
+		var err error
+		resolved, err = p.resolveWorkspaceTarget(ctx, requested)
 		if err != nil {
 			return modelResult{}, err
 		}
-		sessionID, pid = resolved.SessionID, resolved.PID
 	}
 	var entries []modelEntry
 	if err := runJSON(ctx, p.runner, []string{"models", "list", "--json"}, maxModelBytes, &entries); err != nil {
 		return modelResult{}, err
 	}
+	currentName := p.sessionModelName(ctx, resolved.SessionID)
+	return p.modelResult(entries, currentName, false)
+}
+
+func (p *provider) modelResult(entries []modelEntry, currentName string, online bool) (modelResult, error) {
 	if len(entries) > maxModelProfiles {
 		return modelResult{}, errorsNew("model profile count exceeds limit")
 	}
 	entries = collapseModels(entries)
-	// The registry document names what can be selected, never what is selected, so
-	// the current model is a second read. It is deliberately non-fatal: a catalog
-	// that cannot prove the current model is still a usable menu, and failing the
-	// whole read would take the menu away because one observation was unavailable.
-	currentName := p.currentModelName(ctx, sessionID, pid)
 	result := modelResult{Profiles: make([]modelProfileFact, 0, len(entries)), ObservedAtMS: p.now().UnixMilli()}
 	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
@@ -357,7 +394,10 @@ func (p *provider) models(ctx context.Context, requested *target, raw json.RawMe
 			return modelResult{}, errorsNew("model response contains duplicate provider resource key")
 		}
 		seen[key] = struct{}{}
-		available, reason := modelAvailability(entry)
+		available, reason := true, ""
+		if !online {
+			available, reason = modelAvailability(entry)
+		}
 		result.Profiles = append(result.Profiles, modelProfileFact{resourceModelProfile, key, boundedString(entry.Name, 256), modelCurrentState(entry.Name, currentName), available, reason})
 	}
 	return result, nil
@@ -652,6 +692,13 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 	if err := decodeStrict(raw, &payload); err != nil {
 		return detailResult{}, fmt.Errorf("%w: session.detail payload", errInvalidRequest)
 	}
+	if exact, ok, decodeErr := decodeProviderTarget(requested.ProviderTarget); decodeErr != nil {
+		return detailResult{}, decodeErr
+	} else if ok {
+		if err := validateExactSessionTarget(sessionID, exact); err != nil {
+			return detailResult{}, err
+		}
+	}
 	stdout, stderr, runErr := p.runner.Run(ctx, []string{"session", "info", sessionID, "--json"}, nil)
 	// The provider prints its own not-found document on stdout and exits non-zero,
 	// so the document is inspected before the exit status. Reading the status first
@@ -676,7 +723,7 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 	if len(stdout) == 0 {
 		return detailResult{}, errorsNew("provider returned no session record")
 	}
-	runtime, err := p.runtimeEnvelope(ctx, sessionID)
+	runtime, err := p.runtimeEnvelope(ctx, sessionID, requested.ProviderTarget)
 	if err != nil {
 		return detailResult{}, err
 	}
@@ -701,7 +748,23 @@ func (p *provider) detail(ctx context.Context, requested *target, raw json.RawMe
 // another host is still described, and that row simply has no runtime record
 // here. An empty result therefore means "not observable from this host", and the
 // surface reports it as not reported rather than as an empty observation.
-func (p *provider) runtimeEnvelope(ctx context.Context, sessionID string) (json.RawMessage, error) {
+func (p *provider) runtimeEnvelope(ctx context.Context, sessionID, providerTarget string) (json.RawMessage, error) {
+	resolved, exact, err := decodeProviderTarget(providerTarget)
+	if err != nil {
+		return nil, err
+	}
+	if exact {
+		if err := validateExactSessionTarget(sessionID, resolved); err != nil {
+			return nil, err
+		}
+	}
+	if exact && resolved.PID > 0 {
+		var document json.RawMessage
+		if err := runJSON(ctx, p.runner, []string{"runtime", "info", "-s", resolved.SessionID, "-p", fmt.Sprint(resolved.PID)}, maxMetricsBytes, &document); err != nil {
+			return nil, err
+		}
+		return document, nil
+	}
 	args := []string{"workspace", "list", "--json", "--local", "-s", sessionID, "--include-runtime"}
 	var document workspaceResponse
 	if err := runJSON(ctx, p.runner, args, maxMetricsBytes, &document); err != nil {

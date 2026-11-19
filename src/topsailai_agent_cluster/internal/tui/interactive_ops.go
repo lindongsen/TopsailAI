@@ -54,7 +54,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		// because the editor owns the terminal and is the only writer. Arming
 		// keeps the existing watch seam, so a keypress stops the stream through
 		// the same path that stops an auto-refresh loop.
-		return armFollowStream(api, state, endpointID, session.ClusterSessionID, session.ProviderGeneration, maxBytes, maxLines, trustedOut)
+		return armFollowStream(api, state, endpointID, session.ClusterSessionID, session.ProviderGeneration, session.ProviderTarget, maxBytes, maxLines, trustedOut)
 	}
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.ClusterSessionID, maxBytes, maxLines, false, color)
 }
@@ -134,11 +134,11 @@ func logsTarget(ctx context.Context, api InteractiveAPI, state *interactiveState
 // grammars, two announcements or two capability checks. A client without the
 // streaming seam is refused here instead of arming a stream that could never
 // start.
-func armFollowStream(api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation string, maxBytes, maxLines int, trustedOut io.Writer) error {
+func armFollowStream(api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation, providerTarget string, maxBytes, maxLines int, trustedOut io.Writer) error {
 	if _, ok := api.(OutputFollower); !ok {
 		return fmt.Errorf("follow is unavailable: the API client does not support streaming output")
 	}
-	state.follow = &followRequest{EndpointID: endpointID, ResourceID: sessionID, ProviderGeneration: generation, MaxBytes: maxBytes, MaxLines: maxLines}
+	state.follow = &followRequest{EndpointID: endpointID, ResourceID: sessionID, ProviderGeneration: generation, ProviderTarget: providerTarget, MaxBytes: maxBytes, MaxLines: maxLines}
 	// The announcement carries the shared follow prefix, so the operator can tell
 	// it apart from agent output. The redundant "follow: " word is dropped because
 	// the prefix already names the writer. The policy comes from the writer this
@@ -591,7 +591,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.ClusterSessionID, ProviderGeneration: session.ProviderGeneration, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: session.ProviderDisplayName, ProviderSessionID: session.ProviderSessionID}
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.ClusterSessionID, ProviderGeneration: session.ProviderGeneration, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: session.ProviderDisplayName, ProviderSessionID: session.ProviderSessionID, ProviderTarget: session.ProviderTarget}
 	progress := NewActionProgress(options.ProgressWriter, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
@@ -617,7 +617,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	// happened, so the operator should not have to type logs to see the effect.
 	// The automatic step is the same live tail as logs -f, because a one-shot
 	// snapshot stops at the moment it was read while the agent keeps writing.
-	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, "send completed", actionResultData, autoFollowMaxLines); err != nil {
+	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, session.ProviderTarget, trustedOut, options, "send completed", actionResultData, autoFollowMaxLines); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
@@ -672,7 +672,7 @@ const autoFollowMaxLines = 10
 // definition. A nil result decodes to a zero receipt, which is not
 // EffectNotApplied, so a caller with no action receipt keeps its previous
 // behaviour.
-func autoFollowAfterAction(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation string, trustedOut io.Writer, options InteractiveOptions, failurePrefix string, result map[string]any, maxLines int) error {
+func autoFollowAfterAction(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation, providerTarget string, trustedOut io.Writer, options InteractiveOptions, failurePrefix string, result map[string]any, maxLines int) error {
 	if ReceiptForStatus(result).EffectCertainty == protocol.EffectNotApplied {
 		return nil
 	}
@@ -683,7 +683,7 @@ func autoFollowAfterAction(parent context.Context, api InteractiveAPI, state *in
 		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
 	}
 	maxBytes, lines := outputBoundsForLines(options, maxLines)
-	if err := armFollowStream(api, state, endpointID, sessionID, generation, maxBytes, lines, trustedOut); err != nil {
+	if err := armFollowStream(api, state, endpointID, sessionID, generation, providerTarget, maxBytes, lines, trustedOut); err != nil {
 		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
 	}
 	return nil
@@ -940,7 +940,7 @@ func autoFollowAfterStart(parent context.Context, api InteractiveAPI, state *int
 		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
 	}
 	maxBytes, maxLines := interactiveOutputBounds(options)
-	if err := armFollowStream(api, state, endpointID, session.ClusterSessionID, session.ProviderGeneration, maxBytes, maxLines, trustedOut); err != nil {
+	if err := armFollowStream(api, state, endpointID, session.ClusterSessionID, session.ProviderGeneration, session.ProviderTarget, maxBytes, maxLines, trustedOut); err != nil {
 		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
 	}
 	return nil
@@ -1100,7 +1100,7 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	var postSubmit func(context.Context, map[string]any) error
 	if op == protocol.OperationContextInject {
 		postSubmit = func(postCtx context.Context, result map[string]any) error {
-			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, trustedOut, options, name+" completed", result, autoFollowMaxLines)
+			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.ClusterSessionID, session.ProviderGeneration, session.ProviderTarget, trustedOut, options, name+" completed", result, autoFollowMaxLines)
 		}
 		// Context injection is additive and the operator already stated the
 		// command and its text, so it submits directly. A confirmation here could
@@ -1206,7 +1206,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 // step its own bounded budget.
 func submitInteractiveAction(ctx, parent context.Context, api InteractiveAPI, state *interactiveState, op, name string, target confirmationTarget, generation string, payload json.RawMessage, out io.Writer, options InteractiveOptions, postSubmit func(context.Context, map[string]any) error) error {
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.ClusterSessionID, ProviderGeneration: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: target.ProviderDisplayName, ProviderSessionID: target.ProviderSessionID, ProviderSessionHandle: target.ProviderSessionHandle}
+	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.ClusterSessionID, ProviderGeneration: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, ProviderDisplayName: target.ProviderDisplayName, ProviderSessionID: target.ProviderSessionID, ProviderTarget: target.ProviderTarget, ProviderSessionHandle: target.ProviderSessionHandle}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)
 	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {

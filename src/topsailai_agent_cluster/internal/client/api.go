@@ -289,7 +289,16 @@ type OutputSnapshot = protocol.OutputSnapshotResponse
 // GetOutput retrieves a bounded output snapshot for a resource.
 // maxLines bounds the provider line count and zero keeps the provider default.
 func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
-	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
+	return c.GetOutputRequest(ctx, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, MaxBytes: maxBytes, MaxLines: maxLines})
+}
+
+// GetOutputRequest preserves the exact opaque Provider target when available.
+func (c *APIClient) GetOutputRequest(ctx context.Context, request protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	endpointID := request.EndpointID
+	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(request.ResourceID), url.QueryEscape(request.ProviderGeneration), request.MaxBytes, request.MaxLines)
+	if request.ProviderTarget != "" {
+		path += "&provider_target=" + url.QueryEscape(request.ProviderTarget)
+	}
 	var result protocol.OutputSnapshotResponse
 	err := c.get(c.withEndpointOperation(ctx, endpointID, protocol.OperationOutputRead), path, &result)
 	return result, c.explainRefusal(err, endpointID)
@@ -310,7 +319,16 @@ type FollowChunk = protocol.OutputFollowRecord
 // releases its follow slot. The provider child therefore stops instead of streaming
 // into a queue nobody reads.
 func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (<-chan FollowChunk, error) {
-	path := fmt.Sprintf("/api/v1/output/follow?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
+	return c.FollowOutputRequest(ctx, protocol.OutputFollowRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, MaxBytes: maxBytes, MaxLines: maxLines})
+}
+
+// FollowOutputRequest preserves the exact opaque Provider target when available.
+func (c *APIClient) FollowOutputRequest(ctx context.Context, request protocol.OutputFollowRequest) (<-chan FollowChunk, error) {
+	endpointID := request.EndpointID
+	path := fmt.Sprintf("/api/v1/output/follow?endpoint_id=%s&resource_id=%s&provider_generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(request.ResourceID), url.QueryEscape(request.ProviderGeneration), request.MaxBytes, request.MaxLines)
+	if request.ProviderTarget != "" {
+		path += "&provider_target=" + url.QueryEscape(request.ProviderTarget)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
 		return nil, err

@@ -56,14 +56,6 @@ type ModelProfile struct {
 // then resolves the target itself.
 type ModelCatalogQuery struct {
 	Target CommandTarget `json:"target"`
-	// ProviderSessionID is the provider's own session identifier, descriptive of
-	// the target rather than an addressing key of its own: the cluster still
-	// addresses the session by Target.ResourceID.
-	ProviderSessionID string `json:"provider_session_id,omitempty"`
-	// ProviderPID is the provider process identifier that makes the session an
-	// exact target. One provider session identifier can own several rows, so the
-	// identifier alone does not identify which process to ask.
-	ProviderPID int64 `json:"provider_pid,omitempty"`
 }
 
 // ModelCatalog is one bounded read of the profiles a session can select.

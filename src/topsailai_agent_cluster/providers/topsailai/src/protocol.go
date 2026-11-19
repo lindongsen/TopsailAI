@@ -3,9 +3,10 @@ package main
 import "encoding/json"
 
 const (
-	protocolName  = "agent-cluster-adapter"
-	protocolMajor = 1
-	protocolMinor = 0
+	maxProviderTargetBytes = 4096
+	protocolName           = "agent-cluster-adapter"
+	protocolMajor          = 1
+	protocolMinor          = 0
 )
 
 const (
@@ -107,6 +108,7 @@ type target struct {
 	ResourceKind        string `json:"resource_kind"`
 	ProviderResourceKey string `json:"provider_resource_key"`
 	ExpectedGeneration  string `json:"expected_generation,omitempty"`
+	ProviderTarget      string `json:"provider_target,omitempty"`
 }
 
 // namedContract identifies one versioned standard operation or query.
@@ -178,6 +180,7 @@ type providerObservation struct {
 	StateReason         string          `json:"state_reason,omitempty"`
 	ObservedAtMS        int64           `json:"observed_at_ms"`
 	Attributes          json.RawMessage `json:"attributes,omitempty"`
+	ProviderTarget      string          `json:"provider_target,omitempty"`
 }
 
 type discoveryResult struct {

@@ -110,6 +110,8 @@ const (
 const (
 	// MaxIdentifierBytes bounds opaque protocol identifiers.
 	MaxIdentifierBytes = 256
+	// MaxProviderTargetBytes bounds one opaque Provider-owned exact-target slot.
+	MaxProviderTargetBytes = 4096
 	// MaxProviderResponseBytes bounds one opaque provider response.
 	MaxProviderResponseBytes = 64 << 10
 	// MaxErrorMessageBytes bounds one provider error message.
@@ -143,6 +145,9 @@ type Target struct {
 	ResourceKind        string `json:"resource_kind"`
 	ProviderResourceKey string `json:"provider_resource_key"`
 	ExpectedGeneration  string `json:"expected_generation,omitempty"`
+	// ProviderTarget is an opaque Provider-owned exact-target slot. The Generic
+	// CLI Adapter validates only its bound and forwards it unchanged.
+	ProviderTarget string `json:"provider_target,omitempty"`
 }
 
 // NamedContract identifies one versioned standard operation, query or control
@@ -197,6 +202,7 @@ type ProviderObservation struct {
 	StateReason         string          `json:"state_reason,omitempty"`
 	ObservedAtMS        int64           `json:"observed_at_ms"`
 	Attributes          json.RawMessage `json:"attributes,omitempty"`
+	ProviderTarget      string          `json:"provider_target,omitempty"`
 }
 
 // DiscoveryResult carries a bounded provider scan and its completeness evidence.

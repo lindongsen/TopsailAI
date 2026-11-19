@@ -744,28 +744,29 @@ A session-addressed query targets the Provider's own session identifier, not a C
 because a session with no live process has no Cluster resource ID and these reads exist precisely for
 such a session.
 
-### A read carries the identity the caller already holds
+### A read carries the exact-target evidence the caller already holds
 
-A read that addresses one session carries the Provider's own session identifier and process
-identifier in its payload when the caller already holds them. The caller reads both from the
-committed inventory, so sending them costs nothing; omitting them forces the Provider to recover the
-same values by scanning every workspace row and recomputing a digest for each one.
+A read that addresses one session carries the Provider's own opaque exact-target evidence when the
+caller already holds it. The caller reads it from the committed inventory, so sending it costs
+nothing; omitting it forces the Provider to recover the same identity by scanning every workspace row
+and recomputing a digest for each one.
+
+The evidence travels in the standard `provider_target` slot. It is bounded, opaque to the Cluster and
+forwarded unchanged. The Cluster never models its contents, so a second Provider may fill the slot
+with an entirely different document and nothing above the adapter changes.
 
 | Field | Meaning | When absent |
 |---|---|---|
-| `provider_session_id` | the Provider's own session identifier | the Provider resolves the target from the opaque mapping key |
-| `provider_pid` | the Provider's own process identifier for the exact row | the Provider selects the row itself, which is ambiguous when one session owns several rows |
+| `provider_target` | opaque Provider-owned exact-target evidence | the Provider resolves the target from the opaque mapping key |
 
-Both are optional, and the fallback is the previous behaviour rather than a second code path, so a
-caller with no inventory row keeps its reachability. The process identifier travels with the session
-identifier because one session can own several rows: a session identifier alone is not an exact
-target, and the Provider's own liveness selection would then choose a row the caller did not mean.
+It is optional, and the fallback is the previous behaviour rather than a second code path, so a caller
+with no inventory row keeps its reachability. The slot supplements Cluster identity: the Provider must
+bind it to the durable Provider resource key or session key it accompanies, and a slot that names a
+different resource is refused before any Provider process starts. Authorization, ownership, generation
+comparison and Provider same-path revalidation remain in force.
 
-A negative `provider_pid` is refused as an invalid payload rather than dropped, because dropping it
-would silently address the session without the row the caller named.
-
-This is the general rule, not a `model.catalog` detail: a value the caller holds travels down as an
-explicit field, and a read reaches its answer in one Provider call. A second Provider call whose only
+This is the general rule, not a `model.catalog` detail: a value the caller holds travels down as one
+explicit slot, and a read reaches its answer in one Provider call. A second Provider call whose only
 purpose is to translate an identity is a defect, not a design.
 
 Query capabilities and mutating operation capabilities are separate typed descriptor collections, so
@@ -782,10 +783,7 @@ a read cannot become a mutation through classification ambiguity.
     "provider_resource_key": "provider-private-key",
     "expected_generation": "generation-7"
   },
-  "payload": {
-    "provider_session_id": "s-1",
-    "provider_pid": 77
-  }
+  "payload": {}
 }
 ```
 

@@ -213,7 +213,13 @@ failure.
 | GET | `/api/v1/output` | Read one bounded output snapshot |
 
 Required query parameters are `endpoint_id` and `resource_id`. Optional parameters are
-`provider_generation`, `max_bytes` and `max_lines`.
+`provider_generation`, `provider_target`, `max_bytes` and `max_lines`.
+
+`provider_target` is the opaque, bounded Provider-owned exact-target evidence copied from the
+committed inventory row. When present, the Provider reads the exact row without scanning the task
+directory or running workspace discovery; when absent, it resolves the target from the durable
+mapping key. The Cluster forwards the value unchanged and never interprets it, and the Provider
+refuses a slot that does not match the durable Provider resource key.
 
 `max_bytes` defaults to 64 KiB and is clamped to 1 MiB. `max_lines` is optional; an absent or
 invalid value keeps the provider default, and an explicit value is clamped to the provider range of
@@ -236,7 +242,9 @@ code, so an unavailable read is never reported as an empty successful read.
 | GET | `/api/v1/output/follow` | Stream output records for one resource |
 
 Required query parameters are `endpoint_id` and `resource_id`. Optional parameters are
-`provider_generation`, `max_bytes` and `max_lines`. `max_bytes` defaults to 64 KiB and is clamped to 1 MiB;
+`provider_generation`, `provider_target`, `max_bytes` and `max_lines`. `provider_target` carries the
+same opaque exact-target evidence as the snapshot route, so a follow starts on the exact row instead
+of reconstructing its identity. `max_bytes` defaults to 64 KiB and is clamped to 1 MiB;
 `max_lines` keeps the provider default when absent or invalid and is clamped to 10000 lines.
 
 `max_bytes` bounds one record, because one record is one chunk. A record longer than the budget is
@@ -400,6 +408,11 @@ seconds and the channel at 9, so the innermost component is always the one that 
 `GET /api/v1/detail` requires `endpoint_id` and `session_id`. The response `data` carries
 `provider_session_id`, `provider_metadata`, `provider_runtime` and `observed_at_ms`.
 
+An optional `provider_target` selects the exact Provider row whose runtime document is returned.
+Metadata stays session-scoped, because `session info` answers for the session rather than one row.
+Without the parameter the runtime document is selected by the Provider's own session-scoped rule,
+which is the compatibility path for a session that has no committed inventory row.
+
 This is a live provider read, not a stored projection. It never serves persisted inventory and never
 caches a result, so the documents describe the session at the moment the provider answered. The
 record is provider state, so the route answers for a session that is no longer running; that is
@@ -450,19 +463,18 @@ generation and request ID, and waits at most 10 seconds.
 `profiles` and `observed_at_ms`; each profile carries `model_profile_id`, `provider_display_name`,
 `current_state` (`yes`, `no` or `unknown`) and `available` with its `unavailable_reason`.
 
-Two optional parameters carry the provider's own identity for the session:
+One optional parameter carries the Provider's own exact-target evidence for the session:
 
 | Parameter | Meaning |
 |---|---|
-| `provider_session_id` | the provider's own session identifier |
-| `provider_pid` | the provider's own process identifier for the exact row |
+| `provider_target` | opaque, bounded Provider-owned addressing evidence copied from the committed inventory row |
 
-Both are read from the committed inventory by the caller, so supplying them costs nothing. When they
-are present the provider addresses the exact session directly; when they are absent the provider
-resolves the target from the opaque mapping key, which scans every workspace row to recover the same
-values. The process identifier travels with the session identifier because one session can own several
-rows, so a session identifier alone is not an exact target. A negative or non-numeric `provider_pid`
-is refused with `invalid_target` before any provider process starts.
+The value is read from the committed inventory by the caller, so supplying it costs nothing. When it
+is present the Provider addresses the exact row directly and one `agent.models` instruction returns
+the catalog and current model; when it is absent the Provider resolves the target from the opaque
+mapping key and uses its offline sources. The Cluster never interprets the value: it is bounded,
+forwarded unchanged, and bound by the Provider to the durable Provider resource key, so a slot that
+names a different row is refused before any Provider process starts.
 
 This is a live provider read, not a stored projection. It never serves persisted inventory and never
 caches a result, so the catalog describes the registry at the moment the provider answered. The
@@ -476,7 +488,7 @@ it.
 
 | Status | Code | Meaning |
 |---|---|---|
-| 400 | `invalid_target` | `endpoint_id` or `resource_id` is missing, or `provider_pid` is not a non-negative integer |
+| 400 | `invalid_target` | `endpoint_id` or `resource_id` is missing, or `provider_target` exceeds its bound |
 | 403 | `policy_denied` | The Endpoint token does not hold the `agent.model.list` permission |
 | 404 | `endpoint_not_found` | The endpoint identifier is not registered |
 | 501 | `model_catalog_unsupported` | No configured adapter can read a model catalog |

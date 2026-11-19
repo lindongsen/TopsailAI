@@ -89,6 +89,46 @@ type providerSessionTarget struct {
 	IsTask         bool   `json:"is_task,omitempty"`
 }
 
+// providerTargetSlot is the Provider-owned exact-row address carried through the
+// Cluster opaque provider_target seam. No Cluster component interprets these keys.
+type providerTargetSlot struct {
+	SessionID      string `json:"session_id"`
+	ProviderRowKey string `json:"provider_row_key,omitempty"`
+	PID            int64  `json:"pid,omitempty"`
+	IsTask         bool   `json:"is_task,omitempty"`
+}
+
+func encodeProviderTarget(target providerSessionTarget) (string, error) {
+	document, err := json.Marshal(providerTargetSlot{
+		SessionID: target.SessionID, ProviderRowKey: target.ProviderRowKey,
+		PID: target.PID, IsTask: target.IsTask,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode provider target: %w", err)
+	}
+	if len(document) > maxProviderTargetBytes {
+		return "", errors.New("provider target exceeds contract limit")
+	}
+	return string(document), nil
+}
+
+func decodeProviderTarget(value string) (providerSessionTarget, bool, error) {
+	if value == "" {
+		return providerSessionTarget{}, false, nil
+	}
+	if len(value) > maxProviderTargetBytes {
+		return providerSessionTarget{}, false, fmt.Errorf("%w: provider_target exceeds contract limit", errInvalidRequest)
+	}
+	var slot providerTargetSlot
+	if err := decodeStrict(json.RawMessage(value), &slot); err != nil {
+		return providerSessionTarget{}, false, fmt.Errorf("%w: invalid provider_target", errInvalidRequest)
+	}
+	if strings.TrimSpace(slot.SessionID) == "" || slot.PID < 0 {
+		return providerSessionTarget{}, false, fmt.Errorf("%w: invalid provider_target identity", errInvalidRequest)
+	}
+	return providerSessionTarget{SessionID: slot.SessionID, ProviderRowKey: slot.ProviderRowKey, PID: slot.PID, IsTask: slot.IsTask}, true, nil
+}
+
 type sessionAttributes struct {
 	ProviderSessionID        string        `json:"provider_session_id,omitempty"`
 	ProviderPID              int64         `json:"provider_pid,omitempty"`
@@ -264,7 +304,13 @@ func (p *provider) observation(item workspaceItem) (providerObservation, error) 
 	if err != nil {
 		return providerObservation{}, err
 	}
-	return providerObservation{ProviderResourceKey: key, ProviderGeneration: generation, ResourceKind: resourceSession, State: state, StateReason: reason, ObservedAtMS: now, Attributes: attributes}, nil
+	providerTarget, err := encodeProviderTarget(providerSessionTarget{
+		SessionID: item.SessionID, ProviderRowKey: item.ProviderRowKey, PID: item.PID, IsTask: item.IsTask,
+	})
+	if err != nil {
+		return providerObservation{}, err
+	}
+	return providerObservation{ProviderResourceKey: key, ProviderGeneration: generation, ResourceKind: resourceSession, State: state, StateReason: reason, ObservedAtMS: now, Attributes: attributes, ProviderTarget: providerTarget}, nil
 }
 
 // providerSessionKey mints the mapping key for one workspace row.
@@ -285,6 +331,31 @@ func providerSessionKey(item workspaceItem) (string, error) {
 		IsTask         bool   `json:"is_task"`
 	}{item.SessionID, item.ProviderRowKey, item.IsTask}
 	return stableProviderKey(sessionRowProviderKeyPrefix, identity)
+}
+
+// validateExactRowTarget proves an opaque slot belongs to the durable Provider
+// resource key that accompanied it. The slot is client-carried evidence, so
+// decoding it alone must never authorize a different row.
+func validateExactRowTarget(key string, exact providerSessionTarget) error {
+	candidate, err := providerSessionKey(workspaceItem{
+		SessionID: exact.SessionID, ProviderRowKey: exact.ProviderRowKey, IsTask: exact.IsTask,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: invalid provider target: %v", errInvalidRequest, err)
+	}
+	if candidate != key {
+		return fmt.Errorf("%w: provider target does not match provider resource key", errInvalidRequest)
+	}
+	return nil
+}
+
+// validateExactSessionTarget proves a detail slot belongs to the session-scoped
+// Provider key used by the query.
+func validateExactSessionTarget(sessionID string, exact providerSessionTarget) error {
+	if exact.SessionID != sessionID {
+		return fmt.Errorf("%w: provider target does not match provider session", errInvalidRequest)
+	}
+	return nil
 }
 
 // historySessionKey mints the mapping key for one history row.

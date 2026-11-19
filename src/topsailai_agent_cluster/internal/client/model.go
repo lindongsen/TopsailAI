@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"net/url"
-	"strconv"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -22,15 +21,8 @@ func (c *APIClient) GetModelCatalog(ctx context.Context, endpointID string, quer
 	if query.Target.ProviderGeneration != "" {
 		path += "&provider_generation=" + url.QueryEscape(query.Target.ProviderGeneration)
 	}
-	// The provider's own identity travels as query parameters because the Server
-	// forwards it verbatim and never interprets it. Omitting an empty value keeps
-	// the request unchanged for a caller that has no inventory row, so the adapter
-	// resolves the target itself exactly as before.
-	if query.ProviderSessionID != "" {
-		path += "&provider_session_id=" + url.QueryEscape(query.ProviderSessionID)
-	}
-	if query.ProviderPID > 0 {
-		path += "&provider_pid=" + url.QueryEscape(strconv.FormatInt(query.ProviderPID, 10))
+	if query.Target.ProviderTarget != "" {
+		path += "&provider_target=" + url.QueryEscape(query.Target.ProviderTarget)
 	}
 	err := c.get(c.withEndpointOperation(ctx, endpointID, protocol.OperationAgentModelList), path, &result)
 	return result, c.explainRefusal(err, endpointID)

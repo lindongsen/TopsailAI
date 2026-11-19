@@ -33,6 +33,9 @@ type Session struct {
 	// process an operation would reach. Zero means the provider reported no PID,
 	// which is not the same as a session with no process.
 	ProviderPID int64 `json:"provider_pid,omitempty"`
+	// ProviderTarget is an opaque, bounded Provider-owned addressing slot. The
+	// Cluster stores and forwards it unchanged and never interprets its contents.
+	ProviderTarget string `json:"provider_target,omitempty"`
 	// ProviderDisplayName is the provider session name, descriptive only.
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`
 	// ProviderSessionQualifier distinguishes sibling provider rows that share a

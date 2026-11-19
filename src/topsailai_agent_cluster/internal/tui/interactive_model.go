@@ -117,9 +117,7 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 	// would otherwise reverse-resolve the opaque mapping key by scanning every
 	// workspace row.
 	query := protocol.ModelCatalogQuery{
-		Target:            protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: target.sessionID},
-		ProviderSessionID: target.providerSessionID,
-		ProviderPID:       target.providerPID,
+		Target: protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: target.sessionID, ProviderTarget: target.providerTarget},
 	}
 	catalog, err := querier.GetModelCatalog(ctx, target.endpointID, query)
 	if err != nil {

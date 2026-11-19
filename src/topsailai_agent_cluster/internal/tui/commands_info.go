@@ -54,7 +54,7 @@ func (r CommandRunner) Info(ctx context.Context, out io.Writer, id string, jsonM
 	if err != nil {
 		return err
 	}
-	read := readSessionDetail(ctx, r.API, endpoint.EndpointID, session.ProviderSessionID)
+	read := readSessionDetail(ctx, r.API, endpoint.EndpointID, session.ProviderSessionID, session.ProviderTarget)
 	if jsonMode {
 		info := SessionInfo{EndpointID: endpoint.EndpointID, Session: session}
 		if read.Available {

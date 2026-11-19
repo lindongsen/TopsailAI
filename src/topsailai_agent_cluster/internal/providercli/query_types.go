@@ -63,20 +63,7 @@ type HistoryMessagesResult struct {
 }
 
 // ModelCatalogPayload is the closed payload of a session-scoped model catalog read.
-//
-// ProviderSessionID and ProviderPID carry the provider's own identity for the
-// session, which the Endpoint already holds from the committed inventory. They are
-// optional: a caller with no inventory row omits them and the provider resolves the
-// target itself, which is the previous behaviour rather than a second code path.
-//
-// The PID travels with the identifier because one provider session identifier can
-// own several rows. A provider that receives only the identifier has to pick a row
-// by its own liveness rule, which is a different target than the one the operator
-// named.
-type ModelCatalogPayload struct {
-	ProviderSessionID string `json:"provider_session_id,omitempty"`
-	ProviderPID       int64  `json:"provider_pid,omitempty"`
-}
+type ModelCatalogPayload struct{}
 
 // ModelProfileFact is one provider-private model profile before Endpoint mapping.
 type ModelProfileFact struct {
@@ -209,12 +196,6 @@ func DecodeQueryPayload(query NamedContract, target *Target, payload json.RawMes
 		var value ModelCatalogPayload
 		if err := decodeStrict(payload, &value); err != nil {
 			return nil, err
-		}
-		if err := validateIdentifier("provider_session_id", value.ProviderSessionID, false); err != nil {
-			return nil, err
-		}
-		if value.ProviderPID < 0 {
-			return nil, errors.New("provider_pid must not be negative")
 		}
 		return value, nil
 	case QuerySessionMessages:
@@ -503,6 +484,7 @@ func (r SessionMetricsBatchResult) validate() error {
 	}
 	return nil
 }
+
 // validate rejects a detail result that cannot be presented as a real
 // observation.
 //

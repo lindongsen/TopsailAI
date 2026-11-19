@@ -16,6 +16,7 @@ type ctlExecStub struct {
 	capabilities []protocol.Capability
 	intents      []protocol.ImmutableIntent
 	command      map[string]any
+	report       protocol.InventoryReport
 }
 
 // ListEndpoints returns one endpoint so the commands have a target.
@@ -25,6 +26,9 @@ func (s *ctlExecStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error
 
 // GetInventory returns a complete report with one session.
 func (s *ctlExecStub) GetInventory(context.Context, string) (protocol.InventoryReport, error) {
+	if len(s.report.Sessions) != 0 {
+		return s.report, nil
+	}
 	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded}, nil
 }
 
@@ -334,5 +338,33 @@ func tuiActionRequest(operation, label string) tui.ActionRequest {
 		Payload:            json.RawMessage(`{}`),
 		Confirmed:          true,
 		WaitTimeoutMS:      100,
+	}
+}
+
+// TestSubmitActionEnrichesKnownProviderTarget proves standalone mutations reuse
+// the exact Provider slot already stored in the Server inventory while keeping
+// the operator-supplied generation unchanged.
+func TestSubmitActionEnrichesKnownProviderTarget(t *testing.T) {
+	stub := ctlExecStubFor(protocol.Capability{Name: "ctl.heartbeat"})
+	stub.report = protocol.InventoryReport{Sessions: []protocol.Session{{
+		ClusterSessionID:   "session",
+		ProviderSessionID:  "provider-session",
+		ProviderGeneration: "inventory-generation",
+		ProviderTarget:     `{"session_id":"provider-session","pid":77}`,
+	}}}
+	request := tuiActionRequest("ctl.heartbeat", "ctl heartbeat")
+	request.ProviderGeneration = "explicit-generation"
+	if err := submitAction(context.Background(), stub, &strings.Builder{}, request, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+	target := stub.intents[0].Target
+	if got, want := target.ProviderTarget, `{"session_id":"provider-session","pid":77}`; got != want {
+		t.Fatalf("provider_target=%q want=%q", got, want)
+	}
+	if got, want := target.ProviderGeneration, "explicit-generation"; got != want {
+		t.Fatalf("provider_generation=%q want=%q", got, want)
 	}
 }

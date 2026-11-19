@@ -17,6 +17,10 @@ type confirmationTarget struct {
 	ProviderDisplayName string
 	ProviderSessionID   string
 	ClusterSessionID    string
+	// ProviderTarget is opaque Provider-owned addressing evidence copied from
+	// the selected inventory row. It is forwarded unchanged and never used for
+	// the confirmation label.
+	ProviderTarget string
 	// ProviderSessionHandle is the provider session identifier the operator named
 	// with -s, forwarded so the Endpoint can mint the durable mapping. It is set
 	// only when no cluster resource ID is known, because the two are alternative
@@ -50,5 +54,6 @@ func confirmationTargetFor(session protocol.Session) confirmationTarget {
 		ProviderDisplayName: session.ProviderDisplayName,
 		ProviderSessionID:   session.ProviderSessionID,
 		ClusterSessionID:    session.ClusterSessionID,
+		ProviderTarget:      session.ProviderTarget,
 	}
 }

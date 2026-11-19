@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -27,6 +26,7 @@ type modelSelectStub struct {
 	// instead of reverse-resolving the opaque mapping key.
 	providerSessionID string
 	providerPID       int64
+	providerTarget    string
 	catalogIdentities []string
 }
 
@@ -48,6 +48,7 @@ func (s *modelSelectStub) GetInventory(context.Context, string) (protocol.Invent
 			ClusterSessionID:   "session",
 			ProviderSessionID:  s.providerSessionID,
 			ProviderPID:        s.providerPID,
+			ProviderTarget:     s.providerTarget,
 			AdapterID:          "adapter-1",
 			ProviderGeneration: s.generation,
 			State:              "running",
@@ -91,7 +92,7 @@ func (s *modelSelectStub) AdmitCommand(_ context.Context, intent protocol.Immuta
 // with, so a test can prove the catalog read already carried both.
 func (s *modelSelectStub) GetModelCatalog(_ context.Context, _ string, query protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
 	s.catalogReads = append(s.catalogReads, query.Target.ProviderGeneration)
-	s.catalogIdentities = append(s.catalogIdentities, query.ProviderSessionID+"/"+strconv.FormatInt(query.ProviderPID, 10))
+	s.catalogIdentities = append(s.catalogIdentities, query.Target.ProviderTarget)
 	if s.catalogErr != nil {
 		return protocol.ModelCatalog{}, s.catalogErr
 	}
@@ -137,7 +138,7 @@ func TestModelSelectResolvesTheGenerationBeforeAskingForConfirmation(t *testing.
 // dropped it would still render a correct catalog, so only an assertion on the
 // wire can tell the two apart.
 func TestModelSelectCarriesTheProviderIdentity(t *testing.T) {
-	stub := &modelSelectStub{generation: "gen-7", providerSessionID: "wa-abc", providerPID: 4242}
+	stub := &modelSelectStub{generation: "gen-7", providerSessionID: "wa-abc", providerPID: 4242, providerTarget: `{"private":"wa-abc/4242"}`}
 	var output, diagnostics strings.Builder
 	err := modelSelectWithProgress(context.Background(), stub, &output, &diagnostics, "ep", "session", "mp-1", true, false, 0, "")
 	if err != nil {
@@ -146,7 +147,7 @@ func TestModelSelectCarriesTheProviderIdentity(t *testing.T) {
 	if len(stub.catalogIdentities) != 1 {
 		t.Fatalf("expected one catalog read, got %d", len(stub.catalogIdentities))
 	}
-	if stub.catalogIdentities[0] != "wa-abc/4242" {
+	if stub.catalogIdentities[0] != `{"private":"wa-abc/4242"}` {
 		t.Fatalf("the catalog read must carry the provider identity, got %q", stub.catalogIdentities[0])
 	}
 }

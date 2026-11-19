@@ -22,9 +22,12 @@ type SessionRow struct {
 	ProviderSessionQualifier string `json:"provider_session_qualifier,omitempty"`
 	ProviderProjectWorkspace string `json:"provider_project_workspace,omitempty"`
 	ProviderGeneration       string `json:"provider_generation"`
-	State                    string `json:"state"`
-	Stale                    bool   `json:"stale"`
-	Unknown                  bool   `json:"unknown"`
+	// ProviderTarget is opaque Provider-owned addressing evidence retained for
+	// row-backed actions. It is not a rendered table or JSON-list column.
+	ProviderTarget string `json:"-"`
+	State          string `json:"state"`
+	Stale          bool   `json:"stale"`
+	Unknown        bool   `json:"unknown"`
 	// Unverified marks a session the provider listed but whose liveness it could
 	// not verify, so no generation was reported. Such a session is reported as
 	// unknown rather than dropped, and only resume may address it. The flag is
@@ -89,6 +92,7 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 				ProviderSessionQualifier: session.ProviderSessionQualifier,
 				ProviderProjectWorkspace: session.ProviderProjectWorkspace,
 				ProviderGeneration:       session.ProviderGeneration,
+				ProviderTarget:           session.ProviderTarget,
 				State:                    session.State,
 				Stale:                    adapter.Stale || endpointStale,
 				Unknown:                  !adapter.DataKnown,

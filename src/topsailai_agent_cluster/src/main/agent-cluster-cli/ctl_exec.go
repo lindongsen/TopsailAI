@@ -150,6 +150,13 @@ func submitAction(ctx context.Context, api tui.CommandAPI, output io.Writer, req
 // lines. The reporter is built from that stream, so a nil or redirected stream
 // stays silent and the machine-readable output is never touched.
 func submitActionWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, request tui.ActionRequest, jsonMode bool) error {
+	if request.ResourceID != "" && request.ProviderTarget == "" {
+		identity := tui.SessionReadIdentity(ctx, api, request.EndpointID, request.ResourceID)
+		request.ProviderTarget = identity.ProviderTarget
+		if request.ProviderSessionID == "" {
+			request.ProviderSessionID = identity.ProviderSessionID
+		}
+	}
 	runner := legacyRunner(api)
 	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)

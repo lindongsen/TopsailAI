@@ -31,6 +31,8 @@ type ActionRequest struct {
 	// describe the target in progress output. Like DisplayName it is presentation
 	// data and never participates in routing or the immutable intent.
 	ProviderSessionID string
+	// ProviderTarget is opaque Provider addressing evidence from the selected inventory row.
+	ProviderTarget string
 	// ProviderSessionHandle names a target the operator identified by the
 	// provider's own session identifier instead of a cluster resource ID. It is
 	// forwarded into the immutable intent so the Endpoint can mint the durable
@@ -96,7 +98,7 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 		// not look the session up first. Exactly one of the two is set, because
 		// carrying both would leave the Endpoint choosing between two names for a
 		// target that could be different sessions.
-		intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration, ProviderSessionHandle: request.ProviderSessionHandle}
+		intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, ProviderGeneration: request.ProviderGeneration, ProviderSessionHandle: request.ProviderSessionHandle, ProviderTarget: request.ProviderTarget}
 	}
 	if request.Operation == "agent.start" {
 		if request.Profile == "" || request.ProfileRevision == "" {

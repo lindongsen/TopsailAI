@@ -262,23 +262,19 @@ func TestModelCatalogTargetReachesTheEndpoint(t *testing.T) {
 	defer server.Close()
 	api := newBearerAPIClient(server.URL, "test")
 	for _, item := range []struct {
-		resourceID        string
-		generation        string
-		providerSessionID string
-		providerPID       int64
+		resourceID     string
+		generation     string
+		providerTarget string
 	}{
-		{"s-1", "", "", 0},
-		{"s-2", "gen-7", "wa-abc", 4242},
+		{"s-1", "", ""},
+		{"s-2", "gen-7", `{"private":"wa-abc/4242"}`},
 	} {
-		query := protocol.ModelCatalogQuery{
-			Target: protocol.CommandTarget{
-				Kind:               "session",
-				ResourceID:         item.resourceID,
-				ProviderGeneration: item.generation,
-			},
-			ProviderSessionID: item.providerSessionID,
-			ProviderPID:       item.providerPID,
-		}
+		query := protocol.ModelCatalogQuery{Target: protocol.CommandTarget{
+			Kind:               "session",
+			ResourceID:         item.resourceID,
+			ProviderGeneration: item.generation,
+			ProviderTarget:     item.providerTarget,
+		}}
 		if _, err := api.GetModelCatalog(context.Background(), "ep-1", query); err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -289,14 +285,8 @@ func TestModelCatalogTargetReachesTheEndpoint(t *testing.T) {
 		if forwarded.Target.ProviderGeneration != item.generation {
 			t.Fatalf("generation=%q want=%q", forwarded.Target.ProviderGeneration, item.generation)
 		}
-		if forwarded.Target.Kind != "session" {
-			t.Fatalf("kind=%q want=session", forwarded.Target.Kind)
-		}
-		if forwarded.ProviderSessionID != item.providerSessionID {
-			t.Fatalf("provider_session_id=%q want=%q", forwarded.ProviderSessionID, item.providerSessionID)
-		}
-		if forwarded.ProviderPID != item.providerPID {
-			t.Fatalf("provider_pid=%d want=%d", forwarded.ProviderPID, item.providerPID)
+		if forwarded.Target.ProviderTarget != item.providerTarget {
+			t.Fatalf("provider_target=%q want=%q", forwarded.Target.ProviderTarget, item.providerTarget)
 		}
 	}
 }

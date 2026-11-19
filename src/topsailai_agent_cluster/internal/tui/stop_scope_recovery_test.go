@@ -226,7 +226,7 @@ func TestStopScopeRecoveryUsesItsOwnBudget(t *testing.T) {
 func TestFindSelectedNamesTheSessionIdentityWhenTheSessionIsGone(t *testing.T) {
 	state := interactiveState{}
 	endpoint := protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one", ConnectionState: "online"}
-	state.enterSessionDetails(endpoint, "res-1", "provider-res-1", "Daily work", "adapter-1", "generation-1")
+	state.enterSessionDetails(endpoint, "res-1", "provider-res-1", "Daily work", "adapter-1", "generation-1", "")
 	loaded := reportLoad{
 		endpoints: []protocol.Endpoint{endpoint},
 		reports: map[string]protocol.InventoryReport{

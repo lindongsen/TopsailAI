@@ -80,7 +80,7 @@ func degradedScopeState() *interactiveState {
 // the session is what makes the gate the first refusal.
 func degradedSessionState() *interactiveState {
 	state := &interactiveState{}
-	state.enterSessionDetails(protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one"}, "res-1", "provider-res-1", "session one", "adapter-1", "generation-1")
+	state.enterSessionDetails(protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one"}, "res-1", "provider-res-1", "session one", "adapter-1", "generation-1", "")
 	return state
 }
 

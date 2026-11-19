@@ -182,6 +182,14 @@ func (p *provider) resolveReadTarget(ctx context.Context, value *target) (provid
 // rule lives in exactly one place: a caller that needs the row identity without
 // reading its output must not inherit a read-only refusal.
 func (p *provider) resolveReadTargetByKey(ctx context.Context, key string, value *target) (providerSessionTarget, error) {
+	if exact, ok, err := decodeProviderTarget(value.ProviderTarget); err != nil {
+		return providerSessionTarget{}, err
+	} else if ok {
+		if err := validateExactRowTarget(key, exact); err != nil {
+			return providerSessionTarget{}, err
+		}
+		return exact, nil
+	}
 	if proven, ok := p.resolveRowTargetByDigest(key); ok {
 		return proven, nil
 	}

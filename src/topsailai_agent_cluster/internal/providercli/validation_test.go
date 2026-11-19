@@ -372,3 +372,13 @@ func TestOperationResultRejectsNegativeTimestamp(t *testing.T) {
 		t.Fatalf("negative operation timestamp accepted: %v", err)
 	}
 }
+
+// TestObservationRejectsAnOversizedProviderTarget proves the Cluster bounds the
+// opaque slot a Provider reports, so a later forward cannot carry an unbounded value.
+func TestObservationRejectsAnOversizedProviderTarget(t *testing.T) {
+	observation := validObservation()
+	observation.ProviderTarget = strings.Repeat("x", MaxProviderTargetBytes+1)
+	if err := observation.validate(); err == nil {
+		t.Fatal("observation accepted an oversized provider_target")
+	}
+}

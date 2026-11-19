@@ -42,7 +42,7 @@ func (h *Handler) detail(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	query := protocol.SessionDetailQuery{ProviderSessionID: sessionID}
+	query := protocol.SessionDetailQuery{ProviderSessionID: sessionID, ProviderTarget: r.URL.Query().Get("provider_target")}
 	result, err := requester.RequestDetail(ctx, endpointID, query)
 	if err != nil {
 		h.writeDetailFailure(w, r, endpointID, err)

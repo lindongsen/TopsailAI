@@ -88,6 +88,31 @@ func (p *provider) currentModelName(ctx context.Context, sessionID string, pid i
 // a model the registry no longer lists, and the session is then using something
 // other than every published profile. That is an observation, not a gap, so it must
 // not be reported as unknown.
+func (p *provider) sessionModelName(ctx context.Context, sessionID string) string {
+	var document struct {
+		ModelName string `json:"model_name"`
+	}
+	if err := runJSON(ctx, p.runner, []string{"session", "info", sessionID, "--json"}, maxModelBytes, &document); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(document.ModelName)
+}
+
+func modelInstructionKwargsWithPID(sessionID string, pid int64, instruction string, kwargs map[string]string) ([]string, error) {
+	document, err := json.Marshal(map[string]any{
+		"instruction": instruction,
+		"kwargs":      kwargs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode %s instruction: %w", instruction, err)
+	}
+	argv := []string{"runtime", "control", "call_instruction", "-s", sessionID}
+	if pid > 0 {
+		argv = append(argv, "-p", strconv.FormatInt(pid, 10))
+	}
+	return append(argv, "-a", string(document), "--json"), nil
+}
+
 func modelCurrentState(profileName, currentName string) string {
 	if currentName == "" {
 		return modelCurrentUnknown

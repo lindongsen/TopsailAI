@@ -232,11 +232,9 @@ func (r CommandRunner) ModelCatalog(ctx context.Context, out, errors io.Writer, 
 	// fact. The identity travels with the query because the provider would
 	// otherwise reverse-resolve the opaque mapping key by scanning every workspace
 	// row, which is the cost this field exists to remove.
-	providerSessionID, providerPID, label := providerIdentityFromInventory(ctx, r.API, endpoint.EndpointID, resourceID)
+	providerTarget, label := providerIdentityFromInventory(ctx, r.API, endpoint.EndpointID, resourceID)
 	query := protocol.ModelCatalogQuery{
-		Target:            protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: resourceID, ProviderGeneration: generation},
-		ProviderSessionID: providerSessionID,
-		ProviderPID:       providerPID,
+		Target: protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: resourceID, ProviderGeneration: generation, ProviderTarget: providerTarget},
 	}
 	catalog, err := querier.GetModelCatalog(ctx, endpoint.EndpointID, query)
 	if err != nil {

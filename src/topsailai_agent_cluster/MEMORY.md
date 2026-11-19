@@ -583,25 +583,28 @@ The rule is stated as three requirements:
 
 | Requirement | Meaning |
 |---|---|
-| Pass what you know | A value the caller holds travels down as an explicit field. It is never dropped and re-derived. |
-| One step to the answer | A read reaches its answer in one provider call. A second call that exists only to translate an identity is a defect, not a design. |
-| No extra work | Do not add a fallback path, a cache, a second spelling or a compatibility branch to avoid the real fix. Fix the data flow instead. |
+| Pass what the Provider supplied | Provider addressing data travels through one standard opaque Cluster slot. The Cluster never replaces that slot with Provider-specific fields and never drops and re-derives its content. |
+| One step to the answer | A read reaches its answer in one Provider call. A second call that exists only to translate an identity is a defect, not a design. |
+| No extra work | Do not add a cache, a second spelling or a compatibility branch to avoid the real fix. Fix the standard seam and data flow instead. |
 
 Consequences that MUST hold:
 
-- An opaque identifier minted by the cluster is not a substitute for the provider identifier
-  the provider needs. When a provider call needs the provider's own session identifier and
-  process identifier, both travel on the wire.
-- A digest that cannot be reversed must never be sent where the plain value is available.
-  A reverse lookup by scanning every row is the symptom of a value that was dropped, not a
-  cost the provider has to pay.
-- A second provider call whose only purpose is to translate an identity is removed, not
-  optimised. Optimising it keeps the extra step and makes the defect harder to see.
-- The exact target travels as an exact target. A session identifier alone is ambiguous when
-  one session can own several rows, so the process identifier travels with it.
-- "One step" does not authorise skipping a required check. Authorization, generation
-  revalidation, policy and capability checks stay exactly where they are; only redundant
-  identity reconstruction is removed.
+- The Cluster defines the contract, seam, bound and standard `provider_target` slot. A Provider fills
+  that slot with its own addressing document; the Cluster stores and forwards the bytes unchanged.
+- Cluster protocol, Server, Endpoint and CLI code must not declare `session_id`, `pid` or another
+  Provider's address dimensions as Cluster target semantics. TopsailAI may place those values in its
+  opaque slot and only `providers/topsailai` may interpret them.
+- An opaque Cluster resource ID remains the routing and authority identity. The Provider slot is
+  supplementary addressing evidence, not Cluster authority, and it never replaces resource mapping,
+  policy, capability, journal or generation checks.
+- A digest that cannot be reversed must never be the only value sent when the Provider already
+  supplied an exact target slot. A reverse lookup by scanning every row is the symptom of a slot that
+  was dropped, not a cost the Provider has to pay.
+- A second Provider call whose only purpose is to translate an identity is removed, not optimised.
+  Optimising it keeps the extra step and makes the defect harder to see.
+- "One step" does not authorise skipping a required check. Authorization, generation revalidation,
+  policy and capability checks stay exactly where they are; only redundant identity reconstruction is
+  removed.
 
 Why this is recorded: `model.catalog` ran `workspace list --json --local` (1.77 s) purely to
 reverse-resolve a sha256 digest back into the provider session identifier, and then used only
@@ -609,6 +612,41 @@ that one field. The identifier was already known by the CLI, which reads it from
 inventory, and it was discarded when the target was minted as a digest. The provider paid 54%
 of the read to recover a value the caller had in hand. See
 `issues/model-catalog-reverses-a-digest-it-was-given.md`.
+
+
+## The Cluster defines standard seams and slots; Providers only fill them
+
+Directed by the human on 2026-11-19, wording normalized, meaning preserved:
+
+> Cluster is the contract and the seam. It defines standard interfaces, standard seams and standard
+> slots without changing Provider data. A Provider only fills those slots with its own data.
+
+This is an architecture floor for every integration path. The Cluster owns the shape around Provider
+content, never the Provider content itself.
+
+| Owner | Responsibility |
+|---|---|
+| Cluster | Define the resource, operation, seam name, slot position, byte/schema bound, forwarding rule and authority checks. |
+| Provider | Produce the slot content and interpret it when the request returns to that Provider. |
+| Server and Endpoint | Validate the standard envelope and bound, preserve the slot unchanged, and never derive Provider business meaning from it. |
+| CLI/TUI | Carry the slot belonging to the selected Cluster resource; never edit it or construct Provider-specific fields. |
+
+Consequences that MUST hold:
+
+- A standard slot is opaque to Cluster business logic. The Cluster may check presence, size and valid
+  JSON when the contract says the slot is a JSON document; it may not inspect keys to make routing,
+  display, authorization or behavior decisions.
+- Provider-specific address dimensions such as TopsailAI session IDs and PIDs belong inside the
+  Provider's target slot, not as new Cluster-wide target semantics.
+- The Provider fills the slot when it reports a resource. The same bytes follow that resource through
+  read and command seams and return to the Provider that produced them.
+- The Cluster never merges, trims, renames or re-encodes slot content. If a Provider needs a different
+  address document, the Provider changes what it emits while the standard slot remains unchanged.
+- The opaque slot is evidence used by the Provider to address its business resource. Cluster authority
+  remains the opaque Cluster resource ID, resource mapping, generation, policy, capability and journal.
+- A fallback may exist only when no Provider slot was reported, such as a historical handle or a
+  pre-migration record. It must be explicit and must not become the normal path for a resource whose
+  Provider already supplied an exact slot.
 
 ## A seam's content belongs to the Provider; the Cluster only addresses it
 

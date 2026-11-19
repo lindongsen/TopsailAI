@@ -19,6 +19,7 @@ type followRequest struct {
 	EndpointID         string
 	ResourceID         string
 	ProviderGeneration string
+	ProviderTarget     string
 	MaxBytes           int
 	MaxLines           int
 }
@@ -28,6 +29,18 @@ type followRequest struct {
 // never shown a snapshot that silently pretends to be a stream.
 type OutputFollower interface {
 	FollowOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (<-chan protocol.OutputFollowRecord, error)
+}
+
+// ExactOutputFollower preserves opaque Provider addressing evidence.
+type ExactOutputFollower interface {
+	FollowOutputRequest(ctx context.Context, request protocol.OutputFollowRequest) (<-chan protocol.OutputFollowRecord, error)
+}
+
+func openFollow(ctx context.Context, follower OutputFollower, request protocol.OutputFollowRequest) (<-chan protocol.OutputFollowRecord, error) {
+	if exact, ok := follower.(ExactOutputFollower); ok {
+		return exact.FollowOutputRequest(ctx, request)
+	}
+	return follower.FollowOutput(ctx, request.EndpointID, request.ResourceID, request.ProviderGeneration, request.MaxBytes, request.MaxLines)
 }
 
 // followStopLabel is the message printed when a keypress ends a stream. A
@@ -127,7 +140,7 @@ func (r CommandRunner) FollowLogs(ctx context.Context, out io.Writer, endpointID
 	if !ok {
 		return fmt.Errorf("follow is unavailable: the API client does not support streaming output")
 	}
-	records, err := follower.FollowOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
+	records, err := openFollow(ctx, follower, protocol.OutputFollowRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, MaxBytes: maxBytes, MaxLines: maxLines})
 	if err != nil {
 		return err
 	}
@@ -244,7 +257,7 @@ func newFollowSession(parent context.Context, api InteractiveAPI, request follow
 // operator's own keypress is not reported at all: the session is already ended,
 // so the diagnostic would describe a stream nobody is waiting for.
 func (s *followSession) open(ctx context.Context, follower OutputFollower) {
-	records, err := follower.FollowOutput(ctx, s.request.EndpointID, s.request.ResourceID, s.request.ProviderGeneration, s.request.MaxBytes, s.request.MaxLines)
+	records, err := openFollow(ctx, follower, protocol.OutputFollowRequest{EndpointID: s.request.EndpointID, ResourceID: s.request.ResourceID, ProviderGeneration: s.request.ProviderGeneration, ProviderTarget: s.request.ProviderTarget, MaxBytes: s.request.MaxBytes, MaxLines: s.request.MaxLines})
 	if err != nil {
 		s.failStart(err)
 		return

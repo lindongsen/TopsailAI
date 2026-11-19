@@ -372,7 +372,7 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 	if mapping.AdapterID != a.config.AdapterID || mapping.ResourceKind != protocol.ResourceSession {
 		return errors.New("output resource is not owned by this adapter")
 	}
-	target := &providercli.Target{ResourceKind: mapping.ResourceKind, ProviderResourceKey: mapping.ProviderResourceKey, ExpectedGeneration: request.ProviderGeneration}
+	target := &providercli.Target{ResourceKind: mapping.ResourceKind, ProviderResourceKey: mapping.ProviderResourceKey, ExpectedGeneration: request.ProviderGeneration, ProviderTarget: request.ProviderTarget}
 	payload, _ := json.Marshal(struct {
 		MaxBytes int `json:"max_bytes"`
 		MaxLines int `json:"max_lines"`
@@ -467,7 +467,7 @@ func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQ
 	if err != nil {
 		return protocol.ModelCatalog{}, err
 	}
-	payload, err := json.Marshal(providercli.ModelCatalogPayload{ProviderSessionID: query.ProviderSessionID, ProviderPID: query.ProviderPID})
+	payload, err := json.Marshal(providercli.ModelCatalogPayload{})
 	if err != nil {
 		return protocol.ModelCatalog{}, fmt.Errorf("encode model catalog payload: %w", err)
 	}
@@ -607,7 +607,7 @@ var _ adapter.MetricsBatchHandler = (*Adapter)(nil)
 // An empty value is the honest answer: the surface says it was not reported, and a
 // placeholder would claim an observation nobody made.
 func (a *Adapter) Detail(ctx context.Context, query protocol.SessionDetailQuery) (protocol.SessionDetail, error) {
-	target := &providercli.Target{ResourceKind: protocol.ResourceSession, ProviderResourceKey: query.ProviderSessionID}
+	target := &providercli.Target{ResourceKind: protocol.ResourceSession, ProviderResourceKey: query.ProviderSessionID, ProviderTarget: query.ProviderTarget}
 	payload, _ := json.Marshal(providercli.SessionDetailPayload{})
 	value, err := a.typedQuery(ctx, providercli.QuerySessionDetail, target, payload)
 	if err != nil {
@@ -839,7 +839,7 @@ func (a *Adapter) providerTarget(ctx context.Context, target protocol.CommandTar
 	if requireGeneration && target.ProviderGeneration == "" {
 		return nil, errors.New("target generation is required")
 	}
-	return &providercli.Target{ResourceKind: mapping.ResourceKind, ProviderResourceKey: mapping.ProviderResourceKey, ExpectedGeneration: target.ProviderGeneration}, nil
+	return &providercli.Target{ResourceKind: mapping.ResourceKind, ProviderResourceKey: mapping.ProviderResourceKey, ExpectedGeneration: target.ProviderGeneration, ProviderTarget: target.ProviderTarget}, nil
 }
 
 func (a *Adapter) mapSession(ctx context.Context, observation providercli.ProviderObservation) (protocol.Session, error) {
@@ -855,7 +855,8 @@ func (a *Adapter) mapSession(ctx context.Context, observation providercli.Provid
 	}
 	return protocol.Session{
 		ClusterSessionID: mapping.ResourceID, ProviderSessionID: attributes.ProviderSessionID,
-		ProviderPID: attributes.ProviderPID, ProviderDisplayName: attributes.ProviderDisplayName,
+		ProviderPID: attributes.ProviderPID, ProviderTarget: observation.ProviderTarget,
+		ProviderDisplayName:      attributes.ProviderDisplayName,
 		ProviderSessionQualifier: attributes.ProviderSessionQualifier,
 		ProviderProjectWorkspace: attributes.ProviderProjectWorkspace,
 		ProviderAgentID:          attributes.ProviderAgentID, ProviderGeneration: observation.ProviderGeneration,

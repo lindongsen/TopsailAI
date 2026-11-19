@@ -39,6 +39,10 @@ type ScopeState struct {
 	SessionName        string
 	AdapterID          string
 	ProviderGeneration string
+	// ProviderTarget is the opaque Provider addressing evidence of the pinned
+	// row. It is carried so a follow armed from the current scope addresses the
+	// exact row without reading the inventory again.
+	ProviderTarget string
 }
 
 // interactiveSelection stores the identity pinned by an explicit navigation command.
@@ -101,11 +105,11 @@ func (s *interactiveState) enterEndpoint(endpoint protocol.Endpoint) {
 
 // enterSession pins a validated session and records its endpoint hostname.
 func (s *interactiveState) enterSession(endpoint protocol.Endpoint, sessionID, generation string) {
-	s.enterSessionDetails(endpoint, sessionID, "", "", "", generation)
+	s.enterSessionDetails(endpoint, sessionID, "", "", "", generation, "")
 }
 
 // enterSessionDetails pins a session and its user-facing identity in the prompt.
-func (s *interactiveState) enterSessionDetails(endpoint protocol.Endpoint, sessionID, providerSessionID, sessionName, adapterID, generation string) {
+func (s *interactiveState) enterSessionDetails(endpoint protocol.Endpoint, sessionID, providerSessionID, sessionName, adapterID, generation, providerTarget string) {
 	s.reset(endpoint.EndpointID, sessionID, generation)
 	s.Scope = ScopeState{
 		Kind:               ScopeSession,
@@ -116,5 +120,6 @@ func (s *interactiveState) enterSessionDetails(endpoint protocol.Endpoint, sessi
 		SessionName:        sessionName,
 		AdapterID:          adapterID,
 		ProviderGeneration: generation,
+		ProviderTarget:     providerTarget,
 	}
 }

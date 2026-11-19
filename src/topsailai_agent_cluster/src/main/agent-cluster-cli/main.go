@@ -984,27 +984,25 @@ func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 	// provider identity travels with the catalog query because the provider would
 	// otherwise reverse-resolve the opaque mapping key by scanning every workspace
 	// row, which is the cost this field exists to remove.
-	providerSessionID, providerPID, inventoryGeneration, label := tui.SessionReadIdentity(ctx, api, endpoint.EndpointID, sessionID)
+	identity := tui.SessionReadIdentity(ctx, api, endpoint.EndpointID, sessionID)
 	if generationFlag == "" {
-		generationFlag = inventoryGeneration
+		generationFlag = identity.Generation
 		if generationFlag == "" {
-			return fmt.Errorf("session %s has no verified generation in the committed inventory, so a model change cannot address it; pass --generation explicitly or refresh the inventory", label)
+			return fmt.Errorf("session %s has no verified generation in the committed inventory, so a model change cannot address it; pass --generation explicitly or refresh the inventory", identity.Label)
 		}
 	}
 	query := protocol.ModelCatalogQuery{
-		Target:            protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: sessionID, ProviderGeneration: generationFlag},
-		ProviderSessionID: providerSessionID,
-		ProviderPID:       providerPID,
+		Target: protocol.CommandTarget{Kind: protocol.ResourceSession, ResourceID: sessionID, ProviderGeneration: generationFlag, ProviderTarget: identity.ProviderTarget},
 	}
 	catalog, err := querier.GetModelCatalog(ctx, endpoint.EndpointID, query)
 	if err != nil {
 		return err
 	}
 	if catalog.ErrorCode != "" {
-		return tui.ModelCatalogError(label, catalog.ErrorCode)
+		return tui.ModelCatalogError(identity.Label, catalog.ErrorCode)
 	}
 	view := tui.NewModelCatalogView(endpoint.EndpointID, sessionID, catalog)
-	row, err := tui.ResolveModelProfileSelector(view, profile, label)
+	row, err := tui.ResolveModelProfileSelector(view, profile, identity.Label)
 	if err != nil {
 		return err
 	}
@@ -1019,7 +1017,7 @@ func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 	if err != nil {
 		return err
 	}
-	request := tui.ActionRequest{Operation: protocol.OperationAgentModelSelect, OperationLabel: "model select", EndpointID: endpoint.EndpointID, ResourceID: sessionID, ProviderGeneration: generationFlag, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
+	request := tui.ActionRequest{Operation: protocol.OperationAgentModelSelect, OperationLabel: "model select", EndpointID: endpoint.EndpointID, ResourceID: sessionID, ProviderGeneration: generationFlag, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, ProviderTarget: identity.ProviderTarget}
 	runner := legacyRunner(api)
 	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)

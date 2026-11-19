@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
@@ -47,16 +46,7 @@ func (h *Handler) modelCatalog(w http.ResponseWriter, r *http.Request) {
 	// never decides which one a read needs. Omitting an absent value keeps the
 	// request identical for a caller that has no inventory row.
 	query := protocol.ModelCatalogQuery{
-		Target:            protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: q.Get("provider_generation")},
-		ProviderSessionID: q.Get("provider_session_id"),
-	}
-	if raw := q.Get("provider_pid"); raw != "" {
-		pid, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || pid < 0 {
-			h.writeError(w, http.StatusBadRequest, "invalid_target", "provider_pid must be a non-negative integer")
-			return
-		}
-		query.ProviderPID = pid
+		Target: protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: q.Get("provider_generation"), ProviderTarget: q.Get("provider_target")},
 	}
 	result, err := requester.RequestModelCatalog(ctx, endpointID, query)
 	if err != nil {

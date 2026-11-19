@@ -406,6 +406,9 @@ func (t Target) validate(requireGeneration bool) error {
 	if err := validateProviderResourceKey("provider_resource_key", t.ProviderResourceKey, true); err != nil {
 		return err
 	}
+	if err := validateOpaqueProviderTarget(t.ProviderTarget); err != nil {
+		return err
+	}
 	return validateIdentifier("expected_generation", t.ExpectedGeneration, requireGeneration)
 }
 
@@ -450,6 +453,9 @@ func (o ProviderObservation) validate() error {
 		return err
 	}
 	if err := validateIdentifier("state_reason", o.StateReason, false); err != nil {
+		return err
+	}
+	if err := validateOpaqueProviderTarget(o.ProviderTarget); err != nil {
 		return err
 	}
 	if o.ObservedAtMS < 1 {
@@ -651,6 +657,19 @@ func validateIdentifier(name, value string, required bool) error {
 	}
 	if len(value) > MaxIdentifierBytes {
 		return fmt.Errorf("%s exceeds %d bytes", name, MaxIdentifierBytes)
+	}
+	return nil
+}
+
+func validateOpaqueProviderTarget(value string) error {
+	if value == "" {
+		return nil
+	}
+	if !utf8.ValidString(value) {
+		return errors.New("provider_target must be valid UTF-8")
+	}
+	if len(value) > MaxProviderTargetBytes {
+		return fmt.Errorf("provider_target exceeds %d bytes", MaxProviderTargetBytes)
 	}
 	return nil
 }

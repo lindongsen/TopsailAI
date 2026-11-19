@@ -120,7 +120,7 @@ func autoFollowOnSessionEntry(parent context.Context, api InteractiveAPI, state 
 	// A session entry is not an action result, so it carries no receipt and the
 	// tail keeps its previous behaviour: selecting a session is exactly when the
 	// operator wants to see its output.
-	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, failurePrefix, nil, 0)
+	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, state.Scope.ProviderTarget, trustedOut, options, failurePrefix, nil, 0)
 }
 
 // renderAutomaticSnapshot renders one bounded output snapshot for the selected
@@ -649,7 +649,7 @@ func enterValidatedSession(state *interactiveState, endpoint protocol.Endpoint, 
 	if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
 		return outcomeCancelled, err
 	}
-	state.enterSessionDetails(endpoint, session.ClusterSessionID, session.ProviderSessionID, session.ProviderDisplayName, session.AdapterID, session.ProviderGeneration)
+	state.enterSessionDetails(endpoint, session.ClusterSessionID, session.ProviderSessionID, session.ProviderDisplayName, session.AdapterID, session.ProviderGeneration, session.ProviderTarget)
 	return outcomeResolved, nil
 }
 
