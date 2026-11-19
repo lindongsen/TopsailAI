@@ -535,3 +535,141 @@ func TestJSONFrameConnRefusesNilReaderOnly(t *testing.T) {
 		t.Fatal("ReadFrame() = nil, want an error")
 	}
 }
+
+// contentConn is a scripted connection that can also carry content frames.
+//
+// The plain scriptedConn deliberately cannot, which is why the content path had no
+// session-level test: a session over a connection without the capability falls back
+// to JSON, so every test passed while the binary path was broken end to end.
+type contentConn struct {
+	scriptedConn
+	contentHeaders []protocol.ContentHeader
+	contentBodies  [][]byte
+}
+
+// WriteContentFrame records one content frame.
+func (c *contentConn) WriteContentFrame(header protocol.ContentHeader, content []byte) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.contentHeaders = append(c.contentHeaders, header)
+	c.contentBodies = append(c.contentBodies, append([]byte(nil), content...))
+	return nil
+}
+
+// TestSessionStampsTheWireRequestIDOnContent checks that the content frame carries
+// the wire request id, not the caller's request id.
+//
+// This is the regression test for a defect that shipped past every existing test:
+// the dispatcher stamped the caller's request id on the content header, while the
+// Server buffers content under the wire id it generated for the forwarded frame.
+// The two namespaces never match, so the Server logged "dropping content for a
+// request with no waiter" and answered success with an empty body. The CLI then
+// reported "wrote 300000 bytes" for a zero-byte file.
+//
+// The test asserts the property that was broken rather than the absence of an
+// error: a content frame whose id differs from the wire id is a frame the receiver
+// cannot route, and no amount of error-free writing makes it correct.
+func TestSessionStampsTheWireRequestIDOnContent(t *testing.T) {
+	dispatch := newDispatchFixture(t)
+	request := dispatch.request(protocol.OperationFileRead, "project", "inside.txt")
+
+	conn := &contentConn{scriptedConn: scriptedConn{frames: []protocol.Frame{
+		requestFrame(t, "wire_abc123", request),
+	}}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	session := NewSession(dispatch.dispatcher, conn, logger).
+		WithTransport(protocol.FileTransportBinaryV1)
+
+	if err := session.Serve(context.Background()); err != nil {
+		t.Fatalf("Serve() = %v, want nil", err)
+	}
+
+	if len(conn.contentHeaders) != 1 {
+		t.Fatalf("wrote %d content frames, want 1", len(conn.contentHeaders))
+	}
+	header := conn.contentHeaders[0]
+	if header.RequestID != "wire_abc123" {
+		t.Fatalf("content request id = %q, want %q so the receiver can route it", header.RequestID, "wire_abc123")
+	}
+	if header.RequestID == request.RequestID {
+		t.Fatalf("content request id = %q, which is the caller id; the receiver buffers under the wire id", header.RequestID)
+	}
+	if header.ContentLength != int64(len(conn.contentBodies[0])) {
+		t.Fatalf("content length = %d, want %d", header.ContentLength, len(conn.contentBodies[0]))
+	}
+	if len(conn.contentBodies[0]) == 0 {
+		t.Fatal("content body is empty, want the file bytes")
+	}
+}
+
+// TestSessionSendsContentBeforeTheResponse checks the order the receiver depends on.
+//
+// The Server attaches buffered content when the response arrives, so a response
+// that arrived first would describe bytes the Server had not received yet and the
+// caller would receive an empty body with a success code.
+func TestSessionSendsContentBeforeTheResponse(t *testing.T) {
+	dispatch := newDispatchFixture(t)
+	request := dispatch.request(protocol.OperationFileRead, "project", "inside.txt")
+
+	conn := &contentConn{scriptedConn: scriptedConn{frames: []protocol.Frame{
+		requestFrame(t, "wire_order", request),
+	}}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	session := NewSession(dispatch.dispatcher, conn, logger).
+		WithTransport(protocol.FileTransportBinaryV1)
+
+	if err := session.Serve(context.Background()); err != nil {
+		t.Fatalf("Serve() = %v, want nil", err)
+	}
+
+	// The content frame is written through a different method, so the recorded
+	// order is "content recorded, then response frame written". A response written
+	// before the content would leave the content list empty at that moment.
+	if len(conn.contentHeaders) != 1 {
+		t.Fatalf("wrote %d content frames, want 1", len(conn.contentHeaders))
+	}
+	answers := conn.answers()
+	if len(answers) != 1 || answers[0].Type != protocol.FrameResponse {
+		t.Fatalf("wrote %d frames, want one response", len(answers))
+	}
+	if answers[0].RequestID != "wire_order" {
+		t.Fatalf("response request id = %q, want wire_order", answers[0].RequestID)
+	}
+}
+
+// TestSessionWithoutContentTransportKeepsTheJSONShape checks that a connection
+// without the capability still serves the documented JSON payload.
+//
+// The fallback is the reason a peer that negotiated nothing keeps working, and it
+// is also why the content path needs its own test: a session over scriptedConn
+// exercises only this branch.
+func TestSessionWithoutContentTransportKeepsTheJSONShape(t *testing.T) {
+	dispatch := newDispatchFixture(t)
+	request := dispatch.request(protocol.OperationFileRead, "project", "inside.txt")
+
+	fixture := newSessionFixture(t, dispatch, requestFrame(t, "req_json", request))
+
+	if err := fixture.session.Serve(context.Background()); err != nil {
+		t.Fatalf("Serve() = %v, want nil", err)
+	}
+
+	answers := fixture.conn.answers()
+	if len(answers) != 1 {
+		t.Fatalf("wrote %d frames, want 1", len(answers))
+	}
+	response := decodeResponse(t, answers[0])
+	if response.Code != protocol.CodeSuccess {
+		t.Fatalf("code = %v, want success", response.Code)
+	}
+	var chunk struct {
+		Content []byte `json:"content"`
+		Size    int64  `json:"size"`
+	}
+	if err := json.Unmarshal(response.Data, &chunk); err != nil {
+		t.Fatalf("decode read payload: %v", err)
+	}
+	if len(chunk.Content) == 0 {
+		t.Fatal("JSON payload carries no content, want the file bytes")
+	}
+}

@@ -33,10 +33,16 @@ const (
 
 // Frame is the envelope every message travels in. The payload stays opaque at
 // this layer so a new operation does not change the envelope.
+//
+// Content is not part of the JSON representation. A content frame travels as a
+// binary message built by EncodeContentFrame, and the transport fills this field
+// after decoding that message. Keeping it out of JSON is what stops file bytes
+// from being base64-encoded a second time.
 type Frame struct {
 	Type      FrameType `json:"type"`
 	RequestID string    `json:"request_id,omitempty"`
 	Payload   []byte    `json:"payload,omitempty"`
+	Content   []byte    `json:"-"`
 }
 
 // Hello is the payload of FrameHello, sent by the Node as the first frame.
@@ -56,6 +62,10 @@ type Hello struct {
 	TunnelToken []byte   `json:"tunnel_token"`
 	Operations  []string `json:"operations,omitempty"`
 	Scopes      []string `json:"scopes,omitempty"`
+	// FileTransports lists the content transports this Node can decode. An
+	// absent list means the Node speaks only the original JSON transport, so an
+	// older Node keeps working without a protocol change.
+	FileTransports []FileTransportVersion `json:"file_transports,omitempty"`
 }
 
 // HelloConfirm is the payload of FrameHelloConfirm, sent by the Server.
@@ -64,9 +74,14 @@ type Hello struct {
 // connection. It lets a Node tell a fresh acceptance from a replayed one, and it
 // lets an operator correlate a log line on both sides without either side storing
 // a credential.
+//
+// FileTransport names the content transport both peers will use. An empty value
+// means the original JSON transport, which is what a Server that did not
+// negotiate an efficient transport reports.
 type HelloConfirm struct {
-	Version    string `json:"version"`
-	Generation uint64 `json:"generation"`
+	Version       string               `json:"version"`
+	Generation    uint64               `json:"generation"`
+	FileTransport FileTransportVersion `json:"file_transport,omitempty"`
 }
 
 // Validate checks that a hello carries the fields the Server needs.

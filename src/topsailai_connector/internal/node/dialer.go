@@ -233,7 +233,8 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 	})
 	defer stopIdentityWatcher()
 
-	if err := d.handshake(conn); err != nil {
+	transport, err := d.handshake(conn)
+	if err != nil {
 		return err
 	}
 
@@ -244,7 +245,7 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 		return err
 	}
 
-	session := NewSession(d.dispatcher, frames, d.logger)
+	session := NewSession(d.dispatcher, frames, d.logger).WithTransport(transport)
 	err = session.Serve(ctx)
 	if ctx.Err() != nil {
 		// The read failed because this side closed the connection to honour the
@@ -286,79 +287,122 @@ func (d *Dialer) dial(ctx context.Context) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-// handshake sends hello and waits for the confirmation.
+// handshake sends hello and waits for the confirmation, and returns the content
+// transport the Server selected.
 //
 // The tunnel token is written into the hello frame and released with it. It is never
 // copied into a field of the dialer, so a reconnect re-reads it from the configuration
 // instead of replaying a stored copy.
-func (d *Dialer) handshake(conn *websocket.Conn) error {
+//
+// The returned transport is the Server's answer, not the Node's preference. A Server
+// that answers with no transport leaves the Node on the original JSON transport, so an
+// older Server keeps working without a protocol change.
+func (d *Dialer) handshake(conn *websocket.Conn) (protocol.FileTransportVersion, error) {
 	hello := protocol.Hello{
-		Version:     protocol.Version,
-		NodeID:      d.holder.NodeID(),
-		TunnelToken: []byte(d.config.TunnelToken),
-		Operations:  d.advertisedOperations(),
-		Scopes:      d.advertisedScopes(),
+		Version:        protocol.Version,
+		NodeID:         d.holder.NodeID(),
+		TunnelToken:    []byte(d.config.TunnelToken),
+		Operations:     d.advertisedOperations(),
+		Scopes:         d.advertisedScopes(),
+		FileTransports: []protocol.FileTransportVersion{protocol.FileTransportBinaryV1},
 	}
 
 	payload, err := json.Marshal(hello)
 	if err != nil {
-		return fmt.Errorf("encode hello: %w", err)
+		return "", fmt.Errorf("encode hello: %w", err)
 	}
 	frame := protocol.Frame{Type: protocol.FrameHello, Payload: payload}
 	encoded, err := json.Marshal(frame)
 	if err != nil {
-		return fmt.Errorf("encode hello frame: %w", err)
+		return "", fmt.Errorf("encode hello frame: %w", err)
 	}
 
 	if err := conn.SetWriteDeadline(time.Now().Add(handshakeTimeout)); err != nil {
-		return fmt.Errorf("set the handshake write deadline: %w", err)
+		return "", fmt.Errorf("set the handshake write deadline: %w", err)
 	}
 	if err := conn.WriteMessage(websocket.TextMessage, encoded); err != nil {
-		return fmt.Errorf("write hello: %w", err)
+		return "", fmt.Errorf("write hello: %w", err)
 	}
 
 	if err := conn.SetReadDeadline(time.Now().Add(handshakeTimeout)); err != nil {
-		return fmt.Errorf("set the handshake read deadline: %w", err)
+		return "", fmt.Errorf("set the handshake read deadline: %w", err)
 	}
 	_, data, err := conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("read hello_confirm: %w", err)
+		return "", fmt.Errorf("read hello_confirm: %w", err)
 	}
 
 	var answer protocol.Frame
 	if err := json.Unmarshal(data, &answer); err != nil {
-		return fmt.Errorf("decode hello_confirm frame: %w", err)
+		return "", fmt.Errorf("decode hello_confirm frame: %w", err)
 	}
 
+	var selected protocol.FileTransportVersion
 	switch answer.Type {
 	case protocol.FrameHelloConfirm:
 		var confirm protocol.HelloConfirm
 		if err := json.Unmarshal(answer.Payload, &confirm); err != nil {
-			return fmt.Errorf("decode hello_confirm payload: %w", err)
+			return "", fmt.Errorf("decode hello_confirm payload: %w", err)
 		}
 		if confirm.Version != protocol.Version {
-			return fmt.Errorf("server speaks protocol %q, this node speaks %q", confirm.Version, protocol.Version)
+			return "", fmt.Errorf("server speaks protocol %q, this node speaks %q", confirm.Version, protocol.Version)
 		}
-		d.logger.Info("handshake accepted", "node_id", d.holder.NodeID(), "generation", confirm.Generation)
+		if err := validateSelectedTransport(confirm.FileTransport); err != nil {
+			return "", err
+		}
+		selected = confirm.FileTransport
+		d.logger.Info("handshake accepted",
+			"node_id", d.holder.NodeID(),
+			"generation", confirm.Generation,
+			"file_transport", transportName(selected),
+		)
 	case protocol.FrameError:
 		var refusal protocol.Response
 		if err := json.Unmarshal(answer.Payload, &refusal); err != nil {
-			return fmt.Errorf("%w: unreadable refusal", ErrHandshakeRefused)
+			return "", fmt.Errorf("%w: unreadable refusal", ErrHandshakeRefused)
 		}
-		return fmt.Errorf("%w: %s", ErrHandshakeRefused, refusal.Code.Name())
+		return "", fmt.Errorf("%w: %s", ErrHandshakeRefused, refusal.Code.Name())
 	default:
-		return fmt.Errorf("server answered the handshake with %q", string(answer.Type))
+		return "", fmt.Errorf("server answered the handshake with %q", string(answer.Type))
 	}
 
 	// The handshake deadlines are cleared so a long-lived channel is not closed by a
 	// deadline set for the exchange that has already finished.
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("clear the handshake read deadline: %w", err)
+		return "", fmt.Errorf("clear the handshake read deadline: %w", err)
 	}
 	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("clear the handshake write deadline: %w", err)
+		return "", fmt.Errorf("clear the handshake write deadline: %w", err)
 	}
-	return nil
+	return selected, nil
+}
+
+// validateSelectedTransport refuses a transport this Node did not offer.
+//
+// The Server selects from the list the Node sent, so a value outside that list is a
+// Server that answered a different question. Accepting it would mean encoding content
+// in a representation this Node never claimed to support, and the failure would appear
+// as unreadable bytes rather than as a refused handshake.
+func validateSelectedTransport(selected protocol.FileTransportVersion) error {
+	switch selected {
+	case "":
+		// No transport selected: the original JSON transport, which every version
+		// supports.
+		return nil
+	case protocol.FileTransportBinaryV1:
+		return nil
+	default:
+		return fmt.Errorf("server selected file transport %q, which this node did not offer", string(selected))
+	}
+}
+
+// transportName renders a transport for a log line, naming the JSON fallback rather
+// than printing an empty value a reader would have to interpret.
+func transportName(transport protocol.FileTransportVersion) string {
+	if transport == "" {
+		return "json"
+	}
+	return string(transport)
 }
 
 // advertisedOperations returns the operations this Node can serve.

@@ -79,6 +79,16 @@ type channel struct {
 
 	pendingMutex sync.Mutex
 	pending      map[string]chan protocol.Response
+	// content holds the raw file bytes of a read that arrived on the content
+	// transport, keyed by the correlation id of the request they answer. The
+	// bytes are attached to the response when it arrives and dropped with the
+	// waiter, so a request that times out leaves nothing behind.
+	content map[string][]byte
+
+	// transport is the file content representation negotiated in the handshake.
+	// An empty value means the original JSON transport, which is what an older
+	// Node that advertised no capability list keeps using.
+	transport protocol.FileTransportVersion
 }
 
 // newChannel builds a channel over an upgraded connection.
@@ -89,7 +99,23 @@ func newChannel(nodeID string, conn *websocket.Conn, logger *slog.Logger) *chann
 		logger:  logger,
 		done:    make(chan struct{}),
 		pending: make(map[string]chan protocol.Response),
+		content: make(map[string][]byte),
 	}
+}
+
+// setTransport records the file content representation negotiated in the
+// handshake.
+//
+// It is set once, before the read loop starts, so no lock is needed: the value is
+// written by the goroutine that owns the connection and read by request handlers
+// only after the channel is registered.
+func (c *channel) setTransport(transport protocol.FileTransportVersion) {
+	c.transport = transport
+}
+
+// usesContentTransport reports whether file bytes arrive outside JSON.
+func (c *channel) usesContentTransport() bool {
+	return c.transport == protocol.FileTransportBinaryV1
 }
 
 // NodeID returns the identity the Node reported in hello.
@@ -181,12 +207,39 @@ func (c *channel) Forward(ctx context.Context, nodeID string, request protocol.R
 
 	select {
 	case response := <-waiter:
-		return response, nil
+		return c.attachContent(requestID, response), nil
 	case <-ctx.Done():
 		return protocol.Response{}, ctx.Err()
 	case <-c.done:
 		return protocol.Response{}, ErrChannelClosed
 	}
+}
+
+// attachContent merges buffered file bytes back into the documented read shape.
+//
+// On the content transport the Node sends the bytes in a binary frame and the
+// response carries only size and truncated. The CLI and docs/API.md still expect
+// one JSON object with content, size and truncated, so the merge happens here and
+// the caller-facing contract does not change with the transport.
+//
+// A response that is not a successful read is returned untouched: a refusal has no
+// content, and inventing an empty content field would turn a refusal into a
+// success with an empty file.
+func (c *channel) attachContent(requestID string, response protocol.Response) protocol.Response {
+	content, ok := c.takeContent(requestID)
+	if !ok {
+		return response
+	}
+	if response.Code != protocol.CodeSuccess {
+		return response
+	}
+
+	merged, err := mergeReadContent(response.Data, content)
+	if err != nil {
+		c.logger.Warn("dropping content that did not match its response", "node_id", c.nodeID, "request_id", requestID, "error", err)
+		return protocol.Response{Code: protocol.CodeInternal}
+	}
+	return protocol.Response{Code: response.Code, Data: merged}
 }
 
 // addPending registers a waiter for one correlation id.
@@ -203,10 +256,45 @@ func (c *channel) addPending(requestID string) (chan protocol.Response, error) {
 }
 
 // removePending drops a waiter, whether it was answered or abandoned.
+//
+// The buffered content for the same correlation id is dropped here as well, so a
+// request that timed out cannot leave file bytes in memory until the channel
+// closes. Dropping it in one place means the two maps cannot disagree about which
+// requests are still in flight.
 func (c *channel) removePending(requestID string) {
 	c.pendingMutex.Lock()
 	defer c.pendingMutex.Unlock()
 	delete(c.pending, requestID)
+	delete(c.content, requestID)
+}
+
+// stashContent records the raw bytes of a read that arrived before its response.
+//
+// An unknown correlation id is dropped rather than buffered, because a content
+// frame for a request nobody is waiting for would otherwise be memory a caller
+// could allocate at will. The Node sends content before the response, so a frame
+// that arrives after the waiter is gone is a late answer to an abandoned request.
+func (c *channel) stashContent(requestID string, content []byte) {
+	c.pendingMutex.Lock()
+	defer c.pendingMutex.Unlock()
+
+	if _, present := c.pending[requestID]; !present {
+		c.logger.Warn("dropping content for a request with no waiter", "node_id", c.nodeID, "request_id", requestID)
+		return
+	}
+	c.content[requestID] = content
+}
+
+// takeContent returns and forgets the buffered bytes for one correlation id.
+func (c *channel) takeContent(requestID string) ([]byte, bool) {
+	c.pendingMutex.Lock()
+	defer c.pendingMutex.Unlock()
+
+	content, present := c.content[requestID]
+	if present {
+		delete(c.content, requestID)
+	}
+	return content, present
 }
 
 // deliver hands a response to the waiter registered for its correlation id.
@@ -232,6 +320,22 @@ func (c *channel) deliver(requestID string, response protocol.Response) {
 	}
 }
 
+// handleContentFrame decodes one binary content frame and buffers its bytes.
+//
+// A malformed content frame closes the channel rather than being skipped, because
+// the bytes belong to a request that is still waiting: skipping the frame would
+// leave that request to time out with no explanation, and continuing would mean
+// the next frame is interpreted against a stream that is already misaligned.
+func (c *channel) handleContentFrame(data []byte) bool {
+	header, content, err := protocol.DecodeContentFrame(data)
+	if err != nil {
+		c.logger.Warn("refusing a malformed content frame", "node_id", c.nodeID, "error", err)
+		return false
+	}
+	c.stashContent(header.RequestID, content)
+	return true
+}
+
 // readLoop reads frames until the connection fails.
 //
 // It owns the read side for the whole life of the connection, because a websocket
@@ -246,7 +350,7 @@ func (c *channel) readLoop() {
 	}()
 
 	for {
-		_, data, err := c.conn.ReadMessage()
+		messageType, data, err := c.conn.ReadMessage()
 		if err != nil {
 			if !c.closed.Load() {
 				c.logger.Info("channel read ended", "node_id", c.nodeID, "error", err)
@@ -256,6 +360,16 @@ func (c *channel) readLoop() {
 		if len(data) > MaxChannelMessageBytes {
 			c.logger.Warn("refusing an oversized channel message", "node_id", c.nodeID, "bytes", len(data))
 			return
+		}
+
+		// A binary message is a content frame and a text message is a JSON frame.
+		// The message type is what separates them, so a content frame is never
+		// parsed as JSON and a JSON frame is never parsed as content.
+		if messageType == websocket.BinaryMessage {
+			if !c.handleContentFrame(data) {
+				return
+			}
+			continue
 		}
 
 		var frame protocol.Frame
@@ -358,7 +472,15 @@ func (l *Listener) acceptChannel(conn *websocket.Conn) {
 		return
 	}
 
+	transport, err := negotiateChannelTransport(hello.FileTransports)
+	if err != nil {
+		logger.Warn("refusing a hello with no common file transport", "node_id", hello.NodeID, "error", err)
+		refuseChannel(conn, protocol.CodeInvalidArgument)
+		return
+	}
+
 	live := newChannel(hello.NodeID, conn, logger)
+	live.setTransport(transport)
 	registration, replaced, err := l.registry.Register(live)
 	if err != nil {
 		logger.Warn("refusing a hello with an unusable node id", "node_id", hello.NodeID, "error", err)
@@ -374,7 +496,11 @@ func (l *Listener) acceptChannel(conn *websocket.Conn) {
 	}
 
 	generation := l.generations.Add(1)
-	confirm := protocol.HelloConfirm{Version: protocol.Version, Generation: generation}
+	confirm := protocol.HelloConfirm{
+		Version:       protocol.Version,
+		Generation:    generation,
+		FileTransport: transport,
+	}
 	payload, err := json.Marshal(confirm)
 	if err != nil {
 		logger.Error("encoding hello_confirm failed", "node_id", hello.NodeID, "error", err)
@@ -395,6 +521,7 @@ func (l *Listener) acceptChannel(conn *websocket.Conn) {
 		"generation", generation,
 		"operations", hello.Operations,
 		"scopes", hello.Scopes,
+		"file_transport", transportName(transport),
 	)
 
 	live.readLoop()

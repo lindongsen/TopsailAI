@@ -87,21 +87,18 @@ func NewDispatcher(authority *Authority, holder *IdentityHolder, window time.Dur
 	}, nil
 }
 
-// Dispatch performs one request and returns the response a caller sees.
+// authorize runs the fixed check order described on Dispatcher and returns the
+// scope a granted request may use.
 //
-// Every failure is a code and never a panic, because a request arrives from the
-// network and a panic on a malformed request is a remote crash. The response carries
-// no detail string: the detail goes to the Node's log, where a path or a scope name
-// is allowed, and never to the caller, where it would be a leak.
-func (d *Dispatcher) Dispatch(request protocol.Request) protocol.Response {
-	if d == nil {
-		return protocol.Failure(protocol.CodeInternal)
-	}
+// Both entry points call this function, so the JSON path and the content path
+// cannot drift apart. A refusal is returned as a response with ok false, and the
+// caller returns it unchanged rather than re-deriving a code.
+func (d *Dispatcher) authorize(request protocol.Request) (*Scope, protocol.Response, bool) {
 	// A dispatcher with no authority has no policy to consult. It is refused before
 	// any refusal is logged, because refuse dereferences the logger and a nil
 	// receiver would panic on the request path.
-	if d.authority == nil {
-		return protocol.Failure(protocol.CodeInternal)
+	if d == nil || d.authority == nil {
+		return nil, protocol.Failure(protocol.CodeInternal), false
 	}
 
 	// The identity is read once per request rather than captured at startup, so an
@@ -114,26 +111,40 @@ func (d *Dispatcher) Dispatch(request protocol.Request) protocol.Response {
 	credentials := d.holder.Credentials()
 
 	if request.NodeID != nodeID {
-		return d.refuse(request, protocol.CodeDenied, "request is addressed to another node")
+		return nil, d.refuse(request, protocol.CodeDenied, "request is addressed to another node"), false
 	}
 
 	if err := d.verifyNodeProof(request, nodeID, credentials); err != nil {
 		// The contract names this unauthenticated rather than denied: the caller did
 		// not prove it may talk to this Node at all, which is a different answer from
 		// "you may talk to this Node but not do that".
-		return d.refuse(request, protocol.CodeUnauthenticated, "node proof does not verify")
+		return nil, d.refuse(request, protocol.CodeUnauthenticated, "node proof does not verify"), false
 	}
 
 	if len(request.Data) > 0 || len(request.Argv) > 0 {
-		return d.refuse(request, protocol.CodeInvalidArgument, "request carries a field no enabled operation uses")
+		return nil, d.refuse(request, protocol.CodeInvalidArgument, "request carries a field no enabled operation uses"), false
 	}
 	if request.Operation == "" {
-		return d.refuse(request, protocol.CodeInvalidArgument, "request names no operation")
+		return nil, d.refuse(request, protocol.CodeInvalidArgument, "request names no operation"), false
 	}
 
 	scope, err := d.authority.AuthorizeOperation(request.Operation, request.Scope)
 	if err != nil {
-		return d.refuse(request, CodeOf(err), "authorization refused: %v", err)
+		return nil, d.refuse(request, CodeOf(err), "authorization refused: %v", err), false
+	}
+	return scope, protocol.Response{}, true
+}
+
+// Dispatch performs one request and returns the response a caller sees.
+//
+// Every failure is a code and never a panic, because a request arrives from the
+// network and a panic on a malformed request is a remote crash. The response carries
+// no detail string: the detail goes to the Node's log, where a path or a scope name
+// is allowed, and never to the caller, where it would be a leak.
+func (d *Dispatcher) Dispatch(request protocol.Request) protocol.Response {
+	scope, refusal, ok := d.authorize(request)
+	if !ok {
+		return refusal
 	}
 
 	payload, err := d.perform(scope, request)
@@ -141,6 +152,62 @@ func (d *Dispatcher) Dispatch(request protocol.Request) protocol.Response {
 		return d.refuse(request, CodeOf(err), "operation failed: %v", err)
 	}
 	return protocol.Success(payload)
+}
+
+// DispatchWithContent performs one request and reports the raw content bytes of a
+// successful `file.read` separately from its JSON metadata.
+//
+// The JSON path stays available through Dispatch, so a peer that did not negotiate
+// an efficient transport keeps receiving the documented read shape. This entry
+// point exists so the efficient path never base64-encodes file content: the
+// content is returned as bytes and the caller puts it in a binary frame.
+//
+// The returned metadata is the same document Dispatch would have produced, with
+// the content field omitted. A caller that receives content must therefore use
+// this metadata rather than re-decoding a payload that no longer carries bytes.
+//
+// Every operation other than `file.read` returns its documented JSON payload and no
+// content, so a caller can route on the returned content being empty rather than on
+// the operation name.
+func (d *Dispatcher) DispatchWithContent(request protocol.Request) (protocol.Response, []byte, protocol.ContentHeader, error) {
+	scope, refusal, ok := d.authorize(request)
+	if !ok {
+		return refusal, nil, protocol.ContentHeader{}, nil
+	}
+
+	if request.Operation != protocol.OperationFileRead {
+		payload, err := d.perform(scope, request)
+		if err != nil {
+			return d.refuse(request, CodeOf(err), "operation failed: %v", err), nil, protocol.ContentHeader{}, nil
+		}
+		return protocol.Success(payload), nil, protocol.ContentHeader{}, nil
+	}
+
+	content, truncated, err := scope.Read(request.Path, request.Offset, request.Length)
+	if err != nil {
+		return d.refuse(request, CodeOf(err), "operation failed: %v", err), nil, protocol.ContentHeader{}, nil
+	}
+
+	metadata, err := json.Marshal(readMetadata{
+		Size:      int64(len(content)),
+		Truncated: truncated,
+	})
+	if err != nil {
+		return d.refuse(request, protocol.CodeInternal, "encoding read metadata failed: %v", err), nil, protocol.ContentHeader{}, err
+	}
+
+	// The correlation id is deliberately left empty. The Server buffers content
+	// under the wire request id it generated for the forwarded frame, which is not
+	// the caller's request id, so only the session can stamp the value the Server
+	// will look up. Filling it here with request.RequestID produced a frame the
+	// Server dropped as "content for a request with no waiter", and the caller then
+	// received a success with no bytes.
+	header := protocol.ContentHeader{
+		Size:          int64(len(content)),
+		Truncated:     truncated,
+		ContentLength: int64(len(content)),
+	}
+	return protocol.Success(metadata), content, header, nil
 }
 
 // verifyNodeProof verifies the Node HMAC proof and records its nonce.
@@ -251,11 +318,23 @@ func statPayload(scope *Scope, request protocol.Request) ([]byte, error) {
 	return json.Marshal(entry)
 }
 
-// readResult is the payload of a successful `file.read`.
+// readResult is the payload of a successful `file.read` on the JSON transport.
 type readResult struct {
 	Content   []byte `json:"content"`
 	Size      int64  `json:"size"`
 	Truncated bool   `json:"truncated"`
+}
+
+// readMetadata is the payload of a successful `file.read` on the content
+// transport.
+//
+// It carries the same size and truncated fields as readResult and no content,
+// because the content travels as raw bytes in a binary frame. The field names are
+// identical so a caller that reads either shape finds the same keys, and the only
+// difference is where the bytes are.
+type readMetadata struct {
+	Size      int64 `json:"size"`
+	Truncated bool  `json:"truncated"`
 }
 
 // listResult is the payload of a successful `file.list`.
