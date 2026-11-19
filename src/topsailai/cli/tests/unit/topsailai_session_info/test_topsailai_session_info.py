@@ -262,6 +262,9 @@ class TestFormatSessionJson:
             "total_completion_tokens",
             "total_usage_tokens",
             "total_cached_tokens",
+            # Optional runtime enrichment, always present so the record shape
+            # never changes between invocations.
+            "runtime",
         }
         expected_keys.update(name for name, _attribute, _default in METRIC_FIELDS)
         # Derived values computed by session_metrics() itself.
@@ -519,6 +522,149 @@ class TestMain:
         text = capsys.readouterr().out
         assert "Category:" in text
         assert "agent" in text
+
+
+class TestIncludeRuntime:
+    """Pin the `--include-runtime` contract of the single-session command."""
+
+    def test_flag_defaults_to_false(self):
+        """Runtime collection is opt-in, so the default must not query anything."""
+        assert si._parse_args(["abc123"]).include_runtime is False
+        assert si._parse_args(["abc123", "--include-runtime"]).include_runtime is True
+
+    def test_record_carries_runtime_null_when_not_requested(self, tmp_path: Path):
+        """The key is always present so the record shape never changes."""
+        session = SessionData(session_id="abc123", task="Task")
+
+        data = si._session_to_dict(session, str(tmp_path))
+
+        assert "runtime" in data
+        assert data["runtime"] is None
+
+    def test_record_carries_collected_runtime(self, tmp_path: Path):
+        """A collected record is published verbatim under `runtime`."""
+        session = SessionData(session_id="abc123", task="Task")
+        collected = {"state": "ok", "error_code": None, "pid": 123, "data": {"ok": True}}
+
+        data = si._session_to_dict(session, str(tmp_path), runtime=collected)
+
+        assert data["runtime"] == collected
+
+    def test_idle_session_is_never_queried(self, tmp_path: Path):
+        """An idle session has no process, so nothing may be contacted."""
+        session = SessionData(session_id="idle1", task="Task")
+
+        with patch("cli_topsailai.process_liveness.live_session_pid") as probe, \
+             patch("cli_topsailai.workspace_runtime.collect_session_runtime") as collect:
+            assert si._collect_runtime(session, str(tmp_path), False) is None
+
+        probe.assert_not_called()
+        collect.assert_not_called()
+
+    def test_running_session_without_a_live_pid_is_not_queried(self, tmp_path: Path):
+        """A status without a resolvable owner PID must not invent a target."""
+        session = SessionData(session_id="run1", task="Task")
+
+        with patch("cli_topsailai.process_liveness.live_session_pid",
+                   return_value=None) as probe, \
+             patch("cli_topsailai.workspace_runtime.collect_session_runtime") as collect:
+            assert si._collect_runtime(session, str(tmp_path), True) is None
+
+        probe.assert_called_once()
+        collect.assert_not_called()
+
+    def test_running_session_queries_the_proving_pid(self, tmp_path: Path):
+        """The queried PID must be the one that proved the session live."""
+        session = SessionData(session_id="run1", task="Task")
+        collected = {"state": "ok", "error_code": None, "pid": 4242, "data": {"ok": True}}
+
+        with patch("cli_topsailai.process_liveness.live_session_pid",
+                   return_value=4242), \
+             patch("cli_topsailai.workspace_runtime.collect_session_runtime",
+                   return_value=collected) as collect:
+            result = si._collect_runtime(session, str(tmp_path), True)
+
+        assert result == collected
+        args = collect.call_args.args
+        assert args[0] == "run1"
+        assert args[1] == 4242
+        assert args[2] == os.path.join(str(tmp_path), si.TASK_SUBDIR)
+
+    def test_collection_failure_leaves_runtime_null(self, tmp_path: Path):
+        """Runtime data is optional enrichment, so a failure must not raise."""
+        session = SessionData(session_id="run1", task="Task")
+
+        with patch("cli_topsailai.process_liveness.live_session_pid",
+                   side_effect=RuntimeError("boom")):
+            assert si._collect_runtime(session, str(tmp_path), True) is None
+
+    def test_flag_alone_selects_json(self, tmp_path: Path, capsys):
+        """Runtime data has no card representation, so the flag selects JSON."""
+        db_conn = f"sqlite:///{tmp_path / 'sessions.db'}"
+        get_session_manager(db_conn).create_session(
+            SessionData(session_id="json-runtime", task="Task")
+        )
+
+        assert si.main([
+            "json-runtime", "--db-conn", db_conn, "--home", str(tmp_path),
+            "--include-runtime",
+        ]) == 0
+        parsed = json.loads(capsys.readouterr().out)
+
+        assert parsed["session_id"] == "json-runtime"
+        assert parsed["runtime"] is None
+        assert parsed["is_running"] is False
+
+    def test_flag_alone_selects_json_on_the_failure_path(self, tmp_path: Path, capsys):
+        """A machine consumer must receive parseable JSON even when not found."""
+        db_conn = f"sqlite:///{tmp_path / 'sessions.db'}"
+
+        assert si.main([
+            "missing", "--db-conn", db_conn, "--home", str(tmp_path),
+            "--include-runtime",
+        ]) == 1
+        captured = capsys.readouterr()
+
+        assert json.loads(captured.out)["error_code"] == "session_not_found"
+        assert "\x1b[" not in captured.out
+
+    def test_running_session_publishes_runtime_in_json(self, tmp_path: Path, capsys):
+        """A running session's record carries the collected runtime object."""
+        db_conn = f"sqlite:///{tmp_path / 'sessions.db'}"
+        get_session_manager(db_conn).create_session(
+            SessionData(session_id="live-runtime", task="Task")
+        )
+        task_dir = tmp_path / si.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        (task_dir / f"live-runtime.{os.getpid()}.session.stdout").write_text("")
+        collected = {"state": "ok", "error_code": None, "pid": os.getpid(),
+                     "data": {"ok": True, "model": {"name": "m"}}}
+
+        with patch("cli_topsailai.workspace_runtime.collect_session_runtime",
+                   return_value=collected):
+            assert si.main([
+                "live-runtime", "--db-conn", db_conn, "--home", str(tmp_path),
+                "--include-runtime",
+            ]) == 0
+        parsed = json.loads(capsys.readouterr().out)
+
+        assert parsed["is_running"] is True
+        assert parsed["runtime"] == collected
+
+    def test_text_mode_is_unchanged(self, tmp_path: Path, capsys):
+        """Without the flag the card is printed exactly as before."""
+        db_conn = f"sqlite:///{tmp_path / 'sessions.db'}"
+        get_session_manager(db_conn).create_session(
+            SessionData(session_id="card-only", task="Task")
+        )
+
+        assert si.main([
+            "card-only", "--db-conn", db_conn, "--home", str(tmp_path), "--no-color",
+        ]) == 0
+        text = capsys.readouterr().out
+
+        assert "Session Information" in text
+        assert "runtime" not in text
 
 
 if __name__ == "__main__":

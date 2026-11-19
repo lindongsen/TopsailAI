@@ -282,6 +282,32 @@ class TestInfoDispatch:
             ["abc", "--json", "--no-color", "--db-conn", "sqlite:///x"]
         )
 
+    def test_include_runtime_is_forwarded_to_the_single_session_script(self):
+        """A flag accepted by the subcommand must reach the child it dispatches."""
+        with patch("topsailai_session_info.main", return_value=0) as single:
+            assert cli.run_session_cli(["info", "abc", "--include-runtime"]) == 0
+        single.assert_called_once_with(["abc", "--include-runtime"])
+
+    def test_include_runtime_is_forwarded_to_the_batch_script(self):
+        """Many identifiers route to the batch script, which must accept it too."""
+        with patch("topsailai_sessions_info.main", return_value=0) as batch:
+            assert cli.run_session_cli(
+                ["info", "abc", "def", "--include-runtime"]
+            ) == 0
+        batch.assert_called_once_with(["abc", "def", "--include-runtime"])
+
+    def test_include_runtime_is_absent_when_not_requested(self):
+        """The flag must not be invented for a plain invocation."""
+        with patch("topsailai_session_info.main", return_value=0) as single:
+            cli.run_session_cli(["info", "abc"])
+        single.assert_called_once_with(["abc"])
+
+    def test_include_runtime_combines_with_json(self):
+        """Both spellings may be given; each is forwarded once."""
+        with patch("topsailai_session_info.main", return_value=0) as single:
+            cli.run_session_cli(["info", "abc", "--json", "--include-runtime"])
+        single.assert_called_once_with(["abc", "--json", "--include-runtime"])
+
 
 class TestChildCommandForwarding:
     """Each action must forward exactly the flags its child script accepts."""

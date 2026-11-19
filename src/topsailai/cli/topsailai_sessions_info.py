@@ -64,6 +64,16 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Output the session information as a JSON array.",
     )
+    parser.add_argument(
+        "--include-runtime",
+        dest="include_runtime",
+        action="store_true",
+        help=(
+            "Add a runtime object to every running session's record. Selects "
+            "JSON output by itself, because runtime data has no card "
+            "representation."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -100,21 +110,13 @@ def _session_id_of(session: SessionData) -> str:
     return str(session.session_id) if session.session_id else ""
 
 
-def _running_status_map(home: str) -> dict[str, bool]:
-    """Return ``session_id -> is_running`` from one scan of the stdout directory.
+def _session_pid_map(home: str) -> dict[str, list[int]]:
+    """Return ``session_id -> every PID`` recorded in its stdout filenames.
 
-    The reference command resolves running status per session, and each
-    resolution lists the whole task directory.  A batch must not pay that cost
-    once per session, so the directory is listed once here.
-
-    Every stdout file of a session is collected, not only the newest one,
-    because a newer dead file must not hide an older live process. This is the
-    same rule ``topsailai_session_info._is_session_running`` applies, so both
-    commands answer identically for the same session and the same on-disk
-    state. A zombie or a non-positive PID is never reported as running.
-
-    A session with no stdout file is absent from the returned mapping, which
-    callers must read as "not running" rather than "unknown".
+    The directory is listed exactly once, because the reference command lists it
+    once per session and a batch must not pay that cost per identifier. Every
+    stdout file of a session is collected, not only the newest one, because a
+    newer dead file must not hide an older live process.
     """
     task_dir = os.path.join(home, session_info.TASK_SUBDIR)
     if not os.path.isdir(task_dir):
@@ -136,21 +138,85 @@ def _running_status_map(home: str) -> dict[str, bool]:
         if not os.path.isfile(full_path):
             continue
         pids_by_session.setdefault(session_id, []).append(pid)
+    return pids_by_session
 
-    return {
-        session_id: any(pid_state(pid) is ProcessState.ALIVE for pid in pids)
-        for session_id, pids in pids_by_session.items()
-    }
+
+def _status_and_pid_maps(home: str) -> tuple[dict[str, bool], dict[str, int]]:
+    """Return running status and the proving PID for every session.
+
+    Both answers come from one directory scan and one probe pass, so asking for
+    runtime data does not double the cost of the batch. The PID is the candidate
+    that actually proved liveness, so a runtime query contacts the process that
+    produced the reported status instead of guessing from the newest file.
+
+    A session with no stdout file is absent from both mappings, which callers
+    must read as "not running" rather than "unknown". A zombie or a
+    non-positive PID is never reported as running.
+    """
+    running_by_id: dict[str, bool] = {}
+    live_pid_by_id: dict[str, int] = {}
+    for session_id, pids in _session_pid_map(home).items():
+        alive = [pid for pid in pids if pid_state(pid) is ProcessState.ALIVE]
+        running_by_id[session_id] = bool(alive)
+        if alive:
+            live_pid_by_id[session_id] = alive[0]
+    return running_by_id, live_pid_by_id
+
+
+def _running_status_map(home: str) -> dict[str, bool]:
+    """Return ``session_id -> is_running`` from one scan of the stdout directory.
+
+    This is the status half of :func:`_status_and_pid_maps`, kept as its own
+    entry point because it is the only answer a caller without runtime data
+    needs.
+    """
+    return _status_and_pid_maps(home)[0]
+
+
+def _collect_runtimes(
+    sessions: list[SessionData], home: str, live_pid_by_id: dict[str, int]
+) -> dict[str, dict]:
+    """Collect runtime data for every running session, keyed by session id.
+
+    Only sessions with a proven live PID are queried, because an idle session
+    has no process to answer and probing one would report a failure for a state
+    that is not a failure. Collection reuses the workspace collector, so the
+    batch pays the same bounded concurrency and reports the same states, error
+    codes and payloads as ``workspace list --include-runtime``. A failure is
+    best effort: the affected session simply carries no runtime record.
+    """
+    from cli_topsailai.workspace_runtime import collect_workspace_runtime
+
+    rows = []
+    for session in sessions:
+        session_id = _session_id_of(session)
+        pid = live_pid_by_id.get(session_id)
+        if pid is None:
+            continue
+        # The filename is the collector's key and is unique per session here,
+        # so the collected mapping can be read back by session id directly.
+        rows.append({"session_id": session_id, "pid": pid, "filename": session_id})
+    if not rows:
+        return {}
+    task_dir = os.path.join(home, session_info.TASK_SUBDIR)
+    return collect_workspace_runtime(rows, task_dir)
 
 
 def _format_sessions_json(
-    sessions: list[SessionData], home: str, running_by_id: dict[str, bool]
+    sessions: list[SessionData],
+    home: str,
+    running_by_id: dict[str, bool],
+    runtime_by_id: Optional[dict[str, dict]] = None,
 ) -> str:
     """Format sessions as a JSON array of the single-session JSON records."""
+    runtimes = runtime_by_id or {}
     return json.dumps(
         [
             session_info._session_to_dict(
-                session, home, running_by_id.get(_session_id_of(session), False)
+                session,
+                home,
+                running_by_id.get(_session_id_of(session), False),
+                runtimes.get(_session_id_of(session)),
             )
             for session in sessions
         ],
@@ -231,17 +297,32 @@ def main(argv: Optional[list[str]] = None) -> int:
             file=sys.stderr,
         )
 
+    # Runtime data has no card representation, so asking for it selects the
+    # JSON document instead of being rejected or silently dropped. The flag is
+    # therefore a request for the data, not a modifier of an already-chosen
+    # format, which is the same contract ``workspace list`` applies.
+    json_output = bool(args.json or args.include_runtime)
+
     if found:
-        running_by_id = _running_status_map(home)
-        if args.json:
-            print(_format_sessions_json(found, home, running_by_id))
+        running_by_id, live_pid_by_id = _status_and_pid_maps(home)
+        runtime_by_id = {}
+        if args.include_runtime:
+            # Collection runs only for sessions proven live, so an idle session
+            # is never probed and never reports a failure for a state that is
+            # not a failure.
+            try:
+                runtime_by_id = _collect_runtimes(found, home, live_pid_by_id)
+            except Exception:
+                runtime_by_id = {}
+        if json_output:
+            print(_format_sessions_json(found, home, running_by_id, runtime_by_id))
         else:
             print(
                 _format_sessions(
                     found, home, session_info._supports_color(), running_by_id
                 )
             )
-    elif args.json:
+    elif json_output:
         print(_format_sessions_json(found, home, {}))
 
     return 1 if missing else 0

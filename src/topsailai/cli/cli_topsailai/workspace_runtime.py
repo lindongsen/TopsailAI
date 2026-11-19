@@ -212,3 +212,40 @@ def collect_workspace_runtime(
                     "unavailable", "internal_error", _row_owner_pid(row),
                 )
     return collected
+
+
+def collect_session_runtime(
+    session_id: Any,
+    pid: Optional[int],
+    task_dir: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+    sender=None,
+) -> Dict[str, Any]:
+    """Collect one session's runtime record through its own control channel.
+
+    This is the single-session entry point for the same contract
+    :func:`collect_workspace_runtime` applies per row, so both commands report
+    identical states, error codes and payloads. It exists instead of a second
+    transport because a duplicated request builder is a second place for the
+    instruction name or the argument form to drift.
+
+    Args:
+        session_id: Display session identity, including the ``(temp)`` sentinel.
+        pid: The process that owns the session's control channel. ``None``
+            means no live owner was resolved, so nothing is contacted.
+        task_dir: Absolute task directory holding the control sockets.
+        timeout: Transport budget in seconds.
+        sender: Optional delivery seam, defaulting to the real transport.
+
+    Returns:
+        One ``{state, error_code, pid, data}`` record. A row that cannot be
+        queried reports ``unsupported_row`` rather than raising, because
+        runtime data is an optional enrichment of the session record.
+    """
+    row: Dict[str, Any] = {"session_id": session_id, "pid": pid}
+    if sender is None:
+        from cli_topsailai.runtime_control import send_to_control
+
+        sender = send_to_control
+    return _collect_one(row, task_dir, timeout, sender)

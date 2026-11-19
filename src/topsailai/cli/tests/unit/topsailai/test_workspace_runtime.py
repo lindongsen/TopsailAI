@@ -504,3 +504,128 @@ def test_import_failure_keeps_the_document(isolated_home, capsys, monkeypatch):
     payload = json.loads(capsys.readouterr().out)
     assert payload["total"] == 1
     assert payload["items"][0]["runtime"] is None
+
+
+def test_single_session_collector_publishes_the_same_record(tmp_path):
+    """The single-session entry point must reuse the per-row contract."""
+    make_socket(str(tmp_path), "sample", 123)
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=ok_sender(),
+    )
+
+    assert record["state"] == "ok"
+    assert record["error_code"] is None
+    assert record["pid"] == 123
+    assert record["data"]["model"]["name"] == "example-model"
+
+
+def test_single_session_collector_uses_the_positional_argument_form(tmp_path):
+    """Both entry points must send one identical request."""
+    make_socket(str(tmp_path), "sample", 123)
+    seen = {}
+
+    def send(socket_path, action, request_payload, *, timeout):
+        seen.update(request_payload)
+        return Mock(response={"status": "ok", "result": static_payload()})
+
+    workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=send,
+    )
+
+    assert seen["instruction"] == "runtime.static-data"
+    assert seen["args"] == ["json=1"]
+    assert "kwargs" not in seen
+
+
+def test_single_session_collector_without_a_pid_is_unsupported(tmp_path):
+    """No resolved owner means nothing may be contacted."""
+    calls = []
+
+    def send(socket_path, action, request_payload, *, timeout):
+        calls.append(socket_path)
+        return Mock(response={"status": "ok", "result": static_payload()})
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", None, str(tmp_path), sender=send,
+    )
+
+    assert calls == []
+    assert record["state"] == "unavailable"
+    assert record["error_code"] == "unsupported_row"
+
+
+def test_single_session_collector_reports_a_missing_endpoint(tmp_path):
+    """A stale or absent socket is reported without a request."""
+    calls = []
+
+    def send(socket_path, action, request_payload, *, timeout):
+        calls.append(socket_path)
+        return Mock(response={"status": "ok", "result": static_payload()})
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=send,
+    )
+
+    assert calls == []
+    assert record["state"] == "unavailable"
+    assert record["error_code"] == "endpoint_missing"
+
+
+def test_single_session_collector_reports_a_rejection(tmp_path):
+    """A process that predates the instruction keeps its own state."""
+    make_socket(str(tmp_path), "sample", 123)
+
+    def send(socket_path, action, request_payload, *, timeout):
+        raise ControlDeliveryError("control request rejected",
+                                   "control_rejected", 6)
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=send,
+    )
+
+    assert record["state"] == "rejected"
+    assert record["error_code"] == "control_rejected"
+
+
+def test_single_session_collector_reports_an_unexpected_failure(tmp_path):
+    """An unexpected transport failure is one record's problem, not a raise."""
+    make_socket(str(tmp_path), "sample", 123)
+
+    def send(socket_path, action, request_payload, *, timeout):
+        raise RuntimeError("transport exploded")
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=send,
+    )
+
+    assert record["state"] == "unavailable"
+    assert record["error_code"] == "internal_error"
+
+
+def test_single_session_collector_reports_an_instruction_failure(tmp_path):
+    """An instruction that answered with its own failure is unavailable."""
+    make_socket(str(tmp_path), "sample", 123)
+
+    def send(socket_path, action, request_payload, *, timeout):
+        body = json.dumps({"ok": False, "error": "no_runtime_state"})
+        return Mock(response={"status": "ok", "result": body})
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=send,
+    )
+
+    assert record["state"] == "unavailable"
+    assert record["error_code"] == "no_runtime_state"
+
+
+def test_single_session_collector_accepts_the_temp_sentinel(tmp_path):
+    """The display sentinel must resolve the on-disk temporary identity."""
+    make_socket(str(tmp_path), "topsailai", 123)
+
+    record = workspace_runtime.collect_session_runtime(
+        "(temp)", 123, str(tmp_path), sender=ok_sender(),
+    )
+
+    assert record["state"] == "ok"
+    assert record["data"]["model"]["name"] == "example-model"

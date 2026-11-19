@@ -57,6 +57,7 @@ topsailai_sessions_info <session_id> [<session_id> ...]
 | `--home <path>` | Override `TOPSAILAI_HOME` directory. |
 | `--no-color` | Disable colored output. |
 | `--json` | Output the session information as a JSON array. |
+| `--include-runtime` | Add a `runtime` object to every running session's record. Selects JSON output by itself. |
 
 ## Output
 
@@ -72,6 +73,25 @@ array.
 
 The per-session fields are the same as `topsailai_session_info`; see
 [`topsailai_session_info`](topsailai_session_info.md) for the field table.
+
+## Runtime Data
+
+`--include-runtime` adds a `runtime` object to every running session's record.
+The object, its states, and its error vocabulary are identical to
+[`topsailai_session_info`](topsailai_session_info.md), because both commands use
+the same collector.
+
+- Only sessions with a proven live PID are queried. An idle session has no
+  process to answer, so its `runtime` stays `null` instead of reporting a
+  failure for a state that is not a failure.
+- Running status and the proving PID come from **one** scan of the stdout
+  directory, so asking for runtime data does not double the batch's scan cost.
+- Collection is best effort. A failure leaves the affected session's `runtime`
+  as `null` and never breaks the array.
+- The key is always present on every record, so the array shape never changes.
+
+`--include-runtime` selects JSON output by itself, because runtime data has no
+card representation.
 
 ## Ordering and duplicates
 

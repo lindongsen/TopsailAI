@@ -37,6 +37,7 @@ topsailai_session_info <session_id>
 | `--home <path>` | Override `TOPSAILAI_HOME` directory. |
 | `--no-color` | Disable colored output. |
 | `--json` | Output the session information as JSON. |
+| `--include-runtime` | Add a `runtime` object collected from the running session process. Selects JSON output by itself. |
 
 ## Output Fields
 
@@ -57,8 +58,38 @@ topsailai_session_info <session_id>
 | `status` | `Running` or `Idle`. |
 | `is_running` | Boolean running status (JSON output only). |
 | `create_time_relative` | Human-readable relative time, e.g. "3 minutes ago". |
+| `runtime` | Runtime record collected from the running process, or `null`. Always present in JSON. |
 
 The human-readable card labels these metrics as `Prompt Tokens`, `Completion Tokens`, `Total Usage Tokens`, and `Cached Prompt Tokens`. The JSON result does not expose the ambiguous `total_tokens` name. No additional database columns are used: `total_prompt_tokens` maps the internal legacy prompt-only `total_tokens` column to an explicit query field, and `total_usage_tokens` is calculated from prompt plus completion totals.
+
+## Runtime Data
+
+`--include-runtime` adds a `runtime` object to the JSON record. It is collected from the session's own control channel, using the same instruction, argument form, timeout, and error vocabulary as `workspace list --include-runtime`, so both commands report identical states for the same process.
+
+- The object is fetched only when the session is running. An idle session has no process to answer, so `runtime` stays `null` instead of reporting a failure for a state that is not a failure.
+- The queried PID is the one that proved the session live, so a session owned by a sibling container is reached through its own control channel rather than through the local process table.
+- Collection is best effort. Any failure leaves `runtime` as `null` and never breaks the record, so a consumer always receives a complete document.
+- The key is always present, which lets a consumer tell "not requested" from "requested but unavailable".
+
+The record shape is:
+
+```json
+{
+  "state": "ok",
+  "error_code": null,
+  "pid": 4242,
+  "data": { "ok": true, "model": { "name": "example-model" } }
+}
+```
+
+| `state` | Meaning |
+|---------|---------|
+| `ok` | Usable runtime data is present in `data`. |
+| `rejected` | The process answered but refused the instruction, typically because it started before the instruction existed. |
+| `timeout` | The process did not answer within the transport budget. |
+| `unavailable` | The endpoint is missing, the instruction reported its own failure, or the transport failed. |
+
+`--include-runtime` selects JSON output by itself, because runtime data has no card representation. It is therefore a request for the data rather than a modifier of an already-chosen format, which is the same contract `workspace list` applies. The failure paths honour it too, so a machine consumer always receives parseable JSON.
 
 ## Failure Output
 
