@@ -971,3 +971,54 @@ AI reflection archive, not here.
   (`Content.IE5`), which appeared in the enumeration because the walk followed the
   first junction. Removing the outer link first made the inner one unreachable, so
   the enumeration must be re-read after each removal rather than trusted once.
+
+## A shared secret that admits a Node also admits a Node's impersonator
+
+- The `tunnel_token` was treated as a low-value secret on the argument that a host
+  using it to connect has thereby made itself a managed Node, so nothing is gained
+  by an attacker. That argument is correct for a host that connects under its own
+  new node id, and it is wrong for a host that claims an id which already exists.
+- The Server replaces a live connection when a duplicate node id arrives
+  (`registry.go` `Register`, `channel.go` "replacing a live connection"), and the
+  response direction carries no proof at all (`protocol.Response` has no signature
+  field). Together those two properties let a token holder take over an existing
+  address and answer its requests with invented content.
+- Measured, not reasoned: a rogue process holding only the token connected as
+  `node_xm6lqoluutyi2ezczl4y2zkfrm`, the Server logged an ordinary
+  `channel established generation=42`, and the same CLI command that had returned
+  `REAL SECRET FILE CONTENT` returned `FABRICATED BY THE ROGUE NODE` with `rc=0`.
+  The real file was unchanged, so the caller had no way to tell.
+- The distinction to keep is between "becomes a Node" and "becomes an existing
+  Node". The first is the feature; the second is the vulnerability. A security
+  argument about a shared secret must state which of the two it is answering,
+  because the same sentence is true for one and false for the other.
+- The fix that does not touch the credential model is to refuse a duplicate node id
+  instead of replacing it. That converts a silent substitution into a visible
+  `node_offline`, and a caller who sees a refusal knows something is wrong while a
+  caller who receives invented bytes does not. The obvious alternative — sign the
+  response and verify it on the Server — is forbidden, because verifying a node
+  signature requires the node secret, which the Server must never receive.
+- A residual-risk row that says "impersonate a Node" reads as "connect as one". The
+  consequence is larger: impersonating a Node means answering its requests. Write
+  the consequence a caller experiences, not the mechanism an attacker uses.
+
+## A probe that fails on its first call proves nothing about the product
+
+- The first rogue-node probe was accepted by the Server and received the request,
+  but the CLI reported `decode response: EOF`. The cause was the probe, not the
+  product: it answered with a bare `Response{Code:0, Data:[]byte("...")}`, while a
+  successful `file.read` carries a JSON object with a `content` field. The Server
+  merged nothing and wrote an envelope with no data.
+- The second attempt failed for a different probe reason: it advertised
+  `binary-v1`, so the Server expected a binary content frame before the response
+  frame and the CLI saw an empty body. Advertising no transport made the JSON path
+  run and the attack succeed immediately.
+- Both failures looked like "the attack does not work", which is the conclusion
+  that would have been wrong. A probe must reproduce the real peer's shape before
+  its failure is read as a property of the product: copy the struct from the
+  dispatch code, and check which transport the handshake selected in the Server
+  log before interpreting an empty answer.
+- The evidence that the probe was finally faithful is that it succeeded on the
+  first call after the shape was corrected, and that the Server log showed the
+  transport it had negotiated. A probe that needs several attempts to produce a
+  result has not shown which attempt was measuring the product.
