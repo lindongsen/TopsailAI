@@ -89,16 +89,19 @@ copies the whole payload.
 - Correctness. Every size produced byte-identical output, including the 256 MiB
   case.
 
-## Suggested direction
+## Decided direction
 
-Not decided here, because each option changes the wire contract:
+The accepted fix is a versioned `binary-v1` file transport. Control and error
+messages remain structured, while file bytes travel outside JSON without base64
+or default compression. The Server selects the first version in its preference
+order that the Node offered; malformed or disjoint offers fail closed instead of
+silently falling back.
 
-- Carry the payload as `json.RawMessage` instead of `[]byte`, which removes one
-  base64 layer and the 1.33x expansion.
-- Send the content as a raw binary frame rather than inside JSON, which removes
-  both layers.
-- Raise `MaxResponseBytes` together with the frame limit, which reduces the number
-  of round trips but not the per-byte cost.
+The negotiation contract lands before live activation, but neither peer advertises
+or selects `binary-v1` until its binary frame behavior exists on both sides. Live
+negotiation and framing activate atomically so an intermediate build cannot claim
+a transport it does not implement. Chunk size remains 256 KiB until measurement
+shows that a different bounded value improves the complete workflow.
 
 ## Detection gap
 
