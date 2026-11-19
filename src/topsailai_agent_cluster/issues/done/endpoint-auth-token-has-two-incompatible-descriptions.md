@@ -1,11 +1,30 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: resolved
 created: 2026-11-20
+resolved: 2026-11-20
+resolution: removed the key and required an explicit CLI credential
 ---
 
 # The Endpoint `AUTH_TOKEN` has two incompatible descriptions and one unusable form
+
+## Resolution
+
+The key was removed rather than repaired. Commit `130b1af2` deletes `AUTH_TOKEN` from the endpoint
+configuration template and from every installer path, and `agent-cluster-node-setup` now takes the
+credential explicitly with `--token <key_id.secret>`.
+
+The reason removal was chosen over correcting the value: the Endpoint daemon never reads the key, so
+the only thing it could ever do was feed the CLI env writer, and it fed it a bare secret that the CLI
+rejects in hmac mode. A key that exists solely to produce an unusable credential is not worth keeping
+in a configuration contract. The credential now lives in exactly one place, the CLI env file, and
+writing it is an explicit operator act.
+
+Behaviour change, stated plainly: a fresh node no longer gets a CLI env file from the installer. Both
+installers warn and name the command that writes it. This is deliberate, because the previous
+behaviour wrote a file that could not authenticate.
+
 
 ## What was claimed, and why it was wrong
 

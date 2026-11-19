@@ -1952,3 +1952,25 @@ unused, and the installer that depends on it runs once, at install time, where n
 tell is that the key is present in a shipped `node.conf` at all: a template does not carry a value
 that nothing reads, so a key with no daemon consumer should be traced to the packaging path before it
 is called dead.
+
+## A line-range replacement that repeats its own anchor duplicates the block
+
+Trigger: while removing the `AUTH_TOKEN` placeholder check from `scripts/make-deb.sh`, the replaced
+range was `505-510` and the replacement content repeated the `if grep -q "127.0.0.1"` block that
+already sat inside that range. The result was a duplicated `warn` line and an orphaned `fi`. The next
+edit then removed the wrong two lines and deleted the `fi` that closed the surviving `if`, leaving a
+function that `bash -n` rejected. The same class of mistake happened again in `README.md`, where a
+replacement range began one line below the paragraph's first line, so the first line survived and the
+replacement re-emitted it, duplicating the sentence and swallowing the opening of the next paragraph.
+
+Action: when a replacement range covers only part of a block, the replacement must contain only the
+lines that are new, never a copy of a line that is still outside the range. Before writing, print the
+exact range and confirm which lines are inside it and which are outside. After every line-range edit,
+run `bash -n` on a shell file or read the region back, and check the diff for a duplicated line or a
+lost closing token. When a block needs several interdependent edits, replace the whole block in one
+call instead of chaining edits whose line numbers shift under each other.
+
+Why this prevents recurrence: the tool reports success either way, and a duplicated line or a missing
+`fi` is invisible in the success message. Prose has no compiler, so a swallowed paragraph opening
+renders as a plausible sentence and survives review. The only cheap check is reading the region back
+and looking at the diff, which is exactly what the success message makes you skip.
