@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: undo
 severity: medium
 created: 2026-11-19
 platform: linux
@@ -119,3 +119,43 @@ design decisions that change the deployment contract and need a human decision.
 No data loss, no authorization bypass. The exposure is credential disclosure to a
 network observer, bounded by the requirement to observe the segment. The
 `tunnel_token` gate itself still works: a wrong value is refused.
+
+## Disposition: not a defect, decided by the human on 2026-11-19
+
+The human rejected this issue as a security defect. The reasoning, in the human's
+words:
+
+> tunnel_token 明文没问题，毕竟它只是一个授权通道，表达可以接入到server去被管。从本质上来说，没有安全问题。
+
+Normalised: `tunnel_token` travelling in plaintext is acceptable, because it only
+authorises a channel — it expresses "this machine may connect to the Server and be
+managed". It carries no data authority, so its disclosure is not a security
+problem in substance.
+
+The distinction the human drew is the one the design already makes elsewhere:
+
+| Value | What it authorises | Consequence of disclosure |
+|---|---|---|
+| `tunnel_token` | Opening a channel to the Server | An attacker can connect and be managed. No file, no scope, no operation is reachable without a node credential and a policy grant |
+| client credential secret | Calling the Server at all | Every Node reachable through that Server |
+| node credential secret | Operating on one Node | Every operation that Node's policy grants |
+
+A channel is the precondition for being managed, not the authority to be managed.
+The two credentials that do carry authority are proof-based and were measured at
+zero occurrences on the wire, so the property that matters holds.
+
+What remains true and is kept rather than deleted:
+
+- The measurement is correct: `tunnel_token` does cross the wire as a value, 8
+  occurrences in the channel capture, base64 inside the `hello` payload.
+- The false-clean methodology is correct and worth keeping: a raw grep over a
+  masked WebSocket frame reports zero hits for a value that is present, and the
+  token is base64 inside a base64 payload. That lesson applies to any future
+  capture, not only to this value.
+- The deployment note still states the exposure under Known limitations, because
+  an operator should know which value is readable on the segment even when the
+  answer is "that is acceptable".
+
+The issue is moved to `issues/undo/` rather than deleted, so a future reader who
+re-measures the capture finds the human's decision instead of filing the same
+issue again.
