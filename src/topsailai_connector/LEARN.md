@@ -763,3 +763,37 @@ AI reflection archive, not here.
 - Ask what the operator must know to make the value work, not only which values
   exist. A variable with a constraint and no stated constraint is documented in
   name only.
+
+## A skill update is not delivered until its version and its evidence exist
+
+- `scope list` was implemented, tested, documented in `docs/API.md`, recorded in
+  `features/90ai-added.md`, and added to both skills — and the skills still said
+  `version: 1.0.0` and `version: 2.1.0`. The body was correct and the version was
+  stale, so a reader had no way to tell that the capability was new.
+- The version is the only signal a skill consumer has that the document changed.
+  A skill is loaded by description and read as current, so a stale version makes a
+  new capability indistinguishable from one that was always there. Bump it in the
+  same change that adds the capability, not afterwards.
+- The larger gap was that no executed evidence existed for the skill's claims. The
+  claims were true, but "true" was established by reading the source, which is
+  exactly what a skill reader cannot do. `skills/tests/{skill-name}/findings.md`
+  is where a claim becomes a measurement, and the folder did not exist.
+- The claim that failed on execution was small and real: the skill said a malformed
+  policy "fails here with the message the Node would print". Measured, `scope list`
+  prints `connector-node: scope "bad": ...` while `run` prints
+  `connector-node: load authority: scope "bad": ...`. The reason is identical and
+  the prefix is not, so the sentence was wrong in the way that sends a reader
+  searching for text that does not exist.
+- A security claim needs a control, not just two matching failures. "An undefined
+  scope and a missing grant cannot be told apart" was measured with two requests
+  that both returned `denied`, and a third request on the same scope with a granted
+  operation returned the file. Without the third, two identical failures are also
+  what a wrong credential produces.
+- The distinction the caller cannot see is visible in the Node log, and that is the
+  evidence the property is deliberate rather than accidental: the log names
+  `scope "absent" does not grant "read"` and `scope "readonly" does not grant
+  "list"`, while `protocol.Response` has no message field to carry either.
+- Producing the two cases needed a policy with two scopes, because one scope cannot
+  be both undefined and defined-without-a-grant. The Node has no `SIGHUP` reload,
+  so the Node had to be restarted with an edited policy — which is itself a
+  confirmation that a running Node cannot gain a scope.
