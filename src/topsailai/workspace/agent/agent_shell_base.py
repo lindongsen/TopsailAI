@@ -742,6 +742,31 @@ class AgentChat(AgentChatBase):
                             task.tool_call_count = 0
                         task.executor = getattr(self.ai_agent, "agent_name", "") or ""
 
+            # User2Agent exception outcome map (keep this synchronized with the
+            # except branches below whenever an exception type or policy changes):
+            #
+            # 1. LLMBackToChatError and errors resolved through the RECOVERABLE_*
+            #    allowlists abandon only the current turn on the interactive main
+            #    thread and wait for fresh input. Non-interactive and worker-thread
+            #    recoverable errors are re-raised; workers must not read main-chat
+            #    input. LLM-layer automatic retries and Retry / Back / Exit menus
+            #    happen before this boundary and must not be confused with it.
+            # 2. HardInterruptError pauses the conversation; AgentEndProcess uses
+            #    the Agent-provided final message; KeyboardInterrupt and EOFError
+            #    follow the human-abort path.
+            # 3. ContextWindowLimitError, HeavyTaskError and
+            #    SummaryWindowLimitError terminate the session in a controlled
+            #    way: they set terminal failure and break without an uncaught
+            #    traceback.
+            # 4. Database I/O failures recover the interactive main-thread turn.
+            #    A non-interactive main thread calls _exit_after_db_io_failure()
+            #    because a lost durable write must never look successful; a worker
+            #    thread returns a controlled terminal failure instead of exiting
+            #    its owning process.
+            # 5. Every other Exception is re-raised. AgentChat.run() marks the
+            #    session as error and re-raises it; the agent_chats CLI catches only
+            #    EOFError, so such an exception reaches that entry point as a
+            #    traceback and non-zero worker-process exit.
             except (
                 (LLMBackToChatError, LLMRetryExhaustedError)
                 + RECOVERABLE_PROVIDER_ERRORS
