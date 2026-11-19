@@ -123,7 +123,7 @@ PACKAGE_NODE_KEY_ID ?= bundle-caller
 UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
-.PHONY: help build build-server build-node build-cli vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e check fmt clean build-windows test-windows-compile package package-windows
+.PHONY: help build build-server build-node build-cli vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e measure check fmt clean build-windows test-windows-compile package package-windows
 
 help:
 	@echo "Targets:"
@@ -143,6 +143,7 @@ help:
 	@echo "  integration     Build the binaries, then run the integration suite"
 	@echo "  bdd             Run the Gherkin scenarios in tests/bdd/"
 	@echo "  e2e             Build the binaries, then drive real processes and a real bundle"
+	@echo "  measure         Measure one file.read on both sides and fail on a budget regression"
 	@echo "  check           vet, unit, coverage, race, integration, bdd and e2e in that order"
 	@echo "  fmt             Format every Go source file"
 	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
@@ -315,6 +316,34 @@ e2e: build
 	bash tests/e2e/deep_nesting.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/manual_probe.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
 	bash tests/e2e/verify_package.sh 2>&1 | tee -a $(TMP_DIR)/e2e-test.log
+
+# `measure` is the resource check, and it is deliberately not part of `check`.
+#
+# A 64 MiB measurement takes minutes and its absolute numbers move with host load,
+# so putting it in `check` would make the standard suite slow and flaky. It is a
+# separate target so it is discoverable in `help` and runnable on demand and in a
+# release check.
+#
+# The two scripts are separate on purpose. `measure_read.sh` measures and reports;
+# it does not judge, because a threshold with no baseline is a guess with a test
+# around it. `check_budget.sh` reads that report and compares it with the rule in
+# `docs/resource-baseline.md`. Merging them would make the report unusable as raw
+# evidence and would put the threshold somewhere other than next to the baseline it
+# implements.
+#
+# No cleanup is added here. `measure_read.sh` already stops the exact PIDs that
+# `start.sh` recorded, through its own EXIT trap. A second cleanup path in this
+# recipe could disagree with that one, and a cleanup that reports success is not a
+# cleanup that happened.
+#
+# Sizes are overridable so a quick run and a release run can differ without editing
+# this file: `make measure MEASURE_SIZES="1 16 64"`.
+MEASURE_SIZES ?= 1 16 64
+measure: build
+	@mkdir -p $(TMP_DIR)
+	bash tests/e2e/start.sh 2>&1 | tee $(TMP_DIR)/measure.log
+	bash tests/e2e/measure_read.sh $(MEASURE_SIZES) 2>&1 | tee -a $(TMP_DIR)/measure.log
+	bash tests/e2e/check_budget.sh 2>&1 | tee -a $(TMP_DIR)/measure.log
 
 # Windows is a supported platform for the Node, so the Node must be compiled for
 # it on every check. The Server is deployed on Linux and is not built here: a
