@@ -166,14 +166,18 @@ def normalize(args):
     message = getattr(args, "message", None)
     payload_text = getattr(args, "payload_text", None)
     if args.positionals and args.positionals[0] == "info":
-        # ``info`` publishes a session record document, so it accepts only the
+        # ``info`` publishes one workspace item, so it accepts only the two
         # selectors and the transport budget. Every delivery and log option is
-        # rejected instead of being silently ignored.
+        # rejected instead of being silently ignored. Both selectors are
+        # required because one session may run several agents, so a session
+        # alone does not name the process whose runtime is reported.
         if (len(args.positionals) != 1 or instruction is not None
                 or message is not None or payload_text is not None
                 or args.stdin or hasattr(args, "lines") or args.follow
                 or args.is_task):
             raise RuntimeUsageError("Invalid info arguments")
+        if session_id is None or pid is None:
+            raise RuntimeUsageError("info requires both a session and a PID")
         return RuntimeInfoRequest(session_id=session_id, pid=pid,
                                   timeout=getattr(args, "timeout", None))
     control_action = None

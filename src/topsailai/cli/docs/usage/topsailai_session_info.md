@@ -93,7 +93,7 @@ The record shape is:
 
 ## Related Command
 
-`topsailai runtime info` prints the same document for the same session, with one addition: `-p/--pid` selects which process answers the runtime query, because one session may run several agents at the same time. Without `-p` it resolves the answering PID exactly as this command does, so the default invocation is identical. A task (child) agent writes only a `{session}.{pid}[.{task_id}].task.stdout` log, so `-p` accepts that file as ownership evidence and reports `is_task: true` in the `runtime` object; this command always queries the session process, so its own `runtime` never carries a worker's data. See [topsailai](topsailai.md#session-record-with-runtime-data).
+`topsailai runtime info -s SESSION -p PID` publishes the `workspace list --json --include-runtime` item for one exact process, restricted to the session identity, the `runtime` object and the `metafile` object. It is not the same document as this command: both selectors are mandatory there, because one session may run several agents and a session identity alone does not name the process whose runtime should be reported. This command always queries the session process, so its own `runtime` never carries a worker's data; reaching a worker's runtime requires `runtime info -s SESSION -p <worker-pid>`, which accepts a `{session}.{pid}[.{task_id}].task.stdout` log as ownership evidence. See [topsailai](topsailai.md#session-record-with-runtime-data).
 
 ## Failure Output
 

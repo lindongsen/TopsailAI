@@ -1,15 +1,16 @@
-"""Read one session record enriched with runtime data from a chosen process.
+"""Read one workspace row enriched with runtime data from a chosen process.
 
 Author: DawsonLin
 
-``topsailai runtime info`` publishes exactly the document that
-``topsailai session info --include-runtime --json`` publishes, with one
-addition: the process that answers the runtime query can be selected by PID,
-because one session may run several agents at the same time.
+``topsailai runtime info`` publishes the workspace-list item for one exact
+process, restricted to three groups: the session identity, the ``runtime``
+object and the ``metafile`` object. The item is produced by the workspace list's
+own builder and the runtime record by the list's own collector, so the two
+commands cannot drift in fields, values, states or error codes.
 
-The record projection and the runtime transport are both reused instead of
-reimplemented, so the two commands cannot drift in fields, ordering, states or
-error codes.
+Both selectors are mandatory. One session may run several agents, so a session
+identity alone does not name the process whose runtime should be reported, and a
+PID alone does not prove which session the caller meant.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ TASK_SUBDIR = "workspace/task"
 
 #: Exit categories. ``session_not_found`` and ``lookup_failed`` keep the status
 #: ``session info`` already returns for the same failures, so a caller that
-#: switches between the two commands sees one contract.
+#: switches between the commands sees one contract.
 _EXIT_CODES = {
     "usage_error": 2,
     "target_not_found": 3,
@@ -33,14 +34,30 @@ _EXIT_CODES = {
     "lookup_failed": 1,
 }
 
+#: Identity keys copied from the workspace-list item, in the list's own order.
+#: ``status_raw`` is copied only when the list item carries it, because the list
+#: omits it when the session lookup produced no record; emitting ``null`` here
+#: would claim an observation that never happened.
+IDENTITY_KEYS = (
+    "session_id",
+    "session_name",
+    "project_workspace",
+    "is_task",
+    "session_qualifier",
+    "pid",
+    "status",
+    "status_raw",
+)
+
 
 @dataclass(frozen=True)
 class RuntimeInfoRequest:
     """Describe one read-only runtime info request.
 
+    ``session_id`` and ``pid`` are both required: the session proves which
+    session the caller meant and the PID selects which of its agents answers.
     ``timeout`` is ``None`` when the caller did not pass ``--timeout``, so the
-    collector's own default budget applies and the default invocation keeps the
-    same transport cost as ``session info --include-runtime``.
+    collector's own default budget applies.
     """
 
     session_id: Optional[str] = None
@@ -86,139 +103,155 @@ def _on_disk_session_id(session_id: Optional[str]) -> Optional[str]:
     return _file_session_id(session_id)
 
 
-def _display_session_id(on_disk_session_id: str) -> str:
-    """Map an on-disk filename prefix back to the identity users see.
+def _display_session_id(session_id: str) -> str:
+    """Map a session identity to the value discovered rows carry.
 
-    A temporary session is stored under the reserved ``topsailai`` prefix but is
-    displayed as ``(temp)`` everywhere else, so a PID-only lookup must translate
-    the prefix instead of publishing the storage detail as a session name.
+    Discovery reports a temporary session as ``(temp)`` while its files use the
+    reserved ``topsailai`` prefix, so filtering rows with the caller's spelling
+    would drop every temporary row when the caller passed the prefix.
     """
     from cli_topsailai.constants import TEMP_SESSION_ID, TEMP_SESSION_MARKER
 
-    if on_disk_session_id == TEMP_SESSION_ID:
+    if _on_disk_session_id(session_id) == TEMP_SESSION_ID:
         return TEMP_SESSION_MARKER
-    return on_disk_session_id
+    return session_id
 
 
 def resolve_target(
     session_id: Optional[str], pid: Optional[int], home: str
-) -> Tuple[str, Optional[int], bool]:
-    """Return the exact ``(session_id, pid, is_task)`` triple to query.
+) -> Tuple[str, int]:
+    """Return the exact ``(session_id, pid)`` pair to describe.
 
-    Without an explicit PID the answer is the one ``session info`` already
-    produces: the PID that proved the session live. An idle or unverifiable
-    session therefore yields ``(session_id, None, False)`` and is never probed,
-    so a process that does not exist is not reported as a collection failure.
-
-    With an explicit PID the caller asserted a specific process, so it is
-    queried even when the session looks idle. The PID is first proven to belong
-    to the requested session through a process log it wrote itself, because
-    reporting another session's runtime data would be worse than failing. A
-    task agent writes only a task log, so accepting that file is what makes a
-    worker PID reachable at all.
+    Both selectors are required. The PID is proven to belong to the requested
+    session through a process log it wrote itself, because reporting another
+    session's runtime data would be worse than failing. A task agent writes only
+    a task log, so accepting that file is what makes a worker PID reachable.
 
     Args:
-        session_id: Display session identity, or ``None`` when only a PID was
-            given.
-        pid: Explicit positive PID, or ``None`` to resolve the live owner.
+        session_id: Display session identity.
+        pid: Explicit positive PID.
         home: Absolute ``TOPSAILAI_HOME`` directory.
 
     Returns:
-        The session identity, the PID to query (``None`` when no live owner was
-        resolved), and whether that PID is a task agent rather than the session
-        process.
+        The session identity and the PID to describe.
 
     Raises:
-        RuntimeInfoError: ``target_not_found`` when no process log records the
-            PID, or ``target_mismatch`` when it records another session.
+        RuntimeInfoError: ``usage_error`` when a selector is missing,
+            ``target_not_found`` when no process log records the PID, or
+            ``target_mismatch`` when it records another session.
     """
-    if pid is None:
-        from cli_topsailai.process_liveness import live_session_pid
-
-        return session_id or "", live_session_pid(session_id or "", home=home), False
-
-    task_dir = os.path.join(home, TASK_SUBDIR)
-    owners = [(owner, is_task) for owner, record_pid, is_task
-              in _process_records(task_dir) if record_pid == pid]
-    if not owners:
+    if session_id is None or pid is None:
         raise RuntimeInfoError(
-            "target_not_found", "No process log records this PID"
+            "usage_error", "Both a session and a PID are required"
         )
-    # A session process writes a session log, so its own record wins when a PID
-    # somehow left both kinds behind; the session log is the stronger identity.
-    is_task = all(record_is_task for _owner, record_is_task in owners)
-    if session_id is None:
-        # Only a PID was given, so the filename is the only identity evidence.
-        # The on-disk prefix is translated back to the display identity, so a
-        # temporary session is reported as ``(temp)`` like every other command.
-        return _display_session_id(owners[0][0]), pid, is_task
     expected = _on_disk_session_id(session_id)
     if expected is None:
         raise RuntimeInfoError(
             "target_mismatch", "The session identifier cannot name a process"
         )
-    if expected not in [owner for owner, _is_task in owners]:
+    task_dir = os.path.join(home, TASK_SUBDIR)
+    owners = [owner for owner, record_pid, _is_task
+              in _process_records(task_dir) if record_pid == pid]
+    if not owners:
+        raise RuntimeInfoError(
+            "target_not_found", "No process log records this PID"
+        )
+    if expected not in owners:
         raise RuntimeInfoError(
             "target_mismatch", "The PID belongs to another session"
         )
-    return session_id, pid, is_task
+    return session_id, pid
+
+
+def _workspace_row(session_id: str, pid: int, home: str) -> Dict[str, Any]:
+    """Return the workspace-list row whose filename records *pid*.
+
+    The row is produced by the same discovery and enrichment calls the list
+    makes, in the same order, restricted to one session. ``metafile`` is
+    attached by the hostname enrichment that the driver enrichment invokes, so
+    skipping either step would publish ``null`` for a session that has a record.
+
+    Raises:
+        RuntimeInfoError: ``session_not_found`` when the session has no row, or
+            ``target_not_found`` when no row of it records the PID.
+    """
+    from cli_topsailai.core import _driver_authority, _enrich_driver_rows
+    from cli_topsailai.log_files import discover_workspace_log_files
+    from cli_topsailai.session_info import enrich_files_with_session_names
+
+    task_dir = os.path.join(home, TASK_SUBDIR)
+    rows = discover_workspace_log_files(
+        task_dir, session_ids=[_display_session_id(session_id)]
+    )
+    if not rows:
+        raise RuntimeInfoError(
+            "session_not_found", f"Session not found: {session_id}"
+        )
+    enrich_files_with_session_names(rows)
+    _enrich_driver_rows(rows, home, _driver_authority(os.environ))
+    for row in rows:
+        # The filename PID is the identity evidence, so it selects the row even
+        # when the published ``pid`` is a display fallback for a dead process.
+        if row.get("pid") == pid:
+            return row
+    raise RuntimeInfoError(
+        "target_not_found", "No process log records this PID"
+    )
+
+
+def _project(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Restrict one workspace-list item to identity, runtime and metafile."""
+    document = {key: item[key] for key in IDENTITY_KEYS if key in item}
+    document["runtime"] = item.get("runtime")
+    document["metafile"] = item.get("metafile")
+    return document
 
 
 def build_document(
     session_id: str,
-    pid: Optional[int],
+    pid: int,
     home: str,
     timeout: Optional[float] = None,
-    is_task: bool = False,
 ) -> str:
-    """Return the session record document as one JSON string.
+    """Return the projected workspace item as one JSON string.
 
-    The projection is ``topsailai_session_info``'s own formatter, so the
-    document is identical to ``session info --include-runtime --json`` for the
-    same session. ``runtime`` is ``None`` when no PID was resolved, which is the
-    same "not running" answer that command publishes.
-
-    *is_task* is forwarded to the collector so the runtime record states which
-    kind of process answered; the session record itself is unchanged, which is
-    what keeps the two commands byte-identical.
+    The item comes from the workspace list's own builder and the runtime record
+    from the list's own collector, so every published value is the value the
+    list publishes for the same row. Only one row is collected, so the command
+    costs one transport call instead of a directory-wide fan-out.
 
     Raises:
-        RuntimeInfoError: ``session_not_found`` when the session has no stored
-            record, because a record cannot be produced without one.
+        RuntimeInfoError: ``session_not_found`` when the session has no row, or
+            ``target_not_found`` when no row of it records the PID.
     """
-    import topsailai_session_info as session_info
-    from topsailai.context.ctx_manager import get_session_manager
-    from cli_topsailai.workspace_runtime import collect_session_runtime
+    from cli_topsailai.core import _workspace_json_item
+    from cli_topsailai.workspace_runtime import collect_workspace_runtime
 
-    manager = get_session_manager(None)
-    session = manager.get_session(session_id)
-    if session is None:
-        raise RuntimeInfoError(
-            "session_not_found", f"Session not found: {session_id}"
-        )
-    runtime: Optional[Dict[str, Any]] = None
-    if pid is not None:
-        task_dir = os.path.join(home, TASK_SUBDIR)
-        if timeout is None:
-            runtime = collect_session_runtime(
-                session_id, pid, task_dir, is_task=is_task
-            )
-        else:
-            runtime = collect_session_runtime(
-                session_id, pid, task_dir, timeout=timeout, is_task=is_task
-            )
-    return session_info._format_session_json(session, home, runtime)
+    row = _workspace_row(session_id, pid, home)
+    task_dir = os.path.join(home, TASK_SUBDIR)
+    if timeout is None:
+        collected = collect_workspace_runtime([row], task_dir)
+    else:
+        collected = collect_workspace_runtime([row], task_dir, timeout=timeout)
+    runtime = collected.get(row.get("filename"))
+    item = _workspace_json_item(row, 1, runtime)
+    return json.dumps(_project(item), ensure_ascii=False, indent=2)
 
 
 def _failure_document(session_id: str, error_code: str, message: str) -> str:
-    """Return the same failure object ``session info`` prints for this case."""
+    """Return the same failure object ``session info`` prints for this case.
+
+    A failure carries no metafile and no runtime, so inventing empty groups
+    would make a failure indistinguishable from a real record whose fields
+    happen to be empty.
+    """
     import topsailai_session_info as session_info
 
     return session_info._format_failure_json(session_id, error_code, message)
 
 
 def run_info(request: RuntimeInfoRequest, *, home: str) -> int:
-    """Print one session record document and return its exit status.
+    """Print one projected workspace item and return its exit status.
 
     The document is always JSON, because the requested content is a JSON
     record. Every failure path prints the same failure object instead of a text
@@ -227,11 +260,11 @@ def run_info(request: RuntimeInfoRequest, *, home: str) -> int:
     """
     session_id = request.session_id or ""
     try:
-        resolved_session, resolved_pid, is_task = resolve_target(
+        resolved_session, resolved_pid = resolve_target(
             request.session_id, request.pid, home
         )
         document = build_document(
-            resolved_session, resolved_pid, home, request.timeout, is_task
+            resolved_session, resolved_pid, home, request.timeout
         )
     except RuntimeInfoError as error:
         print(_failure_document(session_id, error.error_code, error.message))
