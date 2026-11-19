@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import pty
 import select
@@ -1033,3 +1034,153 @@ class TestInputFromPipePromptEcho:
 
         captured = capsys.readouterr()
         assert captured.out.strip() == "answer"
+
+
+class TestNonAsciiInputPreservation:
+    """Regression tests for CJK input handling in the terminal helper path.
+
+    Each test targets one confirmed defect: the kernel erase unit, the history
+    writer, the helper pipe read size, and the helper pipe encoding.
+    """
+
+    def test_configure_terminal_enables_utf8_erase(self):
+        """Canonical mode must erase one character, not one byte, per backspace."""
+        master_fd, slave_fd = pty.openpty()
+        try:
+            with input_tool._configure_terminal(slave_fd):
+                current = termios.tcgetattr(slave_fd)
+                assert current[0] & termios.IUTF8
+        finally:
+            os.close(master_fd)
+            os.close(slave_fd)
+
+    def test_history_append_tolerates_lone_surrogate(self, tmp_path):
+        """A surrogate from a partial decode must not lose the history entry."""
+        history_file = str(tmp_path / "history.jsonl")
+        text = "bad\udce6text"
+
+        input_tool.append_input_history_jsonl(history_file, "sid", text)
+
+        with open(history_file, "r", encoding="utf-8") as fd:
+            entry = json.loads(fd.readline())
+        assert entry["text"] == "bad?text"
+        assert entry["session_id"] == "sid"
+
+    def _read_helper_line(self, tmp_path, payload: bytes, timeout: float = 5.0):
+        """Drive input_from_pipe through a fake helper pipe carrying *payload*."""
+        pipe_path = str(tmp_path / "helper.pipe")
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, payload)
+        os.close(write_fd)
+
+        fake_stdin = MagicMock()
+        fake_stdin.fileno.return_value = 0
+
+        writer = self._write_to_pipe_after_delay(pipe_path, b"")
+        try:
+            with patch.object(input_tool.sys, "stdin", fake_stdin), \
+                    patch.object(input_tool.os, "isatty", return_value=True), \
+                    patch.object(input_tool, "_spawn_terminal_input_subprocess",
+                                 return_value=(MagicMock(), read_fd)):
+                return input_tool.input_from_pipe(
+                    pipe_path, timeout=timeout, prompt=""
+                )
+        finally:
+            writer.join(timeout=2.0)
+
+    def _write_to_pipe_after_delay(self, pipe_path: str, content: bytes,
+                                   delay: float = 0.05):
+        """Spawn a thread that opens the FIFO and writes content after a delay."""
+
+        def writer():
+            time.sleep(delay)
+            with open(pipe_path, "wb") as fifo:
+                fifo.write(content)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        return thread
+
+    def test_long_ascii_line_is_not_truncated(self, tmp_path):
+        """A line longer than one read must be returned in full."""
+        line = "a" * 5000
+
+        result = self._read_helper_line(tmp_path, (line + "\n").encode("utf-8"))
+
+        assert result == line
+        assert len(result) == 5000
+
+    def test_long_cjk_line_survives_a_split_read(self, tmp_path):
+        """A multi-byte character split across reads must not break decoding."""
+        line = "\u4e2d" * 1400
+        payload = (line + "\n").encode("utf-8")
+        assert len(payload) > 4096
+
+        result = self._read_helper_line(tmp_path, payload)
+
+        assert result == line
+
+    def test_helper_uses_utf8_under_ascii_locale(self):
+        """The helper must decode stdin and write UTF-8 under an ASCII locale.
+
+        PYTHONIOENCODING is deliberately absent from the child environment, so
+        the helper has to establish UTF-8 itself. Without that, Python decodes
+        each stdin byte as a lone surrogate and CJK input arrives corrupted.
+        """
+        cjk = "\u4e2d\u6587\u8f93\u5165"
+        master_fd, slave_fd = pty.openpty()
+        proc = None
+        read_fd = None
+        try:
+            child_env = {
+                "LC_ALL": "C",
+                "LANG": "C",
+                "PYTHONUTF8": "0",
+                "PYTHONCOERCECLOCALE": "0",
+            }
+            with patch.dict(os.environ, child_env):
+                os.environ.pop("PYTHONIOENCODING", None)
+                proc, read_fd = input_tool._spawn_terminal_input_subprocess(
+                    "", stdin_fd=slave_fd
+                )
+            assert proc is not None
+            time.sleep(0.8)
+            os.write(master_fd, (cjk + "\n").encode("utf-8"))
+
+            payload = b""
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline:
+                ready, _, _ = select.select([read_fd], [], [], 0.2)
+                if ready:
+                    data = os.read(read_fd, 4096)
+                    if not data:
+                        break
+                    payload += data
+                    if b"\n" in payload:
+                        break
+
+            assert payload == (cjk + "\n").encode("utf-8")
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                proc.wait(timeout=3.0)
+            if read_fd is not None:
+                os.close(read_fd)
+            os.close(master_fd)
+            os.close(slave_fd)
+
+    def test_fifo_writer_closing_mid_character_does_not_raise(self, tmp_path):
+        """A writer that closes inside a multi-byte character must not raise."""
+        pipe_path = str(tmp_path / "partial.pipe")
+        os.mkfifo(pipe_path)
+        # "中文" truncated to 4 bytes ends inside the second character.
+        payload = "\u4e2d\u6587".encode("utf-8")[:4]
+
+        writer = self._write_to_pipe_after_delay(pipe_path, payload)
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=5, prompt="")
+        finally:
+            writer.join(timeout=2.0)
+
+        assert result.startswith("\u4e2d")
+        assert "\ufffd" in result

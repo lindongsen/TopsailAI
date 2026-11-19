@@ -63,6 +63,9 @@ def _configure_terminal(fd: int):
         # Ensure canonical mode and echo are enabled so typed characters are
         # visible without relying on the readline library state.
         new_settings[3] |= termios.ICANON | termios.ECHO
+        # Without IUTF8 the kernel erases one byte per backspace in canonical
+        # mode, so deleting a multi-byte character leaves a broken fragment.
+        new_settings[0] |= getattr(termios, "IUTF8", 0)
         termios.tcsetattr(fd, termios.TCSADRAIN, new_settings)
     except Exception as exc:  # pragma: no cover - fd may not be a real tty
         logger.debug("Could not configure terminal for input_with_timeout: %s", exc)
@@ -539,6 +542,10 @@ def append_input_history_jsonl(
     """
     if not history_file or not text:
         return
+    # A lone surrogate reaches this point when terminal input was decoded from
+    # a partial multi-byte sequence. It cannot be encoded as UTF-8, so replace
+    # it instead of losing the whole history entry.
+    safe_text = text.encode("utf-8", "replace").decode("utf-8")
     try:
         parent = os.path.dirname(history_file)
         if parent and not os.path.exists(parent):
@@ -547,11 +554,11 @@ def append_input_history_jsonl(
         entry = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
             "session_id": session_id or "",
-            "text": text,
+            "text": safe_text,
         }
         with open(history_file, "a", encoding="utf-8") as fd:
             fd.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError as exc:
+    except (OSError, UnicodeEncodeError) as exc:
         logger.debug("Could not append JSONL history %s: %s", history_file, exc)
 
 
@@ -971,17 +978,26 @@ if eof_or_interrupt:
         pass
 else:
     try:
-        with os.fdopen(write_fd, "w", closefd=True) as fifo:
-            fifo.write(line + chr(10))
+        # Write explicit UTF-8 bytes: the parent decodes this pipe as UTF-8,
+        # while text mode would use the helper's locale encoding and silently
+        # drop the line when that locale is ASCII.
+        with os.fdopen(write_fd, "wb", closefd=True) as fifo:
+            fifo.write((line + chr(10)).encode("utf-8"))
     except Exception:
         pass
 '''
     )
     try:
+        # The helper must decode its stdin as UTF-8 regardless of the parent's
+        # locale. Under an ASCII locale Python decodes each input byte as a lone
+        # surrogate, so CJK text reaches the parent already corrupted.
+        helper_env = dict(os.environ)
+        helper_env["PYTHONIOENCODING"] = "utf-8"
         popen_kwargs: dict[str, typing.Any] = {
             "stdout": None,
             "stderr": None,
             "pass_fds": [write_fd],
+            "env": helper_env,
         }
         if stdin_fd is not None:
             popen_kwargs["stdin"] = stdin_fd
@@ -1188,6 +1204,9 @@ def input_from_pipe(
             print(prompt, flush=True)
 
         chunks: list[bytes] = []
+        # Bytes received from the terminal helper. A long line arrives in
+        # several reads, so they are accumulated until the newline is seen.
+        helper_chunks: list[bytes] = []
         deadline = None if timeout is None else time.monotonic() + float(timeout)
         pipe_closed = False
 
@@ -1253,8 +1272,15 @@ def input_from_pipe(
             if helper_read_fd in ready:
                 line_bytes = _read_available(helper_read_fd)
                 if line_bytes:
-                    line = line_bytes.decode(encoding).rstrip("\n")
-                    return line
+                    helper_chunks.append(line_bytes)
+                    # A long line arrives in several reads, so only decode once
+                    # the newline terminator is present. Decoding a partial
+                    # chunk would split a multi-byte character.
+                    pending = b"".join(helper_chunks)
+                    if b"\n" in pending:
+                        line = pending.decode(encoding).rstrip("\n")
+                        return line
+                    continue
                 # Helper closed its write end without producing a line.
                 # This means the user pressed Ctrl+D / EOF on the terminal.
                 try:
@@ -1262,6 +1288,12 @@ def input_from_pipe(
                 except OSError:
                     pass
                 helper_read_fd = None
+                if helper_chunks:
+                    # The helper died mid-write, so the trailing bytes may end
+                    # inside a multi-byte character. Replace rather than raise.
+                    return b"".join(helper_chunks).decode(
+                        encoding, "replace"
+                    ).rstrip("\n")
                 if raise_eof_error:
                     raise EOFError("Terminal input closed (EOF or interrupt)")
                 # Return empty string for normal EOF.
@@ -1272,7 +1304,10 @@ def input_from_pipe(
         if result is not None:
             print(result)
             return result
-        decoded = b"".join(chunks).decode(encoding)
+        # The writer closed mid-character, so the trailing bytes may end inside
+        # a multi-byte sequence. Replace rather than raise, because a truncated
+        # tail is still the message the user sent.
+        decoded = b"".join(chunks).decode(encoding, "replace")
         cleaned, eof_seen = _strip_eof_suffix(decoded, eof_marker)
         if eof_seen and raise_eof_error:
             raise EOFError(f"EOF marker '{eof_marker}' reached")

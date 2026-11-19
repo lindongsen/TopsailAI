@@ -653,3 +653,43 @@ underlying defect was the truncated-`PYTHONPATH` problem already recorded in thi
 file: a spawned child cannot import `topsailai`, so it dies before writing its
 pidfile. Both failures share that single cause, which is why they appear and
 disappear together.
+
+## A terminal helper's encoding must be set by the parent, not inherited from the locale
+
+Trigger: CJK input through `utils/input_tool.py` arrived corrupted even after
+the helper's write side was fixed to emit explicit UTF-8 bytes. The helper's
+own stdin encoding was still `ascii` under `LC_ALL=C`, so Python decoded every
+input byte as a lone surrogate (`'\udce4\udcb8\udcad'`) and the parent received
+mojibake that no later fix could repair.
+
+Action: pass an explicit child environment with `PYTHONIOENCODING=utf-8` when
+spawning the helper, and verify with a PTY probe that deliberately omits
+`PYTHONIOENCODING` from the parent environment. The probe showed `b''` before
+and the exact UTF-8 payload after, and the helper's own `sys.stdin.encoding`
+changed from `ascii` to `utf-8`.
+
+Why this prevents recurrence: a pipe has two ends and each end has its own
+encoding decision. Fixing the writer's encoding does not fix the reader's, and
+the reader's default comes from the locale, which the parent cannot see. Any
+spawned helper that exchanges text must have its encoding pinned by the parent
+in both directions, and the test must remove the variable it is testing rather
+than set it, otherwise the test proves only that an explicitly configured
+environment works.
+
+## A truncation-tolerant decode belongs on every path that can end mid-character
+
+Trigger: after fixing the terminal-helper path, a real FIFO writer that closed
+inside a multi-byte character still raised `UnicodeDecodeError` from
+`input_from_pipe`'s pipe-EOF branch. The same class of defect existed on two
+independent read paths, and only the one that had been probed was fixed.
+
+Action: apply `errors="replace"` to the pipe-EOF decode as well, and add a test
+that writes `"中文".encode("utf-8")[:4]` through a real FIFO. The test failed
+with `UnicodeDecodeError` before the change and returns `'中\ufffd'` after.
+
+Why this prevents recurrence: whenever a byte stream can be cut at an arbitrary
+boundary, every decode of that stream needs a truncation policy, not just the
+path that happened to be under investigation. Enumerate all decode sites of the
+same stream in one pass, and prefer a probe that truncates a real multi-byte
+character over a mock, because a mock returns whole characters and can never
+reproduce the failure.
