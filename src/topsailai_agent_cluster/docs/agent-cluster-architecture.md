@@ -150,6 +150,60 @@ corrected design defines `ModelProfile`, `agent.model.list` and `agent.model.sel
 and confines every provider detail to one adapter section. See
 `.task/plan_20261109T150000_session-model-command.md`.
 
+### A seam carries the Provider's content, and the Cluster only addresses it
+
+The abstraction rule has a second half that is easy to miss, and getting it wrong is a defect even
+when the result looks tidier. The Cluster defines a seam's **position** and its **bound**. The
+Provider defines everything inside it. The Cluster never edits, merges, de-duplicates or hides a
+seam's content.
+
+Human direction on 2026-11-19, wording normalized, meaning preserved:
+
+> `provider_metadata` and `provider_runtime` are both seams, standard interfaces, contracts. What
+> fills them is the Provider's business. The Cluster does no processing of the content at all; it
+> keeps it verbatim. This principle is a floor and it is very important.
+
+Three prohibitions follow, and each one is a different way to break the rule:
+
+| Prohibited | Meaning |
+|---|---|
+| The Cluster decides what a seam contains | Which fields belong in `provider_metadata` is the Provider's decision. |
+| The Cluster edits a seam's bytes | Dropping a key, merging two documents or re-encoding a document is a content change. |
+| The Cluster interprets a seam to render it differently | A renderer may format bytes for a human; it may not decide one key is redundant and hide it. |
+
+The Cluster's legitimate work on a seam is **addressing**: which resource, which row, which bound.
+That work lives in `internal/protocol` and the adapter, and it never touches the document body. A
+Provider that wants a different split changes its own project, because `providers/<name>/` is an
+independent module and a content decision therefore never requires a Cluster, Server, schema or CLI
+change.
+
+**The worked example is `session.detail`.** The Cluster forwards two seams, `provider_metadata` and
+`provider_runtime`. The Provider's `runtime info` command publishes one document containing both a
+session record and a `runtime` object, so the two seams overlap. The correct fix is inside
+`providers/topsailai`, where that Provider decides how the document is split. The incorrect fix is in
+`internal/`: dropping the `runtime` key from `provider_metadata`, or teaching the TUI renderer to skip
+it. Both make the Cluster a second author of a Provider document, and both diverge silently the first
+time the Provider changes its record.
+
+The same example marks where the Cluster's work stops. A `session.detail` read must name one row,
+because a session and its task children share one session identifier. Carrying that row identity is
+addressing and belongs in `SessionDetailQuery` and the adapter. Deciding what the row's document
+contains is not addressing and belongs to the Provider.
+
+Why this is a floor: a seam exists so a second Provider can be added without touching the Cluster. The
+moment the Cluster edits a seam, the seam describes the Cluster's opinion of one Provider instead of
+that Provider's own record, and the second Provider inherits an opinion that was never about it. The
+failure is silent in the direction that matters: the edited document still renders and still looks
+complete, and only the dropped field is missing, which nobody can see because it is not there.
+
+This was learned by getting it wrong. While evaluating whether `topsailai runtime info` could replace
+the two reads behind `session.detail`, the first proposals were "drop the `runtime` key from
+`provider_metadata`" and "skip that key when the TUI renders it". Both were Cluster-side content
+edits, and the human rejected the direction: the Provider decides the split, the Cluster forwards it.
+The corrected design keeps `internal/` to addressing only and puts the split inside
+`providers/topsailai`. See `docs/agent-cluster-protocol.md` under "A seam's content belongs to the
+Provider, and the Cluster never edits it".
+
 ## Component boundaries
 
 | Component | Owns | Must not own |

@@ -609,3 +609,59 @@ that one field. The identifier was already known by the CLI, which reads it from
 inventory, and it was discarded when the target was minted as a digest. The provider paid 54%
 of the read to recover a value the caller had in hand. See
 `issues/model-catalog-reverses-a-digest-it-was-given.md`.
+
+## A seam's content belongs to the Provider; the Cluster only addresses it
+
+Directed by the human on 2026-11-19, wording normalized, meaning preserved:
+
+> `provider_metadata` and `provider_runtime` are both seams, standard interfaces, contracts. What
+> fills them is the Provider's business. The Cluster does no processing of the content at all; it
+> keeps it verbatim. This principle is a floor and it is very important.
+
+This is a floor, not a preference, and it applies to every seam the Cluster forwards, not only to
+`session.detail`. A seam fixes a **position** and a **bound**. It never fixes the content, and it
+never authorises the Cluster to reshape what arrives.
+
+Three prohibitions, because each one is a different way to break the rule:
+
+| Prohibited | Meaning |
+|---|---|
+| The Cluster decides what a seam contains | Which fields belong in `provider_metadata` is the Provider's decision, not the Cluster's. |
+| The Cluster edits a seam's bytes | Dropping a key, merging two documents or re-encoding a document is a content change, even when the result looks tidier. |
+| The Cluster interprets a seam to render it differently | A renderer may format bytes for a human; it may not decide one key is redundant with another field and hide it. |
+
+Consequences that MUST hold:
+
+- De-duplication between two seams is the Provider's job. If `provider_metadata` and
+  `provider_runtime` would carry the same object, the Provider decides which seam keeps it, and the
+  Cluster forwards both answers unchanged.
+- A Cluster-side "just drop this key" or "skip this key when rendering" is a defect, not a
+  convenience. It makes the Cluster a second author of a Provider document, and the two authors
+  disagree the moment the Provider changes.
+- The only Cluster-side work on a seam is **addressing**: which resource, which row, which bound.
+  That work belongs in `internal/protocol` and the adapter, and it never touches the document body.
+- A Provider that wants a different split changes its own project. `providers/<name>/` is an
+  independent module, so a content decision never requires a Cluster, Server, schema or CLI change.
+
+The worked example is `session.detail`. The Cluster forwards two seams, `provider_metadata` and
+`provider_runtime`. The Provider's `runtime info` command publishes one document containing both a
+session record and a `runtime` object, so the two seams overlap. The correct fix is inside
+`providers/topsailai`, where that Provider decides how the document is split between the two seams.
+The incorrect fix is in `internal/`: dropping the `runtime` key from `provider_metadata`, or teaching
+the TUI renderer to skip it. Both make the Cluster the author of a Provider document, and both
+diverge silently the first time the Provider changes its record.
+
+The same example marks where the Cluster's legitimate work stops. A `session.detail` read must name
+one row, because a session and its task children share one session identifier. Carrying that row
+identity is addressing and belongs in `SessionDetailQuery` and the adapter. Deciding what the row's
+document contains is not addressing and belongs to the Provider.
+
+Why this is a floor: a seam exists so a second Provider can be added without touching the Cluster.
+The moment the Cluster edits a seam, the seam describes the Cluster's opinion of one Provider instead
+of that Provider's own record, and the second Provider inherits an opinion that was never about it.
+The failure is also silent in the direction that matters: the edited document still renders and still
+looks complete, and only the dropped field is missing, which nobody can see because it is not there.
+
+Recorded in `docs/agent-cluster-protocol.md` under "A seam's content belongs to the Provider, and the
+Cluster never edits it" and in `docs/agent-cluster-architecture.md` under "A seam carries the
+Provider's content, and the Cluster only addresses it".

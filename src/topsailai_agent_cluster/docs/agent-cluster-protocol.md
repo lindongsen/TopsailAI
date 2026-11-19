@@ -849,6 +849,52 @@ also rejected a document would create a second, invisible limit: an operator who
 bound would still be refused by the Provider, and the refusal would arrive as a generic provider
 error that sends the investigation to a Provider behaving correctly.
 
+### A seam's content belongs to the Provider, and the Cluster never edits it
+
+This is a floor, not a preference. A seam fixes a **position** and a **bound**. It never fixes the
+content, and it never authorises the Cluster to reshape what arrives.
+
+The rule is stated as three prohibitions, because each one is a different way to break it:
+
+| Prohibited | Meaning |
+|---|---|
+| The Cluster decides what a seam contains | Which fields belong in `provider_metadata` is the Provider's decision, not the Cluster's. |
+| The Cluster edits a seam's bytes | Removing a key, merging two documents, or re-encoding a document is a content change, even when the result looks tidier. |
+| The Cluster interprets a seam to render it differently | A renderer may format bytes for a human. It may not decide that one key is redundant with another field and hide it. |
+
+Consequences that MUST hold for every change:
+
+- De-duplication between two seams is the Provider's job. If `provider_metadata` and
+  `provider_runtime` would carry the same object, the Provider decides which seam keeps it, and the
+  Cluster forwards both answers unchanged.
+- A Cluster-side "just drop this key" or "skip this key when rendering" is a defect, not a
+  convenience. It makes the Cluster a second author of a Provider document, and the two authors will
+  disagree the moment the Provider changes.
+- The only Cluster-side work on a seam is addressing: which resource, which row, which bound. That
+  work belongs in `internal/protocol` and the adapter, and it never touches the document body.
+- A Provider that wants a different split changes its own project. `providers/<name>/` is an
+  independent module, so a content decision never requires a Cluster, Server, schema or CLI change.
+
+**The worked example is `session.detail`.** The Cluster forwards two seams, `provider_metadata` and
+`provider_runtime`. The Provider's `runtime info` command publishes one document that contains both a
+session record and a `runtime` object, so the two seams would overlap. The correct fix is inside
+`providers/topsailai`: that Provider decides how the document is split between the two seams. The
+incorrect fix is in `internal/`: dropping the `runtime` key from `provider_metadata`, or teaching the
+TUI renderer to skip it. Both of those make the Cluster the author of a Provider document, and both
+would silently diverge the first time the Provider changed its record.
+
+The same example shows where the Cluster's legitimate work stops. A `session.detail` read must name
+one row, because a session and its task children share one session identifier. Carrying that row
+identity is addressing, and it belongs in `SessionDetailQuery` and the adapter. Deciding what the row's
+document contains is not addressing, and it belongs to the Provider.
+
+Why this is a floor rather than a guideline: a seam exists so that a second Provider can be added
+without touching the Cluster. The moment the Cluster edits a seam, the seam describes the Cluster's
+opinion of one Provider instead of that Provider's own record, and the second Provider inherits an
+opinion that was never about it. The failure is also silent in the direction that matters: the edited
+document still renders, still looks complete, and only the field that was dropped is missing, which
+nobody can see because it is not there.
+
 ### The capability revision seam
 
 The advertised capability revision is the third seam where the content is decided entirely by the

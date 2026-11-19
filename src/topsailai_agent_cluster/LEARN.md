@@ -1849,3 +1849,54 @@ Why this prevents recurrence: a probe that passes for the wrong reason is worse 
 it certifies a check nobody performed. The failure direction is the dangerous one: a correct
 implementation looks broken, and the natural response is to weaken the verifier that was never
 consulted.
+
+## A seam named after a provider command inherits that command's projection
+
+Trigger: the human reported that `info`'s `provider_metadata` has no `metafile` field while the
+TopsailAI provider does provide it. The field exists, but in a different provider command.
+`provider_metadata` is defined as the provider's `session info --json` record
+(`providers/topsailai/src/query.go:621-664`), which is built from the session database
+(`src/topsailai/cli/topsailai_session_info.py:105-150`) and has no `metafile` key. `metafile` is a
+`workspace list --json` item field built from the row's on-disk `{session_id}.{pid}.session.meta`
+record (`src/topsailai/cli/cli_topsailai/core.py:1561-1579`). Both commands describe the same
+session and expose different field sets, so the seam is faithful and the expectation was wrong.
+
+Action: when a field is missing from a provider seam, read the provider command the seam is defined
+against before looking for a drop in the forwarding chain. Then run that exact command and the
+command that does expose the field, and compare their key sets. A seam that forwards verbatim cannot
+lose a key, so a missing key means the source never sent it. When the two commands differ, decide
+which one the seam means rather than merging them: one seam carrying two sources makes the field's
+origin unknowable.
+
+Why this prevents recurrence: a verbatim seam looks like the obvious place for a dropped field, so
+the investigation starts at the forwarding code and every layer there is correct. The provider
+exposes the field somewhere, which makes the seam look broken. The two commands are both plausible
+sources for "the session record", and nothing in either one names the other, so the difference is
+visible only by running both and comparing keys.
+
+## A seam's content is the Provider's, and a Cluster-side tidy-up is a defect
+
+Trigger: while evaluating whether `topsailai runtime info` could replace the two reads behind
+`session.detail`, the Provider's new document carried both a session record and a `runtime` object,
+so the two seams `provider_metadata` and `provider_runtime` would overlap. Two fixes were proposed,
+and both were Cluster-side content edits: "drop the `runtime` key from `provider_metadata`" and
+"teach the TUI renderer to skip that key". The human rejected the direction: `provider_metadata` and
+`provider_runtime` are seams, standard interfaces and contracts, what fills them is the Provider's
+business, and the Cluster keeps the content verbatim without processing it at all.
+
+Action: when two seams would carry the same object, or a seam's document looks like it needs
+trimming, the fix belongs in the Provider project, never in `internal/`. `providers/<name>/` is an
+independent module, so the Provider can split, merge or drop its own keys without any Cluster,
+Server, schema or CLI change. The Cluster's only legitimate work on a seam is addressing: which
+resource, which row, which bound. That work lives in `internal/protocol` and the adapter and never
+touches the document body. Before proposing any edit to a seam's bytes, ask which project owns the
+document; if the answer is the Provider, the edit is in the wrong repository.
+
+Why this prevents recurrence: a Cluster-side tidy-up is the shortest path to a clean-looking result,
+and it passes every test on the only Provider that exists, so review cannot see the defect. It makes
+the Cluster a second author of a Provider document, and the two authors diverge the first time the
+Provider changes its record. The failure is silent in the direction that matters: the edited document
+still renders and still looks complete, and only the dropped field is missing, which nobody can see
+because it is not there. The same trap applies to any seam the Cluster forwards, not only to
+`session.detail`: a renderer that hides a "redundant" key, an adapter that merges two documents, and
+a Server that re-encodes a forwarded payload are all the same defect wearing different clothes.
