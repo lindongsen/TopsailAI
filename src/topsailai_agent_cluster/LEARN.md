@@ -1900,3 +1900,28 @@ still renders and still looks complete, and only the dropped field is missing, w
 because it is not there. The same trap applies to any seam the Cluster forwards, not only to
 `session.detail`: a renderer that hides a "redundant" key, an adapter that merges two documents, and
 a Server that re-encodes a forwarded payload are all the same defect wearing different clothes.
+
+## A convenience read added to a shared helper lands on the hot path of every caller
+
+Trigger: to carry the opaque Provider slot into a follow intent, `armFollowStream` was given a
+synchronous `SessionReadIdentity` call. That helper is shared by the explicit `logs -f` command, the
+post-send automatic tail and the post-start tail, so the read was added to the send path as well. The
+send path arms its tail before forcing one collection, and the extra inventory round trip delayed that
+refresh enough that `TestUnitSendAutoFollowKeepsTheForcedCollection` timed out waiting for three
+automatic steps and observed only `[follow follow]`. It passed 5/5 in isolation, passed three full
+package runs, and failed once in a `make test-unit-cli` run, so it first looked like flake.
+
+Action: when a shared helper needs one more fact, check whether every caller already holds that fact
+before adding a read inside the helper. Here all three callers already had the session row: two had
+`session.ProviderTarget` in hand and the third had it in `state.Scope`. Thread the value through the
+helper's parameters instead of re-reading it, and keep the helper free of I/O so its cost stays
+predictable for every caller. When a test fails once and then passes repeatedly, compare the failing
+value against the producers on that path before calling it flake: `[follow follow]` with no `refresh`
+named the missing step, and the missing step was the one the added read delayed.
+
+Why this prevents recurrence: a helper is chosen for reuse precisely because many callers share it, so
+a read added for one caller's convenience is paid by all of them. The cost is invisible in the diff
+because the added line is correct in isolation, and it is invisible in a focused test because the
+focused test exercises one caller. Only the composed path shows the delay, and only as a timeout that
+looks like timing noise. Threading the already-known value keeps the helper pure and makes the
+duplicate read structurally impossible rather than merely removed once.
