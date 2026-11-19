@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -466,5 +468,65 @@ func TestParseArgumentsDefaults(t *testing.T) {
 	}
 	if options.RequestID != "" {
 		t.Errorf("request id = %q, want empty", options.RequestID)
+	}
+}
+
+// TestParseRefusalsExitTwo proves the invariant that ties the message prefix to the
+// exit status for the refusals the argument parser produces: a message beginning
+// `usage:` means the command line was rejected and nothing was sent, so the status is 2.
+//
+// The invariant is asserted over every parse-time refusal rather than only the one that
+// was wrong, because a per-case assertion is what missed the `-o` defect: that test
+// checked the message and the status separately and each was individually plausible.
+// Only the pair was inconsistent, and only a test that reads the pair can see it.
+//
+// The scope is deliberately the parser. `Client.Send` also wraps its own local
+// validation in ErrUsage, and `Run` returns 1 for those, so the same inconsistency
+// exists on that path. That is a separate defect with a separate fix, recorded in
+// `issues/issue-send-time-validation-exits-one-with-a-usage-message.md`; asserting the
+// invariant over it here would make this test fail for a reason it does not own.
+func TestParseRefusalsExitTwo(t *testing.T) {
+	clientCredential := testClientCredential().String()
+	nodeCredential := testNodeCredential().String()
+	nodeID := testNodeID(t)
+
+	directory := t.TempDir()
+	existing := filepath.Join(directory, "out.bin")
+	if err := os.WriteFile(existing, []byte("original"), 0o600); err != nil {
+		t.Fatalf("seed the destination: %v", err)
+	}
+
+	cases := map[string][]string{
+		"no operation":                {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project"},
+		"no client credential":        {"--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "file.read"},
+		"no node credential":          {"--client-credential", clientCredential, "--node-id", nodeID, "--scope", "project", "file.read"},
+		"no node id":                  {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--scope", "project", "file.read"},
+		"no scope":                    {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "file.read"},
+		"two operations":              {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "file.read", "file.list"},
+		"unknown operation":           {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "file.delete"},
+		"negative offset":             {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "--offset", "-1", "file.read"},
+		"negative length":             {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "--length", "-1", "file.read"},
+		"unknown flag":                {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "--nope", "file.read"},
+		"malformed client credential": {"--client-credential", "no-dot", "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "file.read"},
+		"malformed node credential":   {"--client-credential", clientCredential, "--node-credential", "no-dot", "--node-id", nodeID, "--scope", "project", "file.read"},
+		"empty destination":           {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "-o", "", "file.read"},
+		"force without destination":   {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "--force", "file.read"},
+		"json with destination":       {"--client-credential", clientCredential, "--node-credential", nodeCredential, "--node-id", nodeID, "--scope", "project", "--json", "-o", existing, "file.read"},
+	}
+
+	for name, arguments := range cases {
+		t.Run(name, func(t *testing.T) {
+			result := runCLI(t, http.StatusOK, readEnvelope, arguments, nil)
+
+			if !strings.HasPrefix(result.stderr, "connector-server cli: usage:") {
+				t.Errorf("stderr = %q, want a usage: prefix", result.stderr)
+			}
+			if result.status != 2 {
+				t.Errorf("status = %d, want 2 because the command line was rejected; stderr = %q", result.status, result.stderr)
+			}
+			if result.stdout != "" {
+				t.Errorf("stdout = %q, want empty", result.stdout)
+			}
+		})
 	}
 }

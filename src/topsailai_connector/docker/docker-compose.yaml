@@ -39,7 +39,7 @@ services:
       # at /v1/. Publishing one port is the whole point of the single-listener
       # design, and a second mapping would suggest an isolation that does not
       # exist.
-      - "${PUBLISH_PORT:-18444}:8443"
+      - "${PUBLISH_PORT:-8743}:8443"
     read_only: true
     tmpfs:
       - /tmp

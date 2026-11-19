@@ -665,13 +665,54 @@ AI reflection archive, not here.
   `usage:`. Both halves were wrong in a way that only running the command revealed.
   A documented exit status is a claim like any other, so it is measured, not
   inferred from the error's type.
-- The `ErrUsage` wrapper on that path is decorative: `openDestination` wraps the
+- The `ErrUsage` wrapper on that path was decorative: `openDestination` wrapped the
   refusal, and `Run` returns `1` for every error from `writeToDestination` without
-  unwrapping it. The message prefix and the status disagree, and a script branching
-  on the status cannot tell "the command line was rejected" from "the request ran
-  and the write was refused". Recorded as
-  `issues/issue-output-refusal-exits-one-with-a-usage-message.md`.
+  unwrapping it. The message prefix and the status disagreed, and a script branching
+  on the status could not tell "the command line was rejected" from "the request ran
+  and the write was refused". Fixed by dropping the wrapper, so the message matches
+  the status; recorded in
+  `issues/done/issue-output-refusal-exits-one-with-a-usage-message.md`.
+- The same wrapper is still decorative in the other direction on the `Client.Send`
+  path: ten local checks wrap `ErrUsage` and `Run` returns `1`, so the prefix is right
+  and the status is wrong. Two defects of one shape, and fixing the first did not fix
+  the second because the correct answer differs: there the status must change, here
+  the message had to. Recorded as
+  `issues/issue-send-time-validation-exits-one-with-a-usage-message.md`.
+- A test that asserts the message and the status separately cannot see that the pair
+  is inconsistent. `TestOutputRefusesAnExistingDestination` checked that the message
+  contained `--force` and that the status was non-zero; each assertion passed while
+  the combination was wrong. The fix was to strengthen that test to read the pair,
+  not to add a second test beside it: a duplicate in another file would have left the
+  weak assertion in place and made the suite look better covered than it was.
 - A skill's `description` is what decides whether it is loaded at all. Adding a
   capability without adding it there means the skill is not selected for the
   request that needs it, so the feature stays undiscoverable even after the body
   documents it.
+
+## A published port is a value in four places, not one
+
+- Changing the Server's published port from `18444` to `8743` looked like one
+  line in `docker-compose.yaml`. It is four values: the Server's compose file, the
+  repo copy of that file, the zip node's `server_url` file, and the embedded
+  node's compiled-in URL. Updating the first two leaves both Nodes dialling a port
+  nothing listens on, and the failure appears on the Windows host as a retry loop
+  rather than on the host that was edited.
+- The embedded URL cannot be edited. It is stored in the binary's data section by
+  `-ldflags -X`, so the artifact must be rebuilt and redeployed. Confirm the new
+  value without running the binary:
+  `strings bin/connector-node-windows-amd64.exe | grep -F 'ws://192.168.2.3:8743/channel'`.
+- The container-internal listen address does not move. `CONNECTOR_SERVER_LISTEN`
+  stays `0.0.0.0:8443` and only the host mapping changes, so the healthcheck
+  (`nc -z 127.0.0.1 8443`) and the single-listener design are untouched. A change
+  that also moved the internal port would break the healthcheck silently, because
+  the container would still report healthy while nothing was published.
+- Verify the change from the outside, not from the compose file. `docker ps`
+  showing `0.0.0.0:8743->8443/tcp` proves the mapping; only a real CLI call proves
+  a Node is reachable through it. The old port must also be checked, because a
+  stale listener would make the new mapping look correct while the old one still
+  answered: `18444` returned `rc=1, connect: connection refused`.
+- The repo copy and the deployed copy had already diverged: the deployed
+  `docker-compose.yaml` carries a `volumes` entry for the client credential file
+  that the repo copy lacks. Editing the repo file does not deploy anything, and
+  editing the deployed file does not update the repo. Compare the two before
+  assuming a one-line change is complete.

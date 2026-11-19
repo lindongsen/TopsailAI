@@ -103,10 +103,24 @@ func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *i
 	if state.Scope.Kind != ScopeSession || previous.Kind == ScopeSession {
 		return nil
 	}
+	return autoFollowOnSessionEntry(parent, api, state, trustedOut, options, "session selected")
+}
+
+// autoFollowOnSessionEntry follows the output of the session the caller just
+// entered, naming the command that caused the entry in every diagnostic.
+//
+// It is the single implementation behind the navigation entry tail and the
+// post-resume entry tail, so the two cannot drift into two capability checks, two
+// announcements or two degradation messages. The caller has already validated the
+// transition, so this step only reads output and never re-decides the target.
+func autoFollowOnSessionEntry(parent context.Context, api InteractiveAPI, state *interactiveState, trustedOut io.Writer, options InteractiveOptions, failurePrefix string) error {
+	if state.Scope.Kind != ScopeSession {
+		return nil
+	}
 	// A session entry is not an action result, so it carries no receipt and the
 	// tail keeps its previous behaviour: selecting a session is exactly when the
 	// operator wants to see its output.
-	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, "session selected", nil, 0)
+	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.ClusterSessionID, state.ProviderGeneration, trustedOut, options, failurePrefix, nil, 0)
 }
 
 // renderAutomaticSnapshot renders one bounded output snapshot for the selected

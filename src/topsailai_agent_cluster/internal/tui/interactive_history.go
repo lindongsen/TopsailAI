@@ -352,6 +352,16 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 	}
 	postSubmit := func(postCtx context.Context, result map[string]any) error {
 		state.commandID = pinned.commandID
+		// The entry runs before the stale-number notice, because a successful
+		// entry consumes the numbers: the transition clears both namespaces, so a
+		// notice telling the operator to re-render a table they have left would
+		// describe a step that no longer applies.
+		if err := enterResumedSession(postCtx, api, state, selection, result, trustedOut, options); err != nil {
+			return err
+		}
+		if state.Scope.Kind == ScopeSession {
+			return nil
+		}
 		return invalidateResumeRowBindings(state, selection.Source, out)
 	}
 	target := confirmationTarget{ProviderDisplayName: selection.ProviderDisplayName, ProviderSessionID: selection.ProviderSessionID, ClusterSessionID: selection.ResourceID, ProviderSessionHandle: selection.Handle}

@@ -3,7 +3,7 @@ maintainer: AI
 author: DawsonLin
 status: decided
 created: 2026-11-09
-updated: 2026-11-10
+updated: 2026-11-19
 ---
 
 # Permission and Token Design
@@ -206,6 +206,27 @@ refuses the request before forwarding it.
 The Server must never treat a valid client proof as authority to perform an
 operation. If it did, the Server would become an authority for operations, which
 the hard constraint forbids.
+
+## File transport negotiation
+
+File content transport has its own named version because changing from JSON/base64
+to binary bytes changes frame interpretation without changing authentication,
+authorization or the control-message contract. The first efficient version is
+`binary-v1`.
+
+The Server owns preference order and the Node advertises availability. Selection
+chooses the first Server-preferred version that the Node offered. Empty names and
+duplicate entries are refused rather than normalized, and valid lists with no
+common version produce an explicit incompatibility. Version names are public
+protocol identifiers and may appear in upgrade guidance; credentials, proofs,
+paths and file content may not.
+
+The shared negotiation model exists before live activation, but `binary-v1` is not
+advertised in `hello` or selected in `hello_confirm` until its binary frame behavior
+is implemented on both sides. Advertising a mode before implementing it would
+make a compatible-looking connection misinterpret content. Live negotiation and
+the binary frame therefore activate in one atomic protocol change, and no legacy
+fallback is implied by an absent or incompatible offer.
 
 ## Flow
 
