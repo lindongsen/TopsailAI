@@ -100,9 +100,22 @@ type Request struct {
 // The code is an enumerated value rather than a free-form string, because a
 // string cannot distinguish a refusal from a missing file, and collapsing those
 // two would let a caller probe for the existence of a file it may not read.
+//
+// Content carries the raw file bytes of a successful read when the Node used the
+// binary content transport. It is excluded from the JSON representation on purpose:
+// a []byte field in a JSON struct is base64-encoded by encoding/json, and that
+// encoding is exactly the cost this field exists to avoid. The bytes travel between
+// the Node and the Server in a binary frame and leave the Server as an octet stream,
+// so no JSON encoder ever sees them.
+//
+// Data and Content are mutually exclusive. Data is the JSON payload a Node sends on
+// the original transport, or the metadata of a read on the content transport; Content
+// is the bytes that arrived beside that metadata. A response that carried both would
+// have two answers to "what is the file", and the caller would have to guess which.
 type Response struct {
-	Code Code   `json:"code"`
-	Data []byte `json:"data,omitempty"`
+	Code    Code   `json:"code"`
+	Data    []byte `json:"data,omitempty"`
+	Content []byte `json:"-"`
 }
 
 // Succeeded reports whether the operation happened.

@@ -215,12 +215,18 @@ func (c *channel) Forward(ctx context.Context, nodeID string, request protocol.R
 	}
 }
 
-// attachContent merges buffered file bytes back into the documented read shape.
+// attachContent attaches buffered file bytes to the response that describes them.
 //
 // On the content transport the Node sends the bytes in a binary frame and the
-// response carries only size and truncated. The CLI and docs/API.md still expect
-// one JSON object with content, size and truncated, so the merge happens here and
-// the caller-facing contract does not change with the transport.
+// response carries only size and truncated. This function keeps the two halves
+// separate: the metadata stays in Data and the bytes stay in Content, which is
+// excluded from JSON. Nothing here base64-encodes the file.
+//
+// The merge into the legacy JSON shape is deliberately not done here. It is done by
+// the HTTP layer, and only for a caller that did not opt in to the raw stream, so a
+// caller that asked for bytes never pays for an encoding it did not ask for. Doing
+// the merge here would mean every caller paid it, because this function runs before
+// the handler knows what the caller accepts.
 //
 // A response that is not a successful read is returned untouched: a refusal has no
 // content, and inventing an empty content field would turn a refusal into a
@@ -234,12 +240,11 @@ func (c *channel) attachContent(requestID string, response protocol.Response) pr
 		return response
 	}
 
-	merged, err := mergeReadContent(response.Data, content)
-	if err != nil {
+	if _, err := validateReadContent(response.Data, content); err != nil {
 		c.logger.Warn("dropping content that did not match its response", "node_id", c.nodeID, "request_id", requestID, "error", err)
 		return protocol.Response{Code: protocol.CodeInternal}
 	}
-	return protocol.Response{Code: response.Code, Data: merged}
+	return protocol.Response{Code: response.Code, Data: response.Data, Content: content}
 }
 
 // addPending registers a waiter for one correlation id.

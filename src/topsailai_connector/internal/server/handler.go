@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -288,7 +289,36 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	h.write(writer, requestID, response)
+	h.write(writer, requestID, wantsRawContent(request), response)
+}
+
+// rawContentMediaType is the media type a caller sends to receive file bytes
+// without the JSON envelope.
+//
+// It is the standard type for opaque bytes, so a caller does not need a
+// project-specific spelling to ask for the cheaper shape.
+const rawContentMediaType = "application/octet-stream"
+
+// wantsRawContent reports whether the caller opted in to the raw byte stream.
+//
+// The opt-in is a request header rather than a new endpoint or a new operation,
+// because the operation is the same read: only the encoding of the answer differs.
+// A second endpoint would be a second place to authenticate, and a second operation
+// would be a second thing the Node's policy has to grant.
+//
+// The header is parsed rather than compared as a whole string, because a caller may
+// send several acceptable types and may add parameters. A whole-string comparison
+// would refuse `application/octet-stream; q=1`, which is the same request.
+func wantsRawContent(request *http.Request) bool {
+	for _, value := range request.Header.Values("Accept") {
+		for _, candidate := range strings.Split(value, ",") {
+			mediaType := strings.TrimSpace(strings.Split(candidate, ";")[0])
+			if strings.EqualFold(mediaType, rawContentMediaType) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // verifyClientProof verifies the client HMAC proof and records its nonce.
@@ -470,18 +500,106 @@ func decodeRequest(payload []byte) (protocol.Request, error) {
 	}, nil
 }
 
-// write relays a Node answer in the envelope.
-func (h *Handler) write(writer http.ResponseWriter, requestID string, response protocol.Response) {
+// write relays a Node answer, in the shape the caller asked for.
+//
+// Two shapes exist and the caller chooses between them with Accept:
+//
+//   - The JSON envelope, which is the documented contract and carries the read
+//     result as one object with a base64 content field.
+//   - The raw byte stream, which carries the file bytes as the body and the
+//     metadata in headers, so no encoder ever touches the content.
+//
+// The raw shape is used only when all three conditions hold: the caller asked for
+// it, the answer is a success, and there are bytes to send. Each condition is a
+// refusal rather than a fallback for a reason:
+//
+//   - A caller that did not ask for bytes must not receive them, because a client
+//     that expected JSON would try to parse a file as JSON.
+//   - A refusal must not become an empty body, because an empty octet stream with
+//     status 200 reads as a successful read of an empty file. A refusal keeps the
+//     envelope, where the code is visible.
+//   - A success with no bytes is the JSON transport, where the Node sent the whole
+//     result as JSON. There is nothing to stream, so the envelope is the answer.
+func (h *Handler) write(writer http.ResponseWriter, requestID string, raw bool, response protocol.Response) {
+	if raw && response.Code == protocol.CodeSuccess && len(response.Content) > 0 {
+		h.writeRawContent(writer, requestID, response)
+		return
+	}
+
+	// The legacy shape is rebuilt here, and only here, so a caller that did not ask
+	// for bytes still receives the documented object with a base64 content field.
+	// The merge is what pays the encoding cost, which is why it is on this branch
+	// rather than in attachContent: a caller that asked for bytes must not pay it.
+	//
+	// A merge failure is refused as internal rather than published as metadata
+	// without content, because a caller that receives size and truncated but no
+	// content has no way to tell a short file from a broken answer.
+	data := response.Data
+	if len(response.Content) > 0 && response.Code == protocol.CodeSuccess {
+		merged, err := mergeReadContent(response.Data, response.Content)
+		if err != nil {
+			h.logger.Warn("connector-server refused to publish content that did not match its metadata",
+				"request_id", requestID, "error", err)
+			h.refuse(writer, requestID, protocol.CodeInternal, "the read result did not match its metadata")
+			return
+		}
+		data = merged
+	}
+
 	body := envelope{
 		Code:      response.Code,
 		Message:   messageOf(response.Code),
 		RequestID: requestID,
 		Timestamp: time.Now().UnixMilli(),
 	}
-	if len(response.Data) > 0 {
-		body.Data = json.RawMessage(response.Data)
+	if len(data) > 0 {
+		body.Data = json.RawMessage(data)
 	}
 	writeJSON(writer, statusOf(response.Code), body)
+}
+
+// writeRawContent writes the file bytes as the response body.
+//
+// Content-Length is set explicitly rather than left to the server, so a truncated
+// write is detectable by the client instead of arriving as a short body that looks
+// complete. The length is the length of the bytes in hand, which the size check in
+// attachContent has already compared with the metadata the Node sent.
+//
+// The metadata travels in headers because the body is entirely file content. A
+// header is the only place left for it, and putting it in the body would mean
+// prefixing the file with a JSON object the caller has to strip.
+//
+// The truncated flag is reported rather than acted on: a truncated read is a
+// successful read of the first part of a file, which is what the caller asked for
+// when it set a length. Hiding the flag would leave the caller unable to tell a
+// complete file from a prefix.
+func (h *Handler) writeRawContent(writer http.ResponseWriter, requestID string, response protocol.Response) {
+	truncated := false
+	if meta, err := validateReadContent(response.Data, response.Content); err == nil {
+		truncated = meta.Truncated
+	} else {
+		// The size check already ran in attachContent, so reaching here means the
+		// metadata changed between the two checks. Refusing is the only safe answer:
+		// publishing bytes whose description does not match is the defect the check
+		// exists to prevent.
+		h.logger.Warn("connector-server refused to stream content that did not match its metadata",
+			"request_id", requestID, "error", err)
+		h.refuse(writer, requestID, protocol.CodeInternal, "the read result did not match its metadata")
+		return
+	}
+
+	writer.Header().Set("Content-Type", rawContentMediaType)
+	writer.Header().Set("Content-Length", strconv.Itoa(len(response.Content)))
+	writer.Header().Set(security.RequestIDHeader, requestID)
+	writer.Header().Set("X-Connector-Truncated", strconv.FormatBool(truncated))
+	writer.WriteHeader(http.StatusOK)
+	if _, err := writer.Write(response.Content); err != nil {
+		// The status and headers are already sent, so the caller cannot be told. The
+		// log is the only record, and it is written because a failed write is a
+		// truncated response the caller will see as a short file.
+		h.logger.Warn("connector-server could not write the whole content",
+			"request_id", requestID, "error", err)
+	}
 }
 
 // refuse logs the reason and answers with the code and no data.

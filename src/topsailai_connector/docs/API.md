@@ -303,6 +303,56 @@ grow the log line it appears in.
 `link_target` describe the link itself. Following it is exactly the operation the
 path fence refuses.
 
+### Opting in to the raw byte stream
+
+The envelope above is the contract, and it stays the contract. A caller that wants
+the file bytes without the base64 field asks for them with one request header:
+
+```text
+Accept: application/octet-stream
+```
+
+The operation, the proofs, the scope and the path are unchanged. Only the encoding
+of the answer differs, which is why this is a header rather than a second endpoint
+or a second operation: a second endpoint would be a second place to authenticate,
+and a second operation would be a second thing the Node's policy has to grant.
+
+A caller that sends no `Accept` header, or any other value, receives the envelope
+described above, byte for byte. The header is parsed rather than compared as a
+whole string, so `application/octet-stream; q=1` and a list containing it both
+count as the opt-in.
+
+On the opt-in path the response is the file bytes as the body, with the metadata
+in headers:
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `application/octet-stream` |
+| `Content-Length` | The exact number of bytes in the body |
+| `X-Request-Id` | The caller's correlation id, as in the envelope |
+| `X-Connector-Truncated` | `true` when the read stopped at the response cap, `false` otherwise |
+
+`Content-Length` is set explicitly so a short write is detectable by the client
+instead of arriving as a body that looks complete. `X-Connector-Truncated` carries
+the same meaning as the `truncated` field in the envelope: it reports whether
+content was left behind, not whether the response reached the cap.
+
+Three conditions must all hold for the raw shape, and each one is a refusal rather
+than a fallback:
+
+- The caller asked for it. A client that expected JSON must not receive a file.
+- The answer is a success. A refusal keeps the envelope, because an empty
+  octet-stream body with status `200` reads as a successful read of an empty file.
+- There are bytes to send. A success with no bytes is the JSON transport, where the
+  Node sent the whole result as JSON and there is nothing to stream.
+
+A refusal on the opt-in path therefore returns the envelope with its non-zero
+`code`, never an empty body. A caller can always tell "the file is empty" from "the
+request was refused" by the status and the `code`.
+
+The raw shape is a caller-facing encoding only. It does not change what the Server
+validates, what the Node authorizes, or which transport the channel negotiated.
+
 ## Error codes
 
 A caller must be able to tell "you may not" from "it is not there" from "the Node
@@ -519,7 +569,9 @@ identical either way.
   operator can tell which one a connection is using without inspecting traffic.
 - The transport is not visible to the CLI. A caller sends the same request and
   receives the same response either way, so a client does not need to know which
-  transport is in force.
+  transport is in force. The caller-facing shape is decided by the `Accept` header
+  alone, not by the transport: a JSON-transport answer and a `binary-v1` answer are
+  both delivered as the envelope unless the caller opted in to the raw stream.
 
 ## CLI surface
 

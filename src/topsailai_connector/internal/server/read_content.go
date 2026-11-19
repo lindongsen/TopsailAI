@@ -32,20 +32,37 @@ type readResult struct {
 	Truncated bool   `json:"truncated"`
 }
 
-// mergeReadContent rebuilds the documented read shape from metadata and bytes.
+// validateReadContent checks that the metadata agrees with the bytes that arrived.
 //
-// The metadata is decoded strictly enough to catch a mismatch: a response that
-// does not parse, or whose size disagrees with the bytes that arrived, is an error
-// rather than a silently truncated file. A caller that receives a short file with
-// a correct-looking size has no way to notice, so the disagreement is refused here
-// where both halves are still available.
-func mergeReadContent(metadata []byte, content []byte) ([]byte, error) {
+// The check exists because a caller that receives fewer bytes than the metadata
+// promised has no way to notice: the file looks complete and is short. The
+// disagreement is refused where both halves are still available, which is here.
+//
+// It is separate from mergeReadContent so the streaming path can perform the same
+// check without building the merged JSON. A check that only existed inside the
+// merge would be a check the streaming path could not reach, and a streaming path
+// without it would publish a short file.
+func validateReadContent(metadata []byte, content []byte) (readMetadata, error) {
 	var meta readMetadata
 	if err := json.Unmarshal(metadata, &meta); err != nil {
-		return nil, fmt.Errorf("decode read metadata: %w", err)
+		return readMetadata{}, fmt.Errorf("decode read metadata: %w", err)
 	}
 	if meta.Size != int64(len(content)) {
-		return nil, fmt.Errorf("read metadata reports %d bytes but %d arrived", meta.Size, len(content))
+		return readMetadata{}, fmt.Errorf("read metadata reports %d bytes but %d arrived", meta.Size, len(content))
+	}
+	return meta, nil
+}
+
+// mergeReadContent rebuilds the documented read shape from metadata and bytes.
+//
+// This is the legacy caller-facing shape: one JSON object with a base64 content
+// field. It is built only for a caller that did not opt in to the raw stream, so
+// the base64 cost is paid by the caller that asked for the old contract and not by
+// the one that asked for the new one.
+func mergeReadContent(metadata []byte, content []byte) ([]byte, error) {
+	meta, err := validateReadContent(metadata, content)
+	if err != nil {
+		return nil, err
 	}
 	return json.Marshal(readResult{
 		Content:   content,

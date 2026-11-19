@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"testing"
@@ -90,12 +91,17 @@ func TestRemovePendingDropsBufferedContent(t *testing.T) {
 	}
 }
 
-// TestAttachContentRebuildsTheDocumentedReadShape proves the caller-facing JSON is
-// unchanged by the transport.
+// TestAttachContentKeepsTheBytesRaw proves the Server no longer base64-encodes the
+// content on the way to the caller.
 //
-// The Node sends metadata plus raw bytes; the CLI and docs/API.md expect one object
-// with content, size and truncated. This is the merge that keeps that promise.
-func TestAttachContentRebuildsTheDocumentedReadShape(t *testing.T) {
+// This is the property the unit exists for. The earlier version merged the bytes
+// into a JSON object here, which base64-encoded them and made the Server-to-caller
+// hop 1.3371 bytes per content byte. The bytes must now stay raw in Content, and the
+// metadata must stay in Data, so the HTTP layer can choose the shape.
+//
+// The assertion is on the raw bytes rather than on a decoded field, because a test
+// that decoded a JSON object would pass whether or not the encoding happened.
+func TestAttachContentKeepsTheBytesRaw(t *testing.T) {
 	c := newContentTestChannel()
 	if _, err := c.addPending("req_1"); err != nil {
 		t.Fatalf("addPending: %v", err)
@@ -107,23 +113,48 @@ func TestAttachContentRebuildsTheDocumentedReadShape(t *testing.T) {
 	}
 	c.stashContent("req_1", content)
 
-	merged := c.attachContent("req_1", protocol.Response{Code: protocol.CodeSuccess, Data: metadata})
+	got := c.attachContent("req_1", protocol.Response{Code: protocol.CodeSuccess, Data: metadata})
 
-	if merged.Code != protocol.CodeSuccess {
-		t.Fatalf("code = %v, want success", merged.Code)
+	if got.Code != protocol.CodeSuccess {
+		t.Fatalf("code = %v, want success", got.Code)
 	}
-	var result readResult
-	if err := json.Unmarshal(merged.Data, &result); err != nil {
-		t.Fatalf("unmarshal merged data: %v", err)
+	if !bytes.Equal(got.Content, content) {
+		t.Fatalf("content = %q, want %q", got.Content, content)
 	}
-	if string(result.Content) != string(content) {
-		t.Fatalf("content = %q, want %q", result.Content, content)
+	if !bytes.Equal(got.Data, metadata) {
+		t.Fatalf("data = %s, want the metadata unchanged %s", got.Data, metadata)
 	}
-	if result.Size != int64(len(content)) {
-		t.Fatalf("size = %d, want %d", result.Size, len(content))
+	// The metadata must not have been replaced by a merged document. A merged
+	// document would contain the base64 of the content, so its presence is the
+	// defect stated positively.
+	if bytes.Contains(got.Data, []byte("aGVsbG8sIGNvbm5lY3Rvcg==")) {
+		t.Fatalf("data carries base64 content: %s", got.Data)
 	}
-	if !result.Truncated {
-		t.Fatal("truncated = false, want true")
+}
+
+// TestResponseContentIsNotSerialised proves the raw bytes cannot leak into JSON.
+//
+// Response.Content is excluded from the JSON representation, so no code path can
+// accidentally base64 it into a frame or an envelope. Without the exclusion, a
+// response carrying content would be encoded twice: once by the field's own
+// encoding and once by whatever wraps it.
+func TestResponseContentIsNotSerialised(t *testing.T) {
+	encoded, err := json.Marshal(protocol.Response{
+		Code:    protocol.CodeSuccess,
+		Data:    []byte(`{"size":2}`),
+		Content: []byte("raw bytes"),
+	})
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	if bytes.Contains(encoded, []byte("raw bytes")) {
+		t.Fatalf("encoded response carries the raw content: %s", encoded)
+	}
+	if bytes.Contains(encoded, []byte("cmF3IGJ5dGVz")) {
+		t.Fatalf("encoded response carries the base64 content: %s", encoded)
+	}
+	if !bytes.Contains(encoded, []byte(`"data"`)) {
+		t.Fatalf("encoded response lost its data field: %s", encoded)
 	}
 }
 
