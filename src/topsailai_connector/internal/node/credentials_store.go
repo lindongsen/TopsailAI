@@ -149,6 +149,21 @@ func SaveCredentials(path string, credentials []security.Credential) error {
 // every start would put a secret into a log on every start, which is the leak the
 // design forbids.
 func EnsureCredentials(path string) (set *security.CredentialSet, generated *security.Credential, err error) {
+	return EnsureCredentialsWithSeed(path, security.Credential{})
+}
+
+// EnsureCredentialsWithSeed loads the credential file, writing seed when the file
+// does not exist yet and generating a random credential when seed is empty.
+//
+// The file wins over the seed, for the same reason the identity file does: a Node
+// that preferred the seed would undo `credential remove`, so a revoked caller would
+// work again after a restart. The seed only decides what the first write contains.
+//
+// A seed that fails validation is an error rather than a fallback to a random
+// credential. A packaging mistake that silently produced a different secret would
+// hand the operator a value that does not authenticate, and the failure would appear
+// on the recipient's machine rather than at packaging time.
+func EnsureCredentialsWithSeed(path string, seed security.Credential) (set *security.CredentialSet, generated *security.Credential, err error) {
 	loaded, err := LoadCredentials(path)
 	if err == nil {
 		return loaded, nil, nil
@@ -157,9 +172,12 @@ func EnsureCredentials(path string) (set *security.CredentialSet, generated *sec
 		return nil, nil, err
 	}
 
-	created, err := security.NewCredential()
-	if err != nil {
-		return nil, nil, err
+	created := seed
+	if created.KeyID == "" {
+		created, err = security.NewCredential()
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := SaveCredentials(path, []security.Credential{created}); err != nil {
 		return nil, nil, err

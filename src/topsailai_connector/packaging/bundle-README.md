@@ -83,6 +83,11 @@ that opens the channel. Both are credentials that never expire.
 secret: knowing it grants nothing without a node credential and a client
 credential.
 
+The operator already has these values. Packaging records the node id and the
+credential in `bin/env.<YYYYMMDDHHMMSS>` on the build host, so you do not have to
+report them back. If the operator asks for the node id anyway, it is the single
+line in `config/identity`.
+
 - Do not put this folder in a public repository, a shared drive or a chat
   message.
 - Do not paste the contents of `config/credentials.yaml` or

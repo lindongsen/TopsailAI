@@ -164,3 +164,21 @@ response to HTTPS client`, which reads as a certificate problem rather than as a
 wrong address. The mapping is what makes the printed block copyable as printed,
 which is the only reason the block exists; see
 `issues/issue-startup-summary-prints-https-for-a-plaintext-server.md`.
+
+## Packaging can decide the node identity and credential
+
+`make package PACKAGE_EMBED_IDENTITY=1` generates a node id and one credential at
+packaging time, compiles them into the Node binary, and records both in
+`bin/env.<YYYYMMDDHHMMSS>` with mode `0600`. The operator reads the values from that
+file instead of asking the recipient, which removes the round trip that previously
+followed every handover.
+
+The embedded values are seeds, not authorities. On first start the Node writes them
+to its identity and credential files, and from then on the files win, so
+`regenerate`, `credential add` and `credential remove` behave exactly as they do on a
+build with nothing embedded and a removed credential is not restored by a restart.
+The feature is off by default because one package is for one recipient: two machines
+running one binary share one node id and evict each other in the Server's registry,
+and revoking one recipient of a shared binary revokes every recipient. A build that
+carries a credential also joins the deny list, because a node credential is a secret
+that never expires. See `docs/packaging-identity-prd.md`.

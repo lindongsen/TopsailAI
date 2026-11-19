@@ -49,6 +49,12 @@ PACKAGE_TUNNEL_TOKEN=${PACKAGE_TUNNEL_TOKEN:-}
 PACKAGE_NODE_KEY_ID=${PACKAGE_NODE_KEY_ID:-bundle-caller}
 PACKAGE_ALLOW_FILESYSTEM_ROOT=${PACKAGE_ALLOW_FILESYSTEM_ROOT:-}
 PACKAGE_EMBED_CONFIG=${PACKAGE_EMBED_CONFIG:-1}
+# PACKAGE_EMBED_IDENTITY decides whether the node id and the node credential are
+# generated here and compiled into the artifact, so the operator can address the
+# Node without asking the recipient for either value. It is off by default,
+# because a build that carries a credential is a credential, and an existing
+# packaging run must not start producing one without being asked.
+PACKAGE_EMBED_IDENTITY=${PACKAGE_EMBED_IDENTITY:-}
 BIN_DIR=${BIN_DIR:-bin}
 TMP_DIR=${TMP_DIR:-.tmp}
 
@@ -69,6 +75,88 @@ absolute() {
 
 BIN_PATH=$(absolute "$BIN_DIR")
 TMP_PATH=$(absolute "$TMP_DIR")
+
+# generate_identity writes a node id and one node credential into a config
+# directory and echoes `node_id key_id secret` on one line.
+#
+# Both values are produced by the Node's own `id` and `credential add` commands
+# rather than by a second implementation here. A second implementation would be a
+# second definition of the formats, and the two would eventually disagree about
+# what a valid credential is. The host binary is used because a cross-compiled one
+# cannot run here, and both formats are platform independent: each is a random
+# string and a newline.
+#
+# The credential is split on the first dot, which is the rule the parser uses, so
+# the key id and the secret reported here are the same two halves the Node will
+# read back from the file.
+generate_identity() {
+	local config_dir=$1
+	local node_id credential
+
+	mkdir -p "$config_dir"
+
+	node_id=$(CONNECTOR_NODE_CONFIG_DIR="$config_dir" "$HOST_NODE" id) ||
+		fail "the Node printed no identity"
+	[ -n "$node_id" ] || fail "the Node printed no identity"
+	[ -f "$config_dir/identity" ] || fail "the Node did not write $config_dir/identity"
+
+	credential=$(CONNECTOR_NODE_CONFIG_DIR="$config_dir" "$HOST_NODE" credential add --key-id "$PACKAGE_NODE_KEY_ID") ||
+		fail "the Node printed no credential"
+	[ -n "$credential" ] || fail "the Node printed no credential"
+	[ -f "$config_dir/credentials.yaml" ] || fail "the Node did not write $config_dir/credentials.yaml"
+
+	printf '%s %s %s\n' "$node_id" "${credential%%.*}" "${credential#*.}"
+}
+
+# write_env_file records the identity and the credential in a timestamped file
+# under bin/, and echoes the path.
+#
+# The name carries the build time because the operator may ship several Nodes on
+# one day, and a fixed name would let the second build overwrite the first
+# recipient's credential record. The file is created with mode 0600 through a
+# umask rather than a chmod after the write, so the secret is never readable by
+# another account even for the instant between creation and chmod.
+#
+# An existing file is refused rather than overwritten. Two builds in the same
+# second is unlikely, and silently replacing a credential record is the one
+# outcome the operator cannot recover from.
+write_env_file() {
+	local node_id=$1 key_id=$2 secret=$3
+	local stamp path
+
+	stamp=$(date +%Y%m%d%H%M%S)
+	path="$BIN_PATH/env.$stamp"
+	[ ! -e "$path" ] ||
+		fail "$path already exists; wait a second and rebuild, so two builds do not share one credential record"
+
+	(
+		umask 077
+		cat >"$path" <<ENVFILE
+# Node identity and credential recorded at packaging time.
+# Build: $PACKAGE_NAME for $PACKAGE_GOOS/$PACKAGE_GOARCH
+# Created: $stamp
+#
+# This file holds a secret that never expires. Keep it at mode 0600, do not commit
+# it, and do not paste it into a ticket or a chat message. bin/ is git-ignored, so
+# a credential cannot be committed by accident.
+#
+# One package is for one recipient. Two copies of one artifact share this node id
+# and this credential: the Server keeps one connection per node id, so the second
+# copy to connect evicts the first, and revoking one recipient revokes both.
+
+CONNECTOR_CLI_SERVER_URL=$HTTP_BASE
+CONNECTOR_CLI_NODE_ID=$node_id
+CONNECTOR_CLI_NODE_CREDENTIAL=$key_id.$secret
+
+# The two halves, for a tool that wants them separately.
+CONNECTOR_NODE_ID=$node_id
+CONNECTOR_NODE_KEY_ID=$key_id
+CONNECTOR_NODE_SECRET=$secret
+ENVFILE
+	)
+	chmod 600 "$path"
+	echo "$path"
+}
 
 # normalize_channel_url turns whatever the operator typed into the WebSocket
 # address the Node dials.
@@ -179,6 +267,19 @@ case "$PACKAGE_EMBED_CONFIG" in
 	;;
 esac
 
+# PACKAGE_EMBED_IDENTITY accepts the same two spellings as the other switches and
+# refuses everything else, for the same reason: a value such as `true` that was
+# silently read as "off" would produce an artifact without the identity the
+# operator asked for, and the operator would discover it only when the CLI could
+# not address the Node.
+case "$PACKAGE_EMBED_IDENTITY" in
+'' | 0) EMBED_IDENTITY=0 ;;
+1) EMBED_IDENTITY=1 ;;
+*)
+	fail "PACKAGE_EMBED_IDENTITY '$PACKAGE_EMBED_IDENTITY' is not recognised; use 1 to embed the identity and the credential, or leave it unset"
+	;;
+esac
+
 CHANNEL_URL=$(normalize_channel_url "$PACKAGE_SERVER_URL")
 HTTP_BASE=$(http_base_from_channel "$CHANNEL_URL")
 
@@ -187,11 +288,12 @@ HTTP_BASE=$(http_base_from_channel "$CHANNEL_URL")
 # formats are platform independent, so a node id and a credential generated on this
 # host are valid on the target: each is a random string and a newline.
 #
-# The embedded mode does not generate either, because both are deliberately not
-# embedded: they are created on the target machine by the first run. Requiring a
-# host binary there would fail a packaging run for a file it never reads.
+# The host binary is required in two cases: the zip mode, which always generates
+# both, and the embedded mode when the operator asked for the identity to be
+# embedded. It is not required otherwise, because a packaging run must not fail for
+# a file it never reads.
 HOST_NODE="$BIN_PATH/connector-node"
-if [ "$EMBED_CONFIG" != "1" ]; then
+if [ "$EMBED_CONFIG" != "1" ] || [ "$EMBED_IDENTITY" = "1" ]; then
 	[ -x "$HOST_NODE" ] || fail "$HOST_NODE is missing; run make build-node first"
 fi
 
@@ -322,6 +424,41 @@ if [ "$EMBED_CONFIG" = "1" ]; then
 		OUTPUT_PATH="$OUTPUT_PATH.exe"
 	fi
 
+	# The identity and the credential are generated before the build, because the
+	# linker flags carry them. Generating them afterwards would mean the artifact
+	# and the env file could disagree, and the operator would configure the CLI with
+	# a credential the binary does not accept.
+	#
+	# They are seeds rather than authorities: the binary writes them to the config
+	# directory on first start when that file does not exist, and the file wins once
+	# it does. That is what keeps `regenerate`, `credential add` and
+	# `credential remove` working on the target machine.
+	EMBEDDED_NODE_ID=""
+	EMBEDDED_CREDENTIAL=""
+	ENV_FILE=""
+	if [ "$EMBED_IDENTITY" = "1" ]; then
+		echo "package: generating the node identity and credential to embed" >&2
+		# The scratch config directory is removed first, for the same reason the zip
+		# mode removes its stage: a leftover identity and credential from a previous
+		# build would be adopted instead of a fresh pair, and `credential add` would
+		# refuse the key id it already holds. The removal is logged because a silent
+		# delete is indistinguishable from a directory that was never there.
+		if [ -e "$TMP_PATH/embed/config" ]; then
+			echo "package: removing the previous scratch config directory $TMP_PATH/embed/config" >&2
+			rm -rf "$TMP_PATH/embed/config"
+		fi
+		IDENTITY_OUT=$(generate_identity "$TMP_PATH/embed/config")
+		EMBEDDED_NODE_ID=${IDENTITY_OUT%% *}
+		rest=${IDENTITY_OUT#* }
+		EMBEDDED_KEY_ID=${rest%% *}
+		EMBEDDED_SECRET=${rest#* }
+		EMBEDDED_CREDENTIAL="$EMBEDDED_KEY_ID.$EMBEDDED_SECRET"
+		[ -n "$EMBEDDED_NODE_ID" ] || fail "the generated node id is empty"
+		[ -n "$EMBEDDED_CREDENTIAL" ] || fail "the generated credential is empty"
+		ENV_FILE=$(write_env_file "$EMBEDDED_NODE_ID" "$EMBEDDED_KEY_ID" "$EMBEDDED_SECRET")
+		echo "package: recorded the identity and credential in $ENV_FILE" >&2
+	fi
+
 	echo "package: building connector-node for $PACKAGE_GOOS/$PACKAGE_GOARCH with the configuration embedded" >&2
 	LDFLAGS="-X topsailai_connector/internal/node/embedded.ServerURL=$CHANNEL_URL"
 	LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.PolicyBase64=$POLICY_B64"
@@ -329,6 +466,10 @@ if [ "$EMBED_CONFIG" = "1" ]; then
 		LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.TunnelToken=$PACKAGE_TUNNEL_TOKEN"
 	else
 		echo "package: no PACKAGE_TUNNEL_TOKEN given; the binary will require CONNECTOR_NODE_TUNNEL_TOKEN in the environment" >&2
+	fi
+	if [ -n "$EMBEDDED_NODE_ID" ]; then
+		LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.NodeID=$EMBEDDED_NODE_ID"
+		LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.Credential=$EMBEDDED_CREDENTIAL"
 	fi
 	(
 		cd "$ROOT"
@@ -350,16 +491,19 @@ else
 	# separately and reported separately. `id` writes the identity file the bundle
 	# ships; `credential add` writes the credential file and prints the value once,
 	# because no command reads a secret back.
-	echo "package: generating the node identity" >&2
-	NODE_ID=$(CONNECTOR_NODE_CONFIG_DIR="$STAGE/config" "$HOST_NODE" id)
-	[ -n "$NODE_ID" ] || fail "the Node printed no identity"
-	[ -f "$STAGE/config/identity" ] || fail "the Node did not write $STAGE/config/identity"
+	echo "package: generating the node identity and credential" >&2
+	IDENTITY_OUT=$(generate_identity "$STAGE/config")
+	NODE_ID=${IDENTITY_OUT%% *}
+	rest=${IDENTITY_OUT#* }
+	NODE_KEY_ID=${rest%% *}
+	NODE_SECRET=${rest#* }
+	NODE_CREDENTIAL="$NODE_KEY_ID.$NODE_SECRET"
 
-	echo "package: generating the node credential" >&2
-	NODE_CREDENTIAL=$(CONNECTOR_NODE_CONFIG_DIR="$STAGE/config" "$HOST_NODE" credential add --key-id "$PACKAGE_NODE_KEY_ID") ||
-		fail "the Node printed no credential"
-	[ -n "$NODE_CREDENTIAL" ] || fail "the Node printed no credential"
-	[ -f "$STAGE/config/credentials.yaml" ] || fail "the Node did not write $STAGE/config/credentials.yaml"
+	# The zip already generated both values, so recording them costs nothing and
+	# removes the "read the secret off stdout" step. The env file is the same shape
+	# the embedded mode writes, so an operator who ships both kinds reads one format.
+	ENV_FILE=$(write_env_file "$NODE_ID" "$NODE_KEY_ID" "$NODE_SECRET")
+	echo "package: recorded the identity and credential in $ENV_FILE" >&2
 
 	# server_url is a file rather than a value baked into the start script, so the
 	# user can point the bundle at a different Server without editing a script.
@@ -411,6 +555,49 @@ resolved on this build host, because the paths belong to the machine that will
 run the binary. A path that does not exist there is refused when the binary
 starts, not here.
 
+SUMMARY
+	if [ "$EMBED_IDENTITY" = "1" ]; then
+		cat <<EMBEDDED_IDENTITY_SUMMARY
+The identity and the credential are embedded, and recorded in:
+
+  $ENV_FILE
+
+The binary writes them to the config directory on first start when that file does
+not exist, so the CLI can address the Node as soon as it connects, with no value
+typed by the recipient. The file wins once it exists, so "regenerate" and
+"credential remove" still work on the target machine.
+
+One package is for one recipient. Two copies of this artifact share one node id
+and one credential: the Server keeps one connection per node id, so the second
+copy to connect evicts the first, and revoking one recipient revokes both.
+
+The summary is printed on every start, so a restart shows the same values again.
+The secret is printed in full only when standard output is a terminal. A launcher
+that redirects standard output to a log receives the redacted form
+"<secret:N bytes>" instead, because a log file would otherwise accumulate a
+credential that never expires. To see the secret, run the binary in a terminal, or
+read the credentials file named in the summary. "credential list" shows only the
+key id, so a lost secret is replaced rather than recovered:
+
+  $OUTPUT_PATH credential add --key-id <name>
+  $OUTPUT_PATH credential remove --key-id <key_id>
+
+Both files live in the platform config directory, not beside the binary:
+%APPDATA%\topsailai-connector on Windows, ~/.config/topsailai-connector on Linux.
+
+CLI example, runnable as soon as the binary connects. The flags come before the
+operation because the CLI stops parsing flags at the first positional argument, so
+the operation must be last:
+
+  CONNECTOR_CLI_SERVER_URL=$HTTP_BASE \\
+  CONNECTOR_CLI_CLIENT_CREDENTIAL=<client_credential> \\
+  CONNECTOR_CLI_NODE_CREDENTIAL=$EMBEDDED_CREDENTIAL \\
+  CONNECTOR_CLI_NODE_ID=$EMBEDDED_NODE_ID \\
+    connector-server cli --scope $FIRST_SCOPE --path '' file.list
+
+EMBEDDED_IDENTITY_SUMMARY
+	else
+		cat <<NO_IDENTITY_SUMMARY
 The identity and the credential are not embedded. They are created on the target
 machine in two separate steps, because "id" creates only the address and "run"
 creates the credential:
@@ -450,7 +637,8 @@ first positional argument, so the operation must be last:
   CONNECTOR_CLI_NODE_ID=<node_id> \\
     connector-server cli --scope $FIRST_SCOPE --path '' file.list
 
-SUMMARY
+NO_IDENTITY_SUMMARY
+	fi
 else
 	cat <<SUMMARY
 
@@ -468,6 +656,10 @@ node id (an address, safe to record):
 node credential (a secret, copy it into the CLI and nowhere else):
 
   $NODE_CREDENTIAL
+
+Both values are also recorded in:
+
+  $ENV_FILE
 
 CLI example, runnable as soon as the user starts the bundle. The flags come
 before the operation because the CLI stops parsing flags at the first positional
