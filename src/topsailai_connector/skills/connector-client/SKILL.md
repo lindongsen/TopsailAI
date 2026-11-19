@@ -1,7 +1,7 @@
 ---
 name: connector-client
 description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, copy a file down to their own machine, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next, or when they do not know which scope name to pass as --scope. Covers the connector-server cli command, its flags including -o for a whole-file copy, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
-version: 2.1.0
+version: 2.2.0
 author: DawsonLin
 license: MIT
 metadata:

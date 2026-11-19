@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
 description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, or how to revoke a leaked credential. Covers the first-run order, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management and regeneration.
-version: 1.0.0
+version: 1.1.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -561,8 +561,10 @@ What it does and does not do:
   does not help anyone fill `--scope`.
 - It prints no permission and no secret.
 - It uses the same strict decoder the Node uses at startup, so a malformed policy
-  fails here with the message the Node would print, and the command doubles as a
-  policy check.
+  fails here with the same reason `run` reports, and the command doubles as a policy
+  check. The prefix differs: this command prints
+  `connector-node: scope "bad": path "rel/path" is relative; ...` while `run` prints
+  the same reason after `connector-node: load authority: `.
 - It reads `CONNECTOR_NODE_CONFIG_DIR` and `CONNECTOR_NODE_POLICY_FILE`, exactly as
   `run` does. A build with an embedded policy reads the embedded document and
   refuses `CONNECTOR_NODE_POLICY_FILE`.
