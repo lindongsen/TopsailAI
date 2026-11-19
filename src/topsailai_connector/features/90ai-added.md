@@ -97,3 +97,32 @@ documented rather than encoded away: base64, compression and obfuscation all dec
 with the same command, and encryption would need a key the binary must also carry.
 The protection that matters is the deny list, which stops a remote caller; a local
 user holding the file already has the secret.
+
+## Whole-file read with `-o` in the CLI
+
+`connector-server cli` accepts `-o` / `--output`, which turns `file.read` from one
+capped request into a loop that fetches the whole file. `-o -` writes the raw bytes
+to stdout and `-o /path/out.bin` writes them to a local file, so a caller no longer
+has to hand-write an offset loop to retrieve a file larger than the Node's 256 KiB
+response cap.
+
+The loop is driven by the response rather than by a hardcoded step size, so a change
+to the Node's cap does not require a change in the CLI. It stops on end of file, on a
+zero-byte response, or when the caller's `--length` budget is spent. `truncated` is
+trusted only in the safe direction, because the Node reports it for a file whose size
+is exactly the cap; that false positive costs one extra request and never truncates
+the result.
+
+A destination that exists always holds a complete result: the CLI writes to a
+temporary file in the destination's directory and renames it into place only after
+every chunk arrived, so a failure part way through leaves the destination untouched.
+An existing destination is refused unless `--force` is given, because replacing a
+local file is a destructive act the caller did not ask for by naming a path.
+
+`-o` applies to `file.list` and `file.stat` as well, so the flag means one thing
+across the three operations. `--json` and `-o` are refused together, and `--force`
+without `-o` is refused, because each combination names two incompatible outputs.
+
+The change is confined to the CLI. The Node's cap is a denial-of-service boundary and
+is not relaxed, and each chunk is a separately signed request with its own nonce, so
+no protocol change was needed and no replay weakness was introduced.
