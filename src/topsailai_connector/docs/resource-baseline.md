@@ -61,19 +61,49 @@ Measured after Unit 4a/4b, with the CLI opting in to the raw byte stream:
 |---|---|---|---|---|
 | 1 MiB | 1,052,209 | 1.0034 | 1,051,841 | 1.0031 |
 | 16 MiB | 16,834,209 | 1.0034 | 16,829,441 | 1.0031 |
+| 64 MiB | 67,336,593 | 1.0034 | 67,317,769 | 1.0031 |
 
 Both hops are now at the PRD's 1.10 target. The Server hop fell from 1.3371 to
 1.0034 because the envelope is no longer written on the opt-in path; the Node hop
 was already binary and did not move, which is the evidence that the change removed
 the envelope rather than shifting bytes to the other side.
 
-The 64 MiB row is not re-measured here. The ratio is stable to four decimals across
-a 64x size range, so the 1 MiB and 16 MiB rows establish it; a 64 MiB run is part of
-the release check rather than of this unit.
+The 64 MiB row was measured in Unit 7d at revision `e0b46ef4`, and it confirms the
+ratio is stable across the full 64x size range rather than only at the two smaller
+sizes.
 
 Measured on the same host with `/proc/loadavg` between 6.53 and 12.43, so the
 absolute CPU figures in these runs are not comparable with the baseline table above.
 The ratios are, because a ratio does not move with host load.
+
+### Final measurement at the close of the work
+
+Command: `make measure MEASURE_SIZES="1 16 64"`, revision `e0b46ef4`, transport
+`binary-v1`, TLS disabled, `/proc/loadavg` 8.54.
+
+| Size | Wall | Throughput | Server CPU | Node CPU | Server peak RSS | Node peak RSS | Content |
+|---|---|---|---|---|---|---|---|
+| 1 MiB | 0.034 s | 29.41 MiB/s | 0.020 s | 0.010 s | 20,376 KB | 15,908 KB | yes |
+| 16 MiB | 0.356 s | 44.94 MiB/s | 0.240 s | 0.180 s | 23,700 KB | 21,304 KB | yes |
+| 64 MiB | 1.439 s | 44.48 MiB/s | 0.920 s | 0.640 s | 23,964 KB | 22,068 KB | yes |
+
+Idle baselines before any read in this run: Server 14,112 KB, Node 13,780 KB.
+
+Compared with the baseline table above, which was measured at `29d3634f+dirty`:
+
+| Property | Baseline | Final | Change |
+|---|---|---|---|
+| Throughput at 16 MiB | 11.01 MiB/s | 44.94 MiB/s | 4.1x faster |
+| Throughput at 64 MiB | 11.01 MiB/s | 44.48 MiB/s | 4.0x faster |
+| Server CPU at 64 MiB | 2.480 s | 0.920 s | 63% less |
+| Server peak RSS at 64 MiB | 28,480 KB | 23,964 KB | 16% less |
+| Peak RSS growth 16 → 64 MiB | +2,252 KB | +264 KB | still bounded |
+
+The final run happened at a higher load than the baseline run (8.54 against
+2.06–3.91), so the throughput and CPU improvements are understated rather than
+inflated. The budget check reported the six absolute CPU rows as `INCONCLUSIVE` for
+that reason and passed every ratio and RSS rule, which is the correct outcome: the
+ratios are load-independent and are what the budget asserts.
 
 ## What counts as a regression
 

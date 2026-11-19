@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: resolved
 severity: medium
 created: 2026-11-19
 platform: linux
@@ -112,3 +112,91 @@ wall-time, CPU or RSS bound, and no BDD scenario mentions a large file
 (`grep -rn "large\|MiB" tests/bdd/features/*.feature` returns nothing). The suite
 therefore cannot observe a throughput regression, which is the class of defect this
 issue describes.
+
+## Resolution
+
+Resolved on 2026-11-19 by Units 2, 3, 4a and 4b of the resource-efficient read
+plan (`.task/plan_20261119T123000-resource-efficient-read.md`). The double base64
+encoding is gone from both hops, and the detection gap is closed by a measurement
+harness that runs from a maintained Make target.
+
+### What changed
+
+| Unit | Commit | Change |
+|---|---|---|
+| 2 | `645314db` | Versioned file transport negotiation, fail-closed on a disjoint offer |
+| 3 | `8d4c6fc9` | `binary-v1` content frame: magic, bounded JSON header, raw bytes |
+| 4a | `298e0484` | The Server writes the bytes to the HTTP response without re-encoding |
+| 4b | `e0b46ef4` | The CLI opts in with `Accept: application/octet-stream` and consumes the raw body |
+
+The Node hop was already binary, so it did not move. The Server hop was the one
+that decoded and re-encoded, and it is the one that changed.
+
+### Measured after the fix
+
+Same host, same command (`make measure MEASURE_SIZES="1 16 64"`), revision
+`e0b46ef4`, transport `binary-v1`, TLS disabled:
+
+| Size | Wall | Throughput | Server CPU | Node CPU | Server peak RSS | Node peak RSS | Content |
+|---|---|---|---|---|---|---|---|
+| 1 MiB | 0.034 s | 29.41 MiB/s | 0.020 s | 0.010 s | 20,376 KB | 15,908 KB | yes |
+| 16 MiB | 0.356 s | 44.94 MiB/s | 0.240 s | 0.180 s | 23,700 KB | 21,304 KB | yes |
+| 64 MiB | 1.439 s | 44.48 MiB/s | 0.920 s | 0.640 s | 23,964 KB | 22,068 KB | yes |
+
+Protocol bytes:
+
+| Size | Server ratio | Node ratio |
+|---|---|---|
+| 1 MiB | 1.0034 | 1.0031 |
+| 16 MiB | 1.0034 | 1.0031 |
+| 64 MiB | 1.0034 | 1.0031 |
+
+### Before and after
+
+| Property | Before | After | Change |
+|---|---|---|---|
+| Server wire ratio | 1.3371 | 1.0034 | base64 expansion removed |
+| Node wire ratio | 1.0031 | 1.0031 | unchanged, which proves the bytes were not moved to the other hop |
+| Throughput at 16 MiB | 11.01 MiB/s | 44.94 MiB/s | 4.1x |
+| Throughput at 64 MiB | 11.01 MiB/s | 44.48 MiB/s | 4.0x |
+| Server CPU at 64 MiB | 2.480 s | 0.920 s | 63% less |
+| Server peak RSS at 64 MiB | 28,480 KB | 23,964 KB | 16% less |
+| Peak RSS growth 16 → 64 MiB | +2,252 KB | +264 KB | still bounded |
+
+The after-run happened at `/proc/loadavg` 8.54, higher than the baseline run's
+2.06–3.91, so the throughput and CPU improvements are understated rather than
+inflated. The ratios are load-independent and are the numbers the budget asserts.
+
+### The frame-headroom argument above is now obsolete
+
+The "Why it matters" section argued that `MaxResponseBytes = 256 KiB` could not be
+raised, because one chunk occupied 466 KB of the 1 MiB frame. That was true of the
+double-encoded frame and is no longer true: a 256 KiB chunk now costs about 800
+bytes of overhead, so a 512 KiB chunk would occupy roughly 513 KB of the 1 MiB
+frame and leave ample headroom.
+
+The cap is therefore raisable on technical grounds. It is **not** raised here,
+because the chunk size is a separate decision with its own trade-offs (per-request
+memory, small-request latency, cancellation responsiveness, retry cost on a weak
+link) and the PRD defers it to measurement. Recorded so the next reader does not
+inherit a constraint that no longer exists.
+
+### Detection gap closed
+
+- `tests/e2e/measure_read.sh` reports CPU, peak RSS, protocol bytes, wall time,
+  throughput, platform, Go version and revision for both sides.
+- `tests/e2e/check_budget.sh` asserts the ratios, the RSS growth bound and the CPU
+  budget, and reports absolute CPU rows as `INCONCLUSIVE` when host load makes them
+  incomparable rather than passing them.
+- `make measure` runs both, so the check is reachable from a maintained target
+  rather than from a script nobody invokes.
+- `docs/resource-baseline.md` records the numbers and the regression rule.
+
+### What remains open
+
+- The chunk size is still 256 KiB. Raising it is now possible and is a separate
+  measured decision.
+- The per-caller admission default of 2 is an unresolved product decision; eight
+  concurrent 16 MiB reads serialize into about four waves.
+- Absolute CPU figures are only comparable on a host with similar load; the budget
+  enforces ratios and bounded properties for that reason.
