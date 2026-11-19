@@ -601,3 +601,32 @@ func TestHandlerRefusesUnwiredHandler(t *testing.T) {
 		}
 	}
 }
+
+// TestOverloadedCodeIsRetryableServiceUnavailable checks the HTTP mapping of the
+// overload code. The envelope code is authoritative, but a proxy or a browser
+// reacts to the status, so a code that maps to 500 would tell a caller the Server
+// failed when it is merely busy and the same request will work later.
+//
+// The status is asserted together with the message because the two are what a
+// caller sees: a documented code whose status says "internal error" is a code
+// nobody can act on.
+func TestOverloadedCodeIsRetryableServiceUnavailable(t *testing.T) {
+	if got := statusOf(protocol.CodeOverloaded); got != http.StatusServiceUnavailable {
+		t.Fatalf("statusOf(overloaded) = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+
+	message := messageOf(protocol.CodeOverloaded)
+	if message == "" {
+		t.Fatal("messageOf(overloaded) is empty, want a message a caller can act on")
+	}
+	if message == messageOf(protocol.CodeInternal) {
+		t.Fatalf("messageOf(overloaded) = %q, which is the internal message; a busy Server must not read as a failed one", message)
+	}
+
+	if !protocol.CodeOverloaded.Retryable() {
+		t.Fatal("CodeOverloaded.Retryable() = false, want true: the condition is temporary")
+	}
+	if protocol.CodeOverloaded.Name() != "overloaded" {
+		t.Fatalf("CodeOverloaded.Name() = %q, want %q", protocol.CodeOverloaded.Name(), "overloaded")
+	}
+}

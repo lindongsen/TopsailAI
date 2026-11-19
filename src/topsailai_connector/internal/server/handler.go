@@ -473,7 +473,7 @@ func statusOf(code protocol.Code) int {
 		return http.StatusNotFound
 	case protocol.CodeTooLarge:
 		return http.StatusRequestEntityTooLarge
-	case protocol.CodeNodeOffline:
+	case protocol.CodeNodeOffline, protocol.CodeOverloaded:
 		return http.StatusServiceUnavailable
 	case protocol.CodeNodeTimeout:
 		return http.StatusGatewayTimeout
@@ -507,6 +507,8 @@ func messageOf(code protocol.Code) string {
 		return "the operation is not supported in this version"
 	case protocol.CodeTooLarge:
 		return "the request or response exceeds the limit"
+	case protocol.CodeOverloaded:
+		return "the server is at its concurrency limit, retry later"
 	default:
 		return "the server failed"
 	}

@@ -33,6 +33,11 @@ const (
 	CodeTooLarge Code = 1008
 	// CodeInternal means the Server failed. Details are logged, never returned.
 	CodeInternal Code = 1009
+	// CodeOverloaded means the Server is at its admission limit for this caller,
+	// this Node or the whole process, and the request was refused rather than
+	// queued without a bound. It is retryable because the condition is temporary:
+	// the work already admitted finishes and capacity returns.
+	CodeOverloaded Code = 1010
 )
 
 // Name returns the stable name of a code. The name is what appears in a
@@ -59,6 +64,8 @@ func (c Code) Name() string {
 		return "too_large"
 	case CodeInternal:
 		return "internal"
+	case CodeOverloaded:
+		return "overloaded"
 	default:
 		return "unknown"
 	}
@@ -69,7 +76,7 @@ func (c Code) Name() string {
 // policy decision into a load problem.
 func (c Code) Retryable() bool {
 	switch c {
-	case CodeNodeOffline, CodeNodeTimeout, CodeInternal:
+	case CodeNodeOffline, CodeNodeTimeout, CodeInternal, CodeOverloaded:
 		return true
 	default:
 		return false

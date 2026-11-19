@@ -321,6 +321,7 @@ is why the codes are enumerated.
 | `1007` | `unsupported_operation` | The operation is unknown or declared but not enabled in this version | No |
 | `1008` | `too_large` | The response exceeds the cap, or the request body exceeds the limit | No |
 | `1009` | `internal` | The Server failed. Details are logged, not returned | Yes |
+| `1010` | `overloaded` | The Server is at its admission limit for this caller, this Node or the whole process, and refused the request instead of queueing it without a bound | Yes |
 
 `denied` and `not_found` are deliberately distinct. Collapsing them would let a
 caller probe for the existence of a file it may not read, which is an information
