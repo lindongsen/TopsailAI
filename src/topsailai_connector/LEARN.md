@@ -716,3 +716,50 @@ AI reflection archive, not here.
   that the repo copy lacks. Editing the repo file does not deploy anything, and
   editing the deployed file does not update the repo. Compare the two before
   assuming a one-line change is complete.
+
+## A guard that has never failed is not evidence
+
+- Four help guards passed for many commits while asserting nothing. Each used
+  `strings.Contains(page, name)`, which a *mention* satisfies: the name appears in
+  prose, in an example, or in the SYNOPSIS, so deleting the documentation entry
+  left the guard green. Reading the test source would not have found it, because
+  each test reads correctly on its own; only mutating the help text did.
+- The fix is a structural assertion, not a stronger substring. `hasEntry` requires
+  a two-space-indented line beginning with the name, `hasFlagEntry` a line
+  beginning with the flag, `section` one upper-case section, `exampleBlock` a
+  command line recognised by content. A substring cannot tell an entry from a
+  sentence about the entry.
+- Every helper must fail loudly when it finds nothing. The wrong-page defect was
+  caught by `t.Fatalf("... this guard is measuring nothing")`, not by the
+  assertion that followed it. A helper that returns an empty string on a miss
+  turns the guard into a test of the empty string.
+- Mutate the artifact, not the test. Renaming `--force` to `--forceX` in the help
+  text is what proved the guard works; editing the test proves only that the test
+  can be edited.
+- A mutation whose new value contains the old value is not a mutation.
+  `REPLAY_CAPACITY` to `REPLAY_CAPACITYX` stayed green because the substring was
+  still present; `QUEUE_DEPTH` failed correctly. Check that the mutation actually
+  removes what the guard looks for.
+- A guard that enforces one wording tests style, not the rule. Requiring the word
+  `absolute` failed on entries saying "A relative path is refused", which is the
+  same rule. Accept every spelling that states it, and refuse only an entry that
+  states none.
+- Restore from a backup and compare `md5sum` after every mutation. A mutation left
+  in place is a product change nobody reviewed, and the next run would measure the
+  mutated text.
+
+## A documented rule the help omits is learned from a startup failure
+
+- Six path variables are refused when relative, and neither help page said so. The
+  operator who exported a relative `CONFIG_DIR` met the rule as
+  `is relative; a relative path resolves differently per launch`, which reads as a
+  bug rather than as a documented constraint.
+- The gap is invisible to a completeness guard that counts variables, because the
+  variable *is* documented; only the constraint on its value is missing. A guard
+  for this must assert the rule inside the entry, which is why `entryFor` isolates
+  one entry rather than searching the page: "absolute" appears elsewhere on the
+  page in the policy description, and a whole-page search would pass on that
+  unrelated sentence.
+- Ask what the operator must know to make the value work, not only which values
+  exist. A variable with a constraint and no stated constraint is documented in
+  name only.
