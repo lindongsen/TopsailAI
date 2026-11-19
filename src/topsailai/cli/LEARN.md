@@ -915,3 +915,109 @@ which print the file's own numbering. For a small document the cheapest safe
 procedure is to read the whole file *with* line numbers, edit exactly one range,
 then read it whole again; for a ledger tick, prefer appending a status line over
 replacing the checkbox line, because an append cannot delete a neighbour.
+
+## A pathspec commit cannot include a file git has never seen
+
+### Trigger
+
+Committing one logical unit with `git commit -m <msg> -- <paths>` failed with
+`error: pathspec '.../runtime_info.py' did not match any file(s) known to git`
+for the two new files, while the four modified files were accepted. A second
+attempt from the repository root failed the same way, and the commit only
+succeeded after `git add` staged the two new files first.
+
+### Action taken
+
+Staged exactly the two untracked files, re-checked `git diff --cached
+--name-only` to confirm the index held only those two, then re-ran the same
+pathspec commit. Verified the result with `git show --name-only HEAD`: six files,
+no foreign file, and `git status --porcelain` still showing the parallel agent's
+changes untouched.
+
+### Why this prevents recurrence
+
+`git commit -- <path>` restricts the commit to paths already in the index; it
+does not add anything. An untracked file therefore has no index entry to
+restrict, so the pathspec is rejected rather than staged. The safe sequence is
+`git add` the new files, verify the index, then commit with the full pathspec so
+concurrent staging still cannot leak in. Also check `git check-ignore -v` before
+planning a commit: `.task/` is ignored in this repository, so task artifacts are
+local records and must not be forced into history with `git add -f`.
+
+## An ownership proof that reads one filename kind cannot see the other kind
+
+### Trigger
+
+`topsailai runtime info -p <worker-pid>` rejected a live task agent with
+`target_not_found` / "No session stdout file records this PID", even though the
+worker process was alive and its control channel answered `state=ok` with its own
+distinct data. The ownership scan enumerated only `*.session.stdout`, but a task
+agent runs with session tee disabled and writes
+`{session}.{pid}[.{task_id}].task.stdout` instead, so it never produces the file
+the scan looked for.
+
+### Action taken
+
+Moved the scan into `workspace_runtime._process_log_records()`, which returns
+`(session_id, pid, is_task)` for both log kinds in one pass, and had
+`runtime_info._process_records()` delegate to it so the filename convention has
+one definition. The file kind that proves ownership is the same evidence that
+answers the new `is_task` field, so the two cannot disagree, and the session log
+wins when a PID left both kinds behind. Verified live on a real two-agent session
+(both PIDs now succeed with distinct data), with a parity re-check against
+`session info --include-runtime --json`, and with three negative controls proving
+the new tests fail against each regressed implementation.
+
+### Why this prevents recurrence
+
+A filename convention is a contract with several producers, and a scan that
+enumerates one suffix silently defines "a process that exists" as "a process that
+wrote that suffix". Before trusting a discovery result as absence, enumerate the
+producers: a process launched with a different tee setting, a different role, or
+a different wrapper writes a different file, and the missing file then looks
+exactly like a missing process. Derive every related fact from the same evidence
+that established identity, because a second scan can disagree with the first, and
+keep the scan in one place so a new producer is added once rather than in every
+caller.
+
+## A row's owner is not the row's parent
+
+### Trigger
+
+`topsailai workspace list --json --include-runtime` published the manager's
+runtime payload for every row of a session that ran several agents. All three
+rows of session `20261119T165005` reported `runtime.pid=214141` with the
+manager's 11 Agent2LLM / 5 User2Agent / 1 tool-call numbers, while the live
+worker `230926` actually held 10 / 6 / 0. Direct `runtime.static-data` probes on
+both sockets returned different payloads, so the list was not merely mislabeling
+a PID — it was reporting another process's data as this row's data.
+
+### Action taken
+
+Traced ownership to `_row_owner_pid()`, which returned `row["session_pid"]`
+first, and to `log_files.py`, which deliberately sets a task row's `session_pid`
+to its parent session PID. The docstring justified that with "a task row is a
+child process log, so its own PID never owns a control channel", which is false:
+`agent_shell_base.py` calls `get_or_start_control_server(session_id=...,
+pid=os.getpid())`, so every agent process owns `{session}.{pid}.session.sock`.
+Replaced the resolver with `_resolve_owner()`, which probes the row's own PID
+first and falls back to the parent session PID only when the row's own channel
+is absent, and made `is_task` describe the answering process rather than the row
+kind. Verified with 43 tests in the module, 166 in the targeted set, 4605 in the
+full unit suite, three negative controls that each went red and were reverted,
+and a live re-read where the worker row reported its own `pid`, `is_task=true`
+and its own 10 / 6 / 0.
+
+### Why this prevents recurrence
+
+A row's `session_pid` answers "which session owns this row", not "which process
+should answer for this row", and the two differ exactly when one session runs
+several agents. Any per-row enrichment must resolve the row's own process first
+and treat the parent as a fallback, because a parent-first rule silently
+attributes one process's state to every sibling and the numbers still look
+plausible. Also distrust a docstring that explains why a capability is
+unavailable: the claim "this process never owns a channel" was the whole bug,
+and one grep for the control-server start call disproved it. Finally, make a
+descriptive field such as `is_task` describe the process that actually answered,
+not the row that was asked, so the field can never contradict the `pid` beside
+it.

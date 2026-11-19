@@ -196,8 +196,31 @@ def test_instruction_self_reported_failure_is_not_ok(tmp_path):
     assert record["error_code"] == "no_agent"
 
 
-def test_task_row_queries_the_parent_session_pid(tmp_path):
-    """A task row is owned by its parent session, never by its own PID."""
+def test_task_row_queries_its_own_pid_when_it_owns_a_channel(tmp_path):
+    """A live task agent answers for itself, not through its parent session."""
+    make_socket(str(tmp_path), "sample", 901)
+    make_socket(str(tmp_path), "sample", 900)
+    probed = []
+
+    def send(socket_path, action, request_payload, *, timeout):
+        probed.append(socket_path)
+        return Mock(response={"status": "ok", "result": static_payload()})
+
+    collected = workspace_runtime.collect_workspace_runtime(
+        [row(pid=901, filename="sample.901.task.stdout", is_task=True,
+             session_pid=900)],
+        str(tmp_path), sender=send,
+    )
+
+    assert probed == [os.path.join(str(tmp_path), "sample.901.session.sock")]
+    record = collected["sample.901.task.stdout"]
+    assert record["state"] == "ok"
+    assert record["pid"] == 901
+    assert record["is_task"] is True
+
+
+def test_task_row_falls_back_to_the_parent_session_pid(tmp_path):
+    """A task row without its own channel is read through its parent session."""
     make_socket(str(tmp_path), "sample", 900)
     probed = []
 
@@ -212,12 +235,14 @@ def test_task_row_queries_the_parent_session_pid(tmp_path):
     )
 
     assert probed == [os.path.join(str(tmp_path), "sample.900.session.sock")]
-    assert collected["sample.901.task.stdout"]["state"] == "ok"
+    record = collected["sample.901.task.stdout"]
+    assert record["state"] == "ok"
+    assert record["pid"] == 900
+    assert record["is_task"] is False
 
 
-def test_task_row_without_a_parent_pid_is_not_probed(tmp_path):
-    """An unresolvable parent must not fall back to the child's PID."""
-    make_socket(str(tmp_path), "sample", 901)
+def test_task_row_without_any_channel_reports_its_own_pid(tmp_path):
+    """A failure names the process the row describes, not a guessed parent."""
     calls = []
 
     def send(socket_path, action, request_payload, *, timeout):
@@ -230,7 +255,31 @@ def test_task_row_without_a_parent_pid_is_not_probed(tmp_path):
     )
 
     assert calls == []
-    assert collected["sample.901.task.stdout"]["error_code"] == "unsupported_row"
+    record = collected["sample.901.task.stdout"]
+    assert record["error_code"] == "endpoint_missing"
+    assert record["pid"] == 901
+    assert record["is_task"] is True
+
+
+def test_task_row_sharing_the_parent_pid_reports_a_session_process(tmp_path):
+    """A subagent inside the session process is answered by that process."""
+    make_socket(str(tmp_path), "sample", 900)
+    probed = []
+
+    def send(socket_path, action, request_payload, *, timeout):
+        probed.append(socket_path)
+        return Mock(response={"status": "ok", "result": static_payload()})
+
+    collected = workspace_runtime.collect_workspace_runtime(
+        [row(pid=900, filename="sample.900.task.stdout", is_task=True,
+             session_pid=900)],
+        str(tmp_path), sender=send,
+    )
+
+    assert probed == [os.path.join(str(tmp_path), "sample.900.session.sock")]
+    record = collected["sample.900.task.stdout"]
+    assert record["pid"] == 900
+    assert record["is_task"] is False
 
 
 def test_temporary_session_maps_the_display_label_to_the_file_prefix(tmp_path):
@@ -629,3 +678,61 @@ def test_single_session_collector_accepts_the_temp_sentinel(tmp_path):
 
     assert record["state"] == "ok"
     assert record["data"]["model"]["name"] == "example-model"
+
+
+def test_single_session_collector_publishes_is_task_false_by_default(tmp_path):
+    """A session process is not a task agent, so the flag defaults to false."""
+    make_socket(str(tmp_path), "sample", 123)
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=ok_sender(),
+    )
+
+    assert record["is_task"] is False
+
+
+def test_single_session_collector_publishes_is_task_true(tmp_path):
+    """A worker PID must be reported as a task agent, not as the session."""
+    make_socket(str(tmp_path), "sample", 123)
+
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=ok_sender(), is_task=True,
+    )
+
+    assert record["is_task"] is True
+    assert record["state"] == "ok"
+
+
+def test_is_task_is_published_on_every_failure_record(tmp_path):
+    """A failure must still state which kind of process was asked."""
+    record = workspace_runtime.collect_session_runtime(
+        "sample", 123, str(tmp_path), sender=ok_sender(), is_task=True,
+    )
+
+    assert record["state"] == "unavailable"
+    assert record["error_code"] == "endpoint_missing"
+    assert record["is_task"] is True
+
+
+def test_process_log_records_accepts_both_log_kinds(tmp_path):
+    """A session log and a task log must both prove a PID's ownership."""
+    (tmp_path / "s.111.session.stdout").touch()
+    (tmp_path / "s.222.topsailai.1795078235.630223.task.stdout").touch()
+
+    records = workspace_runtime._process_log_records(str(tmp_path))
+
+    assert sorted(records) == [
+        ("s", 111, False),
+        ("s", 222, True),
+    ]
+
+
+def test_process_log_records_skips_unusable_names(tmp_path):
+    """One leftover must not hide the record that does match."""
+    (tmp_path / "broken.notapid.session.stdout").touch()
+    (tmp_path / "zero.0.session.stdout").touch()
+    (tmp_path / "s.111.session.stdout").touch()
+
+    assert workspace_runtime._process_log_records(str(tmp_path)) == [
+        ("s", 111, False),
+    ]

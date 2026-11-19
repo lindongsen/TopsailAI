@@ -15,6 +15,7 @@ from topsailai.utils import (
 from topsailai.utils.print_tool import print_info, print_warning
 from topsailai.prompt_hub.prompt_tool import get_observation_by_tools
 from topsailai.workspace.folder_constants import FOLDER_ROOT
+from topsailai.workspace.plugin_instruction.base import arguments
 from topsailai.workspace.plugin_instruction.base.cache import get_ai_agent
 
 # Path to the user-defined model registry (JSON Lines).
@@ -78,7 +79,7 @@ def _sync_session_meta_model_name(model_name: str) -> None:
         )
 
 
-def _apply_model_config(agent, config: dict) -> str:
+def _apply_model_config(agent, config: dict, details: dict | None = None) -> str:
     """Apply one model configuration without exposing partial client state.
 
     A connection change acquires its replacement before publishing any model
@@ -89,6 +90,10 @@ def _apply_model_config(agent, config: dict) -> str:
         agent: The current agent instance.
         config (dict): Model configuration containing model, endpoint,
             credentials, and environment.
+        details (dict | None): Optional out-mapping filled with the resolved
+            transition facts (`previous_model`, `applied_model`,
+            `previous_api_base`, `applied_api_base`, `connection_changed`).
+            Callers that only need the text summary pass nothing.
 
     Returns:
         str: Human-readable summary of the applied changes.
@@ -164,6 +169,15 @@ def _apply_model_config(agent, config: dict) -> str:
     for source_name, target_name in credential_mappings:
         if source_name and os.getenv(source_name) is not None:
             os.environ[target_name] = os.environ[source_name]
+
+    if details is not None:
+        details.update(
+            previous_model=old_model_name,
+            applied_model=new_model_name,
+            previous_api_base=old_api_base,
+            applied_api_base=new_api_base,
+            connection_changed=connection_changed,
+        )
 
     result = (
         f"model_name: {old_model_name} -> {new_model_name}, "
@@ -294,27 +308,110 @@ def get_llm() -> str:
     return llm
 
 
-def select_model(*args) -> str:
+_MODELS_USAGE = "Usage: /agent.models [<name>|<index>] [json=1]"
+
+
+def _normalize_model_arguments(args: tuple, kwargs: dict) -> tuple[str | None, bool, str | None]:
+    """Resolve the optional model target and the `json` flag from either form.
+
+    Terminal dispatch delivers named parameters as keyword arguments while the
+    control channel forwards them as positional `name=value` strings, so both
+    forms are flattened through the shared Instruction argument convention.
+
+    Returns:
+        A `(target, json_enabled, error)` triple. `target` is the raw positional
+        model name or 1-based index, `json_enabled` reports the requested output
+        format, and `error` is a stable token when the arguments are unusable.
+    """
+    segments, error = arguments.split_named_parameters(args, kwargs)
+    if error:
+        return None, False, error
+
+    # Resolve the output format first so every later error uses that format.
+    json_enabled = arguments.resolve_json_flag(segments)
+
+    positional = []
+    for name, value in segments:
+        if name == arguments.JSON_PARAM:
+            continue
+        if name is None:
+            positional.append(value)
+        else:
+            return None, json_enabled, arguments.USAGE_UNKNOWN_PARAMETER
+
+    if len(positional) > 1:
+        return None, json_enabled, arguments.USAGE_TOO_MANY_ARGUMENTS
+    return (positional[0] if positional else None), json_enabled, None
+
+
+def _models_list_payload(registry: dict, current_model: str, model_names: list) -> dict:
+    """Build the structured model listing shared by the JSON output path."""
+    models = []
+    for idx, name in enumerate(model_names, start=1):
+        config = registry[name]
+        models.append({
+            "index": idx,
+            "name": name,
+            "api_base": config.get("api_base") or config.get("base_url", ""),
+            "current": name == current_model,
+        })
+    return {
+        "ok": True,
+        "current_model": current_model,
+        "current_in_registry": current_model in registry,
+        "registry_file": FILE_MODELS_REGISTRY,
+        "models": models,
+    }
+
+
+def _selection_payload(registry_name: str, details: dict) -> dict:
+    """Build the structured selection result shared by the JSON output path."""
+    return {
+        "ok": True,
+        "selected": details["applied_model"],
+        "registry_name": registry_name,
+        "previous_model": details["previous_model"],
+        "api_base": {
+            "previous": details["previous_api_base"],
+            "current": details["applied_api_base"],
+        },
+        "connection_changed": details["connection_changed"],
+    }
+
+
+def select_model(*args, **kwargs) -> str:
     """
     List or select a model from the user-defined model registry.
 
     Supported forms:
-      /models              # list available models
-      /models <model_name> # select and apply the named model
-      /models <number>     # select and apply the model by 1-based index
+      /models                    # list available models
+      /models <model_name>       # select and apply the named model
+      /models <number>           # select and apply the model by 1-based index
+      /models [<name>|<number>] json=1  # emit a stable JSON document
 
     Args:
         *args: Positional arguments from the instruction parser.
+        **kwargs: Named parameters from the terminal dispatcher.
     """
+    target, json_enabled, error = _normalize_model_arguments(args, kwargs)
+    if error:
+        return arguments.error_response(error, _MODELS_USAGE, json_enabled)
+
     agent = get_ai_agent()
     if not agent:
+        if json_enabled:
+            return arguments.json_dump({"ok": False, "error": "no_agent"})
         return "No active agent"
 
     registry = _load_models_registry()
     current_model = agent.runtime.llm_model.model_name
     model_names = sorted(registry.keys())
 
-    if not args:
+    if target is None:
+        if json_enabled:
+            return arguments.json_dump(
+                _models_list_payload(registry, current_model, model_names),
+            )
         if not registry:
             return f"Current model: {current_model}\nNo models found in {FILE_MODELS_REGISTRY}"
 
@@ -329,11 +426,18 @@ def select_model(*args) -> str:
             lines.append(f"  {idx}. {marker}{name} ({api_base})")
         return "\n".join(lines)
 
-    arg = str(args[0]).strip()
+    arg = str(target).strip()
     # Numeric 1-based index selection.
     if arg.isdigit():
         index = int(arg)
         if index < 1 or index > len(model_names):
+            if json_enabled:
+                return arguments.json_dump({
+                    "ok": False,
+                    "error": "invalid_index",
+                    "index": index,
+                    "valid_range": f"1-{len(model_names)}",
+                })
             return f"Invalid model index: {index}. Valid range: 1-{len(model_names)}"
         model_name = model_names[index - 1]
     else:
@@ -341,10 +445,20 @@ def select_model(*args) -> str:
 
     config = registry.get(model_name)
     if not config:
+        if json_enabled:
+            return arguments.json_dump({
+                "ok": False,
+                "error": "not_found",
+                "model": model_name,
+            })
         return f"Model not found: {model_name}"
 
-    result = _apply_model_config(agent, config)
-    return result
+    if not json_enabled:
+        return _apply_model_config(agent, config)
+
+    details = {}
+    _apply_model_config(agent, config, details)
+    return arguments.json_dump(_selection_payload(model_name, details))
 
 
 def _format_estimated_tokens(token_count: int | None) -> str:

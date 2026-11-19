@@ -837,6 +837,320 @@ class TestSelectModel(unittest.TestCase):
         self.assertIn("No models found in", result)
 
 
+class TestSelectModelJsonOutput(unittest.TestCase):
+    """Test the `json=1` output path of select_model()."""
+
+    def _agent(self, model_name="OldModel"):
+        """Build an agent double whose model switch is observable."""
+        agent = MagicMock()
+        agent.runtime.llm_model.model_name = model_name
+        agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        agent.runtime.llm_model.model = "old_client"
+        agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
+        return agent
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_list_models_json(self, mock_load_registry, mock_get_agent):
+        """Test /agent.models json=1 returns the structured listing."""
+        mock_get_agent.return_value = self._agent("ModelA")
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+            "ModelB": {"name": "ModelB", "api_base": "https://b.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model(json="1"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["current_model"], "ModelA")
+        self.assertTrue(payload["current_in_registry"])
+        self.assertEqual(len(payload["models"]), 2)
+        self.assertEqual(payload["models"][0], {
+            "index": 1,
+            "name": "ModelA",
+            "api_base": "https://a.example.com",
+            "current": True,
+        })
+        self.assertEqual(payload["models"][1]["index"], 2)
+        self.assertFalse(payload["models"][1]["current"])
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_list_models_json_current_not_in_registry(self, mock_load_registry, mock_get_agent):
+        """Test the JSON listing reports a current model outside the registry."""
+        mock_get_agent.return_value = self._agent("CustomModel")
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model(json="1"))
+
+        self.assertEqual(payload["current_model"], "CustomModel")
+        self.assertFalse(payload["current_in_registry"])
+        self.assertFalse(payload["models"][0]["current"])
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_list_models_json_empty_registry(self, mock_load_registry, mock_get_agent):
+        """Test the JSON listing stays valid when the registry is empty."""
+        mock_get_agent.return_value = self._agent("CurrentModel")
+        mock_load_registry.return_value = {}
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model(json="1"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["models"], [])
+        self.assertFalse(payload["current_in_registry"])
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_by_index_json(self, mock_load_registry, mock_get_agent):
+        """Test /agent.models <index> json=1 reports the applied transition."""
+        agent = self._agent()
+        mock_get_agent.return_value = agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com", "api_key": "key_a"},
+            "ModelB": {"name": "ModelB", "api_base": "https://b.example.com", "api_key": "key_b"},
+        }
+        environment = {
+            "OPENAI_API_BASE": "https://old.example.com/v1",
+            "OPENAI_API_KEY": "old_key",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            from topsailai.workspace.plugin_instruction.agent import select_model
+            payload = json.loads(select_model("2", json="1"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["selected"], "ModelB")
+        self.assertEqual(payload["registry_name"], "ModelB")
+        self.assertEqual(payload["previous_model"], "OldModel")
+        self.assertEqual(payload["api_base"]["previous"], "https://old.example.com/v1")
+        self.assertEqual(payload["api_base"]["current"], "https://b.example.com")
+        self.assertTrue(payload["connection_changed"])
+        self.assertEqual(agent.runtime.llm_model.model_name, "ModelB")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_by_name_json(self, mock_load_registry, mock_get_agent):
+        """Test /agent.models <name> json=1 reports the applied transition."""
+        agent = self._agent()
+        mock_get_agent.return_value = agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com", "api_key": "key_a"},
+        }
+        environment = {
+            "OPENAI_API_BASE": "https://old.example.com/v1",
+            "OPENAI_API_KEY": "old_key",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            from topsailai.workspace.plugin_instruction.agent import select_model
+            payload = json.loads(select_model("ModelA", json="1"))
+
+        self.assertEqual(payload["selected"], "ModelA")
+        self.assertEqual(payload["previous_model"], "OldModel")
+        self.assertEqual(agent.runtime.llm_model.model_name, "ModelA")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_json_reports_unchanged_connection(self, mock_load_registry, mock_get_agent):
+        """Test the JSON selection reports a reused connection explicitly."""
+        agent = self._agent()
+        mock_get_agent.return_value = agent
+        mock_load_registry.return_value = {
+            "ModelA": {
+                "name": "ModelA",
+                "api_base": "https://current.example.com/v1",
+                "api_key": "current_key",
+            },
+        }
+        environment = {
+            "OPENAI_API_BASE": "https://current.example.com/v1",
+            "OPENAI_API_KEY": "current_key",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            from topsailai.workspace.plugin_instruction.agent import select_model
+            payload = json.loads(select_model("ModelA", json="1"))
+
+        self.assertFalse(payload["connection_changed"])
+        self.assertEqual(
+            payload["api_base"]["previous"], "https://current.example.com/v1",
+        )
+        self.assertEqual(
+            payload["api_base"]["current"], "https://current.example.com/v1",
+        )
+        agent.runtime.llm_model.replace_llm_model.assert_not_called()
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_json_flag_as_positional_segment(self, mock_load_registry, mock_get_agent):
+        """Test the control-channel form `json=1` as one positional token."""
+        mock_get_agent.return_value = self._agent("ModelA")
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model("json=1"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["current_model"], "ModelA")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_json_flag_false_returns_text(self, mock_load_registry, mock_get_agent):
+        """Test json=0 keeps the original text output."""
+        mock_get_agent.return_value = self._agent("ModelA")
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model(json="0")
+
+        self.assertEqual(
+            result,
+            "Available models:\n  1. * ModelA (https://a.example.com)",
+        )
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_text_listing_unchanged_without_json(self, mock_load_registry, mock_get_agent):
+        """Negative control: the listing text is byte-identical without json."""
+        mock_get_agent.return_value = self._agent("ModelA")
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+            "ModelB": {"name": "ModelB", "api_base": "https://b.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model()
+
+        self.assertEqual(
+            result,
+            "Available models:\n"
+            "  1. * ModelA (https://a.example.com)\n"
+            "  2. ModelB (https://b.example.com)",
+        )
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_text_selection_unchanged_without_json(self, mock_load_registry, mock_get_agent):
+        """Negative control: the selection text is byte-identical without json."""
+        mock_get_agent.return_value = self._agent()
+        mock_load_registry.return_value = {
+            "ModelA": {
+                "name": "ModelA",
+                "api_base": "https://new.example.com/v1",
+                "api_key": "new_key",
+            },
+        }
+        environment = {
+            "OPENAI_API_BASE": "https://old.example.com/v1",
+            "OPENAI_API_KEY": "old_key",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            from topsailai.workspace.plugin_instruction.agent import select_model
+            result = select_model("ModelA")
+
+        self.assertEqual(
+            result,
+            "model_name: OldModel -> ModelA, "
+            "api_base: https://old.example.com/v1 -> https://new.example.com/v1",
+        )
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_no_agent_json(self, mock_get_agent):
+        """Test the JSON path reports a missing agent structurally."""
+        mock_get_agent.return_value = None
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model(json="1"))
+
+        self.assertEqual(payload, {"ok": False, "error": "no_agent"})
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_invalid_index_json(self, mock_load_registry, mock_get_agent):
+        """Test an out-of-range index is reported structurally."""
+        mock_get_agent.return_value = self._agent()
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model("5", json="1"))
+
+        self.assertEqual(payload, {
+            "ok": False,
+            "error": "invalid_index",
+            "index": 5,
+            "valid_range": "1-1",
+        })
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_not_found_json(self, mock_load_registry, mock_get_agent):
+        """Test an unknown model name is reported structurally."""
+        mock_get_agent.return_value = self._agent()
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model("Unknown", json="1"))
+
+        self.assertEqual(payload, {
+            "ok": False,
+            "error": "not_found",
+            "model": "Unknown",
+        })
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_unknown_parameter_json(self, mock_get_agent):
+        """Test an unknown named parameter is rejected structurally."""
+        mock_get_agent.return_value = self._agent()
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model(foo="bar", json="1"))
+
+        self.assertEqual(payload["ok"], False)
+        self.assertEqual(payload["error"], "unknown_parameter")
+        self.assertIn("Usage: /agent.models", payload["usage"])
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_unknown_parameter_text(self, mock_get_agent):
+        """Test an unknown named parameter degrades to a usage line."""
+        mock_get_agent.return_value = self._agent()
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model(foo="bar")
+
+        self.assertEqual(result, "Usage: /agent.models [<name>|<index>] [json=1]")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_too_many_arguments_json(self, mock_get_agent):
+        """Test two positional targets are rejected structurally."""
+        mock_get_agent.return_value = self._agent()
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model("1", "2", json="1"))
+
+        self.assertEqual(payload["error"], "too_many_arguments")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_unknown_parameter_checked_before_agent_lookup(self, mock_get_agent):
+        """Test argument errors are reported even without an active agent."""
+        mock_get_agent.return_value = None
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        payload = json.loads(select_model(foo="bar", json="1"))
+
+        self.assertEqual(payload["error"], "unknown_parameter")
+
+
 class TestSessionMetaModelNameSync(unittest.TestCase):
     """Test that a model switch refreshes the session metadata model_name."""
 
