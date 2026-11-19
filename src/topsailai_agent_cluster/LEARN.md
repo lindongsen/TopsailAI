@@ -1798,3 +1798,54 @@ field that looks purpose-built for the question, so it is the first thing consul
 thing doubted. The two fields that actually answer the question sit beside it and are ignored
 because they look like timestamps rather than evidence. A wrong "no" is worse than no answer: it
 closes the investigation that would have found the killed Agent.
+
+## A rollout checklist that names roles misses the per-node instances of a role
+
+Trigger: the HMAC cutover checklist named three boundaries — Server, Endpoint, CLI — and I switched
+gd-dev's Server verifier and Endpoint verifier but left gd-dev's CLI caller on the pre-HMAC form. That
+CLI then rejected its own credential locally, before sending anything:
+`server credential is not in key_id.secret form required by hmac mode`. The other three nodes were
+correct, so every check I ran on the host I was working on passed.
+
+Action: when a checklist names a role, enumerate the instances of that role before executing. Here the
+role "CLI" has four instances, one per node, and all four environment files live at the identical path
+`/root/.topsailai/.topsailai_agent_cluster.env`, which is exactly why reading "the CLI environment file"
+on one host looks like a complete check. Write the instance list into the checklist itself, and verify
+each instance by its own rendered output rather than by a shared probe.
+
+Why this prevents recurrence: a role name reads as a single thing, so a checklist that is correct at the
+role level is silently incomplete at the instance level. The identical path removes the last cue that
+would prompt a second look, and the nodes that are skipped are the ones that serve no traffic during
+normal operation, so their failure surfaces only during the incident they exist for.
+
+## A credential rejection that exits zero certifies a CLI that did nothing
+
+Trigger: the gd-dev CLI printed `server credential is not in key_id.secret form required by hmac mode`
+and exited **0**. Any script testing `$?` reported a working CLI while the CLI had sent no request at
+all.
+
+Action: verify a CLI by its rendered output, never by its exit status alone. When a CLI prints a
+diagnostic and exits 0, treat the exit code as a defect rather than as evidence of success, and check
+the exit code of the failure path explicitly when adding a credential or configuration validation.
+
+Why this prevents recurrence: the message reads like usage text, which is conventionally paired with a
+zero exit, so the pairing looks normal. The exit code is the cheapest automation guard, so a zero exit
+propagates into every script and check that trusts it, and the CLI's own silence is indistinguishable
+from a command that legitimately produced no rows.
+
+## A Server-side projection cannot prove an Endpoint-side check
+
+Trigger: while verifying the HMAC cutover, `agent-cluster-cli endpoints` was used as the negative probe
+for the Endpoint boundary. It passed with a deliberately wrong Endpoint secret, which looked like the
+policy was not verifying. It was not verifying because it was never reached: `endpoints` renders the
+Server's persisted inventory and never contacts an Endpoint, so the wrong credential was never used.
+
+Action: before using a probe as evidence for a boundary, trace which component consumes the credential.
+A Server-side projection proves the Server boundary only. Use a live provider read such as
+`history <endpoint>` to reach the Endpoint policy, and state in the evidence which component the probe
+actually exercised.
+
+Why this prevents recurrence: a probe that passes for the wrong reason is worse than no probe, because
+it certifies a check nobody performed. The failure direction is the dangerous one: a correct
+implementation looks broken, and the natural response is to weaken the verifier that was never
+consulted.
