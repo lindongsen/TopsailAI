@@ -131,7 +131,8 @@ FILES
                                  answers: which Node is this
 
     <config>/credentials.yaml    key_id and secret pairs
-                                 written by credential add and credential remove
+                                 written by credential add, credential remove, and by
+                                 the first run when the file does not exist yet
                                  answers: which callers may operate on it
 
     <config>/policy.yaml         scopes and grants
@@ -152,6 +153,51 @@ FILES
   that may never be. Merging them would make "change my address" and "revoke a
   caller" the same operation.
 
+POLICY FILE
+  The policy file is the only place a scope and a permission are granted. It is
+  required: a missing file is a startup failure, and an empty file is refused
+  rather than read as an empty policy. This is the whole format:
+
+    version: 1
+    scopes:
+      project:
+        path: /home/me/project
+      scratch:
+        path: /home/me/scratch
+    grants:
+      - scope: project
+        permissions: [read, list, stat]
+      - scope: scratch
+        permissions: [read, list, stat]
+
+  version is required and must be 1.
+
+  scopes maps a name to a directory. The name is what a caller asks for, so it is
+  never a path: letters, digits, "-" and "_" only. The path must be absolute, and
+  it must not be the home directory, a filesystem root, a symlink, a mount point,
+  or a directory that contains this Node's config directory. A path that does not
+  exist yet is accepted, and that scope answers not_found until the directory
+  exists and the Node restarts.
+
+  grants says which permissions each scope allows. The permission names are read,
+  list and stat. A grant naming a scope that scopes does not define is refused, so
+  a typo fails startup instead of looking like a working policy.
+
+  write and exec are accepted by the parser but do nothing in this version:
+  file.write and command.exec are refused before the policy is consulted. A grant
+  that lists them starts the Node and grants nothing, so do not add them expecting
+  them to work.
+
+  An unknown key anywhere in the file is refused rather than ignored, because a
+  typo in a security file that is silently skipped is worse than a crash. The file
+  is capped at 1 MiB.
+
+  To check a policy without starting the Node, run it and read stderr: a policy that
+  is accepted logs "connector-node starting" and then "connector-node ready", and a
+  rejected one prints "load authority:" followed by the reason and exits 1. The
+  startup log goes to stderr, so a check that reads stdout sees only the node id and
+  the generated credential.
+
 ENVIRONMENT
   Every variable carries the CONNECTOR_NODE_ prefix.
 
@@ -162,13 +208,17 @@ ENVIRONMENT
 
     CONNECTOR_NODE_TUNNEL_TOKEN
         The secret this Node presents in hello. Required, and an absent or empty
-        value is a startup failure rather than a disabled check.
+        value is a startup failure rather than a disabled check. At least 16 bytes,
+        and a shorter value is refused at startup with the length it received, so a
+        placeholder such as "test" fails before the Node dials.
 
   Read by every subcommand:
 
     CONNECTOR_NODE_CONFIG_DIR
         Where the identity, the credential file and the policy file live. Defaults to
-        the platform config directory joined with topsailai-connector.
+        the platform config directory joined with topsailai-connector. Must be an
+        absolute path; a relative one is refused, because it would resolve differently
+        depending on the directory the Node was started from.
 
   Read by run:
 
@@ -178,7 +228,7 @@ ENVIRONMENT
 
     CONNECTOR_NODE_POLICY_FILE
         Path to the policy file. Defaults to <config>/policy.yaml. A missing file is a
-        startup failure.
+        startup failure, and so is a relative path.
 
     CONNECTOR_NODE_REPLAY_WINDOW_SECONDS
         How far a node proof timestamp may differ from this machine's clock. Default
@@ -243,9 +293,15 @@ EXAMPLES
       {{program}} run
 
 SEE ALSO
-  docs/permission-design.md in the Connector repository describes the three
-  credentials, the path fence and the policy file. skills/connector-node-setup/
-  describes the same material for a reader who has only the binary.
+  {{program}} help run, help id, help regenerate, help credential
+        The page for one subcommand.
+
+  {{program}} --version
+        The build this binary came from, which is what to quote in a bug report.
+
+  The Server side of the same system is connector-server. The caller side is
+  connector-cli, or connector-server cli if only the Server binary is installed.
+  Both are separate programs, so this binary's help cannot describe them.
 `)
 }
 

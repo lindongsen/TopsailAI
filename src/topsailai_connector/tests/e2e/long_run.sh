@@ -256,9 +256,21 @@ trap - EXIT
 
 # An orphan would keep the port and the identity in use and make the next run fail for
 # a reason that has nothing to do with the code under test.
-orphans=$(pgrep -af 'bin/connector-(server|node)' || true)
+#
+# The check asks about the PIDs this run recorded, never about a process name. A name
+# pattern answers "does some connector process exist", which is a different question:
+# it reported another run's processes as this run's leak, and the false failure taught
+# the operator to ignore the check. A PID recorded at creation can only name a process
+# this run started.
+orphans=""
+for pid in "${E2E_SERVER_PID:-}" "${NODE_PID:-}"; do
+	[ -n "$pid" ] || continue
+	if kill -0 "$pid" 2>/dev/null; then
+		orphans="$orphans $pid"
+	fi
+done
 if [ -n "$orphans" ]; then
-	fail "orphan processes are still running: $orphans"
+	fail "orphan processes are still running:$orphans"
 fi
 
 echo "long-run: all long-run checks passed" >&2

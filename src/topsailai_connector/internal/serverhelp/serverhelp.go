@@ -78,9 +78,9 @@ SUBCOMMANDS
         The operations are file.list, file.stat and file.read. file.write and
         command.exec are refused in this version.
 
-        Run {{program}} cli --help for the flags, the environment variables, the error
-        codes and the exit statuses. That help is complete and is not repeated here,
-        because two copies of one interface drift apart.
+        Run {{program}} help cli for the flags, the environment variables and the
+        exit statuses. That page is complete for running a request, and it is not
+        repeated here, because two copies of one interface drift apart.
 
   help [SUBCOMMAND]
         Print this help, or the help for one subcommand.
@@ -92,11 +92,15 @@ ENVIRONMENT
 
     CONNECTOR_SERVER_TUNNEL_TOKEN
         The secret a Node must present in hello to open a channel. An absent or empty
-        value fails startup rather than disabling the check.
+        value fails startup rather than disabling the check. At least 16 bytes, and a
+        shorter value is refused at startup with the length it received, so a
+        placeholder such as "test" fails before the listener opens.
 
     CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE
         Path to the YAML file holding the client credentials this Server accepts. A
-        missing, empty or unreadable file fails startup.
+        missing, empty or unreadable file fails startup. Must be an absolute path; a
+        relative one is refused, because it would resolve differently depending on the
+        directory the Server was started from.
 
   Optional:
 
@@ -106,13 +110,13 @@ ENVIRONMENT
 
     CONNECTOR_SERVER_TLS_CERT
         Path to the TLS certificate. Required unless TLS is terminated in front of the
-        Server.
+        Server. Must be an absolute path.
 
     CONNECTOR_SERVER_TLS_KEY
-        Path to the TLS private key. A path, not the key itself. Setting one of the
-        certificate variables without the other is a startup failure, because a key
-        without a certificate cannot serve and a certificate without a key cannot
-        either.
+        Path to the TLS private key. A path, not the key itself. Must be an absolute
+        path. Setting one of the certificate variables without the other is a startup
+        failure, because a key without a certificate cannot serve and a certificate
+        without a key cannot either.
 
     CONNECTOR_SERVER_REPLAY_WINDOW_SECONDS
         How far a client proof timestamp may differ from this machine's clock. Default
@@ -162,14 +166,37 @@ ENVIRONMENT
   secret pairs, is parsed strictly so an unknown key is a startup failure, and is
   capped at 1 MiB.
 
+FIRST RUN
+  The Server cannot create its own client credential file: this binary has no
+  credential subcommand, because the file format has one implementation and it lives
+  in the Node binary. Create the file with connector-node, then point the Server at
+  it:
+
+    CONNECTOR_NODE_CONFIG_DIR=/etc/connector/server-client \
+      connector-node credential add --key-id operator-dawson
+    -> operator-dawson.<secret>        copy this; it is printed once
+
+    CONNECTOR_SERVER_TUNNEL_TOKEN=<secret> \
+    CONNECTOR_SERVER_CLIENT_CREDENTIALS_FILE=/etc/connector/server-client/credentials.yaml \
+      {{program}} run
+
+  CONNECTOR_NODE_CONFIG_DIR is a Node variable, used here only because the Node
+  binary is what writes the file. The Server never reads it.
+
+  The file is written with mode 0600 and is owned by whoever ran that command. A
+  Server that runs as a different user, such as a container running as nobody, must
+  have the file's owner changed to that user, or it cannot read the file it requires
+  and refuses to start.
+
+  A Node's own credential is created on the Node, with the same command and a
+  different config directory. The Server never receives it and has no variable for
+  it.
+
 EXIT STATUS
   0   The Server stopped after a signal. A help request also exits 0.
   1   Startup failed, or the listener ended with an error.
   2   The command line was rejected. The message begins "usage:", so a script can
-      tell a rejected command line from a failed operation without parsing the text.
-
-  A message beginning "usage:" always accompanies status 2, so a script can tell a
-  rejected command line from a failed startup without parsing the text.
+      tell a rejected command line from a failed startup without parsing the text.
 
 EXAMPLES
   Start the Server with TLS terminated in front of it:
@@ -187,19 +214,29 @@ EXAMPLES
     CONNECTOR_SERVER_TLS_KEY=/etc/connector/tls.key \
       {{program}} run
 
-  Call a Node:
+  Call a Node. Every value below is required, and the flags come before the
+  operation name:
 
-    {{program}} cli --scope project --path notes.md file.read
+    CONNECTOR_CLI_SERVER_URL=http://192.168.2.3:8743 \
+    CONNECTOR_CLI_CLIENT_CREDENTIAL=operator-dawson.<secret> \
+    CONNECTOR_CLI_NODE_ID=node_7f3a...9c1e \
+    CONNECTOR_CLI_NODE_CREDENTIAL=bundle-caller.<secret> \
+      {{program}} cli --scope project --path notes.md file.read
 
-  Read the CLI's own help:
+  Read the flags the cli subcommand accepts:
 
-    {{program}} cli --help
+    {{program}} help cli
 
 SEE ALSO
-  docs/permission-design.md in the Connector repository describes the three
-  credentials, the path fence and the policy file. docs/API.md describes the HTTP API
-  the cli subcommand calls. skills/connector-server-operations/ describes the same
-  material for a reader who has only the binary.
+  {{program}} help run, help cli
+        The page for one subcommand.
+
+  {{program}} --version
+        The build this binary came from, which is what to quote in a bug report.
+
+  The Node side of the same system is connector-node, which is also the binary that
+  writes the client credential file this Server requires. The caller side is
+  connector-cli, or the cli subcommand of this binary.
 `)
 }
 
@@ -289,21 +326,110 @@ DESCRIPTION
   The operations are file.list, file.stat and file.read. file.write and command.exec
   are refused in this version.
 
-  This subcommand has its own complete help, covering every flag, every environment
-  variable, the precedence between them, every error code and every exit status. It is
-  not repeated here, because two copies of one interface drift apart.
+  This subcommand is the same implementation as the standalone connector-cli binary,
+  so either one works. This page lists the flags needed to run a request. The
+  standalone binary's help is longer: it adds every error code, the retry advice for
+  each one, and the precedence between a flag, an environment variable and a
+  configuration file.
 
-  Run {{program}} cli --help for that text.
+FLAGS
+  --server URL
+        Base URL of the Server, for example http://192.168.2.3:8743.
+        Environment: CONNECTOR_CLI_SERVER_URL
+
+  --node-id ID
+        The Node the request is for, for example node_ysj64hfylk2ke3aui65fygln2e.
+        Environment: CONNECTOR_CLI_NODE_ID
+
+  --client-credential KEY_ID.SECRET
+        The credential this Server verifies.
+        Environment: CONNECTOR_CLI_CLIENT_CREDENTIAL
+
+  --node-credential KEY_ID.SECRET
+        The credential the Node verifies.
+        Environment: CONNECTOR_CLI_NODE_CREDENTIAL
+
+  --scope NAME
+        The scope name the Node's policy defines, for example project. A scope is a
+        name, never a path. Required.
+        Environment: CONNECTOR_CLI_SCOPE
+
+  --path PATH
+        A path relative to the scope root. Required for file.stat and file.read; use
+        an empty value to address the scope root for file.list.
+        Environment: CONNECTOR_CLI_PATH
+
+  --offset N, --length N
+        Read part of a file. Default 0, which means from the start and to the end.
+        Environment: CONNECTOR_CLI_OFFSET, CONNECTOR_CLI_LENGTH
+
+  -o FILE, --output FILE
+        Write the content to a file instead of printing it. Refuses an existing file
+        unless --force is given.
+        Environment: CONNECTOR_CLI_OUTPUT
+
+  --force
+        Overwrite an existing -o destination. Without it, an existing file is refused
+        rather than replaced, so a mistyped path cannot destroy a file.
+        Environment: CONNECTOR_CLI_FORCE
+
+  --json
+        Print the whole response envelope instead of just the content.
+        Environment: CONNECTOR_CLI_JSON
+
+  --request-id ID
+        The request identifier to send, for correlating a call with a Server log. An
+        empty value generates one.
+        Environment: CONNECTOR_CLI_REQUEST_ID
+
+  -h, --help
+        Print this page and exit 0.
+
+  --version
+        Print the build this binary came from and exit 0. It is the same build string
+        the Server reports, because the cli subcommand is part of this binary.
+
+  CONNECTOR_CLI_ENV_FILE is not a flag. It names a file of KEY=VALUE lines that is
+  read before the environment, so one shell can hold several Nodes' settings and a
+  command selects one with CONNECTOR_CLI_ENV_FILE=/path/to/file. A value in the
+  environment wins over the file, and a flag wins over both.
+
+  The flags come before the operation name. Go's flag parser stops at the first
+  word that is not a flag, so an operation written before a flag turns that flag
+  into a stray argument and the command fails with a message about arguments rather
+  than about order.
 
 EXIT STATUS
   0   The operation succeeded.
-  1   The request failed.
+  1   The request failed. The message names the error code, for example denied or
+      not_found.
   2   The command line was rejected. The message begins "usage:", so a script can
       tell a rejected command line from a failed operation without parsing the text.
 
-EXAMPLE
-  {{program}} cli --scope project --path notes.md file.read
-  {{program}} cli --help
+EXAMPLES
+  The first three examples assume the four values below are already exported, because
+  a request cannot run without them. The last example shows the export itself.
+
+  Read a file:
+
+    {{program}} cli --scope project --path notes.md file.read
+
+  List a scope root, which takes an empty path rather than ".":
+
+    {{program}} cli --scope project --path "" file.list
+
+  Read a file into a local file:
+
+    {{program}} cli --scope project --path big.log -o ./big.log file.read
+
+  Every value can come from the environment instead, so a script can export them
+  once:
+
+    CONNECTOR_CLI_SERVER_URL=http://192.168.2.3:8743 \
+    CONNECTOR_CLI_CLIENT_CREDENTIAL=operator.<secret> \
+    CONNECTOR_CLI_NODE_ID=node_7f3a...9c1e \
+    CONNECTOR_CLI_NODE_CREDENTIAL=caller.<secret> \
+      {{program}} cli --scope project --path notes.md file.read
 `)
 }
 
