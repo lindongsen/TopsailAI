@@ -144,10 +144,20 @@ func printClientEnvironment(w io.Writer, config node.Config, nodeID string, cred
 // WebSocket, and the CLI posts to `/v1/` over HTTP. Printing the channel address as the
 // CLI address would send an operator to a path that answers nothing, so the scheme and
 // the path are rewritten here rather than left for the reader to work out.
+//
+// The scheme is mapped rather than replaced. A plaintext `ws://` channel is served by a
+// plaintext HTTP listener, so its CLI address is `http://`; only a TLS `wss://` channel
+// has an `https://` counterpart. Printing `https://` for a plaintext Server produces a
+// line that fails with "server gave HTTP response to HTTPS client", which reads as a
+// certificate problem rather than as a wrong summary.
 func cliServerURL(channelURL string) string {
+	scheme := "https://"
 	trimmed := channelURL
 	for _, prefix := range []string{"wss://", "ws://"} {
 		if len(trimmed) >= len(prefix) && trimmed[:len(prefix)] == prefix {
+			if prefix == "ws://" {
+				scheme = "http://"
+			}
 			trimmed = trimmed[len(prefix):]
 			break
 		}
@@ -158,7 +168,7 @@ func cliServerURL(channelURL string) string {
 			break
 		}
 	}
-	return "https://" + trimmed
+	return scheme + trimmed
 }
 
 // joinOrNone renders a list, or the word that says there is nothing to list.

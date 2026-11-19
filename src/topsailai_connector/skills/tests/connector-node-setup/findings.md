@@ -469,10 +469,89 @@ returned True.
   is a Windows console opened by a human double-clicking `run.cmd` in Explorer;
   the pty path exercises the same `isTerminal` branch, but the double-click path
   itself was not observed.
-- The end-to-end run used a plaintext `http://` Server, so the printed
-  `CONNECTOR_CLI_SERVER_URL=https://...` was rewritten to `http://` by hand for
-  that run, on Windows as well as on Linux. The rewrite itself is covered by the
-  unit tests, not by these runs.
+- The end-to-end run used a plaintext `http://` Server. At the time of that run the
+  summary printed `CONNECTOR_CLI_SERVER_URL=https://...` regardless of the channel
+  scheme, so the line was rewritten to `http://` by hand on Windows as well as on
+  Linux. That defect is now fixed: the scheme is mapped, `ws://` prints `http://`
+  and `wss://` prints `https://`. See
+  `issues/issue-startup-summary-prints-https-for-a-plaintext-server.md`. The
+  rewrite is no longer needed, and a later run must copy the printed line
+  unchanged.
 - The four `make check` e2e processes left behind by the suite were killed by
   exact PID after this evidence was collected; they were not part of the
   measurement.
+
+## Evidence: the double-click output the user pasted, verified end to end
+
+The user double-clicked `connector-node.exe` in Explorer and pasted the console
+output. That closes the limitation recorded above: the double-click path was
+observed, by the person who owns the machine, and the summary appeared in the
+window with the secret in full.
+
+The pasted identity was `node_rjkwb7zuy26vsajaj2pbnlssna`, key id
+`key_ncofi1iiwzmd-vphaz4xuq`. The Server log confirms the channel really opened:
+`channel established node_id=node_rjkwb7zuy26vsajaj2pbnlssna generation=17
+file_transport=binary-v1`, and `channel closed` when the window was closed.
+
+The pasted credential was then used from the build host. Every operation below
+was run against the live Server with the Node started from the desktop binary.
+
+| Operation | Result |
+|---|---|
+| `file.stat Windows/win.ini` | `rc=0`, `size 92`, `mode -rw-rw-rw-`, `is_symlink false` |
+| `file.read Windows/win.ini` | `rc=0`, real content (`; for 16-bit app support`, `[fonts]`, …) |
+| `file.list` on the scope root | `rc=0`, `$Recycle.Bin`, `Program Files`, `Users`, … |
+| absent scope `d` | `rc=1`, `not_found` |
+| undefined scope `nope` | `rc=1`, `denied` |
+| traversal `../Windows/win.ini` | `rc=1`, `invalid_argument` |
+| backslash `Windows\win.ini` | `rc=1`, `invalid_argument` |
+| config dir `credentials.yaml` | `rc=1`, `denied` |
+| missing file `nope.txt` | `rc=1`, `not_found` |
+
+The credential the user pasted therefore authenticates, and the fence refuses the
+cases it is supposed to refuse.
+
+### The pasted summary contained the scheme defect
+
+The pasted block printed `CONNECTOR_CLI_SERVER_URL=https://192.168.2.3:8743` while
+the Server is plaintext HTTP. Measured with that exact line:
+
+```
+connector-cli: call server: Post "https://192.168.2.3:8743/v1/nodes/.../operations":
+http: server gave HTTP response to HTTPS client
+rc=1
+```
+
+With `http://` the same request returns `rc=0`. The user's paste is therefore the
+first real-world sighting of the defect recorded in
+`issues/issue-startup-summary-prints-https-for-a-plaintext-server.md`, and it is
+the reason that issue exists rather than a hypothetical.
+
+### The rebuilt binary prints the right scheme
+
+The desktop binary was replaced with the fixed build, 9608192 bytes, sha256
+`538135857bf006ebd37ca029cf7e40d1f9c2d0ae64d01c78e0d19c8141918fbb`, matching the
+build host. Started from that binary with `ws://192.168.2.3:8743/channel`, the
+summary printed:
+
+```
+CONNECTOR_CLI_SERVER_URL=http://192.168.2.3:8743
+```
+
+That printed line was used unchanged and returned `rc=0` for `file.stat` and
+`file.read`. The fix is verified on the platform it was reported on, not only in a
+unit test.
+
+### The README contradicted the binary
+
+`README.txt` on the desktop still said `https://` on the line it told the reader to
+copy, so a reader following the README would have hit the TLS error the binary no
+longer produces. Corrected to `http://` and extended with the scheme rule: the
+scheme follows the channel address, `ws://` prints `http://`, `wss://` prints
+`https://`, and changing it by hand fails with `server gave HTTP response to HTTPS
+client`. Transferred and verified by md5 `a2265313d8705372c82723d961cbdc87` on both
+sides.
+
+A document that tells the reader to copy a line the product no longer prints is the
+same class of defect as the original: the reader follows the document, not the
+binary.

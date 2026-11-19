@@ -152,3 +152,15 @@ refuses to serve. The rule moved into the decoder, so every reader applies it; s
 The command adds no authority and no wire surface. The operator already owns the
 policy file, so printing its scope names grants nothing that opening the file does not
 already grant, and the Node stays the only authority for permissions.
+
+## The printed CLI address uses the scheme the channel actually speaks
+
+The startup summary prints `CONNECTOR_CLI_SERVER_URL` with a scheme derived from the
+channel address instead of a fixed `https://`: a `ws://` channel prints `http://`
+and a `wss://` channel prints `https://`, with `https://` as the default when the
+address carries no scheme. Before this, a Node dialling a plaintext Server printed
+an `https://` address, and copying that line failed with `http: server gave HTTP
+response to HTTPS client`, which reads as a certificate problem rather than as a
+wrong address. The mapping is what makes the printed block copyable as printed,
+which is the only reason the block exists; see
+`issues/issue-startup-summary-prints-https-for-a-plaintext-server.md`.

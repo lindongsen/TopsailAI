@@ -628,6 +628,45 @@ func TestRunNodeWithOutputNamesTheServerAndTheClientVariables(t *testing.T) {
 	}
 }
 
+// TestRunNodeWithOutputPrintsThePlaintextCLIAddress checks that a Node dialling a
+// plaintext channel prints a plaintext CLI address.
+//
+// The scheme must be mapped, not replaced. A `ws://` channel is served by a plaintext
+// HTTP listener, so `https://` in the summary sends the operator to a TLS handshake
+// against a plaintext port, which fails with "server gave HTTP response to HTTPS
+// client". That message names TLS, so the operator looks for a certificate problem
+// rather than for the summary that produced the wrong line.
+//
+// This test exists separately from the `wss://` fixture because a fixture that dials
+// `wss://` and asserts `https://` is consistent with either implementation: it cannot
+// tell a mapped scheme from an unconditional one.
+func TestRunNodeWithOutputPrintsThePlaintextCLIAddress(t *testing.T) {
+	configDir := setNodeEnvironment(t)
+	t.Setenv("CONNECTOR_NODE_SERVER_URL", "ws://192.168.2.3:8743/channel")
+	t.Setenv("CONNECTOR_NODE_POLICY_FILE", writeNodePolicy(t, configDir))
+
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+
+	var buffer strings.Builder
+	if err := runNodeWithOutput(nil, signals, &buffer, true); err != nil {
+		t.Fatalf("runNodeWithOutput() error = %v", err)
+	}
+	printed := buffer.String()
+
+	for _, want := range []string{
+		"server        : ws://192.168.2.3:8743/channel",
+		"CONNECTOR_CLI_SERVER_URL=http://192.168.2.3:8743",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Fatalf("stdout = %q, want %q", printed, want)
+		}
+	}
+	if strings.Contains(printed, "CONNECTOR_CLI_SERVER_URL=https://") {
+		t.Fatalf("stdout = %q, want no https address for a plaintext channel", printed)
+	}
+}
+
 // TestCLIServerURLRewritesTheChannelAddress checks the conversion from the address the
 // Node dials to the address the CLI calls.
 //
@@ -641,7 +680,9 @@ func TestCLIServerURLRewritesTheChannelAddress(t *testing.T) {
 		want    string
 	}{
 		{"wss with channel path", "wss://cloud.example.com:8443/channel", "https://cloud.example.com:8443"},
-		{"ws with channel path", "ws://192.168.2.3:8743/channel", "https://192.168.2.3:8743"},
+		{"ws with channel path", "ws://192.168.2.3:8743/channel", "http://192.168.2.3:8743"},
+		{"ws with trailing slash", "ws://192.168.2.3:8743/", "http://192.168.2.3:8743"},
+		{"ws with no path", "ws://192.168.2.3:8743", "http://192.168.2.3:8743"},
 		{"wss with trailing slash", "wss://cloud.example.com/", "https://cloud.example.com"},
 		{"wss with no path", "wss://cloud.example.com", "https://cloud.example.com"},
 	}
