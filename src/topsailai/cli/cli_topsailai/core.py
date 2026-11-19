@@ -1515,6 +1515,7 @@ def _workspace_json_item(file_info: dict, index: int,
     """
     from cli_topsailai.agent_launch_process import _process_identity
     from cli_topsailai.log_files import is_process_holding_file
+    from cli_topsailai.session_stats import row_last_stats
 
     pid = file_info.get("workspace_display_pid", file_info.get("workspace_pid"))
     status = file_info.get("workspace_status", "idle")
@@ -1577,6 +1578,16 @@ def _workspace_json_item(file_info: dict, index: int,
     metafile = file_info.get("_workspace_session_meta_data")
     if not isinstance(metafile, dict):
         metafile = None
+    # The stats file is an append-only log of cumulative snapshots, so only its
+    # last complete record describes the current state. It is per-PID, so it is
+    # the one source that describes this exact agent rather than the session it
+    # belongs to: a task row receives its own counters here even though the
+    # session lookup record is filtered to session-scoped keys. The read is one
+    # bounded tail seek per row, so it costs no directory scan and never grows
+    # with the file. A row without a usable record reports ``null`` rather than
+    # an empty object, and the key is always present so the item schema never
+    # changes shape between row kinds.
+    last_stats = row_last_stats(file_info)
     item = {
         "no": index,
         "filename": file_info.get("filename", ""),
@@ -1593,6 +1604,7 @@ def _workspace_json_item(file_info: dict, index: int,
         "project_workspace": file_info.get("project_workspace"),
         "hostname": hostname,
         "metafile": metafile,
+        "last_stats": last_stats,
         "runtime": runtime,
     }
     # The lookup record describes the session's live state and is already in
