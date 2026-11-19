@@ -168,10 +168,10 @@ failure on the user's machine.
 
 ### What the packaging prints
 
-The pair, and a CLI command that runs as soon as the user starts the bundle. The
-flags come before the operation because the CLI stops parsing flags at the first
-positional argument, so the operation must be last. Copy the command rather than
-retyping it.
+The node id, the node credential, and a CLI command that runs as soon as the user
+starts the bundle. The flags come before the operation because the CLI stops parsing
+flags at the first positional argument, so the operation must be last. Copy the
+command rather than retyping it.
 
 ### The bundle is a credential
 
@@ -245,10 +245,11 @@ its own executable through a scope, so a caller with `read` on the install folde
 cannot download the binary and extract the token. A normal build is served
 normally, because its bytes disclose nothing.
 
-The identity is deliberately **not** embedded. It is generated on the recipient's
-machine at first start, so two copies of one binary do not share a `node-id` and
-evict each other from the Server's registry. The recipient runs
-`connector-node id` once to learn the pair, exactly as with a normal build.
+The identity and the credential are deliberately **not** embedded. Both are
+created on the recipient's machine, so two copies of one binary do not share a
+`node-id` and evict each other from the Server's registry. The recipient runs
+`connector-node id` once to learn the address, then starts the binary once in a
+terminal to receive the credential it prints.
 
 That identity does **not** land beside the executable. A zip's start script exports
 `CONNECTOR_NODE_CONFIG_DIR="$HERE/config"`, so a bundle keeps its credentials in
