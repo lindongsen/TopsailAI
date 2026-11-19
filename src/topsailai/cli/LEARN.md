@@ -886,3 +886,32 @@ lower-privileged child can execute, and the failure surfaces as an exec error
 that looks like a product defect. Keep the venv semantics when substituting the
 path, and prove the fix with a negative control so a passing run cannot be
 mistaken for a masked failure.
+
+## A full-file read has no line numbers, so a range taken from it is an estimate
+
+### Trigger
+
+Ticking one unit in `plan_20261119T134512_session-info-include-runtime.md`, I
+passed `start_num=43, end_num=45` taken from a full `read_file` of that document.
+The range actually covered design decisions 3 and 4, so the tick replaced two
+design decisions with the unit entry and left the real `## Units` checkbox
+unticked. A second attempt then duplicated the entry, and a third dropped the
+`## Affected files` heading. Three writes were needed to restore a 90-line file.
+
+### Action taken
+
+Restored design decisions 3 and 4 verbatim, removed the duplicate unit line,
+re-added the blank line under `## Affected files`, and confirmed the final file by
+reading it whole: 5 design decisions, one ticked unit, 14 affected files, and the
+out-of-scope note all present.
+
+### Why this prevents recurrence
+
+`read_file` returns content without line numbers, so any number derived from it is
+a count, not a coordinate — and a count silently drifts by however many lines the
+reader mis-tallies. The overwrite tool's own contract requires the number to come
+from `read_file_lines`, `read_file_around_line`, or `read_file_with_context`,
+which print the file's own numbering. For a small document the cheapest safe
+procedure is to read the whole file *with* line numbers, edit exactly one range,
+then read it whole again; for a ledger tick, prefer appending a status line over
+replacing the checkbox line, because an append cannot delete a neighbour.
