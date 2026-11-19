@@ -156,6 +156,7 @@ func TestParseWatchArguments(t *testing.T) {
 		interval time.Duration
 		force    bool
 		all      bool
+		bell     bool
 		wantErr  bool
 	}{
 		{name: "WAT-U01 default", rest: "", interval: 5 * time.Second},
@@ -172,6 +173,12 @@ func TestParseWatchArguments(t *testing.T) {
 		{name: "WAT-U12 short all", rest: "-a", interval: 5 * time.Second, all: true},
 		{name: "WAT-U13 long all with force", rest: "--all --force", interval: 10 * time.Second, force: true, all: true},
 		{name: "WAT-U14 repeated all rejected", rest: "-a --all", wantErr: true},
+		{name: "WAT-U15 short bell", rest: "-b", interval: 5 * time.Second, bell: true},
+		{name: "WAT-U16 long bell", rest: "--bell", interval: 5 * time.Second, bell: true},
+		{name: "WAT-U17 bell with interval", rest: "2s -b", interval: 2 * time.Second, bell: true},
+		{name: "WAT-U18 bell with force and all", rest: "10s --force --all -b", interval: 10 * time.Second, force: true, all: true, bell: true},
+		{name: "WAT-U19 repeated bell rejected", rest: "-b --bell", wantErr: true},
+		{name: "WAT-U20 bell is off by default", rest: "2s", interval: 2 * time.Second},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -185,8 +192,8 @@ func TestParseWatchArguments(t *testing.T) {
 			if err != nil {
 				t.Fatalf("rest=%q error=%v", testCase.rest, err)
 			}
-			if request.Interval != testCase.interval || request.Force != testCase.force || request.All != testCase.all {
-				t.Fatalf("rest=%q request=%+v, want interval=%s force=%v all=%v", testCase.rest, request, testCase.interval, testCase.force, testCase.all)
+			if request.Interval != testCase.interval || request.Force != testCase.force || request.All != testCase.all || request.Bell != testCase.bell {
+				t.Fatalf("rest=%q request=%+v, want interval=%s force=%v all=%v bell=%v", testCase.rest, request, testCase.interval, testCase.force, testCase.all, testCase.bell)
 			}
 		})
 	}
@@ -1110,6 +1117,235 @@ func TestReplWatchPrintsRebindingForIdenticalBytes(t *testing.T) {
 	}
 }
 
+// TestShouldBellRingsOnAnyStateChange pins the bell rule, which is wider than
+// the trigger rule on purpose: the operator asked to hear any change, not one
+// specific transition. An unseen identity rings because the table gained a row,
+// and a replaced generation arrives as an unseen identity for the same reason.
+func TestShouldBellRingsOnAnyStateChange(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		previous string
+		next     string
+		known    bool
+		want     bool
+	}{
+		{name: "BEL-U01 running to waiting_input", previous: "running", next: "waiting_input", known: true, want: true},
+		{name: "BEL-U02 waiting_input to running", previous: "waiting_input", next: "running", known: true, want: true},
+		{name: "BEL-U03 running to stopped", previous: "running", next: "stopped", known: true, want: true},
+		{name: "BEL-U04 running to failed", previous: "running", next: "failed", known: true, want: true},
+		{name: "BEL-U05 unchanged state is silent", previous: "running", next: "running", known: true, want: false},
+		{name: "BEL-U06 unchanged waiting_input is silent", previous: "waiting_input", next: "waiting_input", known: true, want: false},
+		{name: "BEL-U07 unseen identity rings", previous: "", next: "running", known: false, want: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := shouldBell(testCase.previous, testCase.next, testCase.known); got != testCase.want {
+				t.Fatalf("shouldBell(%q, %q, known=%v)=%v, want %v", testCase.previous, testCase.next, testCase.known, got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestTriggerRuleIgnoresAnUnseenIdentity keeps the two rules distinguishable.
+// The trigger treats an unseen identity as a baseline, so a shared predicate
+// would either fire a script for every session already waiting or silence the
+// bell for a session that just appeared.
+func TestTriggerRuleIgnoresAnUnseenIdentity(t *testing.T) {
+	if triggerRule("", "waiting_input", false) {
+		t.Fatal("the trigger fired for an unseen identity, so arming the loop would fire for sessions that were already waiting")
+	}
+	if !triggerRule("running", "waiting_input", true) {
+		t.Fatal("the trigger did not fire for a real transition")
+	}
+	if triggerRule("waiting_input", "running", true) {
+		t.Fatal("the trigger fired for a transition it does not watch")
+	}
+}
+
+// TestWatchBellTrackerStaysSilentOnTheFirstCollection proves arming the loop
+// never rings for sessions that were already there. Without this the operator
+// would hear one bell per existing session the moment watch started.
+func TestWatchBellTrackerStaysSilentOnTheFirstCollection(t *testing.T) {
+	controller := &watchController{request: watchRequest{Bell: true}}
+	rows := []SessionRow{
+		{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"},
+		{EndpointID: "endpoint-1", ClusterSessionID: "res-2", ProviderGeneration: "generation-1", State: "waiting_input"},
+	}
+	if controller.observeBell(rows) {
+		t.Fatal("the first collection rang, so arming the loop would ring once per existing session")
+	}
+	if controller.observeBell(rows) {
+		t.Fatal("an unchanged second collection rang")
+	}
+}
+
+// TestWatchBellTrackerRingsOnAStateChange proves a real change rings once.
+func TestWatchBellTrackerRingsOnAStateChange(t *testing.T) {
+	controller := &watchController{request: watchRequest{Bell: true}}
+	controller.observeBell([]SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}})
+	changed := []SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "waiting_input"}}
+	if !controller.observeBell(changed) {
+		t.Fatal("a state change did not ring")
+	}
+	if controller.observeBell(changed) {
+		t.Fatal("the same state rang twice, so a session that stays waiting would ring on every tick")
+	}
+}
+
+// TestWatchBellTrackerRingsOnANewSession proves a session that appears after the
+// baseline rings, because the table gained a row the operator has not seen.
+func TestWatchBellTrackerRingsOnANewSession(t *testing.T) {
+	controller := &watchController{request: watchRequest{Bell: true}}
+	controller.observeBell([]SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}})
+	appeared := []SessionRow{
+		{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"},
+		{EndpointID: "endpoint-1", ClusterSessionID: "res-2", ProviderGeneration: "generation-1", State: "running"},
+	}
+	if !controller.observeBell(appeared) {
+		t.Fatal("a new session did not ring")
+	}
+}
+
+// TestWatchBellTrackerRingsOnAReplacedGeneration proves a replaced process rings
+// even when the state is unchanged, because the row now addresses a different
+// process and the operator should know the table moved under them.
+func TestWatchBellTrackerRingsOnAReplacedGeneration(t *testing.T) {
+	controller := &watchController{request: watchRequest{Bell: true}}
+	controller.observeBell([]SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}})
+	replaced := []SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-2", State: "running"}}
+	if !controller.observeBell(replaced) {
+		t.Fatal("a replaced generation did not ring")
+	}
+}
+
+// TestWatchBellTrackerRingsOnceForSeveralChanges proves one tick rings once even
+// when several sessions changed, because three bells in a row cannot be told
+// apart from one event ringing three times.
+func TestWatchBellTrackerRingsOnceForSeveralChanges(t *testing.T) {
+	controller := &watchController{request: watchRequest{Bell: true}}
+	controller.observeBell([]SessionRow{
+		{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"},
+		{EndpointID: "endpoint-1", ClusterSessionID: "res-2", ProviderGeneration: "generation-1", State: "running"},
+	})
+	changed := []SessionRow{
+		{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "waiting_input"},
+		{EndpointID: "endpoint-1", ClusterSessionID: "res-2", ProviderGeneration: "generation-1", State: "stopped"},
+	}
+	if !controller.observeBell(changed) {
+		t.Fatal("two changes did not ring")
+	}
+}
+
+// TestWatchBellTrackerIsSilentWithoutTheFlag proves a watch without --bell keeps
+// its previous behaviour exactly, so the flag is a real opt-in.
+func TestWatchBellTrackerIsSilentWithoutTheFlag(t *testing.T) {
+	controller := &watchController{}
+	controller.observeBell([]SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}})
+	changed := []SessionRow{{EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "waiting_input"}}
+	if controller.observeBell(changed) {
+		t.Fatal("a watch without --bell rang")
+	}
+}
+
+// TestReplWatchRingsOnAChangeItDoesNotReprint proves the bell is independent of
+// the suppression. A tick whose table is byte-identical still rings when the
+// loop observed a change, and it prints the bell alone so the table is not
+// reprinted for a change the operator cannot see in it.
+func TestReplWatchRingsOnAChangeItDoesNotReprint(t *testing.T) {
+	rows := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}}
+	state := &interactiveState{}
+	state.setRows(rows)
+	watch := &replWatch{controller: &watchController{}, state: state}
+	watch.controller.pending = &watchResult{rows: rows, output: []byte("1 | res-1 | running\n")}
+	if _, err := watch.Idle(); err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	watch.controller.pending = &watchResult{rows: rows, output: []byte("1 | res-1 | running\n"), bell: true}
+	payload, err := watch.Idle()
+	if err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	if string(payload) != "\a" {
+		t.Fatalf("payload=%q, want the bell alone for an unchanged table", payload)
+	}
+}
+
+// TestReplWatchBellDoesNotEnterTheSuppressionBaseline is the regression guard for
+// the one way this feature can break the loop: if the BEL were stored in
+// lastPayload, every following tick would differ from it and the table would
+// reprint forever.
+//
+// The bell tick must print a changed table, because a tick whose table is
+// unchanged returns from the suppression branch and never reaches the code that
+// stores lastPayload. A fixture that rang on an unchanged table would pass even
+// with the defect present, which is exactly what the first version of this test
+// did.
+func TestReplWatchBellDoesNotEnterTheSuppressionBaseline(t *testing.T) {
+	running := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}}
+	stopped := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "stopped"}}
+	state := &interactiveState{}
+	state.setRows(running)
+	watch := &replWatch{controller: &watchController{}, state: state}
+	watch.controller.pending = &watchResult{rows: running, output: []byte("1 | res-1 | running\n")}
+	if _, err := watch.Idle(); err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	// This tick prints a changed table and rings, so it reaches the store.
+	watch.controller.pending = &watchResult{rows: stopped, output: []byte("1 | res-1 | stopped\n"), bell: true}
+	if _, err := watch.Idle(); err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	// The same table again must be silent. If the BEL was stored in lastPayload,
+	// this payload differs from it by exactly one byte and reprints.
+	watch.controller.pending = &watchResult{rows: stopped, output: []byte("1 | res-1 | stopped\n")}
+	payload, err := watch.Idle()
+	if err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	if len(payload) != 0 {
+		t.Fatalf("payload=%q, want silence after a bell tick, so the table does not reprint forever", payload)
+	}
+}
+
+// TestReplWatchAppendsTheBellAfterTheTable proves a changed table is printed and
+// then rings, so the operator both sees the change and hears it.
+func TestReplWatchAppendsTheBellAfterTheTable(t *testing.T) {
+	rows := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "running"}}
+	state := &interactiveState{}
+	state.setRows(rows)
+	watch := &replWatch{controller: &watchController{}, state: state}
+	watch.controller.pending = &watchResult{rows: rows, output: []byte("1 | res-1 | running\n")}
+	if _, err := watch.Idle(); err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	changed := []SessionRow{{No: 1, EndpointID: "endpoint-1", ClusterSessionID: "res-1", ProviderGeneration: "generation-1", State: "stopped"}}
+	watch.controller.pending = &watchResult{rows: changed, output: []byte("1 | res-1 | stopped\n"), bell: true}
+	payload, err := watch.Idle()
+	if err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	if !strings.Contains(string(payload), "stopped") {
+		t.Fatalf("payload=%q, want the changed table", payload)
+	}
+	if !strings.HasSuffix(string(payload), "\a") {
+		t.Fatalf("payload=%q, want the bell after the table", payload)
+	}
+}
+
+// TestReplWatchDoesNotRingOnAFailedCollection proves a failure is reported as a
+// diagnostic without a bell, because nothing about the inventory changed.
+func TestReplWatchDoesNotRingOnAFailedCollection(t *testing.T) {
+	state := &interactiveState{}
+	watch := &replWatch{controller: &watchController{}, state: state}
+	watch.controller.pending = &watchResult{err: errors.New("boom"), bell: true}
+	payload, err := watch.Idle()
+	if err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	if strings.Contains(string(payload), "\a") {
+		t.Fatalf("payload=%q, want no bell for a failed collection", payload)
+	}
+}
+
 // TestReplWatchReportsFailureAsDiagnostic proves a failed refresh never ends the
 // session and never mutates row bindings.
 func TestReplWatchReportsFailureAsDiagnostic(t *testing.T) {
@@ -1197,7 +1433,7 @@ func TestWatchHelpDocumentsTheStopRule(t *testing.T) {
 		t.Fatalf("PrintScopedCommandHelp: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]]", "workspace, endpoint", "-a, --all: include Endpoints that are not online", "any keypress stops the loop", "-t, --trigger: run a script when a session changes from running to waiting_input", "topsailai-agent-cluster.on-state-change.trigger", "an online endpoint that fails to report is named beside the table instead of replacing it"} {
+	for _, want := range []string{"watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]] [-b|--bell]", "workspace, endpoint", "-a, --all: include Endpoints that are not online", "any keypress stops the loop", "-t, --trigger: run a script when a session changes from running to waiting_input", "-b, --bell: ring the terminal bell once on any state change", "topsailai-agent-cluster.on-state-change.trigger", "an online endpoint that fails to report is named beside the table instead of replacing it"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q: %q", want, text)
 		}

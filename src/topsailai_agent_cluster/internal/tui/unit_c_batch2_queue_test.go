@@ -262,8 +262,8 @@ func unitC19MainHelp() string {
 // Its syntax is wider than the block column, so the description hangs on the next
 // line at the shared description column.
 func unitC19WatchHelpLine() string {
-	return "  watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]]\n" +
-		"                                        re-render the list on a timer until any key is pressed; --trigger runs a script when a session starts waiting for input\n"
+	return "  watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]] [-b|--bell]\n" +
+		"                                        re-render the list on a timer until any key is pressed; --trigger runs a script when a session starts waiting for input, and --bell rings the terminal bell on any state change\n"
 }
 
 // unitC19StartHelpLine is a fixed independent overview line shared by two scopes.

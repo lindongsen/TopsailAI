@@ -29,6 +29,11 @@ const (
 type watchRequest struct {
 	Interval time.Duration
 	Force    bool
+	// Bell emits one terminal BEL when a tick prints a changed table. It is an
+	// explicit opt-in because a bell is intrusive, and it is written by the
+	// editor rather than by a trigger script: a script's streams are captured
+	// pipes, so only the editor's own output reaches the operator's terminal.
+	Bell bool
 	// All includes Endpoints that are not online. Projection mode shares list's
 	// selection rule, while forced mode applies the same rule before provider
 	// discovery so a repeating watch does not probe a known-offline Endpoint.
@@ -71,12 +76,12 @@ type WatchLineReader interface {
 // watchUsage is the interactive usage line. One constant keeps every rejection
 // message identical, so an operator never has to compare two spellings of the
 // same grammar.
-const watchUsage = "usage: watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]]"
+const watchUsage = "usage: watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]] [-b|--bell]"
 
 // parseWatchArguments decodes the interactive watch grammar.
 // Accepted forms are "watch", "watch <interval>", "watch --force",
 // "watch <interval> --force", and either of those with "-a", "--all", "-t",
-// "--trigger", "-t=<path>" or "--trigger=<path>" appended.
+// "--trigger", "-t=<path>", "--trigger=<path>", "-b" or "--bell" appended.
 //
 // --trigger is a flag with an optional value rather than a positional argument,
 // because the interval is already positional and a bare path would be
@@ -103,6 +108,15 @@ func parseWatchArguments(rest string) (watchRequest, error) {
 				return watchRequest{}, fmt.Errorf("%s", watchUsage)
 			}
 			request.All = true
+		case token == "-b" || token == "--bell":
+			// -b is a spelling of the same flag rather than a second flag, so a
+			// repeated spelling in any combination is a usage error for the same
+			// reason --trigger rejects one: resolving it by precedence would
+			// silently ignore something the operator stated.
+			if request.Bell {
+				return watchRequest{}, fmt.Errorf("%s", watchUsage)
+			}
+			request.Bell = true
 		case token == "--trigger" || token == "-t":
 			if request.TriggerSet {
 				return watchRequest{}, fmt.Errorf("%s", watchUsage)
@@ -154,6 +168,11 @@ type watchResult struct {
 	rows   []SessionRow
 	output []byte
 	err    error
+	// bell reports that this collection observed a change the operator asked to
+	// hear. It travels with the result instead of being written by the collector,
+	// because the editor is the only writer: a bell written from the collection
+	// goroutine would race the input block the editor is redrawing.
+	bell bool
 }
 
 // watchWriter sanitizes trusted table output while reporting the real output
@@ -192,6 +211,12 @@ type watchController struct {
 	// tracker remembers the last observed state per session identity, so the
 	// trigger fires on a transition rather than on a state.
 	tracker triggerTracker
+	// bellTracker is a second baseline for the bell rule. It is a separate
+	// tracker rather than a second predicate on one tracker because the two rules
+	// disagree about an unseen identity: the trigger treats it as a baseline,
+	// while the bell treats it as a change. One baseline cannot answer both, and
+	// sharing the baseline logic keeps the two from drifting.
+	bellTracker triggerTracker
 
 	mu      sync.Mutex
 	pending *watchResult
@@ -277,15 +302,35 @@ func (c *watchController) collect() {
 		c.publishFailure(err)
 		return
 	}
+	// The bell is decided here, on the collection goroutine, because the baseline
+	// it compares against belongs to this loop. It travels to the editor as a
+	// flag rather than as a byte: writing the byte here would race the editor's
+	// own redraw of the same rows.
+	bell := c.observeBell(rows)
 	c.mu.Lock()
 	c.lastErr = ""
-	c.pending = &watchResult{rows: rows, output: output}
+	c.pending = &watchResult{rows: rows, output: output, bell: bell}
 	c.mu.Unlock()
 	// The trigger runs after the table is published, so a slow script can never
 	// delay the render the operator is waiting for. It runs on this goroutine
 	// rather than the editor thread, so a script that blocks cannot delay a
 	// keypress.
 	c.fireTriggers(rows)
+}
+
+// observeBell reports whether this collection should ring the terminal bell.
+//
+// It is a no-op unless the operator armed --bell, so a watch without the flag
+// keeps its previous behaviour exactly. The baseline is separate from the
+// trigger's baseline because the two rules disagree about an unseen identity:
+// the trigger treats it as a baseline, while the bell treats it as a change,
+// since the table gained a row the operator has not seen yet.
+func (c *watchController) observeBell(rows []SessionRow) bool {
+	if !c.request.Bell {
+		return false
+	}
+	c.bellTracker.fires = shouldBell
+	return len(c.bellTracker.observe(rows)) > 0
 }
 
 // fireTriggers runs the trigger script for every transition this collection
@@ -491,11 +536,27 @@ func (w *replWatch) Idle() ([]byte, error) {
 	// every tick. Rendered bytes alone are not sufficient evidence: a generation
 	// change can render identical text, so a rebinding must always print even
 	// when the table looks the same.
-	if !rebound && w.hasPayload && bytes.Equal(payload, w.lastPayload) {
+	unchanged := !rebound && w.hasPayload && bytes.Equal(payload, w.lastPayload)
+	if unchanged {
+		// A suppressed table still rings when the loop observed a change, because
+		// the bell answers "did something change" while the suppression answers
+		// "is the table different". Returning the bell alone keeps the two
+		// decisions independent instead of making the bell a side effect of
+		// printing.
+		if result.bell {
+			return []byte{'\a'}, nil
+		}
 		return nil, nil
 	}
 	w.lastPayload = append(w.lastPayload[:0], payload...)
 	w.hasPayload = true
+	// The bell is appended after lastPayload is stored, never before. The
+	// suppression above compares the next payload against lastPayload, so a BEL
+	// stored in lastPayload would make every following tick differ and reprint
+	// the table forever.
+	if result.bell {
+		payload = append(payload, '\a')
+	}
 	return payload, nil
 }
 
@@ -556,6 +617,16 @@ func interactiveWatch(api InteractiveAPI, state *interactiveState, rest string, 
 	}
 	if _, err = fmt.Fprintf(out, "auto-refresh: %s %s (any key stops)\n", request.Interval, mode); err != nil {
 		return err
+	}
+	// The bell line is printed before the trigger branch returns, because the two
+	// are independent: an operator may arm the bell alone, the script alone, or
+	// both. Naming the scope here matters because "any state change" is a wider
+	// rule than the trigger's single transition, and an operator who expected one
+	// specific transition would otherwise read every bell as that transition.
+	if request.Bell {
+		if _, err = fmt.Fprintf(out, "bell: on any state change\n"); err != nil {
+			return err
+		}
 	}
 	if !request.TriggerSet {
 		return nil

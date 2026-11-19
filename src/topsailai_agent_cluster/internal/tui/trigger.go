@@ -88,6 +88,27 @@ func shouldTrigger(previous, next string) bool {
 	return previous == protocol.SessionStateRunning && next == protocol.SessionStateWaitingInput
 }
 
+// shouldBell decides whether one observation rings the terminal bell.
+//
+// The bell answers a different question than the trigger: the operator asked to
+// hear any change in the table, not one specific transition. A state that
+// differs from the previous observation is a change, and an identity the
+// baseline has never seen is a change too, because the table gained a row. A
+// replaced provider generation arrives as an unseen identity for the same
+// reason, so a new process is announced rather than compared with the process it
+// replaced.
+func shouldBell(previous, next string, known bool) bool {
+	return !known || previous != next
+}
+
+// triggerRule is the trigger predicate in the shape the tracker calls, so one
+// baseline implementation can serve both rules. An unseen identity is never a
+// transition for the trigger, because the first observation of a session is a
+// baseline rather than an event.
+func triggerRule(previous, next string, known bool) bool {
+	return known && shouldTrigger(previous, next)
+}
+
 // triggerKey is the identity a baseline is remembered against. It is the same
 // identity the row table uses, so a row number can never be mistaken for a
 // session and a replaced process is never mistaken for the same one.
@@ -104,6 +125,15 @@ type triggerKey struct {
 // waiting for input, and a session that stays waiting would fire on every tick.
 type triggerTracker struct {
 	states map[triggerKey]string
+	// primed records that one observation has already been applied. The first
+	// observation describes what was already there, so it establishes a baseline
+	// and fires nothing whatever the rule says about an unseen identity. Without
+	// this flag the bell rule would ring once for every session in the fleet the
+	// moment the loop started.
+	primed bool
+	// fires decides whether one observation fires. A nil value keeps the trigger
+	// rule, so a tracker built without a rule behaves exactly as before.
+	fires func(previous, next string, known bool) bool
 }
 
 // observe records the current states and returns the transitions that fire.
@@ -116,6 +146,12 @@ func (t *triggerTracker) observe(rows []SessionRow) []TriggerEvent {
 	if t.states == nil {
 		t.states = make(map[triggerKey]string, len(rows))
 	}
+	first := !t.primed
+	t.primed = true
+	rule := t.fires
+	if rule == nil {
+		rule = triggerRule
+	}
 	seen := make(map[triggerKey]struct{}, len(rows))
 	events := make([]TriggerEvent, 0, 1)
 	for _, row := range rows {
@@ -123,7 +159,7 @@ func (t *triggerTracker) observe(rows []SessionRow) []TriggerEvent {
 		seen[key] = struct{}{}
 		previous, known := t.states[key]
 		t.states[key] = row.State
-		if !known || !shouldTrigger(previous, row.State) {
+		if first || !rule(previous, row.State, known) {
 			continue
 		}
 		events = append(events, TriggerEvent{

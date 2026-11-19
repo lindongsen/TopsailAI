@@ -1,7 +1,7 @@
 ---
 name: agent-cluster-watch-trigger
-description: Use when a user wants a local script to run automatically when a watched Agent Cluster session becomes blocked on input, or when they ask what environment variables such a script receives, why it did not run, how to make `watch --trigger` fire, or how to add a reaction of their own. Covers the `watch --trigger` command surface, the default script path, the thirteen `AGENT_CLUSTER_*` payload variables, the whitelisted child environment, the five second timeout, the foreground-only limits of the mechanism, and the shipped generic executor that dispatches on the state transition and runs one independent behaviour script per reaction (a system bell sound and a desktop notification popup on `running -> waiting_input`).
-version: 1.3.0
+description: Use when a user wants a local script to run automatically when a watched Agent Cluster session becomes blocked on input, when they want an audible bell in their own terminal on any state change while watching (including over ssh), or when they ask what environment variables such a script receives, why it did not run, how to make `watch --trigger` fire, or how to add a reaction of their own. Covers the `watch --trigger` and `watch --bell` command surfaces, the default script path, the thirteen `AGENT_CLUSTER_*` payload variables, the whitelisted child environment, the five second timeout, the foreground-only limits of the mechanism, and the shipped generic executor that dispatches on the state transition and runs one independent behaviour script per reaction (a system bell sound on the CLI host and a desktop notification popup on `running -> waiting_input`).
+version: 1.4.0
 author: DawsonLin
 license: Apache-2.0
 metadata:
@@ -14,8 +14,14 @@ metadata:
 ## Overview
 
 `agent-cluster-cli` runs an interactive REPL. Its `watch` command re-renders the session
-table on a timer until any key is pressed. With `--trigger`, `watch` also runs one local
-script when a watched session transitions from `running` to `waiting_input`.
+table on a timer until any key is pressed. Two independent reactions can be armed on it:
+
+- `--trigger` runs one local script when a watched session transitions from `running` to
+  `waiting_input`.
+- `--bell` rings the operator's own terminal once on any state change in the table.
+
+The bell is the answer for an operator who ssh'd into a node and wants to hear something
+locally. A script cannot do that, because the runner captures and discards its output.
 
 The mechanism exists so an operator who is already looking at the table can react without
 typing a second command. It is a **foreground convenience**, not a reliability promise:
@@ -32,20 +38,22 @@ the Endpoint drive controller or a provider hook instead.
 ## When to Use
 
 Use this skill when the user wants a local script to run on a session state transition
-while they are watching, or when they are debugging why such a script did not run.
+while they are watching, when they want an audible bell in their own terminal on any state
+change while watching, or when they are debugging why such a script did not run.
 
 Do not use this skill when the user needs:
 
 - Reaction that survives a closed terminal, a disconnect, or a reboot. That belongs in the
   Endpoint or in the provider's own hook surface.
 - Reaction to a transition that may complete in under ten seconds. Sampling cannot see it.
-- Reaction to a state other than `running -> waiting_input`. Only that transition fires
-  today; other transitions are a code change, not a configuration change.
+- Reaction to a state other than `running -> waiting_input` from a **script**. Only that
+  transition fires a script today; other transitions are a code change, not a configuration
+  change. `--bell` is the exception, because it already rings on any state change.
 
 ## Command Surface
 
 ```text
-watch [interval] [--force] [-t|--trigger[=<path>]]
+watch [interval] [--force] [-a|--all] [-t|--trigger[=<path>]] [-b|--bell]
 ```
 
 | Form | Meaning |
@@ -60,6 +68,11 @@ watch [interval] [--force] [-t|--trigger[=<path>]]
 | `watch --trigger=` | Rejected. An empty path is a usage error rather than a silent fallback to the default. |
 | `watch -t=` | Rejected for the same reason. |
 | `watch -t <path>` | Rejected. The value is attached with `=`, because the interval is already positional. |
+| `watch --bell` | Ring the operator's own terminal once on any state change. |
+| `watch -b` | The same request, written with the short spelling. |
+| `watch -t -b` | Combine the script and the bell; they are independent. |
+| `watch --bell --bell` | Rejected. A repeated flag is a usage error, never a silent override. |
+| `watch -b --bell` | Rejected. The two spellings name one flag, so repeating it in any combination is a usage error. |
 
 A relative `--trigger=<path>` or `-t=<path>` is resolved with `filepath.Abs`, so it is
 relative to the directory the CLI was started in, not to the session working directory.
@@ -68,7 +81,8 @@ relative to the directory the CLI was started in, not to the session working dir
 because a forced refresh can invalidate the pinned session.
 
 `--json` is rejected in interactive mode, so a trigger script is the only machine-readable
-output path `watch` offers.
+output path `watch` offers. `--bell` is a terminal signal rather than data, so it has no
+machine-readable form and no `--json` interaction.
 
 ### Default script path
 
@@ -275,9 +289,14 @@ the whole group at five seconds regardless.
 
 ### The shipped behaviours
 
-`running_to_waiting_input/bell.py` plays the system bell sound. `running_to_waiting_input/notify.py`
-raises a desktop notification popup. Both are external channels, because the runner captures and
-discards the script's terminal streams and a terminal BEL was not audible to the operator.
+`running_to_waiting_input/bell.py` plays the system bell sound on the CLI host.
+`running_to_waiting_input/notify.py` raises a desktop notification popup. Both are external
+channels, because the runner captures and discards the script's terminal streams, so a BEL written
+by a script never reaches the terminal.
+
+Neither behaviour is how an operator gets a bell in their own terminal over ssh. That is
+`watch --bell`, a CLI flag described under "The Bell Flag" below. Reach for the flag first when the
+reaction is a bell, and for a behaviour only when the reaction must be something else.
 
 ```python
 def behaviour_files(key):
@@ -396,10 +415,92 @@ watch --trigger
 watch -t
 watch 2s --trigger=/path/to/another/script
 watch 2s -t=/path/to/another/script
+watch --bell
+watch -t -b
 ```
 
 The banner prints `trigger: <path> on running -> waiting_input` when a script is armed, or
-one note explaining why none will run.
+one note explaining why none will run. It prints `bell: on any state change` when the bell is
+armed, on its own line, so the two banners never contradict each other.
+
+## The Bell Flag
+
+`watch --bell` (or `-b`) rings the operator's own terminal once when the observed table
+changes. It is a CLI flag, not a behaviour script, and the difference is the whole reason it
+exists.
+
+| Property | `--bell` | `--trigger` behaviour script |
+|---|---|---|
+| Where the reaction happens | The operator's terminal, over the ssh pty | The CLI host |
+| Who writes it | The line editor, which owns the terminal | The script, whose output is captured and discarded |
+| Which changes ring | Any state change in the table | Only `running -> waiting_input` |
+| Needs a script | No | Yes, plus a wrapper at the default path |
+| Works on a headless node | Yes, the bell travels to the operator | Only if the host has a desktop session |
+
+The two are independent and combine: `watch -t -b` runs the script and rings the bell.
+
+### Why a script cannot do this
+
+The trigger runner starts a script with `StdoutPipe` and `StderrPipe` and discards both, because
+the editor is the only writer allowed to touch the table. A `printf '\a'` inside a behaviour
+therefore lands in a pipe and never reaches the terminal. That is why the shipped `bell.py` plays
+audio through PulseAudio instead, and why it exits 0 silently on a host with no audio session.
+
+The `--bell` path is different in kind: the BEL byte is appended to the payload the editor writes
+to the terminal, so it travels the same pty the table does. An operator who ssh'd into a node
+hears it locally, which no script on the remote host can arrange.
+
+### Which changes ring
+
+| Observation | Rings |
+|---|---|
+| First collection of the loop | No. It is the baseline, so arming the loop never rings for sessions that were already there. |
+| A session's state changes | Yes. |
+| A session appears that was not in the baseline | Yes. The table gained a row the operator has not seen. |
+| A session's provider generation is replaced | Yes. A replaced process is a new subject, not a transition of the old one. |
+| A session disappears | No. See below. |
+| The table is unchanged | No. |
+| The collection failed | No. A failure is not a state change. |
+| Several sessions change in one tick | One bell, not several. Three bells in a row cannot be told apart from one event ringing three times. |
+
+A disappearance is deliberately silent, and the reason is that the row set cannot tell the two
+causes apart. A session that ended and an Endpoint that stopped reporting both remove rows, and
+ringing for the second case would make an offline Endpoint sound like a fleet-wide shutdown. The
+baseline drops keys that are no longer reported so a long watch cannot grow without bound, but it
+fires nothing for them.
+
+The bell rule is deliberately wider than the trigger rule, and the two need separate baselines:
+the trigger treats an unseen identity as a baseline, while the bell treats it as a change. One
+baseline cannot answer both questions.
+
+### The bell and the suppression are two decisions
+
+`watch` suppresses a tick whose table is byte-identical to the previous one, so an idle loop does
+not reprint the table. The bell answers a different question: did anything change? A tick that
+prints nothing still rings when a change was observed, because the change was real even though the
+rendered table looks the same.
+
+The BEL is appended to the payload **after** the payload is stored as the previous one. Storing
+the BEL would make every later tick differ from the stored value and reprint the table forever.
+
+### What the operator sees
+
+The banner prints `bell: on any state change` on its own line when the flag is armed. It is
+printed before the trigger line, because the two are independent: an operator may arm the bell
+alone, the script alone, or both, and a trigger note must never suppress the bell line.
+
+### Debugging a bell that never rings
+
+1. **The banner does not say `bell: on any state change`.** The flag was not parsed. Check the
+   spelling: `-b` and `--bell` are the only forms, and a repeated flag is a usage error.
+2. **Nothing changed.** The bell is silent on an unchanged table by design. Confirm the table
+   actually differs between two ticks.
+3. **The change happened between two collections.** Sampling cannot see it. The delay is the
+   Endpoint collection interval, not the watch interval.
+4. **The byte was written but nothing was heard.** Whether a BEL is audible or shown as a flash is
+   decided by the operator's terminal. A multiplexer such as tmux or screen may swallow a bell from
+   a window that is not current, and some terminals disable it entirely. Confirm in the real
+   terminal rather than by inspecting the byte.
 
 ## Debugging a Script That Never Runs
 
@@ -428,8 +529,9 @@ Check these in order. Each one has a distinct symptom.
   writing the script, and route the requirement to the Endpoint or a provider hook.
 - **Expecting instant reaction.** The delay is the collection interval, about ten seconds.
   Shortening the watch interval does not help, because it only re-reads the same document.
-- **Expecting every transition.** Only `running -> waiting_input` fires. A round trip that
-  completes between two collections is invisible.
+- **Expecting every transition from a script.** Only `running -> waiting_input` fires a script.
+  A round trip that completes between two collections is invisible. If the operator wants every
+  change, offer `--bell` instead of a script.
 - **Reading a credential from the environment.** The environment is a whitelist and carries
   no credential. A script that needs one reads its own file.
 - **Printing to the terminal.** Output is discarded, and the editor owns the terminal. A
@@ -449,6 +551,20 @@ Check these in order. Each one has a distinct symptom.
 - **Assuming a script failure is retried.** It is reported once and dropped.
 - **Assuming a dropped overlap is queued.** It is dropped with one diagnostic, because a
   backlog would describe states the operator already saw.
+- **Writing a behaviour script to ring a bell over ssh.** The runner captures and discards the
+  script's stdout and stderr, so `printf '\a'` inside a behaviour never reaches the terminal, and
+  the shipped `bell.py` plays audio on the CLI host instead. An operator who ssh'd into a headless
+  node wants the bell in their own terminal, which is what `watch --bell` does. Reach for the flag
+  first and a behaviour only when the reaction must be something other than a bell.
+- **Expecting `--bell` to ring for a table that did not change.** The bell answers "did something
+  change", not "is the table different", so it stays silent on an unchanged tick. A tick that
+  prints nothing still rings when a change was observed, because the suppression and the bell are
+  two independent decisions.
+- **Expecting `--bell` to ring once per changed session.** It rings once per tick, because three
+  bells in a row cannot be told apart from one event ringing three times.
+- **Assuming a bell was heard because the byte was written.** Whether a BEL is audible or shown as
+  a flash is decided by the operator's terminal, and a multiplexer such as tmux or screen may
+  swallow a bell from a window that is not current. Confirm it in the real terminal.
 
 ## Verification Checklist
 
@@ -466,6 +582,9 @@ Check these in order. Each one has a distinct symptom.
       with the terminal.
 - [ ] A popup was observed on the operator's screen, not merely a zero exit status. A script
       that cannot reach the session bus still exits 0, so the exit status alone proves nothing.
+- [ ] When the operator wanted a bell over ssh, `--bell` was offered instead of a behaviour
+      script, and the bell was confirmed in the operator's own terminal rather than by the
+      presence of the byte.
 
 ## File Structure Description
 
@@ -473,10 +592,12 @@ Check these in order. Each one has a distinct symptom.
 - **scripts/**: `watch-trigger-exec.py` is the generic executor. It reads the transition from the
   payload, resolves the behaviour directory and runs every behaviour in it under one deadline. It
   contains no reaction and no transition-specific condition. `behaviours/` holds the reactions:
-  `running_to_waiting_input/bell.py` plays one system bell sound and
+  `running_to_waiting_input/bell.py` plays one system bell sound on the CLI host and
   `running_to_waiting_input/notify.py` raises one desktop notification popup, while
   `behaviours/_desktop.py` is a shared helper that the executor skips because its name begins with
   an underscore. Install the executor by pointing a one-line bash wrapper at it from the default
-  path; add a reaction by dropping one executable file into a transition directory.
+  path; add a reaction by dropping one executable file into a transition directory. The `--bell`
+  flag is not a behaviour: it is a CLI flag, so it needs no script, no wrapper and no transition
+  directory.
 - **references/**: None. The payload table and the execution contract above are complete.
 - **assets/**: None.
