@@ -2,12 +2,11 @@
 
 Author: DawsonLin
 
-The command publishes the workspace-list item for one exact process, restricted
-to three groups: the session identity, the ``runtime`` object and the
-``metafile`` object. These tests therefore assert parity against
-``topsailai workspace list --json --include-runtime`` instead of a frozen copy of
-its fields, and they assert the selector and ownership rules that make the
-projection safe.
+The command publishes the workspace-list item for one exact process, minus the
+keys that exist only to render a listing. These tests therefore assert parity
+against ``topsailai workspace list --json --include-runtime`` instead of a frozen
+copy of its fields, and they assert the selector and ownership rules that make
+the projection safe.
 """
 
 import json
@@ -163,7 +162,7 @@ class TestResolveTarget:
 
 
 class TestProjection:
-    """The document must be the list item's three groups, not a copy of them."""
+    """The document must be the list item minus its presentation keys."""
 
     def test_document_matches_the_workspace_list_item(self, tmp_path: Path):
         """Every published value must equal the list's value for the same row."""
@@ -186,26 +185,59 @@ class TestProjection:
         assert produced["metafile"]["session_id"] == "parity"
         assert produced["metafile"]["pid"] == os.getpid()
 
-    def test_only_the_three_groups_are_published(self, tmp_path: Path):
-        """List presentation keys must not leak into the projected document."""
+    def test_only_list_presentation_keys_are_removed(self, tmp_path: Path):
+        """Every session-record field must survive; only listing keys are cut.
+
+        A keep-list would drop each field the session record gains later, so the
+        contract is stated as an exclusion: the document is the list item minus
+        the presentation keys, and a session-record field is published without
+        being named here.
+        """
         home = make_home(tmp_path)
         manager = manager_for(tmp_path)
         manager.create_session(SessionData(session_id="s", task="Task"))
         write_stdout(home, "s", os.getpid())
+        item = {
+            "no": 1,
+            "filename": "s.%d.session.stdout" % os.getpid(),
+            "session_id": "s",
+            "session_name": "s",
+            "project_workspace": "/w",
+            "is_task": False,
+            "session_qualifier": None,
+            "pid": os.getpid(),
+            "status": "input",
+            "status_raw": "Running",
+            "hostname": "h",
+            "created_at": "2026-11-19T16:50:05+0800",
+            "completed": False,
+            "driver": {"reason": "metadata_missing"},
+            "process_generation": 7,
+            "total_prompt_tokens": 502864,
+            "tool_call_count": 8,
+            "model_name": "DeepSeek-V4-Flash-Preview",
+            "runtime": {"state": "ok"},
+            "metafile": {"pid": os.getpid()},
+        }
 
         with patch("topsailai.context.ctx_manager.get_session_manager",
                    return_value=manager), \
+             patch("cli_topsailai.core._workspace_json_item",
+                   return_value=item), \
              patch("cli_topsailai.workspace_runtime.collect_workspace_runtime",
                    return_value={}):
             produced = json.loads(ri.build_document("s", os.getpid(), home))
 
-        assert set(produced) == {
-            "session_id", "session_name", "project_workspace", "is_task",
-            "session_qualifier", "pid", "status", "runtime", "metafile",
-        }
-        for excluded in ("no", "filename", "hostname", "created_at",
-                         "completed", "driver", "process_generation"):
+        assert set(produced) == set(item) - set(ri.EXCLUDED_KEYS)
+        for excluded in ri.EXCLUDED_KEYS:
             assert excluded not in produced
+        # A session-record field must be published without being enumerated.
+        assert produced["total_prompt_tokens"] == 502864
+        assert produced["tool_call_count"] == 8
+        assert produced["model_name"] == "DeepSeek-V4-Flash-Preview"
+        assert produced["status_raw"] == "Running"
+        assert produced["runtime"] == {"state": "ok"}
+        assert produced["metafile"] == {"pid": os.getpid()}
 
     def test_metafile_is_null_without_a_record(self, tmp_path: Path):
         """A row without a metadata record reports ``null``, not an empty object."""

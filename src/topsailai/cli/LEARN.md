@@ -1089,3 +1089,37 @@ has all three equal. Whenever a function accepts an identifier and then passes i
 to a second subsystem, translate it once at the boundary and pass the translated
 value, and keep the published value whatever the reference command publishes
 rather than the spelling the caller used.
+
+## A keep-list of published fields silently drops every field added later
+
+### Trigger
+
+`topsailai runtime info` published 10 keys while the workspace-list item it
+claimed to mirror carried 48. The user reported "显示内容少了". The 10 published
+values were all correct, so no test failed: `IDENTITY_KEYS` was a hand-written
+8-key tuple, and the 31 session-record fields the list carries were never named
+in it.
+
+### Action taken
+
+Replaced the keep-list with an exclusion set of the seven keys that exist only to
+render a listing (`no`, `filename`, `hostname`, `created_at`, `completed`,
+`driver`, `process_generation`), so the document is the list item minus those
+keys. The manager document went from 10 to 41 keys and the worker document from
+9 to 13, both byte-equal to the corresponding list item minus the exclusions.
+Rewrote the pinning test to assert the exclusion rule and to assert that a
+session-record field is published without being named, and proved it sensitive by
+restoring the old keep-list and watching it fail.
+
+### Why this prevents recurrence
+
+A keep-list is a second copy of a schema it does not own, so it is correct only
+on the day it is written: every field the source gains afterwards is dropped
+silently, and no test fails because the test asserts the same stale list. When a
+command claims to publish another command's record, state the rule as an
+exclusion — the few keys that must not appear — and let everything else pass
+through. Then a new source field appears automatically, and the only maintenance
+is deciding whether it belongs in the exclusion set. Also check the count, not
+just the parity: parity against a projection of the same item is trivially true
+when both sides use the same keep-list, which is exactly how a 10-key document
+passed a "matches the list item" test.
