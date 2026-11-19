@@ -57,10 +57,13 @@ NODE_CPU_TARGET_PER_16MIB=0.10
 REGRESSION_FACTOR=1.25
 # NODE_WIRE_CEILING is the PRD target on the hop where the binary transport works.
 NODE_WIRE_CEILING=1.10
-# SERVER_WIRE_CEILING is the current known state, not a target: the Server still
-# re-encodes content as base64 JSON before writing the HTTP response. A rise above
-# this is a regression today; a fall is the improvement Unit 4a is meant to deliver.
-SERVER_WIRE_CEILING=1.3371
+# SERVER_WIRE_CEILING is now a target, not a known-bad state. The Server used to
+# re-encode content as base64 JSON before writing the HTTP response, which is why
+# this ceiling was 1.3371. Unit 4a removed that re-encoding and Unit 4b made the
+# CLI opt in to the raw stream, so the measured ratio is 1.0034 at 1 MiB and 16 MiB.
+# The ceiling is set to the PRD target rather than to the measurement, so the check
+# fails if the envelope ever comes back instead of merely noticing that it grew.
+SERVER_WIRE_CEILING=1.10
 # RATIO_TOLERANCE absorbs four-decimal rounding in the report. It is not slack: the
 # ratio is stable to four decimals across a 64x size range, so a real change is far
 # larger than this.

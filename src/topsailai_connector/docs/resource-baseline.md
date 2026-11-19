@@ -47,16 +47,33 @@ Idle baselines before any read: Server 14,676 KB, Node 13,276 KB.
 
 ### Protocol bytes
 
+Measured before Unit 4a/4b, when the Server re-encoded content as base64 JSON:
+
 | Size | Server wire bytes | Server ratio | Node wire bytes | Node ratio |
 |---|---|---|---|---|
 | 1 MiB | 1,401,997 | 1.3370 | 1,051,841 | 1.0031 |
 | 16 MiB | 22,432,593 | 1.3371 | 16,829,449 | 1.0031 |
 | 64 MiB | 89,730,385 | 1.3371 | 67,317,769 | 1.0031 |
 
-The Node hop is at the PRD's 1.10 target. The Server hop is not: 1.3371 is the base64
-expansion ratio, because the Server still re-encodes content as base64 JSON before
-writing the HTTP response. Closing that is Unit 4a, which is deferred behind another
-agent's uncommitted changes in `internal/server/cli/`.
+Measured after Unit 4a/4b, with the CLI opting in to the raw byte stream:
+
+| Size | Server wire bytes | Server ratio | Node wire bytes | Node ratio |
+|---|---|---|---|---|
+| 1 MiB | 1,052,209 | 1.0034 | 1,051,841 | 1.0031 |
+| 16 MiB | 16,834,209 | 1.0034 | 16,829,441 | 1.0031 |
+
+Both hops are now at the PRD's 1.10 target. The Server hop fell from 1.3371 to
+1.0034 because the envelope is no longer written on the opt-in path; the Node hop
+was already binary and did not move, which is the evidence that the change removed
+the envelope rather than shifting bytes to the other side.
+
+The 64 MiB row is not re-measured here. The ratio is stable to four decimals across
+a 64x size range, so the 1 MiB and 16 MiB rows establish it; a 64 MiB run is part of
+the release check rather than of this unit.
+
+Measured on the same host with `/proc/loadavg` between 6.53 and 12.43, so the
+absolute CPU figures in these runs are not comparable with the baseline table above.
+The ratios are, because a ratio does not move with host load.
 
 ## What counts as a regression
 
@@ -69,19 +86,24 @@ absolute number. The absolute numbers move with host load; the ratios do not.
 | Server CPU per MiB | 0.038 s/MiB at 16 MiB, 0.039 s/MiB at 64 MiB | exceeds 0.25 CPU-seconds per 16 MiB on a comparable host | The PRD budget; per-MiB cost is the quantity that must stay flat |
 | Node CPU per MiB | 0.011 s/MiB at 16 MiB, 0.010 s/MiB at 64 MiB | exceeds 0.10 CPU-seconds per 16 MiB on a comparable host | The PRD budget; the Node runs on a personal computer |
 | Node wire ratio | 1.0031 | exceeds 1.10 | The PRD target, and the hop where the binary transport already works |
-| Server wire ratio | 1.3371 | exceeds 1.3371 | Recorded as the current known state, not as a target. It must fall to about 1.003 when Unit 4a lands; a rise above 1.3371 is a regression today |
+| Server wire ratio | 1.0034 | exceeds 1.10 | The PRD target. It was 1.3371 while the Server re-encoded content as base64 JSON; Unit 4a removed that and Unit 4b made the CLI opt in, so a rise back toward 1.33 means the envelope returned |
 | Content identity | byte-identical at every size | any mismatch | A fast wrong answer is not an improvement |
 
 ### How to compare
 
 1. Run `tests/e2e/start.sh` then `tests/e2e/measure_read.sh 1 16 64` on the same host
    class, with TLS in the same state.
-2. Compare the **ratios** first. A ratio change is a code change; an absolute change
+2. To check the envelope specifically, run `make measure-optin`. It measures the raw
+   byte stream and the JSON envelope against the same two processes, so the
+   difference between the two reports is the cost of the envelope and nothing else.
+   A Server ratio near 1.33 in the `legacy` block is expected; the `raw` block is the
+   one the ceiling applies to.
+3. Compare the **ratios** first. A ratio change is a code change; an absolute change
    with a stable ratio is host load.
-3. Compare absolute CPU and wall time only when `/proc/loadavg` is within about 1.0 of
+4. Compare absolute CPU and wall time only when `/proc/loadavg` is within about 1.0 of
    the baseline run's load. Otherwise record the load and treat the comparison as
    inconclusive rather than as a pass or a fail.
-4. A regression must fail the check or be approved with updated measurements and a
+5. A regression must fail the check or be approved with updated measurements and a
    written reason. It must not pass silently because the output was still correct.
 
 ## Known gaps in this baseline

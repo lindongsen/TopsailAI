@@ -31,7 +31,9 @@
 # envelope and nothing else.
 #
 # Requires start.sh to have run, because it reuses the two processes and the
-# credentials that script recorded. It stops only the PIDs start.sh recorded.
+# credentials that script recorded. It does not stop them: it is meant to be run
+# twice against one pair of processes, so the caller owns the lifetime. The
+# `measure-optin` Make target is that caller and stops the recorded PIDs itself.
 
 set -euo pipefail
 

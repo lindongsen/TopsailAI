@@ -123,7 +123,7 @@ PACKAGE_NODE_KEY_ID ?= bundle-caller
 UNIT_TAGS :=
 INTEGRATION_TAGS := integration
 BDD_TAGS := bdd
-.PHONY: help build build-server build-node build-cli vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e measure check fmt clean build-windows test-windows-compile package package-windows
+.PHONY: help build build-server build-node build-cli vet test test-unit test-server test-node test-shared test-race coverage coverage-html integration bdd e2e measure measure-optin check fmt clean build-windows test-windows-compile package package-windows
 
 help:
 	@echo "Targets:"
@@ -144,6 +144,7 @@ help:
 	@echo "  bdd             Run the Gherkin scenarios in tests/bdd/"
 	@echo "  e2e             Build the binaries, then drive real processes and a real bundle"
 	@echo "  measure         Measure one file.read on both sides and fail on a budget regression"
+	@echo "  measure-optin   Measure the raw byte stream against the JSON envelope on one process pair"
 	@echo "  check           vet, unit, coverage, race, integration, bdd and e2e in that order"
 	@echo "  fmt             Format every Go source file"
 	@echo "  build-windows   Cross-compile the Node for windows/amd64, arm64 and 386"
@@ -344,6 +345,23 @@ measure: build
 	bash tests/e2e/start.sh 2>&1 | tee $(TMP_DIR)/measure.log
 	bash tests/e2e/measure_read.sh $(MEASURE_SIZES) 2>&1 | tee -a $(TMP_DIR)/measure.log
 	bash tests/e2e/check_budget.sh 2>&1 | tee -a $(TMP_DIR)/measure.log
+
+# `measure-optin` measures the raw byte stream against the JSON envelope on the
+# same two processes, so the difference between the two reports is the cost of the
+# envelope and nothing else.
+#
+# It is a separate target rather than a mode of `measure` because it answers a
+# different question. `measure` asks "does one file.read stay inside the budget";
+# this asks "did opting in to the raw stream actually remove the envelope". Merging
+# them would make the budget report contain two ratios that mean different things.
+#
+# The wrapper owns the process lifetime. `measure_optin.sh` deliberately does not,
+# because it must run twice against one pair of processes, so a target calling it
+# directly would leak the Server and the Node on every run.
+MEASURE_OPTIN_SIZE ?= 16
+measure-optin: build
+	@mkdir -p $(TMP_DIR)
+	bash tests/e2e/measure_optin_pair.sh $(MEASURE_OPTIN_SIZE) 2>&1 | tee $(TMP_DIR)/measure-optin.log
 
 # Windows is a supported platform for the Node, so the Node must be compiled for
 # it on every check. The Server is deployed on Linux and is not built here: a

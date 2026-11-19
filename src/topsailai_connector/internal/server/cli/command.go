@@ -93,6 +93,34 @@ func RunAs(program string, arguments []string, lookup func(string) string, stdou
 		return 0
 	}
 
+	// A `file.read` without a destination is one request, and it asks for the bytes
+	// directly unless `--json` was given. The raw shape is the cheaper answer, and the
+	// single-chunk case is the most common invocation, so leaving it on the envelope
+	// would keep the encoding cost on the path most callers use.
+	//
+	// `--json` keeps the envelope because that flag asks for the envelope: a raw body
+	// is not JSON, and printing it as JSON would produce something no parser accepts.
+	if options.Operation == protocol.OperationFileRead && !jsonOutput {
+		chunk, err := client.SendRaw(options)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", program, err)
+			if errors.Is(err, ErrUsage) {
+				return 2
+			}
+			return 1
+		}
+		if _, err := stdout.Write(chunk.Content); err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", program, err)
+			return 1
+		}
+		// The notice goes to stderr, never to stdout, because a notice written to
+		// stdout would corrupt a piped payload.
+		if chunk.Truncated {
+			fmt.Fprintf(stderr, "%s: content truncated at %d bytes\n", program, len(chunk.Content))
+		}
+		return 0
+	}
+
 	envelope, err := client.Send(options)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", program, err)

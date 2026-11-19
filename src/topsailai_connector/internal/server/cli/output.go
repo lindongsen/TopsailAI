@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -71,27 +70,20 @@ func fetchWholeFile(client *Client, options Options, write func([]byte) error) (
 		chunkOptions.Offset = offset
 		chunkOptions.Length = requested
 
-		envelope, err := client.Send(chunkOptions)
+		chunk, err := client.SendRaw(chunkOptions)
 		if err != nil {
 			return total, err
 		}
-		if !envelope.Succeeded() {
-			return total, fmt.Errorf("%s: %s", envelope.Code.Name(), envelope.Message)
-		}
 
-		var chunk readChunk
-		if err := json.Unmarshal(envelope.Data, &chunk); err != nil {
-			return total, fmt.Errorf("decode read result: %w", err)
-		}
-
-		if chunk.Size > 0 {
+		if len(chunk.Content) > 0 {
 			if err := write(chunk.Content); err != nil {
 				return total, err
 			}
-			total += chunk.Size
-			offset += chunk.Size
+			size := int64(len(chunk.Content))
+			total += size
+			offset += size
 			if remaining > 0 {
-				remaining -= chunk.Size
+				remaining -= size
 			}
 		}
 
@@ -100,7 +92,7 @@ func fetchWholeFile(client *Client, options Options, write func([]byte) error) (
 		// response that claims more remains but delivered nothing, which would
 		// otherwise spin forever. It is checked before the budget so a spent budget
 		// cannot turn a contradictory response into another request.
-		if chunk.Size == 0 || !chunk.Truncated {
+		if len(chunk.Content) == 0 || !chunk.Truncated {
 			return total, nil
 		}
 		if options.Length > 0 && remaining == 0 {

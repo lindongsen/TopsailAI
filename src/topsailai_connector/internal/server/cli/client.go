@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,7 +134,32 @@ type Client struct {
 	Now func() time.Time
 }
 
-// Send performs one operation.
+// RawResponse is the answer to a request that asked for the file bytes directly.
+//
+// It exists because the raw shape carries no JSON body: the bytes are the body and
+// the metadata travels in headers. A caller that decoded this as an envelope would
+// read the first bytes of a file as a status code.
+type RawResponse struct {
+	// Content is the file bytes, exactly as the Server sent them.
+	Content []byte
+	// Truncated reports whether content was left behind, which is the same meaning
+	// the envelope's `truncated` field carries.
+	Truncated bool
+	// RequestID is the correlation id the Server echoed back.
+	RequestID string
+}
+
+// rawContentMediaType is the media type that asks for the file bytes directly.
+//
+// It is the same value the Server compares against, and it is declared here rather
+// than imported from the Server package for the same reason Envelope is: the CLI
+// depends on the wire contract, not on the Server's internals.
+const rawContentMediaType = "application/octet-stream"
+
+// truncatedHeader carries the truncation flag on the raw path.
+const truncatedHeader = "X-Connector-Truncated"
+
+// Send performs one operation and returns the Server's envelope.
 //
 // The credentials are validated before the request is built, so a malformed credential
 // is reported as a usage error and nothing is sent. Two proofs are then built over the
@@ -141,46 +167,184 @@ type Client struct {
 // header, and the Node proof covers the logical operation. The Server verifies the
 // first and forwards the second, so neither party can widen its own authority.
 func (c *Client) Send(options Options) (Envelope, error) {
+	request, err := c.buildRequest(options, false)
+	if err != nil {
+		return Envelope{}, err
+	}
+
+	response, err := c.transport().Do(request)
+	if err != nil {
+		return Envelope{}, fmt.Errorf("call server: %w", err)
+	}
+	defer response.Body.Close()
+
+	return decodeEnvelope(response.Body, c.limit())
+}
+
+// SendRaw performs one operation and returns the file bytes without the envelope.
+//
+// The request is identical to Send's except for one header, so the proofs, the
+// nonces and the replay protection are unchanged: only the encoding of the answer
+// differs. That is why this is a second method rather than a second operation.
+//
+// A refusal still arrives as the envelope, because the Server keeps the JSON shape
+// whenever the answer is not a success. The two are told apart by the response's
+// media type, which is the only signal the Server sends: an octet-stream body is
+// bytes, and anything else is the documented envelope.
+func (c *Client) SendRaw(options Options) (RawResponse, error) {
+	request, err := c.buildRequest(options, true)
+	if err != nil {
+		return RawResponse{}, err
+	}
+
+	response, err := c.transport().Do(request)
+	if err != nil {
+		return RawResponse{}, fmt.Errorf("call server: %w", err)
+	}
+	defer response.Body.Close()
+
+	if !isRawResponse(response) {
+		// The Server answers with the envelope in three cases: the request was
+		// refused, the answer is a success with no bytes (the empty file), and the
+		// Server predates the opt-in and ignored the Accept header. All three are
+		// decoded here, and the payload is read from the envelope rather than
+		// discarded, because discarding it would turn an older Server's answer into a
+		// successful read of zero bytes.
+		envelope, err := decodeEnvelope(response.Body, c.limit())
+		if err != nil {
+			return RawResponse{}, err
+		}
+		if !envelope.Succeeded() {
+			return RawResponse{}, fmt.Errorf("%s: %s", envelope.Code.Name(), envelope.Message)
+		}
+		chunk, err := decodeReadChunk(envelope.Data)
+		if err != nil {
+			return RawResponse{}, err
+		}
+		return RawResponse{
+			Content:   chunk.Content,
+			Truncated: chunk.Truncated,
+			RequestID: envelope.RequestID,
+		}, nil
+	}
+
+	return readRawResponse(response, c.limit())
+}
+
+// decodeReadChunk decodes the documented `file.read` payload.
+//
+// It is used on the envelope path, which is reached when the Server refused the
+// request, when the file is empty, or when the Server predates the opt-in. The third
+// case is why the content is returned rather than dropped: an older Server sends the
+// bytes inside the envelope, and a caller that ignored them would report a successful
+// read of nothing.
+func decodeReadChunk(data json.RawMessage) (readChunk, error) {
+	if len(data) == 0 {
+		return readChunk{}, nil
+	}
+	var chunk readChunk
+	if err := json.Unmarshal(data, &chunk); err != nil {
+		return readChunk{}, fmt.Errorf("decode read result: %w", err)
+	}
+	return chunk, nil
+}
+
+// isRawResponse reports whether the answer is the byte stream rather than the envelope.
+//
+// The media type is the only discriminator the Server provides, so it is compared
+// without parameters and case-insensitively, the same way the Server parses Accept.
+func isRawResponse(response *http.Response) bool {
+	mediaType := strings.TrimSpace(strings.Split(response.Header.Get("Content-Type"), ";")[0])
+	return strings.EqualFold(mediaType, rawContentMediaType)
+}
+
+// readRawResponse reads the byte stream and its metadata headers.
+//
+// The body is bounded before it is read, so a broken or hostile Server cannot exhaust
+// the CLI's memory. The declared length is compared with what arrived, because a short
+// body that looks complete is the failure this check exists to catch: a caller that
+// accepted it would publish a truncated file as a whole one.
+//
+// The truncation flag is required rather than defaulted. A missing header treated as
+// `false` would stop a whole-file read after one chunk and report success, which is
+// the silent truncation the flag exists to prevent.
+func readRawResponse(response *http.Response, limit int64) (RawResponse, error) {
+	payload, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return RawResponse{}, fmt.Errorf("read response: %w", err)
+	}
+	if int64(len(payload)) > limit {
+		return RawResponse{}, fmt.Errorf("response body exceeds %d bytes", limit)
+	}
+
+	if declared := response.ContentLength; declared >= 0 && int64(len(payload)) != declared {
+		return RawResponse{}, fmt.Errorf("response body is %d bytes but declared %d", len(payload), declared)
+	}
+
+	flag := response.Header.Get(truncatedHeader)
+	if flag == "" {
+		return RawResponse{}, fmt.Errorf("response has no %s header", truncatedHeader)
+	}
+	truncated, err := strconv.ParseBool(flag)
+	if err != nil {
+		return RawResponse{}, fmt.Errorf("response has %s = %q, want true or false", truncatedHeader, flag)
+	}
+
+	return RawResponse{
+		Content:   payload,
+		Truncated: truncated,
+		RequestID: response.Header.Get(security.RequestIDHeader),
+	}, nil
+}
+
+// buildRequest validates the options and builds the signed request.
+//
+// It is shared by both response shapes so the two cannot drift: a second copy of the
+// proof construction would be a second definition of what a valid request is, and the
+// two would eventually disagree about a field. The only difference the raw flag makes
+// is the Accept header, which is a request for an encoding and not a change to the
+// request's meaning.
+func (c *Client) buildRequest(options Options, raw bool) (*http.Request, error) {
 	if err := security.ValidateKeyID(options.ClientCredential.KeyID); err != nil {
-		return Envelope{}, fmt.Errorf("%w: client credential: %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: client credential: %v", ErrUsage, err)
 	}
 	if err := security.ValidateCredentialSecret(options.ClientCredential.Secret); err != nil {
-		return Envelope{}, fmt.Errorf("%w: client credential: %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: client credential: %v", ErrUsage, err)
 	}
 	if err := security.ValidateKeyID(options.NodeCredential.KeyID); err != nil {
-		return Envelope{}, fmt.Errorf("%w: node credential: %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: node credential: %v", ErrUsage, err)
 	}
 	if err := security.ValidateCredentialSecret(options.NodeCredential.Secret); err != nil {
-		return Envelope{}, fmt.Errorf("%w: node credential: %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: node credential: %v", ErrUsage, err)
 	}
 	if err := security.ValidateNodeID(options.NodeID); err != nil {
-		return Envelope{}, fmt.Errorf("%w: --node-id %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: --node-id %v", ErrUsage, err)
 	}
 	if err := options.Operation.Validate(); err != nil {
-		return Envelope{}, fmt.Errorf("%w: %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 	if !options.Operation.Enabled() {
-		return Envelope{}, fmt.Errorf("%w: operation %q is not enabled in this version", ErrUsage, options.Operation)
+		return nil, fmt.Errorf("%w: operation %q is not enabled in this version", ErrUsage, options.Operation)
 	}
 	if err := security.ValidateScopeName(options.Scope); err != nil {
-		return Envelope{}, fmt.Errorf("%w: %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 
 	requestID := options.RequestID
 	if requestID == "" {
 		generated, err := security.NewRequestID()
 		if err != nil {
-			return Envelope{}, err
+			return nil, err
 		}
 		requestID = generated
 	}
 	if err := security.ValidateRequestID(requestID); err != nil {
-		return Envelope{}, fmt.Errorf("%w: --request-id %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: --request-id %v", ErrUsage, err)
 	}
 
 	url, err := operationURL(options.ServerURL, options.NodeID)
 	if err != nil {
-		return Envelope{}, fmt.Errorf("%w: %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 
 	body, err := json.Marshal(requestBody{
@@ -191,7 +355,7 @@ func (c *Client) Send(options Options) (Envelope, error) {
 		Length:    options.Length,
 	})
 	if err != nil {
-		return Envelope{}, fmt.Errorf("encode request: %w", err)
+		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
 	nowMS := c.now().UnixMilli()
@@ -201,7 +365,7 @@ func (c *Client) Send(options Options) (Envelope, error) {
 	// exist yet, and a placeholder would be a value the Server could not reproduce.
 	nodeNonce, err := security.NewNonce()
 	if err != nil {
-		return Envelope{}, err
+		return nil, err
 	}
 	nodeProof := security.Proof{
 		Scheme:      security.SchemeNode,
@@ -227,7 +391,7 @@ func (c *Client) Send(options Options) (Envelope, error) {
 
 	clientNonce, err := security.NewNonce()
 	if err != nil {
-		return Envelope{}, err
+		return nil, err
 	}
 	clientProof := security.Proof{
 		Scheme:      security.SchemeClient,
@@ -249,20 +413,16 @@ func (c *Client) Send(options Options) (Envelope, error) {
 
 	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return Envelope{}, fmt.Errorf("build request: %w", err)
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(security.ClientAuthHeader, security.FormatProof(clientProof))
 	request.Header.Set(security.NodeAuthHeader, nodeAuthHeader)
 	request.Header.Set(security.RequestIDHeader, requestID)
-
-	response, err := c.transport().Do(request)
-	if err != nil {
-		return Envelope{}, fmt.Errorf("call server: %w", err)
+	if raw {
+		request.Header.Set("Accept", rawContentMediaType)
 	}
-	defer response.Body.Close()
-
-	return decodeEnvelope(response.Body, c.limit())
+	return request, nil
 }
 
 // now returns the clock the proofs are built from.
