@@ -134,7 +134,7 @@ the artifact so the first start adopts them instead of generating new ones.
 |---|---|
 | FR-PKG-ID-1 | Packaging accepts an opt-in that embeds the node id and the node credential. The opt-in is off by default. |
 | FR-PKG-ID-2 | When the opt-in is set, packaging generates the node id and the credential itself, using the Node's own `id` and `credential add` commands, never a second implementation of the formats. |
-| FR-PKG-ID-3 | Packaging writes the values to `bin/env.{YYYYMMDDHHMMSS}` with mode `0600`, containing the node id, the key id, the secret, the assembled credential, the Server URL and the CLI variable names. |
+| FR-PKG-ID-3 | Packaging writes the values to `env.{YYYYMMDDHHMMSS}` with mode `0600`, containing the node id, the key id, the secret, the assembled credential, the Server URL and the CLI variable names. The folder is `BIN_DIR` by default and is overridable through `ENV_DIR`, so a test that runs packaging can keep a live secret out of the folder artifacts are copied from. |
 | FR-PKG-ID-4 | The env file name carries the build timestamp, so two builds in one day do not overwrite each other. |
 | FR-PKG-ID-5 | The embedded node id is written to the identity file on first start when that file does not exist. |
 | FR-PKG-ID-6 | The embedded credential is written to the credential file on first start when that file does not exist. |
@@ -189,8 +189,8 @@ discoverable from the packaging summary and the Node skill.
 ## Acceptance criteria
 
 - **AC-PKG-ID-1** A package built with `PACKAGE_EMBED_IDENTITY=1` produces
-  `bin/env.<timestamp>` at mode `0600` containing the node id, key id, secret and
-  assembled credential.
+  `env.<timestamp>` at mode `0600` in `BIN_DIR` (or in `ENV_DIR` when set)
+  containing the node id, key id, secret and assembled credential.
 - **AC-PKG-ID-2** The artifact started on a clean machine prints the same node id
   and the same credential the env file records.
 - **AC-PKG-ID-3** That credential authenticates a real CLI call against a real

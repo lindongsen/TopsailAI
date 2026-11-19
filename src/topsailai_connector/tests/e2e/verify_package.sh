@@ -137,7 +137,8 @@ echo "verify: building the bundle" >&2
 		PACKAGE_SERVER_URL="http://127.0.0.1:$PORT" \
 		PACKAGE_SCOPES="project=$SHARED tool=$TOOL_DIR" \
 		PACKAGE_TUNNEL_TOKEN="$TUNNEL_TOKEN" \
-		PACKAGE_EMBED_CONFIG=0
+		PACKAGE_EMBED_CONFIG=0 \
+		ENV_DIR="$WORK"
 ) >"$PACKAGE_LOG" 2>&1 || fail "make package failed; see $PACKAGE_LOG"
 
 ZIP="$BIN/$BUNDLE_NAME.zip"
@@ -296,7 +297,8 @@ build_optin_bundle() {
 			PACKAGE_SCOPES="root=/" \
 			PACKAGE_TUNNEL_TOKEN="$TUNNEL_TOKEN" \
 			PACKAGE_ALLOW_FILESYSTEM_ROOT="$flag" \
-			PACKAGE_EMBED_CONFIG=0
+			PACKAGE_EMBED_CONFIG=0 \
+			ENV_DIR="$OPTIN_WORK"
 	) >"$OPTIN_WORK/$name.log" 2>&1 || fail "make package $name failed; see $OPTIN_WORK/$name.log"
 	unzip -q "$BIN/$name.zip" -d "$OPTIN_WORK/$name" || fail "unzip $name failed"
 	echo "$OPTIN_WORK/$name/$name"
@@ -376,7 +378,8 @@ EMBEDDED_NAME="embedded-default"
 		PACKAGE_GOARCH=amd64 \
 		PACKAGE_SERVER_URL="http://127.0.0.1:$PORT" \
 		PACKAGE_SCOPES="project=$SHARED" \
-		PACKAGE_TUNNEL_TOKEN="$TUNNEL_TOKEN"
+		PACKAGE_TUNNEL_TOKEN="$TUNNEL_TOKEN" \
+		ENV_DIR="$EMBEDDED_WORK"
 ) >"$EMBEDDED_WORK/package.log" 2>&1 || fail "the default packaging mode failed; see $EMBEDDED_WORK/package.log"
 
 EMBEDDED_ARTIFACT=$(sed -n 's/^package: wrote //p' "$EMBEDDED_WORK/package.log" | head -1)

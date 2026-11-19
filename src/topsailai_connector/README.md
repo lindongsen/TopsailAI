@@ -285,6 +285,11 @@ both in `bin/env.<YYYYMMDDHHMMSS>` with mode `0600`. You read the values from th
 file; the recipient never has to report them. The file also holds a ready-to-run
 CLI example.
 
+The record follows `BIN_DIR`, so `make package BIN_DIR=/tmp/release` writes it
+beside the artifact. Set `ENV_DIR` to separate the two: a test that runs packaging
+sets it to a scratch folder, because a credential record must never land in the
+folder artifacts are copied from.
+
 The embedded values are **seeds, not authorities**. On first start the Node writes
 them to its identity and credential files, and from then on the files win. So
 `regenerate`, `credential add` and `credential remove` keep working exactly as they

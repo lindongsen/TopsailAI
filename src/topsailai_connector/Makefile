@@ -33,6 +33,11 @@ SHELL := /bin/bash
 # over a `?=` default, and a plain `:=` would silently ignore it.
 BIN_DIR ?= bin
 TMP_DIR ?= .tmp
+# ENV_DIR is where the packaging credential record (env.<timestamp>) is written.
+# It follows BIN_DIR by default, so an operator finds it beside the artifact, and
+# it is a separate knob because a test that ran `make package` would otherwise
+# leave a never-expiring credential in the folder artifacts are copied from.
+ENV_DIR ?= $(BIN_DIR)
 SERVER_PKG := ./cmd/connector-server
 NODE_PKG := ./cmd/connector-node
 CLI_PKG := ./cmd/connector-cli
@@ -169,6 +174,11 @@ help:
 	@echo "  BIN_DIR         Where binaries are written. Default bin. Override with"
 	@echo "                  'make build BIN_DIR=/somewhere/else'"
 	@echo "  TMP_DIR         Where test artifacts are written. Default .tmp"
+	@echo "  ENV_DIR         Where the packaging credential record is written."
+	@echo "                  Default follows BIN_DIR. A test that runs 'make"
+	@echo "                  package' sets it to a scratch folder so a live"
+	@echo "                  secret never lands in the folder artifacts are"
+	@echo "                  copied from"
 	@echo "  PACKAGE_SERVER_URL  Server address the bundle dials. Required by package."
 	@echo "                      http/https is accepted and converted to ws/wss"
 	@echo "  PACKAGE_SCOPES      Folders to expose, as name=path entries. Required"
@@ -451,6 +461,7 @@ package: build-node
 	PACKAGE_EMBED_IDENTITY='$(PACKAGE_EMBED_IDENTITY)' \
 	PACKAGE_NODE_KEY_ID='$(PACKAGE_NODE_KEY_ID)' \
 	BIN_DIR='$(BIN_DIR)' \
+	ENV_DIR='$(ENV_DIR)' \
 	TMP_DIR='$(TMP_DIR)' \
 	bash packaging/build-package.sh
 
@@ -467,8 +478,9 @@ package-windows:
 # set, the tunnel token compiled in. It now only restates the default, so a
 # script that already calls it keeps working after the default changed.
 #
-# The identity is not embedded, so the recipient runs the binary once with `id`
-# to create it. That is stated in the summary the script prints.
+# The identity is not embedded by default, so the recipient runs the binary once
+# with `id` to create it. PACKAGE_EMBED_IDENTITY=1 embeds it as a seed instead,
+# and the summary the script prints says which of the two happened.
 package-embedded:
 	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=1
 

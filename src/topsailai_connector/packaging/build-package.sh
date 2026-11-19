@@ -57,6 +57,12 @@ PACKAGE_EMBED_CONFIG=${PACKAGE_EMBED_CONFIG:-1}
 PACKAGE_EMBED_IDENTITY=${PACKAGE_EMBED_IDENTITY:-}
 BIN_DIR=${BIN_DIR:-bin}
 TMP_DIR=${TMP_DIR:-.tmp}
+# ENV_DIR is where the credential record is written. It defaults to BIN_DIR, which
+# is where an operator expects to find it beside the artifact, and it is a separate
+# knob so a test can keep a live secret out of a deliverable directory. A test that
+# wrote to bin/ would leave a never-expiring credential in the folder an operator
+# copies artifacts from.
+ENV_DIR=${ENV_DIR:-$BIN_DIR}
 
 fail() {
 	echo "package: $*" >&2
@@ -75,6 +81,7 @@ absolute() {
 
 BIN_PATH=$(absolute "$BIN_DIR")
 TMP_PATH=$(absolute "$TMP_DIR")
+ENV_PATH=$(absolute "$ENV_DIR")
 
 # generate_identity writes a node id and one node credential into a config
 # directory and echoes `node_id key_id secret` on one line.
@@ -125,7 +132,7 @@ write_env_file() {
 	local stamp path
 
 	stamp=$(date +%Y%m%d%H%M%S)
-	path="$BIN_PATH/env.$stamp"
+	path="$ENV_PATH/env.$stamp"
 	[ ! -e "$path" ] ||
 		fail "$path already exists; wait a second and rebuild, so two builds do not share one credential record"
 
@@ -137,8 +144,8 @@ write_env_file() {
 # Created: $stamp
 #
 # This file holds a secret that never expires. Keep it at mode 0600, do not commit
-# it, and do not paste it into a ticket or a chat message. bin/ is git-ignored, so
-# a credential cannot be committed by accident.
+# it, and do not paste it into a ticket or a chat message. It is written outside
+# the repository's tracked files, so a credential cannot be committed by accident.
 #
 # One package is for one recipient. Two copies of one artifact share this node id
 # and this credential: the Server keeps one connection per node id, so the second
@@ -317,6 +324,7 @@ fi
 # into the policy that is compiled in. Building first and reading the scopes
 # afterwards would mean the embedded policy and the validated list could differ.
 mkdir -p "$BIN_PATH"
+mkdir -p "$ENV_PATH"
 if [ "$EMBED_CONFIG" = "1" ]; then
 	mkdir -p "$TMP_PATH/embed"
 	SCOPES_OUT="$TMP_PATH/embed/scopes.txt"

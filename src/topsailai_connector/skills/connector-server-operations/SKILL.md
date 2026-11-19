@@ -1,7 +1,7 @@
 ---
 name: connector-server-operations
 description: Use when an operator needs to deploy, configure, run, monitor, rotate credentials for, package or troubleshoot the TopsailAI Connector Server in the cloud, i.e. when they ask how to start the Server, which environment variables it needs, how to rotate tunnel_token or a client credential, how to expose only the channel and hide the CLI API, how to read its log, why a Node cannot connect, why a caller gets overloaded, how many concurrent requests the Server allows, or how to hand a Node to someone else as a zip that unzips and starts. Covers the Server's configuration surface, its single listener with two surfaces, rotation procedure, admission limits per caller per Node and per process, the make package bundle and the limits that are constants rather than settings.
-version: 1.2.0
+version: 1.3.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -121,9 +121,13 @@ The output is `bin/<PACKAGE_NAME>`, or `bin/<PACKAGE_NAME>.zip` when
 
 ### The env file packaging writes
 
-Every packaging run writes `bin/env.<YYYYMMDDHHMMSS>` with mode `0600`. It holds
+Every packaging run writes `env.<YYYYMMDDHHMMSS>` with mode `0600`. It holds
 the node id, the key id, the secret, the full credential and a ready-to-run CLI
 example. Read the values from that file instead of asking the recipient for them.
+
+The file is written beside the artifact, in `BIN_DIR`, so `make package` puts it in
+`bin/`. Set `ENV_DIR` to write it somewhere else; a test that runs packaging does
+that, so a live secret never lands in the folder you copy artifacts from.
 
 The timestamp in the name is why two runs do not collide: a second run writes a
 second file, so the record of the first package survives even after that package is
