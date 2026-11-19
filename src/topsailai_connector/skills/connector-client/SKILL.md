@@ -346,9 +346,17 @@ answer from a credential that is actually correct.
   response, at most 256 KiB. Use `-o out.bin` when the file may be larger, and
   treat a redirect as correct only for a file you know is small.
 - **Expecting `-o` to overwrite silently.** An existing destination is refused
-  with exit status `1`. Add `--force` when you mean to replace it.
-- **Combining `--json` with `-o`.** They are refused together, because `--json`
-  prints the whole envelope and `-o` writes only the payload. Pick one.
+  with `... already exists; pass --force to replace it` and exit status `1`. Add
+  `--force` when you mean to replace it.
+- **Writing `-o` with no value.** `-o ""` is refused with
+  `usage: -o needs a destination; use - for stdout or a file path` and exit
+  status `2`. An empty value is not the same as leaving `-o` out.
+- **Adding `--force` without `-o`.** It is refused with
+  `usage: --force requires -o` and exit status `2`, because there is nothing to
+  replace.
+- **Combining `--json` with `-o`.** They are refused together with
+  `usage: --json and -o cannot be combined; --json prints the envelope and -o
+  writes the payload`, exit status `2`. Pick one.
 - **Assuming the `-o` path is remote.** `--path` is relative to the scope root on
   the Node; `-o` is a path on the machine running the CLI. The two follow
   different rules, and `-o` may be absolute.
