@@ -797,3 +797,80 @@ AI reflection archive, not here.
   be both undefined and defined-without-a-grant. The Node has no `SIGHUP` reload,
   so the Node had to be restarted with an edited policy — which is itself a
   confirmation that a running Node cannot gain a scope.
+
+## A second embedded Node on one machine silently inherits the first one's identity
+
+- The embedded mode compiles the Server URL, the policy and the `tunnel_token` into
+  the binary, and deliberately embeds neither the identity nor the credential. Both
+  live in the platform config directory, which defaults to
+  `%APPDATA%\topsailai-connector` on Windows. That default is a single path per
+  user, so a second embedded binary started on the same machine reads the first
+  one's `identity` file and reports the same `node_id`.
+- Measured: a freshly built binary for a different scope set, run with `id` and no
+  `CONNECTOR_NODE_CONFIG_DIR`, printed `node_ysj64hfylk2ke3aui65fygln2e` — the
+  identity of the Node already running from `C:\connector-embedded`. Nothing
+  warned. The binary was correct; the default directory was shared.
+- The consequence is the channel flap recorded earlier in this file: two processes
+  under one `node_id` evict each other in the Server's registry, so the log shows
+  `replacing a live connection` every few seconds and `generation` climbs. It looks
+  like a network fault and is a configuration collision.
+- The fix is to give every delivery its own config directory through
+  `CONNECTOR_NODE_CONFIG_DIR`, and to set it in the launcher rather than in the
+  shell that happens to start the process. A launcher that forgets it produces a
+  Node that connects, serves nothing new, and quietly takes over the identity of a
+  Node someone else is using.
+- Check the identity before starting, not after: run `<binary> id` with the
+  intended config directory and compare the printed value with every `node_id`
+  already in the Server log. Two deliveries that print the same value are one
+  delivery with two processes.
+- A per-delivery config directory also keeps the credentials separate, which is
+  what makes revocation precise. Sharing the directory shares the credential file,
+  so removing one caller's credential removes it for both Nodes.
+
+## A drive-root scope set is mostly absent scopes, and that is the designed answer
+
+- A policy naming `C:\` through `Z:\` on a machine that has only `C:` defines 24
+  scopes and finds 23 absent directories. The Node starts, reports every absent
+  scope at WARN with its path, lists them in `absent_scopes` on the ready line, and
+  answers `not_found` for all three read operations on each one.
+- Measured on Windows Server 2022 with `Get-PSDrive` returning only `C`: the ready
+  line carried `scopes="[c d e f g h i j k l m n o p q r s t u v w x y z]"` and
+  `absent_scopes="[d e f g h i j k l m n o p q r s t u v w x y z]"`, and `file.list`
+  on `d` and on `z` both returned `not_found`.
+- This is the tolerance working as designed rather than a defect, and the reason it
+  matters is that a drive letter with no volume behind it is the normal case on a
+  machine that will later gain one. A policy that refused startup would make the
+  binary unusable until every drive existed.
+- The tolerance is fail-closed across restarts: when a volume appears, the next
+  startup sees a real filesystem root and refuses it unless the policy states
+  `allow_filesystem_root: true`. A drive-root set therefore needs the opt-in, or it
+  works today and refuses to start tomorrow.
+- A path inside a drive-root scope is still subject to the wire grammar, so
+  `Windows\win.ini` is `invalid_argument` and `Windows/win.ini` is the accepted
+  spelling. The backslash rule is not relaxed by the scope being a volume root, and
+  a caller who writes a Windows path the way Windows writes it gets a shape refusal
+  rather than a file.
+
+## The opt-in moves the credential protection to the deny list, and that must be measured
+
+- With `allow_filesystem_root: true`, a scope rooted at `C:\` necessarily contains
+  the Node's config directory, so the startup overlap refusal cannot apply. The
+  deny list is then the only thing between a remote caller and `identity` and
+  `credentials.yaml`.
+- Measured on the running Node: `file.read` on `connector-drives/config/identity`
+  and on `connector-drives/config/credentials.yaml` both returned `denied`,
+  `file.stat` on the directory returned `denied`, and `file.list` on the parent
+  omitted `config` entirely rather than reporting its name and size.
+- The binary itself was also refused, because a build that carries the
+  `tunnel_token` adds its own executable to the deny list. Measured:
+  `file.read` and `file.stat` on `connector-drives/connector-node.exe` both
+  returned `denied` with the reason `is one of the Node's own files`, and the
+  executable was absent from the directory listing.
+- That second refusal is what makes the opt-in survivable. A whole-volume scope
+  contains the install directory, so without the executable deny entry a caller
+  could read the `tunnel_token` out of the binary and open a channel as any Node on
+  that Server.
+- Verify the opt-in by attempting the reads, not by reading the policy. A policy
+  that says `allow_filesystem_root: true` and a deny list that does not cover the
+  config directory produce a Node that starts, serves the volume, and hands over
+  its own credential.
