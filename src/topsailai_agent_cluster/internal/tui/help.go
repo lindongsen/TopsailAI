@@ -697,6 +697,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 		// not configured it.
 		workflow = "Next: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules.\n" +
 			"A line beginning with ! runs one allowlisted command on this endpoint, in the directory configured by AGENT_CLUSTER_ENDPOINT_COMMAND_DIR; the endpoint decides the allowlist, and the form is refused when that directory is not configured.\n" +
+			"A bare ! prints the ten most recent ! commands as a numbered list; enter a number to run that command, or leave the answer empty to cancel.\n" +
 			"Actions require adapter capability support; scope availability alone does not guarantee support."
 	}
 	if kind == ScopeSession {
@@ -706,6 +707,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 			"Type > <text> to send a message to the current session without spelling the command; the prefix is disjoint from every command word.\n" +
 			"Text that matches no command is offered as a send message; declining keeps the unknown-command diagnostic.\n" +
 			"A line beginning with ! runs one allowlisted command in the session working directory; the endpoint decides the allowlist.\n" +
+			"A bare ! prints the ten most recent ! commands as a numbered list; enter a number to run that command, or leave the answer empty to cancel.\n" +
 			"Actions require adapter capability support and fresh session data; scope availability alone does not guarantee support."
 	}
 	example := "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>"

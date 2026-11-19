@@ -122,11 +122,35 @@ func ExecPayload(argv []string) (json.RawMessage, error) {
 // to run somewhere and the workspace names no machine: choosing one would run the
 // operator's command on a host they never selected.
 //
+// A bare prefix opens the recent-command menu instead of reporting usage. The
+// scope is checked before the menu is printed, because offering a command that
+// cannot run would make the operator choose a row only to be refused afterwards.
+// An empty answer cancels, which is a decision rather than a failure, so it
+// returns no error and submits nothing.
+//
 // The allowlist decision belongs to the Endpoint policy hook, so this path never
 // decides policy locally. A denied command therefore surfaces as a durable
 // rejected receipt with policy_denied, which is the same evidence an operator
 // would see for any other admission refusal.
-func runShellCommand(parent context.Context, api InteractiveAPI, state *interactiveState, line string, out io.Writer, options InteractiveOptions) error {
+func runShellCommand(parent context.Context, api InteractiveAPI, state *interactiveState, line string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+	if isBareShellLine(line) {
+		if err := requireShellScope(state); err != nil {
+			return err
+		}
+		// A caller that supplies no history seam keeps the usage error, so the
+		// menu can never become a silent no-op.
+		if options.ShellHistory == nil {
+			return fmt.Errorf("%s", shellUsage)
+		}
+		chosen, err := promptShellHistory(parent, options.ShellHistory(), lines, out, out, options.Color)
+		if err != nil {
+			return err
+		}
+		if chosen == "" {
+			return nil
+		}
+		line = chosen
+	}
 	argv, err := shellArgv(line)
 	if err != nil {
 		return err
@@ -158,6 +182,25 @@ func runShellCommand(parent context.Context, api InteractiveAPI, state *interact
 		return fmt.Errorf("command %s status unavailable; use status %s to query; %w", state.commandID, state.commandID, err)
 	}
 	return renderCommandExecResult(out, result, options.Color)
+}
+
+// isBareShellLine reports whether a line is the prefix with no program after it.
+// Trailing whitespace is trimmed, so "!  " is the same request as "!".
+func isBareShellLine(line string) bool {
+	return strings.TrimSpace(line) == shellPrefix
+}
+
+// requireShellScope refuses the prefix form when no machine is selected.
+//
+// It is one function rather than two copies of the message, because the menu path
+// and the command path must refuse for the same reason and with the same wording.
+// A second copy would let the two surfaces drift into describing the same rule
+// differently.
+func requireShellScope(state *interactiveState) error {
+	if state.ClusterSessionID != "" || state.EndpointID != "" {
+		return nil
+	}
+	return fmt.Errorf("%s requires a session or endpoint scope; use cd <number> to select a session row, or cd <endpoint-id> to run the command on an endpoint", shellUsage)
 }
 
 // shellActionRequest builds the command.exec request for the current scope.
@@ -194,8 +237,8 @@ func shellActionRequest(ctx context.Context, api InteractiveAPI, state *interact
 		request.ProviderGeneration = session.ProviderGeneration
 		return request, nil
 	}
-	if state.EndpointID == "" {
-		return ActionRequest{}, fmt.Errorf("%s requires a session or endpoint scope; use cd <number> to select a session row, or cd <endpoint-id> to run the command on an endpoint", shellUsage)
+	if err := requireShellScope(state); err != nil {
+		return ActionRequest{}, err
 	}
 	if err := requireQueryableEndpointByID(ctx, api, state.EndpointID); err != nil {
 		return ActionRequest{}, err
