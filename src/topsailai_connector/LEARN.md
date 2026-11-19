@@ -634,3 +634,44 @@ AI reflection archive, not here.
   a hand-built proof. The Python probe returned 200 on its first call, which is the
   evidence that the canonical form was read correctly from the code rather than
   guessed; a probe that fails on its first call proves nothing about the product.
+
+## A skill is documentation for someone who cannot read the code
+
+- The `-o` feature was implemented, documented in `docs/API.md`, recorded in
+  `features/90ai-added.md`, tested and committed — and `skills/connector-client/`
+  still taught `file.read > notes.md` as the way to read a file. That example
+  writes one capped response, so a user following it on a large file gets the
+  first 256 KiB and a stderr notice they may have redirected away.
+- The gap is structural rather than careless. `docs/API.md` is written for a
+  reader who can open the source; a skill is read by someone who has only the
+  binary. The two audiences need different sentences, so updating one does not
+  update the other. A feature is not delivered until the skill names it, because
+  the skill is the only documentation its reader will ever open.
+- The detection failure is that nothing links the two. No test reads the skill, no
+  checklist item asks whether the skill mentions the new flag, and the skill's own
+  text was internally consistent — it described the old behaviour accurately. A
+  document that is correct about a superseded interface reads as correct.
+- Check by grepping the skill for the flag name after adding a flag:
+  `grep -n -- '--output' skills/*/SKILL.md`. An empty result on a flag the binary
+  accepts is the defect, and it is invisible in every other artifact.
+- Write the observable result, not the mechanism. The Operations table said
+  `file.list` returns `entries`: name, type, size, mode, modified_at — field names
+  from a struct the reader cannot see. It now says "one line per entry: name, type,
+  size", which is what appears on their terminal. The first version is a claim
+  about code; the second is a claim about output, and only the second can be acted
+  on.
+- Quote the message and the status together. The skill said an existing `-o`
+  destination exits `2`; the binary exits `1` while printing a message that begins
+  `usage:`. Both halves were wrong in a way that only running the command revealed.
+  A documented exit status is a claim like any other, so it is measured, not
+  inferred from the error's type.
+- The `ErrUsage` wrapper on that path is decorative: `openDestination` wraps the
+  refusal, and `Run` returns `1` for every error from `writeToDestination` without
+  unwrapping it. The message prefix and the status disagree, and a script branching
+  on the status cannot tell "the command line was rejected" from "the request ran
+  and the write was refused". Recorded as
+  `issues/issue-output-refusal-exits-one-with-a-usage-message.md`.
+- A skill's `description` is what decides whether it is loaded at all. Adding a
+  capability without adding it there means the skill is not selected for the
+  request that needs it, so the feature stays undiscoverable even after the body
+  documents it.

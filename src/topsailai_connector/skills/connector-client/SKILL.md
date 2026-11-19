@@ -1,7 +1,7 @@
 ---
 name: connector-client
-description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next. Covers the connector-server cli command, its flags, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
-version: 2.0.0
+description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, copy a file down to their own machine, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next. Covers the connector-server cli command, its flags including -o for a whole-file copy, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
+version: 2.1.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -106,6 +106,8 @@ positional argument and refuses it. This is the single most common usage mistake
 | `--length` | none | no | Byte count for `file.read`; `0` means up to the cap |
 | `--request-id` | none | no | Correlation id, signed by both proofs and echoed by the Server |
 | `--json` | none | no | Print the whole response envelope instead of the payload |
+| `-o`, `--output` | none | no | Where the result goes: `-` for stdout, or a local file path |
+| `--force` | none | no | Replace an existing local file named by `-o` |
 
 A flag wins over its environment variable. The environment exists so a script can
 export a value once instead of repeating it on every line.
@@ -120,13 +122,73 @@ recorded in the residual risks of `docs/permission-design.md`.
 
 | Operation | Needs `--path` | Returns |
 |---|---|---|
-| `file.list` | no; empty lists the scope root | `entries`: name, type, size, mode, modified_at |
-| `file.stat` | yes | `type`, `size`, `mode`, `modified_at`, `is_symlink`, `link_target` |
-| `file.read` | yes | the file content on stdout, plus `size` and `truncated` |
+| `file.list` | no; empty lists the scope root | one line per entry: name, type, size |
+| `file.stat` | yes | one `key<TAB>value` line per field |
+| `file.read` | yes | the file content, as raw bytes |
 
 `file.stat` reports a symlink **without following it**, so `is_symlink` and
 `link_target` describe the link itself. That is deliberate: following a link is
 exactly the operation the Node's path fence refuses.
+
+## Reading a whole file
+
+**This is the part that surprises people.** A single `file.read` returns at most
+256 KiB. That limit belongs to the Node and cannot be raised from the CLI.
+
+So `file.read > out.bin` is **not** a whole-file copy. For a file larger than
+256 KiB it writes the first 256 KiB and prints a notice on stderr:
+
+```
+connector-server cli: content truncated at 262144 bytes
+```
+
+If you redirect stderr away, you get a partial file with nothing to warn you.
+
+**Use `-o` to read a whole file.** It repeats the request until the end of the
+file, so the result is complete no matter how large the file is:
+
+```
+connector-server cli ... --scope project --path photos/cat.jpg -o cat.jpg file.read
+```
+
+Three things follow from that, and all three are deliberate:
+
+- **A file that exists is a complete file.** The CLI writes to a temporary file
+  beside the destination and moves it into place only after the last byte arrives.
+  A failure part-way leaves the destination untouched, so you never get half a
+  file that looks whole.
+- **An existing destination is refused.** You get
+  `... already exists; pass --force to replace it` and exit status `1`. Add
+  `--force` when you mean to overwrite. A read tool that silently replaced your
+  local file would destroy work you never asked it to touch.
+- **`-o` works for all three operations.** It means "where the result goes", so
+  `file.list -o listing.txt` and `file.stat -o info.txt` work too. Only
+  `file.read` needs the repeat loop, because it is the only operation whose answer
+  is capped.
+
+`-o -` writes to stdout and still reads the whole file. Use it when you want the
+complete content in a pipeline:
+
+```
+connector-server cli ... --scope project --path big.bin -o - file.read | sha256sum
+```
+
+The difference between `-o -` and no `-o` at all is worth remembering: **`-o -`
+reads the whole file, no `-o` reads one capped response.**
+
+### Reading part of a file
+
+`--offset` and `--length` still work, and they combine with `-o`:
+
+```
+connector-server cli ... --scope project --path big.log --offset 0 --length 4096 file.read
+```
+
+That returns at most 4096 bytes. With `-o` the CLI still loops, but it stops when
+your `--length` budget is spent, so `--offset 200000 --length 400000 -o part.bin`
+gives you exactly that 400000-byte window.
+
+`--length 0` means "as much as the cap allows", not "zero bytes".
 
 ### Examples
 
@@ -141,19 +203,22 @@ connector-server cli --server https://cloud.example:8443 \
     file.list
 ```
 
-Read a file into a pipeline:
+Copy a whole file from the remote machine to this one:
 
 ```
 connector-server cli --server https://cloud.example:8443 \
     --client-credential "$CONNECTOR_CLI_CLIENT_CREDENTIAL" \
     --node-credential "$CONNECTOR_CLI_NODE_CREDENTIAL" \
     --node-id "$CONNECTOR_CLI_NODE_ID" \
-    --scope project --path notes.md \
-    file.read > notes.md
+    --scope project --path photos/cat.jpg \
+    -o cat.jpg file.read
 ```
 
-`file.read` writes raw bytes to stdout, not JSON, so it pipes cleanly. A truncation
-notice goes to stderr, never to stdout, so it cannot corrupt a piped payload.
+Read a small text file straight into a pipeline:
+
+```
+connector-server cli ... --scope project --path notes.md -o - file.read
+```
 
 Read a byte range:
 
@@ -167,11 +232,21 @@ Inspect a file without reading it:
 connector-server cli ... --scope project --path notes.md file.stat
 ```
 
+Save a directory listing to a local file:
+
+```
+connector-server cli ... --scope project -o listing.txt file.list
+```
+
 Get the full envelope for scripting:
 
 ```
 connector-server cli ... --scope project --path notes.md --json file.read
 ```
+
+`--json` and `-o` cannot be combined. `--json` prints the whole envelope, `-o`
+writes the payload; asking for both is refused with exit status `2` rather than
+silently picking one.
 
 ## Reading the answer
 
@@ -180,11 +255,17 @@ connector-server cli ... --scope project --path notes.md --json file.read
 | Status | Meaning |
 |---|---|
 | `0` | The operation succeeded |
-| `1` | The request failed, or the Server answered with a non-zero code |
-| `2` | The command line itself was wrong: a missing flag, a bad operation name, a negative offset |
+| `1` | The request failed, the Server answered with a non-zero code, or `-o` refused to write |
+| `2` | The command line itself was wrong: a missing flag, a bad operation name, a negative offset, `--json` with `-o` |
 
 A shell script can branch on the status. The error code and message go to stderr;
 the payload goes to stdout.
+
+One case is worth calling out because it looks like a usage error and is not:
+**an existing `-o` destination exits `1`, not `2`**, even though the message begins
+with `usage:`. The refusal happens while the result is being written, after the
+command line was accepted. Treat `1` as "nothing was written" and `2` as "nothing
+was sent".
 
 ### Error codes
 
@@ -261,6 +342,16 @@ answer from a credential that is actually correct.
   fine to show.
 - **Expecting a write.** `file.write` and `command.exec` are refused in this
   version. Do not offer them as an option.
+- **Assuming `file.read > out.bin` copies a whole file.** It copies one capped
+  response, at most 256 KiB. Use `-o out.bin` when the file may be larger, and
+  treat a redirect as correct only for a file you know is small.
+- **Expecting `-o` to overwrite silently.** An existing destination is refused
+  with exit status `1`. Add `--force` when you mean to replace it.
+- **Combining `--json` with `-o`.** They are refused together, because `--json`
+  prints the whole envelope and `-o` writes only the payload. Pick one.
+- **Assuming the `-o` path is remote.** `--path` is relative to the scope root on
+  the Node; `-o` is a path on the machine running the CLI. The two follow
+  different rules, and `-o` may be absolute.
 
 ## Verification Checklist
 
@@ -271,6 +362,11 @@ answer from a credential that is actually correct.
 - [ ] `--scope` names a scope the Node's policy defines, not a directory path.
 - [ ] `--path` is relative, contains no `..`, `.`, backslash, colon or NUL byte.
 - [ ] The operation is one of `file.list`, `file.stat`, `file.read`.
+- [ ] A whole-file copy used `-o`, not a shell redirect, when the file may exceed
+      256 KiB.
+- [ ] `--force` was added only when replacing an existing local file on purpose.
+- [ ] `--json` and `-o` were not combined.
+- [ ] The `-o` destination is a path on this machine, not a path inside the scope.
 - [ ] The exit status was checked, not just the printed output.
 - [ ] A non-zero code was explained from the error table, not guessed.
 - [ ] No secret appears in anything you printed or reported.
