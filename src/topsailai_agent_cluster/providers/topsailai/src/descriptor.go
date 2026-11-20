@@ -20,7 +20,7 @@ func topsailaiDescriptor(control controlCatalog, platform platformCapabilities) 
 	return descriptor{
 		ProviderType:       "topsailai",
 		ProviderVersion:    providerVersion,
-		DescriptorRevision: "topsailai-provider-v3",
+		DescriptorRevision: "topsailai-provider-v4",
 		ProtocolRange: protocolRange{
 			Protocol: protocolName,
 			Major:    protocolMajor,
