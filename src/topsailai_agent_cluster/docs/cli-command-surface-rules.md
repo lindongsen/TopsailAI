@@ -90,6 +90,20 @@ empty answer as `project registry unchanged`. Three details carry over to any fu
 - An empty catalog is stated plainly and asks nothing. A question with no possible answer is worse
   than a statement, because it invites the operator to type something that cannot succeed.
 
+`show` with no selector in workspace scope is the third reference instance, and it shows the rule
+applied to a read-only command. It renders the workspace table, asks which row to show, and reports an
+empty answer as `show cancelled`. Three details are specific to a read:
+
+- An already-rendered table is reused instead of rendered again. The REPL prints the workspace
+  inventory before the first prompt, so re-rendering would issue a second inventory read and clear the
+  other row namespaces for a question the operator is already looking at.
+- The guided answer accepts exactly what the explicit form accepts, which is a printed row number or a
+  provider session ID. Two resolvers for one command would let the question accept a value the command
+  rejects, and the operator would read that as the command being broken.
+- A row with no session identity is an endpoint placeholder row, so the answer renders that endpoint's
+  detail, which is what `show <endpoint-id>` already does. A read has no reason to refuse a row it
+  printed.
+
 The rule has one legitimate alternative, and it is not a violation. When the candidate set is narrow
 and exactly one member is safe, resolving that member without asking is better than rendering a table
 of one row. `resume` with no selector is that pattern: it resumes the sole unknown session and reports
