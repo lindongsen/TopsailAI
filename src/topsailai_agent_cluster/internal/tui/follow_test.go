@@ -561,3 +561,54 @@ func idleUntil(t *testing.T, session *followSession, want string) string {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// contextRecordingFollower records the context it was handed, so a test can
+// observe that a keypress reaches the transport rather than only the renderer.
+//
+// The existing stub records the request but not the context, which is why the
+// teardown chain had no direct assertion: a Stop that only marked the session
+// ended would have satisfied every other follow test while leaving the HTTP
+// request, the Server's pending entry and the provider child alive until the
+// follow budget expired.
+type contextRecordingFollower struct {
+	interactiveStub
+	seen chan context.Context
+}
+
+// FollowOutput implements the streaming seam and reports the context it received.
+func (f *contextRecordingFollower) FollowOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (<-chan protocol.OutputFollowRecord, error) {
+	f.seen <- ctx
+	return make(chan protocol.OutputFollowRecord), nil
+}
+
+// TestStopCancelsTheStreamContext proves the operator's keypress cancels the
+// context the transport was opened with.
+//
+// Cancelling that context is the only thing that releases the stream end to end:
+// the HTTP client aborts the request, the Server observes the abort and sends
+// output_follow_cancel, and the Endpoint cancels the provider child. A Stop that
+// stopped at marking the session ended would leave all three alive, and with the
+// follow budget now thirty minutes by default the leak would last fifteen times
+// longer than the two-minute budget it replaced.
+func TestStopCancelsTheStreamContext(t *testing.T) {
+	follower := &contextRecordingFollower{seen: make(chan context.Context, 1)}
+	session, err := newFollowSession(context.Background(), follower, followRequest{EndpointID: "endpoint-1", ResourceID: "res-1"}, ColorPolicy{})
+	if err != nil {
+		t.Fatalf("newFollowSession: %v", err)
+	}
+	var streamCtx context.Context
+	select {
+	case streamCtx = <-follower.seen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream was never opened")
+	}
+	if streamCtx.Err() != nil {
+		t.Fatalf("the stream context was cancelled before Stop: %v", streamCtx.Err())
+	}
+	session.Stop()
+	select {
+	case <-streamCtx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not cancel the stream context, so the transport was never released")
+	}
+}
