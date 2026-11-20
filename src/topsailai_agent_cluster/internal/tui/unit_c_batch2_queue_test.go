@@ -250,7 +250,7 @@ func unitC19MainHelp() string {
 		"  project [endpoint] | project add <folder> [name] | project remove <row|project-id>\n" +
 		"                                        list managed projects for one endpoint\n" +
 		"  messages [-c N] [-t N] [session]      read one session's conversation by row number or session ID\n" +
-		"  model [session] [profile]             list the model profiles one session can select, by row number or session ID\n" +
+		"  model [session] [profile]             list the models one endpoint offers to launches and mark the one in use, or list the model profiles one session can select by row number or session ID\n" +
 		"  help [command]                        show help\n" +
 		"  quit                                  leave interactive mode\n" +
 		"  exit                                  leave interactive mode from every scope\n" +

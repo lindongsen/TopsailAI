@@ -38,17 +38,25 @@ func IsRowNumber(token string) bool {
 	return numeric
 }
 
-// interactiveModel lists the model profiles one session can select, or applies one
-// profile to that session.
+// interactiveModel lists the model profiles one session can select, applies one
+// profile to that session, or reports the models one Endpoint offers to launches.
 //
 // The grammar is "model [session] [profile]", which covers the documented
 // "model <number-or-session>" form and the two-token form the standalone surface
 // needs:
 //
-//	model                        list the profiles of the current session
+//	model                        the endpoint registry outside session scope, or the
+//	                             current session's profiles inside it
 //	model <session>              list the profiles of one named session
 //	model <number>               apply that profile to the current session
 //	model <session> <profile>    apply one profile to one named session
+//
+// A bare "model" means two different things and the scope decides which, without
+// guessing. Session scope already names one session, so a bare model can only mean
+// that session's catalog. Outside session scope there is no session to list profiles
+// for, so the question is about the machine: which models can a launch here use, and
+// which one is in use. Answering that with "requires a session" made the operator
+// type a session identifier to learn a fact that belongs to the machine.
 //
 // A number means different things in different scopes, and the scope decides it
 // without guessing. In session scope the scope already names the target, so a number
@@ -70,6 +78,11 @@ func interactiveModel(parent context.Context, api InteractiveAPI, state *interac
 	if len(fields) == 1 {
 		token = fields[0]
 	}
+	if token == "" && state.Scope.Kind != ScopeSession {
+		// A bare model outside session scope asks about the machine, so it reads the
+		// endpoint registry instead of demanding a session the operator does not have.
+		return interactiveModelRegistry(parent, api, state, "", lines, out, trustedOut, diagnostics, options)
+	}
 	if token != "" && state.Scope.Kind == ScopeSession && IsRowNumber(token) {
 		return interactiveModelSelect(parent, api, state, "", token, lines, out, trustedOut, options)
 	}
@@ -80,9 +93,10 @@ func interactiveModel(parent context.Context, api InteractiveAPI, state *interac
 // offers the guided selection.
 //
 // Session scope already names its target, so a bare model lists the profiles of the
-// selected session. Outside session scope the argument is required, because a catalog
-// read is session-scoped and fanning out across sessions would multiply provider calls
-// and mix profiles that belong to different runtimes.
+// selected session. This function is reached outside session scope only with a token,
+// because a bare model there reads the endpoint registry instead: a catalog read is
+// session-scoped, and fanning out across sessions would multiply provider calls and
+// mix profiles that belong to different runtimes.
 //
 // The target is resolved through the read resolver and the generation is sent empty,
 // because listing a catalog is a read. A generation proves which process a mutation
