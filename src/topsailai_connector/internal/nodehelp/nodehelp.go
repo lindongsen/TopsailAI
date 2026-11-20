@@ -460,12 +460,23 @@ FLAGS
         show credentials   the public key ids; a secret is never printed
         show scopes        every scope and whether its directory exists
         show status        the mode, the node id, the server and the counts
+        log [level]        show or set the log level: debug, info, warn, error or off
         regenerate id      replace the node id; every credential is unchanged
         credential add <key-id>     add a caller and print its secret once
         credential rotate <key-id>  replace the secret under an existing key id
         credential remove <key-id>  revoke one caller; the last one cannot be removed
         help               the command list
         quit               stop reading commands; the Node keeps running
+
+      The console and the log share one terminal, so a log record written while you
+      are typing lands in the middle of the line and the screen reads as if you typed
+      it. A Node that cannot reach the Server writes a warning every retry, which is
+      the usual source. "log off" silences the process logger, not only the console,
+      so the retry warnings stop too; "log info" brings them back. A silenced Node
+      still reports a fatal error on the way out, so "log off" cannot hide a startup
+      or shutdown failure. The level is not remembered across a restart, because a
+      Node that stayed silent after a restart would hide the reason it cannot
+      connect.
 
       A command that fails prints its error and the console continues, so a typo
       does not cost a restart. Input is read from stdin and is never written to a

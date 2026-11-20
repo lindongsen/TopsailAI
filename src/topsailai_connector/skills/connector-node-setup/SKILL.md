@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
 description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, how to find the node id, key id and secret after starting the Node, how to run the Node on a machine whose filesystem is read-only so it writes no file at all, or how to read the configuration and change the node id or a credential from an interactive console without editing a file, how to read the Node's settings from a dotenv file instead of the environment, or how to override one setting for a single launch with --set. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management, regeneration, stateless mode, the interactive console, and the four configuration sources with their precedence.
-version: 1.7.0
+version: 1.8.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -945,6 +945,7 @@ show identity      the node id this node answers to
 show credentials   the public key ids; a secret is never printed
 show scopes        every scope and whether its directory exists
 show status        the mode, the node id, the server and the counts
+log [level]        show or set the log level: debug, info, warn, error or off
 regenerate id      replace the node id; every credential is unchanged
 credential add <key-id>     add a caller and print its secret once
 credential rotate <key-id>  replace the secret under an existing key id
@@ -963,6 +964,48 @@ once.
 
 A command that fails prints its error and the console continues, so a typo does not
 cost a restart.
+
+### Stopping the log from interrupting what you type
+
+The console and the log share one terminal. A log record written while you are
+typing lands in the middle of the line, so the screen reads as if you typed it:
+
+```
+connector-node> show cretime=2026-11-20T12:14:58.536+08:00 level=WARN msg="channel ended" error="dial ws://127.0.0.1:1/channel: dial tcp 127.0.0.1:1: connect: connection refused" retry_in=5s
+```
+
+Your input is not lost — the terminal keeps the line buffer, so finishing the word
+and pressing Enter still runs the command. But you cannot see what you typed, and a
+Node that cannot reach the Server writes one of these every retry, so it happens
+constantly.
+
+`log off` silences it:
+
+```
+connector-node> log
+log level: info
+connector-node> log off
+log level: off
+the log is off; a failure is still reported when the node exits
+```
+
+That second line is deliberate: a Node that has been silenced still reports a fatal
+error on the way out, so `log off` cannot hide a startup or shutdown failure.
+
+`log off` changes the **process** logger, not only the console, so the retry warnings
+stop too. `log info` brings them back. The accepted words are `debug`, `info`, `warn`
+(also `warning`), `error` and `off` (also `none` and `quiet`).
+
+The level is **not remembered across a restart**. A Node that stayed silent after a
+restart would hide the reason it cannot connect, which is the one thing the log is
+for.
+
+An unknown word is refused and the level is left alone:
+
+```
+connector-node> log silent
+error: unknown level "silent"; want debug, info, warn, error or off
+```
 
 ### What a change does in each mode
 
@@ -998,6 +1041,7 @@ The old secret stops working at once. The new one is printed once, so copy it th
 | Startup fails naming a scope | That scope's path is missing, is a file, is a symlink, or overlaps the config dir | Fix the policy |
 | Handshake refused, then silence | Wrong `tunnel_token` | Get the correct value from the Server operator |
 | Reconnects every 5 seconds | The Server is down, or the node id was regenerated | Check both logs |
+| Log records land in the middle of what I am typing | The console and the log share one terminal, and a Node that cannot reach the Server warns on every retry | Type `log off` in the console; `log info` brings the records back |
 | A request came back `denied` | The policy does not grant it | Add the grant and reload |
 | A request came back `not_found` | The policy allowed it and the path is not there | Check the path |
 | `invalid_argument` on a path | The path has `..`, `.`, a backslash, a colon, a NUL, or is absolute | Use a plain relative path |

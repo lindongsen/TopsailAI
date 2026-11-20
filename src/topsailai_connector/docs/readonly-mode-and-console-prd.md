@@ -261,6 +261,11 @@ intends to expose, and nothing in the process can know that.
 | FR-CON-12 | The console is documented in `--help` and in the Node skill, because a reader of the skill cannot see the source. |
 | FR-CON-13 | Enabling the console with stdout redirected fails startup rather than starting a console that silently reads nothing. |
 | FR-CON-14 | A credential rotation under an existing key id is applied even though the public key identifiers are unchanged. The holder's current comparison reports "unchanged" for that case, so the console must not rely on it alone. |
+| FR-CON-15 | The console can silence the process logger with `log off` and restore it with `log info`, because the console and the log share one terminal and a log record written mid-line makes the operator believe they typed it. The switch changes the process logger, not only the console's own output, so the retry warnings stop too. |
+| FR-CON-16 | The log level is not persisted across a restart, because a Node that stayed silent after a restart would hide the reason it cannot connect. A silenced Node still reports a fatal error on the way out. |
+| FR-CON-17 | A command that names a subject or an action it does not have says which one was wrong and what the valid ones are, rather than repeating a usage line. `credential list` points at `show credentials`; `regenerate bogus` names `bogus`. |
+| FR-CON-18 | `quit` and end-of-input print that the console closed and the Node keeps running, because a silent exit reads as a hang. |
+| FR-CON-19 | `show config` prints one field per line, so a value is never split across a wrap boundary. |
 
 FR-CON-14 records a measured constraint rather than a preference.
 `IdentityHolder.ReplaceCredentials` compares the public key identifiers, because a
@@ -334,7 +339,7 @@ Mutating commands change state and write no file in this mode:
 | Priority | Item |
 |---|---|
 | Must | FR-EPH-1, 2, 3, 4, 5, 6, 8, 9, 11; FR-CON-1, 2, 3, 5, 6, 7, 9, 10, 12 |
-| Should | FR-EPH-7, 10, 12; FR-CON-4, 8, 11, 13, 14 |
+| Should | FR-EPH-7, 10, 12; FR-CON-4, 8, 11, 13, 14, 15, 16, 17, 18, 19 |
 | Could | A `show policy` command that prints the effective policy document; a `show channel` command that prints the last handshake result |
 | Won't (this release) | Changing the tunnel token or the policy from the console; a console over a network socket; a console that survives a restart in stateless mode |
 
@@ -416,6 +421,17 @@ happen, while the console's are about state that must change.
 - **AC-CON-8** An unknown command does not stop the Node.
 - **AC-CON-9** `credential rotate` under an existing key id changes the secret
   that authenticates, and the old secret is refused.
+- **AC-CON-10** `log off` stops the retry warning from appearing on the terminal
+  for at least two retry intervals, and `log info` makes it appear again. Verified
+  by reading the recorded terminal output, not by reading the level variable.
+- **AC-CON-11** `log silent` is refused, names the unknown word, and leaves the
+  level unchanged.
+- **AC-CON-12** `quit` prints `console closed; the node keeps running` and the
+  process is still alive afterwards.
+- **AC-CON-13** `credential list` names `show credentials`, and `regenerate bogus`
+  names `bogus`.
+- **AC-CON-14** Every line of `show config` is a single field and no line exceeds
+  80 characters.
 
 ## Assumptions and constraints
 
