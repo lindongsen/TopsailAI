@@ -51,7 +51,9 @@ func IsRowNumber(token string) bool {
 //	model <session>              list the profiles of one named session
 //	model <number>               apply that profile to the current session
 //	model <session> <profile>    apply one profile to one named session
-//	model set <row|profile-id>   declare which model a launch from this endpoint uses
+//	model set                    render the endpoint registry and ask which model a
+//	                             launch from this endpoint should use
+//	model set <row|profile-id>   declare that model without asking
 //
 // A bare "model" means two different things and the scope decides which, without
 // guessing. Session scope already names one session, so a bare model can only mean
@@ -81,12 +83,12 @@ func interactiveModel(parent context.Context, api InteractiveAPI, state *interac
 	fields := strings.Fields(rest)
 	if len(fields) > 0 && fields[0] == "set" {
 		if state.Scope.Kind == ScopeSession {
-			return fmt.Errorf("usage: model set <row|model-profile-id> is available outside session scope; in session scope use model <profile> to apply a profile to this session, or cd .. to change the launch default")
+			return fmt.Errorf("usage: model set [<row|model-profile-id>] is available outside session scope; in session scope use model <profile> to apply a profile to this session, or cd .. to change the launch default")
 		}
-		return interactiveModelSet(parent, api, state, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "set")), lines, out, trustedOut, options)
+		return interactiveModelSet(parent, api, state, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "set")), lines, out, trustedOut, diagnostics, options)
 	}
 	if len(fields) > 2 {
-		return fmt.Errorf("usage: model [session] [profile] | model set <row|model-profile-id>")
+		return fmt.Errorf("usage: model [session] [profile] | model set [<row|model-profile-id>]")
 	}
 	if len(fields) == 2 {
 		return interactiveModelSelect(parent, api, state, fields[0], fields[1], lines, out, trustedOut, options)

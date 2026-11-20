@@ -181,17 +181,18 @@ func TestModelRegistryNamesAnUnsupportedEndpoint(t *testing.T) {
 func TestModelRegistryDropsEveryOtherRowNamespace(t *testing.T) {
 	stub := modelRegistryFixture()
 	state := &interactiveState{
-		Scope:          ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1"},
-		history:        &historyNamespace{EndpointID: "endpoint-1", Rows: map[int]HistoryViewRow{1: {No: 1}}},
-		modelCatalog:   &modelCatalogNamespace{ClusterSessionID: "res_1", Rows: map[int]ModelCatalogViewRow{1: {No: 1}}},
-		projectCatalog: &projectCatalogNamespace{EndpointID: "endpoint-1", Rows: map[int]protocol.Project{1: {ProjectID: "prj_1"}}},
+		Scope:                ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1"},
+		history:              &historyNamespace{EndpointID: "endpoint-1", Rows: map[int]HistoryViewRow{1: {No: 1}}},
+		modelCatalog:         &modelCatalogNamespace{ClusterSessionID: "res_1", Rows: map[int]ModelCatalogViewRow{1: {No: 1}}},
+		projectCatalog:       &projectCatalogNamespace{EndpointID: "endpoint-1", Rows: map[int]protocol.Project{1: {ProjectID: "prj_1"}}},
+		interactiveSelection: interactiveSelection{Rows: map[int]SessionRow{1: {No: 1}}},
 	}
 	var out, diagnostics strings.Builder
 	if err := interactiveModelRegistry(context.Background(), stub, state, "", nil, &out, &out, &diagnostics, InteractiveOptions{}); err != nil {
 		t.Fatalf("interactiveModelRegistry: %v", err)
 	}
-	if state.history != nil || state.modelCatalog != nil || state.projectCatalog != nil {
-		t.Fatalf("a stale namespace survived the registry render: history=%v catalog=%v project=%v", state.history, state.modelCatalog, state.projectCatalog)
+	if state.history != nil || state.modelCatalog != nil || state.projectCatalog != nil || state.Rows != nil {
+		t.Fatalf("a stale namespace survived the registry render: list=%v history=%v catalog=%v project=%v", state.Rows, state.history, state.modelCatalog, state.projectCatalog)
 	}
 }
 

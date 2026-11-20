@@ -289,3 +289,205 @@ func TestModelSetPayloadCarriesOnlyTheIdentifier(t *testing.T) {
 		t.Fatalf("payload does not carry the identifier: %s", payload)
 	}
 }
+
+// TestModelSetWithoutASelectorRendersAndAsks proves the no-argument form renders the
+// registry and asks which model to declare, so the operator sees what the machine
+// offers before choosing instead of having to run two commands for one decision.
+func TestModelSetWithoutASelectorRendersAndAsks(t *testing.T) {
+	stub := modelSetFixture()
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set\n2\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	// The table is rendered by the same helper the bare read uses, so the operator
+	// reads the same columns and the same current-model marker.
+	if !strings.Contains(output, "Alpha") || !strings.Contains(output, "Beta") {
+		t.Fatalf("the registry was not rendered before the question: %q", output)
+	}
+	if !strings.Contains(output, "select model [1-3]") {
+		t.Fatalf("the question does not name the rendered range: %q", output)
+	}
+	if stub.registryCalls != 1 {
+		t.Fatalf("registry reads=%d, want 1 (the render only)", stub.registryCalls)
+	}
+	if payload := modelSetPayloadOf(t, stub); payload.ModelProfileID != "mp_beta" {
+		t.Fatalf("model_profile_id=%q, want mp_beta", payload.ModelProfileID)
+	}
+	if intent := stub.intents[0]; intent.Target != nil {
+		t.Fatalf("model set must be target-less, got target %+v", *intent.Target)
+	}
+	if !strings.Contains(output, "is now the launch default") {
+		t.Fatalf("the change is not reported: %q", output)
+	}
+}
+
+// TestModelSetWithoutASelectorKeepsTheDefaultOnAnEmptyAnswer proves an empty answer is
+// a decision rather than a failure: the operator looked and kept the current default.
+func TestModelSetWithoutASelectorKeepsTheDefaultOnAnEmptyAnswer(t *testing.T) {
+	stub := modelSetFixture()
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set\n\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("admitted=%d, want 0", stub.admit)
+	}
+	if !strings.Contains(output, "launch default unchanged") {
+		t.Fatalf("the unchanged default is not reported: %q", output)
+	}
+}
+
+// TestModelSetWithoutASelectorAcceptsADisplayName proves the guided answer can name a
+// model instead of counting rows, resolved against the table that was just printed.
+func TestModelSetWithoutASelectorAcceptsADisplayName(t *testing.T) {
+	stub := modelSetFixture()
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set\nBeta\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if payload := modelSetPayloadOf(t, stub); payload.ModelProfileID != "mp_beta" {
+		t.Fatalf("model_profile_id=%q, want mp_beta", payload.ModelProfileID)
+	}
+}
+
+// TestModelSetWithoutASelectorRefusesAnUnavailableRow proves the guided answer reuses
+// the registry's availability answer, so the operator is not asked to confirm a change
+// the provider would then refuse.
+func TestModelSetWithoutASelectorRefusesAnUnavailableRow(t *testing.T) {
+	stub := modelSetFixture()
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set\n3\nexit\n", ColorPolicy{})
+	if stub.admit != 0 {
+		t.Fatalf("admitted=%d, want 0", stub.admit)
+	}
+	if !strings.Contains(diagnostics, "is unavailable (disabled)") {
+		t.Fatalf("the refusal does not repeat the registry reason: %q", diagnostics)
+	}
+	if strings.Contains(output, "Confirm") {
+		t.Fatalf("an unavailable model must not reach a confirmation: %q", output)
+	}
+}
+
+// TestModelSetWithoutASelectorRefusesAnUnprintedNumber proves a number outside the
+// rendered table is refused instead of being retried as an identifier.
+func TestModelSetWithoutASelectorRefusesAnUnprintedNumber(t *testing.T) {
+	stub := modelSetFixture()
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set\n9\nexit\n", ColorPolicy{})
+	if stub.admit != 0 {
+		t.Fatalf("admitted=%d, want 0", stub.admit)
+	}
+	if !strings.Contains(diagnostics, "no such row in the rendered registry") {
+		t.Fatalf("the refusal does not name the missing row: %q", diagnostics)
+	}
+}
+
+// TestModelSetWithoutASelectorStatesAnEmptyRegistry proves an endpoint that offers no
+// model is stated plainly and no question is asked, because there is nothing to choose.
+func TestModelSetWithoutASelectorStatesAnEmptyRegistry(t *testing.T) {
+	stub := modelSetFixture()
+	stub.registry.Entries = nil
+	stub.registry.CurrentProfileID = ""
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("admitted=%d, want 0", stub.admit)
+	}
+	if !strings.Contains(output, "offers no model to launches") {
+		t.Fatalf("the empty registry is not stated: %q", output)
+	}
+	if strings.Contains(output, "select model") {
+		t.Fatalf("an empty registry must not ask a question: %q", output)
+	}
+}
+
+// TestModelSetWithoutASelectorStatesAnAllUnavailableRegistry proves a registry where
+// every row is unavailable states that no default can be declared, instead of asking a
+// question whose every answer the endpoint would reject.
+func TestModelSetWithoutASelectorStatesAnAllUnavailableRegistry(t *testing.T) {
+	stub := modelSetFixture()
+	stub.registry.Entries = []protocol.ModelRegistryEntry{
+		{ModelProfileID: "mp_gamma", ProviderDisplayName: "Gamma", Available: false, UnavailableReason: "disabled"},
+	}
+	stub.registry.CurrentProfileID = ""
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("admitted=%d, want 0", stub.admit)
+	}
+	if !strings.Contains(output, "offers no usable model") {
+		t.Fatalf("the all-unavailable registry is not stated: %q", output)
+	}
+	if strings.Contains(output, "select model") {
+		t.Fatalf("an all-unavailable registry must not ask a question: %q", output)
+	}
+}
+
+// TestModelSetWithoutASelectorPromptsForAnEndpointInWorkspaceScope proves workspace
+// scope asks which machine to change before rendering, because a launch default
+// belongs to one machine.
+func TestModelSetWithoutASelectorPromptsForAnEndpointInWorkspaceScope(t *testing.T) {
+	stub := modelSetFixture()
+	output, diagnostics := runScope(t, stub, "model set\n1\n2\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if len(stub.endpointsRead) != 1 || stub.endpointsRead[0] != "endpoint-1" {
+		t.Fatalf("read endpoints=%v, want [endpoint-1]", stub.endpointsRead)
+	}
+	if !strings.Contains(output, "select model [1-3]") {
+		t.Fatalf("the registry was not rendered after the endpoint was chosen: %q", output)
+	}
+	if payload := modelSetPayloadOf(t, stub); payload.ModelProfileID != "mp_beta" {
+		t.Fatalf("model_profile_id=%q, want mp_beta", payload.ModelProfileID)
+	}
+}
+
+// TestModelSetWithoutASelectorCancelledEndpointPromptChangesNothing proves cancelling
+// the endpoint prompt performs no read and asks no question, because cancelling is a
+// decision rather than a failure.
+func TestModelSetWithoutASelectorCancelledEndpointPromptChangesNothing(t *testing.T) {
+	stub := modelSetFixture()
+	output, diagnostics := runScope(t, stub, "model set\n\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.registryCalls != 0 {
+		t.Fatalf("registry reads=%d, want 0", stub.registryCalls)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("admitted=%d, want 0", stub.admit)
+	}
+	if strings.Contains(output, "select model") {
+		t.Fatalf("a cancelled endpoint prompt must not ask a model question: %q", output)
+	}
+}
+
+// TestModelSetWithoutASelectorDropsTheNamespaceAfterAChange proves the numbers from the
+// guided render are dropped after a successful change, because the table no longer
+// describes the machine.
+func TestModelSetWithoutASelectorDropsTheNamespaceAfterAChange(t *testing.T) {
+	stub := modelSetFixture()
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set\n2\ny\nmodel set 2\nexit\n", ColorPolicy{})
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d, want 1", stub.admit)
+	}
+	if !strings.Contains(diagnostics, "no model registry has been rendered") {
+		t.Fatalf("the stale namespace survived the change: %q", diagnostics)
+	}
+}
+
+// TestModelSetWithoutASelectorRejectsAnOption proves an option is refused before any
+// read, because the interactive surface never accepts a flag.
+func TestModelSetWithoutASelectorRejectsAnOption(t *testing.T) {
+	stub := modelSetFixture()
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nmodel set --json\nexit\n", ColorPolicy{})
+	if stub.registryCalls != 0 || stub.admit != 0 {
+		t.Fatalf("registry reads=%d admitted=%d, want 0 and 0", stub.registryCalls, stub.admit)
+	}
+	if !strings.Contains(diagnostics, "available only in non-interactive mode") {
+		t.Fatalf("the refusal does not name the option restriction: %q", diagnostics)
+	}
+}
