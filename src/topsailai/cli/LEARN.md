@@ -1182,3 +1182,35 @@ to distinguish "this row has no stats" from "the document is broken". The
 existing test was the only thing that caught it, which is the argument for
 pinning an optional-dependency contract before adding a new consumer of that
 dependency.
+
+## A syntax check does not prove a name is imported
+
+### Trigger
+
+Adding the `history` alias for `project list_sessions`, I used
+`aliases=list(PROJECT_LIST_SESSIONS_ALIASES)` in both parsers but imported only
+`PROJECT_LIST_SESSIONS_SPELLINGS` in `core.py`. `ast.parse` reported `AST OK` for
+all three edited files, so the change looked verified; the first real command run
+failed with `NameError: name 'PROJECT_LIST_SESSIONS_ALIASES' is not defined`.
+
+### Action taken
+
+Added the missing import, confirmed the import block by reading it back with line
+numbers, then re-ran the real command (`project --help` now lists
+`{list,list_sessions,history,add,del,launch,resume}`), the alias end-to-end
+(`project history --json` and the table form), the usage-error and
+unknown-subcommand paths, the targeted tests, and the full
+`tests/unit/topsailai` suite (3725 passed). A negative control that emptied the
+alias declaration reproduced the original `invalid choice: 'history'` failure,
+proving the new tests are sensitive.
+
+### Why this prevents recurrence
+
+`ast.parse` answers "is this file syntactically valid", not "does every name it
+references exist", so a missing import passes it silently and only fails when the
+module is imported and the line executes. After adding a symbol to a module's
+namespace, run the entry point that actually reaches the new line — a `--help`
+invocation is usually the cheapest one — instead of treating a parse check as
+verification. Also read the import block back after editing it: a range
+replacement that repeats a surviving line leaves a duplicate import, which is
+harmless to the parser but a sign the edit was not bounded correctly.
