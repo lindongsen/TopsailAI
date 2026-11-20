@@ -60,11 +60,16 @@ type Dialer struct {
 	// synchronisation; the value it describes is published through the holder.
 	identityChanged bool
 
-	// identityChanges carries one signal per adopted identity change. It is created
-	// by Run and is nil for a dialer that is never run, which is what a test that
-	// drives a single connection wants: a nil channel never delivers, so no identity
+	// identityChanges carries one signal per reason to drop the live channel. The
+	// value is the reason, not an empty struct, because two different events drop a
+	// channel and the log must name the one that happened: a regenerated identity and
+	// a repointed Server address both end the channel, and reporting either as the
+	// other sends an operator looking for a change that never occurred.
+	//
+	// It is created by Run and is nil for a dialer that is never run, which is what a
+	// test that drives a single connection wants: a nil channel never delivers, so no
 	// change can drop the connection under test.
-	identityChanges <-chan struct{}
+	identityChanges <-chan string
 
 	// identityChangeRequests is the sending end of the same channel, published so a
 	// console can ask for a channel drop after it replaces the node id in memory. It
@@ -75,8 +80,20 @@ type Dialer struct {
 	//
 	// It is nil until Run starts, and a nil value makes RequestIdentityChange a no-op:
 	// a dialer that is not running has no channel to drop.
-	identityChangeRequests chan<- struct{}
+	identityChangeRequests chan<- string
 	identityChangeMutex    sync.Mutex
+
+	// serverURL is the address the next dial uses. It is a field rather than a read
+	// of config.ServerURL because the console can repoint a running Node, and a
+	// repoint must reach the dial loop without a restart.
+	//
+	// It is guarded by serverURLMutex because the console writes it from the
+	// goroutine that reads commands while the dial loop reads it from the goroutine
+	// that serves the channel. An unsynchronised write there is a data race the race
+	// detector reports, which is the same defect identityChangeRequests already
+	// needed a mutex for.
+	serverURL      string
+	serverURLMutex sync.RWMutex
 }
 
 // NewDialer builds a dialer serving one fixed identity.
@@ -130,6 +147,7 @@ func NewDialerWithHolder(config Config, holder *IdentityHolder, dispatcher *Disp
 	}
 	return &Dialer{
 		config:          config,
+		serverURL:       config.ServerURL,
 		holder:          holder,
 		identityPath:    identityPath,
 		credentialsPath: credentialsPath,
@@ -152,7 +170,7 @@ func (d *Dialer) Run(ctx context.Context) error {
 	// The watcher is started here rather than in the constructor, because a dialer
 	// that is built and never run must not leave a goroutine polling a file. It stops
 	// with the context, so a shutdown leaves nothing behind.
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	go d.watchIdentity(ctx, changes)
 
 	// The sending end is published so a console can ask for a channel drop after it
@@ -196,6 +214,33 @@ func (d *Dialer) Run(ctx context.Context) error {
 	}
 }
 
+// ServerURL returns the address the next dial will use.
+//
+// It is the value in force, not the value the process started with, so a console that
+// repoints the Node and then reports the address reports what the dial loop will
+// actually dial. Reading config.ServerURL instead would report the startup value and
+// make a successful repoint look like it did nothing.
+func (d *Dialer) ServerURL() string {
+	d.serverURLMutex.RLock()
+	defer d.serverURLMutex.RUnlock()
+	return d.serverURL
+}
+
+// SetServerURL replaces the address the next dial uses.
+//
+// The caller validates the value first. This method deliberately does not validate,
+// because a second validator here would be a second definition of an acceptable
+// address, and the two would eventually disagree about which values are allowed.
+//
+// It does not drop the live channel. Dropping is a separate act with a separate
+// consequence, and a setter that also dropped would make "change the address" and
+// "reconnect now" impossible to do independently. The console calls both.
+func (d *Dialer) SetServerURL(value string) {
+	d.serverURLMutex.Lock()
+	d.serverURL = value
+	d.serverURLMutex.Unlock()
+}
+
 // RequestIdentityChange asks the dialer to drop the live channel.
 //
 // It exists for the console. A file-backed Node learns about a regenerated address from
@@ -209,6 +254,27 @@ func (d *Dialer) Run(ctx context.Context) error {
 // disconnected does not drop the channel that is about to be established with the new
 // identity.
 func (d *Dialer) RequestIdentityChange() {
+	d.requestChannelDrop(identityChangeReason)
+}
+
+// RequestReconnect asks the dialer to drop the live channel because the Server
+// address changed.
+//
+// It is a separate method from RequestIdentityChange for one reason: the log line. A
+// repoint and a regeneration both end the channel, and a single message for both would
+// report one as the other. The measured case was a repoint that logged "identity
+// changed", which sends an operator looking for a regeneration that never happened.
+func (d *Dialer) RequestReconnect() {
+	d.requestChannelDrop(serverChangeReason)
+}
+
+// requestChannelDrop publishes one reason to the dial loop.
+//
+// A nil sending end makes it a no-op, because a dialer that is not running has no
+// channel to drop. The send is non-blocking: a pending signal is drained before the
+// next dial, so a request that arrives while the Node is disconnected does not drop the
+// channel that is about to be established.
+func (d *Dialer) requestChannelDrop(reason string) {
 	d.identityChangeMutex.Lock()
 	requests := d.identityChangeRequests
 	d.identityChangeMutex.Unlock()
@@ -217,7 +283,7 @@ func (d *Dialer) RequestIdentityChange() {
 		return
 	}
 	select {
-	case requests <- struct{}{}:
+	case requests <- reason:
 	default:
 	}
 }
@@ -255,7 +321,7 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 	// authenticated with a name that no longer exists. The connection is closed rather
 	// than the session being told to stop, because a blocked read only ends when the
 	// socket does.
-	changeCtx, stopChangeWatcher := identityChangeContext(ctx, d.identityChanges)
+	changeCtx, changeReason, stopChangeWatcher := identityChangeContext(ctx, d.identityChanges)
 	defer stopChangeWatcher()
 
 	// The identifier is captured before the handshake so the log names the identity
@@ -275,8 +341,11 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return
 		}
-		d.logger.Info("identity changed; closing the channel authenticated with the retired node id",
+		// The reason is read here rather than assumed, because two events reach this
+		// callback and the log is the only place an operator learns which one happened.
+		d.logger.Info("closing the channel",
 			"node_id", authenticatedID,
+			"reason", changeReason(),
 		)
 		if err := conn.Close(); err != nil {
 			d.logger.Debug("closing the channel after an identity change reported an error", "error", err)
@@ -289,7 +358,7 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 		return err
 	}
 
-	d.logger.Info("channel established", "node_id", authenticatedID, "server", d.config.ServerURL)
+	d.logger.Info("channel established", "node_id", authenticatedID, "server", d.ServerURL())
 
 	frames, err := NewSocketFrameConn(conn)
 	if err != nil {
@@ -328,12 +397,15 @@ func (d *Dialer) dial(ctx context.Context) (*websocket.Conn, error) {
 		Proxy: http.ProxyFromEnvironment,
 	}
 
-	conn, response, err := dialer.DialContext(dialCtx, d.config.ServerURL, nil)
+	// The address is read once per attempt, so a repoint that lands while the Node is
+	// disconnected is used by the next dial rather than the one already in flight.
+	serverURL := d.ServerURL()
+	conn, response, err := dialer.DialContext(dialCtx, serverURL, nil)
 	if err != nil {
 		if response != nil {
-			return nil, fmt.Errorf("dial %s: %w (status %s)", d.config.ServerURL, err, response.Status)
+			return nil, fmt.Errorf("dial %s: %w (status %s)", serverURL, err, response.Status)
 		}
-		return nil, fmt.Errorf("dial %s: %w", d.config.ServerURL, err)
+		return nil, fmt.Errorf("dial %s: %w", serverURL, err)
 	}
 	return conn, nil
 }

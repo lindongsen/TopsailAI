@@ -28,8 +28,9 @@ const maxConsoleLineBytes = 64 << 10
 //
 // The console is not a second authority. It cannot add a scope, widen a grant or change
 // the policy: those live in the policy document, which is loaded once at startup and
-// reloaded only from a file. It can change exactly the two things the file-backed
-// subcommands can change, which are who the Node is and who may talk to it.
+// reloaded only from a file. It can change exactly the three things the file-backed
+// subcommands and the environment can change, which are who the Node is, who may talk
+// to it, and which Server it dials.
 //
 // It works in both modes. On a file-backed Node a change is also written to the file, so
 // the console and `connector-node regenerate` agree about what is in force; on a
@@ -42,7 +43,17 @@ type Console struct {
 	// rather than a dialer reference so a console can be built for a Node that never
 	// dials, and so a test can observe the request without a running dialer.
 	requestIdentityChange func()
-	logger                *slog.Logger
+	// setServerURL hands a validated address to the dialer. It is a function for the
+	// same reason requestIdentityChange is one: the console is built before the dialer
+	// exists, and a console built for a Node that never dials has nothing to hand the
+	// value to.
+	setServerURL func(string)
+	// requestReconnect asks the dialer to drop the live channel because the Server
+	// address changed. It is a separate function from requestIdentityChange because the
+	// two events write different log lines: a repoint reported as an identity change
+	// sends an operator looking for a regeneration that never happened.
+	requestReconnect func()
+	logger           *slog.Logger
 	// logLevel is the switch behind the `log` command. It is the same LevelVar the
 	// process logger was built from, so changing it here changes what every component
 	// writes, not only what the console writes.
@@ -109,6 +120,29 @@ func (c *Console) SetIdentityChangeRequest(request func()) {
 	c.requestIdentityChange = request
 }
 
+// SetServerURLSetter installs the function that hands a validated address to the
+// dialer.
+//
+// It exists for the same reason SetIdentityChangeRequest does: the dialer is created
+// after the console, so the callback cannot be passed to NewConsole. A nil value is
+// accepted and means "no dialer to tell", which is the correct state for a console
+// built by a test or for a Node that serves without a channel; the address is still
+// changed in memory, so `server` and `show config` agree afterwards.
+func (c *Console) SetServerURLSetter(set func(string)) {
+	c.setServerURL = set
+}
+
+// SetReconnectRequest installs the function that asks the dialer to drop the live
+// channel because the Server address changed.
+//
+// It is separate from SetIdentityChangeRequest for the same reason the dialer has two
+// methods: the log line names which event happened, and one callback for both events
+// would report a repoint as a regeneration. A nil value is accepted and means "no
+// dialer to ask", which is the correct state for a console built by a test.
+func (c *Console) SetReconnectRequest(request func()) {
+	c.requestReconnect = request
+}
+
 // Run reads commands until the input ends, the context is cancelled or `quit` is typed.
 //
 // A command that fails prints its error and the loop continues, because a console that
@@ -169,6 +203,8 @@ func (c *Console) execute(line string) (bool, error) {
 		return false, c.credential(fields[1:])
 	case "log":
 		return false, c.log(fields[1:])
+	case "server":
+		return false, c.server(fields[1:])
 	case "quit", "exit":
 		// The console stops reading but the Node keeps serving, so the operator needs
 		// to be told which of the two happened. A silent exit reads as a hang.
@@ -372,6 +408,59 @@ func (c *Console) showStatus() {
 	fmt.Fprintf(c.out, "credentials: %d\n", c.runtime.IdentityHolder().Credentials().Len())
 }
 
+// server reports or replaces the Server address.
+//
+// It exists because a Node packaged against the wrong address had no way to be
+// corrected without a rebuild and a restart. The address is one value, it is not a
+// secret, and it is the only setting besides the identity and the credentials that the
+// console can change.
+//
+// The tunnel token is deliberately not changeable here. It is one value like the
+// address, but it is a secret, and a secret typed at a terminal is a secret in a
+// scrollback buffer. A Node moved to a Server with a different token is refused at the
+// handshake, which is a visible failure rather than a silent one.
+//
+// The value is validated by the same function the startup path uses, so the console
+// cannot accept an address that `run` would refuse. A refusal leaves the address in
+// force unchanged, and the message names the reason rather than repeating a usage line.
+func (c *Console) server(args []string) error {
+	if len(args) == 0 {
+		fmt.Fprintf(c.out, "server: %s\n", c.runtime.ServerURL())
+		return nil
+	}
+	if len(args) > 1 {
+		return fmt.Errorf("usage: server [address]; unexpected argument %q", args[1])
+	}
+
+	address := args[0]
+	previous, err := c.runtime.ReplaceServerURL(address)
+	if err != nil {
+		// The startup validator names the variable, which is the right name in a
+		// startup message and the wrong one here: the operator typed an address at a
+		// console, not a variable into an environment. The reason is kept and the
+		// variable name is dropped, so the message names what the operator can act on.
+		return fmt.Errorf("the address %q is not usable: %s", address, strings.ReplaceAll(err.Error(), "CONNECTOR_NODE_SERVER_URL ", ""))
+	}
+
+	if c.setServerURL != nil {
+		c.setServerURL(address)
+	}
+	fmt.Fprintf(c.out, "server: %s\n", address)
+	if previous == address {
+		fmt.Fprintln(c.out, "the address is unchanged; the live channel is kept")
+		return nil
+	}
+	fmt.Fprintln(c.out, "the live channel is dropped and the node dials the new address")
+	// The change is not persisted, and saying so is the difference between a change
+	// that reverted and a change that never happened. The Node has no configuration
+	// file of its own, so there is nowhere to write it.
+	fmt.Fprintln(c.out, "this is not remembered across a restart; the address this process started with is used again")
+	if c.requestReconnect != nil {
+		c.requestReconnect()
+	}
+	return nil
+}
+
 // regenerate replaces the node id.
 //
 // The credential is deliberately untouched, which is the same contract
@@ -537,6 +626,7 @@ func (c *Console) printHelp() {
   show scopes        every scope and whether its directory exists
   show status        the mode, the node id, the server and the counts
   log [level]        show or set the log level: debug, info, warn, error or off
+  server [address]   show the Server address, or dial a different Server
   regenerate id      replace the node id; every credential is unchanged
   credential add <key-id>     add a caller and print its secret once
   credential rotate <key-id>  replace the secret under an existing key id

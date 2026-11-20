@@ -70,9 +70,14 @@ func TestDialReportsTheHTTPStatus(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
+	// The address is set in serverURL, which is the field dial() reads. A literal that
+	// set only config.ServerURL would dial an empty address and report a malformed URL,
+	// so the test would measure the fixture instead of the status it is about.
+	address := "ws" + strings.TrimPrefix(server.URL, "http")
 	dialer := &Dialer{
-		config: Config{ServerURL: "ws" + strings.TrimPrefix(server.URL, "http")},
-		logger: slog.New(slog.DiscardHandler),
+		config:    Config{ServerURL: address},
+		serverURL: address,
+		logger:    slog.New(slog.DiscardHandler),
 	}
 
 	_, err := dialer.dial(context.Background())
@@ -92,8 +97,9 @@ func TestDialHonoursACancelledContext(t *testing.T) {
 	cancel()
 
 	dialer := &Dialer{
-		config: Config{ServerURL: "ws://127.0.0.1:1/channel"},
-		logger: slog.New(slog.DiscardHandler),
+		config:    Config{ServerURL: "ws://127.0.0.1:1/channel"},
+		serverURL: "ws://127.0.0.1:1/channel",
+		logger:    slog.New(slog.DiscardHandler),
 	}
 
 	started := time.Now()

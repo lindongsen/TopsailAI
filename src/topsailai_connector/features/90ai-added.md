@@ -205,3 +205,18 @@ are refused at dispatch, so the grant promises more than the binary delivers and
 packaging summary says so. `PACKAGE_EMBED_STATELESS` compiles the mode in as a
 default rather than an authority, so `CONNECTOR_NODE_STATELESS=0` still runs the same
 file file-backed.
+
+The interactive console gained a `server` command, so the Server address can be
+changed from inside a running Node without a rebuild and without a restart.
+`server` with no argument prints the address in force; `server ws://host/channel`
+replaces it, drops the live channel and dials the new address on the next attempt.
+The address is validated by the same rule the startup path uses, so a console
+cannot accept an address the process would refuse to start with, and a refusal
+leaves the address unchanged. The change is deliberately not persisted, because the
+Node has no configuration file of its own and a silent revert would look like the
+change never happened, so the console says so. The tunnel token and the policy
+remain unchangeable from the console: the address is public, the token is a secret,
+and a secret typed at a terminal is a secret in a scrollback buffer. The drop signal
+carries a reason, so a repoint logs `reason="the server address changed"` and an
+identity change logs `reason="the node id changed"`; reporting one as the other
+would send an operator looking for a change that never happened.

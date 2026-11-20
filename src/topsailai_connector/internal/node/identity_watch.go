@@ -16,6 +16,23 @@ import (
 // supports Linux, macOS and Windows from one binary.
 const identityPollInterval = time.Second
 
+// The two reasons a live channel is dropped.
+//
+// They are strings rather than an enum because they are written to a log field, and a
+// field an operator reads should say what happened in words. The values are stable
+// because a log line is a contract: a monitoring rule that matched "identity changed"
+// must keep matching, and a rule for the new reason can be written against it.
+const (
+	// identityChangeReason is a regenerated node id. The channel was authenticated
+	// with a name that no longer exists, so it cannot be kept.
+	identityChangeReason = "the node id changed"
+
+	// serverChangeReason is a repointed Server address. The channel is open to the
+	// Server the operator asked to leave, so keeping it would mean the console
+	// reported a move that did not happen.
+	serverChangeReason = "the server address changed"
+)
+
 // watchIdentity adopts a regenerated identity or credential set while the Node keeps
 // running.
 //
@@ -45,7 +62,7 @@ const identityPollInterval = time.Second
 // fixes the file. The warning is logged once per distinct problem rather than once
 // per poll, because a poll that repeats the same warning every second buries the
 // first occurrence.
-func (d *Dialer) watchIdentity(ctx context.Context, changes chan<- struct{}) {
+func (d *Dialer) watchIdentity(ctx context.Context, changes chan<- string) {
 	if d.identityPath == "" && d.credentialsPath == "" {
 		return
 	}
@@ -88,7 +105,7 @@ func (d *Dialer) watchIdentity(ctx context.Context, changes chan<- struct{}) {
 			// so a change that happened while the Node was disconnected does not drop
 			// the channel that is about to be established with the new identity.
 			select {
-			case changes <- struct{}{}:
+			case changes <- identityChangeReason:
 			default:
 			}
 		}
@@ -151,7 +168,7 @@ func describeCredentialProblem(err error) string {
 // Without this, a regeneration during a reconnect delay would leave a signal in the
 // buffer, and the next loop iteration would drop the freshly established channel even
 // though it was authenticated with the new identity.
-func discardPendingIdentityChange(changes <-chan struct{}) {
+func discardPendingIdentityChange(changes <-chan string) {
 	select {
 	case <-changes:
 	default:
@@ -163,11 +180,20 @@ func discardPendingIdentityChange(changes <-chan struct{}) {
 //
 // The returned stop function must be called when the connection ends, otherwise the
 // goroutine outlives the connection it was installed for.
-func identityChangeContext(ctx context.Context, changes <-chan struct{}) (context.Context, context.CancelFunc) {
+// The reason is returned as a function rather than a value because it is not known
+// until the signal arrives, and the caller reads it only after the context is
+// cancelled. Returning a value would report the reason of the previous connection.
+func identityChangeContext(ctx context.Context, changes <-chan string) (context.Context, func() string, context.CancelFunc) {
 	changeCtx, cancel := context.WithCancel(ctx)
 	if changes == nil {
-		return changeCtx, cancel
+		return changeCtx, func() string { return "" }, cancel
 	}
+
+	// reason is written by the goroutine below and read by the caller after the
+	// context is cancelled, which is the synchronisation the cancel provides: the
+	// write happens before cancel, and the read happens after the caller observes the
+	// cancellation.
+	var reason string
 
 	// done releases the goroutine when the connection ends for another reason, so a
 	// connection that closes normally does not leave a goroutine waiting on a signal
@@ -175,13 +201,14 @@ func identityChangeContext(ctx context.Context, changes <-chan struct{}) (contex
 	done := make(chan struct{})
 	go func() {
 		select {
-		case <-changes:
+		case received := <-changes:
+			reason = received
 			cancel()
 		case <-done:
 		}
 	}()
 
-	return changeCtx, func() {
+	return changeCtx, func() string { return reason }, func() {
 		close(done)
 		cancel()
 	}

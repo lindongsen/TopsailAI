@@ -388,6 +388,19 @@ func serveNodeWithConsole(ctx context.Context, runtime *node.Runtime, logger *sl
 		// dropping the channel.
 		console.SetIdentityChangeRequest(dialer.RequestIdentityChange)
 
+		// The address setter is installed for the same reason and with the same
+		// consequence if it is missing: `server ws://new` would change the address the
+		// console reports while the dial loop kept dialing the old one, so the operator
+		// would see a change that never took effect. The dialer reads the address once
+		// per attempt, so the next attempt uses the new value.
+		console.SetServerURLSetter(dialer.SetServerURL)
+
+		// The reconnect request is a third callback rather than a reuse of the identity
+		// one, because the dialer writes a different log line for each. A repoint
+		// reported as an identity change is the defect this split fixes: the measured
+		// case logged "identity changed" for a change that only moved the address.
+		console.SetReconnectRequest(dialer.RequestReconnect)
+
 		// The console runs beside the dialer rather than before it, so a Node that is
 		// serving can still be inspected and re-addressed. It stops when the context
 		// ends, which is the same signal that stops the dialer.

@@ -82,6 +82,24 @@ The human stated this principle explicitly:
 - The first version is read-only: `file.list`, `file.stat`, `file.read`.
   `file.write` is second, `command.exec` is third and only if a real need appears.
 
+## Configuration precedence
+
+The human approved the order on 2026-11-20:
+
+> 关于那个配置优先级，我觉得可以记
+
+- One value may come from four sources, and the order is fixed: `--set` beats an
+  environment variable, which beats `--env-file`, which beats a value compiled
+  into the binary.
+- An empty value counts as unset at every layer, so an exported but empty variable
+  does not shadow a file that holds a value.
+- A value that none of the four supplies is generated in memory when it can be
+  (the node id and a credential), and is a startup failure when it cannot (the
+  Server address, the `tunnel_token` and the policy).
+- The policy is the one value a file may not override when the build compiled one
+  in: two complete policies would disagree about every scope and every grant, so
+  the second source is refused rather than merged.
+
 ## Platform and client access
 
 The human stated these requirements explicitly:
