@@ -743,3 +743,43 @@ validation and the registry write. Reusing `control` keeps one scope vocabulary 
 invalidating deployed policy files, while the root confinement — not an extra scope name — is the real
 security boundary. Treating registration as configuration keeps a registry edit from ever becoming a
 destructive filesystem operation.
+
+## `PROJECT_ROOT` is `/` on every node, and that supersedes the fail-closed default
+
+Directed by the human on 2026-11-21, wording normalized, meaning preserved:
+
+> project_root 用根目录吧，请配置一下
+
+Confirmed through an explicit decision prompt on 2026-11-21, after the consequence was stated:
+
+> 确认用 /，按我说的配置（我接受任意目录可注册）
+
+This supersedes the earlier entry "Remote project registration edits the registry only, inside an
+explicitly configured root", which required an unconfigured root to refuse the capability. The
+refusal behaviour itself is unchanged and still correct: an unconfigured root still returns
+`project_root_unconfigured`. What changed is the deployment decision — every node now configures the
+root explicitly, and the configured value is `/`.
+
+The consequence was stated before the decision and accepted:
+
+- `confineProjectFolder` (`providers/topsailai/src/project_registry.go:64`) decides confinement with
+  `filepath.Rel(root, resolved)`. With `root = "/"`, the relative path of any absolute path is that
+  path without its leading slash, so it never begins with `..` and every existing directory is
+  admitted.
+- The root confinement therefore no longer narrows what a `control`-scope caller may register. The
+  remaining boundaries are the ones that were always load-bearing: the caller must hold `control`
+  scope, the path must resolve through `EvalSymlinks` to an existing directory, the Endpoint checks
+  before dispatch and the Provider re-checks before the registry write, and the operation still only
+  edits the registry entry and never touches project data.
+
+Trigger: adding, removing or reviewing any remote project registration surface, or reading the
+earlier fail-closed entry and concluding that `/` is a violation.
+
+Action: treat `/` as the approved deployment value on every node, keep the unconfigured-root refusal
+exactly as it is, and do not re-litigate the confinement consequence as a defect. If a future
+requirement needs a narrower root, that is a new human decision, not a correction of this one.
+
+Why this is recorded: the earlier entry reads as a hard rule that `/` breaks, so without this record
+the next agent would either report the deployment as non-compliant or "fix" it by narrowing the root
+and silently removing a capability the operator asked for. The decision is the human's, the
+consequence is known, and the refusal path that protects an unconfigured node is untouched.
