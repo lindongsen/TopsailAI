@@ -865,20 +865,42 @@ func (a *Adapter) executionPayload(ctx context.Context, intent protocol.Immutabl
 		if err != nil {
 			return nil, err
 		}
-		mapping, err := a.config.Mapper.LookupResourceID(ctx, selection.ModelProfileID)
+		providerKey, err := a.modelProfileProviderKey(ctx, selection.ModelProfileID)
 		if err != nil {
-			return nil, fmt.Errorf("resolve model profile: %w", err)
+			return nil, err
 		}
-		if mapping.AdapterID != a.config.AdapterID {
-			return nil, errors.New("model profile is not owned by this adapter")
+		return providercli.MarshalModelSelectPayload(providercli.ModelSelectPayload{ProviderResourceKey: providerKey})
+	case protocol.OperationAgentModelSet:
+		selection, err := protocol.ValidateModelSetPayload(intent.Payload)
+		if err != nil {
+			return nil, err
 		}
-		if mapping.ResourceKind != protocol.ResourceModelProfile {
-			return nil, errors.New("model profile mapping has the wrong resource kind")
+		providerKey, err := a.modelProfileProviderKey(ctx, selection.ModelProfileID)
+		if err != nil {
+			return nil, err
 		}
-		return providercli.MarshalModelSelectPayload(providercli.ModelSelectPayload{ProviderResourceKey: mapping.ProviderResourceKey})
+		return providercli.MarshalModelSetPayload(providercli.ModelSetPayload{ProviderResourceKey: providerKey})
 	default:
 		return intent.Payload, nil
 	}
+}
+
+// modelProfileProviderKey resolves one opaque Cluster model profile into the
+// provider-private key owned by this Adapter. Both model selection surfaces use the
+// same resolution because the difference between selecting a live session profile
+// and setting the launch default is the operation, not the identity being selected.
+func (a *Adapter) modelProfileProviderKey(ctx context.Context, modelProfileID string) (string, error) {
+	mapping, err := a.config.Mapper.LookupResourceID(ctx, modelProfileID)
+	if err != nil {
+		return "", fmt.Errorf("resolve model profile: %w", err)
+	}
+	if mapping.AdapterID != a.config.AdapterID {
+		return "", errors.New("model profile is not owned by this adapter")
+	}
+	if mapping.ResourceKind != protocol.ResourceModelProfile {
+		return "", errors.New("model profile mapping has the wrong resource kind")
+	}
+	return mapping.ProviderResourceKey, nil
 }
 
 func agentStartExecutionPayload(intent protocol.ImmutableIntent) (json.RawMessage, error) {
@@ -932,12 +954,11 @@ func (a *Adapter) executionTarget(ctx context.Context, intent protocol.Immutable
 		}
 		return a.providerTarget(ctx, target, providercli.OperationNeedsLiveGeneration(intent.Operation))
 	}
-	// project.add is the only standard mutation that carries no target, because
-	// the resource it creates does not exist yet and therefore has no identity to
-	// address. It is a named exception rather than a relaxation: every other
-	// target-less operation still falls through to the refusal below, so a
-	// missing target for them remains a defect this adapter reports.
-	if intent.Operation == protocol.OperationProjectAdd {
+	// project.add and agent.model.set are the two standard target-less
+	// mutations. The former creates a resource that does not exist yet; the latter
+	// changes the Endpoint-wide launch declaration. Both are named exceptions
+	// rather than a relaxation, so every other missing target remains a defect.
+	if intent.Operation == protocol.OperationProjectAdd || intent.Operation == protocol.OperationAgentModelSet {
 		return nil, nil
 	}
 	if intent.Operation != protocol.OperationAgentStart || intent.LaunchProfileID == "" || intent.ProfileRevision == "" {

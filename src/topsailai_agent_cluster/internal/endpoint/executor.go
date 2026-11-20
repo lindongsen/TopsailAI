@@ -566,6 +566,9 @@ func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.Immutab
 		// attributed without guessing. Guessing would let the same request be
 		// validated against a different adapter after a restart, so both cases are
 		// refused instead.
+		if intent.Operation == protocol.OperationAgentModelSet {
+			return e.modelSetAdapter(ctx, intent)
+		}
 		if intent.Operation == protocol.OperationCommandExec || intent.Operation == protocol.OperationProjectAdd {
 			return e.endpointCommandAdapter(intent)
 		}
@@ -590,6 +593,32 @@ func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.Immutab
 		return nil, "", nil, resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile %q is not configured", intent.LaunchProfileID))
 	}
 	return instance, intent.LaunchProfileID, release, nil
+}
+
+// modelSetAdapter resolves the opaque model profile named in a target-less
+// agent.model.set payload to the Adapter instance that minted it. The payload
+// already carries an exact Cluster identity, so routing by that mapping supports
+// several configured Adapters without guessing from configuration order.
+func (e *Executor) modelSetAdapter(ctx context.Context, intent protocol.ImmutableIntent) (adapter.Adapter, string, func(), error) {
+	request, err := protocol.ValidateModelSetPayload(intent.Payload)
+	if err != nil {
+		return nil, "", nil, resolutionFailure(protocol.ModelSetUnknownProfile, err)
+	}
+	mapping, err := e.store.LookupResourceID(ctx, request.ModelProfileID)
+	if err != nil {
+		if errors.Is(err, endpointstorage.ErrResourceNotFound) {
+			return nil, "", nil, resolutionFailure(protocol.ModelSetUnknownProfile, fmt.Errorf("model profile %q is not known by this endpoint", request.ModelProfileID))
+		}
+		return nil, "", nil, fmt.Errorf("model profile %q mapping lookup failed: %w", request.ModelProfileID, err)
+	}
+	if mapping.ResourceKind != protocol.ResourceModelProfile {
+		return nil, "", nil, resolutionFailure(protocol.ModelSetUnknownProfile, fmt.Errorf("resource_id %q is not a model profile", request.ModelProfileID))
+	}
+	instance, release, ok := e.registry.Acquire(mapping.AdapterID)
+	if !ok {
+		return nil, "", nil, resolutionFailure("adapter_not_configured", fmt.Errorf("model profile %q adapter %q is not configured", request.ModelProfileID, mapping.AdapterID))
+	}
+	return instance, mapping.AdapterID, release, nil
 }
 
 // endpointCommandAdapter resolves the adapter that validates an Endpoint-scoped
@@ -649,6 +678,8 @@ func targetKey(intent protocol.ImmutableIntent) string {
 			return intent.EndpointID + ":endpoint:command.exec"
 		case protocol.OperationProjectAdd:
 			return intent.EndpointID + ":endpoint:project.add"
+		case protocol.OperationAgentModelSet:
+			return intent.EndpointID + ":endpoint:agent.model.set"
 		}
 		return intent.LaunchProfileID
 	}

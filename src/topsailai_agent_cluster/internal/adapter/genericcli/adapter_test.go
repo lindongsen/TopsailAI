@@ -1125,3 +1125,80 @@ func TestModelRegistryLeavesAnUnresolvableSelectionEmpty(t *testing.T) {
 		t.Fatalf("an unresolvable selection was given an identifier: %q", registry.CurrentProfileID)
 	}
 }
+
+// TestAdapterMapsModelSetPayloadToProviderKey proves the target-less
+// agent.model.set reaches the Provider with the provider-private key and no
+// Cluster identity, exactly as the session-scoped selection does.
+//
+// The two operations share one resolution helper, so this test is what proves the
+// sharing did not leave the new operation without a consumer: a helper that is
+// correct in isolation can still be called with the wrong payload type, and the
+// Provider would then receive a document it cannot decode.
+func TestAdapterMapsModelSetPayloadToProviderKey(t *testing.T) {
+	provider := newFakeProvider(t)
+	binding := mustAdapter(t, provider)
+	mapper := binding.config.Mapper.(*fakeMapper)
+	mapper.mappings["model-id"] = adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceModelProfile, ProviderResourceKey: "provider-model", ResourceID: "model-id"}
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		return providercli.Response{Version: request.Version, RequestID: request.RequestID, OK: true, Result: &providercli.OperationResult{DeliveryBoundary: providercli.DeliverySubmitted, EffectCertainty: providercli.EffectAcknowledged, ProviderOutcome: "set"}}, nil
+	}
+
+	result, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+		CommandID: "command-1", Operation: protocol.OperationAgentModelSet, OperationVersion: protocol.ModelSetPayloadVersion,
+		Payload: json.RawMessage(`{"model_profile_id":"model-id"}`), ExecuteBeforeAtMS: time.Now().Add(time.Second).UnixMilli(),
+	}})
+	if err != nil || result.Receipt.Outcome != "set" {
+		t.Fatalf("execute = %+v, %v", result, err)
+	}
+	request := provider.requests[len(provider.requests)-1]
+	if request.Target != nil {
+		t.Fatalf("target = %+v, want no target for a machine-wide declaration", request.Target)
+	}
+	payload, err := providercli.DecodeModelSetPayload(request.Payload)
+	if err != nil {
+		t.Fatalf("decode Provider model-set payload: %v", err)
+	}
+	if payload.ProviderResourceKey != "provider-model" {
+		t.Fatalf("Provider model key = %q", payload.ProviderResourceKey)
+	}
+	if string(request.Payload) == `{"model_profile_id":"model-id"}` {
+		t.Fatal("Cluster model_profile_id reached Provider unchanged")
+	}
+}
+
+// TestAdapterRejectsInvalidModelSetMappingBeforeProviderInvocation proves an
+// unusable profile mapping is refused before the Provider is started, so a
+// machine-wide declaration is never attempted against a guessed identity.
+func TestAdapterRejectsInvalidModelSetMappingBeforeProviderInvocation(t *testing.T) {
+	tests := []struct {
+		name    string
+		mapping *adapter.ResourceMapping
+		payload json.RawMessage
+	}{
+		{name: "unknown Cluster ID", payload: json.RawMessage(`{"model_profile_id":"missing"}`)},
+		{name: "wrong adapter", mapping: &adapter.ResourceMapping{AdapterID: "other", ResourceKind: protocol.ResourceModelProfile, ProviderResourceKey: "provider-model", ResourceID: "model-id"}, payload: json.RawMessage(`{"model_profile_id":"model-id"}`)},
+		{name: "wrong resource kind", mapping: &adapter.ResourceMapping{AdapterID: "a", ResourceKind: protocol.ResourceSession, ProviderResourceKey: "provider-model", ResourceID: "model-id"}, payload: json.RawMessage(`{"model_profile_id":"model-id"}`)},
+		{name: "unknown public field", payload: json.RawMessage(`{"model_profile_id":"model-id","provider_resource_key":"provider-model"}`)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := newFakeProvider(t)
+			binding := mustAdapter(t, provider)
+			mapper := binding.config.Mapper.(*fakeMapper)
+			if test.mapping != nil {
+				mapper.mappings[test.mapping.ResourceID] = *test.mapping
+			}
+			before := len(provider.requests)
+			_, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+				CommandID: "command-1", Operation: protocol.OperationAgentModelSet, OperationVersion: protocol.ModelSetPayloadVersion,
+				Payload: test.payload, ExecuteBeforeAtMS: time.Now().Add(time.Second).UnixMilli(),
+			}})
+			if err == nil {
+				t.Fatal("invalid model set was accepted")
+			}
+			if len(provider.requests) != before {
+				t.Fatalf("Provider requests = %d, want %d", len(provider.requests), before)
+			}
+		})
+	}
+}
