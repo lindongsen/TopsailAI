@@ -343,8 +343,9 @@ def print_help(
         },
         {
             "cmd": "project list_sessions [--json]",
-            "desc": "Non-interactive: list recent sessions with project workspaces using the same default 30-entry limit as interactive project scope; --json outputs the entries as JSON.",
-            "example": "Example: topsailai project list_sessions --json",
+            "alias": ["history"],
+            "desc": "Non-interactive: list recent sessions with project workspaces using the same default 30-entry limit as interactive project scope; --json outputs the entries as JSON. The alias `history` is the same subcommand and shares its arguments and errors.",
+            "example": "Example: topsailai project list_sessions --json  or  topsailai project history --json",
             "scopes": ["cli"],
         },
         {

@@ -2236,6 +2236,62 @@ class TestProjectSubcommand(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(stdout.getvalue()), [])
 
+    @patch("cli_topsailai.project_scope.print_project_table")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_history_alias_uses_project_scope_default_limit(
+        self, mock_build, mock_print
+    ):
+        """The ``history`` alias is the same subcommand as ``list_sessions``."""
+        entries = [{"session_id": "session-a", "project_workspace": "/work/a"}]
+        mock_build.return_value = entries
+
+        code = _try_handle_project_subcommand(["project", "history"])
+
+        self.assertEqual(code, 0)
+        mock_build.assert_called_once_with(limit=30)
+        mock_print.assert_called_once_with(entries)
+
+    @patch("cli_topsailai.project_scope.print_project_table")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_main_parses_history_alias_json(self, mock_build, mock_print):
+        """The public parser accepts the alias and forwards ``--json``."""
+        from cli_topsailai.core import main
+
+        mock_build.return_value = [{"session_id": "session-a"}]
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            with self.assertRaises(SystemExit) as exit_info:
+                main(["project", "history", "--json"])
+
+        self.assertEqual(exit_info.exception.code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), mock_build.return_value)
+        mock_build.assert_called_once_with(limit=30)
+        mock_print.assert_not_called()
+
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_history_alias_usage_error_names_the_alias(self, mock_build):
+        """An invalid option on the alias reports the same usage error."""
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            code = _try_handle_project_subcommand(["project", "history", "--bad"])
+
+        self.assertEqual(code, 2)
+        output = stdout.getvalue()
+        self.assertIn("Usage: topsailai project list_sessions", output)
+        self.assertIn("alias: history", output)
+        mock_build.assert_not_called()
+
+    def test_history_alias_is_declared_once(self):
+        """The accepted spellings are derived from the single declaration."""
+        from cli_topsailai.constants import (
+            PROJECT_LIST_SESSIONS_ALIASES,
+            PROJECT_LIST_SESSIONS_SPELLINGS,
+        )
+
+        self.assertEqual(PROJECT_LIST_SESSIONS_ALIASES, ("history",))
+        self.assertEqual(
+            PROJECT_LIST_SESSIONS_SPELLINGS,
+            ("list_sessions",) + PROJECT_LIST_SESSIONS_ALIASES,
+        )
+
     @patch("sys.stdout", new_callable=io.StringIO)
     def test_unknown_subcommand_prints_error(self, mock_stdout):
         """Unknown project subcommands report an error and exit 1."""

@@ -35,6 +35,10 @@ QUIT_COMMAND_ALIASES = ("exit",)
 MANAGED_PROJECT_ALIASES = ("projects",)
 # "recent" is the long spelling of the project-scope history command "r".
 PROJECT_RECENT_ALIASES = ("recent",)
+# Non-interactive project subcommand aliases. "history" is the short spelling
+# of "list_sessions", declared once so the handler, both parsers, the help text
+# and the unknown-subcommand guidance cannot drift apart.
+PROJECT_LIST_SESSIONS_ALIASES = ("history",)
 
 
 def _command_spellings(name: str, aliases: Tuple[str, ...]) -> Tuple[str, ...]:
@@ -75,6 +79,11 @@ MANAGED_PROJECT_SPELLINGS = _command_spellings("p", MANAGED_PROJECT_ALIASES)
 
 # Every accepted spelling of the project-scope recent-history command.
 PROJECT_RECENT_SPELLINGS = _command_spellings("r", PROJECT_RECENT_ALIASES)
+
+# Every accepted spelling of the non-interactive "project list_sessions"
+# subcommand. A subcommand is not an interactive command, so no "/"-prefixed
+# form is derived here.
+PROJECT_LIST_SESSIONS_SPELLINGS = ("list_sessions",) + PROJECT_LIST_SESSIONS_ALIASES
 
 # Every accepted spelling of the workspace task-list watch command. "watch"
 # takes no argument, so the declaration carries no aliases.

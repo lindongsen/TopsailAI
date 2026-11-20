@@ -63,6 +63,18 @@ class TestPrintHelp(unittest.TestCase):
         )
         self.assertNotIn("Enter the selected session by its number.", output)
 
+    def test_print_help_advertises_project_list_sessions_alias(self):
+        """The ``history`` alias is discoverable in the CLI-scope help."""
+        output = self._capture(print_help, [], "cli")
+        self.assertIn("project list_sessions", output)
+        self.assertIn("alias: history", output)
+
+    def test_print_help_keyword_history_finds_project_list_sessions(self):
+        """Searching for the alias finds the subcommand it belongs to."""
+        output = self._capture(print_help, [], "cli", keyword="history")
+        self.assertIn("project list_sessions", output)
+        self.assertIn("alias: history", output)
+
     def test_print_help_with_keyword_matches_builtin(self):
         output = self._capture(print_help, [], "workspace", keyword="refresh")
         self.assertIn("Commands matching 'refresh'", output)

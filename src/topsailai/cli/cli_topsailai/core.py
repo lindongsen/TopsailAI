@@ -27,6 +27,8 @@ import cli_topsailai.state as state
 from cli_topsailai.colors import Colors
 from cli_topsailai.constants import (
     MANAGED_PROJECT_SPELLINGS,
+    PROJECT_LIST_SESSIONS_ALIASES,
+    PROJECT_LIST_SESSIONS_SPELLINGS,
     PROJECT_RECENT_SPELLINGS,
     QUIT_COMMAND_SPELLINGS,
     REFRESH_ALL_COMMAND_SPELLINGS,
@@ -197,7 +199,7 @@ def _try_handle_project_subcommand(
             return 0
         print_project_table(projects)
         return 0
-    if subcmd == "list_sessions":
+    if subcmd in PROJECT_LIST_SESSIONS_SPELLINGS:
         from cli_topsailai.project_scope import (
             build_project_list,
             print_project_table as print_project_session_table,
@@ -206,7 +208,8 @@ def _try_handle_project_subcommand(
         json_output = len(argv) > 2 and argv[2:] == ["--json"]
         if len(argv) > 2 and not json_output:
             print(
-                f"{Colors.RED}[ERROR] Usage: topsailai project list_sessions [--json]{Colors.RESET}"
+                f"{Colors.RED}[ERROR] Usage: topsailai project list_sessions [--json] "
+                f"(alias: history){Colors.RESET}"
             )
             return 2
         entries = build_project_list(limit=30)
@@ -224,7 +227,8 @@ def _try_handle_project_subcommand(
             f"{Colors.RED}[ERROR] Unknown project subcommand: {subcmd!r}. "
             f"Use: topsailai project add <path> [name], "
             f"topsailai project del <path>, topsailai project list, "
-            f"topsailai project list_sessions, topsailai project launch <folder>, or "
+            f"topsailai project list_sessions (alias: history), "
+            f"topsailai project launch <folder>, or "
             f"topsailai project resume <session>{Colors.RESET}"
         )
         return 1
@@ -1869,6 +1873,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         )
         list_sessions_parser = project_subparsers.add_parser(
             "list_sessions",
+            aliases=list(PROJECT_LIST_SESSIONS_ALIASES),
             help="list recent project sessions",
             add_help=False,
         )
@@ -2125,6 +2130,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     project_list_parser.set_defaults(func=_handle_project_subcommand)
     project_sessions_parser = project_subparsers.add_parser(
         "list_sessions",
+        aliases=list(PROJECT_LIST_SESSIONS_ALIASES),
         help="list recent project sessions",
     )
     project_sessions_parser.add_argument(
