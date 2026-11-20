@@ -796,9 +796,9 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `models update <number-or-name> <json-or-key=value...>` | Update an existing model entry. |
 | `models delete <number-or-name>` | Delete a model entry. Use `--yes` to skip confirmation. |
 | `models get <number-or-name>` | Print one model entry as formatted JSON. |
-| `models current` | Show the workspace model selection. |
-| `models select <number-or-name>` | Set the workspace default model selection. |
-| `models clear` | Clear the workspace model selection. |
+| `models current [--project PATH]` | Show the effective model and the scope that selected it. |
+| `models set <number-or-name> [--project PATH]` | Set the workspace default model, or a project override with `--project`. |
+| `models clear [--project PATH]` | Clear the workspace model selection, or one project override with `--project`. |
 
 The `docs list --json` document is a JSON array of document records, ordered oldest-first by creation time. Each record contains `row_number`, `folder`, `rel_path`, `path`, `title`, `size_bytes`, and `created`. `row_number` is the 1-based row number that matches the table row, so a caller can pass it to the interactive doc browser. An empty documentation folder returns `[]` and exit code `0`.
 
@@ -873,7 +873,10 @@ topsailai workspace list -s 20261107021807,20261107023139 --include-runtime
 ./topsailai_cli.py models update 1 base_url=https://api.example.com/v1
 
 # Select the first model as the workspace default
-./topsailai_cli.py models select 1
+./topsailai_cli.py models set 1
+
+# Select a model as the override for one project
+./topsailai_cli.py models set 1 --project /path/to/project
 
 # Show the current workspace selection
 ./topsailai_cli.py models current

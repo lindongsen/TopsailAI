@@ -12,11 +12,14 @@ Manage the per-workspace model registry stored in `{TOPSAILAI_HOME}/.models.json
 ## Synopsis
 
 ```text
-topsailai models list [--json]
+topsailai models list [--project PATH] [--json]
 topsailai models add <name> --config KEY=VALUE ... [--json]
 topsailai models get <name> [--json]
 topsailai models update <name> --config KEY=VALUE ... [--json]
 topsailai models delete <name> [--yes] [--json]
+topsailai models set <name|id|number> [--project PATH] [--json]
+topsailai models current [--project PATH] [--json]
+topsailai models clear [--project PATH] [--json]
 ```
 
 ## Description
@@ -106,13 +109,36 @@ topsailai models add GPT-4o --config api_key=sk-...
 
 ### list
 
-Print all model entries with row numbers and pretty-printed JSON.
+Print all model entries with row numbers and pretty-printed JSON. The entry that
+an agent launch would actually use is marked with a `*` in the marker column, and
+one `Current model (<scope>)` line names it.
 
 ```bash
 topsailai models list
 ```
 
-Use `--json` for compact machine-readable output.
+```text
+Available model configurations:
+   1. { ... }
+ * 2. { ... }
+[INFO] Current model (workspace): Qwen [qwen] | local | openai-compatible | qwen-7b | enabled
+```
+
+The marker column is used instead of colouring a value because each entry is
+printed as multi-line JSON, where colouring would corrupt the document. When no
+selection is persisted, the command prints a `No <scope> model selection` line
+instead of a marker.
+
+Use `--json` for compact machine-readable output. Each record then carries a
+`selected` boolean, so a machine consumer gets the same fact without parsing the
+marker column.
+
+```bash
+topsailai models list --json
+```
+
+Pass `--project PATH` to mark the entry effective for that project instead of the
+workspace default.
 
 ### add
 
@@ -162,6 +188,65 @@ When running interactively, a confirmation prompt is shown. Use `--yes` to skip 
 
 If the deleted model is currently selected in `.model_selection.json`, the matching workspace and project selections are cleared automatically.
 
+### set
+
+Persist the model that subsequent agent launches and resumes use.
+
+```bash
+topsailai models set "GPT-4o"
+topsailai models set 2
+topsailai models set gpt-4o --project /path/to/project
+```
+
+The selector is resolved in this order: exact display name, then exact model id,
+then 1-based row number as printed by `list`. Identity beats position, so a model
+literally named `1` still resolves by name.
+
+Without `--project` the workspace default is written, which is the model a launch
+uses when the project has no override. With `--project PATH` a project override is
+written instead, and it takes precedence over the workspace default for that
+project.
+
+A disabled model or a model whose `protocol` is not `openai-compatible` is
+rejected with exit code `1` and nothing is persisted. The interactive `/models`
+command applies the same check, so a model one path refuses can never be persisted
+by the other.
+
+The command does not modify the current shell environment, because it exits
+immediately; the persisted selection is what later launches read.
+
+### current
+
+Show the effective model and the scope that selected it.
+
+```bash
+topsailai models current
+topsailai models current --project /path/to/project
+```
+
+The reported source is `project` when a project override applies, `workspace` when
+the workspace default applies, and `inherited` when nothing is persisted, in which
+case agent launches inherit the current environment.
+
+Exit code is `1` when the persisted selection cannot be used, for example because
+the selected model was deleted from the registry or has been disabled. With
+`--json` the failure is reported as a parseable document with
+`"status": "error"` and `"error_code": "selection_invalid"`.
+
+### clear
+
+Remove the selection for one scope.
+
+```bash
+topsailai models clear
+topsailai models clear --project /path/to/project
+```
+
+Without `--project` the workspace default is removed; with `--project PATH` only
+that project's override is removed, leaving the workspace default untouched. The
+command reports whether anything was actually cleared, and `--json` exposes the
+same fact as a `cleared` boolean.
+
 ## Validation rules
 
 - `name` is required and must be unique.
@@ -184,8 +269,8 @@ Pretty-printed JSON is used by default. Pass `--json` to emit compact JSON suita
 
 Create `{TOPSAILAI_HOME}/.models.jsonl` with one model configuration object per line. Use `/models` in workspace scope to set the default model or in project scope to set an override for the active project. `/models current` shows the effective model and `/models clear` removes the selection for the current scope.
 
-You can also manage the registry from the shell with the `topsailai models` subcommand described above.
+The same selection can be managed from the shell with `topsailai models set`, `topsailai models current` and `topsailai models clear`, which write and read the same `.model_selection.json` record. `set` is the command to use when a script or a non-interactive session must choose the model that later agent launches use.
 
-Selections are stored in `.model_selection.json` with project overrides taking precedence over the workspace default. When a model is selected, any `environment` entries defined in its registry record are applied to the current process environment (each variable is printed as an `[INFO] Set environment variable: name=value` message). The selected OpenAI-compatible configuration is otherwise applied only to subsequently launched or resumed agent processes.
+Selections are stored in `.model_selection.json` with project overrides taking precedence over the workspace default. When a model is selected through the interactive `/models` command, any `environment` entries defined in its registry record are applied to the current process environment (each variable is printed as an `[INFO] Set environment variable: name=value` message). The selected OpenAI-compatible configuration is otherwise applied only to subsequently launched or resumed agent processes.
 
 Registry entries must reference credentials by environment-variable name through `api_key_env`, `organization_env`, or `project_env`. Do not store credentials directly in `.models.jsonl`.

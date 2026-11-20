@@ -21,10 +21,15 @@ from cli_topsailai.models import (
     ModelConfig,
     clear_selected_model,
     find_model,
+    format_model_summary,
     get_model_selection_path,
     get_models_path,
     load_models,
+    normalize_project_workspace,
+    resolve_effective_model,
+    set_selected_model,
     validate_model_record,
+    validate_selectable_model,
 )
 
 
@@ -90,8 +95,15 @@ def _print_error(message: str) -> None:
     print(f"{Colors.RED}[ERROR] {message}{Colors.RESET}")
 
 
-def _print_warn(message: str) -> None:
-    print(f"{Colors.YELLOW}[WARN] {message}{Colors.RESET}")
+def _print_warn(message: str, to_stderr: bool = False) -> None:
+    """Print a warning, optionally to stderr to keep stdout parseable.
+
+    ``--json`` promises one parseable document on stdout, so a diagnostic must
+    not be interleaved with it. Text mode keeps writing to stdout so existing
+    human-facing output is unchanged.
+    """
+    stream = sys.stderr if to_stderr else sys.stdout
+    print(f"{Colors.YELLOW}[WARN] {message}{Colors.RESET}", file=stream)
 
 
 def _print_info(message: str) -> None:
@@ -110,6 +122,59 @@ def _find_model_by_name(models: List[ModelConfig], name: str) -> Optional[ModelC
         if model.name == name:
             return model
     return None
+
+
+def resolve_model_argument(
+    models: List[ModelConfig],
+    argument: str,
+) -> Optional[ModelConfig]:
+    """Resolve a model selector to one registry entry.
+
+    Identity beats position: an exact display name wins, then an exact model
+    id, and only then a 1-based row number. A model literally named ``"1"``
+    therefore still resolves by name instead of by position, so a selector can
+    never silently address a different entry than the one it spells.
+    """
+    selector = argument.strip()
+    if not selector:
+        return None
+    by_name = _find_model_by_name(models, selector)
+    if by_name is not None:
+        return by_name
+    by_id = find_model(models, selector)
+    if by_id is not None:
+        return by_id
+    if selector.isdigit():
+        index = int(selector)
+        if 1 <= index <= len(models):
+            return models[index - 1]
+    return None
+
+
+def _selection_scope(project_workspace: Optional[str]) -> str:
+    """Return the human-readable scope name for a selection target."""
+    return "project" if project_workspace else "workspace"
+
+
+def _selected_model_id(
+    models: List[ModelConfig],
+    project_workspace: Optional[str],
+    to_stderr: bool = False,
+) -> Optional[str]:
+    """Return the effective model id for one scope, or ``None``.
+
+    An unusable selection is reported as a warning and treated as "nothing
+    selected", so a listing still prints every entry instead of failing.
+    """
+    try:
+        effective = resolve_effective_model(
+            models,
+            project_workspace=project_workspace,
+        )
+    except ModelConfigurationError as error:
+        _print_warn(str(error), to_stderr=to_stderr)
+        return None
+    return effective.model_id
 
 
 def _parse_config_pairs(config_pairs: List[str]) -> Dict[str, Any]:
@@ -285,14 +350,33 @@ def _build_update_record(
 
 
 def handle_models_list(args: Any) -> int:
-    """Handle ``topsailai models list``."""
+    """Handle ``topsailai models list``.
+
+    The effective model for the requested scope is marked, so a caller can see
+    which entry an agent launch would actually use without running a second
+    command. Text output uses a ``*`` marker column because each entry is
+    printed as multi-line JSON, where colouring a value would corrupt the
+    document; ``--json`` adds a ``selected`` boolean to each record instead.
+    """
+    compact = getattr(args, "json", False)
     models, errors = _load_registry()
     for error in errors:
-        _print_warn(error)
+        _print_warn(error, to_stderr=compact)
 
-    compact = getattr(args, "json", False)
+    project_workspace = getattr(args, "project", None)
+    selected_model_id = _selected_model_id(
+        models,
+        project_workspace,
+        to_stderr=compact,
+    )
+
     if compact:
-        _print_json([_model_to_record(model) for model in models], compact=True)
+        records = []
+        for model in models:
+            record = _model_to_record(model)
+            record["selected"] = model.id == selected_model_id
+            records.append(record)
+        _print_json(records, compact=True)
         return 0
 
     if not models:
@@ -301,16 +385,33 @@ def handle_models_list(args: Any) -> int:
 
     print(f"\n{Colors.BOLD}Available model configurations:{Colors.RESET}")
     for index, model in enumerate(models, start=1):
-        print(f"  {index}. ", end="")
+        marker = "*" if model.id == selected_model_id else " "
+        print(f" {marker} {index}. ", end="")
         _print_json(_model_to_record(model), compact=False)
+
+    if selected_model_id is None:
+        print(
+            f"{Colors.YELLOW}[INFO] No {_selection_scope(project_workspace)} "
+            f"model selection; agent launches inherit the current environment."
+            f"{Colors.RESET}"
+        )
+        return 0
+    selected_model = find_model(models, selected_model_id)
+    if selected_model is not None:
+        print(
+            f"{Colors.GREEN}[INFO] Current model "
+            f"({_selection_scope(project_workspace)}): "
+            f"{format_model_summary(selected_model)}{Colors.RESET}"
+        )
     return 0
 
 
 def handle_models_add(args: Any) -> int:
     """Handle ``topsailai models add <name> --config KEY=VALUE ...``."""
+    compact = getattr(args, "json", False)
     models, errors = _load_registry()
     for error in errors:
-        _print_warn(error)
+        _print_warn(error, to_stderr=compact)
     try:
         raw_record = _build_add_record(args.name, args.config or [])
     except ModelConfigurationError as error:
@@ -334,7 +435,6 @@ def handle_models_add(args: Any) -> int:
         _print_error(f"Cannot save model registry: {error}")
         return 1
 
-    compact = getattr(args, "json", False)
     if compact:
         _print_json({"status": "ok", "action": "add", "model": _model_to_record(new_model)}, compact=True)
     else:
@@ -344,9 +444,10 @@ def handle_models_add(args: Any) -> int:
 
 def handle_models_update(args: Any) -> int:
     """Handle ``topsailai models update <name> --config KEY=VALUE ...``."""
+    compact = getattr(args, "json", False)
     models, errors = _load_registry()
     for error in errors:
-        _print_warn(error)
+        _print_warn(error, to_stderr=compact)
 
     name = args.name.strip()
     target = _find_model_by_name(models, name)
@@ -384,7 +485,6 @@ def handle_models_update(args: Any) -> int:
         _print_error(f"Cannot save model registry: {error}")
         return 1
 
-    compact = getattr(args, "json", False)
     if compact:
         _print_json({"status": "ok", "action": "update", "model": _model_to_record(updated_model)}, compact=True)
     else:
@@ -394,9 +494,10 @@ def handle_models_update(args: Any) -> int:
 
 def handle_models_delete(args: Any) -> int:
     """Handle ``topsailai models delete <name>``."""
+    compact = getattr(args, "json", False)
     models, errors = _load_registry()
     for error in errors:
-        _print_warn(error)
+        _print_warn(error, to_stderr=compact)
 
     name = args.name.strip()
     target = _find_model_by_name(models, name)
@@ -421,7 +522,6 @@ def handle_models_delete(args: Any) -> int:
     except OSError as error:
         _print_warn(f"Deleted model but could not update selection: {error}")
 
-    compact = getattr(args, "json", False)
     if compact:
         _print_json({"status": "ok", "action": "delete", "name": target.name}, compact=True)
     else:
@@ -451,9 +551,10 @@ def clear_selected_model_for_id(model_id: str) -> bool:
 
 def handle_models_get(args: Any) -> int:
     """Handle ``topsailai models get <name>``."""
+    compact = getattr(args, "json", False)
     models, errors = _load_registry()
     for error in errors:
-        _print_warn(error)
+        _print_warn(error, to_stderr=compact)
 
     name = args.name.strip()
     target = _find_model_by_name(models, name)
@@ -461,8 +562,154 @@ def handle_models_get(args: Any) -> int:
         _print_error(f"Model not found: {name!r}")
         return 1
 
-    compact = getattr(args, "json", False)
     _print_json(_model_to_record(target), compact=compact)
+    return 0
+
+
+def handle_models_set(args: Any) -> int:
+    """Handle ``topsailai models set <name|id|number> [--project PATH]``.
+
+    The selection is persisted through the same helper the interactive
+    ``/models`` command uses, so both paths write one record shape. The current
+    process environment is deliberately not modified: this command exits
+    immediately, and the persisted selection is what later launches read.
+    """
+    compact = getattr(args, "json", False)
+    models, errors = _load_registry()
+    for error in errors:
+        _print_warn(error, to_stderr=compact)
+
+    selector = args.name.strip()
+    target = resolve_model_argument(models, selector)
+    if target is None:
+        _print_error(f"Model not found: {selector!r}")
+        return 1
+
+    try:
+        validate_selectable_model(target)
+    except ModelConfigurationError as error:
+        _print_error(str(error))
+        return 1
+
+    project_workspace = getattr(args, "project", None)
+    try:
+        set_selected_model(target.id, project_workspace=project_workspace)
+    except (OSError, ModelConfigurationError) as error:
+        _print_error(f"Cannot save model selection: {error}")
+        return 1
+
+    scope_name = _selection_scope(project_workspace)
+    if compact:
+        _print_json(
+            {
+                "status": "ok",
+                "action": "set",
+                "scope": scope_name,
+                "project_workspace": (
+                    normalize_project_workspace(project_workspace)
+                    if project_workspace
+                    else None
+                ),
+                "model": _model_to_record(target),
+            },
+            compact=True,
+        )
+    else:
+        _print_info(
+            f"Selected {scope_name} model: {format_model_summary(target)}"
+        )
+    return 0
+
+
+def handle_models_current(args: Any) -> int:
+    """Handle ``topsailai models current [--project PATH]``."""
+    compact = getattr(args, "json", False)
+    models, errors = _load_registry()
+    for error in errors:
+        _print_warn(error, to_stderr=compact)
+
+    project_workspace = getattr(args, "project", None)
+    scope_name = _selection_scope(project_workspace)
+    try:
+        effective = resolve_effective_model(
+            models,
+            project_workspace=project_workspace,
+        )
+    except ModelConfigurationError as error:
+        if compact:
+            _print_json(
+                {
+                    "status": "error",
+                    "scope": scope_name,
+                    "error_code": "selection_invalid",
+                    "message": str(error),
+                },
+                compact=True,
+            )
+        else:
+            _print_error(str(error))
+        return 1
+
+    if compact:
+        _print_json(
+            {
+                "status": "ok",
+                "scope": scope_name,
+                "source": effective.source,
+                "model_id": effective.model_id,
+                "model": (
+                    _model_to_record(effective.model)
+                    if effective.model is not None
+                    else None
+                ),
+            },
+            compact=True,
+        )
+        return 0
+
+    if effective.model is None:
+        print(
+            f"{Colors.YELLOW}[INFO] No persisted model selection; "
+            f"agent launches inherit the current environment.{Colors.RESET}"
+        )
+        return 0
+    print(
+        f"{Colors.GREEN}[INFO] Effective model ({effective.source}): "
+        f"{format_model_summary(effective.model)}{Colors.RESET}"
+    )
+    return 0
+
+
+def handle_models_clear(args: Any) -> int:
+    """Handle ``topsailai models clear [--project PATH]``."""
+    project_workspace = getattr(args, "project", None)
+    scope_name = _selection_scope(project_workspace)
+    try:
+        changed = clear_selected_model(project_workspace)
+    except (OSError, ModelConfigurationError) as error:
+        _print_error(f"Cannot clear model selection: {error}")
+        return 1
+
+    compact = getattr(args, "json", False)
+    if compact:
+        _print_json(
+            {
+                "status": "ok",
+                "action": "clear",
+                "scope": scope_name,
+                "cleared": changed,
+            },
+            compact=True,
+        )
+        return 0
+
+    if changed:
+        _print_info(f"Cleared {scope_name} model selection.")
+    else:
+        print(
+            f"{Colors.YELLOW}[INFO] No {scope_name} model selection was set."
+            f"{Colors.RESET}"
+        )
     return 0
 
 
@@ -481,10 +728,23 @@ def _register_models_subcommands(
             help="output compact JSON instead of pretty-printed JSON",
         )
 
+    def _add_project_option(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--project",
+            dest="project",
+            metavar="PATH",
+            default=None,
+            help=(
+                "target the project override for PATH instead of the "
+                "workspace default"
+            ),
+        )
+
     models_list_parser = subparsers.add_parser(
         "list",
-        help="list model registry entries",
+        help="list model registry entries and mark the current model",
     )
+    _add_project_option(models_list_parser)
     _add_json_flag(models_list_parser)
     models_list_parser.set_defaults(func=handle_models_list, **common_defaults)
 
@@ -557,6 +817,40 @@ def _register_models_subcommands(
     )
     _add_json_flag(models_delete_parser)
     models_delete_parser.set_defaults(func=handle_models_delete, **common_defaults)
+
+    models_set_parser = subparsers.add_parser(
+        "set",
+        help="set the model used by subsequent agent launches",
+        description=(
+            "Persist the model selection used by subsequent agent launches "
+            "and resumes. Without --project the workspace default is written."
+        ),
+    )
+    models_set_parser.add_argument(
+        "name",
+        help="model display name, model id, or 1-based row number",
+    )
+    _add_project_option(models_set_parser)
+    _add_json_flag(models_set_parser)
+    models_set_parser.set_defaults(func=handle_models_set, **common_defaults)
+
+    models_current_parser = subparsers.add_parser(
+        "current",
+        help="show the effective model selection",
+    )
+    _add_project_option(models_current_parser)
+    _add_json_flag(models_current_parser)
+    models_current_parser.set_defaults(
+        func=handle_models_current, **common_defaults
+    )
+
+    models_clear_parser = subparsers.add_parser(
+        "clear",
+        help="clear the model selection for one scope",
+    )
+    _add_project_option(models_clear_parser)
+    _add_json_flag(models_clear_parser)
+    models_clear_parser.set_defaults(func=handle_models_clear, **common_defaults)
 
 
 def try_handle_models_subcommand(argv: Optional[List[str]] = None) -> Optional[int]:

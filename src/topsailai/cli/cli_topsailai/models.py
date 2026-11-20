@@ -384,6 +384,38 @@ def clear_selected_model(
     return changed
 
 
+def validate_selectable_model(
+    model: ModelConfig,
+    label: Optional[str] = None,
+) -> ModelConfig:
+    """Reject a model that cannot be selected for an agent launch.
+
+    Both the interactive ``/models`` command and the non-interactive
+    ``models set`` command call this function, so a model that one path
+    refuses can never be persisted by the other.
+
+    Args:
+        model: The registry entry the caller wants to select.
+        label: Optional message prefix such as ``"Selected workspace"``, used
+            by callers that report where the selection came from.
+
+    Returns:
+        The same model, so the call can be used inline.
+
+    Raises:
+        ModelConfigurationError: The model is disabled or its protocol is not
+            supported.
+    """
+    prefix = f"{label} " if label else ""
+    if not model.enabled:
+        message = f"{prefix}model {model.id!r} is disabled"
+        raise ModelConfigurationError(message[0].upper() + message[1:])
+    if model.protocol not in _SUPPORTED_PROTOCOLS:
+        message = f"{prefix}model protocol {model.protocol!r} is not supported"
+        raise ModelConfigurationError(message[0].upper() + message[1:])
+    return model
+
+
 def resolve_effective_model(
     models: Sequence[ModelConfig],
     project_workspace: Optional[str] = None,
@@ -407,14 +439,7 @@ def resolve_effective_model(
         raise ModelConfigurationError(
             f"Selected {source} model {model_id!r} is missing from .models.jsonl"
         )
-    if not model.enabled:
-        raise ModelConfigurationError(
-            f"Selected {source} model {model_id!r} is disabled"
-        )
-    if model.protocol not in _SUPPORTED_PROTOCOLS:
-        raise ModelConfigurationError(
-            f"Selected model protocol {model.protocol!r} is not supported"
-        )
+    validate_selectable_model(model, label=f"Selected {source}")
     return EffectiveModel(model, source, model_id)
 
 

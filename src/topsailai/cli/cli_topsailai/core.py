@@ -628,6 +628,7 @@ def _handle_models_action(
         load_models,
         resolve_effective_model,
         set_selected_model,
+        validate_selectable_model,
     )
 
     registry = load_models()
@@ -702,14 +703,10 @@ def _handle_models_action(
         )
         return
     model = registry.models[int(answer) - 1]
-    if not model.enabled:
-        print(f"{Colors.RED}[ERROR] Model {model.id!r} is disabled.{Colors.RESET}")
-        return
-    if model.protocol != "openai-compatible":
-        print(
-            f"{Colors.RED}[ERROR] Model protocol {model.protocol!r} is not supported."
-            f"{Colors.RESET}"
-        )
+    try:
+        validate_selectable_model(model)
+    except ModelConfigurationError as error:
+        print(f"{Colors.RED}[ERROR] {error}.{Colors.RESET}")
         return
     try:
         set_selected_model(model.id, project_workspace=project_workspace)
