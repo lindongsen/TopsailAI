@@ -1046,7 +1046,6 @@ cannot claim a release identity. The commit and build time are printed because t
 are the facts that distinguish two builds of the same release; a version number alone
 cannot tell a rebuilt binary from the one that was shipped.
 
-
 ### Exception: interactive `send` and `btw` accept no options
 
 `send` and `btw` are the two commands whose entire remaining line is the payload,
