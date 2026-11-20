@@ -135,3 +135,42 @@ The human stated this requirement explicitly:
 - State a limit where the user meets it. A cap, a refusal or a required flag
   belongs next to the command that hits it, not in a design document the reader
   will never open.
+
+## 无状态模式 is the binding name for the mode that writes nothing
+
+The human named the mode and the name is binding for code, help, documents and
+conversation:
+
+> 我把这种纯内存运行，不创建任何文件的运行模式称之为 无状态模式，以后称呼或提起
+> 就能建立联系。
+
+- 无状态模式 / stateless mode means the Node runs entirely in memory: it creates
+  no directory, writes no identity file and writes no credential file. The node id
+  and the credentials live in the process and are lost when it exits.
+- The switch is `CONNECTOR_NODE_STATELESS=1`. The value is validated strictly:
+  `1` enables it, an empty value or `0` disables it, and anything else is refused
+  rather than read as "off".
+- The mode exists for a machine whose filesystem is read-only. A config directory
+  that cannot be created must not stop the Node, which is the whole point.
+- The policy is the one value that cannot be generated. A Node that invented its
+  own scopes would be a Node whose operator believes it serves something it does
+  not, so a stateless Node requires a compiled-in policy or
+  `CONNECTOR_NODE_POLICY_FILE`.
+- The interactive console is the only way to change the address or revoke a caller
+  in this mode, because `id`, `regenerate` and the `credential` subcommands write
+  files and are therefore refused. The console changes the same state in memory.
+- The mode is additive. The file-backed mode stays the default and its behaviour
+  does not change.
+
+## Incremental development is a standing requirement
+
+The human stated this as a rule for every request, not for one task:
+
+> 我提的需求都是增量式开发，不要去删掉以前支持的功能。
+
+- A new capability is added beside the existing one, never in place of it.
+- No existing subcommand, flag, environment variable, help entry, skill section,
+  test or documented behaviour may be removed to make room for a new one.
+- When a new mode changes what an existing command means, the command refuses in
+  the new mode with a message naming the alternative, rather than silently
+  acquiring a second meaning.
