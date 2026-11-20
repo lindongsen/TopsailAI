@@ -1978,26 +1978,34 @@ and looking at the diff, which is exactly what the success message makes you ski
 ## A named exception at one layer is not the same exception at the next
 
 Trigger: `project.add` is the only standard mutation that carries no target. The exception had to be
-added at five independent sites — `request.schema.json` (the execute base plus a new branch that
+added at six independent sites — `request.schema.json` (the execute base plus a new branch that
 re-requires `target` for every other execute), `internal/providercli` (`validateExecute`),
 `internal/adapter/genericcli` (`executionTarget`), `providers/topsailai`
-(`validateExecuteRequest`), and `providers/mock` (`executeResponse`) — because each layer
-re-validates the contract it cannot import. Adding it to four of five leaves the operation advertised
-but unreachable, and the failure appears as a generic `invalid_request` from the layer that was
-missed.
+(`validateExecuteRequest`), `providers/topsailai` (`validateExecuteEnvelope` in `codec.go`), and
+`providers/mock` (`executeResponse`) — because each layer re-validates the contract it cannot import.
+Adding it to five of six leaves the operation advertised but unreachable, and the failure appears as a
+generic `invalid_request` from the layer that was missed.
+
+The sixth site was missed in exactly that way. `validateExecuteEnvelope` runs on the real process entry
+point (`serve` → `decodeRequest` → `validateRequest`), before dispatch, so the binary refused every
+target-less `project.add` while the whole unit suite stayed green: every project test called
+`dispatch` directly and therefore skipped the envelope check. The defect was found only by running the
+built binary by hand, not by any test.
 
 Action: when a contract gains a named exception, enumerate every layer that re-validates that contract
 before writing any of them, and add the exception to all of them in one unit. Search for the existing
 rejection message (`target is required`) rather than the operation name, because the message is what
-each layer spells independently. Then prove reachability end to end: a test that only exercises the
-Provider passes while the Endpoint still refuses.
+each layer spells independently. Then prove reachability at the layer that actually runs first: a test
+that enters through the process boundary (`decodeRequest` or `serve`), not only through the handler.
+Pair it with a negative test on a different operation, so the exception cannot silently become a
+general relaxation.
 
 Why this prevents recurrence: each layer's check is locally correct and its own test passes, so review
-sees five green suites and no defect. The exception is also the kind of change that looks like one
+sees six green suites and no defect. The exception is also the kind of change that looks like one
 edit, because the contract document states it once. The failure direction is silent: the operation is
 advertised in the descriptor, so the operator sees a capability that exists and a command that always
-fails, which reads as a Provider bug rather than a missing branch in a layer nobody edited.
-
+fails, which reads as a Provider bug rather than a missing branch in a layer nobody edited. A handler
+level test cannot detect this class at all, because the handler is the layer that was already correct.
 ## A strict decoder refuses a field the Cluster legitimately forwards
 
 Trigger: the `project.remove` matrix scenario failed with

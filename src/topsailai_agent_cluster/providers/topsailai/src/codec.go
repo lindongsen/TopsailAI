@@ -57,25 +57,33 @@ func validateRequest(value request) error {
 // validateExecuteEnvelope checks the frozen execute request constraints.
 //
 // The checks mirror protocol/provider-cli/v1/request.schema.json, which requires
-// invocation_id, target and operation for execute, forbids query, and requires
-// expected_generation for every operation except the three non-live ones. They are
+// invocation_id and operation for execute, forbids query, and requires
+// expected_generation for every operation except the non-live ones. They are
 // repeated here because this executable is an independent module that cannot import
 // the Cluster validator, and because a caller may reach dispatch without passing
 // through the Cluster request builder.
+//
+// project.add is the single named exception to the target requirement: the
+// resource it creates does not exist yet, so it has no identity to address. The
+// exception is spelled here as well as in validateExecuteRequest because this
+// function runs first, on the real process entry point, and a request refused here
+// never reaches the handler that would have accepted it. Every other execute still
+// requires a target, so a missing target remains a defect this Provider reports
+// rather than a form it accepts.
 func validateExecuteEnvelope(value request) error {
 	if value.InvocationID == "" {
 		return errors.New("invocation_id is required for execute")
 	}
-	if value.Target == nil {
-		return errors.New("target is required for execute")
-	}
 	if value.Operation == nil {
 		return errors.New("operation is required for execute")
+	}
+	if value.Target == nil && value.Operation.Name != operationProjectAdd {
+		return errors.New("target is required for execute")
 	}
 	if value.Query != nil {
 		return errors.New("execute request must not contain query")
 	}
-	if operationNeedsLiveGeneration(value.Operation.Name) && value.Target.ExpectedGeneration == "" {
+	if value.Target != nil && operationNeedsLiveGeneration(value.Operation.Name) && value.Target.ExpectedGeneration == "" {
 		return errors.New("target expected_generation is required for this operation")
 	}
 	return nil
