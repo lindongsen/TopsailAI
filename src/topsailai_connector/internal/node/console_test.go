@@ -449,3 +449,199 @@ func TestConsoleShowConfigIsOneFieldPerLine(t *testing.T) {
 		t.Fatalf("show config printed %d fields, want at least 5", fields)
 	}
 }
+
+// TestConsoleServerReportsTheAddressInForce checks the reporting half of the command.
+//
+// The assertion compares the two places the address is printed rather than a literal,
+// because the property that matters is that `server` and `show config` agree. A test
+// against a literal would pass while the two disagreed, which is the state a reader
+// would act on wrongly.
+func TestConsoleServerReportsTheAddressInForce(t *testing.T) {
+	runtime, out, console := newConsoleFixture(t)
+
+	printed := runConsole(t, console, out, "server", "show config", "quit")
+
+	want := "server: " + runtime.ServerURL()
+	if strings.Count(printed, want) != 2 {
+		t.Fatalf("the console printed %q, want %q twice: once for server and once for show config", printed, want)
+	}
+}
+
+// TestConsoleServerReplacesTheAddressAndRequestsAReconnect pins the wiring defect this
+// unit fixes.
+//
+// Three things must happen together and each one alone is insufficient: the runtime must
+// hold the new address, the dialer must be told, and the live channel must be dropped.
+// A test that asserted only the first would pass with the dialer still dialing the old
+// address, which is the failure the operator would see as "the change did not take".
+func TestConsoleServerReplacesTheAddressAndRequestsAReconnect(t *testing.T) {
+	runtime, out, console := newConsoleFixture(t)
+
+	before := runtime.ServerURL()
+
+	var handed []string
+	console.SetServerURLSetter(func(value string) { handed = append(handed, value) })
+
+	requests := 0
+	console.SetReconnectRequest(func() { requests++ })
+
+	// The identity callback is installed as well, so the test can prove the repoint did
+	// not report itself as a regeneration. Without this the split could be undone by
+	// pointing both callbacks at the same function and every assertion above would pass.
+	identityRequests := 0
+	console.SetIdentityChangeRequest(func() { identityRequests++ })
+
+	const replacement = "ws://127.0.0.1:1/channel"
+	printed := runConsole(t, console, out, "server "+replacement, "quit")
+
+	if got := runtime.ServerURL(); got != replacement {
+		t.Fatalf("ServerURL() = %q, want %q", got, replacement)
+	}
+	if len(handed) != 1 || handed[0] != replacement {
+		t.Fatalf("the dialer was handed %v, want [%q]", handed, replacement)
+	}
+	if requests != 1 {
+		t.Fatalf("the reconnect was requested %d times, want 1", requests)
+	}
+	if identityRequests != 0 {
+		t.Fatalf("the identity change was requested %d times for a repoint, want 0", identityRequests)
+	}
+	if !strings.Contains(printed, "server: "+replacement) {
+		t.Fatalf("the console printed %q, want it to report the new address", printed)
+	}
+	if !strings.Contains(printed, "the live channel is dropped") {
+		t.Fatalf("the console printed %q, want it to say the channel is dropped", printed)
+	}
+	if !strings.Contains(printed, "not remembered across a restart") {
+		t.Fatalf("the console printed %q, want it to say the change is not remembered", printed)
+	}
+	if before == replacement {
+		t.Fatal("the fixture already used the replacement address, so this test measures nothing")
+	}
+}
+
+// TestConsoleServerRefusesABadSchemeAndKeepsTheAddress checks that a refusal is a
+// refusal: the address in force must not move, the dialer must not be told and no
+// reconnect must be requested.
+//
+// The message is asserted on the reason rather than on the variable name, because the
+// operator typed an address at a console and never typed a variable name. A message that
+// named CONNECTOR_NODE_SERVER_URL would send them looking for an environment variable
+// they did not set.
+func TestConsoleServerRefusesABadSchemeAndKeepsTheAddress(t *testing.T) {
+	runtime, out, console := newConsoleFixture(t)
+
+	before := runtime.ServerURL()
+
+	handed := 0
+	console.SetServerURLSetter(func(string) { handed++ })
+	requests := 0
+	console.SetReconnectRequest(func() { requests++ })
+
+	printed := runConsole(t, console, out, "server http://127.0.0.1:1/channel", "server", "quit")
+
+	if got := runtime.ServerURL(); got != before {
+		t.Fatalf("ServerURL() = %q after a refusal, want the unchanged %q", got, before)
+	}
+	if handed != 0 {
+		t.Fatalf("the dialer was handed an address %d times after a refusal, want 0", handed)
+	}
+	if requests != 0 {
+		t.Fatalf("the reconnect was requested %d times after a refusal, want 0", requests)
+	}
+	if !strings.Contains(printed, `has scheme "http", want wss or ws`) {
+		t.Fatalf("the console printed %q, want it to name the scheme it refused", printed)
+	}
+	if strings.Contains(printed, "CONNECTOR_NODE_SERVER_URL") {
+		t.Fatalf("the console printed %q, want the variable name dropped from a console message", printed)
+	}
+	if !strings.Contains(printed, "server: "+before) {
+		t.Fatalf("the console printed %q, want the following server command to report %q", printed, before)
+	}
+}
+
+// TestConsoleServerRefusesAnAddressWithoutAHost checks the second startup rule the
+// console reuses. The two rules are asserted separately because a validator that checked
+// only the scheme would pass the first test and accept an address nothing can dial.
+func TestConsoleServerRefusesAnAddressWithoutAHost(t *testing.T) {
+	runtime, out, console := newConsoleFixture(t)
+
+	before := runtime.ServerURL()
+
+	printed := runConsole(t, console, out, "server ws://", "quit")
+
+	if got := runtime.ServerURL(); got != before {
+		t.Fatalf("ServerURL() = %q after a refusal, want the unchanged %q", got, before)
+	}
+	if !strings.Contains(printed, "has no host") {
+		t.Fatalf("the console printed %q, want it to say the address has no host", printed)
+	}
+}
+
+// TestConsoleServerWithTheSameAddressKeepsTheChannel checks that repeating the address
+// in force is not treated as a change.
+//
+// Dropping a healthy channel because the operator retyped the same value would be a
+// self-inflicted outage, and the sentence the console prints is the only signal that
+// nothing happened.
+func TestConsoleServerWithTheSameAddressKeepsTheChannel(t *testing.T) {
+	runtime, out, console := newConsoleFixture(t)
+
+	requests := 0
+	console.SetReconnectRequest(func() { requests++ })
+
+	printed := runConsole(t, console, out, "server "+runtime.ServerURL(), "quit")
+
+	if requests != 0 {
+		t.Fatalf("the reconnect was requested %d times for an unchanged address, want 0", requests)
+	}
+	if !strings.Contains(printed, "the address is unchanged; the live channel is kept") {
+		t.Fatalf("the console printed %q, want it to say the channel is kept", printed)
+	}
+}
+
+// TestConsoleServerRefusesAnExtraArgument checks that a second argument is named rather
+// than ignored. An ignored argument would leave the operator believing a value they typed
+// was applied.
+func TestConsoleServerRefusesAnExtraArgument(t *testing.T) {
+	runtime, out, console := newConsoleFixture(t)
+
+	before := runtime.ServerURL()
+
+	printed := runConsole(t, console, out, "server ws://a/channel ws://b/channel", "quit")
+
+	if got := runtime.ServerURL(); got != before {
+		t.Fatalf("ServerURL() = %q, want the unchanged %q", got, before)
+	}
+	if !strings.Contains(printed, `unexpected argument "ws://b/channel"`) {
+		t.Fatalf("the console printed %q, want it to name the extra argument", printed)
+	}
+}
+
+// TestConsoleServerChangesTheAddressWithoutASetter checks the state a console built by a
+// test or by a Node that serves without a channel is in.
+//
+// The address must still change, because `server` and `show config` are read by the
+// operator and must agree. Only the hand-off to the dialer is skipped, and skipping it is
+// the correct behaviour when there is no dialer.
+func TestConsoleServerChangesTheAddressWithoutASetter(t *testing.T) {
+	runtime, out, console := newConsoleFixture(t)
+
+	const replacement = "ws://127.0.0.1:2/channel"
+	printed := runConsole(t, console, out, "server "+replacement, "show config", "quit")
+
+	if got := runtime.ServerURL(); got != replacement {
+		t.Fatalf("ServerURL() = %q, want %q", got, replacement)
+	}
+
+	// The assertion matches the two-line sequence show config prints, not the bare
+	// address, because the `server` command prints the same address line. A search for
+	// the address alone passes while show config still reports the startup value, which
+	// is the disagreement this test exists to refuse. The second line is what tells the
+	// two apart: `server` follows its answer with the drop notice, show config follows
+	// it with the tunnel token.
+	want := "server: " + replacement + "\ntunnel token: "
+	if !strings.Contains(printed, want) {
+		t.Fatalf("the console printed %q, want show config to report %q", printed, want)
+	}
+}

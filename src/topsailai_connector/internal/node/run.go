@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 
 	"topsailai_connector/internal/node/embedded"
 	"topsailai_connector/internal/security"
@@ -34,6 +35,16 @@ type Runtime struct {
 	// The field exists because the mode has no file to read back from, and the startup
 	// summary must still print the credential the operator has to copy.
 	statelessCredentials []security.Credential
+
+	// serverURL is the address in force, which the console can replace. It is a field
+	// rather than a read of config.ServerURL because the console reports and changes
+	// the value the dial loop uses, and a report of the startup value after a
+	// successful repoint would read as if the repoint did nothing.
+	//
+	// It is guarded by serverURLMutex because the console writes it from the goroutine
+	// that reads commands while the startup summary and the dial loop read it.
+	serverURL      string
+	serverURLMutex sync.RWMutex
 }
 
 // Open assembles a Runtime from a configuration.
@@ -161,6 +172,7 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 
 	runtime := &Runtime{
 		config:               config,
+		serverURL:            config.ServerURL,
 		holder:               NewIdentityHolder(nodeID, credentials),
 		generated:            generated,
 		authority:            authority,
@@ -383,7 +395,41 @@ func (r *Runtime) Authority() *Authority {
 
 // Config returns the configuration the runtime was built from.
 func (r *Runtime) Config() Config {
-	return r.config
+	config := r.config
+	// The address is reported from the field in force rather than from the value the
+	// process started with, so `show config` and `show status` agree with the console
+	// after a repoint. Every other field is immutable after Open, so only this one is
+	// substituted.
+	config.ServerURL = r.ServerURL()
+	return config
+}
+
+// ServerURL returns the address in force.
+func (r *Runtime) ServerURL() string {
+	r.serverURLMutex.RLock()
+	defer r.serverURLMutex.RUnlock()
+	return r.serverURL
+}
+
+// ReplaceServerURL validates and stores a new Server address.
+//
+// The value is validated by the same function the startup path uses, so the console
+// cannot accept an address that `run` would refuse. A second validator here would be a
+// second definition of an acceptable address, and the two would eventually disagree
+// about which values are allowed.
+//
+// It returns the previous address so the caller can report what changed, and it does
+// not drop the live channel: dropping is the caller's decision, because a repoint and
+// a reconnect are separate acts with separate consequences.
+func (r *Runtime) ReplaceServerURL(value string) (string, error) {
+	if err := validateServerURL(value); err != nil {
+		return "", err
+	}
+	r.serverURLMutex.Lock()
+	previous := r.serverURL
+	r.serverURL = value
+	r.serverURLMutex.Unlock()
+	return previous, nil
 }
 
 // Report logs one startup line describing what the Node will serve.

@@ -16,8 +16,8 @@ This PRD defines two additive product requirements:
    configuration compiled into the binary, so it can run on a read-only
    filesystem.
 2. An interactive console inside the running Node process that reads
-   configuration and credential information and regenerates the node id and the
-   credentials, entirely in memory.
+   configuration and credential information, regenerates the node id and the
+   credentials, and repoints the Node at a different Server, entirely in memory.
 
 The supporting design record is `docs/permission-design.md`. Its "Embedded
 configuration" section currently states that the identity and the credential are
@@ -73,6 +73,9 @@ for a poll. The console answers that question in both modes.
   identifiers, scopes and channel status from inside the running process.
 - The operator can regenerate the node id and add, rotate or remove a credential
   from inside the running process, with no file edited and no file created.
+- The operator can point the running Node at a different Server from the console,
+  so a Node that was packaged against the wrong address is corrected without a
+  rebuild and without a restart.
 - A regeneration performed in the console takes effect without a restart, and
   drops the channel authenticated under the retired identity.
 - The console works in both modes: with files present, a change is also durable;
@@ -89,7 +92,12 @@ for a poll. The console answers that question in both modes.
   files and are not silently redirected to memory.
 - Changing the tunnel token or the policy from the console. The tunnel token is a
   Server-side value, and the policy is a whole document that a partial edit would
-  leave unreasonably.
+  leave unreasonably. The Server URL is deliberately not in this list: it is one
+  value, it is not a secret, and a Node packaged against the wrong address is a
+  Node that cannot be corrected any other way without a rebuild.
+- Persisting a console change to the Server URL. The Node has no configuration
+  file of its own, so there is nowhere to write one. A repointed Node returns to
+  its packaged address when the process exits, and the console says so.
 - Adding a third-party dependency. Nothing here requires one, and
   `golang.org/x/sys/windows` remains unapproved.
 - Fixing the four open security items. They are recorded separately and are not
@@ -133,6 +141,9 @@ for a poll. The console answers that question in both modes.
   address is replaced without a restart and without editing a file.
 - As an operator, I add or remove a credential from the console, so that I can
   revoke a caller on a machine with no writable directory.
+- As an operator whose Node was packaged against the wrong Server, I repoint it
+  from the console, so that I do not have to rebuild the binary or restart the
+  process to correct one address.
 - As an operator in file mode, I use the console and my change survives a
   restart, so that the console is a second way to reach the same state rather
   than a second, weaker state.
@@ -171,11 +182,18 @@ for a poll. The console answers that question in both modes.
    -> new node id printed, channel dropped, reconnected under the new id
    -> the credential still works; the operator updates one CLI variable
 
-5. A caller must be revoked
+5. The Node was packaged against the wrong Server
+   > server
+   -> the address in force is printed
+   > server ws://other-host:8743/channel
+   -> address accepted, channel dropped, reconnected to the new Server
+   -> the console states that the change is not remembered across a restart
+
+6. A caller must be revoked
    > credential remove --key-id old-caller
    -> removed in memory; the last credential cannot be removed
 
-6. Operator stops the Node
+7. Operator stops the Node
    > quit
    -> channel closed, exit status 0
 ```
@@ -273,6 +291,11 @@ intends to expose, and nothing in the process can know that.
 | FR-CON-17 | A command that names a subject or an action it does not have says which one was wrong and what the valid ones are, rather than repeating a usage line. `credential list` points at `show credentials`; `regenerate bogus` names `bogus`. |
 | FR-CON-18 | `quit` and end-of-input print that the console closed and the Node keeps running, because a silent exit reads as a hang. |
 | FR-CON-19 | `show config` prints one field per line, so a value is never split across a wrap boundary. |
+| FR-CON-20 | The console can report the Server address in force and replace it, so a Node packaged against the wrong Server is corrected without a rebuild and without a restart. |
+| FR-CON-21 | A replacement address is validated by the same rule the startup path uses: a WebSocket scheme of `ws` or `wss` and a non-empty host. A value that fails is refused, the message names the reason, and the address in force is unchanged. |
+| FR-CON-22 | A replacement address drops the live channel and reconnects to the new Server, because a channel open to the old Server is a channel the operator believes was moved. |
+| FR-CON-23 | The console states that the address is not remembered across a restart, because the Node has no configuration file of its own and a silent revert would look like the change never happened. |
+| FR-CON-24 | The address is not a secret, so it is printed in full. The tunnel token and the policy remain unchangeable from the console. |
 
 FR-CON-14 records a measured constraint rather than a preference.
 `IdentityHolder.ReplaceCredentials` compares the public key identifiers, because a
@@ -299,6 +322,8 @@ Mutating commands change state and write no file in this mode:
 | Command | Effect |
 |---|---|
 | `regenerate id` | Replaces the node id, drops the channel, reconnects under the new id |
+| `server` | Prints the Server address in force |
+| `server ws://host/channel` | Replaces the address, drops the channel, reconnects to the new Server |
 | `credential add --key-id NAME` | Adds a credential and prints the secret once |
 | `credential rotate --key-id NAME` | Replaces one credential's secret and prints the new value once |
 | `credential remove --key-id NAME` | Removes a credential; the last one cannot be removed |
@@ -346,7 +371,7 @@ Mutating commands change state and write no file in this mode:
 | Priority | Item |
 |---|---|
 | Must | FR-EPH-1, 2, 3, 4, 5, 6, 8, 9, 11; FR-CON-1, 2, 3, 5, 6, 7, 9, 10, 12 |
-| Should | FR-EPH-7, 10, 12; FR-CON-4, 8, 11, 13, 14, 15, 16, 17, 18, 19 |
+| Should | FR-EPH-7, 10, 12; FR-CON-4, 8, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24 |
 | Could | A `show policy` command that prints the effective policy document; a `show channel` command that prints the last handshake result |
 | Won't (this release) | Changing the tunnel token or the policy from the console; a console over a network socket; a console that survives a restart in stateless mode |
 
@@ -458,6 +483,17 @@ happen, while the console's are about state that must change.
   names `bogus`.
 - **AC-CON-14** Every line of `show config` is a single field and no line exceeds
   80 characters.
+- **AC-CON-15** `server` with no argument prints the address the Node is dialing,
+  and the printed value equals the one `show config` reports.
+- **AC-CON-16** `server ws://127.0.0.1:1/channel` is accepted, the channel to the
+  previous Server is dropped, and the retry warning names the new address.
+  Verified by reading the recorded terminal output, not by reading a struct field.
+- **AC-CON-17** `server http://host` is refused, the message names the scheme, and
+  the address in force is unchanged, verified by a following `server` command.
+- **AC-CON-18** `server` with a value that has no host is refused, and the address
+  in force is unchanged.
+- **AC-CON-19** After a repoint, the console states that the change is not
+  remembered across a restart, and a restart dials the packaged address again.
 
 ## Assumptions and constraints
 
@@ -502,6 +538,14 @@ happen, while the console's are about state that must change.
   `allow_filesystem_root` file already makes.
 - Should `quit` wait for in-flight requests to finish, or close immediately? A
   wait needs a bound, and a bound is a number nobody has measured.
+- Should a repointed address be written somewhere so it survives a restart? The
+  Node has no configuration file, so the only candidates are a new file, which
+  contradicts the mode, or an environment variable, which a running process
+  cannot set for itself. The current answer is that it is not persisted and the
+  console says so.
+- Should the console also accept a replacement `tunnel_token`? It is one value
+  like the address, but it is a secret, and a secret typed at a terminal is a
+  secret in a scrollback buffer. The current answer is no.
 
 ## Recommended product decisions
 
@@ -515,5 +559,11 @@ happen, while the console's are about state that must change.
 - Make the console's mutations go through the identity holder, and give the
   holder a way to apply a rotation under an unchanged key id, because the current
   comparison cannot see it.
+- Let the console repoint the Server and refuse to change the tunnel token. Both
+  are one value, but the address is public and the token is a secret, and a
+  secret typed at a terminal is a secret in a scrollback buffer.
+- Reuse the identity-change path to drop the channel after a repoint, rather than
+  adding a second mechanism. One way to drop a channel is a way that can be
+  reasoned about; two ways are two behaviours to keep in step.
 - Ship the mode first and the console second, as two logical units, each with its
   own commit and its own verification evidence.

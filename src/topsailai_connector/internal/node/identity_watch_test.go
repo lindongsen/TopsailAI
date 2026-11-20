@@ -92,7 +92,7 @@ func (f *watchFixture) regenerate(t *testing.T) string {
 }
 
 // waitForChange waits until the watcher signals a change or the deadline passes.
-func waitForChange(t *testing.T, changes <-chan struct{}, timeout time.Duration) bool {
+func waitForChange(t *testing.T, changes <-chan string, timeout time.Duration) bool {
 	t.Helper()
 	select {
 	case <-changes:
@@ -115,7 +115,7 @@ func TestWatchIdentityAdoptsARegeneratedNodeID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	go fixture.dialer.watchIdentity(ctx, changes)
 
 	next := fixture.regenerate(t)
@@ -141,7 +141,7 @@ func TestWatchIdentityIgnoresAnUnchangedFile(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	go fixture.dialer.watchIdentity(ctx, changes)
 
 	// A rewrite with the same id. The sleep guarantees the modification time differs,
@@ -171,7 +171,7 @@ func TestWatchIdentityKeepsTheOldValueWhenTheFileIsMalformed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	go fixture.dialer.watchIdentity(ctx, changes)
 
 	time.Sleep(20 * time.Millisecond)
@@ -199,7 +199,7 @@ func TestWatchIdentityKeepsTheOldValueWhenTheFileDisappears(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	go fixture.dialer.watchIdentity(ctx, changes)
 
 	time.Sleep(20 * time.Millisecond)
@@ -227,7 +227,7 @@ func TestWatchIdentityAdoptsARevokedCredentialWithoutDroppingTheChannel(t *testi
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	go fixture.dialer.watchIdentity(ctx, changes)
 
 	replacement, err := security.NewCredentialWithKeyID("second-caller")
@@ -268,7 +268,7 @@ func TestWatchIdentityKeepsTheOldCredentialsWhenTheFileIsMalformed(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	go fixture.dialer.watchIdentity(ctx, changes)
 
 	time.Sleep(20 * time.Millisecond)
@@ -290,7 +290,7 @@ func TestWatchIdentityStopsWithTheContext(t *testing.T) {
 	fixture := newWatchFixture(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 
 	done := make(chan struct{})
 	go func() {
@@ -329,7 +329,7 @@ func TestWatchIdentityWithoutAPathReturnsImmediately(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		dialer.watchIdentity(context.Background(), make(chan struct{}, 1))
+		dialer.watchIdentity(context.Background(), make(chan string, 1))
 		close(done)
 	}()
 
@@ -354,7 +354,7 @@ func TestWatchIdentityDetectsASameLengthRewrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	go fixture.dialer.watchIdentity(ctx, changes)
 
 	// The replacement is written directly rather than through RegenerateIdentity, so
@@ -387,8 +387,8 @@ func TestWatchIdentityDetectsASameLengthRewrite(t *testing.T) {
 // Without the drain, a regeneration during a reconnect delay would drop the freshly
 // established channel even though it was authenticated with the new id.
 func TestDiscardPendingIdentityChangeDrainsOneSignal(t *testing.T) {
-	changes := make(chan struct{}, 1)
-	changes <- struct{}{}
+	changes := make(chan string, 1)
+	changes <- identityChangeReason
 
 	discardPendingIdentityChange(changes)
 
@@ -402,7 +402,7 @@ func TestDiscardPendingIdentityChangeDrainsOneSignal(t *testing.T) {
 // TestDiscardPendingIdentityChangeToleratesAnEmptyChannel checks that the drain does
 // not block when nothing is pending, because it runs on every loop iteration.
 func TestDiscardPendingIdentityChangeToleratesAnEmptyChannel(t *testing.T) {
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 
 	done := make(chan struct{})
 	go func() {

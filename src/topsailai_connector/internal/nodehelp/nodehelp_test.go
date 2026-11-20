@@ -105,6 +105,7 @@ func TestRunHelpDocumentsTheConsoleFlagAndEveryConsoleCommand(t *testing.T) {
 		"show credentials",
 		"show scopes",
 		"show status",
+		"server [address]",
 		"regenerate id",
 		"credential add",
 		"credential rotate",
@@ -157,6 +158,50 @@ func TestRunHelpDocumentsTheConsoleLogCommand(t *testing.T) {
 	if !strings.Contains(flattened, "still reports a fatal error on the way out") {
 		t.Errorf("the FLAGS section does not state that a silenced Node still reports a fatal " +
 			"error on the way out, so a reader would believe log off hides a startup failure")
+	}
+}
+
+// TestRunHelpDocumentsTheConsoleServerCommand checks the command that lets a Node
+// packaged against the wrong address be corrected without a rebuild.
+//
+// The assertion is structural rather than a substring, because "server" appears in the
+// prose, in "the Server address" and in every example. A substring guard would stay green
+// after the entry was deleted.
+//
+// The two consequences are asserted because they are the part a reader cannot guess: a
+// repoint drops the live channel, and it is not remembered across a restart. A help page
+// that named the command and omitted both would leave the operator believing the change
+// was permanent and that the old channel was still open.
+func TestRunHelpDocumentsTheConsoleServerCommand(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+
+	var entry string
+	for _, line := range strings.Split(flags, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		if strings.HasPrefix(trimmed, "server ") || trimmed == "server" {
+			entry = trimmed
+			break
+		}
+	}
+	if entry == "" {
+		t.Fatalf("the FLAGS section has no console server entry, so the command is undocumented")
+	}
+	if !strings.Contains(entry, "address") {
+		t.Errorf("the server entry does not name the argument: %q", entry)
+	}
+
+	flattened := strings.Join(strings.Fields(flags), " ")
+	if !strings.Contains(flattened, "drops the live channel") {
+		t.Errorf("the FLAGS section does not state that a repoint drops the live channel, " +
+			"so a reader would believe the old channel is still open")
+	}
+	if !strings.Contains(flattened, "never written, in either mode") {
+		t.Errorf("the FLAGS section does not state that the address is never written, " +
+			"so a reader would believe a repoint survives a restart")
+	}
+	if !strings.Contains(flattened, "cannot change the tunnel token") {
+		t.Errorf("the FLAGS section does not state that the tunnel token cannot be changed " +
+			"from the console, so a reader would try and be refused at the handshake")
 	}
 }
 

@@ -420,7 +420,7 @@ func TestDialerShutdownDoesNotReportAnIdentityChange(t *testing.T) {
 	// A real channel rather than nil, because a nil channel never delivers and
 	// the watcher goroutine would not start, which is the state that hid this
 	// defect from every other test in this file.
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	fixture.dialer.identityChanges = changes
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -443,8 +443,11 @@ func TestDialerShutdownDoesNotReportAnIdentityChange(t *testing.T) {
 		t.Fatal("connectOnce did not return after the context was cancelled")
 	}
 
-	if report := logs.String(); strings.Contains(report, "identity changed") {
-		t.Fatalf("a shutdown reported an identity change: %q", report)
+	// The shutdown branch returns before logging, so the absence of the line is the
+	// property. Asserting on the old wording would pass against a log line that no
+	// longer exists, which is how a guard stops measuring anything.
+	if report := logs.String(); strings.Contains(report, "closing the channel") {
+		t.Fatalf("a shutdown reported a channel drop: %q", report)
 	}
 }
 
@@ -458,7 +461,7 @@ func TestDialerReportsAGenuineIdentityChange(t *testing.T) {
 		return []protocol.Frame{confirmFrame()}
 	}, slog.New(slog.NewTextHandler(logs, nil)))
 
-	changes := make(chan struct{}, 1)
+	changes := make(chan string, 1)
 	fixture.dialer.identityChanges = changes
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -472,7 +475,7 @@ func TestDialerReportsAGenuineIdentityChange(t *testing.T) {
 	// blocked and the callback is the thing that ends it.
 	logs.waitForLog(t, "channel established")
 
-	changes <- struct{}{}
+	changes <- identityChangeReason
 
 	select {
 	case <-done:
@@ -480,9 +483,209 @@ func TestDialerReportsAGenuineIdentityChange(t *testing.T) {
 		t.Fatal("connectOnce did not return after an identity change")
 	}
 
-	if report := logs.String(); !strings.Contains(report, "identity changed") {
+	report := logs.String()
+	if !strings.Contains(report, "closing the channel") {
 		t.Fatalf("an identity change was not reported: %q", report)
 	}
+	if !strings.Contains(report, `reason="`+identityChangeReason+`"`) {
+		t.Fatalf("the identity change was reported with the wrong reason: %q", report)
+	}
+}
+
+// TestDialerReportsAReconnectAsAServerChange checks that a repoint is reported as a
+// repoint.
+//
+// This is the defect the reason split exists for. The measured case was a console
+// `server ws://new` that logged "identity changed; closing the channel authenticated
+// with the retired node id" while the identity had not changed at all, which sends an
+// operator looking for a regeneration that never happened.
+//
+// The test drives RequestReconnect rather than sending on the channel directly, because
+// the method is what the console calls: a test that sent the reason itself would pass
+// with RequestReconnect wired to the wrong constant.
+func TestDialerReportsAReconnectAsAServerChange(t *testing.T) {
+	logs := &syncBuffer{}
+	fixture := newDialerFixtureWithLogger(t, func(protocol.Hello) []protocol.Frame {
+		return []protocol.Frame{confirmFrame()}
+	}, slog.New(slog.NewTextHandler(logs, nil)))
+
+	changes := make(chan string, 1)
+	fixture.dialer.identityChanges = changes
+
+	// The sending end is published the way Run publishes it, so RequestReconnect has a
+	// channel to write to. Without this the method is a no-op and the test would pass
+	// against a dialer that never dropped anything.
+	fixture.dialer.identityChangeMutex.Lock()
+	fixture.dialer.identityChangeRequests = changes
+	fixture.dialer.identityChangeMutex.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- fixture.dialer.connectOnce(ctx)
+	}()
+
+	logs.waitForLog(t, "channel established")
+
+	fixture.dialer.RequestReconnect()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connectOnce did not return after a reconnect request")
+	}
+
+	report := logs.String()
+	if !strings.Contains(report, "closing the channel") {
+		t.Fatalf("a reconnect was not reported: %q", report)
+	}
+	if !strings.Contains(report, `reason="`+serverChangeReason+`"`) {
+		t.Fatalf("a reconnect was reported with the wrong reason: %q", report)
+	}
+	if strings.Contains(report, `reason="`+identityChangeReason+`"`) {
+		t.Fatalf("a reconnect was reported as an identity change: %q", report)
+	}
+}
+
+// TestDialerDialsTheRepointedAddress checks the property a repoint exists for: the next
+// dial goes to the new Server.
+//
+// The console test proves the runtime holds the new address and that the dialer was
+// handed it. Neither proves the dial loop uses it, and a dialer that reported the new
+// address while dialling the old one is exactly the failure the operator would describe
+// as "the change did not take". This test therefore counts hellos on two fake Servers.
+func TestDialerDialsTheRepointedAddress(t *testing.T) {
+	first := newHelloCountingServer(t)
+	second := newHelloCountingServer(t)
+
+	fixture := newDialerFixture(t, func(protocol.Hello) []protocol.Frame {
+		return []protocol.Frame{confirmFrame()}
+	})
+
+	// The fixture dials its own fake Server. Point it at the first counting Server so
+	// both connections in this test are observed by a counter.
+	fixture.dialer.SetServerURL(first.url())
+
+	// connectOnce serves the connection until it ends, so each dial is driven in its own
+	// goroutine and ended by cancelling its own context. A single shared context would
+	// make the second dial reuse a cancelled one and the test would measure the context
+	// rather than the address.
+	dialOnce := func(expected *helloCountingServer, want int) {
+		t.Helper()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			done <- fixture.dialer.connectOnce(ctx)
+		}()
+
+		// Wait for the hello to reach the Server that was dialled, not merely for any
+		// hello to arrive: a wait on the total count would break on the previous dial's
+		// hello and cancel before the new one was sent, which is how the first version of
+		// this test measured nothing.
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if expected.count() >= want {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("connectOnce did not return after the context was cancelled")
+		}
+	}
+
+	fixture.dialer.SetServerURL(first.url())
+	dialOnce(first, 1)
+
+	if got := first.count(); got != 1 {
+		t.Fatalf("the first server received %d hellos, want 1", got)
+	}
+	if got := second.count(); got != 0 {
+		t.Fatalf("the second server received %d hellos before the repoint, want 0", got)
+	}
+
+	fixture.dialer.SetServerURL(second.url())
+	dialOnce(second, 1)
+
+	if got := second.count(); got != 1 {
+		t.Fatalf("the second server received %d hellos after a repoint, want 1", got)
+	}
+	if got := first.count(); got != 1 {
+		t.Fatalf("the first server received %d hellos after a repoint, want the unchanged 1", got)
+	}
+}
+
+// helloCountingServer is a fake Server that counts the hellos it receives.
+type helloCountingServer struct {
+	server *httptest.Server
+	hello  chan protocol.Hello
+}
+
+// url returns the ws address of the counting Server.
+func (s *helloCountingServer) url() string {
+	return "ws" + strings.TrimPrefix(s.server.URL, "http")
+}
+
+// count returns how many hellos the Server has received so far.
+func (s *helloCountingServer) count() int {
+	return len(s.hello)
+}
+
+// newHelloCountingServer starts a fake Server that answers every hello with a
+// confirmation and keeps the connection open.
+func newHelloCountingServer(t *testing.T) *helloCountingServer {
+	t.Helper()
+
+	hello := make(chan protocol.Hello, 8)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		conn, err := upgrader.Upgrade(writer, request, nil)
+		if err != nil {
+			return
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var frame protocol.Frame
+		if err := json.Unmarshal(data, &frame); err != nil {
+			return
+		}
+		var received protocol.Hello
+		if err := json.Unmarshal(frame.Payload, &received); err != nil {
+			return
+		}
+		hello <- received
+
+		encoded, err := json.Marshal(confirmFrame())
+		if err != nil {
+			return
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, encoded); err != nil {
+			return
+		}
+
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	return &helloCountingServer{server: server, hello: hello}
 }
 
 // TestNewDialerRefusesNilDispatcher checks that a dialer without a dispatcher is

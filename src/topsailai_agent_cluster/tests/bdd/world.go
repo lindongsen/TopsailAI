@@ -26,6 +26,18 @@ type Scenario struct {
 	world             *World
 	lastStatus        int
 	lastBody          []byte
+	// followChildPID is the pid the mock provider recorded for the follow child
+	// under test. It is captured before the keypress, because the record is the
+	// only evidence that a child existed at all: after the release the pid is gone
+	// and nothing else names it.
+	followChildPID int
+	// followRun is the interactive REPL that is still running while the release
+	// assertion checks the provider child. It is held here rather than inside the
+	// step because the assertion must observe the REPL alive at the same moment
+	// the pid disappears: a REPL that already exited closes the HTTP connection
+	// and releases the child by itself, which would make the assertion pass
+	// without the keypress doing anything.
+	followRun         *harness.InteractiveFollowRun
 	realCluster       *harness.Cluster
 	realCommandID     string
 	realCommandStatus map[string]any

@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
-description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, how to find the node id, key id and secret after starting the Node, how to run the Node on a machine whose filesystem is read-only so it writes no file at all, or how to read the configuration and change the node id or a credential from an interactive console without editing a file, how to read the Node's settings from a dotenv file instead of the environment, or how to override one setting for a single launch with --set. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management, regeneration, stateless mode, the interactive console, and the four configuration sources with their precedence.
-version: 1.9.0
+description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, how to find the node id, key id and secret after starting the Node, how to run the Node on a machine whose filesystem is read-only so it writes no file at all, or how to read the configuration and change the node id or a credential from an interactive console without editing a file, how to read the Node's settings from a dotenv file instead of the environment, or how to override one setting for a single launch with --set, or how to point a running Node at a different Server from the console without a rebuild and without a restart. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management, regeneration, stateless mode, the interactive console, repointing the Server from the console, and the four configuration sources with their precedence.
+version: 1.10.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -1001,9 +1001,9 @@ channel. Those are properties of the token, not of the filesystem.
 
 ## The interactive console
 
-The console lets you read the configuration and change the identity or a credential
-**without editing a file**. It is the only way to do those things on a stateless
-Node.
+The console lets you read the configuration and change the identity, a credential or
+the Server address **without editing a file**. It is the only way to do those things on
+a stateless Node.
 
 It is on by default in stateless mode when the Node runs in a terminal, and off by
 default otherwise. On a file-backed Node, ask for it:
@@ -1025,6 +1025,7 @@ show credentials   the public key ids; a secret is never printed
 show scopes        every scope and whether its directory exists
 show status        the mode, the node id, the server and the counts
 log [level]        show or set the log level: debug, info, warn, error or off
+server [address]   show the Server address, or dial a different Server
 regenerate id      replace the node id; every credential is unchanged
 credential add <key-id>     add a caller and print its secret once
 credential rotate <key-id>  replace the secret under an existing key id
@@ -1086,12 +1087,48 @@ connector-node> log silent
 error: unknown level "silent"; want debug, info, warn, error or off
 ```
 
+### Pointing the Node at a different Server
+
+A Node packaged against the wrong address is corrected without a rebuild and without
+a restart:
+
+```
+connector-node> server
+server: ws://192.168.2.3:8743/channel
+connector-node> server ws://other-host:8743/channel
+server: ws://other-host:8743/channel
+the live channel is dropped and the node dials the new address
+this is not remembered across a restart; the address this process started with is used again
+```
+
+The address is printed in full because it is not a secret. The `tunnel_token` is
+**not** changeable here: it is a secret, and a secret typed at a terminal is a secret
+in a scrollback buffer. A Node moved to a Server with a different `tunnel_token` is
+refused at the handshake, so move the token with `--set` or an env file and restart.
+
+A value that is not a `ws://` or `wss://` address with a host is refused, and the
+address in force is left alone:
+
+```
+connector-node> server http://other-host:8743/channel
+error: the address "http://other-host:8743/channel" is not usable: "http://other-host:8743/channel" has scheme "http", want wss or ws
+connector-node> server
+server: ws://192.168.2.3:8743/channel
+```
+
+`show config` and `show status` report the address in force, so they agree with
+`server` after a repoint rather than reporting the value the process started with.
+
 ### What a change does in each mode
 
 | Mode | `regenerate id` | `credential add` / `rotate` / `remove` |
 |---|---|---|
 | File-backed | The identity file is rewritten, so the change survives a restart | The credential file is rewritten |
 | Stateless | The change lives in memory and is lost when the process exits | The change lives in memory |
+
+The Server address is not written in either mode, because the Node has no
+configuration file of its own. A repointed Node returns to the address it started
+with when the process exits, and the console says so.
 
 In both modes the change takes effect immediately: `regenerate id` drops the live
 channel and the Node reconnects under the new id, exactly as the `regenerate`
@@ -1120,6 +1157,8 @@ The old secret stops working at once. The new one is printed once, so copy it th
 | Startup fails naming a scope | That scope's path is missing, is a file, is a symlink, or overlaps the config dir | Fix the policy |
 | Handshake refused, then silence | Wrong `tunnel_token` | Get the correct value from the Server operator |
 | Reconnects every 5 seconds | The Server is down, or the node id was regenerated | Check both logs |
+| The Node dials the wrong Server | The address was compiled in, or an environment variable names another one | Type `server` in the console to see the address in force, then `server ws://host/channel` to change it without a rebuild |
+| `the server refused the handshake: unauthenticated` after a repoint | The new Server has a different `tunnel_token` | The token is not changeable from the console; set `CONNECTOR_NODE_TUNNEL_TOKEN` and restart |
 | Log records land in the middle of what I am typing | The console and the log share one terminal, and a Node that cannot reach the Server warns on every retry | Type `log off` in the console; `log info` brings the records back |
 | A request came back `denied` | The policy does not grant it | Add the grant and reload |
 | A request came back `not_found` | The policy allowed it and the path is not there | Check the path |

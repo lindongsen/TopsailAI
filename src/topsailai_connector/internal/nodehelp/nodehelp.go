@@ -451,9 +451,11 @@ FLAGS
       stateless Node has no file to edit and the console is the only way to
       change its address or revoke a caller.
 
-      The console changes exactly two things: who the Node is, and who may talk
-      to it. It cannot add a scope, widen a grant or change the policy, because
-      those live in the policy document.
+      The console changes exactly three things: who the Node is, who may talk
+      to it, and which Server it dials. It cannot add a scope, widen a grant or
+      change the policy, because those live in the policy document, and it
+      cannot change the tunnel token, because a secret typed at a terminal is a
+      secret in a scrollback buffer.
 
         show config        the configuration in force, with the tunnel token redacted
         show identity      the node id this Node answers to
@@ -461,6 +463,7 @@ FLAGS
         show scopes        every scope and whether its directory exists
         show status        the mode, the node id, the server and the counts
         log [level]        show or set the log level: debug, info, warn, error or off
+        server [address]   show the Server address, or dial a different Server
         regenerate id      replace the node id; every credential is unchanged
         credential add <key-id>     add a caller and print its secret once
         credential rotate <key-id>  replace the secret under an existing key id
@@ -483,10 +486,19 @@ FLAGS
       history file: the file could be on a read-only filesystem, and a history
       would record a secret that was printed once.
 
-      On a file-backed Node a change is also written to the identity file or the
-      credential file, so the console and the subcommands agree about what is in
-      force. On a stateless Node the change lives in memory and is lost when the
-      process exits.
+      On a file-backed Node a change to the identity or to a credential is also
+      written to the identity file or the credential file, so the console and the
+      subcommands agree about what is in force. On a stateless Node that change
+      lives in memory and is lost when the process exits.
+
+      The Server address is never written, in either mode, because the Node has no
+      configuration file of its own: the address comes from the environment, the
+      env file or the build, and a repointed address is used until the process
+      exits. "server ws://host/channel" drops the live channel and dials the new
+      address on the next attempt; the console says so, and says that a restart
+      returns to the address this process started with. A Node moved to a Server
+      with a different tunnel token is refused at the handshake, which is a visible
+      failure rather than a silent one.
 
   --env-file <path>
       Read KEY=VALUE pairs from this dotenv file. The path must be absolute,
