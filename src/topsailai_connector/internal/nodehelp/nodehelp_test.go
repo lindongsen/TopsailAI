@@ -353,3 +353,63 @@ func TestPagesDoNotNameInternalPackages(t *testing.T) {
 		}
 	}
 }
+
+// TestMainHelpStatesThatAnEmbeddedIdentityIsASeed checks that the page tells an operator
+// what an embedded node id and credential actually do.
+//
+// The gap this closes was real: the page listed "a Server URL, a policy and a tunnel
+// token" as the things a packaged build may carry, so an operator reading it had no way
+// to learn that a node id and a credential can also be compiled in, and no way to learn
+// that the compiled values are written only when the files are absent. A reader who
+// assumed the compiled values were authoritative would expect `regenerate` to be undone
+// by the next restart, which is the opposite of the behaviour.
+//
+// The assertion is structural rather than a substring of the whole page. "seed" appears
+// nowhere else, but "credential" appears throughout, so a whole-page search for
+// "credential" would pass on an unrelated sentence and prove nothing about this rule.
+func TestMainHelpStatesThatAnEmbeddedIdentityIsASeed(t *testing.T) {
+	text := Main("connector-node")
+
+	// The paragraph that describes what a packaged build carries.
+	start := strings.Index(text, "A packaged build may carry")
+	if start < 0 {
+		t.Fatalf("the page has no paragraph about a packaged build, so this guard is measuring nothing")
+	}
+	end := strings.Index(text[start:], "\n\n")
+	if end < 0 {
+		t.Fatalf("the packaged-build paragraph is not terminated, so this guard is measuring nothing")
+	}
+	paragraph := text[start : start+end]
+
+	// The paragraph must name the two values that can now be compiled in. Naming only the
+	// Server URL, the policy and the tunnel token is the defect this guard exists for.
+	for _, name := range []string{"node id", "credential"} {
+		if !strings.Contains(paragraph, name) {
+			t.Errorf("the packaged-build paragraph does not mention %q, so an operator cannot learn it can be compiled in:\n%s", name, paragraph)
+		}
+	}
+
+	// The seed rule must be stated, and stated as a rule about the files winning. A page
+	// that says the values are compiled in without saying when they are used leaves the
+	// reader to guess, and the guess that reads as natural is the wrong one.
+	seedStart := strings.Index(text, "An embedded node id and credential are a seed")
+	if seedStart < 0 {
+		t.Fatalf("the page does not state that an embedded identity is a seed, so this guard is measuring nothing")
+	}
+	seedEnd := strings.Index(text[seedStart:], "\n\n")
+	if seedEnd < 0 {
+		t.Fatalf("the seed paragraph is not terminated, so this guard is measuring nothing")
+	}
+	seed := text[seedStart : seedStart+seedEnd]
+
+	// The phrases are matched against whitespace-collapsed text, because the page wraps at
+	// 80 columns. A raw substring search would fail on "not restored by a\nrestart" and
+	// report a missing rule that is present, which is a test measuring line wrapping rather
+	// than the rule it claims to check.
+	flat := strings.Join(strings.Fields(seed), " ")
+	for _, phrase := range []string{"files win", "not restored by a restart", "still created"} {
+		if !strings.Contains(flat, phrase) {
+			t.Errorf("the seed paragraph does not say %q, so the reader must guess:\n%s", phrase, seed)
+		}
+	}
+}

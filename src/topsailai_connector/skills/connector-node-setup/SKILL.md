@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
 description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, or how to find the node id, key id and secret after starting the Node. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management and regeneration.
-version: 1.4.0
+version: 1.5.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -264,6 +264,14 @@ time rather than random ones. From then on the files win: `regenerate`,
 nothing embedded, and a credential you remove is not restored by a restart. The
 operator already has these values in the packaging env file, so you never have to
 report them back.
+
+The compiled values are a **seed, not an authority**, so the config directory is
+still created and both files are still written. A machine where that directory
+cannot be created does not run degraded: it refuses to start with
+`create CONNECTOR_NODE_CONFIG_DIR "<path>": mkdir <parent>: no such file or
+directory` and exit status 1. The reason the files cannot be skipped is that a
+running Node adopts a regenerated node id by polling the identity file, so a Node
+that kept its identity only in memory could not be moved to a new address.
 
 The node id is an address, so losing it costs only a lookup. The credential is a
 secret that never expires, so losing it costs a rotation: `credential add` issues a
@@ -750,6 +758,7 @@ a Server that could force regeneration could also force a denial of service.
 | `policy file is missing` | No policy at the default path | Create `<config>/policy.yaml` or set `CONNECTOR_NODE_POLICY_FILE` |
 | `is relative; a relative path resolves differently per launch` | A relative config dir or policy path | Use an absolute path |
 | `is not a directory` | The config dir path is a file | Fix the path |
+| `create CONNECTOR_NODE_CONFIG_DIR "<path>": mkdir <parent>: no such file or directory` | The config directory cannot be created, for example a read-only filesystem or a parent that does not exist | Point `CONNECTOR_NODE_CONFIG_DIR` at a writable location. The Node refuses to start rather than keeping its identity in memory |
 | Startup fails naming a scope | That scope's path is missing, is a file, is a symlink, or overlaps the config dir | Fix the policy |
 | Handshake refused, then silence | Wrong `tunnel_token` | Get the correct value from the Server operator |
 | Reconnects every 5 seconds | The Server is down, or the node id was regenerated | Check both logs |

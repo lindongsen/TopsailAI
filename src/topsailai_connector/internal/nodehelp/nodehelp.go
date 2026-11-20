@@ -273,11 +273,19 @@ ENVIRONMENT
   CONNECTOR_NODE_CONFIG_DIR. They never dial, so they never need a dial target or a
   tunnel token.
 
-  A packaged build may carry a Server URL, a policy and a tunnel token compiled in.
-  The environment wins over an embedded value field by field, so an operator can
-  repoint one binary without a rebuild. The policy is the deliberate exception: a
-  build that embedded a policy refuses CONNECTOR_NODE_POLICY_FILE, because a file
-  path would silently replace every scope and every grant.
+  A packaged build may carry a Server URL, a policy, a tunnel token, and a node id
+  with one credential compiled in. The environment wins over an embedded value field
+  by field, so an operator can repoint one binary without a rebuild. The policy is
+  the deliberate exception: a build that embedded a policy refuses
+  CONNECTOR_NODE_POLICY_FILE, because a file path would silently replace every scope
+  and every grant.
+
+  An embedded node id and credential are a seed, not an authority. They are written
+  only when the identity or credential file is absent, so the files win from then on:
+  regenerate, credential add and credential remove behave exactly as they do on a
+  build with nothing embedded, and a credential you remove is not restored by a
+  restart. The config directory is still created and both files are still written,
+  because a running Node adopts a regenerated node id by polling the identity file.
 
 EXIT STATUS
   0   The subcommand succeeded. A help request also exits 0.
