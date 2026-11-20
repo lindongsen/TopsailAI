@@ -132,15 +132,22 @@ func TestInvokeStreamInterruptsOnEmptyStream(t *testing.T) {
 	}
 }
 
-// TestInvokeStreamReportsADeadlineAsCancelled proves a stream stopped by the
-// deadline is reported as a cancellation, not as a provider fault.
+// TestInvokeStreamReportsADeadlineAsDeadlineExceeded proves a stream stopped by
+// the deadline surfaces the deadline sentinel rather than being reported as a
+// provider fault.
 //
 // The deadline kills the process group, so the stream ends at EOF without a
 // terminal frame and the validator reports a truncated stream. That truncation is
 // the consequence of the stop. Reporting it as a provider fault told the operator
 // the provider had failed whenever a follow was held longer than the configured
 // timeout, which is the ordinary case for a live tail.
-func TestInvokeStreamReportsADeadlineAsCancelled(t *testing.T) {
+//
+// The adapter deliberately does not decide the Cluster code: it reports the
+// sentinel and the Endpoint names it. This test therefore asserts only that the
+// sentinel survives, which is what makes the Endpoint's follow_timeout branch
+// reachable. It was previously named "...AsCancelled", which described the old
+// single-code behaviour and would have kept that wording alive after the split.
+func TestInvokeStreamReportsADeadlineAsDeadlineExceeded(t *testing.T) {
 	request := followRequest()
 	request.DeadlineAtMS = time.Now().Add(300 * time.Millisecond).UnixMilli()
 	err := streamHelperRunner(t, "hold").invokeStream(context.Background(), request, func(providercli.StreamFrame) error { return nil })
@@ -148,7 +155,7 @@ func TestInvokeStreamReportsADeadlineAsCancelled(t *testing.T) {
 		t.Fatalf("a stream held past its deadline returned nil, so a stopped stream looks successful")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("got error %v, want it to wrap context.DeadlineExceeded so the caller classifies a stopped stream as cancelled", err)
+		t.Fatalf("got error %v, want it to wrap context.DeadlineExceeded so the Endpoint can report follow_timeout", err)
 	}
 }
 
@@ -211,5 +218,38 @@ func TestInvokeStreamCompletesAStreamLongerThanMaxRecords(t *testing.T) {
 	}
 	if records != 40 {
 		t.Fatalf("forwarded %d records, want all 40", records)
+	}
+}
+
+// TestInvokeStreamUsesTheFollowBudgetNotTheCallTimeout proves the follow budget
+// actually bounds the child process, rather than being stored and ignored.
+//
+// The request deadline is set far in the future, so the only bound that can stop
+// this stream is the follow budget. A test that set both would pass even if the
+// follow budget were never read, because the request deadline would explain the
+// stop. This is the composed proof for the field: the earlier defect was a
+// parameter threaded through every layer with no consumer, and a distinctive
+// value is the only way to tell "used" from "forwarded".
+func TestInvokeStreamUsesTheFollowBudgetNotTheCallTimeout(t *testing.T) {
+	runner := streamHelperRunner(t, "hold")
+	runner.config.followTimeout = 300 * time.Millisecond
+	runner.config.timeout = 30 * time.Second
+	request := followRequest()
+	request.DeadlineAtMS = time.Now().Add(30 * time.Second).UnixMilli()
+	started := time.Now()
+	err := runner.invokeStream(context.Background(), request, func(providercli.StreamFrame) error { return nil })
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatalf("a stream held past the follow budget returned nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got error %v, want the deadline sentinel", err)
+	}
+	// The call timeout is 30s and the helper holds for 10s, so an elapsed time
+	// near the follow budget proves the follow budget is the bound in force. A
+	// generous ceiling keeps the assertion about which budget applied rather than
+	// about scheduling precision.
+	if elapsed > 5*time.Second {
+		t.Fatalf("stream ran %s, so the call timeout bounded it instead of the follow budget", elapsed)
 	}
 }

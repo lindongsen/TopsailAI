@@ -199,50 +199,54 @@ func assertModelCatalogRendered() error {
 }
 
 // modelSelectPayloadKey returns the provider-private model key the adapter sent
-// assertModelCatalogMarksTheCurrentProfile proves the CURRENT column reports the
-// profile the provider said the session is using.
+// assertModelCatalogMarksTheCurrentProfile proves the MODEL cell marks the profile
+// the provider said the session is using.
 //
-// The assertion is positional rather than a substring search, because "yes" also
-// appears in the AVAILABLE column: a substring hit would pass even if CURRENT were
-// still unknown. Each row is split on the table's own cell separator and the
-// CURRENT cell is read by index, so the column that carries the value is the
-// column that is checked.
+// The assertion reads the MODEL cell and looks for the marker, rather than reading a
+// dedicated column by index. The previous version read cells[2] as CURRENT, and when
+// that column was removed cells[2] became AVAILABLE: the fixture's AVAILABLE value is
+// "yes", which is exactly what the old assertion expected for the current profile, so
+// it would have passed while checking the wrong column. Reading the marker from the
+// cell that carries it is what makes the assertion independent of the layout.
 func assertModelCatalogMarksTheCurrentProfile() error {
 	rows, err := modelCatalogRows(interactiveOutput())
 	if err != nil {
 		return err
 	}
-	want := map[string]string{"fixture-model-a": "yes", "fixture-model-b": "no"}
+	want := map[string]bool{"fixture-model-a": true, "fixture-model-b": false}
 	for name, expected := range want {
-		current, ok := rows[name]
+		marked, ok := rows[name]
 		if !ok {
 			return fmt.Errorf("the catalog table has no row for profile %q", name)
 		}
-		if current != expected {
-			return fmt.Errorf("profile %q reports CURRENT=%q, want %q", name, current, expected)
+		if marked != expected {
+			return fmt.Errorf("profile %q marked current=%v, want %v", name, marked, expected)
 		}
 	}
 	return nil
 }
 
-// modelCatalogRows maps each rendered profile name to its CURRENT cell.
+// modelCatalogRows maps each rendered profile name to whether its MODEL cell carries
+// the current marker.
 //
-// The table prints cells separated by " │ " and pads them to the column width, so
-// the value is trimmed before comparison. Styling is removed first, because the
-// header and the cells are styled on a real terminal and an SGR sequence inside a
-// cell would make a correct value look wrong.
-func modelCatalogRows(text string) (map[string]string, error) {
-	rows := make(map[string]string)
+// The table prints cells separated by " │ " and pads them to the column width, so the
+// value is trimmed before comparison. Styling is removed first, because the header and
+// the marked cell are styled on a real terminal and an SGR sequence inside a cell would
+// make a correct marker look absent.
+func modelCatalogRows(text string) (map[string]bool, error) {
+	rows := make(map[string]bool)
 	for _, line := range strings.Split(stripTableSGR(text), "\n") {
 		cells := strings.Split(line, " │ ")
 		if len(cells) < 3 {
 			continue
 		}
 		name := strings.TrimSpace(cells[1])
+		marked := strings.HasPrefix(name, "* ")
+		name = strings.TrimPrefix(name, "* ")
 		if name != "fixture-model-a" && name != "fixture-model-b" {
 			continue
 		}
-		rows[name] = strings.TrimSpace(cells[2])
+		rows[name] = marked
 	}
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("no catalog row could be parsed from the rendered table: %s", text)

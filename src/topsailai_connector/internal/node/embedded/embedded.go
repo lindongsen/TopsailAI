@@ -80,6 +80,19 @@ var NodeID string
 // what CarriesSecret reports.
 var Credential string
 
+// Stateless is the stateless-mode default the build embedded.
+//
+// It exists because a build whose whole point is "run it and it works" cannot
+// require the recipient to export a variable first. A recipient who must set
+// CONNECTOR_NODE_STATELESS=1 before the artifact behaves as designed has been
+// handed a normal build with extra steps.
+//
+// It is a default, not an authority: an explicit CONNECTOR_NODE_STATELESS in the
+// environment wins, so the same binary can still be run file-backed with
+// CONNECTOR_NODE_STATELESS=0. That is the same precedence every other embedded
+// value follows.
+var Stateless string
+
 // Enabled reports whether this build embedded any configuration at all.
 //
 // It is true when any value is set, so a build that embedded only the Server URL is
@@ -87,7 +100,26 @@ var Credential string
 // one.
 func Enabled() bool {
 	return ServerURL != "" || TunnelToken != "" || PolicyBase64 != "" ||
-		NodeID != "" || Credential != ""
+		NodeID != "" || Credential != "" || Stateless != ""
+}
+
+// StatelessDefault reports whether this build embedded stateless mode as the
+// default.
+//
+// The value is validated strictly, exactly as the environment variable is: `1`
+// enables the mode, an empty value or `0` disables it, and anything else is an
+// error rather than a silent "off". A packaging mistake that produced a
+// file-backed Node where a stateless one was asked for would be discovered on the
+// recipient's machine, where the config directory may not even be writable.
+func StatelessDefault() (bool, error) {
+	switch Stateless {
+	case "", "0":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("embedded stateless mode is %q, want 1, 0 or empty", Stateless)
+	}
 }
 
 // CarriesSecret reports whether this build embedded a secret.

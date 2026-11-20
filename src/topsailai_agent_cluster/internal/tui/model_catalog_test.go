@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -59,6 +60,7 @@ func (s *modelCatalogStubAPI) GetModelCatalog(_ context.Context, endpointID stri
 	}
 	return s.catalog, nil
 }
+
 // modelCataloglessAPI implements CommandAPI without the catalog seam, so the
 // runner must report the missing capability instead of rendering an empty table.
 // It deliberately does not embed modelCatalogStubAPI, because an embedded
@@ -327,13 +329,13 @@ func legacyRunnerForTest(api CommandAPI) CommandRunner {
 	return CommandRunner{API: api, Policy: LegacyPolicy}
 }
 
-// modelCatalogCurrentColumn extracts the CURRENT cell of every data row from one
+// modelCatalogNameColumn extracts the MODEL cell of every data row from one
 // rendered catalog.
 //
 // The column is located by its header rather than by a fixed index, so a layout
 // change cannot silently make the assertion read a different column. Cells are
 // trimmed because the renderer pads them to the measured width.
-func modelCatalogCurrentColumn(t *testing.T, rendered string) []string {
+func modelCatalogNameColumn(t *testing.T, rendered string) []string {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
 	// The table is framed by a full-width rule, so the header is not the first
@@ -341,24 +343,24 @@ func modelCatalogCurrentColumn(t *testing.T, rendered string) []string {
 	// correct if the frame is ever removed.
 	headerIndex := -1
 	for index, line := range lines {
-		if strings.Contains(line, " │ ") && strings.Contains(line, "CURRENT") {
+		if strings.Contains(line, " │ ") && strings.Contains(line, "MODEL") {
 			headerIndex = index
 			break
 		}
 	}
 	if headerIndex < 0 {
-		t.Fatalf("rendered table has no CURRENT header: %q", rendered)
+		t.Fatalf("rendered table has no MODEL header: %q", rendered)
 	}
 	header := strings.Split(lines[headerIndex], " │ ")
 	position := -1
 	for index, name := range header {
-		if strings.TrimSpace(name) == "CURRENT" {
+		if strings.TrimSpace(name) == "MODEL" {
 			position = index
 			break
 		}
 	}
 	if position < 0 {
-		t.Fatalf("header %q has no CURRENT column", lines[headerIndex])
+		t.Fatalf("header %q has no MODEL column", lines[headerIndex])
 	}
 	values := make([]string, 0, len(lines))
 	for _, line := range lines[headerIndex+1:] {
@@ -376,28 +378,29 @@ func modelCatalogCurrentColumn(t *testing.T, rendered string) []string {
 	return values
 }
 
-// TestModelCatalogCurrentColumnKeepsUnknownApartFromNo proves the rendered CURRENT
-// cell states "unknown" when the Endpoint did not observe which profile is in use.
+// TestModelCatalogMarksOnlyTheCurrentProfile proves the MODEL cell carries the
+// current marker on exactly the profile the session is using.
 //
-// This is the regression guard for the original defect. The column used to render
-// every row as "no", because the adapter never assigned the field and Go's zero value
-// is false. A test that only asserted "not yes" would pass on that defect, so each
-// case names the exact expected cell.
+// This is the regression guard for the original defect, carried over from the
+// CURRENT column it replaced. The column used to render every row as "no", because
+// the adapter never assigned the field and Go's zero value is false. A test that only
+// asserted "not marked" would pass on that defect, so each case names the exact
+// expected cell.
 //
 // The empty string and an unrecognized value are included deliberately: they are what
-// an older document or a future adapter would produce, and both must degrade to
-// "unknown" rather than to a definite negative.
-func TestModelCatalogCurrentColumnKeepsUnknownApartFromNo(t *testing.T) {
+// an older document or a future adapter would produce, and neither may earn a marker,
+// because a marker states that the session is using that profile now.
+func TestModelCatalogMarksOnlyTheCurrentProfile(t *testing.T) {
 	cases := []struct {
 		name  string
 		state string
 		want  string
 	}{
-		{name: "observed yes", state: protocol.ModelCurrentYes, want: protocol.ModelCurrentYes},
-		{name: "observed no", state: protocol.ModelCurrentNo, want: protocol.ModelCurrentNo},
-		{name: "not observed", state: protocol.ModelCurrentUnknown, want: protocol.ModelCurrentUnknown},
-		{name: "absent field", state: "", want: protocol.ModelCurrentUnknown},
-		{name: "unrecognized value", state: "not_observed", want: protocol.ModelCurrentUnknown},
+		{name: "observed yes", state: protocol.ModelCurrentYes, want: modelCurrentMarker + "fast"},
+		{name: "observed no", state: protocol.ModelCurrentNo, want: "fast"},
+		{name: "not observed", state: protocol.ModelCurrentUnknown, want: "fast"},
+		{name: "absent field", state: "", want: "fast"},
+		{name: "unrecognized value", state: "not_observed", want: "fast"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -413,43 +416,98 @@ func TestModelCatalogCurrentColumnKeepsUnknownApartFromNo(t *testing.T) {
 			if err := RenderModelCatalog(&out, view, TableOptions{}); err != nil {
 				t.Fatalf("render failed: %v", err)
 			}
-			values := modelCatalogCurrentColumn(t, out.String())
+			values := modelCatalogNameColumn(t, out.String())
 			if len(values) != 1 {
-				t.Fatalf("CURRENT cells = %#v, want one row", values)
+				t.Fatalf("MODEL cells = %#v, want one row", values)
 			}
 			if values[0] != testCase.want {
-				t.Fatalf("CURRENT cell = %q, want %q", values[0], testCase.want)
+				t.Fatalf("MODEL cell = %q, want %q", values[0], testCase.want)
 			}
 		})
 	}
 }
 
-// TestModelCatalogCurrentColumnSeparatesUnknownFromNoInOneTable proves the two
-// states stay distinguishable inside a single table.
+// TestModelCatalogSeparatesUnobservedFromNotCurrent proves an unobserved current
+// model stays distinguishable from a definite "not this one".
 //
-// A per-row test cannot detect a renderer that collapses the whole column to one
-// value, because every row would agree with itself. Rendering both states side by
-// side is what proves the cell is derived per row rather than from a shared default.
-func TestModelCatalogCurrentColumnSeparatesUnknownFromNoInOneTable(t *testing.T) {
-	view := NewModelCatalogView("ep-1", "res_1", protocol.ModelCatalog{
-		Profiles: []protocol.ModelProfile{
-			{ModelProfileID: "mp-1", ProviderDisplayName: "fast", CurrentState: protocol.ModelCurrentYes, Available: true},
-			{ModelProfileID: "mp-2", ProviderDisplayName: "deep", CurrentState: protocol.ModelCurrentNo, Available: true},
-			{ModelProfileID: "mp-3", ProviderDisplayName: "other", CurrentState: protocol.ModelCurrentUnknown, Available: true},
+// The marker can only say "this one is current", so the two states would otherwise
+// render identically: both unmarked. The notice is what keeps them apart, and it is
+// the only carrier of the distinction now that the CURRENT column is gone. Rendering
+// both states side by side is what proves the notice is derived from the rows rather
+// than from a shared default.
+func TestModelCatalogSeparatesUnobservedFromNotCurrent(t *testing.T) {
+	cases := []struct {
+		name       string
+		states     []string
+		wantMarked []string
+		wantNotice bool
+	}{
+		{
+			name:       "one profile in use",
+			states:     []string{protocol.ModelCurrentYes, protocol.ModelCurrentNo},
+			wantMarked: []string{modelCurrentMarker + "fast", "deep"},
+			wantNotice: false,
 		},
-	})
-	var out bytes.Buffer
-	if err := RenderModelCatalog(&out, view, TableOptions{}); err != nil {
-		t.Fatalf("render failed: %v", err)
+		{
+			name:       "nothing observed",
+			states:     []string{protocol.ModelCurrentUnknown, protocol.ModelCurrentUnknown},
+			wantMarked: []string{"fast", "deep"},
+			wantNotice: true,
+		},
+		{
+			name:       "observed that none is in use",
+			states:     []string{protocol.ModelCurrentNo, protocol.ModelCurrentNo},
+			wantMarked: []string{"fast", "deep"},
+			wantNotice: false,
+		},
 	}
-	values := modelCatalogCurrentColumn(t, out.String())
-	want := []string{protocol.ModelCurrentYes, protocol.ModelCurrentNo, protocol.ModelCurrentUnknown}
-	if len(values) != len(want) {
-		t.Fatalf("CURRENT cells = %#v, want %#v", values, want)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			profiles := make([]protocol.ModelProfile, 0, len(testCase.states))
+			for index, state := range testCase.states {
+				profiles = append(profiles, protocol.ModelProfile{
+					ModelProfileID:      "mp-" + strconv.Itoa(index+1),
+					ProviderDisplayName: []string{"fast", "deep"}[index],
+					CurrentState:        state,
+					Available:           true,
+				})
+			}
+			view := NewModelCatalogView("ep-1", "res_1", protocol.ModelCatalog{Profiles: profiles})
+			var out bytes.Buffer
+			if err := RenderModelCatalog(&out, view, TableOptions{}); err != nil {
+				t.Fatalf("render failed: %v", err)
+			}
+			values := modelCatalogNameColumn(t, out.String())
+			if len(values) != len(testCase.wantMarked) {
+				t.Fatalf("MODEL cells = %#v, want %#v", values, testCase.wantMarked)
+			}
+			for index := range testCase.wantMarked {
+				if values[index] != testCase.wantMarked[index] {
+					t.Fatalf("MODEL cells = %#v, want %#v", values, testCase.wantMarked)
+				}
+			}
+			gotNotice := strings.Contains(out.String(), "no row is marked current")
+			if gotNotice != testCase.wantNotice {
+				t.Fatalf("notice present = %v, want %v; output=%q", gotNotice, testCase.wantNotice, out.String())
+			}
+		})
 	}
-	for index := range want {
-		if values[index] != want[index] {
-			t.Fatalf("CURRENT cells = %#v, want %#v", values, want)
+}
+
+// TestModelCatalogHasNoCurrentColumn proves the CURRENT column is gone from every
+// layout, so the marker is the only place the current profile is reported.
+//
+// Without this, a renderer that kept the column and added the marker would pass the
+// marker tests while still spending the width the change was made to reclaim.
+func TestModelCatalogHasNoCurrentColumn(t *testing.T) {
+	for name, columns := range map[string][]tableColumn{
+		"wide":   layoutModelCatalogColumns(TableOptions{}),
+		"narrow": layoutModelCatalogColumns(TableOptions{HideSessionID: true}),
+	} {
+		for _, column := range columns {
+			if column.header == "CURRENT" {
+				t.Fatalf("%s layout still renders a CURRENT column: %#v", name, columns)
+			}
 		}
 	}
 }

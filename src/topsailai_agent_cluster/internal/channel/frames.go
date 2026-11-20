@@ -107,7 +107,7 @@ const (
 	// Endpoint: the Server drops its pending entry when the operator stops
 	// watching, and without this frame the Endpoint would keep the follow
 	// goroutine, its concurrency slot and the provider child alive until the
-	// adapter deadline expired. It is sent only when the Endpoint may still be
+	// follow budget expired. It is sent only when the Endpoint may still be
 	// streaming, so a follow that already sent its terminal frame is never
 	// cancelled twice.
 	FrameOutputFollowCancel = "output_follow_cancel"

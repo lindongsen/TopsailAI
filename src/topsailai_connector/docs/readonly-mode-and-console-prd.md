@@ -228,6 +228,13 @@ happen to run.
 | FR-CFG-9 | The `--set` pairs are validated before the flag package parses them, because the package echoes a rejected value verbatim as `invalid value "<the whole argument>" for flag -set`. |
 | FR-CFG-10 | The policy is the one value that cannot be generated. A build with no embedded policy and no `CONNECTOR_NODE_POLICY_FILE` refuses to start, because a Node that invented its own scopes would be a Node whose operator believes it serves something it does not. |
 | FR-CFG-11 | The precedence is decided in one function, so it can be stated rather than inferred from whichever resolver ran first. |
+| FR-CFG-12 | `make package-stateless` builds one executable that carries the Server URL, the policy, the `tunnel_token`, the node id, the credential and stateless mode, so the recipient runs it with no file and no environment variable. |
+| FR-CFG-13 | The scope set of that target is chosen by `PACKAGE_GOOS`: Linux gets one scope rooted at `/`, Windows gets one scope per drive letter `a=A:\` through `z=Z:\`. A policy naming both cannot start, because `filepath.IsAbs` is platform-specific and a relative path is a startup failure rather than a tolerated absence. |
+| FR-CFG-14 | The target sets `allow_filesystem_root: true`, because every default scope is a filesystem root. The artifact therefore exposes the whole machine, and the deny list is what keeps the Node's own config directory and the running executable unreadable. |
+| FR-CFG-15 | The target grants every permission, but only `read`, `list` and `stat` are dispatched. `file.write` and `command.exec` are refused before the policy is consulted, so the grant promises more than the binary delivers and the packaging summary says so. |
+| FR-CFG-16 | The node id, the key id and the secret are generated during packaging, compiled in as seeds, and written to an env file beside the artifact at mode `0600`, so the operator can configure the CLI without asking the recipient for anything. |
+| FR-CFG-17 | `PACKAGE_EMBED_STATELESS` compiles stateless mode in as the default, so the artifact runs without the recipient exporting anything. An explicit `CONNECTOR_NODE_STATELESS=0` wins, so the same file can be run file-backed for a debugging session. |
+| FR-CFG-18 | `PACKAGE_PERMISSIONS` defaults to `read list stat` and refuses a word outside the vocabulary, a duplicate, and an empty list. |
 
 FR-CFG-9 records a defect that was measured rather than anticipated. The first
 implementation validated a `--set` pair inside `overrideFlag.Set`, and
@@ -403,6 +410,25 @@ happen, while the console's are about state that must change.
   fails startup naming the policy.
 - **AC-CFG-10** With the variable unset and no flag, the existing test suite
   passes unchanged, so the feature is additive.
+- **AC-CFG-11** `make package-stateless` produces one executable that starts with
+  `CONNECTOR_NODE_STATELESS`, `CONNECTOR_NODE_CONFIG_DIR`,
+  `CONNECTOR_NODE_POLICY_FILE`, `CONNECTOR_NODE_TUNNEL_TOKEN` and
+  `CONNECTOR_NODE_SERVER_URL` all unset, prints `mode : stateless` and
+  `policy : embedded in this binary`, and reaches `connector-node ready`.
+- **AC-CFG-12** That executable serves `file.read`, `file.list` and `file.stat`
+  through the CLI, and refuses `file.write` and `command.exec` with exit status 2.
+- **AC-CFG-13** That executable refuses to serve itself: `file.read` on its own
+  path returns `denied`, because the build carries a `tunnel_token`.
+- **AC-CFG-14** `make package-stateless-windows` produces a policy with 26 scopes
+  `a` through `z`, each path `A:\` through `Z:\`, each granted all five
+  permissions, and `allow_filesystem_root: true`.
+- **AC-CFG-15** The env file written beside the artifact is mode `0600` and holds
+  the node id and the credential the binary was built with, so a CLI configured
+  from it reaches the Node.
+- **AC-CFG-16** `CONNECTOR_NODE_STATELESS=0` with an absolute
+  `CONNECTOR_NODE_CONFIG_DIR` makes the same executable write `identity` and
+  `credentials.yaml`, proving the compiled default is a default rather than an
+  authority.
 
 ### In-process console
 

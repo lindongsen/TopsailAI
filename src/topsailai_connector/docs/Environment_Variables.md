@@ -384,6 +384,24 @@ are compiled in:
 | Server channel address | `PACKAGE_SERVER_URL` | Yes, `CONNECTOR_NODE_SERVER_URL` |
 | Policy document | `PACKAGE_SCOPES` or `PACKAGE_SCOPES_FILE` | **No.** `CONNECTOR_NODE_POLICY_FILE` is refused |
 | `tunnel_token` | `PACKAGE_TUNNEL_TOKEN`, when set | Yes, `CONNECTOR_NODE_TUNNEL_TOKEN` |
+| Stateless mode | `PACKAGE_EMBED_STATELESS=1` | Yes, `CONNECTOR_NODE_STATELESS=0` |
+| Permissions per scope | `PACKAGE_PERMISSIONS` | **No.** The policy is a whole document |
+
+`PACKAGE_PERMISSIONS` defaults to `read list stat`, the three operations this
+version dispatches. It accepts any of the five permissions the vocabulary defines
+and refuses a word outside it, a duplicate, and an empty list. Granting `write` or
+`exec` changes nothing a caller can observe, because both are refused at dispatch
+before the policy is consulted; the default therefore promises only what the binary
+delivers.
+
+`PACKAGE_EMBED_STATELESS=1` compiles stateless mode in as the **default**, so the
+artifact runs without writing a file and without the recipient exporting anything.
+It is a default rather than an authority: an explicit `CONNECTOR_NODE_STATELESS=0`
+in the environment wins, so the same binary can still be run file-backed for a
+debugging session. The value is validated strictly, exactly as the environment
+variable is, because a packaging mistake that produced a file-backed Node where a
+stateless one was asked for would be discovered on the recipient's machine, where
+the config directory may not even be writable.
 
 The identity and the credentials are **not** embedded. The identity is generated on
 first start, polled every second and rewritten by `regenerate`; two copies of one
@@ -414,6 +432,51 @@ would bake the build host's filesystem into a binary meant for another machine. 
 scope path that does not exist on the target is tolerated rather than refused: the
 scope starts, is reported absent, and answers `not_found` until the directory
 exists and the Node restarts.
+
+#### The stateless packaging target
+
+`make package-stateless` builds the delivery shape this section describes: one
+executable that carries the Server URL, the policy, the `tunnel_token`, the node
+id, the credential and stateless mode, so the recipient runs it and the Node
+connects with no file and no environment variable.
+
+```
+make package-stateless PACKAGE_SERVER_URL=wss://host/channel \
+                      PACKAGE_TUNNEL_TOKEN=<token>
+```
+
+The scope set is chosen by `PACKAGE_GOOS`, and the reason is measured rather than
+stylistic. A policy naming both `C:\` and `/` cannot start, because
+`filepath.IsAbs` is platform-specific: on Linux the Windows entry is a relative
+path, and a relative path is a startup failure rather than a tolerated absence.
+
+```
+connector-node: load authority: scope "windows": path "C:\\" is relative;
+a relative path resolves differently per launch
+```
+
+Linux therefore gets one scope rooted at `/`, and Windows gets one scope per drive
+letter, `a=A:\` through `z=Z:\`. A drive with no volume behind it is tolerated:
+the scope stays defined, keeps its grant, and answers `not_found` until the volume
+appears and the Node restarts. That is what makes one artifact usable on a machine
+whose drive letters differ from the build host's.
+
+`make package-stateless-windows` is the same target for `windows/amd64`. It is a
+separate target rather than a variable the caller must remember, because forgetting
+it produces a Linux binary whose policy names `/`, and the failure appears on the
+recipient's machine.
+
+Every default scope is a filesystem root, so the target sets
+`allow_filesystem_root: true`. The artifact therefore exposes the whole machine,
+and the deny list is what keeps the Node's own config directory unreadable. That is
+a deliberate decision for a delivery whose purpose is "reach this machine", and the
+packaging summary states it.
+
+The node id, the key id and the secret are generated during packaging and compiled
+in, and the same values are written to an env file beside the artifact at mode
+`0600`, so the operator can configure the CLI without asking the recipient for
+anything. Because the values are compiled in as seeds, the address is stable across
+restarts even though nothing is written to disk.
 
 #### Windows file protection
 

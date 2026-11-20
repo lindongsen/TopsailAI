@@ -150,6 +150,14 @@ type Config struct {
 	// another's, and the operator who installed that provider is the one who knows
 	// the right bound. A zero value means the protocol default applies.
 	DetailMaxBytes int
+	// FollowTimeout bounds one streaming follow. It is Endpoint configuration
+	// rather than a contract constant because how long an operator may watch a
+	// tail is a deployment decision: a fleet that watches long-running agents
+	// needs a longer bound than one that only tails short tasks. A zero value
+	// falls back to the Adapter's own call timeout, so an Endpoint that
+	// configures nothing keeps the previous behaviour instead of an unbounded
+	// stream.
+	FollowTimeout time.Duration
 	Adapters       []AdapterConfig
 }
 
@@ -172,11 +180,18 @@ func Defaults(role string) Config {
 	if role == "agent-cluster-endpoint" {
 		databasePath = ".tmp/endpoint.sqlite"
 	}
+	// A follow is a live tail, so its bound must be long enough to watch real work
+	// and short enough that a forgotten tail cannot hold one of the eight follow
+	// slots forever. Thirty minutes is the default. Leaving it at zero would fall
+	// back to the one-shot call timeout, which is exactly the defect this field
+	// exists to remove: every follow died at two minutes in the deployed
+	// configuration while the operator was still watching.
+	followTimeout := 30 * time.Minute
 	// The default credential is a key_id.secret pair because the default
 	// authentication mode is HMAC, which cannot use a bare secret. A default
 	// token without a key_id would make the default mode unusable, so a Server
 	// started with no configuration would exit at startup instead of serving.
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development.key", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, WriteLivenessBudget: 2 * time.Minute, WriteLivenessInterval: 5 * time.Second, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server", HeartbeatAckTimeout: 3 * time.Second, UnhealthyWindow: 30 * time.Second, AuthMode: string(security.DefaultAuthMode), SignatureWindow: security.DefaultSignatureWindow}
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: databasePath, AuthToken: "development.key", EndpointExpiry: 24 * time.Hour, CommandRetention: 720 * time.Hour, EndpointDegradedRetention: 720 * time.Hour, FollowTimeout: followTimeout, WriteLivenessBudget: 2 * time.Minute, WriteLivenessInterval: 5 * time.Second, InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server", HeartbeatAckTimeout: 3 * time.Second, UnhealthyWindow: 30 * time.Second, AuthMode: string(security.DefaultAuthMode), SignatureWindow: security.DefaultSignatureWindow}
 }
 
 // Load parses command-line flags and applies environment configuration.
@@ -352,6 +367,18 @@ func Load(args []string, role string) (Config, error) {
 			}
 			cfg.DetailMaxBytes = parsed
 		}
+		// The follow budget is read here for the same reason as the detail bound:
+		// the process boundary owns configuration. A malformed value is rejected
+		// at startup instead of silently falling back, because an Endpoint
+		// running with an unintended follow bound is indistinguishable from one
+		// the operator configured.
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_FOLLOW_TIMEOUT"); value != "" {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse AGENT_CLUSTER_ENDPOINT_FOLLOW_TIMEOUT: %w", err)
+			}
+			cfg.FollowTimeout = parsed
+		}
 	}
 	if value := os.Getenv("AGENT_CLUSTER_DATABASE_PATH"); value != "" {
 		cfg.DatabasePath = value
@@ -434,6 +461,7 @@ func Load(args []string, role string) (Config, error) {
 		flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 		flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")
 		flags.IntVar(&cfg.DetailMaxBytes, "detail-max-bytes", cfg.DetailMaxBytes, "maximum accepted size of one provider detail document in bytes; zero uses the protocol default")
+		flags.DurationVar(&cfg.FollowTimeout, "follow-timeout", cfg.FollowTimeout, "how long one streaming follow may run before it is stopped; zero uses the adapter call timeout")
 	}
 	// The credential mode and window belong to whichever role verifies a
 	// credential, so both roles register them. Registering them once outside the
@@ -649,6 +677,14 @@ func (c Config) Validate() error {
 	}
 	if c.DetailMaxBytes > protocol.MaxDetailCeilingBytes {
 		return fmt.Errorf("detail max bytes must be at most %d", protocol.MaxDetailCeilingBytes)
+	}
+	// A negative follow budget is a configuration mistake, not a request to use
+	// the fallback: zero is the documented way to ask for the adapter call
+	// timeout. Accepting a negative value would make every follow end
+	// immediately, which looks like a provider fault rather than the
+	// misconfiguration it is.
+	if c.FollowTimeout < 0 {
+		return fmt.Errorf("follow timeout must not be negative")
 	}
 	return nil
 }

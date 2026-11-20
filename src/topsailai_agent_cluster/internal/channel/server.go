@@ -521,7 +521,7 @@ func (s *Server) deliverFollow(peer *Peer, frame Frame) {
 		}
 		// The Endpoint is still streaming into a queue nobody will read, so it
 		// must be told to stop. Without this the follow would keep one of the
-		// Endpoint's follow slots until the adapter deadline expired. The
+		// Endpoint's follow slots until the follow budget expired. The
 		// terminal event is delivered first, because the consumer is waiting for
 		// it and the cancel send is bounded but not instantaneous.
 		//
@@ -709,7 +709,7 @@ func (s *Server) RequestOutput(ctx context.Context, endpointID string, request p
 // who stops watching does not leave a provider child streaming into a queue
 // nobody reads. The cancel frame is what makes that true: releasing the pending
 // entry alone stops delivery here but leaves the Endpoint streaming until its
-// adapter deadline expires.
+// follow budget expires.
 func (s *Server) RequestFollow(ctx context.Context, endpointID string, request protocol.OutputFollowRequest) (<-chan FollowEvent, error) {
 	requestID := security.NewRequestID()
 	// The queue is sized from the requested tail, because the Endpoint delivers
@@ -757,7 +757,7 @@ func (s *Server) RequestFollow(ctx context.Context, endpointID string, request p
 			// The Endpoint is still streaming, so it must be told to stop.
 			// Releasing the pending entry only stops delivery here; the Endpoint
 			// keeps the follow goroutine, its concurrency slot and the provider
-			// child until its adapter deadline expires. The terminal event is
+			// child until its follow budget expires. The terminal event is
 			// delivered first, because the consumer is waiting for it and the
 			// cancel send is bounded but not instantaneous.
 			deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "cancelled", ObservedAtMS: time.Now().UnixMilli()})

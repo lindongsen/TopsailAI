@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
 description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, how to find the node id, key id and secret after starting the Node, how to run the Node on a machine whose filesystem is read-only so it writes no file at all, or how to read the configuration and change the node id or a credential from an interactive console without editing a file, how to read the Node's settings from a dotenv file instead of the environment, or how to override one setting for a single launch with --set. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management, regeneration, stateless mode, the interactive console, and the four configuration sources with their precedence.
-version: 1.8.0
+version: 1.9.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -909,6 +909,85 @@ The exit status is `1`. The message names the subcommand you ran, so `id` and
 They are file operations, and this mode has no file. Refusing is better than
 silently doing something else: a command whose meaning changes because of an
 environment variable is the hardest kind of bug to find.
+
+### A build that is already stateless
+
+If the operator built the Node with `make package-stateless`, stateless mode is
+compiled in as the default. You do not export anything:
+
+```
+./connector-node run
+```
+
+That is the whole command. The Server address, the policy, the `tunnel_token`, the
+node id and the credential are all inside the file, and nothing is written to disk.
+
+The startup summary says so:
+
+```
+mode          : stateless (nothing is written; the node id and the
+                credentials live in memory and are lost when this process exits)
+policy        : embedded in this binary
+```
+
+Because the node id and the credential are compiled in as seeds, the address is
+**stable across restarts** even though no file exists. That is the difference from
+a stateless build with nothing embedded, where the address changes every start.
+
+An explicit `CONNECTOR_NODE_STATELESS=0` wins over the compiled default, so the same
+file can be run file-backed for a debugging session:
+
+```
+CONNECTOR_NODE_STATELESS=0 CONNECTOR_NODE_CONFIG_DIR=/tmp/node-debug ./connector-node run
+```
+
+That run creates `/tmp/node-debug/identity` and `/tmp/node-debug/credentials.yaml`,
+and prints `a new node id was written by this start`.
+
+#### What a stateless build exposes
+
+The default scope set is chosen by the platform the binary was built for:
+
+| Platform | Scopes | What is reachable |
+|---|---|---|
+| Linux | `linux` | `/` — the whole filesystem |
+| Windows | `a` … `z` | `A:\` … `Z:\` — every drive letter |
+
+On Windows a drive letter with no volume behind it is tolerated: the scope stays
+defined, keeps its grant, and answers `not_found` until the volume appears and the
+Node restarts. That is what makes one file usable on a machine whose drive letters
+differ from the build host's.
+
+Every scope is granted `read`, `write`, `list`, `stat` and `exec`. Only `read`,
+`list` and `stat` do anything in this version: `file.write` and `command.exec` are
+refused before the policy is consulted, so the grant promises more than the binary
+delivers. Do not read the grant list as a statement of what you can do.
+
+The Node's own config directory is refused by the deny list, and so is the running
+executable, because the file carries the `tunnel_token`. Everything else on the
+machine is readable by anyone holding a node credential.
+
+#### The env file beside the artifact
+
+Packaging writes an env file next to the binary, readable only by its owner. It
+holds the node id, the credential and the Server address, so the operator can
+configure the CLI without asking you for anything:
+
+```
+CONNECTOR_CLI_SERVER_URL=...
+CONNECTOR_CLI_NODE_ID=node_...
+CONNECTOR_CLI_NODE_CREDENTIAL=<key id>.<secret>
+```
+
+Source it and the CLI works:
+
+```
+. ./env.<timestamp>
+connector-cli --scope linux --path etc/hostname file.read
+```
+
+The secret in that file is the one compiled into the binary. Treat the file as a
+credential, because it is one.
 
 ### What this mode does not fix
 

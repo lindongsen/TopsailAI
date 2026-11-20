@@ -132,10 +132,8 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 	state.Rows = nil
 	state.history = nil
 	state.modelCatalog = nil
-	if view.Truncated {
-		if _, err := fmt.Fprintln(diagnostics, "model profiles are a bounded provider window; some profiles are not listed"); err != nil {
-			return err
-		}
+	if err := writeModelCatalogNotices(diagnostics, view); err != nil {
+		return err
 	}
 	if len(view.Rows) == 0 {
 		// An empty catalog is a real answer, so it is stated plainly instead of
@@ -326,8 +324,15 @@ func resolveModelProfileSelector(namespace *modelCatalogNamespace, sessionID, to
 	if matches := modelCatalogMatches(rows, func(row ModelCatalogViewRow) bool { return row.ModelProfileID == token }); len(matches) == 1 {
 		return matches[0], nil
 	}
+	// The current profile is marked with a leading "* " in the rendered table, so an
+	// operator copying a row from the screen types the marker too. Both spellings are
+	// accepted, and the bare name is matched first, so a display name that genuinely
+	// begins with "*" still resolves as itself instead of being read as a marker.
 	matches := modelCatalogMatches(rows, func(row ModelCatalogViewRow) bool {
-		return row.ProviderDisplayName != "" && row.ProviderDisplayName == token
+		if row.ProviderDisplayName == "" {
+			return false
+		}
+		return row.ProviderDisplayName == token || modelCurrentMarker+row.ProviderDisplayName == token
 	})
 	switch len(matches) {
 	case 1:

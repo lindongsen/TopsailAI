@@ -28,6 +28,14 @@ type Config struct {
 	Args           []string
 	Environment    []string
 	Timeout        time.Duration
+	// FollowTimeout bounds one streaming follow, separately from Timeout. A
+	// follow is a live tail whose lifetime is decided by the operator, so the
+	// one-shot budget is the wrong bound for it: with Timeout applied, every
+	// follow ended at the configured call timeout and reported `cancelled`,
+	// which read as "someone stopped it" while nobody had. A zero value falls
+	// back to Timeout so an Adapter configured without a follow budget keeps a
+	// working bound instead of an unbounded stream.
+	FollowTimeout  time.Duration
 	MaxStdinBytes  int64
 	MaxStdoutBytes int64
 	MaxStderrBytes int64
@@ -98,7 +106,7 @@ func New(ctx context.Context, config Config) (*Adapter, error) {
 	}
 	runner, err := newProcessRunner(runnerConfig{
 		executable: config.Executable, args: config.Args, environment: config.Environment,
-		timeout: config.Timeout, maxStdinBytes: config.MaxStdinBytes,
+		timeout: config.Timeout, followTimeout: config.FollowTimeout, maxStdinBytes: config.MaxStdinBytes,
 		maxStdoutBytes: config.MaxStdoutBytes, maxStderrBytes: config.MaxStderrBytes,
 		maxRecords: config.MaxRecords,
 	})
@@ -757,7 +765,7 @@ func (a *Adapter) request(ctx context.Context, function string, target *provider
 	if err != nil {
 		return providercli.Request{}, err
 	}
-	deadline := a.config.Now().Add(a.config.Timeout)
+	deadline := a.config.Now().Add(a.budgetFor(function))
 	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
 		deadline = contextDeadline
 	}
@@ -767,6 +775,21 @@ func (a *Adapter) request(ctx context.Context, function string, target *provider
 		Budget: providercli.Budget{MaxStdoutBytes: a.config.MaxStdoutBytes, MaxStderrBytes: a.config.MaxStderrBytes, MaxRecords: a.config.MaxRecords},
 		Target: target, Operation: operation, Query: query, Payload: payload,
 	}, nil
+}
+
+// budgetFor returns the wall-clock budget for one Provider function.
+//
+// A follow is a live tail whose lifetime is decided by the operator, so it is
+// bounded by FollowTimeout rather than by the one-shot Timeout. Sharing Timeout
+// ended every follow at the configured call timeout and reported it as
+// `cancelled`, which read as "someone stopped it" while nobody had. Every other
+// function keeps the one-shot budget, because a command or a read must not be
+// allowed to occupy a slot for as long as an operator happens to watch a tail.
+func (a *Adapter) budgetFor(function string) time.Duration {
+	if function == providercli.FunctionFollowOutput && a.config.FollowTimeout > 0 {
+		return a.config.FollowTimeout
+	}
+	return a.config.Timeout
 }
 
 func (a *Adapter) executionPayload(ctx context.Context, intent protocol.ImmutableIntent) (json.RawMessage, error) {

@@ -76,13 +76,14 @@ func TestAdapterFactoryTakesNoProviderTypeParameter(t *testing.T) {
 	}
 	fn := findFunc(t, file, "registerAdapter")
 	params := fn.Type.Params.List
-	// Five parameter groups: the registry, the store, the configured detail bound,
-	// the configured command directory and the configured project root. The count
+	// Six parameter groups: the registry, the store, the configured detail bound,
+	// the configured follow budget, the configured command directory and the
+	// configured project root. The count
 	// is pinned so a new parameter is a deliberate, reviewable change rather than
 	// something that appears silently; the string check below is what actually
 	// protects the seam this guard exists for.
-	if len(params) != 5 {
-		t.Fatalf("registerAdapter takes %d parameter groups, want 5 (registry, store, detail bound, command directory and project root): %s",
+	if len(params) != 6 {
+		t.Fatalf("registerAdapter takes %d parameter groups, want 6 (registry, store, detail bound, follow budget, command directory and project root): %s",
 			len(params), nodeText(fset, source, fn.Type))
 	}
 	// allowedStringParams names the string parameters that are not a provider-type
@@ -275,7 +276,7 @@ func TestValidateProviderTypeHasNoFallbackPath(t *testing.T) {
 // a provider type either.
 //
 // Guarding the signature alone is not enough: a caller could pass a value through a
-// package-level variable. Requiring the call to have exactly four arguments pins the
+// package-level variable. Requiring the call to have exactly six arguments pins the
 // call site to the same shape as the signature.
 func TestMainRegistersTheAdapterWithoutAProviderType(t *testing.T) {
 	fset := token.NewFileSet()
@@ -298,8 +299,8 @@ func TestMainRegistersTheAdapterWithoutAProviderType(t *testing.T) {
 			return true
 		}
 		calls++
-		if len(call.Args) != 5 {
-			t.Fatalf("registerAdapter is called with %d arguments, want 5 (registry, store, detail bound, command directory and project root): %s",
+		if len(call.Args) != 6 {
+			t.Fatalf("registerAdapter is called with %d arguments, want 6 (registry, store, detail bound, follow budget, command directory and project root): %s",
 				len(call.Args), nodeText(fset, source, call))
 		}
 		return true

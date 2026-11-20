@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"topsailai_agent_cluster/internal/adapter"
@@ -111,5 +112,70 @@ func TestProviderStreamCodeDistinguishesAbsentFromEmpty(t *testing.T) {
 				t.Fatalf("code=%q ok=%v want code=%q ok=%v", code, ok, testCase.wantCode, testCase.wantOK)
 			}
 		})
+	}
+}
+
+// TestStartFollowReportsBudgetExpiryAsFollowTimeout proves a stream that reaches
+// its own budget ends with "follow_timeout" rather than "cancelled".
+//
+// The two facts are different and the remedy differs. A timeout means nobody
+// stopped the stream and the operator may simply follow again; a cancellation
+// means someone stopped it deliberately. Reporting both as "cancelled" sent the
+// operator looking for whoever stopped the stream while the stream had only
+// expired, which is exactly the symptom this code exists to name.
+//
+// The error is wrapped because the adapter wraps the context error with %w, so
+// errors.Is must still see the sentinel through the wrapper. A test that passed a
+// bare context.DeadlineExceeded would not prove the real path works.
+func TestStartFollowReportsBudgetExpiryAsFollowTimeout(t *testing.T) {
+	executor := &followExecutor{followErr: fmt.Errorf("provider stream: %w", context.DeadlineExceeded)}
+	service, transport := newFollowService(t, executor)
+	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-timeout", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r"}})
+	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
+	transport.mu.Lock()
+	end := transport.frames[len(transport.frames)-1].OutputEnd
+	transport.mu.Unlock()
+	if end == nil || end.ErrorCode != "follow_timeout" {
+		t.Fatalf("end=%#v want follow_timeout", end)
+	}
+}
+
+// TestStartFollowKeepsCancelledForRealCancellation proves a genuine cancellation
+// still reports "cancelled" after the timeout branch was split out.
+//
+// Without this test the split could be implemented by mapping every context error
+// to follow_timeout, which would misreport a deliberate stop as an expiry and send
+// the operator to investigate a bound nobody reached.
+func TestStartFollowKeepsCancelledForRealCancellation(t *testing.T) {
+	executor := &followExecutor{followErr: fmt.Errorf("provider stream: %w", context.Canceled)}
+	service, transport := newFollowService(t, executor)
+	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-real-cancel", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r"}})
+	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
+	transport.mu.Lock()
+	end := transport.frames[len(transport.frames)-1].OutputEnd
+	transport.mu.Unlock()
+	if end == nil || end.ErrorCode != "cancelled" {
+		t.Fatalf("end=%#v want cancelled", end)
+	}
+}
+
+// TestStartFollowReportsProviderFollowTimeoutAsFollowTimeout proves the Provider's
+// own timeout classification survives the Endpoint switch.
+//
+// The Provider reports this code when it classified the expiry in its response
+// document instead of returning a wrapped context error, so the sentinel checks
+// cannot see it. Without the branch the correct classification falls through to
+// provider_error, which tells the operator the Provider failed when it only
+// reached its bound.
+func TestStartFollowReportsProviderFollowTimeoutAsFollowTimeout(t *testing.T) {
+	executor := &followExecutor{followErr: &adapter.StreamError{Code: "follow_timeout", Message: "provider budget expired"}}
+	service, transport := newFollowService(t, executor)
+	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-provider-timeout", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r"}})
+	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
+	transport.mu.Lock()
+	end := transport.frames[len(transport.frames)-1].OutputEnd
+	transport.mu.Unlock()
+	if end == nil || end.ErrorCode != "follow_timeout" {
+		t.Fatalf("end=%#v want follow_timeout", end)
 	}
 }

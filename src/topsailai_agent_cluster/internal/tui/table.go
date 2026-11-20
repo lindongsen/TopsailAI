@@ -794,6 +794,11 @@ func dataStatus(row SessionRow) string {
 // with, or counted as, a row state by the summary or the row colour.
 const stateDriveRunning = "drive_running"
 
+// stateModelCurrent is a per-cell emphasis marker for the model profile a session is
+// using now. Like stateDriveRunning it lives outside every state vocabulary, so it
+// can never be counted as a row state or change a row colour.
+const stateModelCurrent = "model_current"
+
 // writeCellState writes one cell with the row's colour. A data row is coloured
 // as a whole from its session state, so every cell and separator of that row
 // shares one style; a warning column keeps its own colour when it reports a
@@ -803,12 +808,19 @@ const stateDriveRunning = "drive_running"
 // verified running controller is visible without recolouring the row it belongs
 // to. It is bold green rather than plain green so it stays distinguishable from a
 // running session row, which is plain green.
+//
+// The model-current marker reuses that mechanism for the same reason: the current
+// profile is a separate fact from the row's availability, so colouring the whole
+// row for it would make the AVAILABLE cell contradict its own row.
 func writeCellState(w io.Writer, cell string, warn bool, state, rowStyle string, policy ColorPolicy) error {
 	if !policy.Enabled {
 		_, err := io.WriteString(w, cell)
 		return err
 	}
 	if state == stateDriveRunning {
+		return writeStyled(w, ansiBoldGreen, cell, policy)
+	}
+	if state == stateModelCurrent {
 		return writeStyled(w, ansiBoldGreen, cell, policy)
 	}
 	if warn {

@@ -182,3 +182,26 @@ running one binary share one node id and evict each other in the Server's regist
 and revoking one recipient of a shared binary revokes every recipient. A build that
 carries a credential also joins the deny list, because a node credential is a secret
 that never expires. See `docs/packaging-identity-prd.md`.
+
+## A packaging target for a stateless Node that reaches the whole machine
+
+`make package-stateless` builds one executable that carries the Server URL, the
+policy, the `tunnel_token`, the node id, the credential and stateless mode, so the
+recipient runs it and the Node connects with no file and no environment variable.
+The scope set is chosen by `PACKAGE_GOOS` because a policy naming both `C:\` and `/`
+cannot start: `filepath.IsAbs` is platform-specific, so on Linux the Windows entry is
+a relative path and a relative path is a startup failure. Linux therefore gets one
+scope rooted at `/`, and Windows gets one scope per drive letter `a=A:\` through
+`z=Z:\`, where an absent volume is tolerated and answers `not_found` until it
+appears. `allow_filesystem_root: true` is set because every default scope is a
+filesystem root, so the artifact exposes the whole machine and the deny list is what
+keeps the Node's own config directory and the running executable unreadable. The
+node id, the key id and the secret are generated during packaging, compiled in as
+seeds and written to an env file beside the artifact at mode `0600`, so the operator
+can configure the CLI without asking the recipient for anything. `PACKAGE_PERMISSIONS`
+defaults to `read list stat` and refuses a word outside the vocabulary, a duplicate
+and an empty list; the target grants all five, but `file.write` and `command.exec`
+are refused at dispatch, so the grant promises more than the binary delivers and the
+packaging summary says so. `PACKAGE_EMBED_STATELESS` compiles the mode in as a
+default rather than an authority, so `CONNECTOR_NODE_STATELESS=0` still runs the same
+file file-backed.
