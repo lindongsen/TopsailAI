@@ -137,6 +137,22 @@ func SaveIdentity(path string, nodeID string) error {
 // can print it once. Printing it on every start would fill a log with an address
 // that never changes.
 func EnsureIdentity(path string) (nodeID string, generated bool, err error) {
+	return EnsureIdentityWithSeed(path, "")
+}
+
+// EnsureIdentityWithSeed loads the identity file, writing seed when the file does
+// not exist yet and generating a random identifier when seed is empty.
+//
+// The file wins over the seed, and that order is the whole point of calling the
+// embedded value a seed. A Node that preferred the seed would ignore `regenerate`,
+// so an operator who changed the address would find the Node answering to the old
+// one again after a restart. The seed only decides what the first write contains.
+//
+// A seed that fails validation is an error rather than a fallback to a random
+// identifier. A packaging mistake that silently produced a random address would
+// look like a working Node whose address the operator cannot find, which is exactly
+// the confusion this feature exists to remove.
+func EnsureIdentityWithSeed(path string, seed string) (nodeID string, generated bool, err error) {
 	loaded, err := LoadIdentity(path)
 	if err == nil {
 		return loaded, false, nil
@@ -145,9 +161,12 @@ func EnsureIdentity(path string) (nodeID string, generated bool, err error) {
 		return "", false, err
 	}
 
-	created, err := security.NewNodeID()
-	if err != nil {
-		return "", false, err
+	created := seed
+	if created == "" {
+		created, err = security.NewNodeID()
+		if err != nil {
+			return "", false, err
+		}
 	}
 	if err := SaveIdentity(path, created); err != nil {
 		return "", false, err

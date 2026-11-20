@@ -1925,3 +1925,52 @@ because the added line is correct in isolation, and it is invisible in a focused
 focused test exercises one caller. Only the composed path shows the delay, and only as a timeout that
 looks like timing noise. Threading the already-known value keeps the helper pure and makes the
 duplicate read structurally impossible rather than merely removed once.
+
+## A configuration key can be dead for the daemon and live for the installer
+
+Trigger: while mapping the credential sites for a rotation, the Endpoint `AUTH_TOKEN` was reported to
+the human as "dead configuration", on the evidence that `cfg.AuthToken` is consumed only by
+`src/main/agent-cluster-server/main.go:188`, that the Endpoint branch of `scripts/agent-clusterctl`
+never passes `--auth-token`, and that `src/main/agent-cluster-endpoint/main.go` contains zero
+references to `AuthToken`. All three facts were true. The conclusion was wrong, and the human rejected
+it with "endpoint的auth_token应该不是死配置，你仔细读代码".
+
+Action: when deciding whether a configuration key is used, search the whole deployment surface, not
+only the daemon that reads the same-named struct field. Here the consumers are the maintainer scripts:
+`scripts/deb/postinst.endpoint:37` sources `node.conf` and passes `AUTH_TOKEN` to `cli_env_write`, and
+`scripts/install-node.sh:161` does the same for a copied bundle. Both write
+`AGENT_CLUSTER_CLI_SERVER_TOKEN` into the per-user CLI env file, so the key is the install-time source
+of the operator CLI's Server credential on that node. Search for the literal key name across `*.sh`,
+`*.conf` and the maintainer scripts, not only `*.go`, and check `scripts/lib/` for the shared writer
+that consumes it.
+
+Why this prevents recurrence: a struct field and a shell variable with the same name are two different
+things, and a `grep` restricted to Go files answers only the daemon question. The daemon answer was
+correct and it was the wrong question, so the evidence looked conclusive while the conclusion was
+false. The failure is silent in the direction that matters: a key that the daemon ignores looks
+unused, and the installer that depends on it runs once, at install time, where nobody is looking. The
+tell is that the key is present in a shipped `node.conf` at all: a template does not carry a value
+that nothing reads, so a key with no daemon consumer should be traced to the packaging path before it
+is called dead.
+
+## A line-range replacement that repeats its own anchor duplicates the block
+
+Trigger: while removing the `AUTH_TOKEN` placeholder check from `scripts/make-deb.sh`, the replaced
+range was `505-510` and the replacement content repeated the `if grep -q "127.0.0.1"` block that
+already sat inside that range. The result was a duplicated `warn` line and an orphaned `fi`. The next
+edit then removed the wrong two lines and deleted the `fi` that closed the surviving `if`, leaving a
+function that `bash -n` rejected. The same class of mistake happened again in `README.md`, where a
+replacement range began one line below the paragraph's first line, so the first line survived and the
+replacement re-emitted it, duplicating the sentence and swallowing the opening of the next paragraph.
+
+Action: when a replacement range covers only part of a block, the replacement must contain only the
+lines that are new, never a copy of a line that is still outside the range. Before writing, print the
+exact range and confirm which lines are inside it and which are outside. After every line-range edit,
+run `bash -n` on a shell file or read the region back, and check the diff for a duplicated line or a
+lost closing token. When a block needs several interdependent edits, replace the whole block in one
+call instead of chaining edits whose line numbers shift under each other.
+
+Why this prevents recurrence: the tool reports success either way, and a duplicated line or a missing
+`fi` is invisible in the success message. Prose has no compiler, so a swallowed paragraph opening
+renders as a plausible sentence and survives review. The only cheap check is reading the region back
+and looking at the diff, which is exactly what the success message makes you skip.

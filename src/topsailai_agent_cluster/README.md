@@ -140,10 +140,11 @@ dpkg -i agent-cluster-node_<version>_amd64.deb \
 
 The endpoint package also installs the operator CLI as `/opt/agent-cluster/bin/agent-cluster-cli`,
 with `/usr/local/sbin/agent-cluster-cli`, `/usr/local/sbin/topsailai_agent_cluster` and
-`/usr/local/sbin/topsailai2` as symlinks to it. The config package writes
-`${HOME}/.topsailai/.topsailai_agent_cluster.env`, which is how the CLI learns
-the Server address and token. Re-generate that file after a token rotation with
-`agent-cluster-node-setup`.
+`/usr/local/sbin/topsailai2` as symlinks to it. The CLI learns the Server address and token from
+`${HOME}/.topsailai/.topsailai_agent_cluster.env`, which the installer does not write: the node
+configuration carries no CLI credential, because the Endpoint daemon never reads one. Write that file
+with `agent-cluster-node-setup --token <key_id.secret>`, which is also the supported path for a token
+rotation.
 
 The TLS material is registered as a conffile, so an upgrade keeps the certificate the site
 installed and leaves the shipped copy beside it as a `.dpkg-dist` file to compare against. Without

@@ -236,7 +236,6 @@ func writeSiteConfig(work string) (string, error) {
 		"ENDPOINT_ID=deb-test",
 		"INSTANCE_ID=deb-test-1",
 		"CHANNEL_ADDRESS=wss://127.0.0.1:53943",
-		"AUTH_TOKEN=deb-test-token",
 		"SERVER_API_URL=http://127.0.0.1:53680",
 		"STOP_TIMEOUT_SECONDS=5",
 		"LOG_MAX_SIZE_MB=100",

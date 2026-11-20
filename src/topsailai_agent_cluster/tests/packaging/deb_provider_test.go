@@ -117,8 +117,8 @@ func TestDebProviderManifestDescribesTheShippedBinary(t *testing.T) {
 	manifest := readPackagedFile(t, pkg, debProviderManifest)
 	for field, want := range map[string]string{
 		"provider_type":       debProviderType,
-		"provider_version":    "1.0.0",
-		"descriptor_revision": "topsailai-provider-v1",
+		"provider_version":    "2.0.0",
+		"descriptor_revision": "topsailai-provider-v2",
 		"protocol":            "agent-cluster-adapter",
 		"package_version":     debProviderVersion,
 	} {

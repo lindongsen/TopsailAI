@@ -33,6 +33,11 @@ SHELL := /bin/bash
 # over a `?=` default, and a plain `:=` would silently ignore it.
 BIN_DIR ?= bin
 TMP_DIR ?= .tmp
+# ENV_DIR is where the packaging credential record (env.<timestamp>) is written.
+# It follows BIN_DIR by default, so an operator finds it beside the artifact, and
+# it is a separate knob because a test that ran `make package` would otherwise
+# leave a never-expiring credential in the folder artifacts are copied from.
+ENV_DIR ?= $(BIN_DIR)
 SERVER_PKG := ./cmd/connector-server
 NODE_PKG := ./cmd/connector-node
 CLI_PKG := ./cmd/connector-cli
@@ -94,9 +99,20 @@ COVERAGE_HTML := $(TMP_DIR)/coverage.html
 # reloadable on SIGHUP, or when one artifact must not carry the Server-wide
 # tunnel token.
 #
-# The identity is deliberately not embedded. It is generated on first start,
+# The identity is not embedded by default. It is generated on first start,
 # polled every second and rewritten by `regenerate`, and two copies of one binary
 # would share a node-id, which makes the Server's registry evict the first.
+#
+# PACKAGE_EMBED_IDENTITY=1 embeds it anyway, because an operator who ships a Node
+# to someone else must otherwise ask that person to run two commands and report a
+# secret before the CLI can address the machine. The embedded values are seeds,
+# not authorities: the binary writes them on first start when the file does not
+# exist, and the file wins once it does, so `regenerate` and `credential remove`
+# keep working. The values are recorded in bin/env.<timestamp> at mode 0600.
+#
+# One package is for one recipient. Two copies share one node id and one
+# credential, so the second copy to connect evicts the first and revoking one
+# recipient revokes both.
 #
 # A binary built this way carries a credential, so the Node adds its own
 # executable to the deny list: a scope that contains the binary cannot serve it.
@@ -116,6 +132,7 @@ PACKAGE_SCOPES_FILE ?=
 PACKAGE_TUNNEL_TOKEN ?=
 PACKAGE_ALLOW_FILESYSTEM_ROOT ?=
 PACKAGE_EMBED_CONFIG ?= 1
+PACKAGE_EMBED_IDENTITY ?=
 PACKAGE_NODE_KEY_ID ?= bundle-caller
 
 # The unit suite is what `go test ./...` runs. Integration and BDD suites are
@@ -157,6 +174,11 @@ help:
 	@echo "  BIN_DIR         Where binaries are written. Default bin. Override with"
 	@echo "                  'make build BIN_DIR=/somewhere/else'"
 	@echo "  TMP_DIR         Where test artifacts are written. Default .tmp"
+	@echo "  ENV_DIR         Where the packaging credential record is written."
+	@echo "                  Default follows BIN_DIR. A test that runs 'make"
+	@echo "                  package' sets it to a scratch folder so a live"
+	@echo "                  secret never lands in the folder artifacts are"
+	@echo "                  copied from"
 	@echo "  PACKAGE_SERVER_URL  Server address the bundle dials. Required by package."
 	@echo "                      http/https is accepted and converted to ws/wss"
 	@echo "  PACKAGE_SCOPES      Folders to expose, as name=path entries. Required"
@@ -173,6 +195,17 @@ help:
 	@echo "                      the recipient can edit and reload. The executable"
 	@echo "                      carries the tunnel token, so treat it as a"
 	@echo "                      credential: a leak exposes every Node on the Server"
+	@echo "  PACKAGE_EMBED_IDENTITY  Set to 1 to generate the node id and the node"
+	@echo "                      credential at packaging time and compile them in, so"
+	@echo "                      the CLI can address the Node without asking the"
+	@echo "                      recipient. Off by default. The values are recorded"
+	@echo "                      in bin/env.<timestamp> at mode 0600. One package is"
+	@echo "                      for one recipient: two copies share one node id and"
+	@echo "                      one credential. The file on the target machine wins"
+	@echo "                      once it exists, so regenerate and credential remove"
+	@echo "                      still work"
+	@echo "  PACKAGE_NODE_KEY_ID Key id of the generated credential. Default"
+	@echo "                      bundle-caller. Public, so it may appear in a ticket"
 	@echo "  PACKAGE_NAME        Bundle name. Default connector-node-<goos>-<goarch>"
 	@echo "  PACKAGE_GOOS        Target OS. Default this host"
 	@echo "  PACKAGE_GOARCH      Target architecture. Default this host"
@@ -425,8 +458,10 @@ package: build-node
 	PACKAGE_TUNNEL_TOKEN='$(PACKAGE_TUNNEL_TOKEN)' \
 	PACKAGE_ALLOW_FILESYSTEM_ROOT='$(PACKAGE_ALLOW_FILESYSTEM_ROOT)' \
 	PACKAGE_EMBED_CONFIG='$(PACKAGE_EMBED_CONFIG)' \
+	PACKAGE_EMBED_IDENTITY='$(PACKAGE_EMBED_IDENTITY)' \
 	PACKAGE_NODE_KEY_ID='$(PACKAGE_NODE_KEY_ID)' \
 	BIN_DIR='$(BIN_DIR)' \
+	ENV_DIR='$(ENV_DIR)' \
 	TMP_DIR='$(TMP_DIR)' \
 	bash packaging/build-package.sh
 
@@ -443,8 +478,9 @@ package-windows:
 # set, the tunnel token compiled in. It now only restates the default, so a
 # script that already calls it keeps working after the default changed.
 #
-# The identity is not embedded, so the recipient runs the binary once with `id`
-# to create it. That is stated in the summary the script prints.
+# The identity is not embedded by default, so the recipient runs the binary once
+# with `id` to create it. PACKAGE_EMBED_IDENTITY=1 embeds it as a seed instead,
+# and the summary the script prints says which of the two happened.
 package-embedded:
 	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=1
 

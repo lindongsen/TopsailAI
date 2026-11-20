@@ -566,10 +566,12 @@ no flags and are resolved once from the resulting environment.
 | 4 | Per-user file | `${HOME}/.topsailai/.topsailai_agent_cluster.env` |
 | 5 | Built-in default | `http://127.0.0.1:8080` for the URL, empty for the token |
 
-Prefer the per-user file. It is written at install time by
-`agent-cluster-node-setup` and is the intended configuration source. Use the
-executable-local file only when the per-user file cannot be used, because it is
-read first and therefore overrides the per-user file.
+Prefer the per-user file. It is written by `agent-cluster-node-setup --token`,
+which is the intended configuration source and the supported path for a token
+rotation. The installer does not write it, because the node configuration carries
+no CLI credential. Use the executable-local file only when the per-user file
+cannot be used, because it is read first and therefore overrides the per-user
+file.
 
 Each file only fills keys that are still unset, so the first source to define a key
 wins and a later source cannot override it. The executable-local file is read

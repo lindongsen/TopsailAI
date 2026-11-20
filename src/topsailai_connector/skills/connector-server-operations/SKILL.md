@@ -1,7 +1,7 @@
 ---
 name: connector-server-operations
 description: Use when an operator needs to deploy, configure, run, monitor, rotate credentials for, package or troubleshoot the TopsailAI Connector Server in the cloud, i.e. when they ask how to start the Server, which environment variables it needs, how to rotate tunnel_token or a client credential, how to expose only the channel and hide the CLI API, how to read its log, why a Node cannot connect, why a caller gets overloaded, how many concurrent requests the Server allows, or how to hand a Node to someone else as a zip that unzips and starts. Covers the Server's configuration surface, its single listener with two surfaces, rotation procedure, admission limits per caller per Node and per process, the make package bundle and the limits that are constants rather than settings.
-version: 1.1.0
+version: 1.3.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -111,11 +111,39 @@ rather than the Server-wide token, so a leak exposes one Node.
 | `PACKAGE_TUNNEL_TOKEN` | no | The `tunnel_token` to embed. Without it the user must supply `CONNECTOR_NODE_TUNNEL_TOKEN` |
 | `PACKAGE_ALLOW_FILESYSTEM_ROOT` | no | `1` lets a scope be a volume root. Unset means off. Any other value fails the build |
 | `PACKAGE_EMBED_CONFIG` | no | Packaging mode. Default `1`: one executable with the configuration compiled in. `0` builds a zip instead |
+| `PACKAGE_EMBED_IDENTITY` | no | `1` generates the node id and one credential at packaging time and compiles them in. Unset means off. Any other value fails the build |
+| `PACKAGE_NODE_KEY_ID` | no | The `key_id` of the generated credential. Default `bundle-caller`. Public, so it may appear in a log |
 | `PACKAGE_NAME` | no | Bundle name. Default `connector-node-<goos>-<goarch>` |
 | `PACKAGE_GOOS`, `PACKAGE_GOARCH` | no | Target platform. Default this host |
 
 The output is `bin/<PACKAGE_NAME>`, or `bin/<PACKAGE_NAME>.zip` when
 `PACKAGE_EMBED_CONFIG=0`.
+
+### The env file packaging writes
+
+Every packaging run writes `env.<YYYYMMDDHHMMSS>` with mode `0600`. It holds
+the node id, the key id, the secret, the full credential and a ready-to-run CLI
+example. Read the values from that file instead of asking the recipient for them.
+
+The file is written beside the artifact, in `BIN_DIR`, so `make package` puts it in
+`bin/`. Set `ENV_DIR` to write it somewhere else; a test that runs packaging does
+that, so a live secret never lands in the folder you copy artifacts from.
+
+The timestamp in the name is why two runs do not collide: a second run writes a
+second file, so the record of the first package survives even after that package is
+installed somewhere.
+
+With `PACKAGE_EMBED_IDENTITY=1` the node id and the credential are also compiled
+into the binary. They are **seeds, not authorities**: the first start writes them
+to the Node's identity and credential files, and from then on the files win. So
+`regenerate`, `credential add` and `credential remove` behave exactly as they do on
+a build with nothing embedded, and a credential you remove is not restored by a
+restart.
+
+One package is for one recipient. Two machines running one binary share one node
+id, and the Server keeps one connection per id, so they evict each other. Revoking
+one recipient of a shared binary revokes every recipient, because they share one
+credential. Build one package per machine when you embed an identity.
 
 ### What the zip contains
 

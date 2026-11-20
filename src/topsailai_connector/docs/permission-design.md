@@ -970,6 +970,16 @@ The deny-list comparison is the one place where platform behaviour changes a
 decision rather than a rule: on Windows a path comparison must be case-insensitive,
 otherwise a deny-list entry for `config.yaml` is bypassed by `CONFIG.YAML`.
 
+A junction is refused like a symlink, but it is not **reported** like one. On Windows
+`os.Lstat` on a junction sets `ModeIrregular`, never `ModeSymlink`, so `file.stat`
+returns `type unknown` and `is_symlink false` with `size 0`, and `link_target` is
+never populated. Measured on the Windows host on a junction to a plain outside
+directory and on a junction at depth 4 to `C:\Windows`: both reported `unknown`,
+while `file.read` and `file.list` through them were `denied`. The fence holds; the
+metadata is wrong. On Linux the same code reports `symlink` correctly, because
+`os.Lstat` sets `ModeSymlink` there. Recorded as
+`issues/issue-a-junction-is-reported-as-unknown-on-windows.md`.
+
 ### Scope to directory mapping
 
 A scope name maps to a directory. The mapping is validated once at startup, and the
@@ -1226,30 +1236,61 @@ deliveries of the same Node; the permission model does not change between them.
 | Server URL | Yes | Static, no secret |
 | Policy document | Yes, base64 | A YAML document does not survive a shell, Makefile or linker flag; base64 is a quoting decision, not a secrecy one |
 | `tunnel_token` | Yes, by operator decision | The Node cannot dial without it, so "start it and it works" is unmet otherwise |
-| `node-id` | **No** | Generated on first start, polled every second, rewritten by `regenerate` |
-| Node credential | **No** | Generated on the target machine, removable only there, and printed in the startup summary on every `run` |
+| `node-id` | Optional, by operator decision | A seed, not an authority. Written to the identity file on first start; the file wins afterwards |
+| Node credential | Optional, by operator decision | A seed, not an authority. Written to the credential file on first start; the file wins afterwards |
 
-The identity and the credential are both excluded, and both are refusals rather
-than limitations to work around:
+The identity and the credential are **not embedded by default**, because a build
+that carries them is a build for one recipient. They may be embedded on request,
+and the mechanism is a seed rather than an authority.
 
-- **Regeneration has no file to rewrite.** `connector-node regenerate` writes the
-  identity file and the running Node adopts it by polling. An embedded identity has
-  no file, so regeneration would either be unavailable or would silently disagree
-  with the value in memory.
-- **Two copies would share one `node-id`.** The Server keeps an in-memory registry
-  `node_id -> connection`, so a second machine running the same binary would evict
-  the first. An identity that is not unique per machine is not an identity.
-- **An embedded credential would be one secret for every recipient.** A credential
-  is per caller, and embedding it would make every copy of the binary share one
-  `key_id`, so revoking one recipient would revoke all of them. It would also put a
-  Node secret inside a file the recipient can copy, which is the exposure the
-  credential file exists to avoid.
+### Seeds, not authorities
 
-The binary therefore still generates its own identity on first start and prints it,
-and the operator creates a credential on the target machine with
-`connector-node credential add`. "Start it and it works" holds: the Node connects
-without configuration, and the operator runs `<binary> id` and
-`<binary> credential add` once to learn what the CLI must present.
+An embedded identity or credential is written to the file on first start and is
+never consulted again. The file is the authority from that moment on.
+
+```
+first start, no identity file   -> write the embedded node id (or a random one)
+first start, no credential file -> write the embedded credential (or a random one)
+file already exists             -> the file wins; the embedded value is ignored
+malformed embedded value        -> startup failure, and no file is written
+```
+
+This ordering is what makes the feature safe rather than a reversal of the earlier
+refusal. Each of the three original objections is answered rather than ignored:
+
+- **Regeneration has a file to rewrite.** `connector-node regenerate` rewrites the
+  identity file and the running Node adopts the new value by polling. Because the
+  file wins, regeneration works exactly as it does on a build with no embedded
+  identity. Measured on a seeded build: `regenerate` changed the address from
+  `node_27ha7z7j7oeptzukysx65cppmq` to `node_lqwsmz5nylf3hewfhzcd6p7p7q`, the
+  credential kept working, and the retired address answered `node_offline`.
+- **Two copies would share one `node-id`.** This remains true, and it is the reason
+  the feature is off by default. The Server keeps an in-memory registry
+  `node_id -> connection`, so two machines running one binary evict each other. The
+  answer is one package per recipient, stated in the packaging summary, in the
+  generated env file and in the PRD. A build that embeds an identity is a build for
+  one machine.
+- **An embedded credential is one secret for every recipient.** This also remains
+  true. Revoking one recipient of a shared binary revokes all of them, so a package
+  that embeds a credential must be rebuilt per recipient. The alternative — one
+  binary for many recipients — is served by the default, which embeds neither.
+
+The credential is a secret, so a build that carries one joins the deny list exactly
+as a build carrying the `tunnel_token` does. `CarriesSecret()` answers "does this
+build carry a secret", and a node credential is a secret that never expires and
+authorizes every operation on that Node.
+
+### The packaging-time env file
+
+The values are generated at packaging time and recorded in `bin/env.<YYYYMMDDHHMMSS>`
+with mode `0600`. The operator reads the node id and the credential from that file
+instead of asking the recipient, which is the requirement the feature exists to
+meet. The file is written for both packaging modes, so the zip bundle and the
+embedded binary are equally self-describing.
+
+The timestamp in the name is what makes two packaging runs distinguishable: a
+second run must not overwrite the record of the first, because the first package
+may already be installed somewhere.
 
 ### Precedence
 
@@ -1261,6 +1302,13 @@ The policy is the deliberate exception. A build that embedded a policy **refuses
 file path would silently replace every scope and every grant, and the operator
 would be looking at a policy file that is not the one in force. A refusal is
 visible; a silent replacement is not.
+
+The identity and the credential follow the opposite rule from the policy, and the
+difference is deliberate. A policy is a whole document, so a second source is a
+second policy. An identity and a credential are single values that live in a file
+the Node owns, so the file is the authority and the embedded value is only a seed.
+A file that exists is never overwritten, which is what keeps `regenerate`,
+`credential add` and `credential remove` meaningful on a seeded build.
 
 ### The binary becomes a credential
 
@@ -1287,6 +1335,18 @@ The deny entry uses `os.Executable()`, not `os.Args[0]`. The latter is whatever 
 launcher typed — a relative path, a symlink, or a bare name resolved through
 `PATH` — and the deny list compares by file identity, so a name that does not
 resolve to the running file would not match.
+
+The deny entry protects the running file, not the secret. A **copy** of the binary is
+a different inode, so it is not refused, and a caller with a valid node credential
+reads the copy in full. Measured on the Windows host with a byte-identical copy
+beside the running file: `file.read` on the running file returned `denied`, and
+`file.read` on the copy returned `rc=0`; reading the region at offset 4.28 MB
+recovered both the node secret and the `tunnel_token`. The escalation is from one
+node credential to every Node on the Server, because the `tunnel_token` is
+Server-wide. This is recorded as
+`issues/issue-a-copy-of-the-binary-leaks-the-tunnel-token.md` with the options and
+their costs; no option is chosen, because the choice trades a per-request hash
+against a Server-wide blast radius.
 
 ### What embedding does not protect
 
@@ -1347,7 +1407,7 @@ These are accepted for the first version and must be stated rather than hidden.
 |---|---|---|
 | A leaked client credential secret never expires | Every caller using that `key_id` is compromised until it is removed | Remove that one credential from the Server's file and restart; other callers are unaffected. This is the accepted cost of a shared-secret model |
 | A leaked node credential secret never expires | Anyone holding it can operate on that Node until it is removed | `connector-node credential remove` invalidates it immediately and needs no Server involvement |
-| A leaked `tunnel_token` never expires | Anyone holding it can open a channel and impersonate a Node | Rotate the Server's environment and restart; the blast radius is every Node |
+| A leaked `tunnel_token` never expires | Anyone holding it can open a channel and **claim an existing node id**, because the Server replaces a live connection on a duplicate id and the response direction carries no proof. The consequence is not only "connect as a Node" but "answer another Node's requests with invented content", which a caller receives as `rc=0`. Measured on 2026-11-20: a rogue process with only the token returned fabricated bytes for a real Node's file, and the Server logged an ordinary `channel established`. The blast radius is every Node | Rotate the Server's environment and restart; the blast radius is every Node. A token holder that connects under its **own** new node id is not a problem, because it has merely become one more managed Node; the problem is claiming an id that already exists. See `issues/issue-tunnel-token-holder-can-impersonate-any-node.md` |
 | A captured proof can be replayed first on a plaintext link | The attacker's copy is accepted and the legitimate copy is refused as a replay | Use TLS. Timestamps and nonces cannot order two identical requests, so HMAC does not replace transport encryption |
 | A proof is not a private message | Anyone who can read the link sees the operation, the scope and the path | Use TLS. HMAC proves origin and integrity, not confidentiality |
 | `tunnel_token` crosses the wire as a value, not as a proof | Anyone who can observe the segment reads the token and can open a channel and impersonate a Node; the blast radius is every Node on that Server | Measured on the wire, not inferred: the `hello` frame carries `tunnel_token` base64-encoded inside its payload, and base64 is an encoding rather than encryption. The HMAC migration covered the two CLI-facing gates and left the channel handshake as a bearer value. The only real fix is TLS or a proof-based handshake; see `issues/issue-tunnel-token-travels-in-plaintext.md` |
@@ -1568,6 +1628,10 @@ request path.
       list, so a scope that contains the binary cannot serve it. The entry uses
       `os.Executable()`, not `os.Args[0]`, because the deny list compares by file
       identity.
+- [ ] A reviewer does not read that deny entry as protecting the secret. It refuses
+      the running file only; a copy is a different inode and is served in full,
+      which leaks the node secret and the Server-wide `tunnel_token`. Measured on
+      Windows; see `issues/issue-a-copy-of-the-binary-leaks-the-tunnel-token.md`.
 - [ ] The executable deny entry is conditional on the token being present, so a
       normal build still serves its own install directory.
 - [ ] An embedded policy is decoded by the same strict decoder as the policy file,

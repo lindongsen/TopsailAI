@@ -44,11 +44,14 @@ CLI_ALIASES="topsailai_agent_cluster topsailai2"
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 CONFIG_FILE=""
-CLI_ENV_LIB="${SCRIPT_DIR}/lib/cli-env.sh"
 
 function die() {
     echo "ERROR: $*" >&2
     exit 1
+}
+
+function warn() {
+    echo "WARNING: $*" >&2
 }
 
 function usage() {
@@ -151,15 +154,14 @@ function install_cli_alias() {
     echo "linked ${target} -> ${CLI_NAME}"
 }
 
-# Writes the per-user CLI env file, replacing it only when forced. The writer is
-# shared with the Debian package postinst so both deployment paths produce the
-# same file with the same permissions.
+# The per-user CLI env file needs a Server credential, and this installer has no
+# source for one: the node configuration deliberately carries no CLI credential,
+# because the Endpoint daemon never reads one. Writing the file with a guessed or
+# placeholder value would produce a CLI that fails every request, so the file is
+# left to the operator instead. `agent-cluster-node-setup --token` writes it.
 function write_cli_env() {
-    [ -f "${CLI_ENV_LIB}" ] || die "missing shared library ${CLI_ENV_LIB}"
-    # shellcheck source=lib/cli-env.sh
-    . "${CLI_ENV_LIB}"
-    cli_env_write "${HOME:-}" "${SERVER_API_URL:-}" "${AUTH_TOKEN:-}" "${FORCE}" ||
-        die "cannot write the per-user CLI env file"
+    warn "the operator CLI env file was not written: this installer has no Server credential"
+    warn "configure it with: agent-cluster-node-setup --token <key_id.secret>"
 }
 
 load_config

@@ -908,3 +908,117 @@ AI reflection archive, not here.
   correctly refused a path that does not exist. That failure looked like a
   product defect too. Write a `.cmd` file and run the file, rather than composing
   a `cmd` command line inside an ssh argument.
+
+## A deny list that answers by identity protects the file, not the secret
+
+- The executable deny entry was written as the mitigation for an embedded
+  `tunnel_token`, and it works exactly as written: `file.read` on the running
+  binary returned `denied` and `file.list` omitted it. A byte-identical **copy**
+  beside it returned `rc=0` and 262144 bytes, because a copy is a different inode
+  and the deny list compares identity.
+- The secret is not in the first 256 KiB. It sits near offset 4.28 MB, so a casual
+  read of a copy returns bytes that look harmless and the defect survives a
+  verification round that only reads the beginning. `grep -abo` on the local
+  artifact located the offsets, and `--offset`/`--length` then read exactly that
+  region back through the fence, which is what turned a suspicion into a measured
+  remote recovery of both the node secret and the `tunnel_token`.
+- The escalation is the part that matters: the `tunnel_token` is Server-wide, so one
+  node credential becomes a credential for every Node. A mitigation that protects a
+  file while the secret is copyable is a mitigation for a different threat than the
+  one the document describes.
+- Ask of any identity-based rule: what happens to a copy? A copy, a backup, a
+  downloaded artifact and a `.bak` sibling are all different inodes, and all of them
+  are served. The rule answers "is this the object I know", not "does this object
+  contain what I am protecting".
+- State the limitation where the mitigation is stated. The design document said the
+  deny entry "is what keeps the embedded secret from becoming a remotely
+  extractable one", which reads as complete and is not. A reviewer who trusts that
+  sentence stops looking.
+
+## A platform difference in `Lstat` changes the reported type, not the fence
+
+- On Windows `os.Lstat` on a junction sets `ModeIrregular`, never `ModeSymlink`, so
+  `typeOf` fell through to `unknown` and `IsSymlink` stayed false. The same code on
+  Linux reports `symlink` correctly, because `Lstat` sets `ModeSymlink` there.
+- The fence was unaffected: `file.read` and `file.list` through the junction were
+  `denied` on both platforms. Only the metadata was wrong, which is why the severity
+  is low and why no security test noticed.
+- A probe binary built for `windows/amd64` and run on the host is what produced the
+  cause: `mode=?rw-rw-rw- isSymlink=false ModeIrregular=true`. Reading the Go source
+  would have shown a correct-looking `ModeSymlink` test; only the platform's answer
+  showed that the test never matches there.
+- A test that asserts `IsSymlink` on Linux cannot cover this. The property differs by
+  platform, so the assertion has to run on the platform where it differs, or the
+  document has to state the difference.
+- The design document's Windows table said "a junction is a directory symlink",
+  which is true of the fence and false of the metadata. A table that describes
+  behaviour must say which behaviour: refusing, or reporting.
+
+## A cleanup must remove a reparse point before the directory that contains it
+
+- `win-scope` contained a junction to `C:\Windows` at depth 4 and a junction to a
+  plain outside directory at depth 1. `Remove-Item -Recurse` follows a reparse point,
+  so deleting the tree in one call was one retry away from deleting the Windows
+  directory.
+- The order that worked: enumerate every reparse point under the tree, sort by path
+  length descending, and remove each with `cmd /c rmdir`, which removes the link and
+  does not follow it. Only then delete the tree.
+- Verify by measuring what must survive, not by reading the script's own output. The
+  count of `C:\Windows\System32` entries was 4099 before and 4099 after, which is the
+  evidence that the junction target was untouched. A script that only asserts its own
+  artifacts are gone cannot distinguish "cleaned up" from "deleted too much".
+- The junction to `C:\Windows` also contained a second reparse point inside it
+  (`Content.IE5`), which appeared in the enumeration because the walk followed the
+  first junction. Removing the outer link first made the inner one unreachable, so
+  the enumeration must be re-read after each removal rather than trusted once.
+
+## A shared secret that admits a Node also admits a Node's impersonator
+
+- The `tunnel_token` was treated as a low-value secret on the argument that a host
+  using it to connect has thereby made itself a managed Node, so nothing is gained
+  by an attacker. That argument is correct for a host that connects under its own
+  new node id, and it is wrong for a host that claims an id which already exists.
+- The Server replaces a live connection when a duplicate node id arrives
+  (`registry.go` `Register`, `channel.go` "replacing a live connection"), and the
+  response direction carries no proof at all (`protocol.Response` has no signature
+  field). Together those two properties let a token holder take over an existing
+  address and answer its requests with invented content.
+- Measured, not reasoned: a rogue process holding only the token connected as
+  `node_xm6lqoluutyi2ezczl4y2zkfrm`, the Server logged an ordinary
+  `channel established generation=42`, and the same CLI command that had returned
+  `REAL SECRET FILE CONTENT` returned `FABRICATED BY THE ROGUE NODE` with `rc=0`.
+  The real file was unchanged, so the caller had no way to tell.
+- The distinction to keep is between "becomes a Node" and "becomes an existing
+  Node". The first is the feature; the second is the vulnerability. A security
+  argument about a shared secret must state which of the two it is answering,
+  because the same sentence is true for one and false for the other.
+- The fix that does not touch the credential model is to refuse a duplicate node id
+  instead of replacing it. That converts a silent substitution into a visible
+  `node_offline`, and a caller who sees a refusal knows something is wrong while a
+  caller who receives invented bytes does not. The obvious alternative — sign the
+  response and verify it on the Server — is forbidden, because verifying a node
+  signature requires the node secret, which the Server must never receive.
+- A residual-risk row that says "impersonate a Node" reads as "connect as one". The
+  consequence is larger: impersonating a Node means answering its requests. Write
+  the consequence a caller experiences, not the mechanism an attacker uses.
+
+## A probe that fails on its first call proves nothing about the product
+
+- The first rogue-node probe was accepted by the Server and received the request,
+  but the CLI reported `decode response: EOF`. The cause was the probe, not the
+  product: it answered with a bare `Response{Code:0, Data:[]byte("...")}`, while a
+  successful `file.read` carries a JSON object with a `content` field. The Server
+  merged nothing and wrote an envelope with no data.
+- The second attempt failed for a different probe reason: it advertised
+  `binary-v1`, so the Server expected a binary content frame before the response
+  frame and the CLI saw an empty body. Advertising no transport made the JSON path
+  run and the attack succeed immediately.
+- Both failures looked like "the attack does not work", which is the conclusion
+  that would have been wrong. A probe must reproduce the real peer's shape before
+  its failure is read as a property of the product: copy the struct from the
+  dispatch code, and check which transport the handshake selected in the Server
+  log before interpreting an empty answer.
+- The evidence that the probe was finally faithful is that it succeeded on the
+  first call after the shape was corrected, and that the Server log showed the
+  transport it had negotiated. A probe that needs several attempts to produce a
+  result has not shown which attempt was measuring the product.

@@ -261,12 +261,45 @@ make package PACKAGE_SERVER_URL=wss://cloud.example.com:8443/channel \
 The binary carries the `tunnel_token`, so hand it over the way you would hand over
 a password: a leaked binary opens a channel to the Server for every Node on it.
 
-The identity and the credentials are not embedded. Run the binary once with `id` on
-the target machine to create the node id, and the first `run` creates one caller
-credential. Every `run` then prints the node id, the key id and the secret in its
-startup summary, so the operator can read them off the terminal at any time.
-`PACKAGE_NODE_KEY_ID` names that credential and defaults to `bundle-caller`; it is
-public, so it may appear in a log or a ticket.
+The identity and the credential are not embedded by default. Run the binary once
+with `id` on the target machine to create the node id, and the first `run` creates
+one caller credential. Every `run` then prints the node id, the key id and the
+secret in its startup summary, so the operator can read them off the terminal at
+any time. `PACKAGE_NODE_KEY_ID` names that credential and defaults to
+`bundle-caller`; it is public, so it may appear in a log or a ticket.
+
+### Decide the identity at packaging time
+
+If you would rather not ask the recipient for the node id and the credential, add
+`PACKAGE_EMBED_IDENTITY=1`:
+
+```
+make package PACKAGE_SERVER_URL=wss://cloud.example.com:8443/channel \
+             PACKAGE_SCOPES='project=/home/me/project' \
+             PACKAGE_TUNNEL_TOKEN=<tunnel_token> \
+             PACKAGE_EMBED_IDENTITY=1
+```
+
+Packaging generates a node id and one credential, compiles them in, and records
+both in `bin/env.<YYYYMMDDHHMMSS>` with mode `0600`. You read the values from that
+file; the recipient never has to report them. The file also holds a ready-to-run
+CLI example.
+
+The record follows `BIN_DIR`, so `make package BIN_DIR=/tmp/release` writes it
+beside the artifact. Set `ENV_DIR` to separate the two: a test that runs packaging
+sets it to a scratch folder, because a credential record must never land in the
+folder artifacts are copied from.
+
+The embedded values are **seeds, not authorities**. On first start the Node writes
+them to its identity and credential files, and from then on the files win. So
+`regenerate`, `credential add` and `credential remove` keep working exactly as they
+do on a build with nothing embedded, and a credential you remove is not restored by
+a restart.
+
+One package is for one recipient. Two machines running the same binary share one
+node id, and the Server keeps one connection per id, so they evict each other.
+Revoking one recipient of a shared binary also revokes every recipient, because
+they share one credential. Build one package per machine when you embed an identity.
 
 `make package-windows` builds the same executable for Windows. `make package-zip`
 produces the older zip instead, for a recipient who must edit the scopes themselves
