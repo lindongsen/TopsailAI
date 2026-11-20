@@ -18,6 +18,7 @@ var requiredSchemaFiles = []string{
 	"request.schema.json",
 	"agent-start-payload.schema.json",
 	"model-select-payload.schema.json",
+	"model-set-payload.schema.json",
 	"project-add-payload.schema.json",
 	"project-remove-payload.schema.json",
 	"response.schema.json",
@@ -388,4 +389,194 @@ func TestModelSelectPayloadSchemaMatchesGoContract(t *testing.T) {
 	if !found {
 		t.Fatal("request Schema has no agent.model.select payload branch")
 	}
+}
+
+// TestModelSetPayloadSchemaMatchesGoContract pins the agent.model.set payload shape
+// and, more importantly, pins that the operation is target-less.
+//
+// The target-less property is the whole reason this operation exists as a separate
+// name: it changes a machine-wide declaration, so a caller must not be able to attach
+// a session target to it. Asserting the payload reference alone would pass even if a
+// target requirement were added later, which would silently turn a machine-scoped
+// declaration into a session-scoped one.
+func TestModelSetPayloadSchemaMatchesGoContract(t *testing.T) {
+	schema := loadSchema(t, "model-set-payload.schema.json")
+	properties := schema["properties"].(map[string]any)
+	var schemaFields []string
+	for field := range properties {
+		schemaFields = append(schemaFields, field)
+	}
+	sort.Strings(schemaFields)
+	goFields := []string{"provider_resource_key"}
+	if !reflect.DeepEqual(schemaFields, goFields) {
+		t.Fatalf("agent.model.set schema fields = %v, Go fields = %v", schemaFields, goFields)
+	}
+	if !reflect.DeepEqual(schema["required"], []any{"provider_resource_key"}) {
+		t.Fatalf("agent.model.set required fields = %v", schema["required"])
+	}
+
+	request := loadSchema(t, "request.schema.json")
+	branches := request["allOf"].([]any)
+	found := false
+	for _, raw := range branches {
+		branch := raw.(map[string]any)
+		condition, ok := branch["if"].(map[string]any)
+		if !ok {
+			continue
+		}
+		conditionProperties, ok := condition["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		operation, ok := conditionProperties["operation"].(map[string]any)
+		if !ok {
+			continue
+		}
+		operationProperties := operation["properties"].(map[string]any)
+		name, ok := operationProperties["name"].(map[string]any)
+		if !ok || name["const"] != protocol.OperationAgentModelSet {
+			continue
+		}
+		then := branch["then"].(map[string]any)
+		thenProperties := then["properties"].(map[string]any)
+		payload := thenProperties["payload"].(map[string]any)
+		if payload["$ref"] != "model-set-payload.schema.json" {
+			t.Fatalf("agent.model.set payload ref = %v", payload["$ref"])
+		}
+		if _, exists := thenProperties["target"]; exists {
+			t.Fatalf("agent.model.set branch declares a target, want target-less")
+		}
+		not, ok := then["not"].(map[string]any)
+		if !ok {
+			t.Fatalf("agent.model.set branch has no target prohibition")
+		}
+		if !reflect.DeepEqual(not["required"], []any{"target"}) {
+			t.Fatalf("agent.model.set target prohibition = %v", not["required"])
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("request Schema has no agent.model.set payload branch")
+	}
+}
+
+// TestTargetlessMutationsAgreeAcrossSchemaBranches proves the two schema branches
+// that decide whether an execute carries a target do not contradict each other.
+//
+// One branch requires a target for every execute except a frozen exception list; a
+// later branch forbids a target for each target-less operation. If a target-less
+// operation is missing from the exception list, both branches apply and no request
+// can satisfy the schema at all. That failure is invisible to a test that only
+// inspects the operation's own branch, because each branch is individually correct.
+func TestTargetlessMutationsAgreeAcrossSchemaBranches(t *testing.T) {
+	request := loadSchema(t, "request.schema.json")
+	branches := request["allOf"].([]any)
+
+	// Collect the operations each branch forbids a target for.
+	forbidden := make(map[string]struct{})
+	for _, raw := range branches {
+		branch := raw.(map[string]any)
+		then, ok := branch["then"].(map[string]any)
+		if !ok {
+			continue
+		}
+		not, ok := then["not"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if !reflect.DeepEqual(not["required"], []any{"target"}) {
+			continue
+		}
+		if constant, ok := branchOperationConstant(branch); ok {
+			forbidden[constant] = struct{}{}
+		}
+	}
+	if len(forbidden) == 0 {
+		t.Fatal("no schema branch forbids a target, so target-less operations are unconstrained")
+	}
+
+	// Collect the exception list of the branch that requires a target.
+	var exceptions []string
+	for _, raw := range branches {
+		branch := raw.(map[string]any)
+		then, ok := branch["then"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if !reflect.DeepEqual(then["required"], []any{"target"}) {
+			continue
+		}
+		name, ok := branchOperationName(branch)
+		if !ok {
+			continue
+		}
+		not, ok := name["not"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, value := range not["enum"].([]any) {
+			exceptions = append(exceptions, value.(string))
+		}
+	}
+	if len(exceptions) == 0 {
+		t.Fatal("the target-required branch has no exception list")
+	}
+
+	exceptionSet := make(map[string]struct{}, len(exceptions))
+	for _, operation := range exceptions {
+		exceptionSet[operation] = struct{}{}
+	}
+	for operation := range forbidden {
+		if _, ok := exceptionSet[operation]; !ok {
+			t.Errorf("operation %q forbids a target but is absent from the target-required exception list, so no request can satisfy both branches", operation)
+		}
+	}
+	for operation := range exceptionSet {
+		if _, ok := forbidden[operation]; !ok {
+			t.Errorf("operation %q is exempt from the target requirement but no branch forbids its target, so a target would be accepted silently", operation)
+		}
+	}
+}
+
+// branchOperationName returns the operation name node of a schema branch condition.
+//
+// It reports false rather than panicking when a branch does not constrain the
+// operation name at all, because most branches in this schema constrain the function
+// or the payload instead. A test that asserts the shape unconditionally would crash
+// on the first such branch and report a panic instead of the property it checks.
+func branchOperationName(branch map[string]any) (map[string]any, bool) {
+	condition, ok := branch["if"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	properties, ok := condition["properties"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	operation, ok := properties["operation"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	operationProperties, ok := operation["properties"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	name, ok := operationProperties["name"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	return name, true
+}
+
+// branchOperationConstant returns the single operation a branch is conditioned on.
+func branchOperationConstant(branch map[string]any) (string, bool) {
+	name, ok := branchOperationName(branch)
+	if !ok {
+		return "", false
+	}
+	constant, ok := name["const"].(string)
+	if !ok {
+		return "", false
+	}
+	return constant, true
 }

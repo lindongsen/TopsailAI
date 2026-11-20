@@ -115,12 +115,15 @@ func (r Request) validateExecute() error {
 	if err := r.Operation.validate("operation"); err != nil {
 		return err
 	}
-	// project.add is the only standard mutation that carries no target, because
-	// the resource it creates does not exist yet and therefore has no identity to
-	// address. Every other execute still requires a target, so a missing target
-	// remains a defect the Provider reports rather than a form it accepts.
+	// Two standard mutations carry no target, and each for its own reason.
+	// project.add creates a resource that does not exist yet, so it has no identity
+	// to address. agent.model.set changes a machine-wide declaration rather than one
+	// resource, so the subject is the Endpoint the frame already names and a target
+	// would have to name an unrelated resource. Every other execute still requires a
+	// target, so a missing target remains a defect the Provider reports rather than a
+	// form it accepts.
 	if r.Target == nil {
-		if r.Operation.Name != protocol.OperationProjectAdd {
+		if !targetlessMutation(r.Operation.Name) {
 			return errors.New("execute target is required")
 		}
 	} else if err := r.Target.validate(OperationNeedsLiveGeneration(r.Operation.Name)); err != nil {
@@ -136,6 +139,10 @@ func (r Request) validateExecute() error {
 		}
 	case protocol.OperationAgentModelSelect:
 		if _, err := DecodeModelSelectPayload(r.Payload); err != nil {
+			return err
+		}
+	case protocol.OperationAgentModelSet:
+		if _, err := DecodeModelSetPayload(r.Payload); err != nil {
 			return err
 		}
 	case protocol.OperationProjectAdd:
@@ -170,6 +177,25 @@ func OperationNeedsLiveGeneration(operation string) bool {
 		}
 	}
 	return true
+}
+
+// targetlessMutation reports whether a standard mutation addresses the Endpoint
+// itself rather than one resource.
+//
+// It exists as one named predicate because the same rule is enforced in three
+// places that must agree: this Provider-side validation, the Endpoint's execution
+// target resolution, and the wire schema. Spelling the rule out at each site is how
+// the three drift apart, and a drift here is silent in the worst direction: a
+// target-less operation that one layer still demands a target for is refused as a
+// malformed request, which reads as a caller defect rather than a contract
+// disagreement.
+func targetlessMutation(operation string) bool {
+	switch operation {
+	case protocol.OperationProjectAdd, protocol.OperationAgentModelSet:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r Request) validateQuery() error {

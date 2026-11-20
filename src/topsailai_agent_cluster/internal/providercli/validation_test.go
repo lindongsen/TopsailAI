@@ -268,6 +268,40 @@ func TestRequestValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("targetless mutations accept no target and every other execute requires one", func(t *testing.T) {
+		// The two target-less operations are the only executes that may omit a
+		// target. Asserting both directions matters: a guard that accepted every
+		// missing target would pass the first half, and a guard that accepted none
+		// would pass the second.
+		targetless := []struct {
+			operation string
+			payload   string
+		}{
+			{operation: protocol.OperationProjectAdd, payload: `{"folder":"/work/example"}`},
+			{operation: protocol.OperationAgentModelSet, payload: `{"provider_resource_key":"model-1"}`},
+		}
+		for _, test := range targetless {
+			t.Run(test.operation+" accepts no target", func(t *testing.T) {
+				request := validRequest(FunctionExecute)
+				request.InvocationID = "invocation-1"
+				request.Operation = &NamedContract{Name: test.operation, Version: "v1"}
+				request.Payload = json.RawMessage(test.payload)
+				if err := request.Validate(); err != nil {
+					t.Fatalf("target-less mutation rejected: %v", err)
+				}
+			})
+		}
+		t.Run("a targeted mutation still requires a target", func(t *testing.T) {
+			request := validRequest(FunctionExecute)
+			request.InvocationID = "invocation-1"
+			request.Operation = &NamedContract{Name: protocol.OperationAgentModelSelect, Version: "v1"}
+			request.Payload = json.RawMessage(`{"provider_resource_key":"model-1"}`)
+			if err := request.Validate(); err == nil || !strings.Contains(err.Error(), "execute target is required") {
+				t.Fatalf("targeted mutation accepted without a target: %v", err)
+			}
+		})
+	})
+
 	t.Run("query registry is closed", func(t *testing.T) {
 		request := validRequest(FunctionQuery)
 		request.Query = &NamedContract{Name: "provider.private.files", Version: "v1"}
