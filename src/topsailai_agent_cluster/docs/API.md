@@ -554,6 +554,103 @@ it.
 The route is forwarded through the existing Endpoint channel, bound to the exact connection
 generation and request ID, and waits at most 10 seconds.
 
+
+## Model registry
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/model-registry` | Read the models one Endpoint offers to launches, and which one a launch would use |
+
+`GET /api/v1/model-registry` requires `endpoint_id` and deliberately accepts no `resource_id`. A
+registry describes the machine, not one session: accepting a resource identifier would let a caller
+believe the answer was about that resource while the Endpoint had to ignore it. A caller that wants
+one session's catalog uses `/api/v1/model-catalog`, which is a different question with a different
+subject.
+
+The response `data` carries `entries`, `current_profile_id`, `current_source`, `project_overrides`,
+`observed_at_ms` and `truncated`:
+
+| Field | Meaning |
+|---|---|
+| `entries` | the models a launch from this Endpoint can use; each carries `model_profile_id`, `provider_display_name`, `available` and its `unavailable_reason` |
+| `current_profile_id` | the profile a launch from this machine would use now; empty when no entry is marked selected |
+| `current_source` | which declaration produced `current_profile_id`; a closed vocabulary |
+| `project_overrides` | folder-specific declarations that differ from the machine default |
+| `observed_at_ms` | when the Endpoint observed the registry, in UTC epoch milliseconds |
+| `truncated` | the provider returned its own capped window rather than every entry |
+
+`current_profile_id` is empty when no entry is marked selected. That is an observation, not an error:
+a machine may list usable models while declaring no default, and the surface reports the model in use
+as unknown rather than inventing one. `current_source` exists because a machine that resolves a model
+per project folder can use different models in different folders, so a machine-wide default and a
+folder override are reported as different sources instead of one value being presented as the whole
+truth.
+
+An empty `entries` list is a real answer meaning the machine has no model configured. It is
+deliberately different from an Endpoint that cannot answer at all, which reports
+`model_registry_unsupported`. Collapsing the two would make an unconfigured adapter look like a
+machine with no models.
+
+This is a live provider read, not a stored projection. It never serves persisted inventory and never
+caches a result.
+
+Reading the registry requires the `agent.model.registry` operation permission on the Endpoint access
+policy. The check runs at the Endpoint, so the Server forwards the caller token without interpreting
+it.
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid_target` | `endpoint_id` is missing |
+| 403 | `policy_denied` | The Endpoint token does not hold the `agent.model.registry` permission |
+| 404 | `endpoint_not_found` | The endpoint identifier is not registered |
+| 409 | `model_registry_selection_invalid` | The Endpoint holds a model selection that cannot be resolved |
+| 501 | `model_registry_unsupported` | No configured adapter can read a model registry |
+| 502 | `model_registry_too_large` | The provider registry exceeded the configured bound |
+| 502 | `provider_error` | The provider call failed |
+| 503 | `unavailable` | The Server has no model registry channel configured |
+| 503 | `endpoint_unavailable` | The endpoint is registered but has no live connection |
+| 503 | `adapter_busy` | Adapter capacity was unavailable, so the read was not attempted |
+
+The route is forwarded through the existing Endpoint channel, bound to the exact connection
+generation and request ID, and waits at most 10 seconds.
+
+## Declaring the launch model
+
+`agent.model.set` is a standard mutating command operation, so it uses `POST /api/v1/commands` rather
+than a dedicated route. It carries no target: it changes a machine-wide declaration, not a running
+process, so the profile it names travels in the payload as an opaque Cluster identifier and the
+Endpoint resolves that identifier to the adapter that minted it.
+
+```json
+{
+  "operation": "agent.model.set",
+  "payload": {
+    "model_profile_id": "mp_alpha"
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `model_profile_id` | the opaque Cluster profile identifier the Endpoint minted for one provider entry |
+
+The payload rejects unknown fields, so a caller cannot smuggle provider vocabulary onto the wire. The
+identifier must resolve to a mapping this Endpoint minted; an identifier it never minted is refused
+with `unknown_model_profile` before any provider call, so a typo cannot become a provider-side guess.
+
+The operation is `mutating` and requires the `control` permission. It refuses an unavailable profile
+before the write, so a refusal proves nothing was written.
+
+| Code | Meaning |
+|---|---|
+| `unknown_model_profile` | the identifier is not one this Endpoint minted |
+| `model_profile_unavailable` | the profile exists but cannot be selected now |
+| `model_set_unsupported` | no configured adapter can change the environment default |
+| `provider_error` | the adapter's provider call failed |
+
+The result is a standard `ExecutionReceipt`. It does not return the post-change registry; a caller
+that wants the new state reads `/api/v1/model-registry` again.
+
 ## Events and manifest
 
 | Method | Path | Purpose |
