@@ -3,6 +3,7 @@ package node
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -274,5 +275,177 @@ func TestConsoleShowConfigRedactsTheTunnelToken(t *testing.T) {
 	}
 	if !strings.Contains(printed, "stateless") {
 		t.Fatalf("the console printed %q, want it to report the stateless mode", printed)
+	}
+}
+
+// TestConsoleLogCommandChangesTheProcessLevel pins the switch that answers the measured
+// complaint: a Node retrying a refused dial writes a warning every five seconds, and the
+// warning lands in the middle of whatever the operator is typing.
+//
+// The assertion is on the LevelVar the process logger was built from, not on the console's
+// own output. A console that printed "log level: off" while the dialer kept writing would
+// pass an output-only test and fix nothing.
+func TestConsoleLogCommandChangesTheProcessLevel(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	level := &slog.LevelVar{}
+	level.Set(slog.LevelInfo)
+	console.SetLogLevel(level)
+
+	printed := runConsole(t, console, out, "log", "log off", "log", "quit")
+
+	if !strings.Contains(printed, "log level: info") {
+		t.Fatalf("the console printed %q, want it to report the level in force", printed)
+	}
+	if !strings.Contains(printed, "log level: off") {
+		t.Fatalf("the console printed %q, want it to report the new level", printed)
+	}
+	if got := level.Level(); got != levelOff {
+		t.Fatalf("the process level = %v, want %v", got, levelOff)
+	}
+}
+
+// TestConsoleLogOffSilencesTheHandler proves the level the console sets actually silences a
+// handler built the way the process builds one.
+//
+// Setting a LevelVar and asserting its value is a test of the setter. This test writes a
+// record through a real handler and asserts nothing reached the buffer, which is the
+// property the operator asked for.
+func TestConsoleLogOffSilencesTheHandler(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	level := &slog.LevelVar{}
+	level.Set(slog.LevelInfo)
+	console.SetLogLevel(level)
+
+	var logged bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: level}))
+
+	logger.Warn("before the switch")
+	if logged.Len() == 0 {
+		t.Fatal("the handler wrote nothing before the switch; this test is measuring nothing")
+	}
+
+	runConsole(t, console, out, "log off", "quit")
+	logged.Reset()
+	logger.Warn("after the switch")
+
+	if logged.Len() != 0 {
+		t.Fatalf("the handler wrote %q after the level was set to off, want nothing", logged.String())
+	}
+}
+
+// TestConsoleLogRefusesAnUnknownLevel checks that a typo is refused rather than rounded to
+// a level the operator did not ask for.
+func TestConsoleLogRefusesAnUnknownLevel(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	level := &slog.LevelVar{}
+	level.Set(slog.LevelInfo)
+	console.SetLogLevel(level)
+
+	printed := runConsole(t, console, out, "log silent", "quit")
+
+	if !strings.Contains(printed, `unknown level "silent"`) {
+		t.Fatalf("the console printed %q, want it to name the unknown level", printed)
+	}
+	if got := level.Level(); got != slog.LevelInfo {
+		t.Fatalf("the level = %v after a refused value, want it unchanged at info", got)
+	}
+}
+
+// TestConsoleLogWithoutASwitchRefusesInsteadOfPretending checks the console built by a
+// caller that never installed a level. Reporting a level it cannot change would be a
+// console that lies about the state of the process.
+func TestConsoleLogWithoutASwitchRefusesInsteadOfPretending(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	printed := runConsole(t, console, out, "log", "quit")
+
+	if !strings.Contains(printed, "no log switch") {
+		t.Fatalf("the console printed %q, want it to say there is no switch", printed)
+	}
+}
+
+// TestConsoleQuitSaysTheNodeKeepsRunning pins the sentence that distinguishes "the console
+// stopped" from "the process stopped". Without it a silent exit reads as a hang.
+func TestConsoleQuitSaysTheNodeKeepsRunning(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	printed := runConsole(t, console, out, "quit")
+
+	if !strings.Contains(printed, "console closed; the node keeps running") {
+		t.Fatalf("the console printed %q, want it to say the node keeps running", printed)
+	}
+}
+
+// TestConsoleCredentialListPointsAtShowCredentials checks that the natural word for "show
+// me the credentials" reaches the command that does it.
+//
+// The measured failure was `credential list` answering with the usage line for add, rotate
+// and remove, which reads as "this feature does not exist" rather than "the command is
+// called something else".
+func TestConsoleCredentialListPointsAtShowCredentials(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	printed := runConsole(t, console, out, "credential list", "quit")
+
+	if !strings.Contains(printed, "use show credentials") {
+		t.Fatalf("the console printed %q, want it to name show credentials", printed)
+	}
+}
+
+// TestConsoleCredentialNamesTheMissingKeyID checks that a command with the action but no
+// key id reports the usage for that action rather than the usage for all three.
+func TestConsoleCredentialNamesTheMissingKeyID(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	printed := runConsole(t, console, out, "credential add", "quit")
+
+	if !strings.Contains(printed, "usage: credential add <key-id>") {
+		t.Fatalf("the console printed %q, want the usage for add alone", printed)
+	}
+}
+
+// TestConsoleRegenerateNamesTheBadSubject checks that a wrong subject is named instead of
+// repeating the usage line, which is what `show` already does.
+func TestConsoleRegenerateNamesTheBadSubject(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	printed := runConsole(t, console, out, "regenerate bogus", "quit")
+
+	if !strings.Contains(printed, `unknown subject "bogus"`) {
+		t.Fatalf("the console printed %q, want it to name the bad subject", printed)
+	}
+}
+
+// TestConsoleShowConfigIsOneFieldPerLine pins the layout that keeps a value from being
+// broken across two lines on a narrow terminal.
+//
+// The measured case was `config_dir=stateless` rendered as `stat` and `eless` at 100
+// columns, which reads as a different value. The assertion is on the line count and on the
+// absence of a wrapped value, not on the exact wording.
+func TestConsoleShowConfigIsOneFieldPerLine(t *testing.T) {
+	_, out, console := newConsoleFixture(t)
+
+	printed := runConsole(t, console, out, "show config", "quit")
+
+	lines := strings.Split(strings.TrimSpace(printed), "\n")
+	// The last line is the quit sentence, so the configuration is everything before it.
+	fields := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "console closed") {
+			break
+		}
+		if !strings.Contains(line, ": ") {
+			t.Fatalf("the line %q is not a field, want one field per line", line)
+		}
+		if len(line) > 80 {
+			t.Fatalf("the line %q is %d characters, want it short enough not to wrap", line, len(line))
+		}
+		fields++
+	}
+	if fields < 5 {
+		t.Fatalf("show config printed %d fields, want at least 5", fields)
 	}
 }

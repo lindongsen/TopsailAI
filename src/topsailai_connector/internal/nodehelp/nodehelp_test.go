@@ -119,6 +119,47 @@ func TestRunHelpDocumentsTheConsoleFlagAndEveryConsoleCommand(t *testing.T) {
 	}
 }
 
+// TestRunHelpDocumentsTheConsoleLogCommand checks the command that answers the one
+// complaint a console always gets: a log record written while the operator is typing
+// lands in the middle of the line.
+//
+// The assertion is structural rather than a substring, because "log" appears in
+// "login", in "catalog" and in the prose above the list. A substring guard would stay
+// green after the entry was deleted, which is the defect this file exists to prevent.
+func TestRunHelpDocumentsTheConsoleLogCommand(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+
+	var entry string
+	for _, line := range strings.Split(flags, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		if strings.HasPrefix(trimmed, "log ") || trimmed == "log" {
+			entry = trimmed
+			break
+		}
+	}
+	if entry == "" {
+		t.Fatalf("the FLAGS section has no console log entry, so the command is undocumented")
+	}
+	for _, word := range []string{"debug", "info", "warn", "error", "off"} {
+		if !strings.Contains(entry, word) {
+			t.Errorf("the log entry does not name the level %q: %q", word, entry)
+		}
+	}
+
+	flattened := strings.Join(strings.Fields(flags), " ")
+	if !strings.Contains(flattened, "silences the process logger") {
+		t.Errorf("the FLAGS section does not state that log off silences the process logger, " +
+			"so a reader would expect it to silence only the console")
+	}
+	if !strings.Contains(flattened, "not remembered across a restart") {
+		t.Errorf("the FLAGS section does not state that the level is not remembered across a restart")
+	}
+	if !strings.Contains(flattened, "still reports a fatal error on the way out") {
+		t.Errorf("the FLAGS section does not state that a silenced Node still reports a fatal " +
+			"error on the way out, so a reader would believe log off hides a startup failure")
+	}
+}
+
 // TestRunHelpStatesThatTheConsoleNeverPrintsASecret checks the rule a reader of the help
 // has to know before they type `show credentials`.
 //
