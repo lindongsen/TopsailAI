@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/project-catalog-request.schema.json",
+  "title": "project-catalog-request payload",
+  "description": "The Endpoint-scoped project catalog query has no target and a closed empty payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {},
+  "maxProperties": 0
+}

@@ -276,11 +276,21 @@ that behaved correctly as `provider_error`.
 |---|---|---|
 | GET | `/api/v1/launch-options` | Read the live start-capable handler catalog |
 
-`endpoint_id` is required. An optional `adapter_id` queries that handler's managed projects.
+`endpoint_id` is required. The response `data` contains `handlers` (each with `adapter_id`,
+`display_name` and `revision`) and an optional `error_code`. Project discovery is not part of this
+seam.
 
-The response `data` contains `handlers` (each with `adapter_id`, `display_name` and `revision`),
-`projects` (each with `name` and `path`) and an optional `error_code`. A failed project query is
-reported as an error, never as an empty successful list.
+## Project catalog
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/project-catalog` | Read the live managed-project catalog of one Endpoint |
+
+`endpoint_id` is required. The route is a live Provider read protected by `project.list` and the
+Endpoint `view` scope. The response contains `projects`, `observed_at_ms`, `truncated` and an optional
+`error_code`. Every project has an opaque Cluster `project_id`, `name` and `path`. Provider keys and
+Provider row numbers never cross this API. The Server forwards the request and never reads Provider
+commands, registry files or project identity rules.
 
 The query is forwarded through the existing Endpoint channel, bound to the exact connection
 generation and request ID, and waits at most 10 seconds. At most 64 launch queries may be pending.

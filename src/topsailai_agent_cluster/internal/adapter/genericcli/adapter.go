@@ -413,7 +413,7 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 
 // LaunchProfile reads and maps this Adapter instance's provider-private launch profile.
 func (a *Adapter) LaunchProfile(ctx context.Context) (protocol.LaunchHandler, error) {
-	result, err := a.launchOptions(ctx, false)
+	result, err := a.launchOptions(ctx)
 	if err != nil {
 		return protocol.LaunchHandler{}, err
 	}
@@ -424,17 +424,26 @@ func (a *Adapter) LaunchProfile(ctx context.Context) (protocol.LaunchHandler, er
 	return protocol.LaunchHandler{AdapterID: a.config.AdapterID, LaunchProfileID: mapping.ResourceID, DisplayName: result.Profile.DisplayName, Revision: result.Profile.Revision}, nil
 }
 
-// Projects returns provider-managed launch projects without exposing the launch profile key.
-func (a *Adapter) Projects(ctx context.Context) ([]protocol.Project, error) {
-	result, err := a.launchOptions(ctx, true)
+// ProjectCatalog maps provider-private project keys to opaque Cluster project IDs.
+func (a *Adapter) ProjectCatalog(ctx context.Context, _ protocol.ProjectCatalogQuery) (protocol.ProjectCatalog, error) {
+	payload, err := json.Marshal(providercli.ProjectCatalogPayload{})
 	if err != nil {
-		return nil, err
+		return protocol.ProjectCatalog{}, fmt.Errorf("encode project catalog payload: %w", err)
 	}
-	projects := make([]protocol.Project, 0, len(result.Projects))
-	for _, project := range result.Projects {
-		projects = append(projects, protocol.Project{Name: project.Name, Path: project.Path})
+	value, err := a.typedQuery(ctx, providercli.QueryProjectCatalog, nil, payload)
+	if err != nil {
+		return protocol.ProjectCatalog{}, err
 	}
-	return projects, nil
+	providerResult := value.(providercli.ProjectCatalogResult)
+	result := protocol.ProjectCatalog{Projects: make([]protocol.Project, 0, len(providerResult.Projects)), ObservedAtMS: providerResult.ObservedAtMS, Truncated: providerResult.Truncated}
+	for _, project := range providerResult.Projects {
+		mapping, mapErr := a.config.Mapper.GetOrCreateResourceID(ctx, a.config.AdapterID, protocol.ResourceProject, project.ProviderResourceKey, providerResult.ObservedAtMS)
+		if mapErr != nil {
+			return protocol.ProjectCatalog{}, mapErr
+		}
+		result.Projects = append(result.Projects, protocol.Project{ProjectID: mapping.ResourceID, Name: project.Name, Path: project.Path})
+	}
+	return result, nil
 }
 
 // History maps provider-private session keys to opaque Cluster resource IDs.
@@ -626,8 +635,8 @@ func (a *Adapter) Detail(ctx context.Context, query protocol.SessionDetailQuery)
 	}, nil
 }
 
-func (a *Adapter) launchOptions(ctx context.Context, includeProjects bool) (providercli.LaunchOptionsResult, error) {
-	payload, _ := json.Marshal(providercli.LaunchOptionsPayload{IncludeProjects: includeProjects})
+func (a *Adapter) launchOptions(ctx context.Context) (providercli.LaunchOptionsResult, error) {
+	payload, _ := json.Marshal(providercli.LaunchOptionsPayload{})
 	value, err := a.typedQuery(ctx, providercli.QueryLaunchOptions, nil, payload)
 	if err != nil {
 		return providercli.LaunchOptionsResult{}, err
@@ -927,6 +936,7 @@ var capabilityProviderContract = map[string]struct {
 	protocol.OperationOutputRead:     {kind: contractFunction, name: providercli.FunctionReadOutput},
 	protocol.OperationOutputFollow:   {kind: contractFunction, name: providercli.FunctionFollowOutput},
 	protocol.OperationAgentModelList: {kind: contractQuery, name: providercli.QueryModelCatalog},
+	protocol.OperationProjectList:    {kind: contractQuery, name: providercli.QueryProjectCatalog},
 }
 
 // intersectCapabilities keeps only the configured capabilities the provider

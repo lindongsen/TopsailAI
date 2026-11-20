@@ -29,10 +29,12 @@ const (
 	resourceSession       = "session"
 	resourceLaunchProfile = "launch_profile"
 	resourceModelProfile  = "model_profile"
+	resourceProject       = "project"
 
 	queryLaunchOptions       = "launch.options"
 	queryHistoryMessages     = "history.messages"
 	queryModelCatalog        = "model.catalog"
+	queryProjectCatalog      = "project.catalog"
 	querySessionMessages     = "session.messages"
 	querySessionMetrics      = "session.metrics"
 	querySessionMetricsBatch = "session.metrics.batch"

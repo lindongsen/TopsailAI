@@ -85,6 +85,10 @@ const (
 	FrameModelCatalogRequest = "model_catalog_request"
 	// FrameModelCatalogResponse returns a bounded model-catalog read.
 	FrameModelCatalogResponse = "model_catalog_response"
+	// FrameProjectCatalogRequest requests the managed projects of one Endpoint.
+	FrameProjectCatalogRequest = "project_catalog_request"
+	// FrameProjectCatalogResponse returns one bounded project catalog.
+	FrameProjectCatalogResponse = "project_catalog_response"
 	// FrameOutputResponse returns a bounded provider output snapshot.
 	FrameOutputResponse = "output_response"
 	// FrameOutputFollowRequest starts one streaming output follow. It is a
@@ -129,6 +133,8 @@ type Frame struct {
 	DetailResult         *protocol.SessionDetail            `json:"detail_result,omitempty"`
 	ModelCatalogQuery    *protocol.ModelCatalogQuery        `json:"model_catalog_query,omitempty"`
 	ModelCatalog         *protocol.ModelCatalog             `json:"model_catalog,omitempty"`
+	ProjectCatalogQuery  *protocol.ProjectCatalogQuery      `json:"project_catalog_query,omitempty"`
+	ProjectCatalog       *protocol.ProjectCatalog           `json:"project_catalog,omitempty"`
 	Type                 string                             `json:"type"`
 	ProtocolVersion      string                             `json:"protocol_version"`
 	FrameID              string                             `json:"frame_id,omitempty"`

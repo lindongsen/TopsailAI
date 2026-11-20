@@ -2,7 +2,6 @@ package endpoint
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -14,7 +13,7 @@ import (
 
 // LaunchOptions queries only explicitly configured, start-capable adapter handlers.
 func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery) (protocol.LaunchOptions, error) {
-	result := protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{}, Projects: []protocol.Project{}}
+	result := protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{}}
 	instances, release := e.registry.AcquireAll()
 	defer release()
 	for _, instance := range instances {
@@ -29,10 +28,6 @@ func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery
 		if !supports(descriptor.Capabilities, protocol.OperationAgentStart, "v1") {
 			continue
 		}
-		handler, ok := instance.(adapter.ProjectHandler)
-		if !ok {
-			continue
-		}
 		launchHandler := protocol.LaunchHandler{AdapterID: descriptor.AdapterID, LaunchProfileID: descriptor.AdapterID, DisplayName: descriptor.DisplayName, Revision: descriptor.Capabilities.Revision}
 		if profileReader, ok := instance.(adapter.LaunchProfileHandler); ok {
 			launchHandler, err = profileReader.LaunchProfile(ctx)
@@ -45,20 +40,7 @@ func (e *Executor) LaunchOptions(ctx context.Context, query protocol.LaunchQuery
 			}
 		}
 		result.Handlers = append(result.Handlers, launchHandler)
-		if query.AdapterID == "" {
-			continue
-		}
-		projects, err := handler.Projects(ctx)
-		if err != nil {
-			result.ErrorCode = readFailureCode(err, result.ErrorCode, "project_query_failed")
-			return result, err
-		}
-		data, err := json.Marshal(projects)
-		if err != nil || len(data) > protocol.MaxProjectBytes || len(projects) > protocol.MaxProjects {
-			result.ErrorCode = "project_response_too_large"
-			return result, nil
-		}
-		result.Projects = projects
+
 	}
 	sort.Slice(result.Handlers, func(i, j int) bool { return result.Handlers[i].AdapterID < result.Handlers[j].AdapterID })
 	if query.AdapterID != "" && len(result.Handlers) == 0 {

@@ -53,7 +53,7 @@ func TestServeDescribe(t *testing.T) {
 	if got := response.Descriptor.Functions; !reflect.DeepEqual(got, wantFunctions) {
 		t.Fatalf("functions = %v want %v", got, wantFunctions)
 	}
-	if len(response.Descriptor.Operations) != 10 || len(response.Descriptor.Queries) != 7 || len(response.Descriptor.ControlActions) != 0 {
+	if len(response.Descriptor.Operations) != 10 || len(response.Descriptor.Queries) != 8 || len(response.Descriptor.ControlActions) != 0 {
 		t.Fatalf("descriptor contracts: %+v", response.Descriptor)
 	}
 }

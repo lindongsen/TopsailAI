@@ -592,6 +592,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// The endpoint table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and refresh.
 		return false, interactiveEndpoints(ctx, api, rest, trustedOut, options.Color)
+	case "project":
+		return false, interactiveProjects(ctx, api, state, rest, lineResults, trustedOut, trustedOut, errOut, options.Color)
 	case "history":
 		// The history table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and endpoints.

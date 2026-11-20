@@ -10,8 +10,3 @@ import (
 type LaunchProfileHandler interface {
 	LaunchProfile(context.Context) (protocol.LaunchHandler, error)
 }
-
-// ProjectHandler optionally discovers provider-managed launch folders without mutation.
-type ProjectHandler interface {
-	Projects(context.Context) ([]protocol.Project, error)
-}

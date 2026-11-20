@@ -60,6 +60,7 @@ var commandScopeMatrix = []commandScopeRule{
 	// history is a read-only projection of retained provider history, so it is
 	// available wherever an endpoint can be resolved and never in session scope.
 	{Name: "history", Workspace: true, Endpoint: true},
+	{Name: "project", Workspace: true, Endpoint: true},
 	// messages reads persisted provider data, so it needs neither a live
 	// generation nor a proven absence. It is therefore the only conversation
 	// surface available in all three scopes, including session scope where the

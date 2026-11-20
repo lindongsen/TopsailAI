@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -40,9 +41,7 @@ const (
 	maxMessageCount         = 10000000
 )
 
-type launchOptionsPayload struct {
-	IncludeProjects bool `json:"include_projects"`
-}
+type launchOptionsPayload struct{}
 type launchProfileFact struct {
 	ResourceKind        string `json:"resource_kind"`
 	ProviderResourceKey string `json:"provider_resource_key"`
@@ -55,8 +54,18 @@ type projectFact struct {
 	Path string `json:"path"`
 }
 type launchOptionsResult struct {
-	Profile  launchProfileFact `json:"profile"`
-	Projects []projectFact     `json:"projects"`
+	Profile launchProfileFact `json:"profile"`
+}
+type projectCatalogResult struct {
+	Projects     []projectCatalogFact `json:"projects"`
+	ObservedAtMS int64                `json:"observed_at_ms"`
+	Truncated    bool                 `json:"truncated"`
+}
+type projectCatalogFact struct {
+	ResourceKind        string `json:"resource_kind"`
+	ProviderResourceKey string `json:"provider_resource_key"`
+	Name                string `json:"name"`
+	Path                string `json:"path"`
 }
 
 type historyPayload struct {
@@ -208,6 +217,8 @@ func (p *provider) query(ctx context.Context, contract *namedContract, requested
 		value, err = p.history(ctx, requested, payload)
 	case queryModelCatalog:
 		value, err = p.models(ctx, requested, payload)
+	case queryProjectCatalog:
+		value, err = p.projectCatalog(ctx, requested, payload)
 	case querySessionMessages:
 		value, err = p.messages(ctx, requested, payload)
 	case querySessionMetrics:
@@ -225,7 +236,7 @@ func (p *provider) query(ctx context.Context, contract *namedContract, requested
 	return json.Marshal(value)
 }
 
-func (p *provider) launchOptions(ctx context.Context, requested *target, raw json.RawMessage) (launchOptionsResult, error) {
+func (p *provider) launchOptions(_ context.Context, requested *target, raw json.RawMessage) (launchOptionsResult, error) {
 	if requested != nil {
 		return launchOptionsResult{}, fmt.Errorf("%w: launch.options does not accept a target", errInvalidRequest)
 	}
@@ -233,30 +244,35 @@ func (p *provider) launchOptions(ctx context.Context, requested *target, raw jso
 	if err := decodeStrict(raw, &payload); err != nil {
 		return launchOptionsResult{}, fmt.Errorf("%w: launch.options payload: %v", errInvalidRequest, err)
 	}
-	result := launchOptionsResult{Profile: launchProfileFact{resourceLaunchProfile, launchProfileKey, "TopsailAI", launchProfileRevision}, Projects: []projectFact{}}
-	if !payload.IncludeProjects {
-		return result, nil
+	return launchOptionsResult{Profile: launchProfileFact{resourceLaunchProfile, launchProfileKey, "TopsailAI", launchProfileRevision}}, nil
+}
+
+func (p *provider) projectCatalog(ctx context.Context, requested *target, raw json.RawMessage) (projectCatalogResult, error) {
+	if requested != nil {
+		return projectCatalogResult{}, fmt.Errorf("%w: project.catalog does not accept a target", errInvalidRequest)
+	}
+	var payload struct{}
+	if err := decodeStrict(raw, &payload); err != nil {
+		return projectCatalogResult{}, fmt.Errorf("%w: project.catalog payload: %v", errInvalidRequest, err)
 	}
 	var projects []projectFact
 	if err := runJSON(ctx, p.runner, []string{"project", "list", "--json"}, maxProjectBytes, &projects); err != nil {
-		return launchOptionsResult{}, err
+		return projectCatalogResult{}, err
 	}
 	if projects == nil || len(projects) > maxProjects {
-		return launchOptionsResult{}, errorsNew("invalid or oversized project list")
+		return projectCatalogResult{}, errorsNew("invalid or oversized project list")
 	}
+	result := projectCatalogResult{Projects: make([]projectCatalogFact, 0, len(projects)), ObservedAtMS: time.Now().UnixMilli(), Truncated: false}
 	for _, project := range projects {
 		if project.Name == "" || project.Path == "" {
-			return launchOptionsResult{}, errorsNew("project name and path are required")
+			return projectCatalogResult{}, errorsNew("project name and path are required")
 		}
-		// The path is validated with the same rule the Cluster applies, so a
-		// project this Provider reports is one the Cluster would also accept.
-		// Checking only for emptiness let a path with surrounding whitespace or a
-		// control character through, which the Cluster refuses.
 		if err := validateFolder(project.Path); err != nil {
-			return launchOptionsResult{}, fmt.Errorf("project %q path is invalid: %w", project.Name, err)
+			return projectCatalogResult{}, fmt.Errorf("project %q path is invalid: %w", project.Name, err)
 		}
+		digest := sha256.Sum256([]byte(project.Path))
+		result.Projects = append(result.Projects, projectCatalogFact{ResourceKind: resourceProject, ProviderResourceKey: fmt.Sprintf("project:v1:%x", digest), Name: project.Name, Path: project.Path})
 	}
-	result.Projects = projects
 	return result, nil
 }
 

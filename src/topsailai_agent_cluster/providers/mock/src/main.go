@@ -339,7 +339,7 @@ func handleUnary(request request, fault string, options mockOptions) response {
 		}
 		switch request.Query.Name {
 		case queryLaunchOptions:
-			base.QueryResult = json.RawMessage(`{"profile":{"resource_kind":"launch_profile","provider_resource_key":"launch:mock","display_name":"Mock","revision":"launch-r1"},"projects":[{"name":"mock","path":"/work/mock"}]}`)
+			base.QueryResult = json.RawMessage(`{"profile":{"resource_kind":"launch_profile","provider_resource_key":"launch:mock","display_name":"Mock","revision":"launch-r1"}}`)
 		case queryHistoryMessages:
 			// The row names the stopped session, not the live one, because a history
 			// row is joined to the inventory on provider_session_id and the mock
@@ -350,6 +350,9 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			// then refused with target_still_active. The stopped session is the
 			// one a resume scenario needs: the record exists, no process holds it.
 			base.QueryResult = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"session:stopped","provider_session_id":"session:stopped","provider_display_name":"Stopped Session","resumable":true}],"observed_at_ms":1700000000000,"truncated":false}`)
+		case queryProjectCatalog:
+			recordInvocation(options, request, queryProjectCatalog)
+			base.QueryResult = json.RawMessage(`{"projects":[{"resource_kind":"project","provider_resource_key":"project:mock","name":"mock","path":"/work/mock"}],"observed_at_ms":1700000000000,"truncated":false}`)
 		case queryModelCatalog:
 			// The read is recorded because a scenario proves the provider was
 			// reached exactly once, and a read that answers without leaving a
@@ -907,6 +910,7 @@ func mockDescriptor(fault string) descriptor {
 		{Name: queryLaunchOptions, Version: "v1"},
 		{Name: queryHistoryMessages, Version: "v1"},
 		{Name: queryModelCatalog, Version: "v1"},
+		{Name: queryProjectCatalog, Version: "v1"},
 		{Name: querySessionMessages, Version: "v1"},
 		{Name: querySessionMetrics, Version: "v1"},
 		{Name: querySessionMetricsBatch, Version: "v1"},

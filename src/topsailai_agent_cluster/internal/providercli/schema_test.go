@@ -26,6 +26,8 @@ var requiredSchemaFiles = []string{
 	"history-messages-result.schema.json",
 	"model-catalog-request.schema.json",
 	"model-catalog-result.schema.json",
+	"project-catalog-request.schema.json",
+	"project-catalog-result.schema.json",
 	"session-messages-request.schema.json",
 	"session-messages-result.schema.json",
 	"session-metrics-request.schema.json",

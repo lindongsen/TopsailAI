@@ -8,13 +8,14 @@ const (
 	ResourceTask          = "task"
 	ResourceLaunchProfile = "launch_profile"
 	ResourceModelProfile  = "model_profile"
+	ResourceProject       = "project"
 )
 
 // IsResourceKind reports whether value belongs to the closed Cluster resource
 // vocabulary.
 func IsResourceKind(value string) bool {
 	switch value {
-	case ResourceAgent, ResourceSession, ResourceTask, ResourceLaunchProfile, ResourceModelProfile:
+	case ResourceAgent, ResourceSession, ResourceTask, ResourceLaunchProfile, ResourceModelProfile, ResourceProject:
 		return true
 	default:
 		return false

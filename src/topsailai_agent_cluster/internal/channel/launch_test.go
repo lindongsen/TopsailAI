@@ -51,10 +51,10 @@ func TestLaunchChannelRoundTrip(t *testing.T) {
 			result <- err
 			return
 		}
-		result <- endpoint.SendFrame(ctx, Frame{Type: FrameLaunchResponse, RequestID: frame.RequestID, LaunchOptions: &protocol.LaunchOptions{Projects: []protocol.Project{{Path: "/work/工程"}}}})
+		result <- endpoint.SendFrame(ctx, Frame{Type: FrameLaunchResponse, RequestID: frame.RequestID, LaunchOptions: &protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{{AdapterID: "a"}}}})
 	}()
 	options, err := s.RequestLaunchOptions(ctx, "e", protocol.LaunchQuery{AdapterID: "a"})
-	if err != nil || len(options.Projects) != 1 {
+	if err != nil || len(options.Handlers) != 1 {
 		t.Fatalf("%#v %v", options, err)
 	}
 	if err := <-result; err != nil {

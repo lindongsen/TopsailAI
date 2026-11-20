@@ -23,7 +23,7 @@ func (launchRequester) RequestOutput(context.Context, string, protocol.OutputSna
 
 // RequestLaunchOptions supplies a test handler response through the real HTTP/client boundary.
 func (launchRequester) RequestLaunchOptions(_ context.Context, endpoint string, query protocol.LaunchQuery) (protocol.LaunchOptions, error) {
-	return protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{{AdapterID: query.AdapterID, Revision: endpoint}}, Projects: []protocol.Project{{Name: "工程", Path: "/work/my app"}}}, nil
+	return protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{{AdapterID: query.AdapterID, Revision: endpoint}}}, nil
 }
 
 // TestLaunchHTTPClient verifies auth, method validation and encoded selectors.

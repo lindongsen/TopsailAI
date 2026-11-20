@@ -42,8 +42,13 @@ func (s *degradedGateStub) GetLaunchOptions(context.Context, string, string) (pr
 	s.launchCalls++
 	return protocol.LaunchOptions{
 		Handlers: []protocol.LaunchHandler{{AdapterID: "a", Revision: "v"}},
-		Projects: []protocol.Project{{Name: "project", Path: "/work/project"}},
 	}, nil
+}
+
+// GetProjectCatalog records that the project seam was requested.
+func (s *degradedGateStub) GetProjectCatalog(context.Context, string) (protocol.ProjectCatalog, error) {
+	s.launchCalls++
+	return protocol.ProjectCatalog{Projects: []protocol.Project{{ProjectID: "pr-1", Name: "project", Path: "/work/project"}}, ObservedAtMS: 1}, nil
 }
 
 // degradedExpiresAtMS is the deletion deadline the fixture reports. It is a fixed

@@ -24,6 +24,7 @@ type countingExecutor struct {
 	historyCalls  int
 	messagesCalls int
 	modelCalls    int
+	projectCalls  int
 	launchCalls   int
 }
 
@@ -54,6 +55,11 @@ func (e *countingExecutor) Messages(context.Context, protocol.MessagesQuery) (pr
 func (e *countingExecutor) ModelCatalog(context.Context, protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
 	e.modelCalls++
 	return protocol.ModelCatalog{}, nil
+}
+
+func (e *countingExecutor) ProjectCatalog(context.Context, protocol.ProjectCatalogQuery) (protocol.ProjectCatalog, error) {
+	e.projectCalls++
+	return protocol.ProjectCatalog{}, nil
 }
 
 func (e *countingExecutor) LaunchOptions(context.Context, protocol.LaunchQuery) (protocol.LaunchOptions, error) {
@@ -127,6 +133,8 @@ func readFrame(kind, token string) channel.Frame {
 		frame.HistoryQuery = &protocol.HistoryQuery{Limit: 10}
 	case channel.FrameMessagesRequest:
 		frame.MessagesQuery = &protocol.MessagesQuery{ProviderSessionID: "s1"}
+	case channel.FrameProjectCatalogRequest:
+		frame.ProjectCatalogQuery = &protocol.ProjectCatalogQuery{}
 	case channel.FrameModelCatalogRequest:
 		frame.ModelCatalogQuery = &protocol.ModelCatalogQuery{Target: protocol.CommandTarget{Kind: "session", ResourceID: "r1", ProviderGeneration: "g1"}}
 	case channel.FrameLaunchRequest:
@@ -136,8 +144,8 @@ func readFrame(kind, token string) channel.Frame {
 }
 
 // TestEveryReadOperationIsRefusedForAnUnlistedToken proves the enforcement point
-// exists on all six read paths. A single missing check would let one token read
-// provider detail that the policy never granted, so the six cases are enumerated
+// exists on every read path. A single missing check would let one token read
+// provider detail that the policy never granted, so the cases are enumerated
 // rather than sampled.
 func TestEveryReadOperationIsRefusedForAnUnlistedToken(t *testing.T) {
 	service, transport, executor := newPolicyService(t, "gd-dev", map[string]string{
@@ -155,6 +163,7 @@ func TestEveryReadOperationIsRefusedForAnUnlistedToken(t *testing.T) {
 		{"history.read", channel.FrameHistoryRequest, channel.FrameHistoryResponse, func() bool { return executor.historyCalls == 0 }},
 		{"messages.read", channel.FrameMessagesRequest, channel.FrameMessagesResponse, func() bool { return executor.messagesCalls == 0 }},
 		{"agent.model.list", channel.FrameModelCatalogRequest, channel.FrameModelCatalogResponse, func() bool { return executor.modelCalls == 0 }},
+		{"project.list", channel.FrameProjectCatalogRequest, channel.FrameProjectCatalogResponse, func() bool { return executor.projectCalls == 0 }},
 		{"launch.query", channel.FrameLaunchRequest, channel.FrameLaunchResponse, func() bool { return executor.launchCalls == 0 }},
 	}
 	for _, testCase := range cases {
@@ -171,6 +180,8 @@ func TestEveryReadOperationIsRefusedForAnUnlistedToken(t *testing.T) {
 				service.messagesFrame(ctx, frame)
 			case channel.FrameModelCatalogRequest:
 				service.modelCatalogFrame(ctx, frame)
+			case channel.FrameProjectCatalogRequest:
+				service.projectCatalogFrame(ctx, frame)
 			case channel.FrameLaunchRequest:
 				service.launchFrame(ctx, frame)
 			}
@@ -198,6 +209,8 @@ func refusalCode(t *testing.T, frame channel.Frame) string {
 		return frame.MessagesResult.ErrorCode
 	case frame.ModelCatalog != nil:
 		return frame.ModelCatalog.ErrorCode
+	case frame.ProjectCatalog != nil:
+		return frame.ProjectCatalog.ErrorCode
 	case frame.LaunchOptions != nil:
 		return frame.LaunchOptions.ErrorCode
 	}

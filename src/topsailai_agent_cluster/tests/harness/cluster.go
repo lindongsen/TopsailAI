@@ -449,6 +449,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		{"name": "workspace.clean", "version": "v1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
 		{"name": "command.exec", "version": "1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
 		{"name": "agent.model.select", "version": "1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
+		{"name": "project.list", "version": "v1", "target_kinds": []string{"endpoint"}, "safety_class": "read_only", "required_permission": "view"},
 	}
 	// A configured control action is advertised as a ctl. capability, because the
 	// catalog is the only source of ctl. actions and the adapter intersects the

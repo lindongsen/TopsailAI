@@ -436,14 +436,15 @@ checked today.
 | `output.read` | `read_output` | `internal/endpoint/service.go` `outputFrame` | `service.go:680` |
 | `output.follow` | `read_output` | `internal/endpoint/follow.go` `startFollow` | `follow.go:41` |
 | `agent.model.list` | `view` | `internal/endpoint/model.go` `modelCatalogFrame` | `model.go:48` |
+| `project.list` | `view` | `internal/endpoint/project.go` `projectCatalogFrame` | `project.go:59` |
 | `launch.query` | `view` | `internal/endpoint/launch.go` `launchFrame` | `launch.go:74` |
 | `history.read` | `view` | `internal/endpoint/history.go` `historyFrame` | `history.go:45` |
 | `messages.read` | `view` | `internal/endpoint/messages.go` `messagesFrame` | `messages.go:46` |
 | `metrics.read` | `view` | `internal/endpoint/metrics.go` `metricsFrame` and `metricsBatchFrame` | `metrics.go:98`, `:194` |
 | `detail.read` | `view` | `internal/endpoint/metrics.go` `detailFrame` | `metrics.go:129` |
 
-`agent.model.list` already has an operation constant
-(`internal/protocol/capabilities.go`), but it is served by its own frame
+`agent.model.list` and `project.list` already have operation constants
+(`internal/protocol/capabilities.go`), but each is served by its own frame
 (`channel.FrameModelCatalogRequest`) rather than as an immutable intent, so it never reaches
 `PolicyHook`. The policy therefore checks it at the frame handler.
 

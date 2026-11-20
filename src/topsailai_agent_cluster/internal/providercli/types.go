@@ -53,6 +53,8 @@ const (
 	ResourceLaunchProfile = protocol.ResourceLaunchProfile
 	// ResourceModelProfile identifies a provider model preset.
 	ResourceModelProfile = protocol.ResourceModelProfile
+	// ResourceProject identifies a provider-managed project registry entry.
+	ResourceProject = protocol.ResourceProject
 )
 
 const (
@@ -62,6 +64,8 @@ const (
 	QueryHistoryMessages = "history.messages"
 	// QueryModelCatalog reads selectable model profiles.
 	QueryModelCatalog = "model.catalog"
+	// QueryProjectCatalog reads managed project registry entries.
+	QueryProjectCatalog = "project.catalog"
 	// QuerySessionMessages reads the current provider session messages.
 	QuerySessionMessages = "session.messages"
 	// QuerySessionMetrics reads one session's current message counts.

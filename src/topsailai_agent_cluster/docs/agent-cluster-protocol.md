@@ -380,11 +380,11 @@ an Endpoint with no entry in its map refuses locally and reports a configuration
 sending a request without a credential, because an Endpoint refusal would describe the symptom and
 hide the cause.
 
-Eight frame-level reads are served by their own frame type instead of an immutable
+Nine frame-level reads are served by their own frame type instead of an immutable
 intent, so they never reach the policy hook and the Endpoint checks each one at its
-frame handler: `output.read`, `output.follow`, `agent.model.list`, `launch.query`,
-`history.read`, `messages.read`, `metrics.read` and `detail.read`. All eight are
-checked today. `agent.model.list`, `metrics.read` and `detail.read` have operation
+frame handler: `output.read`, `output.follow`, `agent.model.list`, `project.list`, `launch.query`,
+`history.read`, `messages.read`, `metrics.read` and `detail.read`. All nine are
+checked today. `agent.model.list`, `project.list`, `metrics.read` and `detail.read` have operation
 constants; the other five are policy identifiers rather than protocol operations,
 because those frames carry no operation constant. None of the eight appears as an
 operation field on the wire. Inventory publication, heartbeat, command receipt
@@ -718,13 +718,14 @@ not a compatibility model to preserve in the Provider CLI contract.
 ### Query framing
 
 `query` is the single framing function for provider-neutral read surfaces. Its names and schemas form
-a closed, versioned Cluster registry. Seven queries are registered, all at version `v1`:
+a closed, versioned Cluster registry. Eight queries are registered, all at version `v1`:
 
 | Query | Addresses | Target required | Session set in payload |
 |---|---|---|---|
 | `launch.options` | a launch profile | no | no |
 | `history.messages` | a session | no | no |
 | `model.catalog` | a session | yes | no |
+| `project.catalog` | an Endpoint project registry | no | no |
 | `session.messages` | a session | yes | no |
 | `session.metrics` | a session | yes | no |
 | `session.metrics.batch` | a set of sessions | no | yes |
@@ -743,6 +744,11 @@ read as a Provider defect rather than as a gap in the test.
 A session-addressed query targets the Provider's own session identifier, not a Cluster resource ID,
 because a session with no live process has no Cluster resource ID and these reads exist precisely for
 such a session.
+
+`project.catalog` is the standard Project seam. A Provider returns bounded project observations with a
+stable Provider-private key, name and path. The Endpoint maps `(adapter_id, project,
+provider_resource_key)` to an opaque Cluster `project_id`; the Server and CLI see only that standard
+identity. `launch.options` returns launch profiles only and never carries projects.
 
 ### A read carries the exact-target evidence the caller already holds
 
@@ -1356,9 +1362,9 @@ No Session event history, durable message broker or notification outbox is requi
 
 ## Implemented adapter project launch query
 
-`GET /api/v1/launch-options?endpoint_id=ID` returns the live start-capable adapter handler catalog. Adding `adapter_id=ID` queries that handler's managed projects. This authenticated read-only API forwards through the existing endpoint channel, binds the response to the exact connection generation and request ID, and waits at most 10 seconds. At most 64 launch queries may be pending. Responses use the existing API envelope; `data` contains `handlers` (adapter_id, display_name, revision), `projects` (name, path) and optional error_code. A failed project query is not an empty successful list. The UI permits manual folder input on project-list failure, while execution still revalidates the adapter revision.
+`GET /api/v1/launch-options?endpoint_id=ID` returns the live start-capable launch-profile catalog. `GET /api/v1/project-catalog?endpoint_id=ID` independently returns the managed projects. Both authenticated read-only APIs forward through the existing Endpoint channel, bind the response to the exact connection generation and request ID, and use bounded pending-request sets. Launch data contains `handlers`; project data contains opaque Cluster `project_id` values plus names and paths. A failed project query is not an empty successful list.
 
-Interactive `start [endpoint]` queries the live catalog, auto-selects a sole handler, then asks for a project number or literal folder and a literal initial task. Empty input or cancel aborts before submission. Answers do not enter command history. The existing explicit profile syntax is retained for compatibility. No extra static profile configuration is needed: the legacy launch_profile_id identifies the selected configured adapter and profile_revision carries that launch profile's own revision, which is the provider-declared profile revision returned by `LaunchProfile` (`internal/adapter/genericcli/adapter.go:417`) and revalidated before execution (`internal/endpoint/executor.go:168`). It is not the capability revision. Inventory adapter summaries are not execution authority.
+Interactive `start [endpoint]` composes the two standard seams: it auto-selects a sole launch profile, then reads `project.catalog` and asks for a project number or literal folder and a literal initial task. Empty input or cancel aborts before submission. Answers do not enter command history. The existing explicit profile syntax is retained. `profile_revision` carries the Provider-declared launch-profile revision and is revalidated before execution; it is not the capability revision. Inventory adapter summaries are not execution authority.
 
 The TopsailAI handler invokes `project list --json`, never scans project folders or edits project registration/settings. Project responses are rejected above 1000 records or 256 KiB after provider capture; the existing provider runner captures stdout before this check, so this is not a subprocess-memory bound. Tasks are carried in the immutable start payload as `task`, validated as nonblank UTF-8 without NUL and at most 8192 bytes, and forwarded as one literal argv value. The interactive wizard accepts one input line; JSON payload callers may provide multiline tasks. Background submission is not readiness or task completion. Provider-side argv handling and real model availability remain separate integration prerequisites.
 

@@ -343,6 +343,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return err
 		}
 		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.OutputColorPolicy(output))
+	case "project":
+		if flags.NArg() != 2 {
+			return fmt.Errorf("usage: project <endpoint-id-or-hostname>")
+		}
+		return project(ctx, api, output, errors, flags.Arg(1), *jsonMode, tui.OutputColorPolicy(output))
 	case "history":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: history <endpoint-id-or-hostname> [--limit N]")
@@ -910,6 +915,13 @@ func parseEndpointsArgs(args []string, flagFilter string) (string, error) {
 
 func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 	return tui.CommandRunner{API: api, Policy: tui.LegacyPolicy}
+}
+
+// project renders one Endpoint's managed project catalog.
+func project(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target string, jsonMode bool, color tui.ColorPolicy) error {
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).Projects(ctx, output, errors, target, jsonMode, options)
 }
 
 // history renders bounded provider session history for one endpoint.

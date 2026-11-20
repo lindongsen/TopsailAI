@@ -5,8 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "profile",
-    "projects"
+    "profile"
   ],
   "properties": {
     "profile": {
@@ -39,28 +38,6 @@
           "minLength": 1,
           "maxLength": 256,
           "pattern": "^\\S(?:.*\\S)?$"
-        }
-      }
-    },
-    "projects": {
-      "type": "array",
-      "maxItems": 1000,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "path"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "path": {
-            "type": "string",
-            "minLength": 1
-          }
         }
       }
     }

@@ -9,6 +9,16 @@ Feature: non-interactive TUI
     When the TUI show command is run for the fixture session
     Then the TUI show JSON contains the session and capability list
 
+  Scenario: non-interactive project returns the managed project catalog
+    Given a real cluster with a healthy provider for the TUI
+    When the TUI project JSON command is run for the fixture endpoint
+    Then the TUI project JSON contains an opaque project identity and path
+
+  Scenario: interactive project renders numbered managed projects
+    Given a real cluster with a healthy provider for the TUI
+    When the interactive project command is run for the fixture endpoint
+    Then the interactive project table contains the number, name, identity, and path
+
   Scenario: unsupported TUI action is rejected without provider invocation
     Given a real cluster with a healthy provider for the TUI
     When the TUI unsupported action is run with confirmation

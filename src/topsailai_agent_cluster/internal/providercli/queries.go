@@ -10,6 +10,7 @@ var standardQueries = []StandardQuery{
 	{Name: QueryLaunchOptions, Version: "v1"},
 	{Name: QueryHistoryMessages, Version: "v1"},
 	{Name: QueryModelCatalog, Version: "v1"},
+	{Name: QueryProjectCatalog, Version: "v1"},
 	{Name: QuerySessionMessages, Version: "v1"},
 	{Name: QuerySessionMetrics, Version: "v1"},
 	{Name: QuerySessionMetricsBatch, Version: "v1"},

@@ -43,7 +43,7 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 	// command budget would expire while the operator is still reading the list and
 	// would abort the REPL instead of the prompt. The bounded budget starts after
 	// the endpoint is known, because only the provider read is command work.
-	endpointID, err := historyEndpointID(parent, api, state, strings.TrimSpace(rest), lines, out, trustedOut, color)
+	endpointID, err := liveReadEndpointID(parent, api, state, "history", strings.TrimSpace(rest), lines, out, trustedOut, color)
 	if err != nil {
 		return err
 	}
@@ -113,10 +113,10 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 // mandatory. Both scopes resolve through the same resolver the standalone command
 // uses, so connectivity is validated on both paths: an endpoint that was online
 // when it was entered can disconnect before the query is dispatched.
-func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interactiveState, target string, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
+func liveReadEndpointID(ctx context.Context, api InteractiveAPI, state *interactiveState, command, target string, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
 	if state.Scope.Kind == ScopeEndpoint {
 		if target != "" && target != state.Scope.EndpointID {
-			return "", fmt.Errorf("history %q does not match the current endpoint %q; run cd .. to query another endpoint", target, state.Scope.EndpointID)
+			return "", fmt.Errorf("%s %q does not match the current endpoint %q; run cd .. to query another endpoint", command, target, state.Scope.EndpointID)
 		}
 		target = state.Scope.EndpointID
 	}
@@ -125,7 +125,7 @@ func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interacti
 	// endpoints, because a history query is a live provider read forwarded through
 	// the endpoint channel and a disconnected machine can only fail.
 	if target == "" && state.Scope.Kind == ScopeWorkspace {
-		chosen, err := promptHistoryEndpoint(ctx, api, lines, out, trustedOut, color)
+		chosen, err := promptLiveReadEndpoint(ctx, api, command, lines, out, trustedOut, color)
 		if err != nil {
 			return "", err
 		}
@@ -155,7 +155,7 @@ func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interacti
 // as "nothing to do" rather than as an error: cancelling a prompt is a decision,
 // not a failure. A failed inventory read is reported as an error, because without
 // the records there is nothing to choose from and the operator must be told why.
-func promptHistoryEndpoint(ctx context.Context, api InteractiveAPI, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
+func promptLiveReadEndpoint(ctx context.Context, api InteractiveAPI, command string, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
 	queryCtx, cancel := commandContext(ctx)
 	reported, err := api.ListEndpoints(queryCtx)
 	cancel()
@@ -165,9 +165,9 @@ func promptHistoryEndpoint(ctx context.Context, api InteractiveAPI, lines <-chan
 	endpoints := selectableEndpoints(reported)
 	if len(endpoints) == 0 {
 		if len(reported) == 0 {
-			return "", fmt.Errorf("no endpoint is registered; register an endpoint before reading history")
+			return "", fmt.Errorf("no endpoint is registered; register an endpoint before reading %s", command)
 		}
-		return "", fmt.Errorf("no endpoint is online; %d registered endpoint(s) are offline or degraded, so history cannot be read", len(reported))
+		return "", fmt.Errorf("no endpoint is online; %d registered endpoint(s) are offline or degraded, so %s cannot be read", len(reported), command)
 	}
 	for index, endpoint := range endpoints {
 		if _, err := fmt.Fprintf(out, "%d. %s\n", index+1, launchEndpointRowLabel(endpoint)); err != nil {

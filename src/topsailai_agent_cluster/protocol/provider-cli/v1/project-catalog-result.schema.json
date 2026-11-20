@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/project-catalog-result.schema.json",
+  "title": "project-catalog-result query_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["projects", "observed_at_ms", "truncated"],
+  "properties": {
+    "projects": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource_kind", "provider_resource_key", "name", "path"],
+        "properties": {
+          "resource_kind": {"const": "project"},
+          "provider_resource_key": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S(?:.*\\S)?$"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 256},
+          "path": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }
+      }
+    },
+    "observed_at_ms": {"type": "integer", "minimum": 1},
+    "truncated": {"type": "boolean"}
+  }
+}

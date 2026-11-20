@@ -65,8 +65,8 @@ All query payloads and results are closed objects. Unknown fields, extra JSON do
 matching schema allows omission; omission is not interchangeable with `null`.
 
 Provider-owned resource references carry both the required `resource_kind` and a non-empty stable
-`provider_resource_key`. `launch.options` uses `launch_profile`, `history.messages` uses `session`,
-and `model.catalog` uses `model_profile`; any other kind fails closed. The same provider business
+`provider_resource_key`. `launch.options` uses `launch_profile`, `project.catalog` uses `project`, `history.messages` uses
+`session`, and `model.catalog` uses `model_profile`; any other kind fails closed. The same provider business
 resource must retain the same key across repeated reads, provider restarts and every upgrade that
 claims identity compatibility. Duplicate keys in one result are invalid.
 
@@ -77,7 +77,7 @@ resulting opaque Cluster ID. A Provider cannot mint, copy or infer that ID.
 
 ### The closed query registry
 
-Seven queries are registered, all at version `v1`. The registry is closed: a Provider may advertise
+Eight queries are registered, all at version `v1`. The registry is closed: a Provider may advertise
 support for a registered query or return `unsupported`, but it cannot add a provider-namespaced
 query. `internal/providercli/queries.go` is the single source of truth, and the conformance suite
 reads the same registry so a newly registered query cannot be exercised with a request that breaks
@@ -88,6 +88,7 @@ its own rule.
 | `launch.options` | a launch profile | no | no |
 | `history.messages` | a session | no | no |
 | `model.catalog` | a model profile | yes | no |
+| `project.catalog` | an Endpoint project registry | no | no |
 | `session.messages` | a session | yes | no |
 | `session.metrics` | a session | yes | no |
 | `session.metrics.batch` | a set of sessions | no | yes |

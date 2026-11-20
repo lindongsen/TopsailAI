@@ -34,6 +34,9 @@ const (
 	// changes live agent behaviour, so it is advertised with SafetyClassMutating
 	// and needs the control scope.
 	OperationAgentModelSelect = "agent.model.select"
+	// OperationProjectList reads the managed project catalog on one Endpoint.
+	// It is a frame-level read and therefore never appears in an immutable intent.
+	OperationProjectList = "project.list"
 
 	// The five names below are policy identifiers for the frame-level read
 	// queries that travel as their own frame type rather than as an immutable

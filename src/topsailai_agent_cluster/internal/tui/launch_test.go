@@ -16,17 +16,19 @@ type launchStub struct {
 	calls int
 }
 
-// GetLaunchOptions supplies a live handler separate from inventory summaries.
-func (s *launchStub) GetLaunchOptions(_ context.Context, endpoint, adapterID string) (protocol.LaunchOptions, error) {
+// GetLaunchOptions supplies one live handler separate from project data.
+func (s *launchStub) GetLaunchOptions(_ context.Context, _ string, _ string) (protocol.LaunchOptions, error) {
 	s.calls++
-	if s.calls == 2 && adapterID != "adapter-route" {
-		return protocol.LaunchOptions{}, errors.New("project query did not use adapter ID")
+	return protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{{AdapterID: "adapter-route", LaunchProfileID: "profile-opaque", Revision: "v"}}}, nil
+}
+
+// GetProjectCatalog supplies the only project-list seam.
+func (s *launchStub) GetProjectCatalog(context.Context, string) (protocol.ProjectCatalog, error) {
+	s.calls++
+	if s.fail {
+		return protocol.ProjectCatalog{}, errors.New("offline")
 	}
-	result := protocol.LaunchOptions{Handlers: []protocol.LaunchHandler{{AdapterID: "adapter-route", LaunchProfileID: "profile-opaque", Revision: "v"}}, Projects: []protocol.Project{{Name: "工程", Path: "/work/my app"}}}
-	if adapterID != "" && s.fail {
-		return protocol.LaunchOptions{}, errors.New("offline")
-	}
-	return result, nil
+	return protocol.ProjectCatalog{Projects: []protocol.Project{{ProjectID: "pr-1", Name: "工程", Path: "/work/my app"}}, ObservedAtMS: 1}, nil
 }
 
 // TestProjectLaunchWizard verifies selected/manual paths, fallback and cancellation.
@@ -91,6 +93,11 @@ func (f launchQueryFunc) GetLaunchOptions(ctx context.Context, e, a string) (pro
 	return f(ctx, e, a)
 }
 
+// GetProjectCatalog supplies one deterministic catalog for launch error scenarios.
+func (f launchQueryFunc) GetProjectCatalog(context.Context, string) (protocol.ProjectCatalog, error) {
+	return protocol.ProjectCatalog{Projects: []protocol.Project{{ProjectID: "pr-1", Path: "/work/one"}}, ObservedAtMS: 1}, nil
+}
+
 // TestProjectLaunchErrors covers catalog, selection and task validation boundaries.
 func TestProjectLaunchErrors(t *testing.T) {
 	for _, item := range []struct {
@@ -118,7 +125,7 @@ func TestProjectLaunchErrors(t *testing.T) {
 				if a != "" {
 					handlers = []protocol.LaunchHandler{{AdapterID: a, Revision: "v"}}
 				}
-				return protocol.LaunchOptions{Handlers: handlers, ErrorCode: item.code, Projects: []protocol.Project{{Path: "/work/one"}}}, nil
+				return protocol.LaunchOptions{Handlers: handlers, ErrorCode: item.code}, nil
 			})
 			lines, done, stop := startInputReader(strings.NewReader(item.input), 8192)
 			err := projectLaunch(context.Background(), stub, query, &interactiveState{}, "endpoint-1", lines, io.Discard, io.Discard, InteractiveOptions{})

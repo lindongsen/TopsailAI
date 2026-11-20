@@ -37,6 +37,7 @@ var operationScenarioMarkers = map[string]string{
 	protocolOperationAgentDriveStart:    "the agent drive start command is submitted",
 	protocolOperationAgentDriveStop:     "the agent drive stop command is submitted",
 	protocolOperationAgentModelList:     "the model catalog is read with the",
+	protocolOperationProjectList:        "the project catalog is read with the",
 	protocolOperationAgentModelSelect:   "the agent model select command is submitted",
 	protocolOperationOutputRead:         "the output snapshot is read with the",
 	protocolOperationOutputFollow:       "the output follow is read with the",
@@ -64,6 +65,7 @@ const (
 	protocolOperationAgentDriveStart    = protocol.OperationAgentDriveStart
 	protocolOperationAgentDriveStop     = protocol.OperationAgentDriveStop
 	protocolOperationAgentModelList     = protocol.OperationAgentModelList
+	protocolOperationProjectList        = protocol.OperationProjectList
 	protocolOperationAgentModelSelect   = protocol.OperationAgentModelSelect
 	protocolOperationOutputRead         = protocol.OperationOutputRead
 	protocolOperationOutputFollow       = protocol.OperationOutputFollow

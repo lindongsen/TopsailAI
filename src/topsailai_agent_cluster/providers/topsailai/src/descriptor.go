@@ -33,6 +33,7 @@ func topsailaiDescriptor(control controlCatalog, platform platformCapabilities) 
 			{Name: queryLaunchOptions, Version: queryVersion},
 			{Name: queryHistoryMessages, Version: queryVersion},
 			{Name: queryModelCatalog, Version: queryVersion},
+			{Name: queryProjectCatalog, Version: queryVersion},
 			{Name: querySessionMessages, Version: queryVersion},
 			{Name: querySessionMetrics, Version: queryVersion},
 			{Name: querySessionMetricsBatch, Version: queryVersion},

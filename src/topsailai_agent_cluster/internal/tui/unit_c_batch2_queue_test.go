@@ -247,6 +247,7 @@ func unitC19MainHelp() string {
 		"  refresh [endpoint] [-a|--all]         refresh inventories\n" +
 		unitC19WatchHelpLine() +
 		"  history [endpoint]                    read provider session history for one endpoint and number its rows\n" +
+		"  project [endpoint]                    list managed projects for one endpoint\n" +
 		"  messages [-c N] [-t N] [session]      read one session's conversation by row number or session ID\n" +
 		"  model [session] [profile]             list the model profiles one session can select, by row number or session ID\n" +
 		"  help [command]                        show help\n" +

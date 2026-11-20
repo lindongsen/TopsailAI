@@ -23,9 +23,9 @@ import (
 // while proving nothing about authorization.
 func registerEndpointQueryPermissionSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a real cluster whose endpoint policy separates view from read output$`, startQueryMatrixCluster)
-	ctx.Step(`^the (model catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) is read with the (view|read output) credential$`, performQueryRead)
-	ctx.Step(`^the (model catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is allowed and reaches the provider$`, assertQueryAllowed)
-	ctx.Step(`^the (model catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is refused with policy denied and exposes nothing$`, assertQueryRefused)
+	ctx.Step(`^the (model catalog|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) is read with the (view|read output) credential$`, performQueryRead)
+	ctx.Step(`^the (model catalog|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is allowed and reaches the provider$`, assertQueryAllowed)
+	ctx.Step(`^the (model catalog|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is refused with policy denied and exposes nothing$`, assertQueryRefused)
 }
 
 // queryModelCatalogOperation is the provider operation name the mock records for
@@ -33,7 +33,10 @@ func registerEndpointQueryPermissionSteps(ctx *godog.ScenarioContext) {
 // below: the display name is what a scenario says, while this is what the provider
 // writes into its invocation record, and conflating the two made the count read
 // zero while the provider had in fact been invoked.
-const queryModelCatalogOperation = "model.catalog"
+const (
+	queryModelCatalogOperation   = "model.catalog"
+	queryProjectCatalogOperation = "project.catalog"
+)
 
 // querySessionMetricsOperation and querySessionDetailOperation are the provider
 // query names the mock records for the two new reads. They are the wire names,
@@ -45,9 +48,10 @@ const (
 	querySessionDetailOperation  = "session.detail"
 )
 
-// The eight read operations under test, named as the feature file names them.
+// The read operations under test, named as the feature file names them.
 const (
 	queryModelCatalog   = "model catalog"
+	queryProjectCatalog = "project catalog"
 	queryLaunchOptions  = "launch options"
 	queryHistory        = "history"
 	queryMessages       = "messages"
@@ -109,7 +113,7 @@ type queryReadOutcome struct {
 	// rather than one formatted string so an assertion can prove the two
 	// positions were not swapped. A formatted "7/3" would pass even if the
 	// adapter had written the counts in the wrong order.
-	inbound int
+	inbound  int
 	outbound int
 	// providerMetadata is the provider session record the detail read returned.
 	// It is kept verbatim so an assertion can prove the document was forwarded
@@ -208,6 +212,12 @@ func performQueryRead(operation, credential string) error {
 		outcome.err = err
 		outcome.errorCode = result.ErrorCode
 		outcome.payloadSize = len(result.Profiles)
+		outcome.observedAtMS = result.ObservedAtMS
+	case queryProjectCatalog:
+		result, err := api.GetProjectCatalog(ctx, scopedEndpointID)
+		outcome.err = err
+		outcome.errorCode = result.ErrorCode
+		outcome.payloadSize = len(result.Projects)
 		outcome.observedAtMS = result.ObservedAtMS
 	case queryLaunchOptions:
 		result, err := api.GetLaunchOptions(ctx, scopedEndpointID, "")
@@ -330,6 +340,20 @@ func assertQueryAllowed(operation string) error {
 		}
 		if count != 1 {
 			return fmt.Errorf("the provider received %d model catalog invocations, want exactly one", count)
+		}
+	case queryProjectCatalog:
+		if outcome.payloadSize == 0 {
+			return fmt.Errorf("allowed project catalog read returned no projects")
+		}
+		if outcome.observedAtMS == 0 {
+			return fmt.Errorf("allowed project catalog read carried no observation time, so the adapter did not answer")
+		}
+		count, err := queryMatrixInvocations(queryProjectCatalogOperation)
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("the provider received %d project catalog invocations, want exactly one", count)
 		}
 	case queryLaunchOptions:
 		if outcome.payloadSize == 0 {

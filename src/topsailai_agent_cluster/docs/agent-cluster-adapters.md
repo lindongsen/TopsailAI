@@ -169,7 +169,7 @@ translates every call into one Provider CLI process invocation. Provider CLIs im
 protocol, not the Endpoint's Go interface.
 
 `query` is one read-only framing function. Query names and their request/result schemas are a closed
-Cluster registry. A provider may support `launch.options`, `history.messages`, `model.catalog` or
+Cluster registry. A provider may support `launch.options`, `project.catalog`, `history.messages`, `model.catalog` or
 `session.messages`, but it may not add an arbitrary provider-namespaced query. Mutations use `execute`;
 approved provider-specific actions use `ctl.<action>`.
 
@@ -178,6 +178,15 @@ Lines with a start frame, zero or more records and one terminal frame. A provide
 banner, progress text or log line to stdout, because one non-protocol byte makes the response invalid.
 The schemas and examples live in `docs/agent-cluster-protocol.md`; prose and conformance tests change
 together.
+
+### Project catalog mapping
+
+`project.catalog` is the only Provider query used by the Cluster `project` command and the interactive
+start wizard. For TopsailAI it invokes `topsailai project list --json` and returns each registered
+project as a Provider observation. The Provider key is a stable digest of the project path, so a
+display-name change does not mint a new Cluster identity. The Endpoint maps that key to an opaque
+`project_id`; no TopsailAI row number, command spelling or registry-file detail enters the Cluster
+contract. `launch.options` returns launch profiles only.
 
 ### Identity and result translation
 

@@ -20,6 +20,7 @@ var resourceKindValues = map[string]string{
 	"ResourceTask":          protocol.ResourceTask,
 	"ResourceLaunchProfile": protocol.ResourceLaunchProfile,
 	"ResourceModelProfile":  protocol.ResourceModelProfile,
+	"ResourceProject":       protocol.ResourceProject,
 }
 
 // declaredResourceKinds reads the IsResourceKind switch and returns the constant

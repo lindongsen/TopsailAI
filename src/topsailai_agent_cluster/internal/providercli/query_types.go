@@ -9,10 +9,8 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
-// LaunchOptionsPayload selects whether launch projects are included with the profile facts.
-type LaunchOptionsPayload struct {
-	IncludeProjects bool `json:"include_projects"`
-}
+// LaunchOptionsPayload is the closed payload of a launch-profile read.
+type LaunchOptionsPayload struct{}
 
 // LaunchProfileFact is one provider-private launch profile before Endpoint mapping.
 type LaunchProfileFact struct {
@@ -22,16 +20,9 @@ type LaunchProfileFact struct {
 	Revision            string `json:"revision"`
 }
 
-// LaunchProjectFact is one provider-managed project directory.
-type LaunchProjectFact struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-}
-
-// LaunchOptionsResult carries one Adapter instance's launch profile and optional projects.
+// LaunchOptionsResult carries one Adapter instance's launch profile.
 type LaunchOptionsResult struct {
-	Profile  LaunchProfileFact   `json:"profile"`
-	Projects []LaunchProjectFact `json:"projects"`
+	Profile LaunchProfileFact `json:"profile"`
 }
 
 // HistoryMessagesPayload bounds one provider history read.
@@ -81,6 +72,24 @@ type ModelCatalogResult struct {
 	CurrentProviderResourceKey string             `json:"current_provider_resource_key,omitempty"`
 	ObservedAtMS               int64              `json:"observed_at_ms"`
 	Truncated                  bool               `json:"truncated"`
+}
+
+// ProjectCatalogPayload is the closed payload of an Endpoint-scoped project read.
+type ProjectCatalogPayload struct{}
+
+// ProjectFact is one provider-private project before Endpoint mapping.
+type ProjectFact struct {
+	ResourceKind        string `json:"resource_kind"`
+	ProviderResourceKey string `json:"provider_resource_key"`
+	Name                string `json:"name"`
+	Path                string `json:"path"`
+}
+
+// ProjectCatalogResult carries one bounded provider project observation.
+type ProjectCatalogResult struct {
+	Projects     []ProjectFact `json:"projects"`
+	ObservedAtMS int64         `json:"observed_at_ms"`
+	Truncated    bool          `json:"truncated"`
 }
 
 // SessionMessagesPayload bounds one provider conversation read.
@@ -198,6 +207,12 @@ func DecodeQueryPayload(query NamedContract, target *Target, payload json.RawMes
 			return nil, err
 		}
 		return value, nil
+	case QueryProjectCatalog:
+		var value ProjectCatalogPayload
+		if err := decodeStrict(payload, &value); err != nil {
+			return nil, err
+		}
+		return value, nil
 	case QuerySessionMessages:
 		var value SessionMessagesPayload
 		if err := decodeStrict(payload, &value); err != nil {
@@ -292,6 +307,12 @@ func DecodeQueryResult(query NamedContract, data json.RawMessage, maxDetailBytes
 			return nil, err
 		}
 		return value, value.validate()
+	case QueryProjectCatalog:
+		var value ProjectCatalogResult
+		if err := decodeStrict(data, &value); err != nil {
+			return nil, err
+		}
+		return value, value.validate()
 	case QuerySessionMessages:
 		var value SessionMessagesResult
 		if err := decodeStrict(data, &value); err != nil {
@@ -350,17 +371,6 @@ func (r LaunchOptionsResult) validate() error {
 	if err := validateIdentifier("launch profile revision", r.Profile.Revision, true); err != nil {
 		return err
 	}
-	if r.Projects == nil {
-		return errors.New("launch projects are required")
-	}
-	if len(r.Projects) > protocol.MaxProjects {
-		return fmt.Errorf("launch projects exceed %d", protocol.MaxProjects)
-	}
-	for _, project := range r.Projects {
-		if project.Name == "" || project.Path == "" {
-			return errors.New("launch project name and path are required")
-		}
-	}
 	return nil
 }
 
@@ -413,6 +423,32 @@ func (r ModelCatalogResult) validate() error {
 	if r.CurrentProviderResourceKey != "" {
 		if _, ok := seen[r.CurrentProviderResourceKey]; !ok {
 			return errors.New("current_provider_resource_key is not in profiles")
+		}
+	}
+	return nil
+}
+
+func (r ProjectCatalogResult) validate() error {
+	if r.Projects == nil {
+		return errors.New("projects are required")
+	}
+	if len(r.Projects) > protocol.MaxProjects || r.ObservedAtMS < 1 {
+		return errors.New("project catalog exceeds bounds or has invalid observation time")
+	}
+	seen := make(map[string]struct{}, len(r.Projects))
+	for _, project := range r.Projects {
+		if err := validateTypedProviderKey(project.ResourceKind, ResourceProject, project.ProviderResourceKey); err != nil {
+			return err
+		}
+		if _, ok := seen[project.ProviderResourceKey]; ok {
+			return fmt.Errorf("duplicate project provider_resource_key %q", project.ProviderResourceKey)
+		}
+		seen[project.ProviderResourceKey] = struct{}{}
+		if project.Name == "" || project.Path == "" {
+			return errors.New("project name and path are required")
+		}
+		if err := protocol.ValidateFolder(project.Path); err != nil {
+			return fmt.Errorf("project %q path is invalid: %w", project.Name, err)
 		}
 	}
 	return nil

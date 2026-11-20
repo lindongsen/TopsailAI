@@ -14,6 +14,7 @@ import (
 // LaunchQuerier retrieves live adapter-owned launch choices without inventory authority.
 type LaunchQuerier interface {
 	GetLaunchOptions(context.Context, string, string) (protocol.LaunchOptions, error)
+	GetProjectCatalog(context.Context, string) (protocol.ProjectCatalog, error)
 }
 
 // launchAnswerOutcome classifies one project-launch prompt answer.
@@ -305,16 +306,13 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 		selected = handler
 	}
 	queryCtx, cancel = commandContext(ctx)
-	projects, queryErr := query.GetLaunchOptions(queryCtx, endpointID, selected.AdapterID)
+	projects, queryErr := query.GetProjectCatalog(queryCtx, endpointID)
 	cancel()
 	if queryErr != nil || projects.ErrorCode != "" {
 		if _, err := fmt.Fprintln(out, "Project list unavailable; enter a folder manually."); err != nil {
 			return err
 		}
 	} else {
-		if len(projects.Handlers) != 1 || projects.Handlers[0].AdapterID != selected.AdapterID || launchProfileID(projects.Handlers[0]) != launchProfileID(selected) || projects.Handlers[0].Revision != selected.Revision {
-			return fmt.Errorf("launch handler changed; start again")
-		}
 		for index, project := range projects.Projects {
 			if _, err := fmt.Fprintf(out, "%d. %s\n", index+1, launchProjectRowLabel(project)); err != nil {
 				return err

@@ -180,6 +180,7 @@ func TestShippedAdapterExampleAdvertisesEveryControlAction(t *testing.T) {
 		protocol.OperationAgentDriveStop,
 		protocol.OperationWorkspaceClean,
 		protocol.OperationAgentModelSelect,
+		protocol.OperationProjectList,
 		protocol.OperationCommandExec,
 	} {
 		if _, ok := declared[name]; !ok {

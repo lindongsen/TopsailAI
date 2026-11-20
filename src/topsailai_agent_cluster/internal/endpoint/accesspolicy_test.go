@@ -18,6 +18,7 @@ var readOperations = []string{
 	protocol.OperationOutputRead,
 	protocol.OperationOutputFollow,
 	protocol.OperationAgentModelList,
+	protocol.OperationProjectList,
 	OperationLaunchQuery,
 	OperationHistoryRead,
 	OperationMessagesRead,

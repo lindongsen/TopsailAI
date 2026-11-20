@@ -126,7 +126,7 @@ func TestDiscoverEmitsBothDirectoryCandidates(t *testing.T) {
 	}
 }
 
-// TestLaunchOptionsRejectsAnUnsafeProjectPath proves the Provider applies the same
+// TestProjectCatalogRejectsAnUnsafeProjectPath proves the Provider applies the same
 // folder rule the Cluster applies.
 //
 // The Cluster refuses a folder with leading or trailing whitespace and a folder
@@ -134,7 +134,7 @@ func TestDiscoverEmitsBothDirectoryCandidates(t *testing.T) {
 // the Provider reported a project the Cluster would never accept. Each rejected
 // shape is asserted separately, because a single "it failed" check cannot tell which
 // rule fired.
-func TestLaunchOptionsRejectsAnUnsafeProjectPath(t *testing.T) {
+func TestProjectCatalogRejectsAnUnsafeProjectPath(t *testing.T) {
 	cases := map[string]string{
 		"leading whitespace":  `[{"name":"demo","path":" /work/demo"}]`,
 		"trailing whitespace": `[{"name":"demo","path":"/work/demo "}]`,
@@ -143,7 +143,7 @@ func TestLaunchOptionsRejectsAnUnsafeProjectPath(t *testing.T) {
 	for name, document := range cases {
 		t.Run(name, func(t *testing.T) {
 			r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(document)}}
-			response := fixedProvider(r).dispatch(context.Background(), queryRequest(queryLaunchOptions, nil, `{"include_projects":true}`))
+			response := fixedProvider(r).dispatch(context.Background(), queryRequest(queryProjectCatalog, nil, `{}`))
 			if response.OK || response.Error == nil {
 				t.Fatalf("an unsafe project path was accepted: %+v", response)
 			}
@@ -151,19 +151,45 @@ func TestLaunchOptionsRejectsAnUnsafeProjectPath(t *testing.T) {
 	}
 }
 
-// TestLaunchOptionsAcceptsAnOrdinaryProjectPath proves the rule is not a blanket
+// TestProjectCatalogAcceptsAnOrdinaryProjectPath proves the rule is not a blanket
 // refusal.
 //
 // Without this half, a validator that rejected every path would pass the rejection
 // test while making every project unlaunchable.
-func TestLaunchOptionsAcceptsAnOrdinaryProjectPath(t *testing.T) {
+func TestProjectCatalogAcceptsAnOrdinaryProjectPath(t *testing.T) {
 	r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(`[{"name":"demo","path":"/work/demo"}]`)}}
-	response := fixedProvider(r).dispatch(context.Background(), queryRequest(queryLaunchOptions, nil, `{"include_projects":true}`))
+	response := fixedProvider(r).dispatch(context.Background(), queryRequest(queryProjectCatalog, nil, `{}`))
 	if !response.OK || response.QueryResult == nil {
 		t.Fatalf("response=%+v", response)
 	}
 	if !strings.Contains(string(response.QueryResult), "/work/demo") {
 		t.Fatalf("query result = %s", response.QueryResult)
+	}
+}
+
+// TestProjectCatalogKeysAreStableByPath proves display-name changes do not
+// remint identity while different paths remain distinct.
+func TestProjectCatalogKeysAreStableByPath(t *testing.T) {
+	read := func(document string) projectCatalogResult {
+		t.Helper()
+		r := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(document)}}
+		response := fixedProvider(r).dispatch(context.Background(), queryRequest(queryProjectCatalog, nil, `{}`))
+		if !response.OK {
+			t.Fatalf("response=%+v", response)
+		}
+		var result projectCatalogResult
+		if err := json.Unmarshal(response.QueryResult, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	first := read(`[{"name":"old","path":"/work/demo"},{"name":"other","path":"/work/other"}]`)
+	renamed := read(`[{"name":"new","path":"/work/demo"}]`)
+	if first.Projects[0].ProviderResourceKey != renamed.Projects[0].ProviderResourceKey {
+		t.Fatalf("same path keys differ: %q %q", first.Projects[0].ProviderResourceKey, renamed.Projects[0].ProviderResourceKey)
+	}
+	if first.Projects[0].ProviderResourceKey == first.Projects[1].ProviderResourceKey {
+		t.Fatalf("different paths share key %q", first.Projects[0].ProviderResourceKey)
 	}
 }
 
@@ -191,7 +217,8 @@ func TestTypedQueriesReturnProviderFactsWithoutClusterIDs(t *testing.T) {
 		answers              map[string][]runnerAnswer
 		forbidden            string
 	}{
-		{name: "launch", query: queryLaunchOptions, payload: `{"include_projects":true}`, answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(`[{"name":"demo","path":"/work/demo"}]`)}, forbidden: "launch_profile_id"},
+		{name: "launch", query: queryLaunchOptions, payload: `{}`, answers: map[string][]runnerAnswer{}, forbidden: "launch_profile_id"},
+		{name: "project", query: queryProjectCatalog, payload: `{}`, answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(`[{"name":"demo","path":"/work/demo"}]`)}, forbidden: "project_id"},
 		{name: "history", query: queryHistoryMessages, payload: `{"limit":10}`, answers: map[string][]runnerAnswer{"project\x00list_sessions\x00--json": answer(`[{"session_id":"s-old","status":"Idle","task":"work"}]`)}, forbidden: "resource_id"},
 		{name: "models", query: queryModelCatalog, payload: `{}`, target: session, answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local": answer(`{"items":[{"session_id":"s-1","filename":"row","pid":77}]}`), "models\x00list\x00--json": answer(`[{"name":"fast","protocol":"openai-compatible"}]`), "session\x00info\x00s-1\x00--json": answer(`{"model_name":"fast"}`)}, forbidden: "model_profile_id"},
 		{name: "messages", query: querySessionMessages, payload: `{"max_chars":0,"max_tokens":0}`, target: &target{ResourceKind: resourceSession, ProviderResourceKey: "s-1"}, answers: map[string][]runnerAnswer{"session\x00info\x00s-1\x00--json": answer(`{}`), "session\x00history\x00s-1\x00--json": answer(`{"ok":true,"session_id":"s-1","message_count":1,"messages":[{"role":"user","content":"hello world","create_time":"2026-01-01T00:00:00Z"}]}`)}, forbidden: "cluster_session_id"},
@@ -268,7 +295,7 @@ func TestReadOutputPreservesAndAppliesBounds(t *testing.T) {
 
 func TestReadFunctionsFailClosedOnInvalidPayloadAndProviderFailure(t *testing.T) {
 	p := fixedProvider(&scriptedRunner{t: t, answers: map[string][]runnerAnswer{}})
-	response := p.dispatch(context.Background(), queryRequest(queryLaunchOptions, nil, `{"include_projects":false,"cluster_id":"bad"}`))
+	response := p.dispatch(context.Background(), queryRequest(queryLaunchOptions, nil, `{"cluster_id":"bad"}`))
 	if response.OK || response.Error == nil || response.Error.Code != "invalid_request" {
 		t.Fatalf("response=%+v", response)
 	}
@@ -337,7 +364,7 @@ func TestBusinessCLIJSONRejectsExtraDocument(t *testing.T) {
 }
 
 func TestTypedQueriesRejectWrongVersionKindAndUnknownField(t *testing.T) {
-	wrongVersion := queryRequest(queryLaunchOptions, nil, `{"include_projects":false}`)
+	wrongVersion := queryRequest(queryLaunchOptions, nil, `{}`)
 	wrongVersion.Query.Version = "v2"
 	wrongKind := queryRequest(queryModelCatalog, &target{ResourceKind: resourceModelProfile, ProviderResourceKey: "x"}, `{}`)
 	unknown := queryRequest(queryHistoryMessages, nil, `{"limit":0,"extra":true}`)
@@ -388,7 +415,7 @@ func TestReadResultsEncodeEmptyCollectionsAsArrays(t *testing.T) {
 		required string
 	}{
 		{name: "discovery", request: validRequest(functionDiscover), answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": answer(`{"items":[],"total":0}`)}, required: `"observations":[]`},
-		{name: "launch", request: queryRequest(queryLaunchOptions, nil, `{"include_projects":true}`), answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(`[]`)}, required: `"projects":[]`},
+		{name: "project", request: queryRequest(queryProjectCatalog, nil, `{}`), answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(`[]`)}, required: `"projects":[]`},
 		{name: "history", request: queryRequest(queryHistoryMessages, nil, `{"limit":0}`), answers: map[string][]runnerAnswer{"project\x00list_sessions\x00--json": answer(`[]`)}, required: `"rows":[]`},
 	}
 	for _, test := range tests {

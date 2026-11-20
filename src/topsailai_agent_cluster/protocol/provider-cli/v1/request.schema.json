@@ -469,6 +469,37 @@
           "query": {
             "properties": {
               "name": {
+                "const": "project.catalog"
+              },
+              "version": {
+                "const": "v1"
+              }
+            }
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "project-catalog-request.schema.json"
+          }
+        },
+        "not": {
+          "required": [
+            "target"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "query": {
+            "properties": {
+              "name": {
                 "const": "session.messages"
               },
               "version": {
@@ -780,6 +811,7 @@
             "launch.options",
             "history.messages",
             "model.catalog",
+            "project.catalog",
             "session.messages",
             "session.metrics",
             "session.metrics.batch",

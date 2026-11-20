@@ -360,7 +360,9 @@ func TestTypedQueriesMapProviderKeysWithoutPublishingThem(t *testing.T) {
 		result := json.RawMessage(`{}`)
 		switch request.Query.Name {
 		case providercli.QueryLaunchOptions:
-			result = json.RawMessage(`{"profile":{"resource_kind":"launch_profile","provider_resource_key":"provider-launch","display_name":"default","revision":"launch-r1"},"projects":[{"name":"work","path":"/work"}]}`)
+			result = json.RawMessage(`{"profile":{"resource_kind":"launch_profile","provider_resource_key":"provider-launch","display_name":"default","revision":"launch-r1"}}`)
+		case providercli.QueryProjectCatalog:
+			result = json.RawMessage(`{"projects":[{"resource_kind":"project","provider_resource_key":"provider-project","name":"work","path":"/work"}],"observed_at_ms":9,"truncated":false}`)
 		case providercli.QueryHistoryMessages:
 			result = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"provider-history","provider_session_id":"session-1","resumable":true}],"observed_at_ms":10,"truncated":false}`)
 		case providercli.QueryModelCatalog:
@@ -374,6 +376,10 @@ func TestTypedQueriesMapProviderKeysWithoutPublishingThem(t *testing.T) {
 	profile, err := binding.LaunchProfile(context.Background())
 	if err != nil || profile.AdapterID != "a" || profile.LaunchProfileID != "launch_profile-provider-launch" || profile.Revision != "launch-r1" {
 		t.Fatalf("launch profile = %+v, %v", profile, err)
+	}
+	projects, err := binding.ProjectCatalog(context.Background(), protocol.ProjectCatalogQuery{})
+	if err != nil || len(projects.Projects) != 1 || projects.Projects[0].ProjectID != "project-provider-project" || projects.Projects[0].Path != "/work" {
+		t.Fatalf("project catalog = %+v, %v", projects, err)
 	}
 	history, err := binding.History(context.Background(), protocol.HistoryQuery{Limit: 10})
 	if err != nil || len(history.Rows) != 1 || history.Rows[0].ResourceID != "session-provider-history" {

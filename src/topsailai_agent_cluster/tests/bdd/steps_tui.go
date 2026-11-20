@@ -17,6 +17,10 @@ func registerTUISteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the TUI list JSON contains the endpoint, adapter, session, generation, and state$`, assertTUIList)
 	ctx.Step(`^the TUI show command is run for the fixture session$`, runTUIShow)
 	ctx.Step(`^the TUI show JSON contains the session and capability list$`, assertTUIShow)
+	ctx.Step(`^the TUI project JSON command is run for the fixture endpoint$`, runTUIProjectJSON)
+	ctx.Step(`^the TUI project JSON contains an opaque project identity and path$`, assertTUIProjectJSON)
+	ctx.Step(`^the interactive project command is run for the fixture endpoint$`, runInteractiveTUIProject)
+	ctx.Step(`^the interactive project table contains the number, name, identity, and path$`, assertInteractiveTUIProject)
 	ctx.Step(`^the TUI unsupported action is run with confirmation$`, runUnsupportedTUIAction)
 	ctx.Step(`^the TUI action is rejected as unsupported$`, assertUnsupportedTUIAction)
 	ctx.Step(`^the TUI provider invocation count is zero$`, assertTUIProviderCountZero)
@@ -117,6 +121,63 @@ func assertTUIShow() error {
 	}
 	if _, ok := value["capabilities"]; !ok {
 		return fmt.Errorf("TUI show has no capabilities field")
+	}
+	return nil
+}
+
+func runTUIProjectJSON() error {
+	stdout, stderr, code, err := activeScenario.realCluster.RunTUI("--json", "project", "endpoint-1")
+	activeScenario.lastBody = []byte(stdout)
+	activeScenario.lastStatus = code
+	if err != nil && code == 0 {
+		return fmt.Errorf("run TUI project: %v; stderr=%s", err, stderr)
+	}
+	return nil
+}
+
+func assertTUIProjectJSON() error {
+	if activeScenario.lastStatus != 0 {
+		return fmt.Errorf("TUI project exit code=%d body=%s", activeScenario.lastStatus, activeScenario.lastBody)
+	}
+	var result struct {
+		Projects []struct {
+			ProjectID string `json:"project_id"`
+			Name      string `json:"name"`
+			Path      string `json:"path"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(activeScenario.lastBody, &result); err != nil {
+		return fmt.Errorf("decode TUI project JSON: %w", err)
+	}
+	if len(result.Projects) != 1 {
+		return fmt.Errorf("TUI project returned %d projects, want 1: %s", len(result.Projects), activeScenario.lastBody)
+	}
+	project := result.Projects[0]
+	if !strings.HasPrefix(project.ProjectID, "res_") || project.Name != "mock" || project.Path != "/work/mock" {
+		return fmt.Errorf("TUI project returned id=%q name=%q path=%q, want opaque ID, mock, /work/mock", project.ProjectID, project.Name, project.Path)
+	}
+	return nil
+}
+
+func runInteractiveTUIProject() error {
+	stdout, stderr, code, err := activeScenario.realCluster.RunTUIInteractive("project endpoint-1\nquit\n")
+	activeScenario.lastBody = []byte(stdout)
+	activeScenario.lastStatus = code
+	if err != nil && code == 0 {
+		return fmt.Errorf("run interactive project: %v; stderr=%s", err, stderr)
+	}
+	return nil
+}
+
+func assertInteractiveTUIProject() error {
+	if activeScenario.lastStatus != 0 {
+		return fmt.Errorf("interactive project exit code=%d body=%s", activeScenario.lastStatus, activeScenario.lastBody)
+	}
+	text := stripTableSGR(string(activeScenario.lastBody))
+	for _, expected := range []string{"NO", "PROJECT_NAME", "PROJECT_ID", "PATH", "1", "mock", "res_", "/work/mock"} {
+		if !strings.Contains(text, expected) {
+			return fmt.Errorf("interactive project table is missing %q: %s", expected, text)
+		}
 	}
 	return nil
 }

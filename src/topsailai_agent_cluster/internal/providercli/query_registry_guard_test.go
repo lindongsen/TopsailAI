@@ -26,8 +26,8 @@ type queryFixture struct {
 // point: a new registry entry must come with a decodable payload and result.
 var queryFixtures = map[string]queryFixture{
 	QueryLaunchOptions: {
-		payload: `{"include_projects":true}`,
-		result:  `{"profile":{"resource_kind":"launch_profile","provider_resource_key":"provider-launch","display_name":"default","revision":"launch-r1"},"projects":[]}`,
+		payload: `{}`,
+		result:  `{"profile":{"resource_kind":"launch_profile","provider_resource_key":"provider-launch","display_name":"default","revision":"launch-r1"}}`,
 	},
 	QueryHistoryMessages: {
 		payload: `{"limit":10}`,
@@ -37,6 +37,10 @@ var queryFixtures = map[string]queryFixture{
 		target:  &Target{ResourceKind: ResourceSession, ProviderResourceKey: "provider-session"},
 		payload: `{}`,
 		result:  `{"profiles":[],"observed_at_ms":1,"truncated":false}`,
+	},
+	QueryProjectCatalog: {
+		payload: `{}`,
+		result:  `{"projects":[],"observed_at_ms":1,"truncated":false}`,
 	},
 	QuerySessionMessages: {
 		target:  &Target{ResourceKind: ResourceSession, ProviderResourceKey: "provider-session"},
