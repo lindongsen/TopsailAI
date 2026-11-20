@@ -236,7 +236,14 @@ func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.W
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// The level is a variable rather than a constant so the console can change it while
+	// the Node runs. A handler built with a fixed level cannot be changed afterwards, and
+	// rebuilding the logger would leave the dispatcher and the dialer holding the old one.
+	//
+	// The default stays Info, which is what every existing deployment already gets.
+	logLevel := &slog.LevelVar{}
+	logLevel.Set(slog.LevelInfo)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
 	// The precedence is decided in one place, before LoadConfig is called, so the order
 	// is visible in one function rather than scattered through the resolvers.
@@ -305,6 +312,9 @@ func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.W
 	// behaviour it had before the console existed: no console unless the operator asked
 	// for one.
 	console := consoleFor(runtime, stdout, *consoleFlag, terminal)
+	if console != nil {
+		console.SetLogLevel(logLevel)
+	}
 	return serveNodeWithConsole(ctx, runtime, logger, console)
 }
 
