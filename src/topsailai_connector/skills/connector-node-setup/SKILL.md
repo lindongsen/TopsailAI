@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
-description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, how to find the node id, key id and secret after starting the Node, how to run the Node on a machine whose filesystem is read-only so it writes no file at all, or how to read the configuration and change the node id or a credential from an interactive console without editing a file. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management, regeneration, stateless mode and the interactive console.
-version: 1.6.0
+description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, how to find the node id, key id and secret after starting the Node, how to run the Node on a machine whose filesystem is read-only so it writes no file at all, or how to read the configuration and change the node id or a credential from an interactive console without editing a file, how to read the Node's settings from a dotenv file instead of the environment, or how to override one setting for a single launch with --set. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management, regeneration, stateless mode, the interactive console, and the four configuration sources with their precedence.
+version: 1.7.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -497,8 +497,101 @@ the policy in a file you edit and holds no Server-wide secret in the binary.
 
 ## Configuration
 
-Every value comes from the environment. There is no configuration file for the
-Node's own settings; the policy is a separate file.
+A value can arrive from four places, and the order is fixed. The first one that
+supplies a non-empty value wins:
+
+```
+--set KEY=VALUE   >   environment variable   >   --env-file   >   compiled in
+```
+
+The argument ranks first because it is typed for this one launch. An environment
+variable is ambient: export it once and every process the shell starts inherits it.
+A file is a default for this installation. A value compiled into the binary is the
+fallback, so a packaged Node works with no configuration at all.
+
+A node id or a credential that none of the four supplies is **generated in memory**.
+That is not a fifth source: it is what a stateless Node does when it has nothing to
+read.
+
+An empty value counts as unset at every layer. Exporting a variable as empty does
+not shadow a value in the file, so you never get a Node running with a value you did
+not write.
+
+### Reading the configuration from a file
+
+```
+connector-node run --env-file /etc/connector/node.env
+```
+
+or, equivalently:
+
+```
+CONNECTOR_NODE_ENV_FILE=/etc/connector/node.env connector-node run
+```
+
+The file holds `KEY=VALUE` lines. Blank lines and lines starting with `#` are
+ignored. The flag wins over the variable when both are set.
+
+Three rules apply, and each one is a refusal rather than a repair:
+
+- **The path must be absolute.** A relative path resolves differently depending on
+  the working directory, so it is refused with
+  `CONNECTOR_NODE_ENV_FILE "node.env" is relative; a relative path resolves differently per launch`
+  and exit status `1`.
+- **There is no default location.** The Node does not look in the working directory
+  or beside the executable. A Node started by a service manager must not silently
+  pick up a file that happened to be there.
+- **A file you named that does not exist is an error**, with exit status `1` and a
+  message naming the path. A typo would otherwise fall through to the compiled-in
+  values and you would believe a configuration is in force that was never read.
+
+### Overriding one value on the command line
+
+```
+connector-node run --set CONNECTOR_NODE_SERVER_URL=ws://127.0.0.1:8743/channel
+```
+
+`--set` may be repeated. It splits on the **first** `=`, so a value that contains an
+equals sign survives intact.
+
+The value is never printed. A rejected pair names the key and not the value, because
+a `--set` argument may carry a `tunnel_token` and an error message is the one place a
+secret must not reach:
+
+```
+$ connector-node run --set 'BAD-KEY=super-secret-value'
+connector-node: usage: --set key "BAD-KEY" is not an environment variable name;
+want letters, digits and underscore, not starting with a digit
+exit status 2
+```
+
+A pair with no `=` is refused the same way:
+
+```
+$ connector-node run --set NOEQUALS
+connector-node: usage: --set has no =; want KEY=VALUE
+exit status 2
+```
+
+Both messages name the key and never the value. The check runs before the flag
+package parses the arguments, because the package would otherwise echo the whole
+argument back as `invalid value "<the whole argument>" for flag -set`.
+
+### The one value that cannot be generated
+
+The policy is not a setting; it is a statement about what you intend to expose, and
+nothing in the process can know that. A build with no embedded policy and no
+`CONNECTOR_NODE_POLICY_FILE` refuses to start:
+
+```
+no policy is in force: this build compiled none in and CONNECTOR_NODE_POLICY_FILE
+is unset, and a stateless Node has no config directory to hold a default policy.yaml;
+set CONNECTOR_NODE_POLICY_FILE to an absolute path or use a build that compiled its
+policy in
+```
+
+A Node that invented its own scopes would be a Node whose operator believes it serves
+something it does not.
 
 ### Per subcommand
 
@@ -508,6 +601,7 @@ Node's own settings; the policy is a separate file.
 | `CONNECTOR_NODE_TUNNEL_TOKEN` | none | `run` | The `tunnel_token` this Node presents in `hello` |
 | `CONNECTOR_NODE_CONFIG_DIR` | platform config directory | `run`, `id`, `regenerate` | Where the identity file and the default policy file live |
 | `CONNECTOR_NODE_POLICY_FILE` | `<config>/policy.yaml` | `run` | Path to the policy file |
+| `CONNECTOR_NODE_ENV_FILE` | none | `run` | Absolute path to a dotenv file. No default location. `--env-file` names the same file and wins |
 
 `id` and `regenerate` read **only** `CONNECTOR_NODE_CONFIG_DIR`. They never dial,
 so they never need a dial target or a tunnel token.

@@ -288,6 +288,14 @@ ENVIRONMENT
 
   Read by run:
 
+    CONNECTOR_NODE_ENV_FILE
+        Absolute path to a dotenv file holding KEY=VALUE pairs. Unset by default, and
+        there is deliberately no default location: a Node started by a service manager
+        must not silently pick up a file from the working directory. The --env-file
+        flag names the same file and wins over this variable. A named file that does
+        not exist is an error rather than an empty configuration, because a typo would
+        otherwise fall through to the compiled-in values.
+
     CONNECTOR_NODE_CREDENTIALS_FILE
         Path to the caller credentials this Node accepts. Defaults to
         <config>/credentials.yaml. A relative path is refused.
@@ -469,6 +477,36 @@ FLAGS
       force. On a stateless Node the change lives in memory and is lost when the
       process exits.
 
+  --env-file <path>
+      Read KEY=VALUE pairs from this dotenv file. The path must be absolute,
+      because a relative path resolves differently per launch. There is no
+      default location: a Node started by a service manager must not silently
+      pick up a file from the working directory, so only a file you name is
+      read. A named file that does not exist is an error rather than an empty
+      configuration, because a typo would otherwise fall through to the
+      compiled-in values and you would believe a configuration is in force that
+      was never read.
+
+      CONNECTOR_NODE_ENV_FILE names the same file when the flag is absent. The
+      flag wins over the variable.
+
+  --set KEY=VALUE
+      Override one configuration value for this launch. Repeatable. The key must
+      be an environment variable name: letters, digits and underscore, not
+      starting with a digit. The value is taken verbatim, including any =, so a
+      secret containing one survives.
+
+      The value is never printed. A usage error names the key and not the value,
+      because a --set argument may carry a tunnel token and an error message is
+      the one place a secret must not reach.
+
+      The order is: --set beats an environment variable, which beats --env-file,
+      which beats a value compiled into the binary. A value that is empty counts
+      as unset at every layer, so an exported but empty variable does not shadow
+      a file that holds a value. A node id or a credential that none of those
+      supplies is generated in memory, which is what a stateless Node does.
+
+
 ENVIRONMENT
   CONNECTOR_NODE_SERVER_URL              required
   CONNECTOR_NODE_TUNNEL_TOKEN            required
@@ -478,6 +516,7 @@ ENVIRONMENT
   CONNECTOR_NODE_REPLAY_WINDOW_SECONDS   default: 60
   CONNECTOR_NODE_REPLAY_CAPACITY         default: 65536
   CONNECTOR_NODE_STATELESS               default: unset; 1 runs without writing
+  CONNECTOR_NODE_ENV_FILE                default: unset; absolute path to a dotenv file
 
 EXIT STATUS
   0   The Node stopped after a signal.

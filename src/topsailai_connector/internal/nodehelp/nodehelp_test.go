@@ -137,6 +137,52 @@ func TestRunHelpStatesThatTheConsoleNeverPrintsASecret(t *testing.T) {
 	}
 }
 
+// TestRunHelpDocumentsTheConfigurationSources checks that the two flags the run
+// subcommand accepts are documented, and that the precedence between them is stated.
+//
+// A flag the binary accepts and the help omits is the defect LEARN.md records: the
+// operator cannot discover it, and the only way to learn the order is to read the
+// source. The order is the part that cannot be guessed, because every layer is a
+// plausible winner.
+func TestRunHelpDocumentsTheConfigurationSources(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+
+	for _, name := range []string{"--env-file <path>", "--set KEY=VALUE"} {
+		if !hasEntry(flags, name) {
+			t.Errorf("the FLAGS section has no %s entry, so the flag is undocumented", name)
+		}
+	}
+
+	flattened := strings.Join(strings.Fields(flags), " ")
+	if !strings.Contains(flattened, "--set beats an environment variable") {
+		t.Fatalf("the FLAGS section does not state that --set beats an environment variable")
+	}
+	if !strings.Contains(flattened, "which beats --env-file") {
+		t.Fatalf("the FLAGS section does not state that an environment variable beats --env-file")
+	}
+	if !strings.Contains(flattened, "which beats a value compiled into the binary") {
+		t.Fatalf("the FLAGS section does not state that --env-file beats a compiled-in value")
+	}
+}
+
+// TestRunHelpStatesThatAnEnvFileMustBeAbsolute checks the constraint on the value,
+// not only the existence of the variable.
+//
+// A variable documented in name only is documented incompletely: the operator who
+// exports a relative path meets the rule as a startup failure that reads like a bug.
+func TestRunHelpStatesThatAnEnvFileMustBeAbsolute(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+	entry := entryFor(t, flags, "--env-file <path>")
+
+	flattened := strings.Join(strings.Fields(entry), " ")
+	if !strings.Contains(flattened, "must be absolute") {
+		t.Fatalf("the --env-file entry does not state that the path must be absolute")
+	}
+	if !strings.Contains(flattened, "does not exist is an error") {
+		t.Fatalf("the --env-file entry does not state that a named file that does not exist is an error")
+	}
+}
+
 // TestMainHelpStatesThatAPathMustBeAbsolute checks that every variable the code refuses
 // when relative is documented as needing an absolute path.
 //

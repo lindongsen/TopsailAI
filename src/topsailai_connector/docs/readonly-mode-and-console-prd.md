@@ -154,9 +154,9 @@ for a poll. The console answers that question in both modes.
    -> bin/env.20261120090000   (node id, key id, secret)
 
 2. Operator starts it on a read-only filesystem
-   CONNECTOR_NODE_EPHEMERAL=1 CONNECTOR_NODE_CONSOLE=1 \
+   CONNECTOR_NODE_STATELESS=1 CONNECTOR_NODE_CONSOLE=1 \
      ./connector-node-linux-amd64 run
-   -> mode: ephemeral (no directory, no file)
+   -> mode: stateless (no directory, no file)
    -> node id, credential and CLI block printed
    -> console prompt
 
@@ -189,7 +189,7 @@ files, so the change survives a restart.
 
 | ID | Requirement |
 |---|---|
-| FR-EPH-1 | `CONNECTOR_NODE_EPHEMERAL=1` starts the Node without creating any directory or file. |
+| FR-EPH-1 | `CONNECTOR_NODE_STATELESS=1` starts the Node without creating any directory or file. |
 | FR-EPH-2 | Unset or `0` leaves today's behaviour unchanged, including the directory creation and both file writes. |
 | FR-EPH-3 | Any value other than `1`, `0` or empty fails startup with a message naming the accepted values, following the `PACKAGE_ALLOW_FILESYSTEM_ROOT` precedent. |
 | FR-EPH-4 | A missing Server URL, `tunnel_token`, policy, node id or credential fails startup, naming the missing piece. A Node that starts and refuses everything is indistinguishable from a working Node, so a missing piece is a refusal rather than a degraded start. |
@@ -207,6 +207,41 @@ files, and in this mode there are no files. Refusing them with a message that
 names the console is the fail-closed choice and is the recommendation; letting
 them write to a temporary directory would create files in a mode whose whole
 purpose is to create none.
+
+### Configuration sources and precedence
+
+A stateless Node has no config directory, so every value it uses must arrive from
+outside the process or from the binary itself. The requirement is that the four
+sources compose in a stated order rather than in whichever order the resolvers
+happen to run.
+
+| ID | Requirement |
+|---|---|
+| FR-CFG-1 | The Node reads configuration from four sources: a command-line argument (`--set KEY=VALUE`), an environment variable, a dotenv file (`--env-file <path>` or `CONNECTOR_NODE_ENV_FILE`), and a value compiled into the binary. |
+| FR-CFG-2 | The order is argument, then environment, then file, then compiled in. The argument ranks first because it is typed for this one launch; an environment variable is ambient and inherited by every process the shell starts; a file is a default for this installation; the compiled value is the fallback that makes a self-contained build work with no configuration at all. |
+| FR-CFG-3 | An empty value counts as unset at every layer, so an exported but empty variable does not shadow a file that holds a value. |
+| FR-CFG-4 | A node id or a credential that none of the four sources supplies is generated in memory. This is not a fifth source: it is what a stateless Node does when it has nothing to read. |
+| FR-CFG-5 | `--env-file` and `CONNECTOR_NODE_ENV_FILE` must name an absolute path. A relative path is refused, following the rule the six existing path variables already hold. |
+| FR-CFG-6 | There is deliberately no default env-file location. The CLI looks beside its executable because a caller runs it from anywhere; a Node is started by a service manager, and a file that appeared in the working directory would silently change what an existing deployment serves. |
+| FR-CFG-7 | A file the operator named that does not exist is an error. `envfile.Load` treats a missing file as an empty map, which is right for a default location and wrong here: a typo would fall through to the compiled-in values and the operator would believe a configuration is in force that was never read. |
+| FR-CFG-8 | A `--set` value is never printed. A usage error names the key and not the value, because a `--set` argument may carry a `tunnel_token` and an error message is the one place a secret must not reach. |
+| FR-CFG-9 | The `--set` pairs are validated before the flag package parses them, because the package echoes a rejected value verbatim as `invalid value "<the whole argument>" for flag -set`. |
+| FR-CFG-10 | The policy is the one value that cannot be generated. A build with no embedded policy and no `CONNECTOR_NODE_POLICY_FILE` refuses to start, because a Node that invented its own scopes would be a Node whose operator believes it serves something it does not. |
+| FR-CFG-11 | The precedence is decided in one function, so it can be stated rather than inferred from whichever resolver ran first. |
+
+FR-CFG-9 records a defect that was measured rather than anticipated. The first
+implementation validated a `--set` pair inside `overrideFlag.Set`, and
+`overrideFlag.String()` printed keys only. Running
+`connector-node run --set 'BAD-KEY=super-secret-value'` still printed the secret,
+because the flag package wraps a `Set` failure as
+`invalid value "<the whole argument>" for flag -set` and never calls `String()` on
+that path. The fix is a pre-pass over the arguments before `flags.Parse`.
+
+FR-CFG-10 is the asymmetry that makes the mode honest. Every other value has a
+sensible generated form: a node id is random, a credential is random, a Server URL
+has no safe default but a missing one is a startup failure. A policy has no
+generated form at all, because a policy is a statement about what the operator
+intends to expose, and nothing in the process can know that.
 
 ### In-process console
 
@@ -301,7 +336,7 @@ Mutating commands change state and write no file in this mode:
 | Must | FR-EPH-1, 2, 3, 4, 5, 6, 8, 9, 11; FR-CON-1, 2, 3, 5, 6, 7, 9, 10, 12 |
 | Should | FR-EPH-7, 10, 12; FR-CON-4, 8, 11, 13, 14 |
 | Could | A `show policy` command that prints the effective policy document; a `show channel` command that prints the last handshake result |
-| Won't (this release) | Changing the tunnel token or the policy from the console; a console over a network socket; a console that survives a restart in ephemeral mode |
+| Won't (this release) | Changing the tunnel token or the policy from the console; a console over a network socket; a console that survives a restart in stateless mode |
 
 ## Release recommendation
 
@@ -338,6 +373,31 @@ happen, while the console's are about state that must change.
   in this mode.
 - **AC-EPH-9** `regenerate` in this mode refuses with a message naming the
   console, rather than creating a file.
+
+### Configuration sources and precedence
+
+- **AC-CFG-1** With every `CONNECTOR_NODE_*` variable unset and only
+  `--env-file` supplied, the Node starts and connects using the values in that
+  file.
+- **AC-CFG-2** A `--set` value overrides the same key in the env file, and the
+  startup summary shows the argument's value.
+- **AC-CFG-3** An environment variable overrides the same key in the env file,
+  and the startup summary shows the variable's value.
+- **AC-CFG-4** An exported but empty variable does not shadow a value in the env
+  file.
+- **AC-CFG-5** `--env-file` naming a relative path fails startup with a message
+  that says the path is relative and why that is refused.
+- **AC-CFG-6** `--env-file` naming a file that does not exist fails startup with
+  a message that names the path.
+- **AC-CFG-7** `--set` with no `=` fails with a message naming the pair and
+  stating the `KEY=VALUE` form.
+- **AC-CFG-8** `--set` with an invalid key fails with a message that names the
+  key and does not contain the value, verified by searching the output for the
+  known value.
+- **AC-CFG-9** A build with no embedded policy and no `CONNECTOR_NODE_POLICY_FILE`
+  fails startup naming the policy.
+- **AC-CFG-10** With the variable unset and no flag, the existing test suite
+  passes unchanged, so the feature is additive.
 
 ### In-process console
 

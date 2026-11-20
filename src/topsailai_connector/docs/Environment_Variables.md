@@ -234,11 +234,51 @@ it does not hold the secret that produced it.
 | `CONNECTOR_NODE_REPLAY_WINDOW_SECONDS` | `60` | `run` | How far a node proof timestamp may differ from the Node's clock. At least 1, at most 600 |
 | `CONNECTOR_NODE_REPLAY_CAPACITY` | `65536` | `run` | Number of unexpired node nonces the Node records. A full cache refuses new proofs rather than evicting a live nonce |
 | `CONNECTOR_NODE_STATELESS` | unset | `run`, `scope list`, `id`, `regenerate`, `credential` | `1` runs the Node without creating any directory or file. `0` or empty leaves the file-backed behaviour unchanged. Any other value is a startup failure |
+| `CONNECTOR_NODE_ENV_FILE` | unset | `run` | Absolute path to a dotenv file holding `KEY=VALUE` pairs. There is deliberately no default location. A named file that does not exist is an error. The `--env-file` flag names the same file and wins over this variable |
 
 `id`, `regenerate`, the `credential` subcommands and `scope list` read only
 `CONNECTOR_NODE_CONFIG_DIR`, and `scope list` also reads the policy file. They never
 dial, so they never need a dial target or a tunnel token, and requiring one would
 make the documented first-run order impossible.
+
+#### Configuration precedence
+
+The Node reads its configuration from four places, and the order is decided in one
+function (`cmd/connector-node/configsource.go`) so it can be stated rather than
+inferred from whichever resolver ran first.
+
+| Rank | Source | How it is supplied | Why it ranks here |
+|---|---|---|---|
+| 1 | Command-line argument | `--set KEY=VALUE`, repeatable | Typed for this one launch, so it is the most specific statement an operator can make |
+| 2 | Environment variable | The process environment | Ambient: exported once and inherited by every process the shell starts |
+| 3 | Dotenv file | `--env-file <path>` or `CONNECTOR_NODE_ENV_FILE` | A default for this installation |
+| 4 | Compiled into the binary | `make package` with `PACKAGE_EMBED_*` | The fallback, so a self-contained build works with no configuration at all |
+
+A node id or a credential that none of the four supplies is **generated in memory**.
+That is not a fifth source: it is what a stateless Node does when it has nothing to
+read, and it is handled by `prepareStatelessIdentity` rather than by the precedence.
+
+Three rules hold at every layer:
+
+- **An empty value counts as unset.** An exported but empty variable does not shadow
+  a file that holds a value, so the operator never sees a Node start with a value
+  they did not write.
+- **A relative path is refused.** `--env-file` and `CONNECTOR_NODE_ENV_FILE` must be
+  absolute, because a relative path resolves differently per launch. This is the rule
+  the six existing path variables already follow.
+- **A named file that does not exist is an error.** `envfile.Load` treats a missing
+  file as an empty map, which is right for a default location and wrong for a file
+  the operator named: a typo would otherwise fall through to the compiled-in values
+  and the operator would believe a configuration is in force that was never read.
+
+The policy is the one value that cannot be generated. A Node that invented its own
+scopes would be a Node whose operator believes it serves something it does not, so a
+build with no embedded policy and no `CONNECTOR_NODE_POLICY_FILE` refuses to start.
+
+`--set` values are never printed. A usage error names the key and not the value,
+because a `--set` argument may carry a tunnel token and an error message is the one
+place a secret must not reach. The pairs are validated before the flag package sees
+them, because the package echoes a rejected value verbatim.
 
 #### Stateless mode (无状态模式)
 
