@@ -24,6 +24,11 @@ type runnerConfig struct {
 	args           []string
 	environment    []string
 	timeout        time.Duration
+	// followTimeout bounds one streaming follow. It is separate from timeout
+	// because a follow's lifetime is decided by the operator, not by the
+	// one-shot call budget: sharing timeout ended every follow at the call
+	// timeout and reported it as cancelled.
+	followTimeout  time.Duration
 	maxStdinBytes  int64
 	maxStdoutBytes int64
 	maxStderrBytes int64
@@ -42,6 +47,17 @@ func newProcessRunner(config runnerConfig) (*processRunner, error) {
 	}
 	if config.timeout <= 0 {
 		return nil, errors.New("provider timeout must be positive")
+	}
+	// A zero follow budget means "use the call timeout", which is the behaviour
+	// every existing configuration already had. Resolving it here keeps that
+	// fallback in one place instead of repeating it at each use site, and it
+	// keeps a negative value a configuration mistake rather than a silent
+	// unbounded stream.
+	if config.followTimeout == 0 {
+		config.followTimeout = config.timeout
+	}
+	if config.followTimeout < 0 {
+		return nil, errors.New("provider follow timeout must not be negative")
 	}
 	if config.maxStdinBytes < 1 || config.maxStdoutBytes < 1 || config.maxStderrBytes < 1 || config.maxRecords < 1 {
 		return nil, errors.New("provider input, output and record limits must be positive")
@@ -112,7 +128,7 @@ func (r *processRunner) invokeStream(parent context.Context, request providercli
 	if int64(len(document)) > r.config.maxStdinBytes {
 		return fmt.Errorf("provider stdin byte limit exceeded: %d > %d", len(document), r.config.maxStdinBytes)
 	}
-	ctx, cancel := invocationContext(parent, r.config.timeout, request.DeadlineAtMS)
+	ctx, cancel := invocationContext(parent, r.config.followTimeout, request.DeadlineAtMS)
 	defer cancel()
 	command := r.command(ctx)
 	command.Stdin = bytes.NewReader(document)

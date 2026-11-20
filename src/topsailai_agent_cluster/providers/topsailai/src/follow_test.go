@@ -129,7 +129,11 @@ func TestFollowOutputUsesRequestDeadlineAndWritesTerminalError(t *testing.T) {
 		t.Fatalf("follow output: %v", err)
 	}
 	frames := decodeFrames(t, output.Bytes())
-	if len(frames) != 2 || frames[1].Type != frameEnd || frames[1].Error == nil || frames[1].Error.Code != "cancelled" {
+	// The request deadline expiring is a timeout, not a cancellation: nobody
+	// stopped the stream, it reached its own bound. This assertion used to expect
+	// "cancelled", which encoded the defect rather than guarding against it, so it
+	// is replaced here instead of being kept beside a new test.
+	if len(frames) != 2 || frames[1].Type != frameEnd || frames[1].Error == nil || frames[1].Error.Code != "follow_timeout" {
 		t.Fatalf("frames=%+v", frames)
 	}
 }

@@ -109,8 +109,28 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 	providerCode, providerCoded := providerStreamCode(err)
 	switch {
 	case err == nil:
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded):
+		// The stream reached its own budget. This is a timeout, not a stop: nobody
+		// cancelled anything, and reporting `cancelled` sent the operator looking
+		// for whoever stopped the stream while the stream had simply expired. The
+		// follow budget is separate from the one-shot call budget precisely so this
+		// bound can be long without lengthening every other call.
+		code = "follow_timeout"
+		s.logFollowFailure(requestID, request, code, err)
+	case errors.Is(err, context.Canceled):
+		// A real cancellation: the consumer stopped the stream, or the Endpoint is
+		// shutting down. This keeps `cancelled`, because that is what happened, and
+		// it is deliberately not logged as a failure.
 		code = "cancelled"
+	case providerCoded && providerCode == "follow_timeout":
+		// The Provider reported that its own budget expired. It reaches this branch
+		// when it classified the failure in its response document rather than by
+		// returning a wrapped context error, so the sentinel checks above cannot see
+		// it. Without this case the Provider's correct classification would fall
+		// through to provider_error and the operator would be told the Provider had
+		// failed when it had only reached its bound.
+		code = "follow_timeout"
+		s.logFollowFailure(requestID, request, code, err)
 	case providerCoded && providerCode == "cancelled":
 		// The Provider reported its own cancellation, so the stream ended for a
 		// reason the Provider already classified. Reporting it as provider_error
@@ -301,8 +321,8 @@ func (s *Service) stopFollows() {
 // The Server drops its pending entry the moment the operator stops reading, so
 // the chunks this Endpoint keeps producing are discarded on arrival. Without this
 // cancellation the Endpoint would keep the follow goroutine, one of its
-// maxConcurrentFollows slots and the adapter's follow slot until the adapter
-// deadline expired, which is two minutes in the deployed configuration. Two
+// maxConcurrentFollows slots and the adapter's follow slot until the follow
+// budget expired, which is thirty minutes by default. Two
 // abandoned follows were therefore enough to make the next follow wait for
 // capacity it could not see.
 //

@@ -98,6 +98,12 @@ const genericCLIReadConcurrency = 4
 // validation at startup could then be replaced by a different value later. Zero
 // means the protocol default, which the adapter itself resolves.
 //
+// followTimeout is the operator-configured bound for one streaming follow. It is
+// passed in for the same reason as detailMaxBytes: the configuration boundary
+// already parsed and validated it. Zero means the adapter's own call timeout,
+// which the adapter resolves, so an Endpoint that configures nothing keeps the
+// previous behaviour rather than an unbounded stream.
+//
 // commandDir is the operator-configured working directory for a command.exec
 // request that names no session. It is passed in for the same reason as
 // detailMaxBytes: the configuration boundary already validated that it is an
@@ -105,7 +111,7 @@ const genericCLIReadConcurrency = 4
 // second source of truth. An empty value is not a default: it means endpoint scope
 // has no working directory, and the adapter refuses that form instead of falling
 // back to the Endpoint process working directory.
-func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, detailMaxBytes int, commandDir string) error {
+func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, detailMaxBytes int, followTimeout time.Duration, commandDir string) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}
@@ -143,6 +149,7 @@ func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, d
 			MaxStderrBytes: genericCLIMaxStderrBytes,
 			MaxRecords:     genericCLIMaxRecords,
 			MaxDetailBytes: detailMaxBytes,
+			FollowTimeout:  followTimeout,
 			CommandDir:     commandDir,
 			EndpointLimits: genericCLIConcurrency,
 			AdapterLimits:  genericCLIConcurrency,

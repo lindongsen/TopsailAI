@@ -1175,6 +1175,39 @@ The budget defaults to 64 KiB and is clamped to 1 MiB, matching the Server clamp
 a caller cannot request a bound the Endpoint would silently reduce. Truncation is
 always labelled, because a shortened record must never be presented as complete.
 
+## Implemented output follow lifetime budget
+
+A follow is bounded by its own budget, not by the adapter call timeout. The two are
+different kinds of bound and must not share one value: a one-shot call answers a
+question and returns, while a follow is a live tail whose lifetime is decided by the
+operator watching it. Sharing the call timeout ended every follow at that bound while
+the operator was still reading, and the operator had no way to tell that the stream
+had been cut rather than finished.
+
+The budget is `AGENT_CLUSTER_ENDPOINT_FOLLOW_TIMEOUT` (`--follow-timeout`), thirty
+minutes by default. It bounds the whole stream, so a tail that keeps producing records
+still ends when the budget expires. A forgotten tail therefore cannot hold one of the
+eight follow slots forever, which is the property the bound exists to provide.
+
+Expiry is reported as `follow_timeout`, and that code is distinct from `cancelled` on
+purpose. `cancelled` means a consumer stopped watching, which is a decision somebody
+made; `follow_timeout` means the budget ran out, which is a bound the deployment
+chose. Reporting both as `cancelled` sent the operator looking for a stop that never
+happened, and it made a truncated tail indistinguishable from a deliberate one.
+
+The distinction has to be made at both layers that can observe the expiry. The
+Provider maps its own context expiry to `follow_timeout` before writing the terminal
+frame, and the Endpoint maps a wrapped `context.DeadlineExceeded` to the same code,
+because the adapter wraps the context error and the Endpoint can therefore see the
+sentinel even when the Provider already classified the stream. A Provider that reports
+`follow_timeout` keeps that code through the Endpoint switch rather than being
+flattened into a generic provider error.
+
+A follow that ends at its budget is a normal end, not a failure: the terminal frame is
+delivered with `follow_timeout`, and the interactive surface treats it like any other
+non-clean end, so the operator gets the bounded snapshot recovery instead of an empty
+screen.
+
 ## Implemented output follow terminal frame delivery
 
 The Endpoint's terminal `output_end` frame is **best-effort**, not guaranteed. This

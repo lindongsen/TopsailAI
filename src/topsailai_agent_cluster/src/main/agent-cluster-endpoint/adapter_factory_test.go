@@ -31,7 +31,7 @@ func newFactoryStore(t *testing.T) *endpointstorage.Store {
 // refusal assertion would fail, because the extra name would become acceptable.
 func TestRegisterAdapterInstallsTheOnlyImplementation(t *testing.T) {
 	registry := adapter.NewRegistry()
-	if err := registerAdapter(registry, newFactoryStore(t), 0, ""); err != nil {
+	if err := registerAdapter(registry, newFactoryStore(t), 0, 0, ""); err != nil {
 		t.Fatalf("register adapter: %v", err)
 	}
 	if err := registry.RegisterType(adapterProviderType, func(context.Context, adapter.Config) (adapter.Adapter, error) {
@@ -84,10 +84,10 @@ func TestValidateProviderTypeAcceptsOnlyTheShippedName(t *testing.T) {
 // register into a nil registry or with a nil store, because both are used by the
 // factory it installs.
 func TestRegisterAdapterRequiresRegistryAndStore(t *testing.T) {
-	if err := registerAdapter(nil, newFactoryStore(t), 0, ""); err == nil {
+	if err := registerAdapter(nil, newFactoryStore(t), 0, 0, ""); err == nil {
 		t.Fatal("nil registry was accepted")
 	}
-	if err := registerAdapter(adapter.NewRegistry(), nil, 0, ""); err == nil {
+	if err := registerAdapter(adapter.NewRegistry(), nil, 0, 0, ""); err == nil {
 		t.Fatal("nil store was accepted")
 	}
 }

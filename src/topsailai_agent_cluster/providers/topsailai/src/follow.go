@@ -105,7 +105,14 @@ func (p *provider) runFollow(ctx context.Context, request request, emit func(fol
 
 func streamError(err error) *providerError {
 	code := errorCode(err)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	// A budget expiry and a consumer stop are two different facts, and reporting
+	// both as `cancelled` hid the one that explains the symptom: an operator
+	// reading `cancelled` looks for whoever stopped the stream, while nobody did
+	// and the stream simply reached its own bound. The deadline is therefore
+	// named as a timeout, and only a real cancellation keeps `cancelled`.
+	if errors.Is(err, context.DeadlineExceeded) {
+		code = "follow_timeout"
+	} else if errors.Is(err, context.Canceled) {
 		code = "cancelled"
 	}
 	return &providerError{

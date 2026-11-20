@@ -153,7 +153,7 @@ func main() {
 	// once and never selected by configuration. A configured provider type is
 	// validated against that one name below; it cannot choose an implementation
 	// because there is nothing to choose between.
-	if err := registerAdapter(registry, store, cfg.DetailMaxBytes, cfg.CommandDir); err != nil {
+	if err := registerAdapter(registry, store, cfg.DetailMaxBytes, cfg.FollowTimeout, cfg.CommandDir); err != nil {
 		logger.Error("register adapter", "error", err)
 		_ = client.Close()
 		_ = store.Close()

@@ -238,8 +238,8 @@ func TestStartFollowReportsOutputLimitAsLocalBound(t *testing.T) {
 //
 // This is the property the operator depends on: stopping `logf` in the REPL must
 // free the Endpoint's follow capacity immediately. Without the cancel the follow
-// would keep its slot until the adapter deadline expired, which is two minutes in
-// the deployed configuration, so two abandoned follows were enough to make the
+// would keep its slot until the follow budget expired, which is thirty minutes by
+// default, so two abandoned follows were enough to make the
 // next follow wait for capacity it could not see.
 func TestCancelFollowReleasesSlot(t *testing.T) {
 	executor := &followExecutor{block: true, started: make(chan struct{})}

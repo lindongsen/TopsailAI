@@ -166,6 +166,7 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_AUTH_MODE` | `--auth-mode` | `hmac` | Authentication scheme the Endpoint accepts for caller credentials: `hmac` or `bearer`; one mode is in force at a time and a failed HMAC never falls back to bearer |
 | `AGENT_CLUSTER_ENDPOINT_SIGNATURE_WINDOW` | `--signature-window` | `60s` | Positive duration a signed caller request's timestamp may differ from the Endpoint clock; also the nonce retention bound |
 | `AGENT_CLUSTER_ENDPOINT_DETAIL_MAX_BYTES` | `--detail-max-bytes` | `0` | Maximum accepted size in bytes of one provider detail document; `0` uses the protocol default of 1 MiB, and the value may not exceed the 2 MiB contract ceiling. A document above the bound is refused with `detail_response_too_large` rather than truncated |
+| `AGENT_CLUSTER_ENDPOINT_FOLLOW_TIMEOUT` | `--follow-timeout` | `30m` | Positive duration one streaming follow may run before it is stopped. It is deliberately separate from the adapter call timeout, because a follow is a live tail rather than a one-shot call: sharing the call timeout ended every follow at that bound while the operator was still watching. Expiry is reported as `follow_timeout`, never as `cancelled`, so an operator can tell a budget expiry from a deliberate stop. `0` falls back to the adapter call timeout, which restores the defect this setting exists to remove |
 
 ### `AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT` and `AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW`
 
