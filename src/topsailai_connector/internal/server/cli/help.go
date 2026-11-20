@@ -156,23 +156,52 @@ FLAGS
   --version
         Print the build version and exit 0.
 
+  --env-file PATH
+        Read KEY=VALUE pairs from this dotenv file instead of .env.local.
+        The path must be absolute, because a relative path resolves
+        differently per launch. A file named here must exist: a typo would
+        otherwise fall through to the environment and look like it worked.
+        Environment: CONNECTOR_CLI_ENV_FILE
+
+  --set KEY=VALUE
+        Override one configuration value for this launch. Repeatable, so a
+        script can supply several values without exporting them. The pair is
+        split on the first =, so a secret may contain one.
+
+        The value is never printed. A rejected pair names the key and not the
+        value, because a --set argument may carry a credential and a usage
+        error that echoed it would write a secret to stderr.
+
+        The order is: --set beats an environment variable, which beats
+        --env-file, which beats .env.local. A value that is empty counts as
+        unset at every layer, so an exported but empty variable does not
+        shadow a value from the file.
+
   Flags come before the operation name. Go's flag parser stops at the first
   positional argument, so an operation written before a flag turns that flag
   into a positional argument and the command fails with a message about
   positional arguments rather than about order.
 
 CONFIGURATION
-  Every value can come from three places. When a value is set in more than one,
+  Every value can come from four places. When a value is set in more than one,
   the first of these wins:
 
-    1. a flag on the command line
+    1. --set KEY=VALUE on the command line
     2. an environment variable in the process environment
-    3. an environment variable in the configuration file
+    3. a KEY=VALUE pair in the configuration file
+    4. the built-in default, where one exists
 
-  A flag wins over the environment because a flag is the more explicit statement
-  of intent. The process environment wins over the file because the file is a
-  default for this installation, and a caller who exported a value meant it for
-  this one command.
+  --set wins over the environment because it is typed for this one launch, while
+  an environment variable is ambient and inherited by every process the shell
+  starts. The environment wins over the file because the file is a default for
+  this installation, and a caller who exported a value meant it for this one
+  command. A value that is empty counts as unset at every layer, so an exported
+  but empty variable does not shadow a value from the file.
+
+  A dedicated flag such as --server or --node-id is the same layer as --set and
+  is read first, so --server wins over --set CONNECTOR_CLI_SERVER_URL. Use the
+  dedicated flag when one exists; --set is for a value that has no flag, and for
+  a script that already holds its configuration as KEY=VALUE pairs.
 
   The configuration file is named .env.local and is read from the directory that
   holds this executable. It is optional: when it is absent the program runs on
@@ -185,9 +214,12 @@ CONFIGURATION
   quotes is removed. Nothing is expanded, so a value is exactly the bytes
   written after the =.
 
-  Set CONNECTOR_CLI_ENV_FILE to read a different file instead. This is useful
-  when the executable lives somewhere its configuration must not, and it is the
-  way to keep credentials outside a directory that a build step deletes.
+  Set CONNECTOR_CLI_ENV_FILE, or pass --env-file PATH, to read a different file
+  instead. This is useful when the executable lives somewhere its configuration
+  must not, and it is the way to keep credentials outside a directory that a
+  build step deletes. A file named by --env-file must exist, because a typo
+  would otherwise fall through to the environment and look like it worked. The
+  default .env.local may be absent, which is the ordinary case.
 
   The file holds credentials, so it must not be readable by other accounts. The
   program warns when it is readable by group or others.

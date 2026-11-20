@@ -1,7 +1,7 @@
 ---
 name: connector-client
 description: Use when a user wants to read files on a remote machine through the TopsailAI Connector, i.e. when they ask to list a directory, inspect a file, copy a file down to their own machine, or read a file on a Node they can address, or when they hit an error code such as unauthenticated, denied, not_found or node_offline and need to know what it means and what to do next, or when they do not know which scope name to pass as --scope. Covers the connector-server cli command, its flags including -o for a whole-file copy, the client and node credentials, the three read-only operations, calling a Node that was distributed as a ready-to-run zip, and every error code.
-version: 2.2.0
+version: 2.3.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -81,6 +81,94 @@ scope root. Retyping it from memory is how the flag-order mistake gets made.
 The user's only job is to start the bundle. Until they do, the CLI answers
 `node_offline`, because the Server has no live connection to route to. That is not a
 credential problem and retrying will not fix it; the Node has to be running.
+
+## Where the four values come from
+
+You can supply each value in four ways. When a value is set in more than one place,
+the first of these wins:
+
+| Rank | How | Example |
+|---|---|---|
+| 1 | `--set KEY=VALUE` | `--set CONNECTOR_CLI_NODE_ID=node_...` |
+| 2 | An environment variable | `export CONNECTOR_CLI_NODE_ID=node_...` |
+| 3 | A dotenv file | `CONNECTOR_CLI_NODE_ID=node_...` in `.env.local` |
+| 4 | The built-in default | Only where one exists |
+
+`--set` wins over the environment because it is typed for this one command. The
+environment wins over the file because the file is a default for this installation.
+
+A dedicated flag such as `--server` is the same rank as `--set` and is read first,
+so `--server` wins over `--set CONNECTOR_CLI_SERVER_URL`. Use the dedicated flag
+when one exists; `--set` is for a value that has no flag.
+
+An empty value counts as unset at every rank, so an exported but empty variable
+does not hide a value from the file.
+
+### Reading from a file
+
+The CLI looks for `.env.local` in the directory that holds the executable. That is
+the ordinary case: drop the binary in a directory with its settings and run it from
+anywhere, including through a symlink on `PATH`.
+
+To read a different file, name it:
+
+```
+connector-cli --env-file /etc/connector/cli.env --scope project --path a.txt file.read
+```
+
+The path must be **absolute**. A relative path is refused with exit status 2,
+because the command line was rejected before anything was sent:
+
+```
+connector-cli: --env-file "cli.env" is relative; a relative path resolves differently per launch
+```
+
+A file you name with `--env-file` **must exist**. A typo is refused rather than
+silently falling through to the environment. Exit status 2:
+
+```
+connector-cli: read /etc/connector/cli.env: stat /etc/connector/cli.env: no such file or directory
+```
+
+The default `.env.local` may be absent, which is the ordinary case. That difference
+is deliberate: an installation whose file has since been deleted keeps working.
+
+Every message begins with the name of the executable you ran, so a copy renamed by
+the operator reports the name the operator typed. The examples below use
+`connector-cli`, which is the name the binary ships under.
+
+The file holds credentials, so it must not be readable by other accounts. The
+program warns when it is:
+
+```
+connector-cli: warning: /etc/connector/cli.env is readable by other accounts (mode 0644); it holds credentials, so chmod 0600 is recommended
+```
+
+### Overriding one value
+
+`--set` takes one `KEY=VALUE` pair and may be repeated:
+
+```
+connector-cli --set CONNECTOR_CLI_SERVER_URL=http://192.168.2.3:8743 \
+              --set CONNECTOR_CLI_NODE_ID=node_j5ys4xzrqlyfct2n7q4a4jione \
+              --scope project --path a.txt file.read
+```
+
+The pair is split on the **first** `=`, so a secret may contain one.
+
+A rejected pair names the key and never the value, because a `--set` argument may
+carry a credential and a usage error that echoed it would write a secret to stderr.
+Exit status 2:
+
+```
+connector-cli: usage: --set key "BAD-KEY" is not an environment variable name; want letters, digits and underscore, not starting with a digit
+```
+
+A pair with no `=` is refused the same way:
+
+```
+connector-cli: usage: --set has no =; want KEY=VALUE
+```
 
 ## The command
 

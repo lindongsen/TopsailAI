@@ -96,6 +96,10 @@ SUBCOMMANDS
         dial target or a tunnel token, and requiring one would make the first-run
         order impossible.
 
+        In stateless mode this subcommand refuses to run, because it works by
+        rewriting the identity file and that mode has no file. The interactive
+        console changes the node id in memory instead.
+
   regenerate
         Replace the identifier with a fresh one and print it. Every credential is
         left untouched, so a caller does not have to be reissued a secret because the
@@ -106,6 +110,10 @@ SUBCOMMANDS
         interval, so a restart is not required.
 
         Reads only CONNECTOR_NODE_CONFIG_DIR.
+
+        In stateless mode this subcommand refuses to run, because it works by
+        rewriting the identity file and that mode has no file. The interactive
+        console replaces the node id in memory instead.
 
   credential add [--key-id NAME]
         Generate a credential and append it to the credential file. The credential is
@@ -133,6 +141,10 @@ SUBCOMMANDS
         credential file.
 
         Reads only CONNECTOR_NODE_CONFIG_DIR.
+
+        In stateless mode the three credential subcommands refuse to run, because
+        they work by rewriting the credential file and that mode has no file. The
+        interactive console adds, rotates and removes credentials in memory instead.
 
   scope list
         Print the scope names the policy defines, one per line, in sorted order.
@@ -177,6 +189,10 @@ FILES
 
   The config directory is created with mode 0700 on POSIX, because it holds a
   credential file.
+
+  In stateless mode none of these files exists. The node id and the credentials are
+  held in memory, the policy comes from the binary or from CONNECTOR_NODE_POLICY_FILE,
+  and nothing is written, so nothing survives a restart.
 
   The identity and the credentials are separate files because they are separate
   things: the identity is an address that may be logged, and a credential is a secret
@@ -250,7 +266,35 @@ ENVIRONMENT
         absolute path; a relative one is refused, because it would resolve differently
         depending on the directory the Node was started from.
 
+    CONNECTOR_NODE_STATELESS
+        Set to 1 to run in stateless mode: the Node creates no directory and writes
+        no file, and holds its node id and its credentials in memory only. The mode
+        exists for a machine whose filesystem is read-only. Unset or 0 keeps the
+        normal behaviour, and any other value is a startup failure rather than being
+        read as "off", because a switch that decides whether the process may write to
+        disk must have a state the operator can state.
+
+        In this mode CONNECTOR_NODE_CONFIG_DIR and CONNECTOR_NODE_CREDENTIALS_FILE are
+        not read, because there is no directory and no file to name. The policy must
+        come from the binary or from CONNECTOR_NODE_POLICY_FILE, since there is no
+        config directory to hold a default policy.yaml. The node id and the credential
+        come from the binary when it carries them and are generated in memory when it
+        does not; either way they are lost when the process exits, so the startup
+        summary is the only place the credential is ever shown.
+
+        id, regenerate and the credential subcommands refuse to run in this mode,
+        because they work by rewriting the two files the mode does not have. The
+        interactive console changes the node id and the credentials in memory instead.
+
   Read by run:
+
+    CONNECTOR_NODE_ENV_FILE
+        Absolute path to a dotenv file holding KEY=VALUE pairs. Unset by default, and
+        there is deliberately no default location: a Node started by a service manager
+        must not silently pick up a file from the working directory. The --env-file
+        flag names the same file and wins over this variable. A named file that does
+        not exist is an error rather than an empty configuration, because a typo would
+        otherwise fall through to the compiled-in values.
 
     CONNECTOR_NODE_CREDENTIALS_FILE
         Path to the caller credentials this Node accepts. Defaults to
@@ -370,14 +414,20 @@ DESCRIPTION
   printed on every start rather than only the first, because an operator who restarts
   a Node has the same question as one who started it.
 
+  In stateless mode the config directory line is replaced by a mode line, because
+  there is no directory to name and two empty values would read as a broken
+  configuration. The mode line states the consequence the operator has to know:
+  nothing survives a restart.
+
   The secret appears in full only when stdout is a terminal. When stdout is redirected
   to a file or a pipe the summary still prints, with the secret replaced by its
   redacted form and a line saying why. A launcher that writes stdout to a log would
   otherwise append a credential that never expires to that log on every start.
 
-  A generated identity and a generated credential are announced above the summary, so
-  an operator can tell a first start from a restart. The values themselves are in the
-  summary either way.
+  A new node id and a new credential are announced above the summary, so an operator
+  can tell a first start from a restart. The wording is "written", not "generated",
+  because a build that embedded an identity and a credential seeds them instead of
+  generating them. The values themselves are in the summary either way.
 
   The process stops on SIGINT or SIGTERM. The shutdown closes the channel, so a Node
   that is mid-request is answered instead of being cut off.
@@ -392,6 +442,82 @@ DESCRIPTION
   the home directory, a mount point and an existing filesystem root are all startup
   refusals. Only absence is tolerated.
 
+FLAGS
+  --console
+      Read commands from stdin while the Node serves. Off by default on a
+      file-backed Node, because a Node started by a service manager has no stdin
+      to read and a console that consumed a pipe would eat the launcher's input.
+      On by default in stateless mode when stdin is a terminal, because a
+      stateless Node has no file to edit and the console is the only way to
+      change its address or revoke a caller.
+
+      The console changes exactly two things: who the Node is, and who may talk
+      to it. It cannot add a scope, widen a grant or change the policy, because
+      those live in the policy document.
+
+        show config        the configuration in force, with the tunnel token redacted
+        show identity      the node id this Node answers to
+        show credentials   the public key ids; a secret is never printed
+        show scopes        every scope and whether its directory exists
+        show status        the mode, the node id, the server and the counts
+        log [level]        show or set the log level: debug, info, warn, error or off
+        regenerate id      replace the node id; every credential is unchanged
+        credential add <key-id>     add a caller and print its secret once
+        credential rotate <key-id>  replace the secret under an existing key id
+        credential remove <key-id>  revoke one caller; the last one cannot be removed
+        help               the command list
+        quit               stop reading commands; the Node keeps running
+
+      The console and the log share one terminal, so a log record written while you
+      are typing lands in the middle of the line and the screen reads as if you typed
+      it. A Node that cannot reach the Server writes a warning every retry, which is
+      the usual source. "log off" silences the process logger, not only the console,
+      so the retry warnings stop too; "log info" brings them back. A silenced Node
+      still reports a fatal error on the way out, so "log off" cannot hide a startup
+      or shutdown failure. The level is not remembered across a restart, because a
+      Node that stayed silent after a restart would hide the reason it cannot
+      connect.
+
+      A command that fails prints its error and the console continues, so a typo
+      does not cost a restart. Input is read from stdin and is never written to a
+      history file: the file could be on a read-only filesystem, and a history
+      would record a secret that was printed once.
+
+      On a file-backed Node a change is also written to the identity file or the
+      credential file, so the console and the subcommands agree about what is in
+      force. On a stateless Node the change lives in memory and is lost when the
+      process exits.
+
+  --env-file <path>
+      Read KEY=VALUE pairs from this dotenv file. The path must be absolute,
+      because a relative path resolves differently per launch. There is no
+      default location: a Node started by a service manager must not silently
+      pick up a file from the working directory, so only a file you name is
+      read. A named file that does not exist is an error rather than an empty
+      configuration, because a typo would otherwise fall through to the
+      compiled-in values and you would believe a configuration is in force that
+      was never read.
+
+      CONNECTOR_NODE_ENV_FILE names the same file when the flag is absent. The
+      flag wins over the variable.
+
+  --set KEY=VALUE
+      Override one configuration value for this launch. Repeatable. The key must
+      be an environment variable name: letters, digits and underscore, not
+      starting with a digit. The value is taken verbatim, including any =, so a
+      secret containing one survives.
+
+      The value is never printed. A usage error names the key and not the value,
+      because a --set argument may carry a tunnel token and an error message is
+      the one place a secret must not reach.
+
+      The order is: --set beats an environment variable, which beats --env-file,
+      which beats a value compiled into the binary. A value that is empty counts
+      as unset at every layer, so an exported but empty variable does not shadow
+      a file that holds a value. A node id or a credential that none of those
+      supplies is generated in memory, which is what a stateless Node does.
+
+
 ENVIRONMENT
   CONNECTOR_NODE_SERVER_URL              required
   CONNECTOR_NODE_TUNNEL_TOKEN            required
@@ -400,6 +526,8 @@ ENVIRONMENT
   CONNECTOR_NODE_POLICY_FILE             default: <config>/policy.yaml
   CONNECTOR_NODE_REPLAY_WINDOW_SECONDS   default: 60
   CONNECTOR_NODE_REPLAY_CAPACITY         default: 65536
+  CONNECTOR_NODE_STATELESS               default: unset; 1 runs without writing
+  CONNECTOR_NODE_ENV_FILE                default: unset; absolute path to a dotenv file
 
 EXIT STATUS
   0   The Node stopped after a signal.
@@ -434,6 +562,10 @@ DESCRIPTION
   Reads only CONNECTOR_NODE_CONFIG_DIR. It never dials, so it does not need a dial
   target or a tunnel token. That is what makes the documented first-run order
   possible: the operator is told to run id before the tunnel token is configured.
+
+  In stateless mode this subcommand refuses to run, because it works by rewriting the
+  identity file and that mode has no file. The interactive console changes the node id
+  in memory instead.
 
 ENVIRONMENT
   CONNECTOR_NODE_CONFIG_DIR   default: platform config directory
@@ -480,6 +612,10 @@ DESCRIPTION
   Regeneration is local and operator-initiated. The Server cannot trigger it, because
   a Server that could force regeneration could also force a denial of service.
 
+  In stateless mode this subcommand refuses to run, because it works by rewriting the
+  identity file and that mode has no file. The interactive console replaces the node id
+  in memory instead.
+
   Reads only CONNECTOR_NODE_CONFIG_DIR.
 
 ENVIRONMENT
@@ -523,6 +659,10 @@ DESCRIPTION
   policy file says "and you may do this".
 
   Every subcommand reads only CONNECTOR_NODE_CONFIG_DIR.
+
+  In stateless mode every subcommand refuses to run, because they work by rewriting the
+  credential file and that mode has no file. The interactive console adds, rotates and
+  removes credentials in memory instead.
 
 SUBCOMMANDS
   add [--key-id NAME]

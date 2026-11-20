@@ -83,6 +83,147 @@ func TestRunHelpDocumentsEveryEnvironmentVariable(t *testing.T) {
 	}
 }
 
+// TestRunHelpDocumentsTheConsoleFlagAndEveryConsoleCommand checks the flag and the
+// command surface the console adds.
+//
+// The flag is asserted structurally rather than by substring, because a mention
+// satisfies a substring: "--console" appears in the prose above the entry, so deleting
+// the entry would leave a substring guard green. The commands are asserted inside the
+// FLAGS section for the same reason: "regenerate id" also appears in the regenerate
+// subcommand's page, so a whole-page search would pass on an unrelated sentence.
+func TestRunHelpDocumentsTheConsoleFlagAndEveryConsoleCommand(t *testing.T) {
+	text := Run("connector-node")
+
+	flags := section(t, text, "FLAGS")
+	if !hasEntry(flags, "--console") {
+		t.Fatalf("the FLAGS section has no --console entry, so the flag is undocumented")
+	}
+
+	commands := []string{
+		"show config",
+		"show identity",
+		"show credentials",
+		"show scopes",
+		"show status",
+		"regenerate id",
+		"credential add",
+		"credential rotate",
+		"credential remove",
+		"help",
+		"quit",
+	}
+	for _, command := range commands {
+		if !strings.Contains(flags, command) {
+			t.Errorf("the FLAGS section does not document the console command %q", command)
+		}
+	}
+}
+
+// TestRunHelpDocumentsTheConsoleLogCommand checks the command that answers the one
+// complaint a console always gets: a log record written while the operator is typing
+// lands in the middle of the line.
+//
+// The assertion is structural rather than a substring, because "log" appears in
+// "login", in "catalog" and in the prose above the list. A substring guard would stay
+// green after the entry was deleted, which is the defect this file exists to prevent.
+func TestRunHelpDocumentsTheConsoleLogCommand(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+
+	var entry string
+	for _, line := range strings.Split(flags, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		if strings.HasPrefix(trimmed, "log ") || trimmed == "log" {
+			entry = trimmed
+			break
+		}
+	}
+	if entry == "" {
+		t.Fatalf("the FLAGS section has no console log entry, so the command is undocumented")
+	}
+	for _, word := range []string{"debug", "info", "warn", "error", "off"} {
+		if !strings.Contains(entry, word) {
+			t.Errorf("the log entry does not name the level %q: %q", word, entry)
+		}
+	}
+
+	flattened := strings.Join(strings.Fields(flags), " ")
+	if !strings.Contains(flattened, "silences the process logger") {
+		t.Errorf("the FLAGS section does not state that log off silences the process logger, " +
+			"so a reader would expect it to silence only the console")
+	}
+	if !strings.Contains(flattened, "not remembered across a restart") {
+		t.Errorf("the FLAGS section does not state that the level is not remembered across a restart")
+	}
+	if !strings.Contains(flattened, "still reports a fatal error on the way out") {
+		t.Errorf("the FLAGS section does not state that a silenced Node still reports a fatal " +
+			"error on the way out, so a reader would believe log off hides a startup failure")
+	}
+}
+
+// TestRunHelpStatesThatTheConsoleNeverPrintsASecret checks the rule a reader of the help
+// has to know before they type `show credentials`.
+//
+// The console prints a secret exactly once, when a credential is added or rotated, and
+// never when one is inspected. A help page that omitted the distinction would leave the
+// operator unable to tell whether the output is safe to paste into a ticket.
+func TestRunHelpStatesThatTheConsoleNeverPrintsASecret(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+
+	flattened := strings.Join(strings.Fields(flags), " ")
+	if !strings.Contains(flattened, "a secret is never printed") {
+		t.Fatalf("the FLAGS section does not state that inspecting a credential never prints a secret")
+	}
+	if !strings.Contains(flattened, "never written to a history file") {
+		t.Fatalf("the FLAGS section does not state that console input is not written to a history file")
+	}
+}
+
+// TestRunHelpDocumentsTheConfigurationSources checks that the two flags the run
+// subcommand accepts are documented, and that the precedence between them is stated.
+//
+// A flag the binary accepts and the help omits is the defect LEARN.md records: the
+// operator cannot discover it, and the only way to learn the order is to read the
+// source. The order is the part that cannot be guessed, because every layer is a
+// plausible winner.
+func TestRunHelpDocumentsTheConfigurationSources(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+
+	for _, name := range []string{"--env-file <path>", "--set KEY=VALUE"} {
+		if !hasEntry(flags, name) {
+			t.Errorf("the FLAGS section has no %s entry, so the flag is undocumented", name)
+		}
+	}
+
+	flattened := strings.Join(strings.Fields(flags), " ")
+	if !strings.Contains(flattened, "--set beats an environment variable") {
+		t.Fatalf("the FLAGS section does not state that --set beats an environment variable")
+	}
+	if !strings.Contains(flattened, "which beats --env-file") {
+		t.Fatalf("the FLAGS section does not state that an environment variable beats --env-file")
+	}
+	if !strings.Contains(flattened, "which beats a value compiled into the binary") {
+		t.Fatalf("the FLAGS section does not state that --env-file beats a compiled-in value")
+	}
+}
+
+// TestRunHelpStatesThatAnEnvFileMustBeAbsolute checks the constraint on the value,
+// not only the existence of the variable.
+//
+// A variable documented in name only is documented incompletely: the operator who
+// exports a relative path meets the rule as a startup failure that reads like a bug.
+func TestRunHelpStatesThatAnEnvFileMustBeAbsolute(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+	entry := entryFor(t, flags, "--env-file <path>")
+
+	flattened := strings.Join(strings.Fields(entry), " ")
+	if !strings.Contains(flattened, "must be absolute") {
+		t.Fatalf("the --env-file entry does not state that the path must be absolute")
+	}
+	if !strings.Contains(flattened, "does not exist is an error") {
+		t.Fatalf("the --env-file entry does not state that a named file that does not exist is an error")
+	}
+}
+
 // TestMainHelpStatesThatAPathMustBeAbsolute checks that every variable the code refuses
 // when relative is documented as needing an absolute path.
 //

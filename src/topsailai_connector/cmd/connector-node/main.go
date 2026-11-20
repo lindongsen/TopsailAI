@@ -206,6 +206,29 @@ func runNodeWithSignals(arguments []string, signals <-chan os.Signal) error {
 func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.Writer, terminal bool) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	// The console is opt-in on a file-backed Node and on by default in stateless mode,
+	// because a stateless Node has no file to edit: without a console, `regenerate` and
+	// the `credential` subcommands are refused and the operator has no way to change the
+	// address or revoke a caller without restarting the process.
+	//
+	// It is a flag rather than an environment variable because it decides whether the
+	// process reads its own stdin, which is a property of how the process was launched
+	// rather than of the machine it runs on.
+	consoleFlag := flags.Bool("console", false, "read commands from stdin while the node serves")
+	// The two configuration sources are flags as well as variables, because the
+	// argument layer is the most specific statement an operator can make: it is typed
+	// for this one launch, while an environment variable is inherited by every process
+	// the shell starts. A source reachable only through the environment would be
+	// unreachable for the operator who wants to override the environment.
+	envFileFlag := flags.String("env-file", "", "read KEY=VALUE pairs from this dotenv file")
+	overrides := overrideFlag{}
+	flags.Var(&overrides, "set", "override one configuration value; repeatable, KEY=VALUE")
+	// The --set pairs are validated before the flag package sees them, because the
+	// package echoes a rejected value verbatim and a --set argument may carry a
+	// tunnel token. See validateOverrideArguments.
+	if err := validateOverrideArguments(arguments); err != nil {
+		return helpdispatch.Usagef("%v", err)
+	}
 	if err := flags.Parse(arguments); err != nil {
 		return helpdispatch.Usagef("%v", err)
 	}
@@ -213,9 +236,28 @@ func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.W
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// The level is a variable rather than a constant so the console can change it while
+	// the Node runs. A handler built with a fixed level cannot be changed afterwards, and
+	// rebuilding the logger would leave the dispatcher and the dialer holding the old one.
+	//
+	// The default stays Info, which is what every existing deployment already gets.
+	logLevel := &slog.LevelVar{}
+	logLevel.Set(slog.LevelInfo)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
-	config, err := node.LoadConfig(os.Getenv)
+	// The precedence is decided in one place, before LoadConfig is called, so the order
+	// is visible in one function rather than scattered through the resolvers.
+	envFilePath, err := resolveEnvFile(*envFileFlag, os.Getenv)
+	if err != nil {
+		return err
+	}
+	fileValues, err := loadEnvFile(envFilePath)
+	if err != nil {
+		return err
+	}
+	lookup := layeredLookup(overrides, os.Getenv, fileValues)
+
+	config, err := node.LoadConfig(lookup)
 	if err != nil {
 		return err
 	}
@@ -238,22 +280,65 @@ func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.W
 	// identity and a credential seeds them instead of generating them. Claiming a
 	// random generation would be false for exactly the build whose operator most needs
 	// to know where the values came from: the one that shipped the artifact.
-	if _, written := runtime.NewIdentity(); written {
-		fmt.Fprintln(stdout, "a new node id was written by this start")
+	//
+	// A stateless Node writes nothing, so the same sentence would be false in the other
+	// direction: it would tell the operator to look for a file the mode exists to avoid
+	// creating. The mode is named instead, and the sentence says where the value lives.
+	// The distinction is not cosmetic. "Written" is a claim about the filesystem, and a
+	// claim about the filesystem has to be true on the machine it is printed on.
+	if _, created := runtime.NewIdentity(); created {
+		if config.Stateless {
+			fmt.Fprintln(stdout, "a new node id was created in memory by this start")
+		} else {
+			fmt.Fprintln(stdout, "a new node id was written by this start")
+		}
 	}
 	if credential := runtime.NewCredential(); credential != nil {
-		fmt.Fprintln(stdout, "a new credential was written by this start")
+		if config.Stateless {
+			fmt.Fprintln(stdout, "a new credential was created in memory by this start")
+		} else {
+			fmt.Fprintln(stdout, "a new credential was written by this start")
+		}
 	}
 	if err := printStartupSummary(stdout, runtime, terminal); err != nil {
 		return err
 	}
-
 	runtime.Report()
 
 	ctx, stop := contextFromSignals(signals)
 	defer stop()
+	// A stateless Node turns the console on by itself, because it has no file to edit and
+	// the file-backed subcommands are refused in that mode. A file-backed Node keeps the
+	// behaviour it had before the console existed: no console unless the operator asked
+	// for one.
+	console := consoleFor(runtime, stdout, *consoleFlag, terminal)
+	if console != nil {
+		console.SetLogLevel(logLevel)
+	}
+	return serveNodeWithConsole(ctx, runtime, logger, console)
+}
 
-	return serveNode(ctx, runtime, logger)
+// consoleFor builds the console the run subcommand should attach, or nil for none.
+//
+// The prompt is written only when stdout is a terminal. A prompt in a redirected log is
+// noise that reads like output, and a log that mixes prompts with the startup summary is
+// a log an operator cannot paste into a ticket without editing it first.
+//
+// The console is attached when the operator asked for it, or when the Node is stateless
+// and stdin is a terminal. The second condition is what makes a stateless Node usable at
+// all: it has no file to edit, so a console is the only way to change its address or
+// revoke a caller. It is conditioned on a terminal because a stateless Node started by a
+// service manager has no stdin to read, and a console that consumed a pipe would be a
+// console that ate the launcher's input.
+func consoleFor(runtime *node.Runtime, stdout io.Writer, requested bool, terminal bool) *node.Console {
+	if !requested && !(runtime.Config().Stateless && terminal) {
+		return nil
+	}
+	console := node.NewConsole(runtime, stdout, nil, nil)
+	if terminal {
+		console.Prompt = "connector-node> "
+	}
+	return console
 }
 
 // serveNode builds the dispatcher and the dialer and serves until the context ends.
@@ -267,6 +352,21 @@ func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.W
 // is adopted by both components at once: the dialer announces the new identity and the
 // dispatcher checks requests against it.
 func serveNode(ctx context.Context, runtime *node.Runtime, logger *slog.Logger) error {
+	return serveNodeWithConsole(ctx, runtime, logger, nil)
+}
+
+// serveNodeWithConsole is serveNode with an optional console attached.
+//
+// The console is a parameter rather than a field on the runtime because it is a process
+// concern: a library that started reading a terminal would be a library that consumes
+// the caller's input. A nil console means the Node serves without one, which is the
+// behaviour every existing deployment has.
+//
+// The console is given the dialer's RequestIdentityChange, so `regenerate id` drops the
+// live channel exactly as a file-backed regeneration does. A stateless Node has no
+// identity file for the watcher to poll, so this is the only path by which a new address
+// reaches the dialer.
+func serveNodeWithConsole(ctx context.Context, runtime *node.Runtime, logger *slog.Logger, console *node.Console) error {
 	holder := runtime.IdentityHolder()
 	config := runtime.Config()
 
@@ -278,6 +378,24 @@ func serveNode(ctx context.Context, runtime *node.Runtime, logger *slog.Logger) 
 	dialer, err := node.NewDialerWithHolder(config, holder, dispatcher, logger)
 	if err != nil {
 		return err
+	}
+
+	if console != nil {
+		// The callback is installed here rather than passed to NewConsole, because the
+		// dialer does not exist when the console is built. Without it `regenerate id`
+		// would change the identity in memory and leave the live channel authenticated
+		// under the retired one, which is the state the file-backed path avoids by
+		// dropping the channel.
+		console.SetIdentityChangeRequest(dialer.RequestIdentityChange)
+
+		// The console runs beside the dialer rather than before it, so a Node that is
+		// serving can still be inspected and re-addressed. It stops when the context
+		// ends, which is the same signal that stops the dialer.
+		go func() {
+			if err := console.Run(ctx, os.Stdin); err != nil {
+				logger.Warn("console ended", "error", err)
+			}
+		}()
 	}
 
 	return dialer.Run(ctx)
@@ -303,6 +421,30 @@ func contextFromSignals(signals <-chan os.Signal) (context.Context, context.Canc
 	return ctx, cancel
 }
 
+// refuseInStatelessMode stops a subcommand that would write a file.
+//
+// `id`, `regenerate` and the three `credential` subcommands all work by reading or
+// rewriting the identity file and the credential file. A stateless Node has neither, so
+// the commands have nothing to act on. They are refused rather than silently turned into
+// in-memory operations, because a command whose meaning depends on an environment
+// variable is the hardest kind of defect to diagnose: the same command would change the
+// address of a file-backed Node and change nothing on a stateless one, and the operator
+// would have no way to tell which happened.
+//
+// The refusal runs before the config directory is resolved, because resolving one
+// creates it. A check placed after that call would have created the directory the mode
+// exists to avoid, and the refusal would arrive after the damage.
+func refuseInStatelessMode(command string) error {
+	stateless, err := node.StatelessRequested(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if !stateless {
+		return nil
+	}
+	return fmt.Errorf("%s writes the node's identity and credential files, and CONNECTOR_NODE_STATELESS=1 means this node has neither; use the interactive console instead, which changes the node id and the credentials in memory", command)
+}
+
 // runID prints the node id and nothing else, so it can be copied into a script.
 //
 // Only the config directory is resolved, not the whole configuration. `id` never dials,
@@ -318,6 +460,10 @@ func runID(arguments []string) error {
 		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
+
+	if err := refuseInStatelessMode("id"); err != nil {
 		return err
 	}
 
@@ -349,6 +495,10 @@ func runRegenerate(arguments []string) error {
 		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
+
+	if err := refuseInStatelessMode("regenerate"); err != nil {
 		return err
 	}
 
@@ -413,6 +563,10 @@ func runCredentialAdd(arguments []string) error {
 		return err
 	}
 
+	if err := refuseInStatelessMode("credential add"); err != nil {
+		return err
+	}
+
 	configDir, err := node.ResolveConfigDir(os.Getenv)
 	if err != nil {
 		return err
@@ -455,6 +609,10 @@ func runCredentialList(arguments []string) error {
 		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
+
+	if err := refuseInStatelessMode("credential list"); err != nil {
 		return err
 	}
 
@@ -551,6 +709,10 @@ func runCredentialRemove(arguments []string) error {
 	}
 	if *keyID == "" {
 		return helpdispatch.Usagef("--key-id is required")
+	}
+
+	if err := refuseInStatelessMode("credential remove"); err != nil {
+		return err
 	}
 
 	configDir, err := node.ResolveConfigDir(os.Getenv)

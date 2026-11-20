@@ -43,15 +43,17 @@ func isTerminal(file *os.File) bool {
 // saying why, so a log file records that a credential exists without recording the
 // credential.
 //
-// The credential list is read from the file rather than from the runtime, because the
-// runtime deliberately holds no secret: a runtime that could render a secret would be a
-// runtime that could print one at any later moment. Reading it here makes the decision
-// to write a secret to a terminal an act of the process boundary, which is where it
-// belongs.
+// The credential list comes from the runtime rather than from the file directly. A
+// file-backed runtime reads the file, because the runtime deliberately holds no
+// secret: a runtime that could render a secret would be a runtime that could print
+// one at any later moment. A stateless runtime has no file, so it returns the list it
+// resolved in memory, which is the only record of a credential that was never
+// written. Reading it here makes the decision to write a secret to a terminal an act
+// of the process boundary, which is where it belongs.
 func printStartupSummary(w io.Writer, runtime *node.Runtime, terminal bool) error {
 	config := runtime.Config()
 
-	credentials, err := node.LoadCredentialList(config.CredentialsPath)
+	credentials, err := runtime.CredentialList()
 	if err != nil {
 		return fmt.Errorf("read the credentials to report them: %w", err)
 	}
@@ -74,8 +76,16 @@ func printStartupSummary(w io.Writer, runtime *node.Runtime, terminal bool) erro
 	fmt.Fprintln(w, "=== connector-node ===")
 	fmt.Fprintf(w, "server        : %s\n", config.ServerURL)
 	fmt.Fprintf(w, "node id       : %s\n", runtime.IdentityID())
-	fmt.Fprintf(w, "config dir    : %s\n", config.ConfigDir)
-	fmt.Fprintf(w, "credentials   : %s\n", config.CredentialsPath)
+	if config.Stateless {
+		// A stateless Node has no directory and no file, so printing two empty values
+		// would read as a broken configuration. The mode is named instead, together
+		// with the consequence the operator has to know: nothing survives a restart.
+		fmt.Fprintln(w, "mode          : stateless (nothing is written; the node id and the")
+		fmt.Fprintln(w, "                credentials live in memory and are lost when this process exits)")
+	} else {
+		fmt.Fprintf(w, "config dir    : %s\n", config.ConfigDir)
+		fmt.Fprintf(w, "credentials   : %s\n", config.CredentialsPath)
+	}
 	fmt.Fprintf(w, "policy        : %s\n", policy)
 	fmt.Fprintf(w, "scopes        : %s\n", joinOrNone(scopes))
 	if len(absent) > 0 {
@@ -88,7 +98,7 @@ func printStartupSummary(w io.Writer, runtime *node.Runtime, terminal bool) erro
 		fmt.Fprintln(w, "credential    : none; this node refuses every caller")
 	} else {
 		for _, credential := range credentials {
-			printCredential(w, credential, terminal)
+			printCredential(w, credential, terminal, config.Stateless)
 		}
 	}
 
@@ -98,7 +108,12 @@ func printStartupSummary(w io.Writer, runtime *node.Runtime, terminal bool) erro
 }
 
 // printCredential writes one credential, in full only when a human is watching.
-func printCredential(w io.Writer, credential security.Credential, terminal bool) {
+//
+// The withheld form names where the secret can be recovered. A file-backed Node has a
+// file to point at; a stateless Node has none, so the only way to see the secret is to
+// run the process in a terminal. Saying "read the credentials file" to a stateless
+// operator would send them looking for a file the mode exists to avoid creating.
+func printCredential(w io.Writer, credential security.Credential, terminal bool, stateless bool) {
 	fmt.Fprintf(w, "key id        : %s\n", credential.KeyID)
 	if terminal {
 		fmt.Fprintf(w, "secret        : %s\n", string(credential.Secret))
@@ -108,6 +123,10 @@ func printCredential(w io.Writer, credential security.Credential, terminal bool)
 	fmt.Fprintf(w, "secret        : %s\n", credential.Secret.Redacted())
 	fmt.Fprintf(w, "credential    : %s\n", credential.Redacted())
 	fmt.Fprintln(w, "                (withheld because stdout is not a terminal; run the node in a")
+	if stateless {
+		fmt.Fprintln(w, "                 terminal to see it, because a stateless node writes no file)")
+		return
+	}
 	fmt.Fprintln(w, "                 terminal to see it, or read the credentials file named above)")
 }
 

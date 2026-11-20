@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -64,6 +65,18 @@ type Dialer struct {
 	// drives a single connection wants: a nil channel never delivers, so no identity
 	// change can drop the connection under test.
 	identityChanges <-chan struct{}
+
+	// identityChangeRequests is the sending end of the same channel, published so a
+	// console can ask for a channel drop after it replaces the node id in memory. It
+	// is guarded by identityChangeMutex because Run publishes it from the goroutine
+	// that starts the dialer while the console reads it from the goroutine that reads
+	// commands, and an unsynchronised write there is a data race the race detector
+	// reports.
+	//
+	// It is nil until Run starts, and a nil value makes RequestIdentityChange a no-op:
+	// a dialer that is not running has no channel to drop.
+	identityChangeRequests chan<- struct{}
+	identityChangeMutex    sync.Mutex
 }
 
 // NewDialer builds a dialer serving one fixed identity.
@@ -142,6 +155,18 @@ func (d *Dialer) Run(ctx context.Context) error {
 	changes := make(chan struct{}, 1)
 	go d.watchIdentity(ctx, changes)
 
+	// The sending end is published so a console can ask for a channel drop after it
+	// replaces the node id in memory. A stateless Node has no identity file, so the
+	// watcher has nothing to poll and this is the only way a regenerated address can
+	// reach the dialer.
+	d.identityChangeMutex.Lock()
+	d.identityChangeRequests = changes
+	d.identityChangeMutex.Unlock()
+	defer func() {
+		d.identityChangeMutex.Lock()
+		d.identityChangeRequests = nil
+		d.identityChangeMutex.Unlock()
+	}()
 	// The channel is stored on the dialer so connectOnce keeps its single argument. A
 	// test that drives one connection directly leaves the field nil, and a nil channel
 	// blocks forever, which is the behaviour such a test wants: no identity change can
@@ -168,6 +193,32 @@ func (d *Dialer) Run(ctx context.Context) error {
 			return nil
 		case <-time.After(reconnectDelay):
 		}
+	}
+}
+
+// RequestIdentityChange asks the dialer to drop the live channel.
+//
+// It exists for the console. A file-backed Node learns about a regenerated address from
+// the watcher, which polls the identity file; a stateless Node has no file, so the
+// console is the only thing that can tell the dialer its identity changed. Without this
+// the Node would keep a channel authenticated under an address it no longer serves.
+//
+// The request is a no-op when the dialer is not running, because a dialer that is not
+// running has no channel to drop. It never blocks: the channel is buffered and a pending
+// signal is drained before the next dial, so a request that arrives while the Node is
+// disconnected does not drop the channel that is about to be established with the new
+// identity.
+func (d *Dialer) RequestIdentityChange() {
+	d.identityChangeMutex.Lock()
+	requests := d.identityChangeRequests
+	d.identityChangeMutex.Unlock()
+
+	if requests == nil {
+		return
+	}
+	select {
+	case requests <- struct{}{}:
+	default:
 	}
 }
 

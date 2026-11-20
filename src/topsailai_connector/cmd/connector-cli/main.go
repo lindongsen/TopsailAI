@@ -5,12 +5,16 @@
 // The behaviour is identical because both entry points call the same package; only
 // the program name in the messages and the configuration file location differ.
 //
-// Configuration is read from three places, and the first one that supplies a value
+// Configuration is read from four places, and the first one that supplies a value
 // wins:
 //
-//  1. a flag on the command line
+//  1. --set KEY=VALUE on the command line
 //  2. an environment variable in the process environment
-//  3. an environment variable in the configuration file
+//  3. a KEY=VALUE pair in the configuration file
+//  4. the built-in default, where one exists
+//
+// A dedicated flag such as --server is the same layer as --set and is read first,
+// so --server wins over --set CONNECTOR_CLI_SERVER_URL.
 //
 // The configuration file is `.env.local` in the directory that holds this
 // executable, so a binary can be dropped into a directory with its settings and run
@@ -20,10 +24,10 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
-	"topsailai_connector/internal/envfile"
 	"topsailai_connector/internal/server/cli"
 )
 
@@ -37,28 +41,45 @@ func main() {
 // run is the whole process, separated from main so a test can call it and so every
 // failure returns a status instead of calling os.Exit in the middle.
 func run(arguments []string) int {
-	program := programName(arguments)
-	stderr := os.Stderr
+	return runWithOutput(arguments, os.Stdout, os.Stderr)
+}
 
-	values, path, err := loadConfiguration()
+// runWithOutput is run with the two streams injected, so a test can read what the
+// program printed instead of only its status.
+//
+// The status alone cannot prove a secret stayed out of the output: a program that
+// echoes a credential and exits 2 has the right status and the wrong behaviour.
+func runWithOutput(arguments []string, stdout, stderr io.Writer) int {
+	program := programName(arguments)
+
+	// The two configuration flags are extracted before anything else, because the
+	// configuration has to be loaded before the operation is parsed: the operation's
+	// own flags are resolved against the configuration, so a flag that changes the
+	// configuration must be read first. The shared cli package never sees them, which
+	// is why it does not have to know they exist.
+	configuration, err := extractConfigurationArguments(arguments[1:])
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: usage: %v\n", program, err)
+		return 2
+	}
+
+	path, named, err := resolveConfigurationPath(configuration.envFile, os.Getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", program, err)
+		return 2
+	}
+	values, err := loadConfigurationFile(path, named)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", program, err)
 		return 2
 	}
 	warnAboutPermissions(program, path, stderr)
 
-	// The process environment wins over the file, because a caller who exported a
-	// value meant it for this one command, while the file is a default for this
-	// installation. An empty value counts as unset, which is the same rule the flag
-	// layer uses: a variable set to nothing is not a configuration.
-	lookup := func(key string) string {
-		if value := os.Getenv(key); value != "" {
-			return value
-		}
-		return values[key]
-	}
+	// The precedence is decided in one place, so the order is visible in one function
+	// rather than scattered through the resolvers.
+	lookup := layeredLookup(configuration.overrides, os.Getenv, values)
 
-	return cli.RunAs(program, arguments[1:], lookup, os.Stdout, stderr)
+	return cli.RunAs(program, configuration.remaining, lookup, stdout, stderr)
 }
 
 // programName returns the name used as the prefix of every message.
@@ -82,15 +103,18 @@ func programName(arguments []string) string {
 // alone, which is the ordinary case for a caller who exports the credentials. A file
 // that exists and cannot be parsed is an error, because a configuration that is
 // half-read is a configuration nobody can reason about.
+//
+// It is the no-flag form of the same work run does, kept as its own function because
+// the tests exercise it directly and because a caller that names no file should not
+// have to pass an empty flag value to say so.
 func loadConfiguration() (map[string]string, string, error) {
-	path, err := configurationPath()
+	path, named, err := resolveConfigurationPath("", os.Getenv)
 	if err != nil {
 		return nil, "", err
 	}
-
-	values, err := envfile.Load(path)
+	values, err := loadConfigurationFile(path, named)
 	if err != nil {
-		return nil, path, fmt.Errorf("read %s: %w", path, err)
+		return nil, path, err
 	}
 	return values, path, nil
 }
@@ -102,15 +126,8 @@ func loadConfiguration() (map[string]string, string, error) {
 // binary may live somewhere its configuration must not, such as a directory a build
 // step deletes.
 func configurationPath() (string, error) {
-	if override := os.Getenv(cli.EnvEnvFile); override != "" {
-		return override, nil
-	}
-
-	executable, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("locate this executable: %w", err)
-	}
-	return filepath.Join(filepath.Dir(executable), defaultConfigName), nil
+	path, _, err := resolveConfigurationPath("", os.Getenv)
+	return path, err
 }
 
 // warnAboutPermissions reports a configuration file other accounts can read.
@@ -119,7 +136,7 @@ func configurationPath() (string, error) {
 // container where the only account is the one running the program, and a refusal
 // there would stop a working installation. The warning names the file and the mode,
 // so the reader can decide without being told what the mode means.
-func warnAboutPermissions(program, path string, stderr *os.File) {
+func warnAboutPermissions(program, path string, stderr io.Writer) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return
