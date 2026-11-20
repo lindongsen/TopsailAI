@@ -87,7 +87,15 @@ SBIN_DIR="/usr/local/sbin"
 # versions installed before this convention (for example 4e160caf-4) sort above
 # any tag-derived 1.x version, so the epoch is what turns the tag scheme into an
 # upgrade instead of a downgrade. Bump it only when the scheme changes again.
-DEB_EPOCH="1"
+#
+# Raised to 2 on 2026-11-21. The fleet had been deployed at 1:2.0.0-1 and the
+# release after it was numbered 1.3.0, so every install printed
+# "downgrading ... from 1:2.0.0-1 to 1:1.3.0-1" while succeeding. The version
+# string cannot fix that, because 1.3.0 is genuinely lower than 2.0.0. The epoch
+# is the only component that outranks the whole version string, so raising it
+# once makes every later release sort above everything installed under epoch 1,
+# whatever number the release carries. It is a one-way ratchet: never lower it.
+DEB_EPOCH="2"
 
 ROLE=""
 DEST=""
@@ -656,8 +664,20 @@ function build_provider_package() {
     local go_cache="${PROJECT_DIR}/.tmp/go-cache"
     local go_tmp="${PROJECT_DIR}/.tmp/go-tmp"
     mkdir -p "${go_cache}" "${go_tmp}" || die "cannot create the Go cache directories"
+
+    # The Provider reports the release version the package carries, injected here
+    # rather than maintained as a literal in the source. Two literals would drift:
+    # the source constant is edited by hand while the package version comes from
+    # --version, and nothing would compare them. `-X` only works on a var, which
+    # is why providerVersion is declared as one; on a const it is a silent no-op
+    # that exits 0 and leaves the literal in place.
+    #
+    # VERSION rather than FULL_VERSION: the Debian revision belongs to the
+    # package, not to the Provider's own identity, and the manifest already
+    # records the two separately.
     ( cd "${module_dir}" && CGO_ENABLED=0 GOCACHE="${go_cache}" GOTMPDIR="${go_tmp}" \
-        go build -trimpath -ldflags "-s -w" -o "${PKG_ROOT}${binary}" ./src ) ||
+        go build -trimpath -ldflags "-s -w -X main.providerVersion=${VERSION}" \
+        -o "${PKG_ROOT}${binary}" ./src ) ||
         die "static build failed for the ${PROVIDER_TYPE} Provider"
     chmod 0755 "${PKG_ROOT}${binary}" || die "cannot set mode on ${binary}"
 

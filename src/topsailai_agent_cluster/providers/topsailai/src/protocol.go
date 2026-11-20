@@ -48,9 +48,23 @@ const (
 	deliveryNotStarted = "not_started"
 	deliverySubmitted  = "submitted"
 
-	providerVersion  = "1.3.0"
 	operationVersion = "v1"
 )
+
+// providerVersion is the version this Provider reports in its describe result.
+//
+// It is a var rather than a const so the packaging build can set it with
+// `-ldflags -X`, which makes it the same value the Debian package carries. A
+// const cannot be overridden: `-X` on a const is a silent no-op that exits 0 and
+// leaves the literal in place, so a const here would let the package version and
+// the reported version drift apart while every build looked successful.
+//
+// The fallback is deliberately not a release number. A binary built outside the
+// packaging script has no package version to inherit, and reporting a plausible
+// release number would claim a provenance the binary does not have. The
+// packaging script always injects the real value, and the packaging test proves
+// the injection reached the binary rather than trusting the build.
+var providerVersion = "0.0.0-unpackaged"
 
 // Standard operation names this Provider serves.
 //

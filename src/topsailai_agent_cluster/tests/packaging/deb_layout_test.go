@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,22 @@ const (
 // config package name carries it, so two sites produce distinguishable
 // artifacts instead of two packages that differ only in content.
 const debTestSite = "test-site"
+
+// debTestVersion is the release version every packaging test builds with. It is
+// deliberately not a release number: a test that pinned the current release
+// would fail on every version bump for a reason unrelated to packaging, and it
+// would also hide a real defect, because a hardcoded expectation passes whether
+// or not the build actually used the version it was given. The Provider version
+// is injected from this value, so the assertion that reads it back proves the
+// injection reached the binary.
+const debTestVersion = "0.0.0-test"
+
+// debMinEpoch is the lowest Debian epoch a package may carry. It is a floor
+// rather than an exact value because the epoch is a one-way ratchet: a future
+// scheme may raise it again, and this test must not have to change for that.
+// It must never be lowered, because a lower epoch sorts below what is already
+// installed and dpkg then reports a downgrade.
+const debMinEpoch = 2
 
 // debLayoutDirs is the real directory set that makes one directory show the
 // whole product, with the permission string dpkg-deb reports. A symlink here
@@ -188,7 +205,7 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 			"--role", build.role,
 			"--dest", dest,
 			"--build-dir", buildDir,
-			"--version", "0.0.0-test",
+			"--version", debTestVersion,
 			"--revision", "1",
 		}
 		if build.configRole != "" {
@@ -654,6 +671,26 @@ func TestDebPackagesCarryAMonotonicEpoch(t *testing.T) {
 				"node version exactly, so a differing epoch makes the dependency "+
 				"unsatisfiable", role, current, epoch)
 		}
+	}
+
+	// The epoch is a one-way ratchet. It was raised to 2 because the fleet had
+	// been deployed at 1:2.0.0-1 and the next release was numbered 1.3.0, so
+	// every install printed a downgrade warning while succeeding. Lowering it
+	// again would reintroduce exactly that, and the warning would then hide a
+	// real downgrade instead of being noise. Asserting a floor rather than the
+	// exact value lets a future scheme raise it again without editing this test.
+	//
+	// Compared as integers, not as strings: "10" sorts below "2" lexically, so a
+	// string comparison would reject a legitimately raised epoch.
+	epochNumber, err := strconv.Atoi(epoch)
+	if err != nil {
+		t.Fatalf("the package epoch %q is not a number: %v", epoch, err)
+	}
+	if epochNumber < debMinEpoch {
+		t.Fatalf("the package epoch is %d, below the required floor %d; lowering the "+
+			"epoch makes every package sort below what is already installed, so dpkg "+
+			"reports a downgrade and an operator cannot tell an upgrade from a rollback",
+			epochNumber, debMinEpoch)
 	}
 
 	// The epoch must stay out of the file name: a colon in a path breaks scp and
