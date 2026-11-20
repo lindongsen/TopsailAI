@@ -25,7 +25,7 @@ scan:
 
 # Context configuration: each top-level item corresponds to a set of context sources.
 # The launcher merges sources in the following order:
-#   1. "_" (基础配置, base configuration) — always loaded first
+#   1. "_" (base configuration) — always loaded first
 #   2. "_default" — legacy backward compatibility, loaded after "_"
 #   3. The selected item (e.g., "default" or "topsailai")
 #

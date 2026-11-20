@@ -59,7 +59,7 @@ if PWD:
 # Global references to temporary startup-message files used for cleanup on exit.
 _CONTEXT_MESSAGE_FILE = None
 _TASK_MESSAGE_FILE = None
-# Names treated as the shared base configuration (基础配置). "_" is the preferred alias;
+# Names treated as the shared base configuration. "_" is the preferred alias;
 # "_default" is kept for backward compatibility.
 BASE_ITEM_NAMES = ("_", "_default")
 # Default age threshold (days) for cleaning stale files in the workspace .tmp/ directory.
@@ -705,8 +705,8 @@ scan:
 # Each source is either a file path (string) or a dict describing a command
 # whose stdout will be captured and included as context.
 #
-# "_" is the 基础配置 (base configuration) shared by all items; item-specific
-# sources are appended after the 基础配置 sources. File paths are relative to
+# "_" is the base configuration shared by all items; item-specific
+# sources are appended after the base configuration sources. File paths are relative to
 # `workspace` unless they start with `/`.
 #
 # Command source example:
@@ -723,7 +723,7 @@ context:
   memo: []
 
 # Environment variable configuration: each item can define its own variables.
-# "_" variables are the 基础配置 (base configuration) and are applied first,
+# "_" variables are the base configuration and are applied first,
 # then item-specific variables override them. System environment variables are
 # inherited and can be overridden here.
 environment:
@@ -832,8 +832,8 @@ scan:
 # Each source is either a file path (string) or a dict describing a command
 # whose stdout will be captured and included as context.
 #
-# "_" is the 基础配置 (base configuration) shared by all items; item-specific
-# sources are appended after the 基础配置 sources. File paths are relative to
+# "_" is the base configuration shared by all items; item-specific
+# sources are appended after the base configuration sources. File paths are relative to
 # `workspace` unless they start with `/`.
 #
 # Command source example:
@@ -849,7 +849,7 @@ context:
   default: []
 
 # Environment variable configuration: each item can define its own variables.
-# "_" variables are the 基础配置 (base configuration) and are applied first,
+# "_" variables are the base configuration and are applied first,
 # then item-specific variables override them. System environment variables are
 # inherited and can be overridden here.
 #
