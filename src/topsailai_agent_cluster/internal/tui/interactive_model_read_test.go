@@ -125,6 +125,28 @@ func TestModelListsProfilesForUnverifiedRow(t *testing.T) {
 	}
 }
 
+// TestModelCatalogHidesProfileIDInTheInteractiveRender proves the interactive
+// catalog prints no MODEL_PROFILE_ID column.
+//
+// The layout function can drop the column, but only the caller decides whether it
+// does, so a test of the layout alone passes while the REPL still prints the opaque
+// value. This drives the real REPL and asserts the rendered header, which is the
+// only evidence that the flag reached the renderer. The standalone command keeps the
+// column on purpose, so the assertion is scoped to the interactive surface.
+func TestModelCatalogHidesProfileIDInTheInteractiveRender(t *testing.T) {
+	stub := modelReadStubFixture()
+	output, diagnostics := runScope(t, stub, "list\nmodel 2\n\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "MODEL") {
+		t.Fatalf("the catalog table was not rendered: %q", output)
+	}
+	if strings.Contains(output, "MODEL_PROFILE_ID") {
+		t.Fatalf("the interactive catalog still prints the MODEL_PROFILE_ID column: %q", output)
+	}
+}
+
 // TestModelDoesNotOfferSelectionForUnverifiedRow proves the guided question is not
 // asked when no profile can be applied.
 //
