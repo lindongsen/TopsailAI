@@ -31,3 +31,23 @@ Feature: output follow
     Given a real cluster with a streaming provider for the TUI
     When the standalone logs follow command runs while the endpoint disconnects
     Then the disconnect is reported as an interrupted stream
+
+  Scenario: an expired follow budget is reported as a timeout, not a cancellation
+    A follow is bounded by its own budget, which is separate from the one-shot
+    call timeout. When that budget expires nobody stopped the stream, so the
+    operator must be told the stream timed out. Reporting a cancellation here
+    sent the operator looking for whoever stopped it while nobody had.
+    Given a real cluster whose follow budget is shorter than the provider hold
+    When the standalone logs follow command runs until its own budget expires
+    Then the stream reports that its budget expired
+
+  Scenario: the keypress releases the provider follow child
+    A keypress must release the provider process, not only stop the drawing. The
+    provider records the pid of its follow child before it starts streaming, so
+    the pid is evidence that a child existed; the assertion then proves that pid
+    is gone after the keypress. Without this the teardown chain rested on source
+    tracing alone, and a regression that stopped cancelling the stream context
+    would leave the child running while every other follow scenario still passed.
+    Given a real cluster whose provider holds the follow stream past the keypress
+    When the interactive REPL runs logs follow and the provider child is recorded
+    Then the keypress releases the provider follow child

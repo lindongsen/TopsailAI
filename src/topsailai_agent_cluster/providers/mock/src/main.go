@@ -170,6 +170,13 @@ func main() {
 		}
 	}
 	if request.Function == functionFollowOutput {
+		// The record is written before the stream starts, not after it ends. A
+		// follow is normally terminated by the Cluster while the process is still
+		// holding the stream open, so a record written at the end would be absent
+		// exactly in the case a scenario needs to prove: that the child existed and
+		// was then released. Writing it first makes the recorded pid evidence of a
+		// live child rather than evidence of a completed call.
+		recordInvocation(options, request, "follow_output")
 		if err := writeStream(request, fault, options.followHoldMS); err != nil {
 			writeDiagnostic("write stream: %v", err)
 			os.Exit(2)
