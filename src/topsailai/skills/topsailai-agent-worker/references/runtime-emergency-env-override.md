@@ -74,7 +74,16 @@ a meaningful interval means the process is not producing output, which may be
 normal for a long LLM call but is not evidence of health.
 
 `topsailai workspace --format json` lists every discovered session with its
-`session_id`, `pid`, and `status`, and is a convenient way to find the PID.
+`session_id`, `pid`, and `status`, and is a convenient way to find the PID. When
+one session runs several agents, this list contains one row per agent with a
+different `pid`, so pick the row whose agent you actually need rather than
+assuming the session has a single process.
+
+`topsailai runtime info -s SESSION_ID -p PID` is the read-only way to confirm you
+selected the right agent before changing anything: it reports that exact
+process's `runtime` state, `is_task`, `last_stats` and `metafile`. It only reads
+the `runtime.static-data` instruction, so it never mutates the process, and it
+grants no signal authority.
 
 ### Check 2 — is the control channel reachable
 
@@ -284,6 +293,7 @@ reverse. Do not let it look like a clean fix.
 | Action | Command |
 |---|---|
 | Find session and PID | `topsailai workspace --format json` |
+| Confirm you picked the right agent | `topsailai runtime info -s SESSION_ID -p PID` |
 | Confirm process alive | `ps -o pid,stat,etime,cmd -p PID` |
 | Confirm output growing | `ls -la {TOPSAILAI_HOME}/workspace/task/SESSION_ID.PID.session.stdout` |
 | Probe control channel | `topsailai runtime control heartbeat -s SESSION_ID -p PID --json` |

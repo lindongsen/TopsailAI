@@ -16,6 +16,9 @@ description: |
   - "resume / watch / send a message to a running session"
   - "interrupt or control a running agent"
   - "inspect logs, sessions, or runtime state under ~/.topsailai"
+  - "how is this session doing" / "show this session's runtime" (`session info --include-runtime`)
+  - "what is this one agent doing" / "query a specific agent by PID" (`runtime info`)
+  - "one session runs several agents, how do I tell them apart"
   - "where is the usage data broken down by model" / "per-model token totals"
   - "add, update, or remove a model in the model registry" (`topsailai models`)
 ---
@@ -85,6 +88,8 @@ Use this skill when the user wants to:
 - Choose the right agent mode for a task.
 - Watch, resume, message, or control a running session.
 - Inspect agent runtime logs, sessions, or state.
+- Read one session's runtime record, or one specific agent's record by PID when a
+  session runs several agents concurrently.
 - Find usage statistics broken down by model.
 
 ## Launch workflow
@@ -185,7 +190,13 @@ self_environs:
 ## Session management
 
 - List historical sessions with `topsailai_list_sessions`.
-- View session details with `topsailai_session_info {session_id}`.
+- View session details with `topsailai_session_info {session_id}`, or with the
+  non-interactive `topsailai session info {session_id}` subcommand.
+- Add `--include-runtime` to either form to attach a `runtime` object collected
+  from the running session process. It selects JSON output by itself, because
+  runtime data has no card representation. This queries the **session** process,
+  so its `runtime` never carries a worker's data; to read one agent in a
+  multi-agent session use `topsailai runtime info -s SESSION -p PID` instead.
 - Read session content with `topsailai_retrieve_messages {session_id}`.
 - Resume a session and continue chatting:
 
@@ -246,19 +257,29 @@ While watching a session's live log you can interact with the running agent:
 ### Non-interactive subcommands
 
 ```bash
-topsailai workspace                  # show the human-readable task list and exit
-topsailai workspace --format json     # output task details as JSON
-topsailai docs list                   # list usage docs
-topsailai docs read topsailai.md      # read a usage doc
-topsailai project list                # list managed projects
-topsailai project add <path>          # add a project
-topsailai models list                 # list model registry entries
+topsailai workspace                    # show the human-readable task list and exit
+topsailai workspace --format json       # output task details as JSON
+topsailai workspace list --json         # same JSON document via the list subcommand
+topsailai workspace list --json --include-runtime  # add each row's runtime record
+topsailai docs list                     # list usage docs
+topsailai docs read topsailai.md        # read a usage doc
+topsailai project list                  # list managed projects
+topsailai project add <path>            # add a project
+topsailai models list                   # list model registry entries
 ```
 
 `topsailai workspace --format json` is recommended for scripts and operational
 queries. The output includes task/session details such as `session_name`,
 `session_id`, `pid`, `status`, `filename`, `created_at`, `project_workspace`,
 `is_task`, and `total`.
+
+`--include-runtime` adds a `runtime` object to every row and selects JSON output
+by itself. Each row's `runtime` is `{"state", "error_code", "pid", "is_task",
+"data"}`, collected from that row's own control channel. Because every agent
+process starts its own control server keyed by its own PID, a session running
+several agents reports a different `pid`, `is_task` and payload per row. This is
+the cheapest way to see which PIDs belong to one session before querying a
+single agent with `runtime info`.
 
 ## Controlling and observing a running agent
 
@@ -331,9 +352,96 @@ topsailai_send_control --session_id my-session --command call_instruction \
   --args '{"instruction":"ctx.history","args":[],"kwargs":{}}'
 ```
 
-Supported runtime actions include `send`, `btw`, `control`, and `logs`; control
-operations include `call_instruction`, `hard_interrupt`, `soft_interrupt`,
+Supported runtime actions include `send`, `btw`, `control`, `logs`, and `info`;
+control operations include `call_instruction`, `hard_interrupt`, `soft_interrupt`,
 `clear_interrupt`, and runtime message queries.
+
+### Reading one agent's runtime record
+
+`runtime info` publishes the runtime record of one exact process. Both selectors
+are mandatory:
+
+```bash
+topsailai runtime info -s SESSION_ID -p PID
+```
+
+The document is always JSON, so `--json` is accepted and changes nothing. It is
+the `workspace list --json --include-runtime` item for that one process, minus
+the keys that exist only to render a listing (`no`, `filename`, `hostname`,
+`created_at`, `completed`, `driver`, `process_generation`). The item is built by
+the list's own builder, so the two commands cannot drift in fields, values,
+states or error codes.
+
+Why both selectors are required: one session may run several agents at the same
+time, so a session identity alone does not name the process whose runtime should
+be reported, and a PID alone does not prove which session the caller meant.
+Omitting either one is `usage_error` with exit `2`.
+
+The row is selected by the PID recorded in its filename, not by the session
+identity. A session process writes `{session}.{pid}.session.stdout`; a task agent
+runs with session tee disabled and writes
+`{session}.{pid}[.{task_id}].task.stdout` instead. Both kinds are accepted as
+ownership evidence, which is what makes a worker PID reachable. A PID with no
+process log is `target_not_found`, and a PID recorded for another session is
+`target_mismatch`; both exit `3`. Reporting another session's runtime data would
+be worse than failing.
+
+The document carries the session record (`session_id`, `session_name`,
+`project_workspace`, `is_task`, `session_qualifier`, `pid`, `status`,
+`status_raw`, `category`, `create_time`, `is_running`, `model_name`, `pwd`,
+`task`, `topsailai_home`, the token, turn, request, tool, first-byte and
+heavy-task counters, `summary_count`), plus `runtime`, `metafile` and
+`last_stats`. A task row receives only the session-scoped subset of the lookup
+record, because the lookup describes the session rather than the individual
+agent; its per-agent counters arrive through `last_stats` instead.
+
+`runtime` is `{"state", "error_code", "pid", "is_task", "data"}`. `state` is `ok`
+when usable data is present, and otherwise one of `rejected` (the answering
+process does not know the `runtime.static-data` instruction, which in practice
+means it started before that instruction existed), `timeout`, `unavailable`, or
+`invalid_payload`. `error_code` carries the finer cause, for example
+`control_rejected`, `endpoint_missing`, `unsupported_row` or `internal_error`.
+`pid` is the PID that was actually probed. `is_task` describes the answering
+process, not the row kind.
+
+`last_stats` is the last complete record of the row's own
+`{session_id}.{pid}.session.stats.jsonl`. That file is an append-only log of
+cumulative snapshots, so only its last complete line describes the current state
+and earlier lines are history, not increments. Because the file is per-PID, it is
+the one source that describes this exact agent rather than the session it belongs
+to. It is `null` when the file is absent, holds no complete record, or its newest
+record names another process.
+
+`metafile` is the static `{session_id}.{pid}.session.meta` registration written
+at startup, so it is `null` only when no record exists. `last_stats` and
+`metafile` are evidence only and grant no signal authority.
+
+Every failure prints one JSON object with `session_id`, `error_code` and
+`message`, never a text line, so a machine consumer always receives a parseable
+document. Exit `0` is success, `1` is `session_not_found` or `lookup_failed`, `2`
+is `usage_error`, and `3` is `target_not_found` or `target_mismatch`.
+
+### One session, several agents
+
+A session may run a manager plus one or more workers. Each agent process starts
+its own control server keyed by its own PID, so each row is answered by its own
+process and reports its own `pid`, `is_task` and payload. A task row falls back
+to its parent session PID only when its own channel is absent, which is why an
+exited worker reports the parent's `pid` with `is_task: false`.
+
+Use the right command for the question:
+
+| Question | Command |
+|---|---|
+| What is this session doing overall? | `topsailai session info SESSION_ID --include-runtime` |
+| What is this one agent doing? | `topsailai runtime info -s SESSION_ID -p PID` |
+| Which PIDs belong to this session? | `topsailai workspace list --json` |
+| What did this agent print? | `topsailai runtime logs -s SESSION_ID -p PID` |
+
+`session info --include-runtime` always queries the session process, so its own
+`runtime` never carries a worker's data. Reaching a worker's runtime requires
+`runtime info -s SESSION_ID -p <worker-pid>`. Do not read the per-model or
+per-agent counters out of `session info`: it reports conversation totals only.
 
 ## Environment variables
 
@@ -395,16 +503,19 @@ reference, naming rules, derived-value formulas and reading caveats.
 - **Per-attempt records** — `{TOPSAILAI_HOME}/workspace/task/`, one JSON Lines
   file per process named `{session_id}.{pid}.session.stats.jsonl`. Every record
   carries `model_name`, so this store answers "which model did this attempt use"
-  and provides bounded recent history.
+  and provides bounded recent history. The newest complete record of one process
+  is published as `last_stats` by `topsailai runtime info -s SESSION_ID -p PID`
+  and by `topsailai workspace list --json --include-runtime`, so a per-agent
+  query does not need to parse the file by hand.
 
 The session database `{TOPSAILAI_HOME}/memory.db` (table `session`) has **no
 `model_name` column**, so `topsailai_list_sessions` and
 `topsailai_session_info` report conversation totals only and cannot answer a
 per-model question.
 
-No CLI reader exists for the per-model documents: no `topsailai` subcommand
-lists or aggregates them, and `topsailai models` manages only the model registry.
-Read the documents directly and aggregate them yourself.
+No CLI reader exists for the per-model cumulative documents: no `topsailai`
+subcommand lists or aggregates them, and `topsailai models` manages only the
+model registry. Read those documents directly and aggregate them yourself.
 
 ## Log files
 

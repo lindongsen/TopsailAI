@@ -226,6 +226,22 @@ Group records by `model_name` and sum the snapshot totals. Two cautions:
   attempts. Prefer the per-model documents for totals, and use this store for
   per-attempt attribution and history.
 
+### Reading the newest record through the CLI
+
+`topsailai runtime info -s SESSION_ID -p PID` publishes this store's newest
+complete record as `last_stats`, so a per-agent query does not need to parse the
+file by hand. Because the file is per-PID, `last_stats` is the one field that
+describes one exact agent rather than the session it belongs to.
+
+Only the last complete line is the current state, so the CLI reads it with a
+bounded tail seek instead of parsing the whole file. A trailing fragment without
+its newline is discarded, and a record whose stored `pid` is not the queried PID
+is rejected rather than published. `last_stats` is `null` when the file is
+absent, holds no complete record, or names another process.
+
+`topsailai workspace list --json --include-runtime` publishes the same field for
+every row, which is the cheapest way to compare several agents of one session.
+
 ## Store 3: session totals in the database
 
 `{TOPSAILAI_HOME}/memory.db`, table `session`, holds conversation totals:
@@ -238,7 +254,7 @@ There is no `model_name` column. `topsailai_session_info` maps the legacy
 prompt-only `total_tokens` column to `total_prompt_tokens` and derives
 `total_usage_tokens` from prompt plus completion totals.
 
-## No CLI reader exists
+## No CLI reader exists for the per-model documents
 
 No `topsailai` subcommand lists or aggregates the per-model documents, and
 `topsailai models` manages only the model registry at
