@@ -28,7 +28,11 @@ const (
 )
 
 const (
-	resourceSession          = "session"
+	resourceSession = "session"
+	// resourceProject is the Cluster resource kind a project registration
+	// addresses. It is a separate kind from session because a project is a
+	// registry entry, not a process: a project target carries no generation.
+	resourceProject          = "project"
 	queryLaunchOptions       = "launch.options"
 	queryHistoryMessages     = "history.messages"
 	queryModelCatalog        = "model.catalog"
@@ -54,10 +58,19 @@ type budget struct {
 }
 
 // target identifies one provider-private resource.
+//
+// ProviderTarget carries the caller's opaque exact-target evidence. The mock
+// accepts it because the Cluster forwards it verbatim for every operation that
+// addresses a resource, and the decoder rejects unknown fields: without this
+// field a request that legitimately carries the slot would be refused as a
+// malformed request instead of being exercised. The mock does not interpret the
+// value, because interpreting it is the Provider's business and the mock has no
+// resource whose identity needs recovering.
 type target struct {
 	ResourceKind        string `json:"resource_kind"`
 	ProviderResourceKey string `json:"provider_resource_key"`
 	ExpectedGeneration  string `json:"expected_generation,omitempty"`
+	ProviderTarget      string `json:"provider_target,omitempty"`
 }
 
 // namedContract identifies one versioned operation or query.

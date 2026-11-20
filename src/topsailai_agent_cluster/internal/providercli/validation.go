@@ -109,16 +109,21 @@ func (r Request) validateExecute() error {
 	if err := validateIdentifier("invocation_id", r.InvocationID, true); err != nil {
 		return err
 	}
-	if r.Target == nil {
-		return errors.New("execute target is required")
-	}
 	if r.Operation == nil {
 		return errors.New("execute operation is required")
 	}
 	if err := r.Operation.validate("operation"); err != nil {
 		return err
 	}
-	if err := r.Target.validate(OperationNeedsLiveGeneration(r.Operation.Name)); err != nil {
+	// project.add is the only standard mutation that carries no target, because
+	// the resource it creates does not exist yet and therefore has no identity to
+	// address. Every other execute still requires a target, so a missing target
+	// remains a defect the Provider reports rather than a form it accepts.
+	if r.Target == nil {
+		if r.Operation.Name != protocol.OperationProjectAdd {
+			return errors.New("execute target is required")
+		}
+	} else if err := r.Target.validate(OperationNeedsLiveGeneration(r.Operation.Name)); err != nil {
 		return err
 	}
 	if r.Query != nil {
@@ -133,6 +138,14 @@ func (r Request) validateExecute() error {
 		if _, err := DecodeModelSelectPayload(r.Payload); err != nil {
 			return err
 		}
+	case protocol.OperationProjectAdd:
+		if _, err := DecodeProjectAddPayload(r.Payload); err != nil {
+			return err
+		}
+	case protocol.OperationProjectRemove:
+		if _, err := DecodeProjectRemovePayload(r.Payload); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -144,6 +157,7 @@ var nonLiveAuthorityOperations = [...]string{
 	protocol.OperationAgentResume,
 	protocol.OperationAgentDriveStop,
 	protocol.OperationWorkspaceClean,
+	protocol.OperationProjectRemove,
 }
 
 // OperationNeedsLiveGeneration reports whether an operation requires live

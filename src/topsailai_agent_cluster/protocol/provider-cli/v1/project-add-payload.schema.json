@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/project-add-payload.schema.json",
+  "title": "project.add payload",
+  "description": "The absolute folder the operator asked to register, plus an optional label. The Endpoint confines the resolved folder to its configured project root before dispatch, and the Provider revalidates the same decision before it writes its registry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "folder"
+  ],
+  "properties": {
+    "folder": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/\\S(?:.*\\S)?$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    }
+  }
+}

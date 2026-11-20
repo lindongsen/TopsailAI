@@ -230,3 +230,31 @@ validated before the editor takes the terminal, so a rejected value never leaves
 screen in raw mode. The standalone `logs` command keeps its own 100-line default and
 still accepts any positive count, and a per-command `logs -n 7` inside the REPL
 still wins over the startup budget.
+
+## Remote project registration
+
+`project.add` and `project.remove` let an operator change one Endpoint's project registry from the
+Cluster CLI instead of logging into the node. Both are standard `control` operations, and both are
+configuration operations: `project.add` appends one registry entry and `project.remove` removes one,
+and neither creates, modifies or deletes project data on disk. The confirmation text states that
+difference, because an operator who expects a deletion would otherwise read a successful removal as a
+lost project.
+
+`project.add` is the only standard mutation that carries no target, because the resource it creates
+does not exist yet. The exception is named once per re-validating layer — the request schema, the
+Provider CLI decoder, the Generic CLI Adapter and each Provider — so every other `execute` still
+requires a target. The Endpoint resolves the Adapter with the same "exactly one capable Adapter" rule
+`command.exec` uses.
+
+Both operations are confined to `AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT`. The root has no default: an
+unconfigured root disables registration with `project_root_unconfigured` rather than falling back to a
+directory nobody approved. The folder is resolved with `EvalSymlinks` and compared against the root, so
+`..`, an absolute escape and a symlink escape are all refused. The Endpoint checks before dispatch and
+the Provider re-checks before writing its registry, which closes the window between validation and the
+write.
+
+`project.remove` addresses the registry entry through the opaque Cluster `project_id` and carries no
+generation, because a project is not a session and has no process to revalidate. The caller carries the
+exact folder in the opaque `provider_target` slot, because the Cluster mapping key is a digest and
+cannot be reversed; the Provider recomputes the key from that folder and refuses a mismatch, so a slot
+naming a different folder cannot remove an entry the caller never selected.

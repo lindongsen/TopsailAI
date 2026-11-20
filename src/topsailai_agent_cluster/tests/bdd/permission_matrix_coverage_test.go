@@ -42,6 +42,8 @@ var operationScenarioMarkers = map[string]string{
 	protocolOperationOutputRead:         "the output snapshot is read with the",
 	protocolOperationOutputFollow:       "the output follow is read with the",
 	protocolOperationCommandExec:        "the command exec operation is submitted",
+	protocolOperationProjectAdd:         "the project add command is submitted",
+	protocolOperationProjectRemove:      "the project remove command is submitted",
 	protocolOperationLaunchQuery:        "the launch options is read with the",
 	protocolOperationHistoryRead:        "the history is read with the",
 	protocolOperationMessagesRead:       "the messages is read with the",
@@ -70,6 +72,8 @@ const (
 	protocolOperationOutputRead         = protocol.OperationOutputRead
 	protocolOperationOutputFollow       = protocol.OperationOutputFollow
 	protocolOperationCommandExec        = protocol.OperationCommandExec
+	protocolOperationProjectAdd         = protocol.OperationProjectAdd
+	protocolOperationProjectRemove      = protocol.OperationProjectRemove
 	protocolOperationLaunchQuery        = endpoint.OperationLaunchQuery
 	protocolOperationHistoryRead        = endpoint.OperationHistoryRead
 	protocolOperationMessagesRead       = endpoint.OperationMessagesRead

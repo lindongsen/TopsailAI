@@ -105,7 +105,14 @@ const genericCLIReadConcurrency = 4
 // second source of truth. An empty value is not a default: it means endpoint scope
 // has no working directory, and the adapter refuses that form instead of falling
 // back to the Endpoint process working directory.
-func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, detailMaxBytes int, commandDir string) error {
+//
+// projectRoot is the operator-configured directory that bounds every folder a
+// remote project.add may register and every folder project.remove may address. It
+// is passed in for the same reason as commandDir, and an empty value is likewise
+// not a default: it means remote project registration is unavailable on this node,
+// and the adapter refuses project.add with project_root_unconfigured instead of
+// confining the folder to a location no operator chose.
+func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, detailMaxBytes int, commandDir string, projectRoot string) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}
@@ -144,6 +151,7 @@ func registerAdapter(registry *adapter.Registry, store *endpointstorage.Store, d
 			MaxRecords:     genericCLIMaxRecords,
 			MaxDetailBytes: detailMaxBytes,
 			CommandDir:     commandDir,
+			ProjectRoot:    projectRoot,
 			EndpointLimits: genericCLIConcurrency,
 			AdapterLimits:  genericCLIConcurrency,
 			ReadLimit:      genericCLIReadConcurrency,

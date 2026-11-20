@@ -37,6 +37,17 @@ const (
 	// OperationProjectList reads the managed project catalog on one Endpoint.
 	// It is a frame-level read and therefore never appears in an immutable intent.
 	OperationProjectList = "project.list"
+	// OperationProjectAdd registers one provider-managed project directory on an
+	// Endpoint. It is the only standard mutation that carries no target, because
+	// the resource it creates does not exist yet and therefore has no identity to
+	// address. The folder is confined to the Endpoint-local project root, so a
+	// remote caller can only register a directory an operator already opened.
+	OperationProjectAdd = "project.add"
+	// OperationProjectRemove unregisters one provider-managed project directory.
+	// It addresses the opaque Cluster project ID and never deletes the directory,
+	// because registration is a registry entry rather than ownership of the
+	// operator's files.
+	OperationProjectRemove = "project.remove"
 
 	// The five names below are policy identifiers for the frame-level read
 	// queries that travel as their own frame type rather than as an immutable

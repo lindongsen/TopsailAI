@@ -101,6 +101,8 @@ var scopeOperations = map[string][]string{
 		protocol.OperationWorkspaceClean,
 		protocol.OperationAgentModelSelect,
 		protocol.OperationCommandExec,
+		protocol.OperationProjectAdd,
+		protocol.OperationProjectRemove,
 	},
 }
 
@@ -706,6 +708,8 @@ var knownAccessOperations = map[string]struct{}{
 	protocol.OperationOutputRead:         {},
 	protocol.OperationOutputFollow:       {},
 	protocol.OperationCommandExec:        {},
+	protocol.OperationProjectAdd:         {},
+	protocol.OperationProjectRemove:      {},
 	OperationLaunchQuery:                 {},
 	OperationHistoryRead:                 {},
 	OperationMessagesRead:                {},

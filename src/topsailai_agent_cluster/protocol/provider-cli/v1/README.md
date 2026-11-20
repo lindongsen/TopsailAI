@@ -163,6 +163,26 @@ change on every descriptor refresh and would stop describing the implementation.
 The seam carries no admission authority: no admission path compares the advertised revision, and a
 command is admitted by operation name and operation version.
 
+## Mutation payload contracts
+
+Every `execute` request carries a target except one named operation. `project.add` creates a resource
+that does not exist yet, so it has no identity to address and the request schema forbids a target for
+it. The exception is stated once, for that operation name only: every other `execute` still requires a
+target, and a target-less request for any other operation is rejected rather than accepted as a
+variant.
+
+`project.add` carries `project-add-payload.schema.json`: `folder` is a required absolute path and
+`name` is an optional label. `project.remove` carries `project-remove-payload.schema.json`, a closed
+empty object, and addresses the registry entry through the target's `resource_kind: project` plus the
+opaque `provider_target` slot. The slot carries the exact folder, because the Cluster mapping key is a
+digest and cannot be reversed; the Provider recomputes the key from that folder and refuses a mismatch
+before building argv.
+
+Neither operation deletes project data. `project.add` appends one registry entry and `project.remove`
+removes one, and the Provider passes no flag that could delete the folder. Both are confined to the
+Endpoint's configured project root, which the Provider resolves once at startup and re-checks on every
+call.
+
 ## Size bounds
 
 Request budgets are byte and record limits. JSON Schema `maxLength` counts Unicode characters rather

@@ -202,6 +202,18 @@ type commandSubmission struct {
 	Operation  string
 	Target     string
 	Generation string
+	// TargetKind is the standard resource kind the target addresses. An empty
+	// value keeps "session", which is what every pre-existing scenario submits.
+	// A project target must state "project", because the Endpoint resolves the
+	// adapter by the target kind and a session kind would route the intent to a
+	// session-shaped authority check that a registry entry cannot satisfy.
+	TargetKind string
+	// ProviderTarget is the opaque Provider-owned exact-target evidence the
+	// intent carries. It is a separate intent field, not a payload field, and it
+	// is forwarded unchanged. A project.remove scenario needs it because the
+	// Endpoint's durable mapping key is a digest of the folder, so the caller is
+	// the only party that still holds the path.
+	ProviderTarget string
 	// Folder is the launch directory an agent.start carries. It is a separate
 	// intent field, not a payload field: the adapter decodes the payload strictly
 	// and rejects unknown keys, so a folder smuggled into the payload would be
@@ -289,7 +301,23 @@ func (w *World) submitRealCommandWithToken(commandID string, submission commandS
 		intent["profile_revision"] = launchProfileRevision
 	}
 	if target != "" {
-		intent["target"] = map[string]any{"kind": "session", "resource_id": target, "provider_generation": generation}
+		// The target kind defaults to session so every pre-existing scenario keeps
+		// submitting the shape it was written against. A project target states its
+		// own kind, because the Endpoint resolves the adapter and the authority
+		// check by kind and a session kind would address a process that a registry
+		// entry does not have.
+		targetKind := submission.TargetKind
+		if targetKind == "" {
+			targetKind = protocol.ResourceSession
+		}
+		targetDocument := map[string]any{"kind": targetKind, "resource_id": target, "provider_generation": generation}
+		// The opaque slot is forwarded unchanged, so a scenario that must prove the
+		// Provider binds it to the mapping key supplies it here rather than inside
+		// the payload, which the adapter decodes strictly.
+		if submission.ProviderTarget != "" {
+			targetDocument["provider_target"] = submission.ProviderTarget
+		}
+		intent["target"] = targetDocument
 	}
 	status, body, err := w.realRequestWithTokenE(http.MethodPost, "/api/v1/commands", intent, submission.EndpointToken)
 	if err != nil {

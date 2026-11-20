@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -67,4 +69,50 @@ func (r CommandRunner) Projects(ctx context.Context, out, diagnostics io.Writer,
 		}
 	}
 	return RenderProjects(out, result.Projects, options)
+}
+
+// ProjectAddPayload builds the standard payload for one project registration.
+//
+// The folder is forwarded as the operator typed it. The Endpoint confines it to
+// the configured project root and rewrites it with the resolved path, so the
+// client never decides whether a folder is acceptable and never resolves a
+// symlink on the Endpoint's behalf.
+func ProjectAddPayload(folder, name string) (json.RawMessage, error) {
+	payload := protocol.ProjectAddPayload{Folder: strings.TrimSpace(folder), Name: strings.TrimSpace(name)}
+	if err := payload.Validate(); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode project add payload: %w", err)
+	}
+	return encoded, nil
+}
+
+// ProjectRemovePayload builds the standard payload for one project removal.
+//
+// The payload is empty by contract: the target carries the identity, and the
+// provider path travels in the opaque slot. A payload field here would be a
+// second way to name the same project.
+func ProjectRemovePayload() json.RawMessage {
+	return json.RawMessage(`{}`)
+}
+
+// ProjectTargetSlot builds the opaque provider addressing slot for one project.
+//
+// The Endpoint mapping key is a digest over the project path, so the Endpoint
+// cannot recover the path from the key. The caller already holds the path from
+// the catalog it rendered, so it supplies the slot and the Provider binds the
+// slot to the mapping key by recomputing the digest locally. The Cluster never
+// interprets the slot's contents.
+func ProjectTargetSlot(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("project target requires a project path")
+	}
+	encoded, err := json.Marshal(map[string]string{"project_path": trimmed})
+	if err != nil {
+		return "", fmt.Errorf("encode project target slot: %w", err)
+	}
+	return string(encoded), nil
 }

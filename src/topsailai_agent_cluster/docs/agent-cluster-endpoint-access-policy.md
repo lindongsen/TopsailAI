@@ -394,7 +394,7 @@ The policy reuses the five operator scopes the Server already defines
 | `view` | Read this Endpoint's inventory, sessions, history and launch catalog |
 | `read_output` | Read session output, as a snapshot or as a follow stream |
 | `send_message` | Submit user input or side context to a session |
-| `control` | Lifecycle, drive, provider control and allowlisted command execution |
+| `control` | Lifecycle, drive, provider control, allowlisted command execution and project registration |
 | `endpoint_admin` | Reserved; no Endpoint operation currently requires it |
 
 The vocabulary is shared, but the meaning is not. On the Server a scope described what an
@@ -423,6 +423,8 @@ These are submitted as an immutable intent and already pass `PolicyHook`
 | `agent.drive.stop` | `control` | |
 | `agent.model.select` | `control` | Switches one session to a model profile |
 | `command.exec` | `control` | Also gated by the command allowlist |
+| `project.add` | `control` | Registry entry only; folder confined to the configured project root |
+| `project.remove` | `control` | Registry entry only; the folder on disk is never deleted |
 | `ctl.<action>` | `control` | One advertised action per capability |
 
 ### Frame-level reads and their policy identifiers

@@ -23,6 +23,8 @@ var wantOperations = []string{
 	"context.inject",
 	"execution.interrupt",
 	"message.send",
+	"project.add",
+	"project.remove",
 	"workspace.clean",
 }
 
@@ -39,7 +41,7 @@ var wantVersions = map[string]string{
 }
 
 // TestDescriptorAdvertisesEveryOperation proves the advertised surface is the
-// full eleven-operation set, so a scenario that drives one of them cannot fail
+// full thirteen-operation set, so a scenario that drives one of them cannot fail
 // with "unsupported" merely because the mock forgot to advertise it.
 func TestDescriptorAdvertisesEveryOperation(t *testing.T) {
 	descriptor := mockDescriptor("")
@@ -65,9 +67,19 @@ func TestDescriptorAdvertisesEveryOperation(t *testing.T) {
 // for every operation asserted that one target shape fits all of them, which is
 // the assumption the mock had to stop making when start began validating its own
 // target.
+//
+// project.add carries no target at all, because it addresses a resource that does
+// not exist yet. project.remove addresses a registry entry, so it names the
+// project resource kind and carries no generation. Returning a session target for
+// either would make this test assert a shape the contract forbids.
 func executeTestTarget(operation string) *target {
-	if operation == "agent.start" {
+	switch operation {
+	case "agent.start":
 		return &target{ResourceKind: resourceLaunchProfile, ProviderResourceKey: "launch:mock", ExpectedGeneration: launchProfileRevision}
+	case "project.add":
+		return nil
+	case "project.remove":
+		return &target{ResourceKind: resourceProject, ProviderResourceKey: "project:mock"}
 	}
 	return &target{ResourceKind: resourceSession, ProviderResourceKey: "session:stable", ExpectedGeneration: "generation-1"}
 }

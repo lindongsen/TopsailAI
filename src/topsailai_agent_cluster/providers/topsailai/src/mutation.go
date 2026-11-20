@@ -33,6 +33,8 @@ var supportedMutationOperations = [...]string{
 	operationWorkspaceClean,
 	operationAgentModelSelect,
 	operationExecutionInterrupt,
+	operationProjectAdd,
+	operationProjectRemove,
 }
 
 // operationNeedsStopSupport reports whether one operation is served only where the
@@ -120,7 +122,13 @@ func validateExecuteRequest(request request, platform platformCapabilities) (str
 		return "", fmt.Errorf("%w: operation version %q is not supported", errInvalidRequest, request.Operation.Version)
 	}
 	if request.Target == nil {
-		return "", fmt.Errorf("%w: target is required", errInvalidRequest)
+		// project.add is the only standard mutation that carries no target: the
+		// resource it creates does not exist yet, so it has no identity to address.
+		// Every other execute still requires a target, so a missing target remains a
+		// defect the Provider reports rather than a form it accepts.
+		if operation != operationProjectAdd {
+			return "", fmt.Errorf("%w: target is required", errInvalidRequest)
+		}
 	}
 	if request.Query != nil {
 		return "", fmt.Errorf("%w: execute request must not contain query", errInvalidRequest)
@@ -128,7 +136,7 @@ func validateExecuteRequest(request request, platform platformCapabilities) (str
 	if !supportedMutationOperation(operation, platform) {
 		return "", fmt.Errorf("%w: provider operation %q is not implemented", errUnsupported, operation)
 	}
-	if operationNeedsLiveGeneration(operation) && request.Target.ExpectedGeneration == "" {
+	if operationNeedsLiveGeneration(operation) && request.Target != nil && request.Target.ExpectedGeneration == "" {
 		return "", fmt.Errorf("%w: target expected_generation is required for %s", errInvalidRequest, operation)
 	}
 	return operation, nil
@@ -177,6 +185,24 @@ func (p *provider) mutationArgs(ctx context.Context, request request, operation 
 			return nil, err
 		}
 		return mutationArgs(mutationInvocation{Operation: operation, Resolved: resolved, Payload: request.Payload})
+	case operationProjectAdd:
+		// project.add creates the resource, so there is no target to revalidate and
+		// no generation to compare. Its authority is the configured project root:
+		// the folder is confined to that root here, in the same execution path that
+		// builds the argv, so the Endpoint's pre-dispatch check and this check
+		// cannot disagree about which folder is registered.
+		return projectAddArgs(request.Payload, p.projectRoot)
+	case operationProjectRemove:
+		// Removal addresses a registry entry, not a live process, so it carries no
+		// generation. The exact folder travels in the opaque provider_target slot,
+		// and membership is decided by the registry owner: the provider CLI refuses
+		// a path it does not list, so this Provider never guesses which entry the
+		// operator meant. The folder on disk is never deleted.
+		folder, err := decodeProjectTarget(request.Target.ProviderTarget)
+		if err != nil {
+			return nil, err
+		}
+		return projectRemoveArgs(folder, request.Target.ProviderResourceKey, p.projectRoot)
 	default:
 		resolved, err := p.requireLiveGeneration(ctx, request.Target)
 		if err != nil {

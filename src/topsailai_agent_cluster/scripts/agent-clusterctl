@@ -204,6 +204,13 @@ function load_config() {
     # therefore lose the capability while the configuration says it is available,
     # so the value is resolved here and passed as a flag below.
     COMMAND_DIR=$(resolve_path "${COMMAND_DIR:-}")
+    # The project root is optional in exactly the same way, and its absence is
+    # fail-closed: an Endpoint that names no root refuses project.add with
+    # project_root_unconfigured instead of confining a remote registration to a
+    # location no operator chose. A node that names the root and never forwards it
+    # would therefore lose remote project registration while the configuration says
+    # it is available, so the value is resolved here and passed as a flag below.
+    PROJECT_ROOT=$(resolve_path "${PROJECT_ROOT:-}")
     # The access policy directory is optional in the same way, but its absence is
     # not fail-closed: an Endpoint with no policy directory permits every caller.
     # A node that names the directory and never forwards it therefore loses the
@@ -293,6 +300,7 @@ function doctor() {
         echo "channel    : ${CHANNEL_ADDRESS:-${CHANNEL_ADDRESSES:-}}"
         echo "allowlist  : ${COMMAND_ALLOWLIST_FILE:-<disabled>}"
         echo "command dir: ${COMMAND_DIR:-<disabled>}"
+        echo "project root: ${PROJECT_ROOT:-<disabled>}"
         # Printed because an absent policy directory is not fail-closed: it means
         # every caller is permitted, which an operator must be able to see before
         # trusting a node's authorization boundary.
@@ -386,6 +394,10 @@ function start_node() {
         # refuses a command.exec request that carries no session target instead of
         # running in its own process working directory.
         [ -n "${COMMAND_DIR:-}" ] && args+=(--command-dir "${COMMAND_DIR}")
+        # The project root is optional and fail-closed in the same way: without it
+        # the endpoint refuses project.add instead of confining a remote
+        # registration to a location no operator chose.
+        [ -n "${PROJECT_ROOT:-}" ] && args+=(--project-root "${PROJECT_ROOT}")
         # The access policy directory is optional, and its absence is the one
         # optional value that widens authority instead of narrowing it: an
         # Endpoint with no policy directory permits every caller. Forwarding it

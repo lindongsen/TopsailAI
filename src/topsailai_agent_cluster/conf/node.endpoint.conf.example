@@ -84,6 +84,8 @@ ADAPTERS='[
         {"name": "command.exec", "version": "1", "target_kinds": ["session", "endpoint"], "safety_class": "mutating", "required_permission": "control"},
         {"name": "agent.model.select", "version": "v1", "target_kinds": ["session"], "safety_class": "mutating", "required_permission": "control"},
         {"name": "project.list", "version": "v1", "target_kinds": ["endpoint"], "safety_class": "read_only", "required_permission": "view"},
+        {"name": "project.add", "version": "v1", "target_kinds": ["endpoint"], "safety_class": "mutating", "required_permission": "control"},
+        {"name": "project.remove", "version": "v1", "target_kinds": ["project"], "safety_class": "mutating", "required_permission": "control"},
         {"name": "ctl.agent.llm", "version": "v1", "required_permission": "read_output"},
         {"name": "ctl.agent.messages", "version": "v1", "required_permission": "read_output"},
         {"name": "ctl.agent.models", "version": "v1", "required_permission": "control"},

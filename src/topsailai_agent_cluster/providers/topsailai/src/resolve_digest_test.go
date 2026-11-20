@@ -30,7 +30,7 @@ func TestResolveRowTargetByDigestProvesSessionAndTaskRows(t *testing.T) {
 	writeStdoutFile(t, directory, "wa-session.5151.task.stdout")
 	writeStdoutFile(t, directory, "wa-session.5151.extra.task.stdout")
 
-	provider := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform, directory)
+	provider := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform, directory, "")
 
 	sessionKey, err := providerSessionKey(workspaceItem{
 		SessionID: "wa-session", ProviderRowKey: "wa-session.4242.session.stdout",
@@ -74,7 +74,7 @@ func TestResolveRowTargetByDigestProvesSessionAndTaskRows(t *testing.T) {
 func TestResolveRowTargetByDigestRefusesWhatItCannotProve(t *testing.T) {
 	directory := t.TempDir()
 	writeStdoutFile(t, directory, "wa-live.7777.session.stdout")
-	provider := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform, directory)
+	provider := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform, directory, "")
 
 	sessionScoped, err := sessionProviderKey("wa-live")
 	if err != nil {
@@ -94,7 +94,7 @@ func TestResolveRowTargetByDigestRefusesWhatItCannotProve(t *testing.T) {
 		t.Fatal("a row whose file is gone must not be proven")
 	}
 
-	withoutDirectory := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform, "")
+	withoutDirectory := newProvider(stubCommandRunner{}, controlCatalog{}, supportedPlatform, "", "")
 	if _, ok := withoutDirectory.resolveRowTargetByDigest(deletedKey); ok {
 		t.Fatal("an unconfigured task directory must not prove anything")
 	}
@@ -110,7 +110,7 @@ func TestResolveReadTargetFallsBackToDiscovery(t *testing.T) {
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		strings.Join([]string{"workspace", "list", "--json", "--local"}, "\x00"): answer(`{"items":[],"total":0}`),
 	}}
-	provider := newProvider(runner, controlCatalog{}, supportedPlatform, t.TempDir())
+	provider := newProvider(runner, controlCatalog{}, supportedPlatform, t.TempDir(), "")
 
 	key, err := providerSessionKey(workspaceItem{
 		SessionID: "wa-gone", ProviderRowKey: "wa-gone.9999.session.stdout",
@@ -137,7 +137,7 @@ func TestResolveReadTargetSkipsDiscoveryForAProvenRow(t *testing.T) {
 	directory := t.TempDir()
 	writeStdoutFile(t, directory, "wa-fast.3131.session.stdout")
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{}}
-	provider := newProvider(runner, controlCatalog{}, supportedPlatform, directory)
+	provider := newProvider(runner, controlCatalog{}, supportedPlatform, directory, "")
 
 	key, err := providerSessionKey(workspaceItem{
 		SessionID: "wa-fast", ProviderRowKey: "wa-fast.3131.session.stdout",

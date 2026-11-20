@@ -153,7 +153,7 @@ func main() {
 	// once and never selected by configuration. A configured provider type is
 	// validated against that one name below; it cannot choose an implementation
 	// because there is nothing to choose between.
-	if err := registerAdapter(registry, store, cfg.DetailMaxBytes, cfg.CommandDir); err != nil {
+	if err := registerAdapter(registry, store, cfg.DetailMaxBytes, cfg.CommandDir, cfg.ProjectRoot); err != nil {
 		logger.Error("register adapter", "error", err)
 		_ = client.Close()
 		_ = store.Close()
@@ -251,6 +251,14 @@ func main() {
 	// force, and a command that runs in the wrong place looks like a working one.
 	if cfg.CommandDir != "" {
 		logger.Info("loaded endpoint command directory", "path", cfg.CommandDir)
+	}
+	// The project root is logged for the same reason as the command directory: it
+	// decides which folders a remote project.add may register, so an operator has
+	// to be able to tell from the startup log whether the capability is enabled at
+	// all. An absent line means remote project registration is unavailable, which
+	// is the fail-closed default rather than a misconfiguration.
+	if cfg.ProjectRoot != "" {
+		logger.Info("loaded endpoint project root", "path", cfg.ProjectRoot)
 	}
 	accessPolicy, err := endpointservice.LoadAccessPolicyDir(cfg.EndpointAccessPolicyDir)
 	if err != nil {

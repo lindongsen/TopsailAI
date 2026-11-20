@@ -93,6 +93,24 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 		if request.Operation == protocol.OperationCommandExec && request.ResourceID == "" && request.ProviderSessionHandle == "" {
 			return intent, nil
 		}
+		// A project registration names a folder, not a resource, because the
+		// project does not exist yet: the Endpoint mints its identity when the
+		// registry entry is written. Carrying a target here would address a
+		// project that cannot exist, so this is the second operation that is
+		// target-less by contract rather than by omission.
+		if request.Operation == protocol.OperationProjectAdd {
+			return intent, nil
+		}
+		// A project removal addresses the opaque Cluster project ID, and it
+		// carries no generation: a project is a registry entry, not a live
+		// process, so there is no generation to prove. The provider path travels
+		// in the opaque slot because the Endpoint mapping key is a digest and
+		// cannot be reversed; the caller already holds the path from the catalog
+		// it rendered.
+		if request.Operation == protocol.OperationProjectRemove {
+			intent.Target = &protocol.CommandTarget{Kind: "project", ResourceID: request.ResourceID, ProviderTarget: request.ProviderTarget}
+			return intent, nil
+		}
 		// A target named by a provider session handle carries no resource ID: the
 		// Endpoint mints the mapping when the command arrives, so the client must
 		// not look the session up first. Exactly one of the two is set, because

@@ -64,6 +64,10 @@ type Cluster struct {
 	// EndpointLogPath is the file that receives the Endpoint's own log when a
 	// scenario must assert on a reconnect or a superseded rejection.
 	EndpointLogPath string
+	// ProjectRootPath is the directory the Endpoint confines project.add to when a
+	// scenario enables Faults.ProjectRoot. A scenario that must prove the folder on
+	// disk survives project.remove reads it to assert the directory still exists.
+	ProjectRootPath string
 	tuiBuildMu      sync.Mutex
 	stopMu          sync.Mutex
 	stopped         bool

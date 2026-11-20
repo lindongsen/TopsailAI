@@ -703,3 +703,43 @@ looks complete, and only the dropped field is missing, which nobody can see beca
 Recorded in `docs/agent-cluster-protocol.md` under "A seam's content belongs to the Provider, and the
 Cluster never edits it" and in `docs/agent-cluster-architecture.md` under "A seam carries the
 Provider's content, and the Cluster only addresses it".
+
+## Remote project registration edits the registry only, inside an explicitly configured root
+
+Directed by the human on 2026-11-20, wording normalized, meaning preserved:
+
+> 允许根目录：不设默认值，未配置即拒绝（fail closed）。这不是新发明，是复用项目已有的同类约定：
+> `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` 就是"空值 = 关闭该 endpoint-scope 形态"。
+> `project.remove` 权限和 add 一样用 `control`，不要新增 `project_admin`，也不要把
+> `endpoint_admin` 拿来用。
+
+> add/remove 只是改配置而已，不涉及任何project的数据，一定要注意
+
+Three standing rules for every remote project registration surface:
+
+1. `AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT` has no default value. An unconfigured root means
+   `project.add` is unavailable and returns `project_root_unconfigured`. The validation shape reuses
+   `validateCommandDir` (`internal/config/config.go`): absolute path, `EvalSymlinks`, must be an
+   existing directory. Confinement is decided on the resolved path, so `..`, absolute escapes and
+   symlink escapes are all refused. The Endpoint checks before dispatch and the Provider re-checks
+   before writing its registry.
+2. `project.remove` uses the `control` scope, the same as `project.add`. No new `project_admin` scope
+   is introduced, and `endpoint_admin` stays reserved and unused: enabling it would change a recorded
+   decision and make every existing policy file unusable after an upgrade.
+3. `project.add` and `project.remove` change the registry entry only. They never create, modify or
+   delete project data on disk, and the confirmation text must say so.
+
+Trigger: adding or changing any operation that registers, removes or otherwise persists a filesystem
+path on an Endpoint.
+
+Action: gate the operation on an explicitly configured root, validate the resolved path twice
+(Endpoint before dispatch, Provider before the registry write), reuse the existing `control` scope,
+keep every code path confined to the registry entry, and state in the confirmation text that removal
+never deletes the folder.
+
+Why this prevents recurrence: a default root would silently grant a remote caller the right to
+register folders nobody approved, and a single pre-dispatch check leaves a TOCTOU window between
+validation and the registry write. Reusing `control` keeps one scope vocabulary and avoids
+invalidating deployed policy files, while the root confinement — not an extra scope name — is the real
+security boundary. Treating registration as configuration keeps a registry edit from ever becoming a
+destructive filesystem operation.

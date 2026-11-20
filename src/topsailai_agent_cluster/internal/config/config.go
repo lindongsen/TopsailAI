@@ -74,6 +74,20 @@ type Config struct {
 	// directory, and it is validated at startup so a mistake fails once instead of
 	// on every command.
 	CommandDir string
+	// ProjectRoot is the Endpoint-local directory that bounds every folder a
+	// remote project.add may register. An empty value disables project.add
+	// entirely: the Endpoint refuses the request with project_root_unconfigured
+	// instead of falling back to any default directory, because a default would
+	// silently grant a remote caller the authority to register paths inside a
+	// location no operator chose. A configured value must be an absolute path to
+	// an existing directory, and it is validated at startup so a mistake fails
+	// once instead of on every registration.
+	//
+	// The confinement decision is made on the resolved path, so a folder that
+	// escapes through "..", an absolute path or a symlink is refused. The same
+	// root is revalidated by the Provider immediately before it writes its
+	// registry, so the Endpoint check and the registration cannot disagree.
+	ProjectRoot string
 	// EndpointAccessPolicyDir is the Endpoint-local directory holding one access
 	// policy file per caller token. An empty value, or a directory that holds no
 	// policy file, permits every caller, which keeps existing deployments
@@ -263,6 +277,9 @@ func Load(args []string, role string) (Config, error) {
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_COMMAND_DIR"); value != "" {
 			cfg.CommandDir = value
 		}
+		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT"); value != "" {
+			cfg.ProjectRoot = value
+		}
 		if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR"); value != "" {
 			cfg.EndpointAccessPolicyDir = value
 		}
@@ -403,6 +420,7 @@ func Load(args []string, role string) (Config, error) {
 	if endpointRole || genericRole {
 		flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
 		flags.StringVar(&cfg.CommandDir, "command-dir", cfg.CommandDir, "Endpoint-local working directory for a command.exec request that carries no session target")
+		flags.StringVar(&cfg.ProjectRoot, "project-root", cfg.ProjectRoot, "Endpoint-local directory that bounds every folder a remote project.add may register")
 		flags.StringVar(&cfg.EndpointAccessPolicyDir, "endpoint-access-policy-dir", cfg.EndpointAccessPolicyDir, "Endpoint-local directory holding one access policy file per caller token")
 		flags.StringVar(&cfg.ReplaceRequestFile, "replace-request-file", cfg.ReplaceRequestFile, "Endpoint-local request document that activates one Provider CLI version for one adapter")
 		flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Server WSS address the Endpoint dials")
@@ -514,6 +532,36 @@ func validateCommandDir(directory string) error {
 	return nil
 }
 
+// validateProjectRoot checks the Endpoint-local project registration root.
+//
+// An empty value is valid and disables project.add. A configured value must be
+// absolute and must resolve to an existing directory, because the confinement
+// check for a registered folder is performed relative to this root: a path that
+// does not exist would make every registration fail with a directory error that
+// looks like a runtime fault instead of the configuration mistake it is.
+// Symlinks are resolved so the root the operator configured and the root the
+// confinement decision uses are the same fact.
+func validateProjectRoot(directory string) error {
+	if directory == "" {
+		return nil
+	}
+	if !filepath.IsAbs(directory) {
+		return fmt.Errorf("project root %q must be an absolute path", directory)
+	}
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return fmt.Errorf("project root %q does not resolve: %w", directory, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("project root %q cannot be inspected: %w", directory, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("project root %q is not a directory", directory)
+	}
+	return nil
+}
+
 // Validate checks configuration values before service initialization.
 func (c Config) Validate() error {
 	if c.LogOutput != "stderr" && c.LogOutput != "file" {
@@ -563,6 +611,13 @@ func (c Config) Validate() error {
 	// would resolve against the process working directory, which is exactly the
 	// implicit location this setting exists to replace.
 	if err := validateCommandDir(c.CommandDir); err != nil {
+		return err
+	}
+	// The project root is validated here for the same reason as the command
+	// directory: a wrong value is a configuration mistake, and the operator who
+	// made it is looking at startup output. An empty value is valid and means
+	// project.add is disabled, which is the fail-closed default.
+	if err := validateProjectRoot(c.ProjectRoot); err != nil {
 		return err
 	}
 	switch c.ChannelDirection {

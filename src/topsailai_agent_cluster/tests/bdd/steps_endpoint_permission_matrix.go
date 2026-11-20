@@ -1,12 +1,14 @@
 package bdd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/cucumber/godog"
+	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	"topsailai_agent_cluster/tests/harness"
@@ -36,6 +38,8 @@ func registerEndpointPermissionMatrixSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a credential permitted to start an agent$`, grantAgentStart)
 	ctx.Step(`^a credential permitted to select a model$`, grantModelSelect)
 	ctx.Step(`^a credential permitted to execute a command$`, grantCommandExec)
+	ctx.Step(`^a credential permitted to register a project$`, grantProjectAdd)
+	ctx.Step(`^a credential permitted to remove a project$`, grantProjectRemove)
 	ctx.Step(`^a credential permitted only to view$`, grantViewOnly)
 	ctx.Step(`^the message send command is submitted with that credential$`, submitMessageSend)
 	ctx.Step(`^the context inject command is submitted with that credential$`, submitContextInject)
@@ -48,6 +52,8 @@ func registerEndpointPermissionMatrixSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the agent start command is submitted with that credential$`, submitAgentStart)
 	ctx.Step(`^the agent model select command is submitted with that credential$`, submitModelSelect)
 	ctx.Step(`^the command exec operation is submitted with an allowlisted argv and that credential$`, submitCommandExec)
+	ctx.Step(`^the project add command is submitted with that credential$`, submitProjectAdd)
+	ctx.Step(`^the project remove command is submitted with that credential$`, submitProjectRemove)
 	ctx.Step(`^the command is accepted and the provider is invoked once$`, assertAcceptedAndInvokedOnce)
 	ctx.Step(`^the command is accepted and the endpoint ran it without the provider$`, assertAcceptedAndRanOnEndpoint)
 	ctx.Step(`^the command is refused with policy denied and the provider is not invoked$`, assertRefusedWithoutInvocation)
@@ -89,6 +95,20 @@ var permissionMatrixOperations = map[string]permissionMatrixOperation{
 	// never executed; now that the Endpoint starts the process itself, that argv
 	// would be refused with command_not_found before the allowlist was consulted.
 	protocol.OperationCommandExec: {Permission: protocol.OperationCommandExec, Target: "fixture-session", Payload: `{"argv":["pwd"]}`, OperationVersion: protocol.CommandExecPayloadVersion, PayloadSchemaVersion: protocol.CommandExecPayloadVersion},
+	// project.add carries no target, because it creates a resource that does not
+	// exist yet and therefore has no identity to address. Its payload is computed
+	// at submit time rather than declared here: the folder must sit inside the
+	// project root this scenario creates, and a hardcoded path could never satisfy
+	// the confinement check, so the refusal would come from confinement instead of
+	// from the policy hook the scenario exists to prove.
+	protocol.OperationProjectAdd: {Permission: protocol.OperationProjectAdd, Target: ""},
+	// project.remove addresses the Cluster-minted project identity, which exists
+	// only after a catalog read has minted the durable mapping. Both the target and
+	// the opaque provider slot are therefore resolved at submit time, and the kind
+	// is declared here because the Endpoint resolves the adapter and the authority
+	// check by kind: a session kind would address a process a registry entry does
+	// not have.
+	protocol.OperationProjectRemove: {Permission: protocol.OperationProjectRemove, Target: "", TargetKind: protocol.ResourceProject},
 }
 
 // permissionMatrixOperation describes one row of the command matrix.
@@ -98,6 +118,17 @@ type permissionMatrixOperation struct {
 	// Target is the fixture session key the operation addresses, or empty when
 	// the operation carries no target.
 	Target string
+	// TargetKind is the standard resource kind the target addresses. Empty keeps
+	// "session", which is what every pre-existing row submits. A project target
+	// must state "project", because the Endpoint resolves the adapter and the
+	// authority check by kind.
+	TargetKind string
+	// ProviderTarget is the opaque Provider-owned exact-target evidence the intent
+	// carries. It is a separate intent field rather than a payload field, because
+	// the adapter decodes the payload strictly. A project.remove row needs it
+	// because the Endpoint's durable mapping key is a digest of the folder, so the
+	// caller is the only party that still holds the path.
+	ProviderTarget string
 	// Payload is the JSON document the adapter accepts for this operation.
 	Payload string
 	// OperationVersion is the version the Endpoint matches against the advertised
@@ -165,6 +196,15 @@ func startPermissionMatrixCluster() error {
 				protocol.OperationAgentModelSelect: protocol.ModelSelectPayloadVersion,
 			},
 			CommandAllowlist: [][]string{permissionMatrixAllowlist},
+			// The project root is the only security boundary for project.add, so
+			// the positive row needs it: without a configured root the operation
+			// fails closed with project_root_unconfigured before the policy hook
+			// runs, and the authorization assertion would pass while proving a
+			// configuration refusal instead. The harness creates the directory and
+			// publishes the same path through the mock catalog, so the folder the
+			// positive row registers and the folder the removal row addresses are
+			// the one real directory inside the root.
+			ProjectRoot: true,
 		},
 	})
 	if err != nil {
@@ -221,6 +261,8 @@ func grantAgentResume() error        { return grantPermission(protocol.Operation
 func grantAgentStart() error         { return grantPermission(protocol.OperationAgentStart) }
 func grantModelSelect() error        { return grantPermission(protocol.OperationAgentModelSelect) }
 func grantCommandExec() error        { return grantPermission(protocol.OperationCommandExec) }
+func grantProjectAdd() error         { return grantPermission(protocol.OperationProjectAdd) }
+func grantProjectRemove() error      { return grantPermission(protocol.OperationProjectRemove) }
 
 // grantViewOnly selects the token that holds an unrelated read scope, so the
 // credential is valid and the Endpoint refuses the operation under test for lack
@@ -258,6 +300,8 @@ func submitPermissionMatrixOperationWithPayload(operation, payload string) error
 	commandID, err := activeScenario.world.SubmitRealCommandWithToken(commandSubmission{
 		Operation:            operation,
 		Target:               row.Target,
+		TargetKind:           row.TargetKind,
+		ProviderTarget:       row.ProviderTarget,
 		Payload:              payload,
 		OperationVersion:     row.OperationVersion,
 		PayloadSchemaVersion: row.PayloadSchemaVersion,
@@ -317,6 +361,88 @@ func submitModelSelect() error {
 		return err
 	}
 	return submitPermissionMatrixOperationWithPayload(protocol.OperationAgentModelSelect, string(payload))
+}
+
+// matrixProject reads the live project catalog with the view credential and
+// returns the Cluster-minted project identity together with the folder the
+// Provider reports for it.
+//
+// The catalog is read with the view token rather than with the row token,
+// because each matrix row grants exactly one operation: the project.remove token
+// holds project.remove and nothing else, so reading the catalog with it would be
+// refused with policy_denied and the scenario would fail before it submitted the
+// operation it exists to prove. The view token is a scope grant, and the view
+// scope covers project.list.
+//
+// The identity is read from the live catalog instead of being written into the
+// scenario, because a project ID is a Cluster-minted opaque value: hardcoding one
+// would assert a mapping detail and would break the moment the mapping changed.
+func matrixProject() (string, string, error) {
+	if activeScenario.world == nil || activeScenario.world.realCluster == nil {
+		return "", "", fmt.Errorf("real cluster is not running")
+	}
+	api := client.NewAPIClient(activeScenario.realCluster.URL(""), "secret")
+	// The harness Server runs in bearer mode, so this in-process client must
+	// present the same scheme. An empty mode would fall back to the HMAC default
+	// and be refused before the request reached the Endpoint, which is the same
+	// reason performQueryRead sets it explicitly.
+	api.AuthMode = security.ModeBearer
+	api.EndpointTokens = map[string]string{scopedEndpointID: permissionMatrixToken(security.ScopeView)}
+	catalog, err := api.GetProjectCatalog(context.Background(), scopedEndpointID)
+	if err != nil {
+		return "", "", fmt.Errorf("read project catalog: %w", err)
+	}
+	if len(catalog.Projects) == 0 {
+		return "", "", fmt.Errorf("project catalog reported no project, so the registration rows cannot address one")
+	}
+	project := catalog.Projects[0]
+	if project.ProjectID == "" || project.Path == "" {
+		return "", "", fmt.Errorf("project catalog row is incomplete: %+v", project)
+	}
+	return project.ProjectID, project.Path, nil
+}
+
+// submitProjectAdd registers the folder the Provider publishes in its catalog.
+//
+// The folder is taken from the catalog rather than written into the scenario,
+// because the Cluster confines a registration to the configured project root and
+// the harness creates that root per scenario. A hardcoded path could never sit
+// inside it, so the refusal would come from the confinement check instead of the
+// policy hook, and the scenario would pass while proving the wrong thing.
+func submitProjectAdd() error {
+	_, folder, err := matrixProject()
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]string{"folder": folder})
+	if err != nil {
+		return err
+	}
+	return submitPermissionMatrixOperationWithPayload(protocol.OperationProjectAdd, string(payload))
+}
+
+// submitProjectRemove removes the registry entry for the project the catalog
+// reports.
+//
+// The opaque provider slot carries the folder, because the Endpoint's durable
+// mapping key is a digest of that folder and the caller is the only party that
+// still holds the path. The Provider binds the slot to the mapping key it was
+// given, so a slot naming a different folder is refused rather than applied to
+// the wrong entry.
+func submitProjectRemove() error {
+	projectID, folder, err := matrixProject()
+	if err != nil {
+		return err
+	}
+	slot, err := json.Marshal(map[string]string{"project_path": folder})
+	if err != nil {
+		return err
+	}
+	row := permissionMatrixOperations[protocol.OperationProjectRemove]
+	row.Target = projectID
+	row.ProviderTarget = string(slot)
+	permissionMatrixOperations[protocol.OperationProjectRemove] = row
+	return submitPermissionMatrixOperation(protocol.OperationProjectRemove)
 }
 func submitCommandExec() error { return submitPermissionMatrixOperation(protocol.OperationCommandExec) }
 

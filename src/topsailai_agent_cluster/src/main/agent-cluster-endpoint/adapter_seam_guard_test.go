@@ -76,22 +76,23 @@ func TestAdapterFactoryTakesNoProviderTypeParameter(t *testing.T) {
 	}
 	fn := findFunc(t, file, "registerAdapter")
 	params := fn.Type.Params.List
-	// Four parameter groups: the registry, the store, the configured detail bound
-	// and the configured command directory. The count is pinned so a new parameter
-	// is a deliberate, reviewable change rather than something that appears
-	// silently; the string check below is what actually protects the seam this
-	// guard exists for.
-	if len(params) != 4 {
-		t.Fatalf("registerAdapter takes %d parameter groups, want 4 (registry, store, detail bound and command directory): %s",
+	// Five parameter groups: the registry, the store, the configured detail bound,
+	// the configured command directory and the configured project root. The count
+	// is pinned so a new parameter is a deliberate, reviewable change rather than
+	// something that appears silently; the string check below is what actually
+	// protects the seam this guard exists for.
+	if len(params) != 5 {
+		t.Fatalf("registerAdapter takes %d parameter groups, want 5 (registry, store, detail bound, command directory and project root): %s",
 			len(params), nodeText(fset, source, fn.Type))
 	}
 	// allowedStringParams names the string parameters that are not a provider-type
 	// seam. A filesystem path cannot select an implementation: it is a location the
-	// operator configured, and the adapter uses it as a working directory rather
-	// than branching on it. Every other string parameter is still refused, and a
-	// second string parameter is refused even when it is named here, so the
-	// exception cannot grow into a general allowance.
-	allowedStringParams := map[string]bool{"commandDir": true}
+	// operator configured, and the adapter uses it as a confinement boundary rather
+	// than branching on it. Every other string parameter is still refused, and the
+	// number of allowed string parameters is pinned to the size of this set, so the
+	// exception cannot grow into a general allowance by adding a name here without
+	// also changing the count.
+	allowedStringParams := map[string]bool{"commandDir": true, "projectRoot": true}
 	stringParams := 0
 	for _, field := range params {
 		// A variadic string is the same seam in a different spelling, so the
@@ -102,9 +103,9 @@ func TestAdapterFactoryTakesNoProviderTypeParameter(t *testing.T) {
 		}
 		if ident, ok := fieldType.(*ast.Ident); ok && ident.Name == "string" {
 			stringParams++
-			if stringParams > 1 {
-				t.Fatalf("registerAdapter takes more than one string parameter, so a provider type can select an implementation: %s",
-					nodeText(fset, source, fn.Type))
+			if stringParams > len(allowedStringParams) {
+				t.Fatalf("registerAdapter takes %d string parameters, want at most %d configured paths, so a provider type can select an implementation: %s",
+					stringParams, len(allowedStringParams), nodeText(fset, source, fn.Type))
 			}
 			allowed := false
 			for _, name := range field.Names {
@@ -297,8 +298,8 @@ func TestMainRegistersTheAdapterWithoutAProviderType(t *testing.T) {
 			return true
 		}
 		calls++
-		if len(call.Args) != 4 {
-			t.Fatalf("registerAdapter is called with %d arguments, want 4 (registry, store, detail bound and command directory): %s",
+		if len(call.Args) != 5 {
+			t.Fatalf("registerAdapter is called with %d arguments, want 5 (registry, store, detail bound, command directory and project root): %s",
 				len(call.Args), nodeText(fset, source, call))
 		}
 		return true

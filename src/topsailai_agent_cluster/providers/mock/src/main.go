@@ -72,6 +72,15 @@ type mockOptions struct {
 	// needs a known count so a shortened body cannot be confused with a dropped
 	// message.
 	messagesCount int
+	// projectPath is the folder the mock reports for the project it publishes in
+	// its catalog. The Cluster confines a project registration to the configured
+	// project root, so a scenario that exercises project.remove must be able to
+	// make the reported row sit inside that root. A hardcoded path could never
+	// satisfy the confinement check, and the scenario would then fail for a
+	// reason unrelated to the behaviour under test. It is a flag rather than an
+	// environment variable for the same reason as sessionDir: the adapter starts
+	// the provider with exactly the configured environment, which is empty.
+	projectPath string
 }
 
 // parseOptions reads the argv knobs. Unknown flags are rejected by flag.Parse,
@@ -102,6 +111,7 @@ func parseOptions() mockOptions {
 	flag.StringVar(&options.sessionDir, "session-dir", "", "working directory reported for every published session")
 	flag.StringVar(&options.messagesBody, "messages-body", "", "first message body reported by a session messages read")
 	flag.IntVar(&options.messagesCount, "messages-count", 2, "number of messages reported by a session messages read")
+	flag.StringVar(&options.projectPath, "project-path", "", "folder reported for the project published in the catalog")
 	flag.Parse()
 	// The conformance runner configures no argv, so the marker path has to be
 	// readable from the environment as well. argv still wins when both are set.
@@ -352,7 +362,7 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			base.QueryResult = json.RawMessage(`{"rows":[{"resource_kind":"session","provider_resource_key":"session:stopped","provider_session_id":"session:stopped","provider_display_name":"Stopped Session","resumable":true}],"observed_at_ms":1700000000000,"truncated":false}`)
 		case queryProjectCatalog:
 			recordInvocation(options, request, queryProjectCatalog)
-			base.QueryResult = json.RawMessage(`{"projects":[{"resource_kind":"project","provider_resource_key":"project:mock","name":"mock","path":"/work/mock"}],"observed_at_ms":1700000000000,"truncated":false}`)
+			base.QueryResult = projectCatalogResult(options)
 		case queryModelCatalog:
 			// The read is recorded because a scenario proves the provider was
 			// reached exactly once, and a read that answers without leaving a
@@ -566,6 +576,11 @@ var operationEvidenceTable = map[string]operationEvidence{
 	"agent.model.select":  {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
 	"command.exec":        {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
 	"workspace.clean":     {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	// project.add and project.remove edit the provider's project registry entry
+	// only. They never create, modify or delete project data on disk, so the
+	// evidence reports a registry write rather than a filesystem effect.
+	"project.add":    {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"registered","effect_certainty":"acknowledged","delivery_boundary":"submitted","registry_only":true}`},
+	"project.remove": {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"unregistered","effect_certainty":"acknowledged","delivery_boundary":"submitted","registry_only":true,"folder_deleted":false}`},
 }
 
 // nonLiveOperations are the operations the Cluster contract allows to address a
@@ -585,6 +600,42 @@ var nonLiveOperations = map[string]struct{}{
 	"agent.resume":     {},
 	"agent.drive.stop": {},
 	"workspace.clean":  {},
+	// project.remove addresses a registry entry, not a process, so it carries no
+	// generation. project.add is deliberately absent: it addresses a resource
+	// that does not exist yet, so it is handled by its own branch in
+	// executeResponse rather than by the non-live rule.
+	"project.remove": {},
+}
+
+// projectCatalogResult builds the project catalog answer.
+//
+// The folder is an argv knob because the Cluster confines a project registration
+// to the configured project root. A hardcoded path could never sit inside a
+// harness-created root, so a project.remove scenario would be refused by the
+// confinement check and the failure would point at the wrong behaviour. The
+// default keeps the historical value so existing catalog scenarios are unchanged.
+func projectCatalogResult(options mockOptions) json.RawMessage {
+	path := options.projectPath
+	if path == "" {
+		path = "/work/mock"
+	}
+	document, err := json.Marshal(map[string]any{
+		"projects": []map[string]any{{
+			"resource_kind":         resourceProject,
+			"provider_resource_key": "project:mock",
+			"name":                  "mock",
+			"path":                  path,
+		}},
+		"observed_at_ms": fixtureTimeMS,
+		"truncated":      false,
+	})
+	if err != nil {
+		// The document is built from constants and one string, so a marshal
+		// failure is impossible; returning an empty result keeps the signature
+		// simple without inventing an error path nobody can reach.
+		return nil
+	}
+	return document
 }
 
 // sessionMessagesResult builds the session messages answer.
@@ -780,13 +831,31 @@ func executeResponse(request request, fault string, mutationFile string) respons
 	// generation. Comparing it against a session generation rejected every start
 	// with generation_mismatch even though the Cluster had validated the profile
 	// revision against the descriptor it was advertised.
-	if request.Operation.Name == "agent.start" {
+	//
+	// project.add is the third shape: it addresses a resource that does not exist
+	// yet, so it carries no target at all. Requiring a target here would reject
+	// the only operation the Cluster contract defines as target-less, and the
+	// refusal would read as a provider defect rather than as a contract rule.
+	// project.remove addresses a registry entry, so it must name the project
+	// resource kind and carries no generation.
+	switch request.Operation.Name {
+	case "agent.start":
 		if request.Target == nil || request.Target.ResourceKind != resourceLaunchProfile || request.Target.ExpectedGeneration != launchProfileRevision {
 			return failureResponse(request.RequestID, "generation_mismatch", "launch profile revision changed", "not_applied")
 		}
-	} else if _, nonLive := nonLiveOperations[request.Operation.Name]; !nonLive {
-		if request.Target == nil || request.Target.ExpectedGeneration != "generation-1" {
-			return failureResponse(request.RequestID, "generation_mismatch", "provider generation changed", "not_applied")
+	case "project.add":
+		if request.Target != nil {
+			return failureResponse(request.RequestID, "invalid_request", "project.add must not carry a target", "not_applied")
+		}
+	case "project.remove":
+		if request.Target == nil || request.Target.ResourceKind != resourceProject {
+			return failureResponse(request.RequestID, "invalid_request", "project.remove must address a project target", "not_applied")
+		}
+	default:
+		if _, nonLive := nonLiveOperations[request.Operation.Name]; !nonLive {
+			if request.Target == nil || request.Target.ExpectedGeneration != "generation-1" {
+				return failureResponse(request.RequestID, "generation_mismatch", "provider generation changed", "not_applied")
+			}
 		}
 	}
 	if fault == "generation-race" {

@@ -1974,3 +1974,64 @@ Why this prevents recurrence: the tool reports success either way, and a duplica
 `fi` is invisible in the success message. Prose has no compiler, so a swallowed paragraph opening
 renders as a plausible sentence and survives review. The only cheap check is reading the region back
 and looking at the diff, which is exactly what the success message makes you skip.
+
+## A named exception at one layer is not the same exception at the next
+
+Trigger: `project.add` is the only standard mutation that carries no target. The exception had to be
+added at five independent sites — `request.schema.json` (the execute base plus a new branch that
+re-requires `target` for every other execute), `internal/providercli` (`validateExecute`),
+`internal/adapter/genericcli` (`executionTarget`), `providers/topsailai`
+(`validateExecuteRequest`), and `providers/mock` (`executeResponse`) — because each layer
+re-validates the contract it cannot import. Adding it to four of five leaves the operation advertised
+but unreachable, and the failure appears as a generic `invalid_request` from the layer that was
+missed.
+
+Action: when a contract gains a named exception, enumerate every layer that re-validates that contract
+before writing any of them, and add the exception to all of them in one unit. Search for the existing
+rejection message (`target is required`) rather than the operation name, because the message is what
+each layer spells independently. Then prove reachability end to end: a test that only exercises the
+Provider passes while the Endpoint still refuses.
+
+Why this prevents recurrence: each layer's check is locally correct and its own test passes, so review
+sees five green suites and no defect. The exception is also the kind of change that looks like one
+edit, because the contract document states it once. The failure direction is silent: the operation is
+advertised in the descriptor, so the operator sees a capability that exists and a command that always
+fails, which reads as a Provider bug rather than a missing branch in a layer nobody edited.
+
+## A strict decoder refuses a field the Cluster legitimately forwards
+
+Trigger: the `project.remove` matrix scenario failed with
+`decode request: json: unknown field "provider_target"`. The Cluster forwards the opaque
+`provider_target` slot verbatim for every resource-addressed operation, and the TopsailAI Provider
+already modelled it, but the mock Provider's `target` struct did not. Its decoder uses
+`DisallowUnknownFields`, so a request the contract permits was refused as malformed before any
+behaviour ran.
+
+Action: when the Cluster gains a standard slot, add it to every Provider's request struct in the same
+unit, including test-only Providers. The mock is not a throwaway: it is the executable reference the
+conformance and BDD suites drive, so a field it cannot decode makes a legitimate contract
+unexercisable. Search for the decoder's strictness setting rather than for the field name, because a
+permissive decoder hides the omission.
+
+Why this prevents recurrence: the slot is optional, so every existing request still decodes and every
+existing test still passes. The failure appears only on the new operation, and it presents as a
+malformed request rather than a missing field, which sends the investigation to the Cluster's
+forwarding code that is in fact correct.
+
+## A test that asserts argv exactly also refuses a destructive flag nobody added yet
+
+Trigger: `project.remove` must never delete the folder on disk, and the first version of its test
+asserted only that the folder still existed after the call. That assertion passes for any argv the
+Provider happens to build, so it would keep passing if a later change added a flag that deletes data
+and the deletion silently failed for an unrelated reason, such as a permission error.
+
+Action: when an operation must not have a destructive effect, assert the exact argv in addition to the
+observable outcome. The argv is the only place a destructive flag can appear, so an exact comparison
+refuses every flag rather than the ones the author happened to think of. Then prove the assertion has
+teeth by adding a plausible destructive flag and confirming the test fails.
+
+Why this prevents recurrence: an outcome-only assertion certifies the current behaviour of the code
+under test, not the absence of the capability to do harm. The two are the same today and diverge the
+moment someone adds a flag, and the divergence is invisible because the folder still exists in the
+test's own fixture. Comparing argv turns "the folder survived this run" into "this Provider cannot
+express a deletion".

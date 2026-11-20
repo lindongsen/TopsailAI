@@ -344,8 +344,15 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.OutputColorPolicy(output))
 	case "project":
+		// The read form stays the default so an existing invocation keeps working.
+		// A subcommand is recognised only as the first argument, because a folder
+		// path could legitimately be named "add" and the read form takes exactly
+		// one argument.
+		if flags.NArg() >= 2 && (flags.Arg(1) == "add" || flags.Arg(1) == "remove") {
+			return projectMutation(ctx, api, output, errors, flags.Args()[1:], *confirmed, *jsonMode)
+		}
 		if flags.NArg() != 2 {
-			return fmt.Errorf("usage: project <endpoint-id-or-hostname>")
+			return fmt.Errorf("usage: project <endpoint-id-or-hostname> | project add <endpoint-id-or-hostname> <folder> [name] | project remove <endpoint-id-or-hostname> <project-id>")
 		}
 		return project(ctx, api, output, errors, flags.Arg(1), *jsonMode, tui.OutputColorPolicy(output))
 	case "history":
@@ -922,6 +929,93 @@ func project(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 	options := tui.TableOptionsFor(output)
 	options.Color = color
 	return legacyRunner(api).Projects(ctx, output, errors, target, jsonMode, options)
+}
+
+// projectMutation dispatches the two remote project registration subcommands.
+//
+// Both edit the Provider's registry entry only. Neither creates, modifies or
+// deletes project data on disk, and the removal confirmation says so explicitly
+// because "remove a project" reads like a destructive filesystem operation.
+func projectMutation(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, args []string, confirmed, jsonMode bool) error {
+	if len(args) < 3 {
+		return fmt.Errorf("usage: project add <endpoint-id-or-hostname> <folder> [name] | project remove <endpoint-id-or-hostname> <project-id>")
+	}
+	action, target := args[0], args[1]
+	endpoint, err := tui.ResolveEndpointTarget(ctx, api, target)
+	if err != nil {
+		return err
+	}
+	switch action {
+	case "add":
+		if len(args) > 4 {
+			return fmt.Errorf("usage: project add <endpoint-id-or-hostname> <folder> [name]")
+		}
+		name := ""
+		if len(args) == 4 {
+			name = args[3]
+		}
+		payload, err := tui.ProjectAddPayload(args[2], name)
+		if err != nil {
+			return err
+		}
+		return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
+			Operation:      protocol.OperationProjectAdd,
+			OperationLabel: "project add",
+			EndpointID:     endpoint.EndpointID,
+			Payload:        payload,
+			Confirmed:      confirmed,
+		}, jsonMode)
+	case "remove":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: project remove <endpoint-id-or-hostname> <project-id>")
+		}
+		// The provider path is read from the catalog the operator is looking at,
+		// because the Endpoint mapping key is a digest and cannot be reversed.
+		// A project ID that is not in the current catalog is refused here rather
+		// than submitted, so the operator learns the ID is unknown instead of
+		// reading a Provider error.
+		slot, err := projectTargetSlot(ctx, api, endpoint.EndpointID, args[2])
+		if err != nil {
+			return err
+		}
+		return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
+			Operation:      protocol.OperationProjectRemove,
+			OperationLabel: "project remove (registry entry only; the folder is not deleted)",
+			EndpointID:     endpoint.EndpointID,
+			ResourceID:     args[2],
+			ProviderTarget: slot,
+			Payload:        tui.ProjectRemovePayload(),
+			Confirmed:      confirmed,
+		}, jsonMode)
+	}
+	return fmt.Errorf("usage: project add <endpoint-id-or-hostname> <folder> [name] | project remove <endpoint-id-or-hostname> <project-id>")
+}
+
+// projectTargetSlot resolves one project ID against the live catalog and returns
+// the opaque provider addressing slot for it.
+//
+// The catalog is a live Provider read, so this is the same read the operator used
+// to see the ID. Resolving here keeps the slot exact: the Provider binds it to the
+// mapping key by recomputing the digest, so a stale or mistyped ID is refused
+// before any registry write.
+func projectTargetSlot(ctx context.Context, api tui.CommandAPI, endpointID, projectID string) (string, error) {
+	querier, ok := api.(tui.ProjectCatalogQuerier)
+	if !ok {
+		return "", fmt.Errorf("project remove is unavailable: this client cannot query managed projects")
+	}
+	catalog, err := querier.GetProjectCatalog(ctx, endpointID)
+	if err != nil {
+		return "", err
+	}
+	if catalog.ErrorCode != "" {
+		return "", fmt.Errorf("project catalog for endpoint %q failed: %s", endpointID, catalog.ErrorCode)
+	}
+	for _, project := range catalog.Projects {
+		if project.ProjectID == projectID {
+			return tui.ProjectTargetSlot(project.Path)
+		}
+	}
+	return "", fmt.Errorf("project %q is not in the current catalog of endpoint %q", projectID, endpointID)
 }
 
 // history renders bounded provider session history for one endpoint.

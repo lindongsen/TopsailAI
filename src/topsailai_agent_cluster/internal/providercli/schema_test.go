@@ -18,6 +18,8 @@ var requiredSchemaFiles = []string{
 	"request.schema.json",
 	"agent-start-payload.schema.json",
 	"model-select-payload.schema.json",
+	"project-add-payload.schema.json",
+	"project-remove-payload.schema.json",
 	"response.schema.json",
 	"stream-frame.schema.json",
 	"launch-options-request.schema.json",

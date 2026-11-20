@@ -129,6 +129,10 @@ type interactiveState struct {
 	// model catalog render. It is separate from history because a profile number
 	// selects a model configuration while a history row number selects a session.
 	modelCatalog *modelCatalogNamespace
+	// projectCatalog is the project-number namespace produced by the most recent
+	// project catalog render. It is separate from the other two because a project
+	// number selects a registry entry, and a registry entry is not a session.
+	projectCatalog *projectCatalogNamespace
 }
 
 type interruptController struct {
@@ -593,7 +597,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// so it renders through the trusted writer like list and refresh.
 		return false, interactiveEndpoints(ctx, api, rest, trustedOut, options.Color)
 	case "project":
-		return false, interactiveProjects(ctx, api, state, rest, lineResults, trustedOut, trustedOut, errOut, options.Color)
+		return false, interactiveProject(ctx, api, state, rest, lineResults, trustedOut, trustedOut, errOut, options)
 	case "history":
 		// The history table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and endpoints.

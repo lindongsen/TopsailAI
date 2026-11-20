@@ -87,7 +87,6 @@
       "then": {
         "required": [
           "invocation_id",
-          "target",
           "operation"
         ],
         "properties": {
@@ -115,7 +114,8 @@
                   "enum": [
                     "agent.resume",
                     "agent.drive.stop",
-                    "workspace.clean"
+                    "workspace.clean",
+                    "project.remove"
                   ]
                 }
               }
@@ -136,6 +136,43 @@
             "required": [
               "expected_generation"
             ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "function": {
+            "const": "execute"
+          },
+          "operation": {
+            "properties": {
+              "name": {
+                "not": {
+                  "enum": [
+                    "project.add"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "required": [
+          "function",
+          "operation"
+        ]
+      },
+      "then": {
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "$ref": "#/$defs/mutation_target"
           }
         }
       }
@@ -206,6 +243,85 @@
                 "properties": {
                   "resource_kind": {
                     "const": "session"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "function": {
+            "const": "execute"
+          },
+          "operation": {
+            "properties": {
+              "name": {
+                "const": "project.add"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "required": [
+          "function",
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "project-add-payload.schema.json"
+          }
+        },
+        "not": {
+          "required": [
+            "target"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "function": {
+            "const": "execute"
+          },
+          "operation": {
+            "properties": {
+              "name": {
+                "const": "project.remove"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "required": [
+          "function",
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "project-remove-payload.schema.json"
+          },
+          "target": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/mutation_target"
+              },
+              {
+                "properties": {
+                  "resource_kind": {
+                    "const": "project"
                   }
                 }
               }
@@ -714,7 +830,8 @@
             "session",
             "task",
             "launch_profile",
-            "model_profile"
+            "model_profile",
+            "project"
           ]
         },
         "provider_resource_key": {
@@ -743,7 +860,8 @@
             "session",
             "task",
             "launch_profile",
-            "model_profile"
+            "model_profile",
+            "project"
           ]
         },
         "provider_resource_key": {
@@ -780,7 +898,8 @@
               "session",
               "task",
               "launch_profile",
-              "model_profile"
+              "model_profile",
+              "project"
             ]
           }
         },

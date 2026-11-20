@@ -11,12 +11,13 @@ import (
 //
 // The list mirrors the frozen enum in protocol/provider-cli/v1/request.schema.json.
 // It is repeated here because this executable is an independent module that cannot
-// import the Cluster validator, and a test pins the three names so the two copies
-// cannot drift silently.
+// import the Cluster validator, and a test pins the names so the two copies cannot
+// drift silently.
 var nonLiveAuthorityOperations = [...]string{
 	operationAgentResume,
 	operationAgentDriveStop,
 	operationWorkspaceClean,
+	operationProjectRemove,
 }
 
 // operationNeedsLiveGeneration reports whether an operation must carry a

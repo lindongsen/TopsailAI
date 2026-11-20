@@ -171,3 +171,42 @@ Feature: endpoint command authorization
     And a credential permitted only to view the control action
     When the fixture control action is submitted with that credential
     Then the control action is refused with policy denied and the provider is not invoked
+
+  # Remote project registration is a mutating control operation, so it needs the
+  # same two-sided proof as every other row: an allowed call that reaches the
+  # provider once, and a refused call that never reaches it.
+  #
+  # The matrix cluster configures AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT. Without it
+  # the positive row would fail closed with project_root_unconfigured before the
+  # policy hook ran, so the scenario would prove a configuration refusal instead
+  # of authorization. The folder submitted by the positive row is read from the
+  # live catalog, so it is a real directory inside that configured root.
+  #
+  # Removal addresses the opaque project ID and carries the exact provider path in
+  # the opaque target slot, because the Endpoint mapping key is a digest and cannot
+  # be reversed. Both rows therefore prove the whole path from the advertised
+  # capability through the policy hook to a provider argv.
+
+  Scenario: an allowed project registration reaches the provider once
+    Given a real cluster that publishes a live and a stopped session
+    And a credential permitted to register a project
+    When the project add command is submitted with that credential
+    Then the command is accepted and the provider is invoked once
+
+  Scenario: a project registration without the control permission is refused before the provider
+    Given a real cluster that publishes a live and a stopped session
+    And a credential permitted only to view
+    When the project add command is submitted with that credential
+    Then the command is refused with policy denied and the provider is not invoked
+
+  Scenario: an allowed project removal reaches the provider once
+    Given a real cluster that publishes a live and a stopped session
+    And a credential permitted to remove a project
+    When the project remove command is submitted with that credential
+    Then the command is accepted and the provider is invoked once
+
+  Scenario: a project removal without the control permission is refused before the provider
+    Given a real cluster that publishes a live and a stopped session
+    And a credential permitted only to view
+    When the project remove command is submitted with that credential
+    Then the command is refused with policy denied and the provider is not invoked

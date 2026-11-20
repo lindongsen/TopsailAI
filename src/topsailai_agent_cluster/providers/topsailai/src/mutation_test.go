@@ -383,13 +383,13 @@ func TestMutationRequiresGenerationForLiveOperations(t *testing.T) {
 	}
 }
 
-// TestNonLiveAuthorityOperationsArePinned pins the three frozen exceptions.
+// TestNonLiveAuthorityOperationsArePinned pins the frozen exceptions.
 //
 // The list mirrors protocol/provider-cli/v1/request.schema.json. This executable is
 // an independent module, so the copy is unavoidable; the test is what stops the two
 // copies from drifting apart silently.
 func TestNonLiveAuthorityOperationsArePinned(t *testing.T) {
-	want := []string{operationAgentResume, operationAgentDriveStop, operationWorkspaceClean}
+	want := []string{operationAgentResume, operationAgentDriveStop, operationWorkspaceClean, operationProjectRemove}
 	if got := nonLiveAuthorityOperations[:]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("non-live operations=%v want %v", got, want)
 	}

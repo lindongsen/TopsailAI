@@ -188,6 +188,31 @@ display-name change does not mint a new Cluster identity. The Endpoint maps that
 `project_id`; no TopsailAI row number, command spelling or registry-file detail enters the Cluster
 contract. `launch.options` returns launch profiles only.
 
+### Project registration mapping
+
+`project.add` and `project.remove` are the only Provider mutations that change the project registry.
+For TopsailAI they invoke `topsailai project add <folder> [name]` and `topsailai project del <folder>`.
+Neither command touches project data: `project add` appends one registry entry and `project del`
+removes one, and the Provider passes no flag that could delete the folder. The Cluster confirmation
+text states that difference so an operator never reads a successful removal as a lost project.
+
+`project.add` is the only standard mutation without a target, because the resource does not exist yet.
+The Provider accepts that shape for this one named operation and refuses a target-less request for
+every other mutation, so the exception cannot spread.
+
+Both operations are confined to `AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT`. The Provider resolves the
+configured root once at startup and refuses registration when it is unusable, so an unconfigured root
+disables the capability instead of falling back to a default. The folder is resolved with
+`EvalSymlinks` and compared against the root, which refuses `..`, an absolute escape and a symlink
+escape. The Endpoint performs the same check before dispatch, so the Provider's check is the second
+half of a two-sided rule rather than the only one.
+
+`project.remove` addresses the registry entry through the Cluster `project_id`. The Cluster mapping key
+is a digest of the folder and cannot be reversed, so the caller carries the exact folder in the opaque
+`provider_target` slot. The Provider recomputes the digest from that folder and refuses a mismatch,
+which binds caller-supplied evidence to the durable identity the Cluster addressed. A slot naming a
+different folder therefore cannot remove an entry the caller never selected.
+
 ### Identity and result translation
 
 ```mermaid

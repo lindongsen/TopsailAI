@@ -62,6 +62,14 @@ type Config struct {
 	// running in the Endpoint process working directory, which is a location the
 	// operator never selected.
 	CommandDir string
+	// ProjectRoot is the Endpoint-local directory that bounds every folder a
+	// remote project.add may register, and every folder project.remove may
+	// address. It is Endpoint configuration for the same reason as CommandDir:
+	// the confinement decision belongs to the machine that owns the filesystem.
+	// An empty value disables remote project registration entirely, because a
+	// default root would silently grant a remote caller the authority to register
+	// folders inside a location no operator chose.
+	ProjectRoot string
 }
 
 type cliRunner interface {
@@ -307,11 +315,11 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	}
 	target, err := a.executionTarget(ctx, intent)
 	if err != nil {
-		return adapter.ExecuteResult{}, err
+		return projectRefusalResult(intent, err), err
 	}
 	payload, err := a.executionPayload(ctx, intent)
 	if err != nil {
-		return adapter.ExecuteResult{}, err
+		return projectRefusalResult(intent, err), err
 	}
 	operation := &providercli.NamedContract{Name: intent.Operation, Version: intent.OperationVersion}
 	response, invokeErr := a.call(ctx, classMutation, providercli.FunctionExecute, target, operation, nil, intent.CommandID, payload)
@@ -765,6 +773,11 @@ func (a *Adapter) executionPayload(ctx context.Context, intent protocol.Immutabl
 	switch intent.Operation {
 	case protocol.OperationAgentStart:
 		return agentStartExecutionPayload(intent)
+	case protocol.OperationProjectAdd:
+		// The folder is confined to the Endpoint-local project root before the
+		// Provider is started, and the payload is re-encoded with the resolved
+		// path so the Provider registers the location this Endpoint approved.
+		return a.projectAddExecutionPayload(intent)
 	case protocol.OperationAgentModelSelect:
 		selection, err := protocol.ValidateModelSelectPayload(intent.Payload)
 		if err != nil {
@@ -822,7 +835,28 @@ func agentStartExecutionPayload(intent protocol.ImmutableIntent) (json.RawMessag
 
 func (a *Adapter) executionTarget(ctx context.Context, intent protocol.ImmutableIntent) (*providercli.Target, error) {
 	if intent.Target != nil {
-		return a.providerTarget(ctx, *intent.Target, providercli.OperationNeedsLiveGeneration(intent.Operation))
+		target := *intent.Target
+		// project.remove addresses a registry entry, and the exact folder travels
+		// in the opaque provider_target slot. The slot is confined to the
+		// Endpoint-local project root and rewritten to the resolved path here, so
+		// the Provider receives the path this Endpoint approved rather than the
+		// text the caller typed.
+		if intent.Operation == protocol.OperationProjectRemove {
+			rewritten, err := a.resolveProjectRemoveTarget(target)
+			if err != nil {
+				return nil, err
+			}
+			target = rewritten
+		}
+		return a.providerTarget(ctx, target, providercli.OperationNeedsLiveGeneration(intent.Operation))
+	}
+	// project.add is the only standard mutation that carries no target, because
+	// the resource it creates does not exist yet and therefore has no identity to
+	// address. It is a named exception rather than a relaxation: every other
+	// target-less operation still falls through to the refusal below, so a
+	// missing target for them remains a defect this adapter reports.
+	if intent.Operation == protocol.OperationProjectAdd {
+		return nil, nil
 	}
 	if intent.Operation != protocol.OperationAgentStart || intent.LaunchProfileID == "" || intent.ProfileRevision == "" {
 		return nil, errors.New("operation requires a target or launch profile")

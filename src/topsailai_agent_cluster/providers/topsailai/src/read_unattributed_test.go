@@ -184,7 +184,7 @@ func TestUnattributedRowCannotBeRead(t *testing.T) {
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		strings.Join([]string{"workspace", "list", "--json", "--local"}, "\x00"): answer(unattributedRowDocument),
 	}}
-	provider := newProvider(runner, controlCatalog{}, supportedPlatform, t.TempDir())
+	provider := newProvider(runner, controlCatalog{}, supportedPlatform, t.TempDir(), "")
 
 	key, err := providerSessionKey(workspaceItem{ProviderRowKey: "topsailai.916395.session.stdout"})
 	if err != nil {
@@ -218,7 +218,7 @@ func TestDiscoverSkipsAnUnmappableRow(t *testing.T) {
 	runner := &scriptedRunner{t: t, answers: map[string][]runnerAnswer{
 		strings.Join([]string{"workspace", "list", "--json", "--local", "--include-runtime"}, "\x00"): answer(document),
 	}}
-	provider := newProvider(runner, controlCatalog{}, supportedPlatform, t.TempDir())
+	provider := newProvider(runner, controlCatalog{}, supportedPlatform, t.TempDir(), "")
 
 	result, err := provider.discover(context.Background())
 	if err != nil {

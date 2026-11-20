@@ -199,6 +199,15 @@ type FaultInjection struct {
 	// an empty value advertises no ctl. action and every ctl. operation is refused
 	// as unsupported before the policy hook runs.
 	ControlActions []ControlAction
+	// ProjectRoot makes the Endpoint accept project.add for folders inside the
+	// given directory. An empty value leaves the root unconfigured, so project.add
+	// fails closed with project_root_unconfigured before the policy hook runs.
+	// A scenario that proves the positive authorization path for project.add needs
+	// it, exactly as command.exec needs CommandAllowlist: without the root the
+	// refusal happens for a configuration reason and proves nothing about
+	// authorization. The directory is created inside the scenario root, so the
+	// confinement check is exercised against a real path rather than a fixture.
+	ProjectRoot bool
 }
 
 // ControlAction describes one ctl. action the harness declares in the adapter
@@ -402,11 +411,35 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	// adapter budget is min(configured timeout, remaining deadline), so a
 	// configured timeout below the deadline would end the call first and the
 	// scenario would measure a timeout rather than an in-flight command.
+	// The project root is created before the adapter argv is built, because the
+	// mock reports the folder it publishes in its catalog through argv. A
+	// project.remove scenario confines that folder to this root, so the reported
+	// row and the configured root must agree; otherwise the refusal would come
+	// from the confinement check and the scenario would prove the wrong thing.
+	// The demo folder is created as well, because confinement requires the
+	// resolved path to be an existing directory.
+	projectRootPath := ""
+	if options.Faults.ProjectRoot {
+		projectRootPath = filepath.Join(root, "projects")
+		if mkErr := os.MkdirAll(filepath.Join(projectRootPath, "demo"), 0o755); mkErr != nil {
+			return nil, fmt.Errorf("create project root: %w", mkErr)
+		}
+		cluster.ProjectRootPath = projectRootPath
+	}
 	adapterTimeoutMS := 5000
 	if options.AdapterTimeoutMS > 0 {
 		adapterTimeoutMS = options.AdapterTimeoutMS
 	}
-	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": append([]string{"--mode", mode, "--session-dir", root, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, providerFaultArgs(options.Faults)...), "timeout_ms": adapterTimeoutMS}}
+	adapterArgv := []string{"--mode", mode, "--session-dir", root, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}
+	if projectRootPath != "" {
+		// The published project row must sit inside the configured root, because
+		// the Cluster confines a registration to that root. A row outside it would
+		// be refused by the confinement check rather than by the behaviour under
+		// test, so the path travels as argv instead of staying hardcoded.
+		adapterArgv = append(adapterArgv, "--project-path", filepath.Join(projectRootPath, "demo"))
+	}
+	adapterArgv = append(adapterArgv, providerFaultArgs(options.Faults)...)
+	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "genericcli", "command": mockBin, "args": adapterArgv, "timeout_ms": adapterTimeoutMS}}
 	if options.Faults.TwoAdapters {
 		adapterArgs = []map[string]any{{"adapter_id": "adapter-a", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-a"}, "timeout_ms": 5000}, {"adapter_id": "adapter-b", "provider_type": "genericcli", "command": mockBin, "args": []string{"--mode", "one", "--always-fail", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-b"}, "timeout_ms": 5000}}
 	}
@@ -450,6 +483,8 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		{"name": "command.exec", "version": "1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
 		{"name": "agent.model.select", "version": "1", "target_kinds": []string{"session"}, "safety_class": "mutating", "required_permission": "control"},
 		{"name": "project.list", "version": "v1", "target_kinds": []string{"endpoint"}, "safety_class": "read_only", "required_permission": "view"},
+		{"name": "project.add", "version": "v1", "target_kinds": []string{"endpoint"}, "safety_class": "mutating", "required_permission": "control"},
+		{"name": "project.remove", "version": "v1", "target_kinds": []string{"project"}, "safety_class": "mutating", "required_permission": "control"},
 	}
 	// A configured control action is advertised as a ctl. capability, because the
 	// catalog is the only source of ctl. actions and the adapter intersects the
@@ -574,6 +609,17 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 			return nil, writeErr
 		}
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE="+allowlistPath)
+	}
+	// The project root is the only security boundary for project.add, so it is
+	// exported to the Endpoint process only. A scenario that proves the positive
+	// authorization path needs it: without a configured root project.add fails
+	// closed with project_root_unconfigured before the policy hook, which would
+	// make an authorization assertion pass while proving a configuration refusal.
+	// The directory itself was created above, before the adapter argv was built,
+	// because the mock reports the folder it publishes through argv and the two
+	// values have to agree.
+	if projectRootPath != "" {
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT="+projectRootPath)
 	}
 	// A scenario that must assert on a reconnect or on a superseded rejection
 	// needs the Endpoint's own log, because neither event is observable anywhere

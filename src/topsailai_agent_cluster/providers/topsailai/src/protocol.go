@@ -68,6 +68,8 @@ const (
 	operationWorkspaceClean     = "workspace.clean"
 	operationAgentModelSelect   = "agent.model.select"
 	operationExecutionInterrupt = "execution.interrupt"
+	operationProjectAdd         = "project.add"
+	operationProjectRemove      = "project.remove"
 
 	// controlOperationPrefix addresses the provider control family, whose action
 	// names come from local configuration rather than from this list.

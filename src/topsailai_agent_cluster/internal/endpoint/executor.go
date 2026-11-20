@@ -219,6 +219,18 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			if !inspection.Found {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_not_found"))
 			}
+		} else if intent.Operation == protocol.OperationProjectRemove {
+			// Project removal addresses a registry entry by its opaque Cluster
+			// project ID, and a registry entry has no process generation to
+			// compare. The authority check is the mapping lookup that already
+			// resolved this intent to a configured adapter: a project ID with no
+			// durable mapping is refused there as target_not_found, so reaching
+			// this branch proves the exact mapped row still exists.
+			//
+			// No provider Inspect is issued, because a project is not a session
+			// and the provider's inspection surface addresses sessions only.
+			// Requiring a generation here would make the operation unreachable,
+			// and inventing one would claim evidence nobody observed.
 		} else if intent.Target.ProviderGeneration == "" {
 			// Every other operation addresses a live process, so an empty
 			// generation cannot prove which process it would reach. This is
@@ -535,17 +547,26 @@ func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.Immutab
 		return instance, mapping.AdapterID, release, nil
 	}
 	if intent.Operation != "agent.start" {
+		// Two operations are Endpoint-scoped rather than resource-scoped, and both
+		// still need one adapter to validate the advertised capability against,
+		// because the capability set is published per adapter.
+		//
 		// command.exec is Endpoint-native: the Endpoint owns the allowlist, the
 		// working directory, the confinement decision and the process cleanup, so
-		// the command runs on this machine rather than through a provider. It still
-		// needs one adapter to validate the advertised capability against, because
-		// the capability set is published per adapter. Exactly one configured
-		// adapter is required for that, and the rule mirrors the provider session
-		// handle path: zero means no configured adapter publishes the capability,
-		// and several means the capability cannot be attributed without guessing.
-		// Guessing would let the same command be validated against a different
-		// adapter after a restart, so both cases are refused instead.
-		if intent.Operation == protocol.OperationCommandExec {
+		// the command runs on this machine rather than through a provider.
+		//
+		// project.add creates a resource that does not exist yet, so it has no
+		// identity to address. Its authority is the Endpoint-local project root,
+		// which the Endpoint enforces before dispatch and the Provider revalidates
+		// before it writes its registry.
+		//
+		// Both use the same resolution rule, which mirrors the provider session
+		// handle path: zero configured adapters means nothing on this machine
+		// publishes the capability, and several means the capability cannot be
+		// attributed without guessing. Guessing would let the same request be
+		// validated against a different adapter after a restart, so both cases are
+		// refused instead.
+		if intent.Operation == protocol.OperationCommandExec || intent.Operation == protocol.OperationProjectAdd {
 			return e.endpointCommandAdapter(intent)
 		}
 		return nil, "", nil, resolutionFailure("target_required", fmt.Errorf("resource_id is required for operation %q", intent.Operation))
@@ -618,10 +639,16 @@ func (e *Executor) lockFor(key string) *sync.Mutex {
 // join that lock without anyone deciding it should. Endpoint-scoped command.exec
 // is deliberately serialized per Endpoint, because two commands running in the
 // same configured directory at once is a collision the operator did not ask for.
+// project.add is serialized per Endpoint for the same reason: two concurrent
+// registrations would write the same provider registry file at once, and the
+// second write would silently drop the first entry.
 func targetKey(intent protocol.ImmutableIntent) string {
 	if intent.Target == nil {
-		if intent.Operation == protocol.OperationCommandExec {
+		switch intent.Operation {
+		case protocol.OperationCommandExec:
 			return intent.EndpointID + ":endpoint:command.exec"
+		case protocol.OperationProjectAdd:
+			return intent.EndpointID + ":endpoint:project.add"
 		}
 		return intent.LaunchProfileID
 	}

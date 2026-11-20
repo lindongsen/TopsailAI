@@ -214,6 +214,7 @@ Suggested semantic operations:
 - `output.snapshot`, `output.follow`: independent capabilities; the former never implies the latter.
 - `ctl.<action>`: one advertised provider control action per capability, with a fixed payload schema; see the provider control channel section.
 - `command.exec`: one allowlisted argv array executed in a session working directory; see the allowlisted command execution section.
+- `project.add`, `project.remove`: change one Endpoint's project registry entry. Both are mutating `control` operations and neither touches project data on disk. `project.add` is the only standard mutation without a target, because the resource does not exist yet; its folder is confined to the configured project root. `project.remove` targets the opaque `project_id` and carries no generation. See the project registration operations section.
 
 Only operations and input/result fields defined by the negotiated standard API are exposed. No provider namespaces, adapter routing selectors or arbitrary provider execution schemas are accepted in commands. Two standard operation families are defined for provider control and for allowlisted command execution: `ctl.<action>` and `command.exec`. Both are versioned standard operations with fixed payload schemas, not a passthrough for provider-specific instructions. Inventory may carry adapter IDs and standard descriptive summaries as report data. A new common semantic operation requires an explicit versioned protocol amendment; provider-only controls that are not advertised as `ctl.<action>` remain local to Endpoint. Server validates standard schemas, not dynamically supplied provider instructions.
 
@@ -749,6 +750,37 @@ such a session.
 stable Provider-private key, name and path. The Endpoint maps `(adapter_id, project,
 provider_resource_key)` to an opaque Cluster `project_id`; the Server and CLI see only that standard
 identity. `launch.options` returns launch profiles only and never carries projects.
+
+### Project registration operations
+
+`project.add` and `project.remove` are standard mutations that change one Endpoint's project registry
+entry. They are configuration operations: neither creates, modifies nor deletes project data on disk,
+and removal leaves the folder and its contents untouched. The confirmation text states that difference
+because an operator who expects a deletion would otherwise read a successful removal as a lost project.
+
+`project.add` is the only standard mutation that carries no target, because the resource it creates does
+not exist yet. It is a named exception rather than a relaxation of the target rule: every other
+`execute` still requires a target, and the Endpoint resolves the Adapter with the same "exactly one
+capable Adapter" rule `command.exec` uses, refusing with `adapter_not_configured` when none publishes
+the capability and `target_ambiguous` when several do.
+
+The payload carries `folder`, an absolute path, and an optional `name` label. The resolved folder must
+lie inside `AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT`. An unconfigured root is a refusal, never a default, so
+the capability stays unavailable until an operator enables it explicitly. Confinement is decided on the
+resolved path, so `..`, an absolute escape and a symlink escape are all refused. The Endpoint checks
+before dispatch and the Provider re-checks before writing its registry, which closes the window between
+validation and the write.
+
+`project.remove` targets one opaque `project_id` and carries no generation. The Endpoint's durable
+mapping lookup already refuses an unknown project ID as `target_not_found`, so reaching the executor
+proves the exact mapped row exists; a project is not a session, so no provider liveness inspection is
+issued. The caller carries the exact folder in the opaque `provider_target` slot, because the Cluster
+mapping key is a digest and cannot be reversed. The Provider recomputes the key from that folder and
+refuses a mismatch, so a slot naming a different folder cannot remove an entry the caller never
+addressed.
+
+Both operations require the `control` scope. They are available in workspace and Endpoint scope and
+never in Session scope.
 
 ### A read carries the exact-target evidence the caller already holds
 

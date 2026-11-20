@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/project-remove-payload.schema.json",
+  "title": "project.remove payload",
+  "description": "project.remove carries no payload: the target names the exact project, so a payload field would be a second selector for the same decision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {},
+  "maxProperties": 0
+}

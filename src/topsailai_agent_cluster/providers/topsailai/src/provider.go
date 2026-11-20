@@ -31,16 +31,21 @@ type provider struct {
 	// a full workspace discovery before the first byte. An empty value disables
 	// that shortcut, so every read falls back to discovery.
 	taskDir string
+	// projectRoot is the Endpoint-local project root resolved once at startup. It
+	// confines project.add and project.remove to folders this Endpoint approved. An
+	// empty value disables both operations, because a default root would grant a
+	// remote caller the right to register folders nobody approved.
+	projectRoot string
 }
 
 // newProvider builds one Provider from its immutable startup configuration.
 //
-// The catalog, the platform capabilities and the task directory are parameters
-// rather than process reads, so the action surface, the operation surface and the
-// output location are decided once at the boundary and every later decision uses
-// the same values.
-func newProvider(runner commandRunner, control controlCatalog, platform platformCapabilities, taskDir string) *provider {
-	return &provider{runner: runner, now: time.Now, control: control, platform: platform, taskDir: taskDir}
+// The catalog, the platform capabilities, the task directory and the project root
+// are parameters rather than process reads, so the action surface, the operation
+// surface, the output location and the registration boundary are decided once at
+// the boundary and every later decision uses the same values.
+func newProvider(runner commandRunner, control controlCatalog, platform platformCapabilities, taskDir string, projectRoot string) *provider {
+	return &provider{runner: runner, now: time.Now, control: control, platform: platform, taskDir: taskDir, projectRoot: projectRoot}
 }
 
 // dispatch handles only functions truthfully advertised by the descriptor.
@@ -92,6 +97,13 @@ func errorCode(err error) string {
 var (
 	errUnsupported    = errors.New("unsupported")
 	errInvalidRequest = errors.New("invalid request")
+	// The three project registration errors are coded rather than plain, because
+	// the Cluster maps each one to a different remedy: an unconfigured root is a
+	// deployment gap, an escaped path is a request the operator must correct, and a
+	// non-directory is a path that does not resolve.
+	errProjectRootUnconfigured = codedError{code: "project_root_unconfigured", message: "project root is not configured"}
+	errProjectPathOutsideRoot  = codedError{code: "project_path_outside_root", message: "project path is outside the configured project root"}
+	errProjectPathNotDirectory = codedError{code: "project_path_not_directory", message: "project path is not an existing directory"}
 )
 
 // codedError carries a provider error code that the Cluster has to act on.

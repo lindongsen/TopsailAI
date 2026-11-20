@@ -187,6 +187,8 @@ passthrough for provider-specific instructions.
 | Provider control | `ctl.<action>` | JSON object forwarded as the action arguments | `read_output` for actions that return conversation content, otherwise `control` |
 | Command execution | `command.exec` | `{"argv": ["..."]}` | `control` |
 | Workspace cleanup | `workspace.clean` | `{}` | `control` |
+| Project registration | `project.add` | `{"folder": "<absolute path>", "name": "<optional label>"}` | `control` |
+| Project deregistration | `project.remove` | `{}` | `control` |
 
 `ctl.<action>` is advertised one capability per action, so an action the Endpoint does not serve is
 absent from the inventory and is refused at admission with `403 permission_denied`. The action name is
@@ -205,6 +207,47 @@ The result document carries `argv`, `exit_code`, `stdout`, `stderr`, `truncated`
 and an optional `error_code`. It is one bounded snapshot, not a stream: `truncated` marks output that
 exceeded the capture limit, and a non-zero `exit_code` is a legitimate result rather than a transport
 failure.
+
+### Project registration
+
+`project.add` and `project.remove` change one Endpoint's project registry entry. They never create,
+modify or delete project data on disk: registration is configuration, and removal leaves the folder
+and its contents untouched. The client confirmation text states that difference, because an operator
+who expects a deletion would otherwise read a successful removal as a lost project.
+
+`project.add` is the only standard mutation that carries no target, because the resource it creates
+does not exist yet. It is a named exception rather than a relaxation of the target rule: every other
+`execute` still requires a target, and the Endpoint resolves the Adapter with the same "exactly one
+capable Adapter" rule `command.exec` uses, refusing with `adapter_not_configured` when none publishes
+the capability and `target_ambiguous` when several do.
+
+The payload carries `folder`, an absolute path, and an optional `name` label. The resolved folder must
+lie inside `AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT`. An unconfigured root is a refusal, never a default,
+so the capability is unavailable until an operator enables it explicitly. Confinement is decided on
+the resolved path, so `..`, an absolute escape and a symlink escape are all refused. The Endpoint
+checks before dispatch and the Provider re-checks before writing its registry, which closes the window
+between validation and the write.
+
+`project.remove` targets one opaque `project_id` and carries no generation. The Endpoint's durable
+mapping lookup already refuses an unknown project ID as `target_not_found`, so reaching the executor
+proves the exact mapped row exists; a project is not a session, so no provider liveness inspection is
+issued. The caller carries the exact folder in the opaque `provider_target` slot, because the Cluster
+mapping key is a digest and cannot be reversed. The Provider recomputes the key from that folder and
+refuses a mismatch, so a slot naming a different folder cannot remove an entry the caller never
+addressed.
+
+Both operations require the `control` scope. They are available in workspace and Endpoint scope and
+never in Session scope.
+
+| Code | Meaning |
+|---|---|
+| `project_root_unconfigured` | No project root is configured, so registration is unavailable |
+| `project_folder_invalid` | The folder is not an absolute path or contains a control character |
+| `project_path_outside_root` | The resolved folder escapes the configured root |
+| `project_path_not_directory` | The resolved path does not exist or is not a directory |
+| `project_already_registered` | The Provider already lists this folder |
+| `project_not_found` | The addressed project ID has no durable mapping |
+| `project_registry_write_failed` | The Provider could not change its registry |
 
 ## Output snapshots
 

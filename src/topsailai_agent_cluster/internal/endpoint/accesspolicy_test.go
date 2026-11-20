@@ -172,8 +172,21 @@ func TestAccessPolicyControlScopeCoversProviderControlFamily(t *testing.T) {
 	if err := loaded.Policy.Permit("e1", "ctl-secret", protocol.OperationWorkspaceClean); err != nil {
 		t.Fatalf("scope control must cover workspace cleanup: %v", err)
 	}
+	// Remote project registration is a registry mutation, so it belongs to the
+	// same control scope as the other mutating operations. It deliberately does
+	// not get a scope of its own: the security boundary is the configured project
+	// root, and a new scope name would invalidate every deployed policy file.
+	if err := loaded.Policy.Permit("e1", "ctl-secret", protocol.OperationProjectAdd); err != nil {
+		t.Fatalf("scope control must cover project registration: %v", err)
+	}
+	if err := loaded.Policy.Permit("e1", "ctl-secret", protocol.OperationProjectRemove); err != nil {
+		t.Fatalf("scope control must cover project removal: %v", err)
+	}
 	if err := loaded.Policy.Permit("e1", "ctl-secret", protocol.OperationOutputRead); err == nil {
 		t.Fatalf("scope control must not cover a read operation")
+	}
+	if err := loaded.Policy.Permit("e1", "ctl-secret", protocol.OperationProjectList); err == nil {
+		t.Fatalf("scope control must not cover the read-only project catalog")
 	}
 }
 

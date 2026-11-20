@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 // interactiveProjects renders the managed projects of one selected Endpoint.
@@ -36,5 +38,21 @@ func interactiveProjects(parent context.Context, api InteractiveAPI, state *inte
 	}
 	options := TableOptionsFor(out)
 	options.Color = color
-	return RenderProjects(out, result.Projects, options)
+	// The previous namespace is dropped before the catalog is rendered, so a row
+	// number from an earlier table can never be applied to a project row.
+	state.projectCatalog = nil
+	if err := RenderProjects(out, result.Projects, options); err != nil {
+		return err
+	}
+	// The namespace is recorded only after a successful render, because a number
+	// is a position in the table the operator actually saw.
+	namespace := &projectCatalogNamespace{
+		EndpointID: endpointID,
+		Rows:       make(map[int]protocol.Project, len(result.Projects)),
+	}
+	for index, project := range result.Projects {
+		namespace.Rows[index+1] = project
+	}
+	state.projectCatalog = namespace
+	return nil
 }

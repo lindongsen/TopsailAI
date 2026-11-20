@@ -159,6 +159,7 @@ the exported value, and no warning is printed, because the name is not read at a
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` | `--command-dir` | empty | Endpoint-local working directory for a `command.exec` request that carries no session target; empty disables the endpoint-scope form |
+| `AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT` | `--project-root` | empty | Endpoint-local directory that bounds every folder a remote `project.add` may register and every folder `project.remove` may address; empty disables remote project registration entirely. Launcher value is `PROJECT_ROOT` |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `--endpoint-access-policy-dir` | empty | Endpoint-local directory holding one access policy file per caller token; empty means every caller is permitted |
 | `AGENT_CLUSTER_ENDPOINT_REPLACE_REQUEST_FILE` | `--replace-request-file` | empty | Endpoint-local request document that activates one Provider CLI version for one adapter; empty disables activation entirely |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | none | `5000` | Positive post-collection delay in milliseconds; launcher value is `COLLECTION_DELAY_MS` |
@@ -359,6 +360,39 @@ decides how much of the filesystem an argument can address. A narrow directory k
 every absolute path confined and remove that protection. The allowlist is still
 consulted first, so this setting widens the reachable paths and never the permitted
 programs.
+
+### `AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT`
+
+Sets the directory that bounds every folder a remote `project.add` may register and
+every folder `project.remove` may address. Paths are resolved relative to the bundle
+root by the launcher, which forwards the value as `PROJECT_ROOT`.
+
+This is the security boundary for remote project registration, and it is the only
+one. `project.add` lets a remote caller append one entry to the Provider's project
+registry, so without a root the caller could register `/` or `/etc` and a later
+`start` would run an agent in a directory nobody approved. The root is what turns
+that into "any folder below a location the operator chose".
+
+An unset value disables remote project registration entirely. `project.add` is
+refused with `project_root_unconfigured`, and the refusal names this setting so an
+operator learns the remedy instead of reading a path failure. There is deliberately
+no default root: a default would silently grant the authority this setting exists to
+withhold, and the capability is meant to be an explicit deployment decision.
+
+A configured value must be an absolute path to an existing directory. A relative path
+is rejected at startup, because it would resolve against the process working
+directory. Symlinks are resolved once at startup, so the directory the operator
+configured and the directory confinement is computed against are the same fact.
+
+Confinement is decided on the resolved path, not on the text the caller sent. A
+folder is accepted only when it resolves to a location inside this root, so `..`
+traversal, an absolute path elsewhere and a symlink that points outside are all
+refused with `project_path_outside_root`. The Endpoint checks before dispatch and the
+Provider re-checks before writing its registry, so the window between validation and
+the registry write cannot be used to swap the target.
+
+`project.add` and `project.remove` change the registry entry only. They never create,
+modify or delete project data on disk, and `project.remove` never deletes the folder.
 
 ### Control actions
 
@@ -667,6 +701,7 @@ is empty, because `rm -rf $(TEST_TMP_DIR)` with an empty value becomes `rm -rf /
 | `AGENT_CLUSTER_CLI_SERVER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` | The endpoint-scope form of `command.exec` is unavailable; session-scope execution is unaffected |
+| `AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT` | Remote project registration is unavailable: `project.add` is refused with `project_root_unconfigured`, and `project.remove` cannot confine the folder it addresses |
 | `AGENT_CLUSTER_ENDPOINT_ADAPTERS` with no `ctl.` capability | No `ctl.` action is advertised and every `ctl.` operation is refused |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | Every caller is permitted, so the Endpoint has no authorization boundary |
 | `AGENT_CLUSTER_TLS_*` | Remote listeners cannot verify peers |
