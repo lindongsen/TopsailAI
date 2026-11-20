@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -133,18 +134,82 @@ func decodeStrict(document []byte, value any) error {
 	return nil
 }
 
+// runJSON runs one provider CLI invocation and decodes its single JSON document.
+//
+// A non-zero exit is reported with the provider's own reason when the CLI wrote one.
+// The provider states a failure inside its JSON document rather than on stderr: a
+// rejected control call carries `response.error`, and a business read carries
+// `error_code` with `message`, while stderr stays empty. Formatting only stderr
+// therefore produced `exit status 6: ` with no cause, and the operator read a 502 that
+// named neither the call nor the reason. The document is inspected before the exit
+// status for the same reason providerDocumentFailure does it: the reason is in the
+// document, not in the status.
+//
+// The classification is deliberately unchanged. This only enriches the message, so a
+// caller that maps a plain error to provider_error keeps doing so, and a failure never
+// becomes a success.
 func runJSON(ctx context.Context, runner commandRunner, args []string, limit int, value any) error {
 	stdout, stderr, err := runner.Run(ctx, args, nil)
 	if len(stdout) > limit {
 		return fmt.Errorf("provider response exceeds %d bytes", limit)
 	}
 	if err != nil {
-		return fmt.Errorf("TopsailAI CLI failed: %w: %s", err, boundedText(stderr, 4096))
+		return fmt.Errorf("TopsailAI CLI failed: %w: %s", err, providerFailureDetail(stdout, stderr))
 	}
 	if err := decodeJSONDocument(stdout, value, false); err != nil {
 		return fmt.Errorf("decode TopsailAI CLI response: %w", err)
 	}
 	return nil
+}
+
+// providerFailureDetail reports why a failed provider invocation failed.
+//
+// The provider states the reason inside its JSON document, so the document is read
+// first and stderr is only the fallback. Both are bounded, because a provider that
+// writes a large document must not turn one log line into megabytes.
+func providerFailureDetail(stdout, stderr []byte) string {
+	if reason := providerDocumentReason(stdout); reason != "" {
+		return reason
+	}
+	return boundedText(stderr, 4096)
+}
+
+// providerDocumentReason extracts the provider's own failure text from a document.
+//
+// Two shapes carry it, and both are read because this helper serves control calls and
+// business reads alike: a control envelope reports `response.error`, while a business
+// read reports `error_code` with `message`. An empty result means the document carried
+// no reason, which is not an error; the caller then falls back to stderr.
+func providerDocumentReason(stdout []byte) string {
+	if len(bytes.TrimSpace(stdout)) == 0 {
+		return ""
+	}
+	var probe struct {
+		ErrorCode string `json:"error_code"`
+		Message   string `json:"message"`
+		Response  *struct {
+			Error string `json:"error"`
+		} `json:"response"`
+	}
+	if err := decodeJSONDocument(stdout, &probe, false); err != nil {
+		return ""
+	}
+	if probe.Response != nil {
+		if reason := strings.TrimSpace(probe.Response.Error); reason != "" {
+			return boundedText([]byte(reason), 4096)
+		}
+	}
+	code := strings.TrimSpace(probe.ErrorCode)
+	message := strings.TrimSpace(probe.Message)
+	switch {
+	case code != "" && message != "":
+		return boundedText([]byte(code+": "+message), 4096)
+	case message != "":
+		return boundedText([]byte(message), 4096)
+	case code != "":
+		return boundedText([]byte(code), 4096)
+	}
+	return ""
 }
 
 // decodeJSONDocument accepts exactly one JSON document. Provider-business CLI
