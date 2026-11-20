@@ -146,6 +146,55 @@ func TestResolveStatelessRejectsAnUnknownValue(t *testing.T) {
 	}
 }
 
+// TestResolveStatelessFallsBackToTheEmbeddedDefault checks that a build which
+// embedded stateless mode runs stateless with nothing exported, and that an explicit
+// environment value still wins.
+//
+// The fallback is the whole point of the packaging target: an artifact handed to
+// someone for a read-only machine must behave as designed without that person
+// exporting a variable first. The override is the other half, because the same
+// binary must still be runnable file-backed for a test or a debugging session.
+//
+// The test mutates a package-level variable because that is how the linker writes
+// it, and restores it so a later test does not inherit the mode.
+func TestResolveStatelessFallsBackToTheEmbeddedDefault(t *testing.T) {
+	previous := embedded.Stateless
+	t.Cleanup(func() { embedded.Stateless = previous })
+
+	embedded.Stateless = "1"
+	got, err := resolveStateless("")
+	if err != nil {
+		t.Fatalf("resolveStateless(\"\") with an embedded default = %v, want nil", err)
+	}
+	if !got {
+		t.Fatal("resolveStateless(\"\") = false with an embedded stateless default, want true")
+	}
+
+	got, err = resolveStateless("0")
+	if err != nil {
+		t.Fatalf("resolveStateless(\"0\") with an embedded default = %v, want nil", err)
+	}
+	if got {
+		t.Fatal("resolveStateless(\"0\") = true, want the explicit value to win over the embedded default")
+	}
+
+	embedded.Stateless = "0"
+	got, err = resolveStateless("")
+	if err != nil {
+		t.Fatalf("resolveStateless(\"\") with an embedded 0 = %v, want nil", err)
+	}
+	if got {
+		t.Fatal("resolveStateless(\"\") = true with an embedded 0, want false")
+	}
+
+	embedded.Stateless = "true"
+	if _, err := resolveStateless(""); err == nil {
+		t.Fatal("resolveStateless(\"\") with an embedded \"true\" = nil error, want a refusal")
+	} else if !strings.Contains(err.Error(), "embedded stateless mode") {
+		t.Fatalf("resolveStateless(\"\") = %q, want it to name the embedded value", err)
+	}
+}
+
 // TestLoadConfigStatelessRefusesAMissingPolicy checks that a stateless build with no
 // embedded policy and no policy file is refused, naming both ways to supply one.
 //
