@@ -304,10 +304,24 @@ func TestListRejectsMismatchingFilterOutsideWorkspace(t *testing.T) {
 	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
-func TestShowRequiresTargetInWorkspaceScope(t *testing.T) {
-	_, diagnostics := runScope(t, scopeStub(), "show\nexit\n", ColorPolicy{})
-	want := "error: show requires an endpoint or session in workspace scope; use show <number> for a session row or show <endpoint-id>\n"
-	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
+// TestShowWithoutASelectorAsksInsteadOfRefusing proves the workspace refusal was
+// replaced by the guided question. The old behaviour reported a usage line and sent
+// the operator to a second command, which cost two commands for one decision.
+//
+// The answer is empty because this test is about the question, not the selection: an
+// empty answer cancels, so the assertion cannot be satisfied by a detail render that
+// happened for an unrelated reason.
+func TestShowWithoutASelectorAsksInsteadOfRefusing(t *testing.T) {
+	output, diagnostics := runScope(t, scopeStub(), "show\n\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("a bare show reported a diagnostic: %q", diagnostics)
+	}
+	if !strings.Contains(output, "select endpoint or session [1-2]") {
+		t.Fatalf("a bare show did not ask which row to show: %q", output)
+	}
+	if strings.Contains(diagnostics, "show requires an endpoint or session") {
+		t.Fatalf("the removed refusal is still reported: %q", diagnostics)
+	}
 }
 
 func TestShowDefaultsToCurrentEndpoint(t *testing.T) {
