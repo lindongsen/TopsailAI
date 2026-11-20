@@ -215,6 +215,20 @@ func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.W
 	// process reads its own stdin, which is a property of how the process was launched
 	// rather than of the machine it runs on.
 	consoleFlag := flags.Bool("console", false, "read commands from stdin while the node serves")
+	// The two configuration sources are flags as well as variables, because the
+	// argument layer is the most specific statement an operator can make: it is typed
+	// for this one launch, while an environment variable is inherited by every process
+	// the shell starts. A source reachable only through the environment would be
+	// unreachable for the operator who wants to override the environment.
+	envFileFlag := flags.String("env-file", "", "read KEY=VALUE pairs from this dotenv file")
+	overrides := overrideFlag{}
+	flags.Var(&overrides, "set", "override one configuration value; repeatable, KEY=VALUE")
+	// The --set pairs are validated before the flag package sees them, because the
+	// package echoes a rejected value verbatim and a --set argument may carry a
+	// tunnel token. See validateOverrideArguments.
+	if err := validateOverrideArguments(arguments); err != nil {
+		return helpdispatch.Usagef("%v", err)
+	}
 	if err := flags.Parse(arguments); err != nil {
 		return helpdispatch.Usagef("%v", err)
 	}
@@ -224,7 +238,19 @@ func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.W
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	config, err := node.LoadConfig(os.Getenv)
+	// The precedence is decided in one place, before LoadConfig is called, so the order
+	// is visible in one function rather than scattered through the resolvers.
+	envFilePath, err := resolveEnvFile(*envFileFlag, os.Getenv)
+	if err != nil {
+		return err
+	}
+	fileValues, err := loadEnvFile(envFilePath)
+	if err != nil {
+		return err
+	}
+	lookup := layeredLookup(overrides, os.Getenv, fileValues)
+
+	config, err := node.LoadConfig(lookup)
 	if err != nil {
 		return err
 	}
