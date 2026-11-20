@@ -70,6 +70,15 @@ literal Session identifier remains available when no table is present. A numeric
 name a current row may be retried as a numeric provider Session identifier, but an ambiguous match is
 rejected rather than guessed.
 
+A command whose only argument is a choice from a table the operator cannot see MUST render that table
+before asking. `model set` with no selector is the reference pattern: it reads the registry, prints it
+with the current entry marked, and then asks which row to declare, so the operator chooses from what
+the machine actually offers instead of recalling a number from an earlier command. An empty answer is
+a decision and is reported as one (`launch default unchanged`), never as a failure. The same rule
+applies to any future command whose argument is a position in a table: printing the table and asking
+costs one round trip, while requiring a separate read command costs two commands for one decision and
+makes the second one the one that can be typed wrong.
+
 ## Interactive input history
 
 Every accepted nonblank input submitted through the interactive CLI is persisted in the operator's
