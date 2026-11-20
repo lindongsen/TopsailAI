@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -413,6 +414,29 @@ func Load(args []string, role string) (Config, error) {
 
 	flags := flag.NewFlagSet(role, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	registerFlags(flags, &cfg, role)
+	if err := flags.Parse(args); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// registerFlags declares every option this role accepts.
+//
+// It is a separate function because two callers need the same declaration for
+// different reasons: Load parses the arguments, and ValueOptionNames reports which
+// options consume a following argument. Keeping one declaration means the reported
+// set cannot drift from the parsed set, which is the failure a hand-written list
+// would produce: a newly added option would be parsed correctly while a raw scan
+// still treated its value as an option.
+func registerFlags(flags *flag.FlagSet, cfg *Config, role string) {
+	serverRole := role == "agent-cluster-server"
+	endpointRole := role == "agent-cluster-endpoint"
+	genericRole := !serverRole && !endpointRole
+
 	flags.StringVar(&cfg.DatabasePath, "database-path", cfg.DatabasePath, "SQLite database path")
 	flags.StringVar(&cfg.ChannelDirection, "channel-direction", cfg.ChannelDirection, "channel direction: endpoint-initiated, server-initiated or bidirectional")
 	flags.StringVar(&cfg.ServerName, "server-name", cfg.ServerName, "expected Server certificate identity when the Endpoint accepts a connection")
@@ -469,13 +493,37 @@ func Load(args []string, role string) (Config, error) {
 	// and an Endpoint flag that could drift apart.
 	flags.StringVar(&cfg.AuthMode, "auth-mode", cfg.AuthMode, "credential authentication mode: hmac (default) or bearer")
 	flags.DurationVar(&cfg.SignatureWindow, "signature-window", cfg.SignatureWindow, "how far a signed request timestamp may differ from the verifier clock")
-	if err := flags.Parse(args); err != nil {
-		return Config{}, err
-	}
-	if err := cfg.Validate(); err != nil {
-		return Config{}, err
-	}
-	return cfg, nil
+}
+
+// ValueOptionNames reports the options of one role that consume the following
+// argument.
+//
+// A raw argument scan needs this set to avoid reading an option's value as an
+// option of its own: "--tls-certificate-file -v" names a file called "-v", and a
+// scan that ignored the value would answer a version request the operator never
+// made. The set is derived from the same declaration Load parses, so a newly added
+// option is covered without anyone remembering to update a second list.
+//
+// The role matters because the two daemons accept different options. Reporting the
+// union would be safe but imprecise, and imprecision here means a Server would
+// consume the argument after an Endpoint-only option it does not accept.
+func ValueOptionNames(role string) map[string]bool {
+	cfg := Defaults(role)
+	flags := flag.NewFlagSet(role, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	registerFlags(flags, &cfg, role)
+
+	names := make(map[string]bool)
+	flags.VisitAll(func(one *flag.Flag) {
+		// A boolean option never consumes the following argument, so its value
+		// cannot be mistaken for an option. Every other kind does, including the
+		// Func options above, which take exactly one argument.
+		if _, isBoolean := one.Value.(interface{ IsBoolFlag() bool }); isBoolean {
+			return
+		}
+		names[one.Name] = true
+	})
+	return names
 }
 
 // ParseDialAddresses parses endpoint_id=wss://address pairs the Server dials in

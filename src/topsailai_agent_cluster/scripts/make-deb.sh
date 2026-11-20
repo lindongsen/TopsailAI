@@ -246,6 +246,11 @@ BUILD_DIR=$(readlink -m "${BUILD_DIR}") || die "cannot resolve --build-dir ${BUI
 [ -n "${ARCH}" ] || ARCH=$(dpkg --print-architecture 2>/dev/null) ||
     die "cannot determine the target architecture; pass --arch"
 FULL_VERSION="${VERSION}-${REVISION}"
+# The build time is resolved once per package build, so the three binaries of one
+# role package cannot disagree about when they were built. It is recorded in UTC
+# because a local offset would make two builds of the same commit look different
+# for a reason that has nothing to do with the code.
+BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # The epoch belongs in the control Version field only. A colon in a file name
 # breaks scp and several artifact steps, so the file keeps the plain version and
 # dpkg still compares the epoch carried inside the package.
@@ -373,12 +378,24 @@ function add_config_layout_dirs() {
     add_dir "${OPT_DIR}/conf/${EFFECTIVE_ROLE}" 0755
     add_dir "${OPT_DIR}/certs/${EFFECTIVE_ROLE}" 0755
 }
-
 # Builds one static binary into the package tree.
+#
+# The version identity is injected so the installed binary can state which
+# release it came from. VERSION rather than FULL_VERSION: the Debian revision
+# belongs to the package, not to the binary's own identity, and the manifest
+# already records the two separately.
+#
+# The commit is read from the working tree once per build. A packaged binary that
+# cannot name its source revision is indistinguishable from one built from a
+# different commit under the same version, which is exactly the ambiguity an
+# operator is trying to resolve when they ask a binary what it is.
 function build_binary() {
     local pkg="$1"
     local target="$2"
-    ( cd "${PROJECT_DIR}" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+    local commit
+    commit=$(cd "${PROJECT_DIR}" && git rev-parse HEAD 2>/dev/null) || commit="unknown"
+    ( cd "${PROJECT_DIR}" && CGO_ENABLED=0 go build -trimpath \
+        -ldflags "-s -w -X topsailai_agent_cluster/internal/version.Version=${VERSION} -X topsailai_agent_cluster/internal/version.Commit=${commit} -X topsailai_agent_cluster/internal/version.BuildTime=${BUILD_TIME}" \
         -o "${PKG_ROOT}${target}" "${pkg}" ) ||
         die "static build failed for ${pkg}"
     chmod 0755 "${PKG_ROOT}${target}" || die "cannot set mode on ${target}"

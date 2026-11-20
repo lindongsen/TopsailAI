@@ -18,6 +18,7 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	"topsailai_agent_cluster/internal/tui"
+	"topsailai_agent_cluster/internal/version"
 )
 
 func main() {
@@ -159,6 +160,17 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return nil
 		}
 		return tui.PrintNonInteractiveCommandHelp(output, target)
+	}
+	// A version request is a successful request, so it is answered before flag
+	// parsing for the same two reasons a help request is: Go's flag package
+	// reports an unregistered option as an error the caller would turn into exit
+	// code 2, and flag.Parse stops at the first positional argument, so a
+	// command-level -v would never reach the flag set at all.
+	if version.Requested(args, versionValueOptions) {
+		if rawJSONRequested(args) {
+			return version.WriteJSON(output, "agent-cluster-cli")
+		}
+		return version.Write(output, "agent-cluster-cli")
 	}
 	if err := flags.Parse(hoistTrailingFlags(args)); err != nil {
 		return err
@@ -457,12 +469,39 @@ func writeUsage(out io.Writer, flags *flag.FlagSet) {
 	// The help option is documented once here instead of on every command, so
 	// the command list stays a list of commands rather than a list of options.
 	fmt.Fprintln(out, "Every command accepts --help (or -h) for its detailed help, equivalent to help <command>.")
+	fmt.Fprintln(out, "Use --version (or -v) to print the identity of this binary; add --json for a structured document.")
 	fmt.Fprintln(out, "Commands:")
 	for _, line := range tui.NonInteractiveCommandHelpLines() {
 		fmt.Fprintln(out, "  "+line)
 	}
 	fmt.Fprintln(out, "Options:")
 	flags.PrintDefaults()
+}
+
+// rawJSONRequested reports whether the raw arguments ask for structured output.
+//
+// It exists because a version request is answered before flag parsing, so the
+// parsed --json value does not exist yet. Reading the raw arguments keeps one
+// spelling for one setting: an operator who writes "--json -v" and one who
+// writes "-v --json" receive the same document, and neither has to remember an
+// ordering rule that the flag parser would otherwise impose.
+func rawJSONRequested(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		name, hasValue := splitOptionName(arg)
+		if name != "json" {
+			continue
+		}
+		if !hasValue {
+			return true
+		}
+		// An explicit "--json=false" states the opposite, so it must not be read
+		// as a request for structured output.
+		return strings.TrimPrefix(arg, "--json=") != "false"
+	}
+	return false
 }
 
 // helpRequest reports whether the raw arguments ask for help and which command
@@ -669,6 +708,23 @@ var booleanGlobalOptions = map[string]bool{
 	"i": true, "follow": true, "f": true,
 }
 
+// versionValueOptions lists the hoisted options that consume the following
+// argument, so a version request is not read out of an option's value.
+//
+// It is derived from the two maps above rather than written out again, because a
+// second hand-maintained list would drift the moment a flag is added: the new flag
+// would be hoistable but its value would be scanned as if it were an option, and
+// "--endpoint -v" would answer the version request instead of naming an endpoint.
+var versionValueOptions = func() map[string]bool {
+	valueOptions := make(map[string]bool, len(globalOptionNames))
+	for name := range globalOptionNames {
+		if !booleanGlobalOptions[name] {
+			valueOptions[name] = true
+		}
+	}
+	return valueOptions
+}()
+
 // hoistTrailingFlags moves recognized global options that appear after the
 // subcommand in front of it. Go's flag package stops parsing at the first
 // positional argument, so without this an operator who follows the tool's own
@@ -760,12 +816,13 @@ func isNegativeNumber(arg string) bool {
 
 // splitOptionName reports the option name without its leading dashes and whether
 // the value was attached with "=".
+//
+// It delegates to the version package rather than keeping its own copy, because
+// that package scans the same raw arguments for the same reason. Two copies would
+// agree today and diverge the first time an option spelling changed, and the
+// divergence would be invisible because both would still compile.
 func splitOptionName(arg string) (string, bool) {
-	name := strings.TrimLeft(arg, "-")
-	if idx := strings.Index(name, "="); idx >= 0 {
-		return name[:idx], true
-	}
-	return name, false
+	return version.SplitOptionName(arg)
 }
 
 // listShorthand names the list spelling the operator typed, so a usage error can
