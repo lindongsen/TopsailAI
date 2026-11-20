@@ -79,6 +79,23 @@ applies to any future command whose argument is a position in a table: printing 
 costs one round trip, while requiring a separate read command costs two commands for one decision and
 makes the second one the one that can be typed wrong.
 
+`project remove` with no selector is the second reference instance, and it shows the rule applied to a
+mutating command. It renders the endpoint project catalog, asks which entry to remove, and reports an
+empty answer as `project registry unchanged`. Three details carry over to any future instance:
+
+- The render is the only read. The answer resolves against the row namespace that render recorded, so
+  the guided form issues exactly one catalog read, the same as the explicit form.
+- A number that was not printed is refused and never retried as an identifier, because a number is a
+  position in the table the operator saw, not a durable identity.
+- An empty catalog is stated plainly and asks nothing. A question with no possible answer is worse
+  than a statement, because it invites the operator to type something that cannot succeed.
+
+The rule has one legitimate alternative, and it is not a violation. When the candidate set is narrow
+and exactly one member is safe, resolving that member without asking is better than rendering a table
+of one row. `resume` with no selector is that pattern: it resumes the sole unknown session and reports
+the candidate rows when there are several. The distinction is whether the operator must *choose* or
+merely *confirm*; a choice needs the table, a confirmation does not.
+
 ## Interactive input history
 
 Every accepted nonblank input submitted through the interactive CLI is persisted in the operator's
