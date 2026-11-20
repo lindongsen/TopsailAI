@@ -434,6 +434,17 @@ function start_node() {
         # an unresolved value is a failed launch rather than a lost capability.
         [ -n "${AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS:-}" ] &&
             export AGENT_CLUSTER_TOPSAILAI_CONTROL_ACTIONS
+        # The project root reaches two independent readers, and they do not share
+        # a channel. The Endpoint reads it as the --project-root flag above, which
+        # is what makes its own confinement check pass. The Provider reads the
+        # environment variable of the same name, because it is a separate process
+        # that never sees the Endpoint's flags. Forwarding only the flag therefore
+        # left the Endpoint approving a folder and the Provider refusing every
+        # registration with project_root_unconfigured, which reads as a Provider
+        # defect rather than as a missing forwarding line. The value is exported
+        # here, guarded by a non-empty check so an unconfigured node keeps the
+        # fail-closed default instead of exporting an empty root.
+        [ -n "${PROJECT_ROOT:-}" ] && export AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT="${PROJECT_ROOT}"
     fi
 
     [ -n "${LOG_MAX_SIZE_MB:-}" ] && args+=(--log-max-size-mb "${LOG_MAX_SIZE_MB}")
