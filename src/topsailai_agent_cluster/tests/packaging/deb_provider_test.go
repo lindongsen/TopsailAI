@@ -118,7 +118,7 @@ func TestDebProviderManifestDescribesTheShippedBinary(t *testing.T) {
 	for field, want := range map[string]string{
 		"provider_type":       debProviderType,
 		"provider_version":    "2.0.0",
-		"descriptor_revision": "topsailai-provider-v2",
+		"descriptor_revision": "topsailai-provider-v3",
 		"protocol":            "agent-cluster-adapter",
 		"package_version":     debProviderVersion,
 	} {

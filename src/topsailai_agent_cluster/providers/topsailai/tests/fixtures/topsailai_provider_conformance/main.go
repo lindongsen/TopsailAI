@@ -179,15 +179,37 @@ func session(args []string) {
 	}
 }
 
-// models answers the model registry read.
+// models answers the model registry reads.
+//
+// The list carries an `id` that differs from its `name`, because the provider derives
+// the identifier from the display name and the two are not interchangeable: the
+// provider's own selection is keyed by the identifier. A fixture whose id equals its
+// name cannot express that difference, so it would let a reader that keys on the name
+// pass while being wrong.
+//
+// `current` reports the workspace source and the identifier of the second entry, so a
+// registry read has something to compare against and the source vocabulary is exercised
+// rather than defaulted.
 func models(args []string) {
-	if len(args) == 0 || args[0] != "list" {
+	if len(args) == 0 {
 		fail("unsupported models subcommand")
 	}
-	emit([]map[string]any{{
-		"name":     "fixture-model-a",
-		"protocol": "openai-compatible",
-	}})
+	switch args[0] {
+	case "list":
+		emit([]map[string]any{
+			{"id": "fixture-model-a", "name": "Fixture Model A", "protocol": "openai-compatible"},
+			{"id": "fixture-model-b", "name": "Fixture Model B", "protocol": "openai-compatible"},
+		})
+	case "current":
+		emit(map[string]any{
+			"status":   "ok",
+			"scope":    "workspace",
+			"source":   "workspace",
+			"model_id": "fixture-model-b",
+		})
+	default:
+		fail("unsupported models subcommand " + args[0])
+	}
 }
 
 // runtime dispatches the runtime subcommands the Provider invokes.

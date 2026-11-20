@@ -217,6 +217,8 @@ func (p *provider) query(ctx context.Context, contract *namedContract, requested
 		value, err = p.history(ctx, requested, payload)
 	case queryModelCatalog:
 		value, err = p.models(ctx, requested, payload)
+	case queryModelRegistry:
+		value, err = p.modelRegistry(ctx, requested, payload)
 	case queryProjectCatalog:
 		value, err = p.projectCatalog(ctx, requested, payload)
 	case querySessionMessages:

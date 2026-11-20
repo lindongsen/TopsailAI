@@ -20,7 +20,7 @@ func topsailaiDescriptor(control controlCatalog, platform platformCapabilities) 
 	return descriptor{
 		ProviderType:       "topsailai",
 		ProviderVersion:    providerVersion,
-		DescriptorRevision: "topsailai-provider-v2",
+		DescriptorRevision: "topsailai-provider-v3",
 		ProtocolRange: protocolRange{
 			Protocol: protocolName,
 			Major:    protocolMajor,
@@ -33,6 +33,7 @@ func topsailaiDescriptor(control controlCatalog, platform platformCapabilities) 
 			{Name: queryLaunchOptions, Version: queryVersion},
 			{Name: queryHistoryMessages, Version: queryVersion},
 			{Name: queryModelCatalog, Version: queryVersion},
+			{Name: queryModelRegistry, Version: queryVersion},
 			{Name: queryProjectCatalog, Version: queryVersion},
 			{Name: querySessionMessages, Version: queryVersion},
 			{Name: querySessionMetrics, Version: queryVersion},

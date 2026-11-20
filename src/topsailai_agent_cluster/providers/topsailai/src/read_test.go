@@ -417,6 +417,7 @@ func TestReadResultsEncodeEmptyCollectionsAsArrays(t *testing.T) {
 		{name: "discovery", request: validRequest(functionDiscover), answers: map[string][]runnerAnswer{"workspace\x00list\x00--json\x00--local\x00--include-runtime": answer(`{"items":[],"total":0}`)}, required: `"observations":[]`},
 		{name: "project", request: queryRequest(queryProjectCatalog, nil, `{}`), answers: map[string][]runnerAnswer{"project\x00list\x00--json": answer(`[]`)}, required: `"projects":[]`},
 		{name: "history", request: queryRequest(queryHistoryMessages, nil, `{"limit":0}`), answers: map[string][]runnerAnswer{"project\x00list_sessions\x00--json": answer(`[]`)}, required: `"rows":[]`},
+		{name: "model registry", request: queryRequest(queryModelRegistry, nil, `{}`), answers: map[string][]runnerAnswer{"models\x00list\x00--json": answer(`[]`), "models\x00current\x00--json": answer(`{"source":"inherited","model_id":null}`)}, required: `"entries":[]`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
