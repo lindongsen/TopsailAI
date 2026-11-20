@@ -28,6 +28,8 @@ var requiredSchemaFiles = []string{
 	"history-messages-result.schema.json",
 	"model-catalog-request.schema.json",
 	"model-catalog-result.schema.json",
+	"model-registry-request.schema.json",
+	"model-registry-result.schema.json",
 	"project-catalog-request.schema.json",
 	"project-catalog-result.schema.json",
 	"session-messages-request.schema.json",

@@ -930,6 +930,7 @@
             "launch.options",
             "history.messages",
             "model.catalog",
+            "model.registry",
             "project.catalog",
             "session.messages",
             "session.metrics",

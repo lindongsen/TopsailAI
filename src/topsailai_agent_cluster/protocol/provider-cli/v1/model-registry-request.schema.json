@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/model-registry-request.schema.json",
+  "title": "model-registry-request payload",
+  "description": "The Endpoint-scoped model registry query has no target and a closed empty payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {},
+  "maxProperties": 0
+}

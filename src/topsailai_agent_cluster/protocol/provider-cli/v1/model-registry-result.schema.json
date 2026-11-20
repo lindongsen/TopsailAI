@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topsailai.dev/agent-cluster/provider-cli/v1/model-registry-result.schema.json",
+  "title": "model-registry-result query_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entries", "current_source", "observed_at_ms", "truncated"],
+  "properties": {
+    "entries": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource_kind", "provider_resource_key", "provider_id", "display_name", "available"],
+        "properties": {
+          "resource_kind": {"const": "model_profile"},
+          "provider_resource_key": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S(?:.*\\S)?$"},
+          "provider_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S(?:.*\\S)?$"},
+          "display_name": {"type": "string", "minLength": 1, "maxLength": 256},
+          "available": {"type": "boolean"},
+          "unavailable_reason": {"type": "string", "maxLength": 64}
+        }
+      }
+    },
+    "current_provider_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "current_source": {"enum": ["workspace", "project", "inherited", "unknown"]},
+    "project_overrides": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["project_workspace", "provider_id"],
+        "properties": {
+          "project_workspace": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "provider_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S(?:.*\\S)?$"}
+        }
+      }
+    },
+    "observed_at_ms": {"type": "integer", "minimum": 1},
+    "truncated": {"type": "boolean"}
+  }
+}

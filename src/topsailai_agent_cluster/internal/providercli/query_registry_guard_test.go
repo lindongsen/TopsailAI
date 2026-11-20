@@ -57,6 +57,10 @@ var queryFixtures = map[string]queryFixture{
 		payload: `{}`,
 		result:  `{"provider_session_id":"provider-session","provider_metadata":"{\"session_id\":\"provider-session\"}","observed_at_ms":1}`,
 	},
+	QueryModelRegistry: {
+		payload: `{}`,
+		result:  `{"entries":[],"current_source":"inherited","observed_at_ms":1,"truncated":false}`,
+	},
 	QuerySessionMetricsBatch: {
 		payload: `{"provider_session_ids":["provider-session"]}`,
 		result:  `{"results":[{"provider_session_id":"provider-session","messages":{"inbound":2,"outbound":68},"observed_at_ms":1}],"observed_at_ms":1}`,

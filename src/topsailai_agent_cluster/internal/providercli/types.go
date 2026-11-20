@@ -64,6 +64,11 @@ const (
 	QueryHistoryMessages = "history.messages"
 	// QueryModelCatalog reads selectable model profiles.
 	QueryModelCatalog = "model.catalog"
+	// QueryModelRegistry reads the model configurations an Endpoint offers to
+	// launches, together with the selection a launch would use. It is separate
+	// from QueryModelCatalog because a catalog addresses one session while a
+	// registry addresses the machine.
+	QueryModelRegistry = "model.registry"
 	// QueryProjectCatalog reads managed project registry entries.
 	QueryProjectCatalog = "project.catalog"
 	// QuerySessionMessages reads the current provider session messages.

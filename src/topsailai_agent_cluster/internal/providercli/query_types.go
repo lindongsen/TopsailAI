@@ -74,6 +74,41 @@ type ModelCatalogResult struct {
 	Truncated                  bool               `json:"truncated"`
 }
 
+// ModelRegistryPayload is the closed payload of an Endpoint-scoped model read.
+type ModelRegistryPayload struct{}
+
+// ModelRegistryFact is one provider-private model entry before Endpoint mapping.
+//
+// ProviderID is the provider's own identifier for the entry. It travels because the
+// provider's selection is keyed by that identifier, so the Endpoint needs it to mark
+// which entry a launch would use. It never becomes a Cluster identifier: the
+// Endpoint mints ModelProfileID from ProviderResourceKey, and ProviderID is used
+// only to compare against the provider's own selection.
+type ModelRegistryFact struct {
+	ResourceKind        string `json:"resource_kind"`
+	ProviderResourceKey string `json:"provider_resource_key"`
+	ProviderID          string `json:"provider_id"`
+	DisplayName         string `json:"display_name"`
+	Available           bool   `json:"available"`
+	UnavailableReason   string `json:"unavailable_reason,omitempty"`
+}
+
+// ModelRegistryOverrideFact is one provider-private folder-specific declaration.
+type ModelRegistryOverrideFact struct {
+	ProjectWorkspace string `json:"project_workspace"`
+	ProviderID       string `json:"provider_id"`
+}
+
+// ModelRegistryResult carries one bounded provider model observation.
+type ModelRegistryResult struct {
+	Entries           []ModelRegistryFact         `json:"entries"`
+	CurrentProviderID string                      `json:"current_provider_id,omitempty"`
+	CurrentSource     string                      `json:"current_source"`
+	ProjectOverrides  []ModelRegistryOverrideFact `json:"project_overrides,omitempty"`
+	ObservedAtMS      int64                       `json:"observed_at_ms"`
+	Truncated         bool                        `json:"truncated"`
+}
+
 // ProjectCatalogPayload is the closed payload of an Endpoint-scoped project read.
 type ProjectCatalogPayload struct{}
 
@@ -207,6 +242,12 @@ func DecodeQueryPayload(query NamedContract, target *Target, payload json.RawMes
 			return nil, err
 		}
 		return value, nil
+	case QueryModelRegistry:
+		var value ModelRegistryPayload
+		if err := decodeStrict(payload, &value); err != nil {
+			return nil, err
+		}
+		return value, nil
 	case QueryProjectCatalog:
 		var value ProjectCatalogPayload
 		if err := decodeStrict(payload, &value); err != nil {
@@ -303,6 +344,12 @@ func DecodeQueryResult(query NamedContract, data json.RawMessage, maxDetailBytes
 		return value, value.validate()
 	case QueryModelCatalog:
 		var value ModelCatalogResult
+		if err := decodeStrict(data, &value); err != nil {
+			return nil, err
+		}
+		return value, value.validate()
+	case QueryModelRegistry:
+		var value ModelRegistryResult
 		if err := decodeStrict(data, &value); err != nil {
 			return nil, err
 		}
@@ -423,6 +470,51 @@ func (r ModelCatalogResult) validate() error {
 	if r.CurrentProviderResourceKey != "" {
 		if _, ok := seen[r.CurrentProviderResourceKey]; !ok {
 			return errors.New("current_provider_resource_key is not in profiles")
+		}
+	}
+	return nil
+}
+
+// validate checks one provider model registry against the contract.
+//
+// The provider identifier is required for every entry because the provider's own
+// selection is keyed by it: an entry without one could never be marked as the
+// current selection, so a launch would silently appear to use nothing.
+func (r ModelRegistryResult) validate() error {
+	if r.Entries == nil {
+		return errors.New("entries are required")
+	}
+	if len(r.Entries) > protocol.MaxModelRegistryEntries || r.ObservedAtMS < 1 {
+		return errors.New("model registry exceeds bounds or has invalid observation time")
+	}
+	if err := protocol.ValidateModelSource(r.CurrentSource); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(r.Entries))
+	for _, entry := range r.Entries {
+		if err := validateTypedProviderKey(entry.ResourceKind, ResourceModelProfile, entry.ProviderResourceKey); err != nil {
+			return err
+		}
+		if _, ok := seen[entry.ProviderResourceKey]; ok {
+			return fmt.Errorf("duplicate model provider_resource_key %q", entry.ProviderResourceKey)
+		}
+		seen[entry.ProviderResourceKey] = struct{}{}
+		if err := validateIdentifier("provider_id", entry.ProviderID, true); err != nil {
+			return err
+		}
+		if err := validateIdentifier("display_name", entry.DisplayName, true); err != nil {
+			return err
+		}
+	}
+	if len(r.ProjectOverrides) > protocol.MaxModelProjectOverrides {
+		return errors.New("model registry exceeds the project override bound")
+	}
+	for _, override := range r.ProjectOverrides {
+		if err := validateIdentifier("project_workspace", override.ProjectWorkspace, true); err != nil {
+			return err
+		}
+		if err := validateIdentifier("provider_id", override.ProviderID, true); err != nil {
+			return err
 		}
 	}
 	return nil
