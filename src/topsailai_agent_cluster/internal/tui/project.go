@@ -23,8 +23,30 @@ var projectColumns = []tableColumn{
 	{key: columnWorkspace, header: "PATH", cap: workspaceColumnCap, grow: true, leftClip: true},
 }
 
+// layoutProjectColumns returns the columns one render actually prints.
+//
+// The opaque project identifier is dropped on the interactive surface for the same
+// reason the session identifier and the model profile identifier are: the operator
+// selects a project by its row number, and the identifier is a long opaque value
+// that only widens the table. It stays on the row, so `project remove` still accepts
+// it as a selector and diagnostics still name it.
+func layoutProjectColumns(options TableOptions) []tableColumn {
+	if !options.HideSessionID {
+		return projectColumns
+	}
+	kept := make([]tableColumn, 0, len(projectColumns)-1)
+	for _, column := range projectColumns {
+		if column.key == columnID {
+			continue
+		}
+		kept = append(kept, column)
+	}
+	return kept
+}
+
 // RenderProjects writes one managed-project catalog as a numbered table.
 func RenderProjects(out io.Writer, projects []protocol.Project, options TableOptions) error {
+	columns := layoutProjectColumns(options)
 	cells := make([][]string, 0, len(projects))
 	states := make([][]string, 0, len(projects))
 	styles := make([]string, 0, len(projects))
@@ -35,12 +57,12 @@ func RenderProjects(out io.Writer, projects []protocol.Project, options TableOpt
 			columnID:        escapeCell(project.ProjectID),
 			columnWorkspace: escapeCell(project.Path),
 		}
-		cells = append(cells, projectCells(values, projectColumns))
-		states = append(states, make([]string, len(projectColumns)))
+		cells = append(cells, projectCells(values, columns))
+		states = append(states, make([]string, len(columns)))
 		styles = append(styles, stateStyle("ok"))
 	}
-	widths := measureColumns(cells, projectColumns, options.Full)
-	return writeTable(out, columnHeaders(projectColumns), cells, states, styles, widths, projectColumns, options)
+	widths := measureColumns(cells, columns, options.Full)
+	return writeTable(out, columnHeaders(columns), cells, states, styles, widths, columns, options)
 }
 
 // Projects renders the live managed-project catalog of one Endpoint.
