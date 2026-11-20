@@ -101,6 +101,16 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 		if request.Operation == protocol.OperationProjectAdd {
 			return intent, nil
 		}
+		// An environment model change declares which model a launch from this
+		// machine should use. It addresses the Endpoint, not a resource on it, so
+		// it carries no target: the profile it names travels in the payload as an
+		// opaque Cluster identifier, and the Endpoint resolves that identifier to
+		// the adapter that minted it. Attaching a session target here would make
+		// the request address a session that has nothing to do with the change,
+		// and would let the answer depend on which session happened to be chosen.
+		if request.Operation == protocol.OperationAgentModelSet {
+			return intent, nil
+		}
 		// A project removal addresses the opaque Cluster project ID, and it
 		// carries no generation: a project is a registry entry, not a live
 		// process, so there is no generation to prove. The provider path travels

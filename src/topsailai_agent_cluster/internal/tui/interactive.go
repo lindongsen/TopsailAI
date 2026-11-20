@@ -133,6 +133,13 @@ type interactiveState struct {
 	// project catalog render. It is separate from the other two because a project
 	// number selects a registry entry, and a registry entry is not a session.
 	projectCatalog *projectCatalogNamespace
+	// modelRegistry is the environment-model-number namespace produced by the most
+	// recent endpoint registry render. It is separate from modelCatalog because the
+	// two tables describe different subjects: a catalog row is a profile one session
+	// can select, while a registry row is a model this machine offers to launches.
+	// Sharing one namespace would let a number silently change meaning depending on
+	// which table was rendered last.
+	modelRegistry *modelRegistryNamespace
 }
 
 type interruptController struct {

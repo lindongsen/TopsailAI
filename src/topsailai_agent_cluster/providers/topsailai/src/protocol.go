@@ -68,6 +68,7 @@ const (
 	operationAgentDriveStop     = "agent.drive.stop"
 	operationWorkspaceClean     = "workspace.clean"
 	operationAgentModelSelect   = "agent.model.select"
+	operationAgentModelSet      = "agent.model.set"
 	operationExecutionInterrupt = "execution.interrupt"
 	operationProjectAdd         = "project.add"
 	operationProjectRemove      = "project.remove"

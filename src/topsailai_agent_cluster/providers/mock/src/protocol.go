@@ -36,6 +36,7 @@ const (
 	queryLaunchOptions       = "launch.options"
 	queryHistoryMessages     = "history.messages"
 	queryModelCatalog        = "model.catalog"
+	queryModelRegistry       = "model.registry"
 	queryProjectCatalog      = "project.catalog"
 	querySessionMessages     = "session.messages"
 	querySessionMetrics      = "session.metrics"

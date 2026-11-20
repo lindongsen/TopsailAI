@@ -564,3 +564,68 @@ The driver task goal is provider-environment-only with no `--task-goal` flag, so
 MVP accepts no goal and the provider default applies; smuggling an
 operator-supplied goal through a process environment variable would let a remote
 payload control provider execution through an implicit channel.
+
+## TopsailAI environment model mapping
+
+The provider keeps two different model surfaces, and the adapter maps each onto a different
+standard operation. They are not interchangeable: one describes what a single session can switch
+to, the other describes what a future launch on this machine would use.
+
+| Standard need | Provider entry | Constraint |
+|---|---|---|
+| `agent.model.registry` — list the models this machine can launch with | `models list --json` | One read answers the whole registry, including which entry is selected |
+| `agent.model.set` — declare the model a launch should use | `models set <id> --json` | The provider validates the identifier itself; the adapter runs an availability preflight first so a refusal proves nothing was written |
+
+### The registry keys on the provider identifier, the catalog keys on the display name
+
+`models list --json` reports both `id` and `name`, and they are different values. The provider
+derives the identifier from the display name, so `models add "My Model"` produces
+`id=my-model` and `name=My Model`.
+
+The environment registry keys on **`id`**, because the provider's selection file is keyed by the
+identifier and `models current` reports `model_id`. The session catalog keys on **`name`**, because
+that is what the session-scoped selection command accepts. The two key spaces are deliberately
+separate: re-keying the session catalog would orphan every mapping already persisted, and matching
+a selection by display name would silently fail to find the model in use whenever the two differ.
+
+`provider_id` travels beside the Cluster profile ID so the Cluster can compare the selection
+without parsing the profile identifier.
+
+### The selection is read from the same document as the list
+
+`selected` is the provider's own answer to "is this the model in use", and it is read from the same
+`models list --json` document that supplies the entries. The adapter does not call
+`models current` as well.
+
+That is a correctness decision, not an optimisation. When the selected model is disabled, the two
+provider surfaces disagree: `models list --json` reports every entry as `selected:false`, while
+`models current` reports `selection_invalid`. A disabled model is not what a launch would use, so
+`selected:false` is the true answer and `selection_invalid` describes a stale record. Reading one
+document makes the disagreement structurally impossible and removes a provider call.
+
+All entries `selected:false` means the machine declares no default, and the Cluster reports the
+model in use as unknown. Two entries `selected:true` is refused rather than resolved to the first,
+because "which model is in use" must have exactly one answer.
+
+### `project_overrides` is deliberately absent
+
+The provider can answer "which model does this one folder resolve to" through
+`models list --project PATH`, and that read does reflect a project override. What no provider
+command can do is **enumerate** which folders carry an override, so the adapter cannot fill a
+per-project list without reading the provider's private selection file.
+
+The adapter therefore omits the field rather than guessing. The Cluster contract allows it to be
+absent, and the surface reports the machine-level answer with its source stated, so an operator is
+never told that one value applies to every folder on the machine.
+
+### The availability preflight runs before the write
+
+`agent.model.set` maps onto `models set <id> --json`. Before that argv is built, the adapter reads
+`models list --json` and refuses an identifier that is absent or disabled.
+
+The preflight exists so a refusal proves nothing was written. The provider's own validation still
+runs inside `models set`, so this is a preflight rather than a substitute: a model disabled between
+the two calls is still refused by the provider, and the receipt carries that refusal.
+
+The provider's `--project` flag is never passed. One standard operation must not mean two scopes,
+and a machine-wide declaration is the only thing `agent.model.set` expresses.

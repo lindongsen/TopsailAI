@@ -32,6 +32,7 @@ var supportedMutationOperations = [...]string{
 	operationAgentDriveStop,
 	operationWorkspaceClean,
 	operationAgentModelSelect,
+	operationAgentModelSet,
 	operationExecutionInterrupt,
 	operationProjectAdd,
 	operationProjectRemove,
@@ -83,6 +84,20 @@ func supportedMutationOperation(operation string, platform platformCapabilities)
 	return false
 }
 
+// targetlessMutation reports whether one standard mutation addresses the Endpoint
+// rather than a resource on it.
+//
+// The predicate is named rather than spelled out at each site because three places
+// must agree about it: the request validator, the argv builder and the descriptor.
+// A rule repeated at three sites is a rule that drifts, and the drift is silent
+// because each site is individually plausible. project.add creates a resource that
+// has no identity yet; agent.model.set declares a machine-wide default, so it names
+// no resource at all. Both are target-less for a reason, and neither is a form the
+// Provider accepts by accident.
+func targetlessMutation(operation string) bool {
+	return operation == operationProjectAdd || operation == operationAgentModelSet
+}
+
 // execute performs one standard mutation and reports Provider evidence only.
 //
 // The order is fixed and load-bearing: validate the request, revalidate the target
@@ -122,11 +137,13 @@ func validateExecuteRequest(request request, platform platformCapabilities) (str
 		return "", fmt.Errorf("%w: operation version %q is not supported", errInvalidRequest, request.Operation.Version)
 	}
 	if request.Target == nil {
-		// project.add is the only standard mutation that carries no target: the
-		// resource it creates does not exist yet, so it has no identity to address.
-		// Every other execute still requires a target, so a missing target remains a
-		// defect the Provider reports rather than a form it accepts.
-		if operation != operationProjectAdd {
+		// Two standard mutations carry no target, and each for its own reason:
+		// project.add creates the resource, so it has no identity yet, and
+		// agent.model.set declares a machine-wide default, so it addresses the
+		// Endpoint rather than any resource on it. Every other execute still
+		// requires a target, so a missing target remains a defect the Provider
+		// reports rather than a form it accepts.
+		if !targetlessMutation(operation) {
 			return "", fmt.Errorf("%w: target is required", errInvalidRequest)
 		}
 	}
@@ -192,6 +209,22 @@ func (p *provider) mutationArgs(ctx context.Context, request request, operation 
 		// builds the argv, so the Endpoint's pre-dispatch check and this check
 		// cannot disagree about which folder is registered.
 		return projectAddArgs(request.Payload, p.projectRoot)
+	case operationAgentModelSet:
+		// agent.model.set declares a machine-wide default, so there is no target to
+		// revalidate and no generation to compare. Its authority is the provider's
+		// own registry: the entry must exist and be selectable, and that decision is
+		// made here, in the same execution path that builds the argv, so a refusal
+		// proves nothing was written. The availability rule is the one the registry
+		// read already uses, so the menu an operator saw and the refusal they receive
+		// cannot disagree about which entries are usable.
+		id, err := decodeModelSetID(request.Payload)
+		if err != nil {
+			return nil, err
+		}
+		if err := p.requireSelectableModel(ctx, id); err != nil {
+			return nil, err
+		}
+		return modelSetArgs(id), nil
 	case operationProjectRemove:
 		// Removal addresses a registry entry, not a live process, so it carries no
 		// generation. The exact folder travels in the opaque provider_target slot,

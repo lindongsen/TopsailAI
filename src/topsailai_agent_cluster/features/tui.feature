@@ -17,7 +17,7 @@ Feature: non-interactive TUI
   Scenario: interactive project renders numbered managed projects
     Given a real cluster with a healthy provider for the TUI
     When the interactive project command is run for the fixture endpoint
-    Then the interactive project table contains the number, name, identity, and path
+    Then the interactive project table contains the number, name, and path but not the identity
 
   Scenario: unsupported TUI action is rejected without provider invocation
     Given a real cluster with a healthy provider for the TUI

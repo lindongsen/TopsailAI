@@ -20,7 +20,7 @@ func registerTUISteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the TUI project JSON command is run for the fixture endpoint$`, runTUIProjectJSON)
 	ctx.Step(`^the TUI project JSON contains an opaque project identity and path$`, assertTUIProjectJSON)
 	ctx.Step(`^the interactive project command is run for the fixture endpoint$`, runInteractiveTUIProject)
-	ctx.Step(`^the interactive project table contains the number, name, identity, and path$`, assertInteractiveTUIProject)
+	ctx.Step(`^the interactive project table contains the number, name, and path but not the identity$`, assertInteractiveTUIProject)
 	ctx.Step(`^the TUI unsupported action is run with confirmation$`, runUnsupportedTUIAction)
 	ctx.Step(`^the TUI action is rejected as unsupported$`, assertUnsupportedTUIAction)
 	ctx.Step(`^the TUI provider invocation count is zero$`, assertTUIProviderCountZero)
@@ -174,9 +174,17 @@ func assertInteractiveTUIProject() error {
 		return fmt.Errorf("interactive project exit code=%d body=%s", activeScenario.lastStatus, activeScenario.lastBody)
 	}
 	text := stripTableSGR(string(activeScenario.lastBody))
-	for _, expected := range []string{"NO", "PROJECT_NAME", "PROJECT_ID", "PATH", "1", "mock", "res_", "/work/mock"} {
+	for _, expected := range []string{"NO", "PROJECT_NAME", "PATH", "1", "mock", "/work/mock"} {
 		if !strings.Contains(text, expected) {
 			return fmt.Errorf("interactive project table is missing %q: %s", expected, text)
+		}
+	}
+	// The interactive table hides the opaque Cluster project identity, because the
+	// operator selects a project by its row number. The identity is still accepted
+	// as a selector and is still printed by the standalone command.
+	for _, hidden := range []string{"PROJECT_ID", "res_"} {
+		if strings.Contains(text, hidden) {
+			return fmt.Errorf("interactive project table must not print %q: %s", hidden, text)
 		}
 	}
 	return nil

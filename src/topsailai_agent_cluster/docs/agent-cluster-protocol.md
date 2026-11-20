@@ -211,6 +211,8 @@ Suggested semantic operations:
 - `agent.start`, `agent.resume`, `agent.stop`: required MVP lifecycle operations, with standard agent/session linkage and execution-generation evidence.
 - `workspace.clean`: delete provider-owned expired artifacts for one exact Session. It is a mutating `control` operation with an empty standard payload. The target is the opaque cluster Session ID; provider selectors remain private to the Endpoint. A missing live generation is allowed only after authoritative inspection confirms the exact mapped record still exists. The operation never falls back to a session-only selector and never applies to a different matching row.
 - `agent.drive.start`, `agent.drive.stop`: controller operations, distinct from the agent lifecycle; see the drive semantics section.
+- `agent.model.registry`: read the models one Endpoint offers to launches, and which one a launch would use. It is a `read_only` `view` query that addresses the machine, so it carries no target. It is separate from `model.catalog` because the two answer different questions about different subjects.
+- `agent.model.set`: declare which model a launch from one Endpoint should use. It is a `mutating` `control` operation with a payload of `{"model_profile_id": "<opaque Cluster profile ID>"}` and no target, because it changes a machine-wide declaration rather than a running process. It is distinct from `agent.model.select`, which switches one live session and therefore needs a live target and a generation. The identifier must resolve to a mapping this Endpoint minted; an identifier it never minted is refused before any provider call, so a typo cannot become a provider-side guess.
 - `output.snapshot`, `output.follow`: independent capabilities; the former never implies the latter.
 - `ctl.<action>`: one advertised provider control action per capability, with a fixed payload schema; see the provider control channel section.
 - `command.exec`: one allowlisted argv array executed in a session working directory; see the allowlisted command execution section.
@@ -381,17 +383,17 @@ an Endpoint with no entry in its map refuses locally and reports a configuration
 sending a request without a credential, because an Endpoint refusal would describe the symptom and
 hide the cause.
 
-Nine frame-level reads are served by their own frame type instead of an immutable
+Ten frame-level reads are served by their own frame type instead of an immutable
 intent, so they never reach the policy hook and the Endpoint checks each one at its
-frame handler: `output.read`, `output.follow`, `agent.model.list`, `project.list`, `launch.query`,
-`history.read`, `messages.read`, `metrics.read` and `detail.read`. All nine are
-checked today. `agent.model.list`, `project.list`, `metrics.read` and `detail.read` have operation
-constants; the other five are policy identifiers rather than protocol operations,
-because those frames carry no operation constant. None of the eight appears as an
-operation field on the wire. Inventory publication, heartbeat, command receipt
-delivery, the fleet list and the session list stay outside the policy, so a denying
-caller still sees which machines and sessions exist while being unable to read their
-content or operate them.
+frame handler: `output.read`, `output.follow`, `agent.model.list`, `agent.model.registry`,
+`project.list`, `launch.query`, `history.read`, `messages.read`, `metrics.read` and
+`detail.read`. All ten are checked today. `agent.model.list`, `agent.model.registry`,
+`project.list`, `metrics.read` and `detail.read` have operation constants; the other
+five are policy identifiers rather than protocol operations, because those frames
+carry no operation constant. None of the ten appears as an operation field on the
+wire. Inventory publication, heartbeat, command receipt delivery, the fleet list and
+the session list stay outside the policy, so a denying caller still sees which
+machines and sessions exist while being unable to read their content or operate them.
 
 Because the Server no longer authorizes operations, five Server-side checks are
 removed: command admission, output read, messages read, history read and model
@@ -719,7 +721,7 @@ not a compatibility model to preserve in the Provider CLI contract.
 ### Query framing
 
 `query` is the single framing function for provider-neutral read surfaces. Its names and schemas form
-a closed, versioned Cluster registry. Eight queries are registered, all at version `v1`:
+a closed, versioned Cluster registry. Nine queries are registered, all at version `v1`:
 
 | Query | Addresses | Target required | Session set in payload |
 |---|---|---|---|
@@ -727,6 +729,7 @@ a closed, versioned Cluster registry. Eight queries are registered, all at versi
 | `history.messages` | a session | no | no |
 | `model.catalog` | a session | yes | no |
 | `project.catalog` | an Endpoint project registry | no | no |
+| `model.registry` | an Endpoint model registry | no | no |
 | `session.messages` | a session | yes | no |
 | `session.metrics` | a session | yes | no |
 | `session.metrics.batch` | a set of sessions | no | yes |
@@ -750,6 +753,20 @@ such a session.
 stable Provider-private key, name and path. The Endpoint maps `(adapter_id, project,
 provider_resource_key)` to an opaque Cluster `project_id`; the Server and CLI see only that standard
 identity. `launch.options` returns launch profiles only and never carries projects.
+
+`model.registry` is the standard Endpoint model seam. It answers a different question from
+`model.catalog`, and the two are separate queries rather than one query with an optional target. A
+catalog answers "which profiles can this session select", and the session is the subject. A registry
+answers "which profiles does this machine offer, and which one would a launch use", and the machine is
+the subject. Giving one query two subjects would make an empty target mean "the whole machine", so a
+caller that forgot the target would silently receive a different answer instead of a refusal.
+
+A registry reports `current_profile_id` and `current_source` separately, because a machine that
+resolves a model per project folder can use different models in different folders. Folding the
+overrides into one value would state one model for a machine that has several. An empty
+`current_profile_id` is an observation, not an error: a machine may list usable models while declaring
+no default. An empty `entries` list is likewise a real answer, and it is deliberately different from an
+Endpoint that cannot answer at all, which reports `model_registry_unsupported`.
 
 ### Project registration operations
 
@@ -1019,6 +1036,16 @@ controller without treating Session process generation as controller generation;
 unambiguous. Supplying generation on these requests remains valid, but it does not replace the
 operation-specific authority check. Every failed live or non-live authority check is reported before
 the provider invokes the business mutation, so rejection proves that the mutation was not applied.
+
+A target-less mutation is a fourth shape, and it is not the same as a non-live mutation. It addresses
+the Endpoint itself rather than any resource on it, so it carries no target at all: `project.add`,
+`project.remove` and `agent.model.set` are the three instances. Their authority check is the payload
+itself, because the opaque identifier in the payload must resolve to a mapping this Endpoint minted.
+An identifier the Endpoint never minted is refused before any provider call, so a typo cannot become a
+provider-side guess. Attaching a resource target to one of these would make the request address a
+resource that has nothing to do with the change, and would let the answer depend on which resource
+happened to be chosen. The rule is stated once as a named predicate rather than repeated at each site,
+because three sites that must agree are three sites that drift.
 
 Every mutating request also carries a stable opaque `invocation_id`. Recovery of the same Cluster
 command reuses the same value. A provider may use it for deduplication or reconciliation, but it does

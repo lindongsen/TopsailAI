@@ -38,6 +38,11 @@ func interactiveProjects(parent context.Context, api InteractiveAPI, state *inte
 	}
 	options := TableOptionsFor(out)
 	options.Color = color
+	// The identifier column is dropped for the same reason the session list and the
+	// model tables drop it: the operator selects a project by its row number, and the
+	// opaque Cluster project ID only widens the table. The ID stays on the row, so
+	// `project remove <project-id>` still accepts it.
+	options.HideSessionID = true
 	// The previous namespace is dropped before the catalog is rendered, so a row
 	// number from an earlier table can never be applied to a project row.
 	state.projectCatalog = nil

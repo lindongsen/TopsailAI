@@ -383,6 +383,19 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			// profile 2" from "row 2 resolved to the only profile there is", so the
 			// row-number-leak assertion would pass while proving nothing.
 			base.QueryResult = json.RawMessage(`{"profiles":[{"resource_kind":"model_profile","provider_resource_key":"fixture-model-a","provider_display_name":"fixture-model-a","current_state":"yes","available":true},{"resource_kind":"model_profile","provider_resource_key":"fixture-model-b","provider_display_name":"fixture-model-b","current_state":"no","available":true}],"current_provider_resource_key":"fixture-model-a","observed_at_ms":1700000000000,"truncated":false}`)
+		case queryModelRegistry:
+			// The registry is the Endpoint-scoped read, so it answers about the
+			// machine rather than about a session: no target is supplied and none
+			// is echoed. Two entries are returned for the same reason the catalog
+			// returns two, so a scenario that marks the current entry can tell
+			// "the selected entry is marked" from "the only entry is marked".
+			//
+			// The document carries provider_id and provider_resource_key but no
+			// model_profile_id, because the Cluster mints that identifier and a
+			// provider that emitted one would be claiming Cluster authority. The
+			// conformance sweep asserts that absence.
+			recordInvocation(options, request, queryModelRegistry)
+			base.QueryResult = json.RawMessage(`{"entries":[{"resource_kind":"model_profile","provider_resource_key":"model:fixture-model-a","provider_id":"fixture-model-a","display_name":"fixture-model-a","available":true},{"resource_kind":"model_profile","provider_resource_key":"model:fixture-model-b","provider_id":"fixture-model-b","display_name":"fixture-model-b","available":true}],"current_provider_id":"fixture-model-a","current_source":"workspace","observed_at_ms":1700000000000,"truncated":false}`)
 		case querySessionMessages:
 			// The provider echoes the session key it was asked about, because the
 			// Cluster forwards the caller's selector verbatim and a hardcoded
@@ -986,6 +999,7 @@ func mockDescriptor(fault string) descriptor {
 		{Name: queryLaunchOptions, Version: "v1"},
 		{Name: queryHistoryMessages, Version: "v1"},
 		{Name: queryModelCatalog, Version: "v1"},
+		{Name: queryModelRegistry, Version: "v1"},
 		{Name: queryProjectCatalog, Version: "v1"},
 		{Name: querySessionMessages, Version: "v1"},
 		{Name: querySessionMetrics, Version: "v1"},

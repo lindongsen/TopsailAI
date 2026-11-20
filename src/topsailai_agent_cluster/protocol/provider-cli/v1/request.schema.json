@@ -151,7 +151,8 @@
               "name": {
                 "not": {
                   "enum": [
-                    "project.add"
+                    "project.add",
+                    "agent.model.set"
                   ]
                 }
               }
@@ -248,6 +249,41 @@
               }
             ]
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "function": {
+            "const": "execute"
+          },
+          "operation": {
+            "properties": {
+              "name": {
+                "const": "agent.model.set"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "required": [
+          "function",
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "model-set-payload.schema.json"
+          }
+        },
+        "not": {
+          "required": [
+            "target"
+          ]
         }
       }
     },

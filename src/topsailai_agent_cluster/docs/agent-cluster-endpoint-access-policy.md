@@ -422,6 +422,7 @@ These are submitted as an immutable intent and already pass `PolicyHook`
 | `agent.drive.start` | `control` | |
 | `agent.drive.stop` | `control` | |
 | `agent.model.select` | `control` | Switches one session to a model profile |
+| `agent.model.set` | `control` | Declares which model a launch from this Endpoint should use; changes a machine-wide declaration, not a running process |
 | `command.exec` | `control` | Also gated by the command allowlist |
 | `project.add` | `control` | Registry entry only; folder confined to the configured project root |
 | `project.remove` | `control` | Registry entry only; the folder on disk is never deleted |
@@ -438,6 +439,7 @@ checked today.
 | `output.read` | `read_output` | `internal/endpoint/service.go` `outputFrame` | `service.go:680` |
 | `output.follow` | `read_output` | `internal/endpoint/follow.go` `startFollow` | `follow.go:41` |
 | `agent.model.list` | `view` | `internal/endpoint/model.go` `modelCatalogFrame` | `model.go:48` |
+| `agent.model.registry` | `view` | `internal/endpoint/model_registry.go` `modelRegistryFrame` | `model_registry.go:84` |
 | `project.list` | `view` | `internal/endpoint/project.go` `projectCatalogFrame` | `project.go:59` |
 | `launch.query` | `view` | `internal/endpoint/launch.go` `launchFrame` | `launch.go:74` |
 | `history.read` | `view` | `internal/endpoint/history.go` `historyFrame` | `history.go:45` |

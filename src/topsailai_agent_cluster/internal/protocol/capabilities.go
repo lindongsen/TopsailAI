@@ -43,6 +43,19 @@ const (
 	// select", while a registry answers "which profiles does this machine offer".
 	// It is a frame-level read and therefore never appears in an immutable intent.
 	OperationAgentModelRegistry = "agent.model.registry"
+	// OperationAgentModelSet declares which model a launch from one Endpoint
+	// should use. It changes a machine-wide declaration rather than a running
+	// process, so it carries no target: the thing it changes is not a live
+	// resource, exactly as project.add carries none because the resource it
+	// creates does not exist yet.
+	//
+	// It is a separate operation from OperationAgentModelSelect rather than the
+	// same operation with an optional target, because the two change different
+	// subjects. A select switches one live session and needs a generation; a set
+	// changes what a future launch would use on a machine that may have no
+	// session at all. Reusing the session operation would force a caller to name
+	// a session that has nothing to do with the change.
+	OperationAgentModelSet = "agent.model.set"
 	// OperationProjectList reads the managed project catalog on one Endpoint.
 	// It is a frame-level read and therefore never appears in an immutable intent.
 	OperationProjectList = "project.list"
