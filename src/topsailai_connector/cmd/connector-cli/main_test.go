@@ -278,9 +278,9 @@ func TestLoadConfigurationRefusesAMalformedFile(t *testing.T) {
 
 // warnToFile calls warnAboutPermissions with a real file and returns what it wrote.
 //
-// warnAboutPermissions takes an *os.File rather than an io.Writer because it is
-// called with os.Stderr in production. A test therefore needs a real file, and
-// reading it back is the only way to see the warning.
+// warnAboutPermissions takes an io.Writer, so a test could pass a buffer. It is
+// called with a real file here because that is what production passes, and reading
+// the file back proves the warning reaches the stream the operator sees.
 func warnToFile(t *testing.T, path string) string {
 	t.Helper()
 

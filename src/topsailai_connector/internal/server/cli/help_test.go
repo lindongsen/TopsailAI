@@ -431,3 +431,109 @@ func TestHelpNamesEveryRetryableCode(t *testing.T) {
 		t.Error("help does not state which codes are worth retrying")
 	}
 }
+
+// flagEntry returns the lines of one FLAGS entry, from the line that begins the
+// entry to the line before the next entry or the next section.
+//
+// A whole-page substring search cannot tell an entry from a sentence about the
+// entry, so a guard built on strings.Contains passes when the entry is deleted
+// and the name survives in prose. This helper isolates the entry instead.
+func flagEntry(t *testing.T, help, name string) string {
+	t.Helper()
+	lines := strings.Split(help, "\n")
+	start := -1
+	for index, line := range lines {
+		if strings.HasPrefix(line, "  "+name) {
+			start = index
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("the FLAGS section has no %s entry; this guard is measuring nothing", name)
+	}
+	end := len(lines)
+	for index := start + 1; index < len(lines); index++ {
+		line := lines[index]
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "        ") {
+			end = index
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+// TestHelpDocumentsTheConfigurationFlags proves the two flags the binary accepts
+// are documented, and that each entry states the rule a caller must know to use
+// it correctly.
+//
+// A flag the binary accepts and the help omits is a flag the user cannot
+// discover, which is the same defect as a documented command that does not run.
+func TestHelpDocumentsTheConfigurationFlags(t *testing.T) {
+	help := helpText("connector-cli")
+
+	envFile := flagEntry(t, help, "--env-file")
+	for _, want := range []string{"CONNECTOR_CLI_ENV_FILE", "absolute", "must exist"} {
+		if !strings.Contains(envFile, want) {
+			t.Errorf("the --env-file entry does not state %q", want)
+		}
+	}
+
+	set := flagEntry(t, help, "--set")
+	for _, want := range []string{"Repeatable", "first =", "never printed"} {
+		if !strings.Contains(set, want) {
+			t.Errorf("the --set entry does not state %q", want)
+		}
+	}
+}
+
+// TestHelpStatesTheConfigurationPrecedence proves the CONFIGURATION section names
+// all four layers in order.
+//
+// The order is the whole content of the rule: a section that lists the layers
+// without saying which wins leaves the reader to guess, and the guess is wrong
+// half the time.
+func TestHelpStatesTheConfigurationPrecedence(t *testing.T) {
+	help := helpText("connector-cli")
+
+	lines := strings.Split(help, "\n")
+	start := -1
+	for index, line := range lines {
+		if line == "CONFIGURATION" {
+			start = index
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatal("the help has no CONFIGURATION section; this guard is measuring nothing")
+	}
+	end := len(lines)
+	for index := start + 1; index < len(lines); index++ {
+		if lines[index] != "" && !strings.HasPrefix(lines[index], " ") {
+			end = index
+			break
+		}
+	}
+	section := strings.Join(lines[start:end], "\n")
+
+	// The four layers must appear in the order they win, so the assertion reads
+	// the positions rather than the presence.
+	order := []string{"--set KEY=VALUE", "environment variable", "configuration file", "built-in default"}
+	previous := -1
+	for _, layer := range order {
+		position := strings.Index(section, layer)
+		if position < 0 {
+			t.Fatalf("the CONFIGURATION section does not name %q", layer)
+		}
+		if position < previous {
+			t.Errorf("%q is listed after a layer it beats", layer)
+		}
+		previous = position
+	}
+
+	if !strings.Contains(section, "empty counts as unset") {
+		t.Error("the CONFIGURATION section does not state that an empty value counts as unset")
+	}
+}
