@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -243,4 +245,23 @@ func modelRegistrySourceLabel(source string) string {
 	default:
 		return "an unknown source"
 	}
+}
+
+// ModelSetPayload builds the standard payload for one environment model change.
+//
+// It carries only the opaque Cluster profile identifier, so the caller never needs
+// to know how the provider stores a model. Validation happens here as well as at
+// the Endpoint, because a caller that submits a malformed identifier would
+// otherwise learn about it only after a round trip, and the Endpoint would have to
+// report a caller defect as a provider-facing rejection.
+func ModelSetPayload(modelProfileID string) (json.RawMessage, error) {
+	payload := protocol.ModelSetPayload{ModelProfileID: strings.TrimSpace(modelProfileID)}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode model set payload: %w", err)
+	}
+	if _, err := protocol.ValidateModelSetPayload(encoded); err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }
