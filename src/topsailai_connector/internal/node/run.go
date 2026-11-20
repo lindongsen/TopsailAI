@@ -283,6 +283,75 @@ func (r *Runtime) CredentialList() ([]security.Credential, error) {
 	return r.statelessCredentials, nil
 }
 
+// ReplaceNodeID installs a new node id and reports whether it differs from the one in
+// force.
+//
+// A file-backed Node also writes the identity file, so the console and
+// `connector-node regenerate` agree about what is in force and a restart keeps the new
+// address. A stateless Node writes nothing, because writing is the one thing the mode
+// forbids; the value lives in memory and is lost when the process exits.
+//
+// The file is written before the holder is updated, so a write that fails leaves the
+// Node serving the identity it can actually prove. The reverse order would publish an
+// address the Node cannot reproduce after a restart, which is a Node that answers to a
+// name it will forget.
+func (r *Runtime) ReplaceNodeID(nodeID string) (bool, error) {
+	if err := security.ValidateNodeID(nodeID); err != nil {
+		return false, err
+	}
+	if r.holder.NodeID() == nodeID {
+		return false, nil
+	}
+
+	if !r.config.Stateless {
+		path := IdentityPath(r.config.ConfigDir)
+		if err := SaveIdentity(path, nodeID); err != nil {
+			return false, fmt.Errorf("write the identity file: %w", err)
+		}
+	}
+
+	return r.holder.ReplaceNodeID(nodeID), nil
+}
+
+// ReplaceCredentials installs a new credential set and reports whether it differs from
+// the one in force.
+//
+// The set is built from the list before anything is written, so a list that cannot form
+// a valid set is refused without touching the file or the holder. A half-applied
+// rotation would leave the Node accepting a secret the operator believes is retired.
+//
+// A file-backed Node writes the credential file, so a restart keeps the change. A
+// stateless Node keeps the set in memory only.
+//
+// The comparison is on the key identifiers, which is the same rule the holder uses. A
+// rotation that keeps the key id and replaces the secret is therefore reported as
+// unchanged by the holder, and that is why this method compares the sets itself before
+// deciding: a rotation must still be applied and still be written.
+func (r *Runtime) ReplaceCredentials(list []security.Credential) error {
+	set, err := security.NewCredentialSet(list)
+	if err != nil {
+		return err
+	}
+
+	if !r.config.Stateless {
+		path := r.config.CredentialsPath
+		if path == "" {
+			path = CredentialsPath(r.config.ConfigDir)
+		}
+		if err := SaveCredentials(path, list); err != nil {
+			return fmt.Errorf("write the credential file: %w", err)
+		}
+	}
+
+	// The holder reports "unchanged" when the key identifiers match, which is the
+	// correct answer for the watcher and the wrong answer here: a rotation keeps the
+	// identifier and replaces the secret, so the set must be installed even when the
+	// identifiers are identical. The store is unconditional for that reason.
+	r.holder.credentials.Store(set)
+	r.statelessCredentials = list
+	return nil
+}
+
 // IdentityHolder returns the holder the Node serves from.
 //
 // The process passes this one holder to both the dispatcher and the dialer, so a

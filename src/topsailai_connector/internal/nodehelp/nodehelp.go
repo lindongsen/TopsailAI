@@ -434,6 +434,41 @@ DESCRIPTION
   the home directory, a mount point and an existing filesystem root are all startup
   refusals. Only absence is tolerated.
 
+FLAGS
+  --console
+      Read commands from stdin while the Node serves. Off by default on a
+      file-backed Node, because a Node started by a service manager has no stdin
+      to read and a console that consumed a pipe would eat the launcher's input.
+      On by default in stateless mode when stdin is a terminal, because a
+      stateless Node has no file to edit and the console is the only way to
+      change its address or revoke a caller.
+
+      The console changes exactly two things: who the Node is, and who may talk
+      to it. It cannot add a scope, widen a grant or change the policy, because
+      those live in the policy document.
+
+        show config        the configuration in force, with the tunnel token redacted
+        show identity      the node id this Node answers to
+        show credentials   the public key ids; a secret is never printed
+        show scopes        every scope and whether its directory exists
+        show status        the mode, the node id, the server and the counts
+        regenerate id      replace the node id; every credential is unchanged
+        credential add <key-id>     add a caller and print its secret once
+        credential rotate <key-id>  replace the secret under an existing key id
+        credential remove <key-id>  revoke one caller; the last one cannot be removed
+        help               the command list
+        quit               stop reading commands; the Node keeps running
+
+      A command that fails prints its error and the console continues, so a typo
+      does not cost a restart. Input is read from stdin and is never written to a
+      history file: the file could be on a read-only filesystem, and a history
+      would record a secret that was printed once.
+
+      On a file-backed Node a change is also written to the identity file or the
+      credential file, so the console and the subcommands agree about what is in
+      force. On a stateless Node the change lives in memory and is lost when the
+      process exits.
+
 ENVIRONMENT
   CONNECTOR_NODE_SERVER_URL              required
   CONNECTOR_NODE_TUNNEL_TOKEN            required

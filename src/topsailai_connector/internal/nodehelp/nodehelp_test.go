@@ -83,6 +83,60 @@ func TestRunHelpDocumentsEveryEnvironmentVariable(t *testing.T) {
 	}
 }
 
+// TestRunHelpDocumentsTheConsoleFlagAndEveryConsoleCommand checks the flag and the
+// command surface the console adds.
+//
+// The flag is asserted structurally rather than by substring, because a mention
+// satisfies a substring: "--console" appears in the prose above the entry, so deleting
+// the entry would leave a substring guard green. The commands are asserted inside the
+// FLAGS section for the same reason: "regenerate id" also appears in the regenerate
+// subcommand's page, so a whole-page search would pass on an unrelated sentence.
+func TestRunHelpDocumentsTheConsoleFlagAndEveryConsoleCommand(t *testing.T) {
+	text := Run("connector-node")
+
+	flags := section(t, text, "FLAGS")
+	if !hasEntry(flags, "--console") {
+		t.Fatalf("the FLAGS section has no --console entry, so the flag is undocumented")
+	}
+
+	commands := []string{
+		"show config",
+		"show identity",
+		"show credentials",
+		"show scopes",
+		"show status",
+		"regenerate id",
+		"credential add",
+		"credential rotate",
+		"credential remove",
+		"help",
+		"quit",
+	}
+	for _, command := range commands {
+		if !strings.Contains(flags, command) {
+			t.Errorf("the FLAGS section does not document the console command %q", command)
+		}
+	}
+}
+
+// TestRunHelpStatesThatTheConsoleNeverPrintsASecret checks the rule a reader of the help
+// has to know before they type `show credentials`.
+//
+// The console prints a secret exactly once, when a credential is added or rotated, and
+// never when one is inspected. A help page that omitted the distinction would leave the
+// operator unable to tell whether the output is safe to paste into a ticket.
+func TestRunHelpStatesThatTheConsoleNeverPrintsASecret(t *testing.T) {
+	flags := section(t, Run("connector-node"), "FLAGS")
+
+	flattened := strings.Join(strings.Fields(flags), " ")
+	if !strings.Contains(flattened, "a secret is never printed") {
+		t.Fatalf("the FLAGS section does not state that inspecting a credential never prints a secret")
+	}
+	if !strings.Contains(flattened, "never written to a history file") {
+		t.Fatalf("the FLAGS section does not state that console input is not written to a history file")
+	}
+}
+
 // TestMainHelpStatesThatAPathMustBeAbsolute checks that every variable the code refuses
 // when relative is documented as needing an absolute path.
 //

@@ -1,7 +1,7 @@
 ---
 name: connector-node-setup
-description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, or how to find the node id, key id and secret after starting the Node. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management and regeneration.
-version: 1.5.0
+description: Use when a user needs to install, configure, start, or move a TopsailAI Connector Node to a new node id on their own computer, i.e. when they ask how to get their node id, what the policy file looks like, which environment variables the Node needs, how to run it on Windows or Linux, how to change what a scope exposes, how to list the scope names the policy defines so a caller knows what to pass as --scope, how to start a Node from a zip they were handed, how to add or remove a caller credential, how to revoke a leaked credential, how to find the node id, key id and secret after starting the Node, how to run the Node on a machine whose filesystem is read-only so it writes no file at all, or how to read the configuration and change the node id or a credential from an interactive console without editing a file. Covers the first-run order, the startup summary printed on every start, the policy file schema and its startup failures, scope path rules, the scope list command, the ready-to-run bundle, credential management, regeneration, stateless mode and the interactive console.
+version: 1.6.0
 author: DawsonLin
 license: MIT
 metadata:
@@ -749,6 +749,146 @@ the Server's client credentials; those are changed by the Server operator.
 Regeneration is local and operator-initiated. The Server cannot trigger it, because
 a Server that could force regeneration could also force a denial of service.
 
+## Running with no writable filesystem (stateless mode)
+
+Some machines cannot be written to: a container with a read-only root filesystem, a
+locked-down desktop, a kiosk. On those, the Node can run entirely in memory.
+
+```
+CONNECTOR_NODE_STATELESS=1 \
+CONNECTOR_NODE_SERVER_URL=wss://host/channel \
+CONNECTOR_NODE_TUNNEL_TOKEN=<secret> \
+CONNECTOR_NODE_POLICY_FILE=/etc/connector/policy.yaml \
+  connector-node run
+```
+
+In this mode the Node creates **no directory and no file**. There is no
+`identity`, no `credentials.yaml`, and the config directory is never created even
+if you point `CONNECTOR_NODE_CONFIG_DIR` at a path that does not exist.
+
+What you see instead is a summary that says so:
+
+```
+mode          : stateless (nothing is written; the node id and the
+                credentials live in memory and are lost when this process exits)
+```
+
+The value is strict. `1` turns the mode on, an empty value or `0` leaves it off, and
+anything else — `true`, `yes`, `on` — refuses to start and names the accepted
+values. A switch that silently accepts a spelling it does not understand is a switch
+whose state nobody can state.
+
+### What you must supply, because nothing can be defaulted
+
+| Value | Where it comes from |
+|---|---|
+| Server URL | `CONNECTOR_NODE_SERVER_URL`, or compiled in |
+| `tunnel_token` | `CONNECTOR_NODE_TUNNEL_TOKEN`, or compiled in |
+| Policy | `CONNECTOR_NODE_POLICY_FILE`, or compiled in |
+| node id | Compiled in, or generated in memory at start |
+| Credential | Compiled in, or generated in memory at start |
+
+The policy is the one value that cannot be invented. A Node with no policy refuses
+everything, and a mode that guessed one would be a mode that silently denies every
+request.
+
+If the node id and the credential are generated rather than compiled in, they are
+**new on every start**. A caller has to be told the new pair each time, which is
+why a build packaged with `PACKAGE_EMBED_IDENTITY=1` is the shape that suits this
+mode.
+
+### The subcommands refuse, and why
+
+`id`, `regenerate`, `credential add`, `credential list` and `credential remove` all
+refuse in this mode:
+
+```
+connector-node: regenerate writes the node's identity and credential files, and
+CONNECTOR_NODE_STATELESS=1 means this node has neither; use the interactive console
+instead, which changes the node id and the credentials in memory
+```
+
+The exit status is `1`. The message names the subcommand you ran, so `id` and
+`credential add` produce the same sentence with their own name in place of
+`regenerate`.
+
+They are file operations, and this mode has no file. Refusing is better than
+silently doing something else: a command whose meaning changes because of an
+environment variable is the hardest kind of bug to find.
+
+### What this mode does not fix
+
+It removes two exposures, because the files they concern do not exist: a copy of the
+config directory cannot be served, and there is no `credentials.yaml` for another
+local account to read.
+
+It does **not** change the two exposures that come from the compiled `tunnel_token`:
+a copy of the binary still carries the token, and a token holder can still open a
+channel. Those are properties of the token, not of the filesystem.
+
+## The interactive console
+
+The console lets you read the configuration and change the identity or a credential
+**without editing a file**. It is the only way to do those things on a stateless
+Node.
+
+It is on by default in stateless mode when the Node runs in a terminal, and off by
+default otherwise. On a file-backed Node, ask for it:
+
+```
+connector-node run --console
+```
+
+It is a flag rather than an environment variable because it decides whether the
+process reads its own stdin, and a console that consumed a launcher's pipe would eat
+the launcher's input.
+
+### The commands
+
+```
+show config        the configuration in force, with the tunnel token redacted
+show identity      the node id this node answers to
+show credentials   the public key ids; a secret is never printed
+show scopes        every scope and whether its directory exists
+show status        the mode, the node id, the server and the counts
+regenerate id      replace the node id; every credential is unchanged
+credential add <key-id>     add a caller and print its secret once
+credential rotate <key-id>  replace the secret under an existing key id
+credential remove <key-id>  revoke one caller; the last one cannot be removed
+help               this list
+quit               stop reading commands; the node keeps running
+```
+
+`show credentials` prints key identifiers only. A secret is printed exactly once, by
+`credential add` or `credential rotate`, and never by an inspection command — so the
+output of `show credentials` is safe to paste into a ticket.
+
+Input is read from stdin and is **never written to a history file**. The file could
+be on a read-only filesystem, and a history would record a secret that was printed
+once.
+
+A command that fails prints its error and the console continues, so a typo does not
+cost a restart.
+
+### What a change does in each mode
+
+| Mode | `regenerate id` | `credential add` / `rotate` / `remove` |
+|---|---|---|
+| File-backed | The identity file is rewritten, so the change survives a restart | The credential file is rewritten |
+| Stateless | The change lives in memory and is lost when the process exits | The change lives in memory |
+
+In both modes the change takes effect immediately: `regenerate id` drops the live
+channel and the Node reconnects under the new id, exactly as the `regenerate`
+subcommand does.
+
+### Rotating a secret without changing the key id
+
+`credential rotate <key-id>` keeps the identifier and replaces the secret. That is
+the useful shape when a secret leaked but the caller should keep its name, because
+the audit record still names the same caller.
+
+The old secret stops working at once. The new one is printed once, so copy it then.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Check |
@@ -758,7 +898,9 @@ a Server that could force regeneration could also force a denial of service.
 | `policy file is missing` | No policy at the default path | Create `<config>/policy.yaml` or set `CONNECTOR_NODE_POLICY_FILE` |
 | `is relative; a relative path resolves differently per launch` | A relative config dir or policy path | Use an absolute path |
 | `is not a directory` | The config dir path is a file | Fix the path |
-| `create CONNECTOR_NODE_CONFIG_DIR "<path>": mkdir <parent>: no such file or directory` | The config directory cannot be created, for example a read-only filesystem or a parent that does not exist | Point `CONNECTOR_NODE_CONFIG_DIR` at a writable location. The Node refuses to start rather than keeping its identity in memory |
+| `create CONNECTOR_NODE_CONFIG_DIR "<path>": mkdir <parent>: no such file or directory` | The config directory cannot be created, for example a read-only filesystem or a parent that does not exist | Point `CONNECTOR_NODE_CONFIG_DIR` at a writable location, or set `CONNECTOR_NODE_STATELESS=1` to run with no file at all. Without that variable the Node refuses to start rather than keeping its identity in memory |
+| `regenerate writes the node's identity and credential files, and CONNECTOR_NODE_STATELESS=1 means this node has neither` | A file subcommand was run in stateless mode | Use the interactive console: `regenerate id`, `credential add`, `credential rotate`, `credential remove` |
+| `CONNECTOR_NODE_STATELESS is "true", want 1, 0 or empty` | The variable holds another spelling | Use `1` to enable it, `0` or empty to disable it |
 | Startup fails naming a scope | That scope's path is missing, is a file, is a symlink, or overlaps the config dir | Fix the policy |
 | Handshake refused, then silence | Wrong `tunnel_token` | Get the correct value from the Server operator |
 | Reconnects every 5 seconds | The Server is down, or the node id was regenerated | Check both logs |
