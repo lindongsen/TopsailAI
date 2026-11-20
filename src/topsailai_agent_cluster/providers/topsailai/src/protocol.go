@@ -48,7 +48,7 @@ const (
 	deliveryNotStarted = "not_started"
 	deliverySubmitted  = "submitted"
 
-	providerVersion  = "2.0.0"
+	providerVersion  = "1.3.0"
 	operationVersion = "v1"
 )
 

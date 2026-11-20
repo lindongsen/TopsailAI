@@ -10,14 +10,16 @@ import (
 	"time"
 )
 
-// ctlAuthModeProbe is a stand-in role binary that records the authentication
-// settings it inherited, then stays alive briefly.
+// ctlAuthModeProbe is a stand-in role binary that records the settings it
+// inherited, then stays alive briefly.
 //
-// It records the environment rather than the argument vector because the mode is
-// environment-only: neither the Server nor the Endpoint binary has an
-// --auth-mode flag, so a launcher that forwarded it as a flag would be forwarding
-// a value nothing reads. The probe therefore proves the value reached the child
-// process under the name the binary actually reads.
+// It records the environment rather than the argument vector because every value
+// it reports is environment-only: neither the Server nor the Endpoint binary has
+// an --auth-mode flag, and the Provider reads the project root from the
+// environment rather than from the Endpoint's --project-root flag. A launcher
+// that forwarded one of them as a flag only would be forwarding a value the
+// reader never sees. The probe therefore proves each value reached the child
+// process under the name the reader actually uses.
 //
 // It sleeps after writing because the controller treats a process that exits
 // during its confirmation window as a failed launch. The sleep keeps the launch
@@ -28,6 +30,7 @@ const ctlAuthModeProbe = `#!/bin/bash
     printf 'ENDPOINT_AUTH_MODE=%s\n' "${AGENT_CLUSTER_ENDPOINT_AUTH_MODE:-}"
     printf 'SERVER_SIGNATURE_WINDOW=%s\n' "${AGENT_CLUSTER_SERVER_SIGNATURE_WINDOW:-}"
     printf 'ENDPOINT_SIGNATURE_WINDOW=%s\n' "${AGENT_CLUSTER_ENDPOINT_SIGNATURE_WINDOW:-}"
+    printf 'ENDPOINT_PROJECT_ROOT=%s\n' "${AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT:-}"
 } >"${PROBE_OUT}"
 sleep 5
 `
@@ -222,5 +225,54 @@ func TestCtlOmitsAuthModeWhenUnset(t *testing.T) {
 	}
 	if got := observed["SERVER_SIGNATURE_WINDOW"]; got != "" {
 		t.Fatalf("AGENT_CLUSTER_SERVER_SIGNATURE_WINDOW=%q want empty when SIGNATURE_WINDOW is unset", got)
+	}
+}
+
+// TestCtlForwardsEndpointProjectRootToTheProvider proves the configured project
+// root reaches the Provider under the name the Provider reads.
+//
+// The defect this guards is a forwarding step that exists for one reader and not
+// the other. node.conf names PROJECT_ROOT, the controller resolves it and passes
+// --project-root to the Endpoint, and the Endpoint's own confinement check then
+// passes. The Provider is a separate process that never sees that flag: it reads
+// AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT from its inherited environment. Without the
+// export the Endpoint approves a folder and the Provider refuses every
+// registration with project_root_unconfigured, which reads as a Provider defect
+// rather than as a missing line in the launcher.
+//
+// The test asserts the resolved path, not the configured text, because the
+// controller resolves the value before forwarding it and the Provider confines
+// against the resolved path. Asserting the raw text would pass while the two
+// readers disagreed about which directory is in force.
+func TestCtlForwardsEndpointProjectRootToTheProvider(t *testing.T) {
+	root := t.TempDir()
+	ctl, config, probeOut := newCtlAuthModeBundle(t, "endpoint", "PROJECT_ROOT="+root+"\n")
+
+	observed := runCtlAuthModeProbe(t, ctl, config, probeOut)
+
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolve the configured root: %v", err)
+	}
+	if got := observed["ENDPOINT_PROJECT_ROOT"]; got != resolved {
+		t.Fatalf("AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT=%q want %q", got, resolved)
+	}
+}
+
+// TestCtlOmitsEndpointProjectRootWhenUnset proves an unconfigured node keeps the
+// fail-closed default.
+//
+// An empty root is not a default location: the Endpoint refuses project.add with
+// project_root_unconfigured, and the Provider refuses the same way. Exporting an
+// empty string would be worse than omitting the variable, because a reader that
+// distinguishes "unset" from "set to empty" would then see a configured root that
+// names no directory.
+func TestCtlOmitsEndpointProjectRootWhenUnset(t *testing.T) {
+	ctl, config, probeOut := newCtlAuthModeBundle(t, "endpoint", "")
+
+	observed := runCtlAuthModeProbe(t, ctl, config, probeOut)
+
+	if got := observed["ENDPOINT_PROJECT_ROOT"]; got != "" {
+		t.Fatalf("AGENT_CLUSTER_ENDPOINT_PROJECT_ROOT=%q want empty when PROJECT_ROOT is unset", got)
 	}
 }
