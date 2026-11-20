@@ -509,6 +509,7 @@ they configure the client role, not the Server role.
 | `CONNECTOR_CLI_CLIENT_CREDENTIAL` | none | The client credential in `key_id.secret` form. Required |
 | `CONNECTOR_CLI_NODE_CREDENTIAL` | none | The node credential in `key_id.secret` form. Required |
 | `CONNECTOR_CLI_NODE_ID` | none | The node id the request is addressed to. Required |
+| `CONNECTOR_CLI_ENV_FILE` | `.env.local` beside the executable | Read `KEY=VALUE` pairs from this dotenv file instead. Must be absolute |
 
 The CLI holds two credentials because it crosses two authentication boundaries, and
 each boundary is verified by a different party. The client credential is signed into
@@ -525,8 +526,45 @@ eventually gets logged whole.
 
 All four are accepted from the environment for scripting convenience. A flag takes
 precedence over the variable, because a flag is the more explicit statement of
-intent. There is no config file for the CLI: the only two sources are a flag and the
-environment, so an operator never has to work out which of three places won.
+intent.
+
+#### Configuration precedence
+
+The CLI reads its configuration from four places. When a value is set in more than
+one, the first of these wins:
+
+| Rank | Source | How it is stated |
+|---|---|---|
+| 1 | `--set KEY=VALUE` | On the command line, repeatable |
+| 2 | Environment variable | Exported in the process environment |
+| 3 | Configuration file | A `KEY=VALUE` pair in the dotenv file |
+| 4 | Built-in default | Where one exists |
+
+`--set` wins over the environment because it is typed for this one launch, while an
+environment variable is ambient and inherited by every process the shell starts. The
+environment wins over the file because the file is a default for this installation,
+and a caller who exported a value meant it for this one command. A value that is
+empty counts as unset at every layer, so an exported but empty variable does not
+shadow a value from the file.
+
+A dedicated flag such as `--server` is the same layer as `--set` and is read first,
+so `--server` wins over `--set CONNECTOR_CLI_SERVER_URL`. Use the dedicated flag when
+one exists; `--set` is for a value that has no flag, and for a script that already
+holds its configuration as `KEY=VALUE` pairs.
+
+The configuration file is `.env.local` in the directory that holds the executable.
+It is optional: when it is absent the program runs on the process environment alone.
+`CONNECTOR_CLI_ENV_FILE` or `--env-file PATH` names a different file instead, and
+that path must be absolute because a relative path resolves differently per launch.
+
+A file named by `--env-file` must exist, because a typo would otherwise fall through
+to the environment and look like it worked. The default `.env.local` may be absent,
+which is the ordinary case. That asymmetry is deliberate: the variable and the
+default predate the flag, and an installation whose file has since been deleted keeps
+working today.
+
+The file holds credentials, so it must not be readable by other accounts. The program
+warns when it is readable by group or others.
 
 No secret is ever echoed by `--help`, by an error message or by a verbose dump.
 `cli.Describe` renders a request with both secrets replaced by a fixed marker, and
