@@ -629,7 +629,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		if err := rejectInteractiveOption("show", rest); err != nil {
 			return false, err
 		}
-		return false, interactiveShow(ctx, api, state, strings.TrimSpace(rest), out)
+		return false, interactiveShow(ctx, api, state, strings.TrimSpace(rest), lineResults, out, trustedOut, errOut, options)
 	case "info":
 		if err := rejectInteractiveOption("info", rest); err != nil {
 			return false, err
@@ -1336,15 +1336,24 @@ func interactiveRefreshWithArguments(parent context.Context, api InteractiveAPI,
 // detail, which is what show already does for a literal endpoint identifier. Every
 // live-process command keeps the stricter resolver, so this widening cannot make an
 // unaddressable session look addressable.
-func interactiveShow(parent context.Context, api InteractiveAPI, state *interactiveState, id string, out io.Writer) error {
+func interactiveShow(parent context.Context, api InteractiveAPI, state *interactiveState, id string, lines <-chan lineReadResult, out, trustedOut, diagnostics io.Writer, options InteractiveOptions) error {
 	if state.Invalidated {
 		return state.requireUsable()
+	}
+	if id == "" && state.Scope.Kind == ScopeWorkspace {
+		// The guided branch owns its own budget, created after the answer arrives, so
+		// operator thinking time is never charged against the command deadline.
+		return interactiveShowGuided(parent, api, state, lines, out, trustedOut, diagnostics, options)
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	if id == "" {
 		switch state.Scope.Kind {
 		case ScopeWorkspace:
+			// Unreachable: the guided branch above returns for workspace scope before
+			// the budget is created. Kept as an explicit refusal so a future change
+			// that reorders the branches cannot silently fall through to the endpoint
+			// default and show the wrong machine.
 			return fmt.Errorf("show requires an endpoint or session in workspace scope; use show <number> for a session row or show <endpoint-id>")
 		case ScopeEndpoint:
 			id = state.Scope.EndpointID
