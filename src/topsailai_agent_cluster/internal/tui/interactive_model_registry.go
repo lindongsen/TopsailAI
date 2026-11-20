@@ -56,12 +56,14 @@ func interactiveModelRegistry(parent context.Context, api InteractiveAPI, state 
 	view := NewModelRegistryView(endpointID, registry)
 	// Every other row-number namespace is dropped before this table is rendered, so
 	// a number from a previous table can never be applied to a row of this one. The
-	// registry itself records no namespace, because it offers no operation: a
-	// number that selected nothing would look selectable and do nothing.
+	// registry's own namespace is dropped here too and recorded only after a
+	// successful render, because a number is a position in the table the operator
+	// actually saw.
 	state.Rows = nil
 	state.history = nil
 	state.modelCatalog = nil
 	state.projectCatalog = nil
+	state.modelRegistry = nil
 	if len(view.Rows) == 0 {
 		// An empty registry is a real answer, so it is stated plainly instead of
 		// rendering an empty table that looks like a rendering fault.
@@ -76,6 +78,17 @@ func interactiveModelRegistry(parent context.Context, api InteractiveAPI, state 
 	tableOptions.HideSessionID = true
 	if err := RenderModelRegistry(out, view, tableOptions); err != nil {
 		return err
+	}
+	// The namespace is recorded only after a successful render, because a number is
+	// a position in the table the operator actually saw. It is recorded even when the
+	// table is bounded, because the rows that were printed are exactly the rows a
+	// number may address.
+	state.modelRegistry = &modelRegistryNamespace{
+		EndpointID: endpointID,
+		Rows:       make(map[int]ModelRegistryViewRow, len(view.Rows)),
+	}
+	for _, row := range view.Rows {
+		state.modelRegistry.Rows[row.No] = row
 	}
 	// The truncation notice is a diagnostic rather than part of the answer, because
 	// it describes the read rather than the machine.

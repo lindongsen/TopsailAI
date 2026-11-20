@@ -39,17 +39,19 @@ func IsRowNumber(token string) bool {
 }
 
 // interactiveModel lists the model profiles one session can select, applies one
-// profile to that session, or reports the models one Endpoint offers to launches.
+// profile to that session, reports the models one Endpoint offers to launches, or
+// declares which of those models a launch should use.
 //
-// The grammar is "model [session] [profile]", which covers the documented
-// "model <number-or-session>" form and the two-token form the standalone surface
-// needs:
+// The grammar is "model [session] [profile]" plus the "model set <selector>" form,
+// which covers the documented "model <number-or-session>" form and the two-token form
+// the standalone surface needs:
 //
 //	model                        the endpoint registry outside session scope, or the
 //	                             current session's profiles inside it
 //	model <session>              list the profiles of one named session
 //	model <number>               apply that profile to the current session
 //	model <session> <profile>    apply one profile to one named session
+//	model set <row|profile-id>   declare which model a launch from this endpoint uses
 //
 // A bare "model" means two different things and the scope decides which, without
 // guessing. Session scope already names one session, so a bare model can only mean
@@ -63,13 +65,28 @@ func IsRowNumber(token string) bool {
 // can only be a profile selector. Outside session scope there is no current session,
 // so a number is a session token: a provider session ID may itself be all digits, and
 // treating it as a profile number would make those sessions unaddressable.
+//
+// "set" is resolved as a form before the two-token session form, exactly as "project
+// add" and "project remove" are resolved before the project read. The cost is that a
+// session whose provider identifier is literally "set" cannot be named in the
+// two-token form; the benefit is that one word cannot silently mean a machine-wide
+// change in one reading and a session change in another. The set form is refused in
+// session scope, because there "model <number>" already applies a profile to the
+// session and a second spelling that changes the machine instead would be the less
+// obvious of two similar commands.
 func interactiveModel(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lines <-chan lineReadResult, out, trustedOut, diagnostics io.Writer, options InteractiveOptions) error {
 	if err := rejectInteractiveOption("model", rest); err != nil {
 		return err
 	}
 	fields := strings.Fields(rest)
+	if len(fields) > 0 && fields[0] == "set" {
+		if state.Scope.Kind == ScopeSession {
+			return fmt.Errorf("usage: model set <row|model-profile-id> is available outside session scope; in session scope use model <profile> to apply a profile to this session, or cd .. to change the launch default")
+		}
+		return interactiveModelSet(parent, api, state, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "set")), lines, out, trustedOut, options)
+	}
 	if len(fields) > 2 {
-		return fmt.Errorf("usage: model [session] [profile]")
+		return fmt.Errorf("usage: model [session] [profile] | model set <row|model-profile-id>")
 	}
 	if len(fields) == 2 {
 		return interactiveModelSelect(parent, api, state, fields[0], fields[1], lines, out, trustedOut, options)
