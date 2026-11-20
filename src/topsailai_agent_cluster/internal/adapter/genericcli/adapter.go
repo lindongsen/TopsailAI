@@ -22,12 +22,12 @@ import (
 
 // Config contains local-only Generic CLI Adapter configuration.
 type Config struct {
-	AdapterID      string
-	DisplayName    string
-	Executable     string
-	Args           []string
-	Environment    []string
-	Timeout        time.Duration
+	AdapterID   string
+	DisplayName string
+	Executable  string
+	Args        []string
+	Environment []string
+	Timeout     time.Duration
 	// FollowTimeout bounds one streaming follow, separately from Timeout. A
 	// follow is a live tail whose lifetime is decided by the operator, so the
 	// one-shot budget is the wrong bound for it: with Timeout applied, every
@@ -515,6 +515,65 @@ func (a *Adapter) ModelCatalog(ctx context.Context, query protocol.ModelCatalogQ
 	return result, nil
 }
 
+// ModelRegistry maps provider-private registry keys to opaque Cluster profile IDs.
+//
+// The read takes no target, because a registry describes the machine rather than one
+// session. It therefore never resolves a provider target: there is no session to
+// address, and inventing one would make the answer depend on whichever session
+// happened to be chosen.
+//
+// The current selection is resolved by comparing the provider's own identifier, not
+// the provider resource key. The two are different values: the key is the Cluster's
+// addressing identity, while the identifier is what the provider stores in its own
+// selection. Comparing keys would work only while the two happen to be spelled the
+// same, which is exactly the kind of coincidence that fails silently later.
+func (a *Adapter) ModelRegistry(ctx context.Context, query protocol.ModelRegistryQuery) (protocol.ModelRegistry, error) {
+	payload, err := json.Marshal(providercli.ModelRegistryPayload{})
+	if err != nil {
+		return protocol.ModelRegistry{}, fmt.Errorf("encode model registry payload: %w", err)
+	}
+	value, err := a.typedQuery(ctx, providercli.QueryModelRegistry, nil, payload)
+	if err != nil {
+		return protocol.ModelRegistry{}, err
+	}
+	providerResult := value.(providercli.ModelRegistryResult)
+	result := protocol.ModelRegistry{
+		Entries:          make([]protocol.ModelRegistryEntry, 0, len(providerResult.Entries)),
+		CurrentSource:    providerResult.CurrentSource,
+		ObservedAtMS:     providerResult.ObservedAtMS,
+		Truncated:        providerResult.Truncated,
+		ProjectOverrides: make([]protocol.ModelProjectOverride, 0, len(providerResult.ProjectOverrides)),
+	}
+	// The identifier-to-Cluster-ID map is built while the entries are mapped, so an
+	// override or a selection that names an entry the registry does not contain is
+	// reported as unresolved instead of being given an identifier nobody minted.
+	byProviderID := make(map[string]string, len(providerResult.Entries))
+	for _, entry := range providerResult.Entries {
+		mapping, mapErr := a.config.Mapper.GetOrCreateResourceID(ctx, a.config.AdapterID, protocol.ResourceModelProfile, entry.ProviderResourceKey, providerResult.ObservedAtMS)
+		if mapErr != nil {
+			return protocol.ModelRegistry{}, mapErr
+		}
+		result.Entries = append(result.Entries, protocol.ModelRegistryEntry{
+			ModelProfileID:      mapping.ResourceID,
+			ProviderDisplayName: entry.DisplayName,
+			Available:           entry.Available,
+			UnavailableReason:   entry.UnavailableReason,
+		})
+		byProviderID[entry.ProviderID] = mapping.ResourceID
+	}
+	result.CurrentProfileID = byProviderID[providerResult.CurrentProviderID]
+	for _, override := range providerResult.ProjectOverrides {
+		result.ProjectOverrides = append(result.ProjectOverrides, protocol.ModelProjectOverride{
+			ProjectWorkspace: override.ProjectWorkspace,
+			ModelProfileID:   byProviderID[override.ProviderID],
+		})
+	}
+	if err := protocol.ValidateModelRegistry(result); err != nil {
+		return protocol.ModelRegistry{}, err
+	}
+	return result, nil
+}
+
 // Messages converts one typed provider conversation result without creating a new Cluster identity.
 func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (protocol.MessagesResult, error) {
 	target := &providercli.Target{ResourceKind: protocol.ResourceSession, ProviderResourceKey: query.ProviderSessionID}
@@ -990,10 +1049,11 @@ var capabilityProviderContract = map[string]struct {
 	kind providerContractKind
 	name string
 }{
-	protocol.OperationOutputRead:     {kind: contractFunction, name: providercli.FunctionReadOutput},
-	protocol.OperationOutputFollow:   {kind: contractFunction, name: providercli.FunctionFollowOutput},
-	protocol.OperationAgentModelList: {kind: contractQuery, name: providercli.QueryModelCatalog},
-	protocol.OperationProjectList:    {kind: contractQuery, name: providercli.QueryProjectCatalog},
+	protocol.OperationOutputRead:         {kind: contractFunction, name: providercli.FunctionReadOutput},
+	protocol.OperationOutputFollow:       {kind: contractFunction, name: providercli.FunctionFollowOutput},
+	protocol.OperationAgentModelList:     {kind: contractQuery, name: providercli.QueryModelCatalog},
+	protocol.OperationAgentModelRegistry: {kind: contractQuery, name: providercli.QueryModelRegistry},
+	protocol.OperationProjectList:        {kind: contractQuery, name: providercli.QueryProjectCatalog},
 }
 
 // intersectCapabilities keeps only the configured capabilities the provider

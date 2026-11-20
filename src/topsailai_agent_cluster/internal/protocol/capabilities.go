@@ -34,6 +34,15 @@ const (
 	// changes live agent behaviour, so it is advertised with SafetyClassMutating
 	// and needs the control scope.
 	OperationAgentModelSelect = "agent.model.select"
+	// OperationAgentModelRegistry reads the models one Endpoint offers to launches,
+	// together with the selection a launch from that machine would use now.
+	//
+	// It is a separate operation from OperationAgentModelList rather than the same
+	// operation with an optional target, because the two answer different questions
+	// about different subjects: a catalog answers "which profiles can this session
+	// select", while a registry answers "which profiles does this machine offer".
+	// It is a frame-level read and therefore never appears in an immutable intent.
+	OperationAgentModelRegistry = "agent.model.registry"
 	// OperationProjectList reads the managed project catalog on one Endpoint.
 	// It is a frame-level read and therefore never appears in an immutable intent.
 	OperationProjectList = "project.list"

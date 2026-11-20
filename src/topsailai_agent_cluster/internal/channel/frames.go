@@ -85,6 +85,12 @@ const (
 	FrameModelCatalogRequest = "model_catalog_request"
 	// FrameModelCatalogResponse returns a bounded model-catalog read.
 	FrameModelCatalogResponse = "model_catalog_response"
+	// FrameModelRegistryRequest requests the models one Endpoint offers to launches,
+	// together with the selection a launch from it would use. It is a read-only
+	// query addressed by the machine, so it carries no target and no generation.
+	FrameModelRegistryRequest = "model_registry_request"
+	// FrameModelRegistryResponse returns one bounded model registry.
+	FrameModelRegistryResponse = "model_registry_response"
 	// FrameProjectCatalogRequest requests the managed projects of one Endpoint.
 	FrameProjectCatalogRequest = "project_catalog_request"
 	// FrameProjectCatalogResponse returns one bounded project catalog.
@@ -133,6 +139,8 @@ type Frame struct {
 	DetailResult         *protocol.SessionDetail            `json:"detail_result,omitempty"`
 	ModelCatalogQuery    *protocol.ModelCatalogQuery        `json:"model_catalog_query,omitempty"`
 	ModelCatalog         *protocol.ModelCatalog             `json:"model_catalog,omitempty"`
+	ModelRegistryQuery   *protocol.ModelRegistryQuery       `json:"model_registry_query,omitempty"`
+	ModelRegistry        *protocol.ModelRegistry            `json:"model_registry,omitempty"`
 	ProjectCatalogQuery  *protocol.ProjectCatalogQuery      `json:"project_catalog_query,omitempty"`
 	ProjectCatalog       *protocol.ProjectCatalog           `json:"project_catalog,omitempty"`
 	Type                 string                             `json:"type"`

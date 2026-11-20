@@ -76,6 +76,7 @@ const accessPolicyWildcard = "*"
 var scopeOperations = map[string][]string{
 	security.ScopeView: {
 		protocol.OperationAgentModelList,
+		protocol.OperationAgentModelRegistry,
 		protocol.OperationProjectList,
 		OperationLaunchQuery,
 		OperationHistoryRead,
@@ -703,6 +704,7 @@ var knownAccessOperations = map[string]struct{}{
 	protocol.OperationAgentDriveStop:     {},
 	protocol.OperationWorkspaceClean:     {},
 	protocol.OperationAgentModelList:     {},
+	protocol.OperationAgentModelRegistry: {},
 	protocol.OperationProjectList:        {},
 	protocol.OperationAgentModelSelect:   {},
 	protocol.OperationOutputRead:         {},

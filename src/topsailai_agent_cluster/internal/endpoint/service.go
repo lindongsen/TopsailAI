@@ -661,6 +661,8 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.dispatchBusiness(ctx, frame, s.detailFrame)
 		case channel.FrameModelCatalogRequest:
 			s.dispatchBusiness(ctx, frame, s.modelCatalogFrame)
+		case channel.FrameModelRegistryRequest:
+			s.dispatchBusiness(ctx, frame, s.modelRegistryFrame)
 		case channel.FrameProjectCatalogRequest:
 			s.dispatchBusiness(ctx, frame, s.projectCatalogFrame)
 		case channel.FrameOutputRequest:

@@ -246,3 +246,61 @@ func capabilityNames(descriptor protocol.CapabilityDescriptor) []string {
 	}
 	return names
 }
+
+// TestEveryContractMappedOperationIsAdvertisedWhenTheProviderOffersIt proves the
+// capability contract map is complete in both directions.
+//
+// The map is the only place that says which provider contract implements a Cluster
+// operation. An operation missing from it is never advertised, and a capability that
+// is never advertised is invisible: no error is logged, because nothing is attempted,
+// and the operator reads the absent command as "not implemented". Enumerating the map
+// rather than sampling it means a newly added operation cannot be forgotten here.
+func TestEveryContractMappedOperationIsAdvertisedWhenTheProviderOffersIt(t *testing.T) {
+	for operation, contract := range capabilityProviderContract {
+		t.Run(operation, func(t *testing.T) {
+			configured := protocol.CapabilityDescriptor{
+				Revision:     "rev-1",
+				Capabilities: []protocol.Capability{readCapability(operation)},
+			}
+			descriptor := providercli.Descriptor{}
+			switch contract.kind {
+			case contractQuery:
+				descriptor.Queries = []providercli.NamedContract{{Name: contract.name, Version: "v1"}}
+			case contractFunction:
+				descriptor.Functions = []string{contract.name}
+			default:
+				t.Fatalf("operation %q has an unknown contract kind", operation)
+			}
+			effective := intersectCapabilities(configured, descriptor)
+			if len(effective.Capabilities) != 1 || effective.Capabilities[0].Name != operation {
+				t.Fatalf("effective capabilities = %v, want %q kept because the provider offers %q",
+					capabilityNames(effective), operation, contract.name)
+			}
+		})
+	}
+}
+
+// TestModelRegistryIsAdvertisedOnlyWhenTheProviderOffersTheRegistryQuery proves the
+// registry capability is gated on its own query rather than on the model catalog.
+//
+// The two are separate contracts, so a provider that can answer a session catalog
+// must not be credited with a machine registry it cannot answer.
+func TestModelRegistryIsAdvertisedOnlyWhenTheProviderOffersTheRegistryQuery(t *testing.T) {
+	configured := protocol.CapabilityDescriptor{
+		Revision:     "rev-1",
+		Capabilities: []protocol.Capability{readCapability(protocol.OperationAgentModelRegistry)},
+	}
+	catalogOnly := providercli.Descriptor{
+		Queries: []providercli.NamedContract{{Name: providercli.QueryModelCatalog, Version: "v1"}},
+	}
+	if effective := intersectCapabilities(configured, catalogOnly); len(effective.Capabilities) != 0 {
+		t.Fatalf("registry advertised from the catalog query: %v", capabilityNames(effective))
+	}
+	registry := providercli.Descriptor{
+		Queries: []providercli.NamedContract{{Name: providercli.QueryModelRegistry, Version: "v1"}},
+	}
+	effective := intersectCapabilities(configured, registry)
+	if len(effective.Capabilities) != 1 || effective.Capabilities[0].Name != protocol.OperationAgentModelRegistry {
+		t.Fatalf("effective capabilities = %v, want %q", capabilityNames(effective), protocol.OperationAgentModelRegistry)
+	}
+}

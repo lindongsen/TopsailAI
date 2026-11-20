@@ -1043,3 +1043,85 @@ func TestDetailHonoursTheConfiguredBound(t *testing.T) {
 		t.Fatalf("provider_metadata length = %d, want %d", len(result.ProviderMetadata), len(document))
 	}
 }
+
+// TestModelRegistryResolvesTheSelectionByProviderIdentifier proves the registry
+// resolves the current selection by the provider's own identifier rather than by
+// the provider resource key or the display name.
+//
+// The three values are deliberately different in this fixture. The provider stores
+// its selection by identifier, so a comparison against the resource key or the name
+// would work only while the three happen to be spelled the same, which is exactly
+// the coincidence that fails silently once a provider entry is renamed.
+func TestModelRegistryResolvesTheSelectionByProviderIdentifier(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			for _, query := range providercli.StandardQueries() {
+				response.Descriptor.Queries = append(response.Descriptor.Queries, providercli.NamedContract{Name: query.Name, Version: query.Version})
+			}
+			return response, nil
+		}
+		if request.Query.Name != providercli.QueryModelRegistry {
+			return providercli.Response{Version: request.Version, RequestID: request.RequestID, OK: true, QueryResult: json.RawMessage(`{}`)}, nil
+		}
+		// The selected entry is the second one, and its identifier differs from both
+		// its resource key and its display name.
+		result := json.RawMessage(`{"entries":[{"resource_kind":"model_profile","provider_resource_key":"key-first","provider_id":"id-first","display_name":"First","available":true},{"resource_kind":"model_profile","provider_resource_key":"key-second","provider_id":"id-second","display_name":"Second","available":false,"unavailable_reason":"disabled"}],"current_provider_id":"id-second","current_source":"workspace","observed_at_ms":21,"truncated":false}`)
+		return providercli.Response{Version: request.Version, RequestID: request.RequestID, OK: true, QueryResult: result}, nil
+	}
+	binding := mustAdapter(t, provider)
+	registry, err := binding.ModelRegistry(context.Background(), protocol.ModelRegistryQuery{})
+	if err != nil {
+		t.Fatalf("model registry: %v", err)
+	}
+	if len(registry.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(registry.Entries))
+	}
+	// The cluster mints its own identifiers, so the provider key must not appear.
+	for _, entry := range registry.Entries {
+		if entry.ModelProfileID == "key-first" || entry.ModelProfileID == "key-second" || entry.ModelProfileID == "id-first" || entry.ModelProfileID == "id-second" {
+			t.Fatalf("provider vocabulary reached the wire: %+v", entry)
+		}
+	}
+	if registry.Entries[0].ModelProfileID != "model_profile-key-first" || registry.Entries[1].ModelProfileID != "model_profile-key-second" {
+		t.Fatalf("entries = %+v", registry.Entries)
+	}
+	if registry.Entries[1].Available || registry.Entries[1].UnavailableReason != "disabled" {
+		t.Fatalf("availability lost: %+v", registry.Entries[1])
+	}
+	// The selection must resolve to the second entry, which is only reachable by
+	// comparing the provider identifier.
+	if registry.CurrentProfileID != registry.Entries[1].ModelProfileID {
+		t.Fatalf("current = %q, want %q", registry.CurrentProfileID, registry.Entries[1].ModelProfileID)
+	}
+	if registry.CurrentSource != protocol.ModelSourceWorkspace || registry.ObservedAtMS != 21 {
+		t.Fatalf("source=%q observed=%d", registry.CurrentSource, registry.ObservedAtMS)
+	}
+}
+
+// TestModelRegistryLeavesAnUnresolvableSelectionEmpty proves a selection naming an
+// entry the registry does not contain is reported as unresolved rather than being
+// given an identifier nobody minted.
+func TestModelRegistryLeavesAnUnresolvableSelectionEmpty(t *testing.T) {
+	provider := newFakeProvider(t)
+	provider.invoke = func(request providercli.Request) (providercli.Response, error) {
+		if request.Function == providercli.FunctionDescribe {
+			response := describeResponseWithFunctions(request, providercli.FunctionQuery)
+			for _, query := range providercli.StandardQueries() {
+				response.Descriptor.Queries = append(response.Descriptor.Queries, providercli.NamedContract{Name: query.Name, Version: query.Version})
+			}
+			return response, nil
+		}
+		result := json.RawMessage(`{"entries":[{"resource_kind":"model_profile","provider_resource_key":"key-first","provider_id":"id-first","display_name":"First","available":true}],"current_provider_id":"id-absent","current_source":"workspace","observed_at_ms":22,"truncated":false}`)
+		return providercli.Response{Version: request.Version, RequestID: request.RequestID, OK: true, QueryResult: result}, nil
+	}
+	binding := mustAdapter(t, provider)
+	registry, err := binding.ModelRegistry(context.Background(), protocol.ModelRegistryQuery{})
+	if err != nil {
+		t.Fatalf("model registry: %v", err)
+	}
+	if registry.CurrentProfileID != "" {
+		t.Fatalf("an unresolvable selection was given an identifier: %q", registry.CurrentProfileID)
+	}
+}

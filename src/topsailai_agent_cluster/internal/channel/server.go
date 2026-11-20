@@ -53,6 +53,7 @@ type Server struct {
 	pendingHistory        map[string]pendingHistoryRequest
 	pendingMessages       map[string]pendingMessagesRequest
 	pendingModelCatalog   map[string]pendingModelCatalogRequest
+	pendingModelRegistry  map[string]pendingModelRegistryRequest
 	pendingProjectCatalog map[string]pendingProjectCatalogRequest
 	pendingMetrics        map[string]pendingMetricsRequest
 	pendingMetricsBatch   map[string]pendingMetricsBatchRequest
@@ -196,7 +197,7 @@ func (s *Server) stopWorker(peer *Peer) {
 
 // NewServer constructs a channel server.
 func NewServer(tlsConfig *tls.Config) *Server {
-	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingFollow: make(map[string]pendingFollowRequest), pendingHistory: make(map[string]pendingHistoryRequest), pendingMessages: make(map[string]pendingMessagesRequest), pendingModelCatalog: make(map[string]pendingModelCatalogRequest), pendingProjectCatalog: make(map[string]pendingProjectCatalogRequest), pendingMetrics: make(map[string]pendingMetricsRequest), pendingDetail: make(map[string]pendingDetailRequest)}
+	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingFollow: make(map[string]pendingFollowRequest), pendingHistory: make(map[string]pendingHistoryRequest), pendingMessages: make(map[string]pendingMessagesRequest), pendingModelCatalog: make(map[string]pendingModelCatalogRequest), pendingModelRegistry: make(map[string]pendingModelRegistryRequest), pendingProjectCatalog: make(map[string]pendingProjectCatalogRequest), pendingMetrics: make(map[string]pendingMetricsRequest), pendingDetail: make(map[string]pendingDetailRequest)}
 }
 
 // Handler accepts Endpoint-initiated WebSocket upgrades and fences older peers.
@@ -358,6 +359,9 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		}
 		if frame.Type == FrameModelCatalogResponse {
 			s.deliverModelCatalog(peer, frame)
+		}
+		if frame.Type == FrameModelRegistryResponse {
+			s.deliverModelRegistry(peer, frame)
 		}
 		if frame.Type == FrameProjectCatalogResponse {
 			s.deliverProjectCatalog(peer, frame)
@@ -900,6 +904,7 @@ func (s *Server) finishDisconnect(peer *Peer, observedAtMS int64) {
 	s.failPendingHistory(peer.EndpointID)
 	s.failPendingMessages(peer.EndpointID)
 	s.failPendingModelCatalog(peer.EndpointID)
+	s.failPendingModelRegistry(peer.EndpointID)
 	s.failPendingProjectCatalog(peer.EndpointID)
 	s.failPendingMetrics(peer.EndpointID)
 	s.failPendingMetricsBatch(peer.EndpointID)

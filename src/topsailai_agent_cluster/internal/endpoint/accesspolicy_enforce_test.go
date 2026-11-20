@@ -24,6 +24,7 @@ type countingExecutor struct {
 	historyCalls  int
 	messagesCalls int
 	modelCalls    int
+	registryCalls int
 	projectCalls  int
 	launchCalls   int
 }
@@ -55,6 +56,11 @@ func (e *countingExecutor) Messages(context.Context, protocol.MessagesQuery) (pr
 func (e *countingExecutor) ModelCatalog(context.Context, protocol.ModelCatalogQuery) (protocol.ModelCatalog, error) {
 	e.modelCalls++
 	return protocol.ModelCatalog{}, nil
+}
+
+func (e *countingExecutor) ModelRegistry(context.Context, protocol.ModelRegistryQuery) (protocol.ModelRegistry, error) {
+	e.registryCalls++
+	return protocol.ModelRegistry{}, nil
 }
 
 func (e *countingExecutor) ProjectCatalog(context.Context, protocol.ProjectCatalogQuery) (protocol.ProjectCatalog, error) {
@@ -137,6 +143,8 @@ func readFrame(kind, token string) channel.Frame {
 		frame.ProjectCatalogQuery = &protocol.ProjectCatalogQuery{}
 	case channel.FrameModelCatalogRequest:
 		frame.ModelCatalogQuery = &protocol.ModelCatalogQuery{Target: protocol.CommandTarget{Kind: "session", ResourceID: "r1", ProviderGeneration: "g1"}}
+	case channel.FrameModelRegistryRequest:
+		frame.ModelRegistryQuery = &protocol.ModelRegistryQuery{}
 	case channel.FrameLaunchRequest:
 		frame.LaunchQuery = &protocol.LaunchQuery{}
 	}
@@ -163,6 +171,7 @@ func TestEveryReadOperationIsRefusedForAnUnlistedToken(t *testing.T) {
 		{"history.read", channel.FrameHistoryRequest, channel.FrameHistoryResponse, func() bool { return executor.historyCalls == 0 }},
 		{"messages.read", channel.FrameMessagesRequest, channel.FrameMessagesResponse, func() bool { return executor.messagesCalls == 0 }},
 		{"agent.model.list", channel.FrameModelCatalogRequest, channel.FrameModelCatalogResponse, func() bool { return executor.modelCalls == 0 }},
+		{"agent.model.registry", channel.FrameModelRegistryRequest, channel.FrameModelRegistryResponse, func() bool { return executor.registryCalls == 0 }},
 		{"project.list", channel.FrameProjectCatalogRequest, channel.FrameProjectCatalogResponse, func() bool { return executor.projectCalls == 0 }},
 		{"launch.query", channel.FrameLaunchRequest, channel.FrameLaunchResponse, func() bool { return executor.launchCalls == 0 }},
 	}
@@ -180,6 +189,8 @@ func TestEveryReadOperationIsRefusedForAnUnlistedToken(t *testing.T) {
 				service.messagesFrame(ctx, frame)
 			case channel.FrameModelCatalogRequest:
 				service.modelCatalogFrame(ctx, frame)
+			case channel.FrameModelRegistryRequest:
+				service.modelRegistryFrame(ctx, frame)
 			case channel.FrameProjectCatalogRequest:
 				service.projectCatalogFrame(ctx, frame)
 			case channel.FrameLaunchRequest:
@@ -209,6 +220,8 @@ func refusalCode(t *testing.T, frame channel.Frame) string {
 		return frame.MessagesResult.ErrorCode
 	case frame.ModelCatalog != nil:
 		return frame.ModelCatalog.ErrorCode
+	case frame.ModelRegistry != nil:
+		return frame.ModelRegistry.ErrorCode
 	case frame.ProjectCatalog != nil:
 		return frame.ProjectCatalog.ErrorCode
 	case frame.LaunchOptions != nil:
@@ -270,8 +283,9 @@ func TestUnconfiguredPolicyPermitsEveryRead(t *testing.T) {
 	service.historyFrame(ctx, readFrame(channel.FrameHistoryRequest, ""))
 	service.messagesFrame(ctx, readFrame(channel.FrameMessagesRequest, ""))
 	service.modelCatalogFrame(ctx, readFrame(channel.FrameModelCatalogRequest, ""))
+	service.modelRegistryFrame(ctx, readFrame(channel.FrameModelRegistryRequest, ""))
 	service.launchFrame(ctx, readFrame(channel.FrameLaunchRequest, ""))
-	if executor.outputCalls != 1 || executor.historyCalls != 1 || executor.messagesCalls != 1 || executor.modelCalls != 1 || executor.launchCalls != 1 {
+	if executor.outputCalls != 1 || executor.historyCalls != 1 || executor.messagesCalls != 1 || executor.modelCalls != 1 || executor.registryCalls != 1 || executor.launchCalls != 1 {
 		t.Fatalf("unconfigured policy blocked a read: %+v", executor)
 	}
 }
