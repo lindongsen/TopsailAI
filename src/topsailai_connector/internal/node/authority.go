@@ -107,9 +107,21 @@ func ListScopeNames(lookup func(string) string) ([]security.Scope, error) {
 	if lookup == nil {
 		return nil, fmt.Errorf("environment lookup is nil")
 	}
-	configDir, err := ResolveConfigDir(lookup)
+	// A stateless Node has no config directory, and resolving one would create it.
+	// The policy source is resolved with an empty directory instead, which is the
+	// same value LoadConfig passes in that mode: an embedded policy is used, or the
+	// operator's absolute CONNECTOR_NODE_POLICY_FILE, and a build with neither is
+	// refused with the message that names both options.
+	stateless, err := resolveStateless(lookup("CONNECTOR_NODE_STATELESS"))
 	if err != nil {
 		return nil, err
+	}
+	var configDir string
+	if !stateless {
+		configDir, err = ResolveConfigDir(lookup)
+		if err != nil {
+			return nil, err
+		}
 	}
 	policyPath, policyBytes, err := resolvePolicySource(lookup, configDir)
 	if err != nil {

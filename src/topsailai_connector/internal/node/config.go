@@ -48,6 +48,14 @@ type Config struct {
 	ReplayWindow time.Duration
 	// ReplayCapacity bounds the number of unexpired nonces the Node records.
 	ReplayCapacity int
+	// Stateless reports that this Node must not create a directory or a file. The
+	// identity and the credentials are then held in memory only, and ConfigDir and
+	// CredentialsPath are empty because there is nothing to name.
+	//
+	// The mode exists for a machine whose filesystem is read-only. It is off by
+	// default, and a Node that does not set it behaves exactly as it did before the
+	// mode existed.
+	Stateless bool
 }
 
 // LoadConfig builds a Config from a lookup function.
@@ -94,14 +102,26 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
-	configDir, err := resolveConfigDir(lookup("CONNECTOR_NODE_CONFIG_DIR"))
+	stateless, err := resolveStateless(lookup("CONNECTOR_NODE_STATELESS"))
 	if err != nil {
 		return Config{}, err
 	}
 
-	credentialsPath, err := resolveCredentialsPath(lookup("CONNECTOR_NODE_CREDENTIALS_FILE"), configDir)
-	if err != nil {
-		return Config{}, err
+	// A stateless Node has no config directory and no credential file: writing
+	// nothing is the whole point of the mode. The two paths are therefore left
+	// empty rather than resolved, and every consumer already treats an empty path
+	// as "this Node has none": the dialer skips the file watcher, the deny list
+	// skips an empty entry, and the config-overlap check is disabled.
+	var configDir, credentialsPath string
+	if !stateless {
+		configDir, err = resolveConfigDir(lookup("CONNECTOR_NODE_CONFIG_DIR"))
+		if err != nil {
+			return Config{}, err
+		}
+		credentialsPath, err = resolveCredentialsPath(lookup("CONNECTOR_NODE_CREDENTIALS_FILE"), configDir)
+		if err != nil {
+			return Config{}, err
+		}
 	}
 
 	window, err := resolveReplayWindow(lookup("CONNECTOR_NODE_REPLAY_WINDOW_SECONDS"))
@@ -128,7 +148,27 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 		PolicyBytes:     policyBytes,
 		ReplayWindow:    window,
 		ReplayCapacity:  capacity,
+		Stateless:       stateless,
 	}, nil
+}
+
+// resolveStateless parses the stateless-mode switch.
+//
+// The value is validated strictly: `1` enables the mode, an empty value or `0`
+// disables it, and anything else is refused rather than read as "off". A mode that
+// decides whether the process may write to disk is a mode whose state must be
+// statable, and a switch that silently accepts a spelling it does not understand is
+// a switch nobody can state. This follows the PACKAGE_ALLOW_FILESYSTEM_ROOT
+// precedent.
+func resolveStateless(value string) (bool, error) {
+	switch value {
+	case "", "0":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("CONNECTOR_NODE_STATELESS is %q, want 1, 0 or empty", value)
+	}
 }
 
 // resolvePolicySource decides where the policy comes from: the document compiled
@@ -158,6 +198,9 @@ func resolvePolicySource(lookup func(string) string, configDir string) (string, 
 	}
 
 	if policyPath == "" {
+		if configDir == "" {
+			return "", nil, fmt.Errorf("no policy is in force: this build compiled none in and CONNECTOR_NODE_POLICY_FILE is unset, and a stateless Node has no config directory to hold a default policy.yaml; set CONNECTOR_NODE_POLICY_FILE to an absolute path or use a build that compiled its policy in")
+		}
 		policyPath = filepath.Join(configDir, "policy.yaml")
 	}
 	if !filepath.IsAbs(policyPath) {
@@ -184,6 +227,19 @@ func ResolveConfigDir(lookup func(string) string) (string, error) {
 		return "", fmt.Errorf("environment lookup is nil")
 	}
 	return resolveConfigDir(lookup("CONNECTOR_NODE_CONFIG_DIR"))
+}
+
+// StatelessRequested reports whether the environment asks for stateless mode.
+//
+// It exists so a subcommand that would write a file can refuse before it resolves a
+// config directory, because resolving one creates it. A subcommand that called
+// ResolveConfigDir first and then discovered the mode would have created the very
+// directory the mode exists to avoid, and the refusal would arrive after the damage.
+func StatelessRequested(lookup func(string) string) (bool, error) {
+	if lookup == nil {
+		return false, fmt.Errorf("environment lookup is nil")
+	}
+	return resolveStateless(lookup("CONNECTOR_NODE_STATELESS"))
 }
 
 // resolveCredentialsPath returns the absolute credential file path.
@@ -306,8 +362,18 @@ func (c Config) Redacted() string {
 		// instead of printing an empty value that reads like a missing configuration.
 		policy = "embedded"
 	}
+	// A stateless Node has no config directory and no credential file, so the two
+	// fields are reported as the mode rather than as empty values. An empty
+	// config_dir= in a log line reads as a configuration mistake, and the operator
+	// would go looking for a directory that the mode exists to avoid creating.
+	configDir := c.ConfigDir
+	credentials := c.CredentialsPath
+	if c.Stateless {
+		configDir = "stateless"
+		credentials = "stateless"
+	}
 	return fmt.Sprintf("server=%s tunnel_token=%s config_dir=%s credentials=%s policy=%s replay_window=%s replay_capacity=%d",
-		c.ServerURL, c.TunnelToken.Redacted(), c.ConfigDir, c.CredentialsPath, policy, c.ReplayWindow, c.ReplayCapacity)
+		c.ServerURL, c.TunnelToken.Redacted(), configDir, credentials, policy, c.ReplayWindow, c.ReplayCapacity)
 }
 
 // String renders the configuration with the secret redacted, so a Config that is

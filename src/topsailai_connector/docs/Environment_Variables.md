@@ -233,11 +233,81 @@ it does not hold the secret that produced it.
 | `CONNECTOR_NODE_POLICY_FILE` | `<config>/policy.yaml` | `run`, `scope list` | Path to the policy file. A missing file is a startup failure |
 | `CONNECTOR_NODE_REPLAY_WINDOW_SECONDS` | `60` | `run` | How far a node proof timestamp may differ from the Node's clock. At least 1, at most 600 |
 | `CONNECTOR_NODE_REPLAY_CAPACITY` | `65536` | `run` | Number of unexpired node nonces the Node records. A full cache refuses new proofs rather than evicting a live nonce |
+| `CONNECTOR_NODE_STATELESS` | unset | `run`, `scope list`, `id`, `regenerate`, `credential` | `1` runs the Node without creating any directory or file. `0` or empty leaves the file-backed behaviour unchanged. Any other value is a startup failure |
 
 `id`, `regenerate`, the `credential` subcommands and `scope list` read only
 `CONNECTOR_NODE_CONFIG_DIR`, and `scope list` also reads the policy file. They never
 dial, so they never need a dial target or a tunnel token, and requiring one would
 make the documented first-run order impossible.
+
+#### Stateless mode (无状态模式)
+
+`CONNECTOR_NODE_STATELESS=1` starts the Node without creating a directory or a
+file. It exists for a machine whose filesystem is read-only, where the file-backed
+Node cannot start at all because it must create its config directory before it can
+serve anything.
+
+The mode is off by default, and a Node that does not set it behaves exactly as it
+did before the mode existed: the config directory is created, the identity file and
+the credential file are written on first start, and every subcommand works as
+documented.
+
+| Aspect | File-backed (default) | Stateless (`=1`) |
+|---|---|---|
+| Config directory | Created with `0700` | **Not created** |
+| `identity` file | Written on first start | **Not written** |
+| `credentials.yaml` | Written on first start | **Not written** |
+| Node id | Read from the file, seeded by the embedded value | The embedded value, or generated in memory |
+| Credentials | Read from the file, seeded by the embedded value | The embedded value, or generated in memory |
+| Policy | `<config>/policy.yaml`, or the embedded document | The embedded document, or `CONNECTOR_NODE_POLICY_FILE` |
+| `CONNECTOR_NODE_CONFIG_DIR` | Read | **Not read** |
+| `CONNECTOR_NODE_CREDENTIALS_FILE` | Read | **Not read** |
+| `id`, `regenerate`, `credential` | Work on the files | **Refused**, naming the console |
+| Lifetime | Survives a restart | Lost when the process exits |
+
+The value is validated strictly: `1` enables the mode, an empty value or `0`
+disables it, and anything else is refused rather than read as "off". A mode that
+decides whether the process may write to disk is a mode whose state must be
+statable, and a switch that silently accepts a spelling it does not understand is a
+switch nobody can state. This follows the `PACKAGE_ALLOW_FILESYSTEM_ROOT`
+precedent.
+
+The policy is the one value that cannot be defaulted in this mode, because the
+default lives inside the config directory that does not exist. A build that
+compiled its policy in is fine; a build that did not must be given
+`CONNECTOR_NODE_POLICY_FILE` as an absolute path, and a build with neither is
+refused with a message naming both options.
+
+The identity and the credentials come from the embedded values when the build
+carries them, and are generated in memory when it does not. A generated credential
+is printed once in the startup summary, exactly as the file-backed path prints it,
+because there is no file to read it back from later. The startup summary replaces
+the `config dir` and `credentials` lines with a `mode` line that says nothing is
+written and that the values are lost when the process exits.
+
+`id`, `regenerate` and the three `credential` subcommands are **refused** in this
+mode rather than silently redirected to memory. A command whose meaning depends on
+an environment variable is the hardest kind of defect to diagnose: the same command
+would change the address of a file-backed Node and change nothing on a stateless
+one, and the operator would have no way to tell which happened. The refusal runs
+before the config directory is resolved, because resolving one creates it.
+
+Two consequences are stated rather than discovered:
+
+- **The node id changes on every start** unless the build embedded one, because
+  there is no file to persist it. A caller must therefore read the address from the
+  startup summary each time, and the Server's routing registry sees a new node id
+  per process. A build that must keep a stable address embeds the identity with
+  `PACKAGE_EMBED_IDENTITY=1`.
+- **The credential is regenerated on every start** unless the build embedded one,
+  so a caller must be given the new secret each time. The same packaging switch
+  fixes it.
+
+The mode removes two exposures that the file-backed mode carries, because the files
+they concern do not exist: a copy of the config directory cannot be served, and the
+Windows ACL gap on `credentials.yaml` has nothing to protect. It does **not** change
+the two exposures that come from the compiled `tunnel_token`: a copy of the binary
+still leaks it, and a tunnel token holder can still impersonate a Node.
 
 The Node's identity and its credentials are two different values in two different
 files, because they answer two different questions.

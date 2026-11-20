@@ -238,11 +238,25 @@ func runNodeWithOutput(arguments []string, signals <-chan os.Signal, stdout io.W
 	// identity and a credential seeds them instead of generating them. Claiming a
 	// random generation would be false for exactly the build whose operator most needs
 	// to know where the values came from: the one that shipped the artifact.
-	if _, written := runtime.NewIdentity(); written {
-		fmt.Fprintln(stdout, "a new node id was written by this start")
+	//
+	// A stateless Node writes nothing, so the same sentence would be false in the other
+	// direction: it would tell the operator to look for a file the mode exists to avoid
+	// creating. The mode is named instead, and the sentence says where the value lives.
+	// The distinction is not cosmetic. "Written" is a claim about the filesystem, and a
+	// claim about the filesystem has to be true on the machine it is printed on.
+	if _, created := runtime.NewIdentity(); created {
+		if config.Stateless {
+			fmt.Fprintln(stdout, "a new node id was created in memory by this start")
+		} else {
+			fmt.Fprintln(stdout, "a new node id was written by this start")
+		}
 	}
 	if credential := runtime.NewCredential(); credential != nil {
-		fmt.Fprintln(stdout, "a new credential was written by this start")
+		if config.Stateless {
+			fmt.Fprintln(stdout, "a new credential was created in memory by this start")
+		} else {
+			fmt.Fprintln(stdout, "a new credential was written by this start")
+		}
 	}
 	if err := printStartupSummary(stdout, runtime, terminal); err != nil {
 		return err
@@ -303,6 +317,30 @@ func contextFromSignals(signals <-chan os.Signal) (context.Context, context.Canc
 	return ctx, cancel
 }
 
+// refuseInStatelessMode stops a subcommand that would write a file.
+//
+// `id`, `regenerate` and the three `credential` subcommands all work by reading or
+// rewriting the identity file and the credential file. A stateless Node has neither, so
+// the commands have nothing to act on. They are refused rather than silently turned into
+// in-memory operations, because a command whose meaning depends on an environment
+// variable is the hardest kind of defect to diagnose: the same command would change the
+// address of a file-backed Node and change nothing on a stateless one, and the operator
+// would have no way to tell which happened.
+//
+// The refusal runs before the config directory is resolved, because resolving one
+// creates it. A check placed after that call would have created the directory the mode
+// exists to avoid, and the refusal would arrive after the damage.
+func refuseInStatelessMode(command string) error {
+	stateless, err := node.StatelessRequested(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if !stateless {
+		return nil
+	}
+	return fmt.Errorf("%s writes the node's identity and credential files, and CONNECTOR_NODE_STATELESS=1 means this node has neither; use the interactive console instead, which changes the node id and the credentials in memory", command)
+}
+
 // runID prints the node id and nothing else, so it can be copied into a script.
 //
 // Only the config directory is resolved, not the whole configuration. `id` never dials,
@@ -318,6 +356,10 @@ func runID(arguments []string) error {
 		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
+
+	if err := refuseInStatelessMode("id"); err != nil {
 		return err
 	}
 
@@ -349,6 +391,10 @@ func runRegenerate(arguments []string) error {
 		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
+
+	if err := refuseInStatelessMode("regenerate"); err != nil {
 		return err
 	}
 
@@ -413,6 +459,10 @@ func runCredentialAdd(arguments []string) error {
 		return err
 	}
 
+	if err := refuseInStatelessMode("credential add"); err != nil {
+		return err
+	}
+
 	configDir, err := node.ResolveConfigDir(os.Getenv)
 	if err != nil {
 		return err
@@ -455,6 +505,10 @@ func runCredentialList(arguments []string) error {
 		return helpdispatch.Usagef("%v", err)
 	}
 	if err := rejectStrayArguments(flags); err != nil {
+		return err
+	}
+
+	if err := refuseInStatelessMode("credential list"); err != nil {
 		return err
 	}
 
@@ -551,6 +605,10 @@ func runCredentialRemove(arguments []string) error {
 	}
 	if *keyID == "" {
 		return helpdispatch.Usagef("--key-id is required")
+	}
+
+	if err := refuseInStatelessMode("credential remove"); err != nil {
+		return err
 	}
 
 	configDir, err := node.ResolveConfigDir(os.Getenv)

@@ -28,6 +28,12 @@ type Runtime struct {
 	// caller prints it. It is cleared by NewCredential, so a runtime cannot print a
 	// secret at a later moment.
 	createdCredential *security.Credential
+
+	// statelessCredentials is the credential list a stateless Node resolved in memory.
+	// It is nil for a file-backed Node, which reads the list from its file instead.
+	// The field exists because the mode has no file to read back from, and the startup
+	// summary must still print the credential the operator has to copy.
+	statelessCredentials []security.Credential
 }
 
 // Open assembles a Runtime from a configuration.
@@ -54,39 +60,61 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 		logger = slog.Default()
 	}
 
-	identityPath := IdentityPath(config.ConfigDir)
-	// A build that embedded an identity uses it as the seed for the first write, so
-	// the operator knows the address before the artifact leaves the build host. The
-	// file still wins once it exists, so `regenerate` keeps working.
-	identitySeed, err := embedded.IdentitySeed()
-	if err != nil {
-		return nil, fmt.Errorf("prepare node identity: %w", err)
-	}
-	nodeID, generated, err := EnsureIdentityWithSeed(identityPath, identitySeed)
-	if err != nil {
-		return nil, fmt.Errorf("prepare node identity: %w", err)
-	}
+	// A stateless Node writes nothing, so its identity and its credentials are
+	// resolved in memory and no path is formed. The two branches share the same
+	// seeds and the same validators, so a stateless Node and a file-backed Node
+	// cannot disagree about what a valid node id or a valid credential is.
+	//
+	// The file-backed branch is unchanged: it still writes the identity and the
+	// credential on first start, and the file still wins once it exists.
+	var identityPath, credentialsPath string
+	var nodeID string
+	var generated bool
+	var credentials *security.CredentialSet
+	var statelessCredentials []security.Credential
+	var createdCredential *security.Credential
+	var err error
 
-	// A Config built by hand rather than by LoadConfig may leave CredentialsPath
-	// empty. The default lives inside the config directory, so an empty value is
-	// resolved here instead of producing a path with no directory component, which
-	// would write the credential file into whatever directory the process happens to
-	// run from.
-	credentialsPath := config.CredentialsPath
-	if credentialsPath == "" {
-		credentialsPath = CredentialsPath(config.ConfigDir)
-		config.CredentialsPath = credentialsPath
-	}
+	if config.Stateless {
+		nodeID, credentials, statelessCredentials, createdCredential, generated, err = prepareStatelessIdentity()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		identityPath = IdentityPath(config.ConfigDir)
+		// A build that embedded an identity uses it as the seed for the first write, so
+		// the operator knows the address before the artifact leaves the build host. The
+		// file still wins once it exists, so `regenerate` keeps working.
+		identitySeed, err := embedded.IdentitySeed()
+		if err != nil {
+			return nil, fmt.Errorf("prepare node identity: %w", err)
+		}
+		nodeID, generated, err = EnsureIdentityWithSeed(identityPath, identitySeed)
+		if err != nil {
+			return nil, fmt.Errorf("prepare node identity: %w", err)
+		}
 
-	// The embedded credential is a seed for the same reason the identity is, and the
-	// file wins once it exists so `credential remove` keeps working.
-	credentialSeed, err := embedded.CredentialSeed()
-	if err != nil {
-		return nil, fmt.Errorf("prepare node credentials: %w", err)
-	}
-	credentials, createdCredential, err := EnsureCredentialsWithSeed(credentialsPath, credentialSeed)
-	if err != nil {
-		return nil, fmt.Errorf("prepare node credentials: %w", err)
+		// A Config built by hand rather than by LoadConfig may leave CredentialsPath
+		// empty. The default lives inside the config directory, so an empty value is
+		// resolved here instead of producing a path with no directory component, which
+		// would write the credential file into whatever directory the process happens to
+		// run from.
+		credentialsPath = config.CredentialsPath
+		if credentialsPath == "" {
+			credentialsPath = CredentialsPath(config.ConfigDir)
+			config.CredentialsPath = credentialsPath
+		}
+
+		// The embedded credential is a seed for the same reason the identity is, and the
+		// file wins once it exists so `credential remove` keeps working.
+		credentialSeed, err := embedded.CredentialSeed()
+		if err != nil {
+			return nil, fmt.Errorf("prepare node credentials: %w", err)
+		}
+		credentials, createdCredential, err = EnsureCredentialsWithSeed(credentialsPath, credentialSeed)
+		if err != nil {
+			return nil, fmt.Errorf("prepare node credentials: %w", err)
+		}
 	}
 
 	// The deny list names the Node's own files. The identity file and the credential
@@ -132,11 +160,12 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 	}
 
 	runtime := &Runtime{
-		config:    config,
-		holder:    NewIdentityHolder(nodeID, credentials),
-		generated: generated,
-		authority: authority,
-		logger:    logger,
+		config:               config,
+		holder:               NewIdentityHolder(nodeID, credentials),
+		generated:            generated,
+		authority:            authority,
+		logger:               logger,
+		statelessCredentials: statelessCredentials,
 	}
 	// The generated credential is kept only until the caller prints it. It is not
 	// stored on the runtime, because a runtime that held it would be a runtime that
@@ -145,12 +174,82 @@ func Open(config Config, logger *slog.Logger) (*Runtime, error) {
 	return runtime, nil
 }
 
-// NewIdentity returns the node id and whether this start wrote it.
+// prepareStatelessIdentity resolves the identity and the credentials without
+// touching the filesystem.
+//
+// The order of preference is the one the operator asked for: a value compiled into
+// the binary is used when it is present, and a value is generated in memory when it
+// is not. Nothing is written either way, so the mode works on a filesystem the
+// process cannot write to.
+//
+// The generated credential is returned separately so the caller can print it once,
+// exactly as the file-backed path does. A stateless Node that generated a credential
+// and did not print it would be a Node nobody can reach, because there is no file to
+// read it back from.
+//
+// The identity is reported the same way, and the distinction it carries is the one the
+// startup summary needs: a random id is new on every start, while an embedded id is the
+// same value every time. Announcing an embedded id as new would be false, and an
+// operator who believed it would expect the address to change on the next restart.
+//
+// A malformed embedded value is an error rather than a fallback to a random one. A
+// packaging mistake that silently produced a different secret would hand the operator
+// a value that does not authenticate, and the failure would appear on the recipient's
+// machine rather than at packaging time.
+func prepareStatelessIdentity() (nodeID string, credentials *security.CredentialSet, list []security.Credential, created *security.Credential, identityCreated bool, err error) {
+	identitySeed, err := embedded.IdentitySeed()
+	if err != nil {
+		return "", nil, nil, nil, false, fmt.Errorf("prepare node identity: %w", err)
+	}
+	if identitySeed == "" {
+		identitySeed, err = security.NewNodeID()
+		if err != nil {
+			return "", nil, nil, nil, false, fmt.Errorf("prepare node identity: %w", err)
+		}
+		identityCreated = true
+	}
+
+	credentialSeed, err := embedded.CredentialSeed()
+	if err != nil {
+		return "", nil, nil, nil, false, fmt.Errorf("prepare node credentials: %w", err)
+	}
+	generated := false
+	if credentialSeed.KeyID == "" {
+		credentialSeed, err = security.NewCredential()
+		if err != nil {
+			return "", nil, nil, nil, false, fmt.Errorf("prepare node credentials: %w", err)
+		}
+		generated = true
+	}
+
+	// The list is returned alongside the set because CredentialSet deliberately
+	// exposes no way to read a secret back: it offers Lookup, Len and KeyIDs only.
+	// A stateless Node has no file to re-read, so the list it built is the only
+	// record of the credential, and the startup summary needs it to print the
+	// secret the operator must copy.
+	list = []security.Credential{credentialSeed}
+	set, err := security.NewCredentialSet(list)
+	if err != nil {
+		return "", nil, nil, nil, false, fmt.Errorf("prepare node credentials: %w", err)
+	}
+	if generated {
+		created = &credentialSeed
+	}
+	return identitySeed, set, list, created, identityCreated, nil
+}
+
+// NewIdentity returns the node id and whether this start created it.
 //
 // The second result exists so the caller announces the identifier exactly once, at the
-// moment it is created. The value may be a random one this start generated or a seed
-// the build embedded; the caller cannot tell the two apart, and does not need to,
-// because both are "the file did not exist and this start created it".
+// moment it is created. In a file-backed Node "created" means "the file did not exist
+// and this start wrote it", and the value may be a random one this start generated or a
+// seed the build embedded; the caller cannot tell the two apart and does not need to,
+// because both are recorded in the file from then on.
+//
+// In a stateless Node "created" means "this start generated a random value", because
+// nothing is recorded anywhere. An embedded value is not created by the start: it is the
+// same value on every start, so announcing it as new would tell the operator to expect a
+// different address after a restart.
 func (r *Runtime) NewIdentity() (string, bool) {
 	return r.holder.NodeID(), r.generated
 }
@@ -164,6 +263,24 @@ func (r *Runtime) NewCredential() *security.Credential {
 	credential := r.createdCredential
 	r.createdCredential = nil
 	return credential
+}
+
+// CredentialList returns the credentials this Node accepts, for reporting.
+//
+// A file-backed Node reads them from the file, because the runtime deliberately
+// holds no secret: a runtime that could render a secret would be a runtime that
+// could print one at any later moment.
+//
+// A stateless Node has no file to read, so the list is the one it resolved in
+// memory. That is a deliberate exception to the no-secret-on-the-runtime rule, and
+// it is confined to the mode that has no other way to answer the question: without
+// it the startup summary could not print the credential the operator must copy, and
+// there is no file to read it back from later.
+func (r *Runtime) CredentialList() ([]security.Credential, error) {
+	if r.config.CredentialsPath != "" {
+		return LoadCredentialList(r.config.CredentialsPath)
+	}
+	return r.statelessCredentials, nil
 }
 
 // IdentityHolder returns the holder the Node serves from.
