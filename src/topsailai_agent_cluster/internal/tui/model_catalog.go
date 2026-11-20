@@ -94,23 +94,47 @@ func assignModelCatalogRowNumbers(rows []ModelCatalogViewRow) {
 // It is deliberately separate from the session and history layouts, because a model
 // profile has no generation, no workspace and no data-status stamp, and reusing
 // those columns would imply fields it does not have.
+//
+// There is no CURRENT column. It spent eleven characters repeating "no" on every
+// row that is not current, and the one row that mattered was the only row an
+// operator had to search for. The current profile is marked inside MODEL instead.
 var modelCatalogColumns = []tableColumn{
 	{key: columnNo, header: "NO", cap: 4},
 	{key: columnName, header: "MODEL", cap: 48, wide: true},
-	{key: "current", header: "CURRENT", cap: 8},
 	{key: "available", header: "AVAILABLE", cap: 24, warn: true},
 	{key: columnID, header: "MODEL_PROFILE_ID", cap: 36},
 }
+
+// modelCurrentMarker prefixes the MODEL cell of the profile the session is using.
+//
+// It is a display decoration, not a field. The tri-state observation stays on the
+// row as CurrentState, so the marker can never become a second source of truth and
+// the wire document is unchanged by this layout.
+const modelCurrentMarker = "* "
 
 // modelCatalogCells renders one profile row into the keyed layout.
 func modelCatalogCells(row ModelCatalogViewRow) map[string]string {
 	return map[string]string{
 		columnNo:    strconv.Itoa(row.No),
-		columnName:  escapeCell(row.ProviderDisplayName),
-		"current":   modelCurrentCell(row),
+		columnName:  modelNameCell(row),
 		"available": escapeCell(modelAvailableCell(row)),
 		columnID:    escapeCell(row.ModelProfileID),
 	}
+}
+
+// modelNameCell renders the MODEL cell, marking the profile the session uses now.
+//
+// The marker is applied after escaping, so a display name containing a backslash is
+// escaped exactly once and the marker is never itself escaped. A profile that is not
+// current, or whose current state was not observed, is printed unchanged: only a
+// definite "yes" earns a marker, because a marker on an unobserved row would state a
+// fact nobody reported.
+func modelNameCell(row ModelCatalogViewRow) string {
+	name := escapeCell(row.ProviderDisplayName)
+	if modelCurrentCell(row) != protocol.ModelCurrentYes {
+		return name
+	}
+	return modelCurrentMarker + name
 }
 
 // modelCurrentCell states whether the session uses this profile now.
@@ -179,16 +203,83 @@ func RenderModelCatalog(out io.Writer, view ModelCatalogView, options TableOptio
 		cells[i] = projectCells(values, columns)
 		states[i] = make([]string, len(columns))
 		for j, column := range columns {
-			if column.key == "available" {
+			switch column.key {
+			case "available":
 				states[i][j] = modelAvailableState(row)
-				continue
+			case columnName:
+				states[i][j] = modelNameState(row)
+			default:
+				states[i][j] = "ok"
 			}
-			states[i][j] = "ok"
 		}
 		rowStyles[i] = stateStyle(modelAvailableState(row))
 	}
 	widths := measureColumns(cells, columns, options.Full)
-	return writeTable(out, headers, cells, states, rowStyles, widths, columns, options)
+	if err := writeTable(out, headers, cells, states, rowStyles, widths, columns, options); err != nil {
+		return err
+	}
+	return writeModelCatalogCurrentNotice(out, view)
+}
+
+// modelNameState marks the MODEL cell of the profile in use, so the marker can be
+// emphasised without recolouring the name printed beside it.
+func modelNameState(row ModelCatalogViewRow) string {
+	if modelCurrentCell(row) == protocol.ModelCurrentYes {
+		return stateModelCurrent
+	}
+	return "ok"
+}
+
+// writeModelCatalogNotices states the caveats one rendered catalog carries.
+//
+// The bounded-window caveat is a diagnostic, because it describes the read rather
+// than the answer, so it goes to the error channel like every other provider
+// limitation. The unobserved-current caveat is part of the answer and is written
+// beside the table by writeModelCatalogCurrentNotice instead.
+func writeModelCatalogNotices(w io.Writer, view ModelCatalogView) error {
+	if !view.Truncated {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, "model profiles are a bounded provider window; some profiles are not listed")
+	return err
+}
+
+// writeModelCatalogCurrentNotice states that no row is marked current because the
+// provider did not report which profile the session uses.
+//
+// It is written to the table's own output rather than to the error channel, because
+// it explains the table the operator is reading. Without it, a catalog where the
+// provider reported nothing would look identical to a catalog where the provider
+// reported that none of the listed profiles is in use, and the second claim is one
+// nobody made. A catalog that does mark a row needs no notice, because the marker
+// already answers the question.
+func writeModelCatalogCurrentNotice(w io.Writer, view ModelCatalogView) error {
+	if !modelCurrentUnobserved(view) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, "the provider did not report which model profile the session is using, so no row is marked current")
+	return err
+}
+
+// modelCurrentUnobserved reports whether the catalog marks no current profile while
+// at least one row was not observed.
+//
+// The marker can only express "this one is current". Without this notice, a catalog
+// where the provider reported nothing would look identical to a catalog where the
+// provider reported that none of the listed profiles is in use, and the second claim
+// is one nobody made. A catalog that does mark a row needs no notice, because the
+// marker already answers the question.
+func modelCurrentUnobserved(view ModelCatalogView) bool {
+	unobserved := false
+	for _, row := range view.Rows {
+		switch modelCurrentCell(row) {
+		case protocol.ModelCurrentYes:
+			return false
+		case protocol.ModelCurrentUnknown:
+			unobserved = true
+		}
+	}
+	return unobserved
 }
 
 // modelAvailableState maps the adapter verdict to a colour state.
@@ -247,10 +338,8 @@ func (r CommandRunner) ModelCatalog(ctx context.Context, out, errors io.Writer, 
 	if jsonMode {
 		return RenderJSON(out, view)
 	}
-	if view.Truncated {
-		if _, err := fmt.Fprintln(errors, "model profiles are a bounded provider window; some profiles are not listed"); err != nil {
-			return err
-		}
+	if err := writeModelCatalogNotices(errors, view); err != nil {
+		return err
 	}
 	if len(view.Rows) == 0 {
 		// An empty catalog is a real answer, not a failure and not an unsupported
