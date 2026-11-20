@@ -123,19 +123,23 @@ func TestModelRegistryMarksTheModelInUse(t *testing.T) {
 	}
 }
 
-// TestModelRegistryStatesAnAbsentSelection proves an unconfigured machine is stated
-// plainly rather than rendered as a table with no marker. An absent selection is an
-// observation, so it must not look like a lost selection or a rendering fault.
+// TestModelRegistryStatesAnAbsentSelection proves a registry where no entry is marked
+// selected is stated as unknown rather than rendered as a table with no marker.
+//
+// The operator's rule is that every entry reporting selected:false means nothing is
+// selected, so the model in use is unknown. It must not read as a lost selection, and
+// it must not read as "no model is configured" either, because the machine may list
+// usable models while declaring no default.
 func TestModelRegistryStatesAnAbsentSelection(t *testing.T) {
 	stub := modelRegistryFixture()
 	stub.registry.CurrentProfileID = ""
-	stub.registry.CurrentSource = protocol.ModelSourceInherited
+	stub.registry.CurrentSource = protocol.ModelSourceUnknown
 	output, _ := runScope(t, stub, "cd host-one/endpoint-1\nmodel\nexit\n", ColorPolicy{})
 	if strings.Contains(output, modelCurrentMarker) {
 		t.Fatalf("no row may be marked when no selection exists: %q", output)
 	}
-	if !strings.Contains(output, "no model is configured") {
-		t.Fatalf("an absent selection is not stated: %q", output)
+	if !strings.Contains(output, "the model in use is unknown") {
+		t.Fatalf("an absent selection is not stated as unknown: %q", output)
 	}
 }
 

@@ -7,20 +7,23 @@ import (
 	"strings"
 )
 
-// The closed current-source vocabulary the wire contract declares.
+// The current-source vocabulary this provider can actually produce.
 //
-// The values are repeated here because this executable is an independent module and
-// cannot import the Cluster's protocol package. They are named rather than written as
-// bare literals so the four answers stay distinguishable at every call site: a
-// workspace default, a project override, a provider-inherited default, and a source
-// that was never observed. The last one is not a negative, and collapsing it into one
-// of the others would tell the operator the environment uses nothing when the truth
-// is that nothing was read.
+// The Cluster declares a closed four-value vocabulary, and this executable is an
+// independent module that cannot import it, so the values are repeated here. Only two
+// of them are reachable from this provider, and that is deliberate rather than an
+// omission: the registry is answered by one `models list --json` read, which reports
+// the workspace-level selection. A project override is a different read (`--project`),
+// so this provider never observes one and must not claim it did. Reporting a source it
+// did not read would be a guess dressed as an observation.
 const (
+	// modelRegistrySourceWorkspace means the list marked one entry as selected, so the
+	// machine has a declared default.
 	modelRegistrySourceWorkspace = "workspace"
-	modelRegistrySourceProject   = "project"
-	modelRegistrySourceInherited = "inherited"
-	modelRegistrySourceUnknown   = "unknown"
+	// modelRegistrySourceUnknown means no entry was marked selected. The operator's
+	// rule is that every entry reporting false means nothing is selected, so the model
+	// in use is unknown rather than absent-and-therefore-defaulted.
+	modelRegistrySourceUnknown = "unknown"
 )
 
 // modelRegistryEntry is one provider registry record.
@@ -28,10 +31,17 @@ const (
 // ID and Name are different values, and the difference is load-bearing. The provider
 // derives the identifier from the display name, so `models add "My Model"` produces
 // id `my-model` with name `My Model`. The provider's own selection file stores the
-// identifier, and `models current` reports it as `model_id`, so a reader that keys on
-// the display name cannot tell which entry a launch would use. Both fields are decoded
-// here for that reason; the session catalog decodes only the name because it addresses
-// a session rather than the machine.
+// identifier, so a reader that keys on the display name cannot tell which entry a
+// launch would use. Both fields are decoded here for that reason; the session catalog
+// decodes only the name because it addresses a session rather than the machine.
+//
+// Selected is the provider's own answer to "is this the model in use". It is read from
+// the same document as the entries, so the menu and the current marker cannot disagree:
+// a second read would be a second source of truth for one fact, and the two reads do
+// disagree in practice. Measured on this host, after the selected model was disabled,
+// `models list --json` reported every entry as `selected:false` while `models current
+// --json` reported `selection_invalid` for the same state. The list is the truthful
+// answer, because a disabled model is not what a launch would use.
 //
 // Enabled is a pointer because the provider omits the field when the entry is enabled
 // and writes `false` only when it is disabled. A plain bool would read an absent field
@@ -41,6 +51,7 @@ type modelRegistryEntry struct {
 	Name     string `json:"name"`
 	Protocol string `json:"protocol"`
 	Enabled  *bool  `json:"enabled"`
+	Selected bool   `json:"selected"`
 }
 
 // modelRegistryFact is one entry as the Cluster contract receives it.
@@ -59,11 +70,11 @@ type modelRegistryFact struct {
 
 // modelRegistryResult is the whole Endpoint-scoped model observation.
 //
-// ProjectOverrides is deliberately absent. The provider's public surface can answer
-// "which model does this one folder resolve to" but cannot enumerate the folders that
-// carry an override, so filling the field would require reading the provider's private
-// selection file. Reporting nothing is honest; reporting a guess would let the operator
-// believe a project override does not exist.
+// ProjectOverrides is deliberately absent. The provider can answer "which model does
+// this one folder resolve to" through `models list --project PATH`, but no command
+// enumerates the folders that carry an override, so filling the field would require
+// reading the provider's private selection file. Reporting nothing is honest; reporting
+// a guess would let the operator believe a project override does not exist.
 type modelRegistryResult struct {
 	Entries           []modelRegistryFact `json:"entries"`
 	CurrentProviderID string              `json:"current_provider_id,omitempty"`
@@ -72,18 +83,16 @@ type modelRegistryResult struct {
 	Truncated         bool                `json:"truncated"`
 }
 
-// modelSelection is the provider's answer to `models current --json`.
-type modelSelection struct {
-	Source  string `json:"source"`
-	ModelID string `json:"model_id"`
-}
-
 // modelRegistry answers the Endpoint-scoped model read.
 //
 // It takes no target, because a registry describes the machine rather than one
 // session. A caller that supplies one is refused instead of having it ignored: an
 // ignored target would let a session-scoped caller believe the answer was about its
 // session.
+//
+// The whole answer comes from one provider call. The entries and the current marker
+// are the same document, so they cannot disagree, and the read costs one provider
+// invocation instead of two.
 func (p *provider) modelRegistry(ctx context.Context, requested *target, raw json.RawMessage) (modelRegistryResult, error) {
 	if requested != nil {
 		return modelRegistryResult{}, fmt.Errorf("%w: model.registry does not accept a target", errInvalidRequest)
@@ -99,13 +108,11 @@ func (p *provider) modelRegistry(ctx context.Context, requested *target, raw jso
 	if entries == nil || len(entries) > maxModelProfiles {
 		return modelRegistryResult{}, errorsNew("invalid or oversized model registry")
 	}
-	selection := p.modelSelection(ctx)
 	result := modelRegistryResult{
-		Entries:           make([]modelRegistryFact, 0, len(entries)),
-		CurrentProviderID: strings.TrimSpace(selection.ModelID),
-		CurrentSource:     modelRegistrySource(selection.Source),
-		ObservedAtMS:      p.now().UnixMilli(),
-		Truncated:         false,
+		Entries:       make([]modelRegistryFact, 0, len(entries)),
+		CurrentSource: modelRegistrySourceUnknown,
+		ObservedAtMS:  p.now().UnixMilli(),
+		Truncated:     false,
 	}
 	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
@@ -121,6 +128,17 @@ func (p *provider) modelRegistry(ctx context.Context, requested *target, raw jso
 			return modelRegistryResult{}, errorsNew("model registry contains duplicate provider resource key")
 		}
 		seen[key] = struct{}{}
+		if entry.Selected {
+			// Two selected entries would make "the model in use" have no single
+			// answer. Picking one would be a guess, and reporting both would leave
+			// the operator unable to tell which one a launch would use, so the
+			// inconsistent registry is refused instead of being resolved silently.
+			if result.CurrentProviderID != "" {
+				return modelRegistryResult{}, errorsNew("model registry marks more than one entry as selected")
+			}
+			result.CurrentProviderID = id
+			result.CurrentSource = modelRegistrySourceWorkspace
+		}
 		available, reason := modelAvailability(modelEntry{Name: entry.Name, Protocol: entry.Protocol, Enabled: entry.Enabled})
 		result.Entries = append(result.Entries, modelRegistryFact{
 			ResourceKind:        resourceModelProfile,
@@ -147,39 +165,4 @@ func modelRegistryDisplayName(entry modelRegistryEntry, id string) string {
 		return boundedString(name, 256)
 	}
 	return boundedString(id, 256)
-}
-
-// modelSelection reads the provider's effective selection.
-//
-// A failed read is reported as an empty selection rather than as an error, and the
-// caller then reports the source as unknown. The registry is a menu: taking it away
-// because one observation was unavailable would leave the operator with nothing, and
-// the honest answer is that the Endpoint did not observe which entry a launch would
-// use. This is the same rule the session catalog applies to its own current-model
-// observation.
-func (p *provider) modelSelection(ctx context.Context) modelSelection {
-	var selection modelSelection
-	if err := runJSON(ctx, p.runner, []string{"models", "current", "--json"}, maxModelBytes, &selection); err != nil {
-		return modelSelection{}
-	}
-	return selection
-}
-
-// modelRegistrySource maps one provider source onto the closed Cluster vocabulary.
-//
-// An unrecognized value becomes unknown rather than being passed through. The Cluster
-// validates the vocabulary, so forwarding a provider value it does not know would fail
-// the whole read; mapping it keeps the menu and states honestly that the source was not
-// understood.
-func modelRegistrySource(source string) string {
-	switch strings.TrimSpace(source) {
-	case modelRegistrySourceWorkspace:
-		return modelRegistrySourceWorkspace
-	case modelRegistrySourceProject:
-		return modelRegistrySourceProject
-	case modelRegistrySourceInherited:
-		return modelRegistrySourceInherited
-	default:
-		return modelRegistrySourceUnknown
-	}
 }

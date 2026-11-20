@@ -204,10 +204,12 @@ func writeModelRegistryNotices(out io.Writer, view ModelRegistryView) error {
 		}
 	}
 	if view.CurrentProfileID == "" {
-		// An absent selection is an observation, not an error: the provider reported
-		// that no model is configured, so no row is marked. Saying so prevents an
-		// unconfigured machine from looking like a machine whose selection was lost.
-		if _, err := fmt.Fprintln(out, "no model is configured for launches from this endpoint, so no row is marked current"); err != nil {
+		// Every entry reporting selected:false means nothing is selected, so the model
+		// in use is unknown. It is stated as unknown rather than as "no model is
+		// configured", because the registry may well list usable models while none of
+		// them is the declared default; calling that "not configured" would tell the
+		// operator to add a model they already have.
+		if _, err := fmt.Fprintln(out, "the model in use is unknown: no entry is marked selected, so a launch from this endpoint has no declared default"); err != nil {
 			return err
 		}
 		return nil

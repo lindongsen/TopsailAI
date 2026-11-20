@@ -47,8 +47,8 @@ type ModelRegistryEntry struct {
 type ModelRegistry struct {
 	Entries []ModelRegistryEntry `json:"entries"`
 	// CurrentProfileID names the profile a launch from this machine would use now.
-	// It is empty when the provider reported no selection, which is an observation
-	// and not an error.
+	// It is empty when no entry is marked selected, which is an observation and not
+	// an error: the machine may list usable models while declaring no default.
 	CurrentProfileID string `json:"current_profile_id,omitempty"`
 	// CurrentSource reports which declaration produced CurrentProfileID. It is a
 	// closed vocabulary, because "the machine uses X" is ambiguous on a machine
