@@ -134,6 +134,8 @@ PACKAGE_ALLOW_FILESYSTEM_ROOT ?=
 PACKAGE_EMBED_CONFIG ?= 1
 PACKAGE_EMBED_IDENTITY ?=
 PACKAGE_NODE_KEY_ID ?= bundle-caller
+PACKAGE_EMBED_STATELESS ?=
+PACKAGE_PERMISSIONS ?= read list stat
 
 # The unit suite is what `go test ./...` runs. Integration and BDD suites are
 # behind build tags so a plain unit run stays fast and needs no built binary.
@@ -459,6 +461,8 @@ package: build-node
 	PACKAGE_ALLOW_FILESYSTEM_ROOT='$(PACKAGE_ALLOW_FILESYSTEM_ROOT)' \
 	PACKAGE_EMBED_CONFIG='$(PACKAGE_EMBED_CONFIG)' \
 	PACKAGE_EMBED_IDENTITY='$(PACKAGE_EMBED_IDENTITY)' \
+	PACKAGE_EMBED_STATELESS='$(PACKAGE_EMBED_STATELESS)' \
+	PACKAGE_PERMISSIONS='$(PACKAGE_PERMISSIONS)' \
 	PACKAGE_NODE_KEY_ID='$(PACKAGE_NODE_KEY_ID)' \
 	BIN_DIR='$(BIN_DIR)' \
 	ENV_DIR='$(ENV_DIR)' \
@@ -497,6 +501,58 @@ package-zip:
 # package-zip-windows is package-zip for windows/amd64.
 package-zip-windows:
 	@$(MAKE) --no-print-directory package PACKAGE_EMBED_CONFIG=0 PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
+
+# package-stateless builds one executable that runs with no file at all: the
+# Server URL, the policy, the tunnel token, the node id, the credential and the
+# stateless mode are compiled in, so the recipient runs it and the Node connects.
+#
+# The scope set is chosen by PACKAGE_GOOS, because a policy naming both C:\ and /
+# cannot start. filepath.IsAbs is platform-specific, so on Linux the Windows entry
+# is a relative path, and a relative path is a startup failure rather than a
+# tolerated absence. Measured:
+#
+#   connector-node: load authority: scope "windows": path "C:\\" is relative;
+#   a relative path resolves differently per launch
+#
+# Linux therefore gets one scope rooted at /, and Windows gets one scope per drive
+# letter, a=A:\ through z=Z:\. A drive with no volume behind it is tolerated: the
+# scope stays defined, keeps its grant, and answers not_found until the volume
+# appears and the Node restarts. That is what makes one artifact usable on a
+# machine whose drive letters differ from the build host's.
+#
+# allow_filesystem_root is set, because every default scope is a filesystem root.
+# The artifact therefore exposes the whole machine, and the deny list is what keeps
+# the Node's own config directory unreadable. That is a deliberate decision for a
+# delivery whose purpose is "reach this machine", and it is stated in the summary
+# the packaging script prints.
+#
+# Every permission is granted, but only read, list and stat are implemented in this
+# version: file.write and command.exec are refused at dispatch, before the policy is
+# consulted, so granting them changes nothing a caller can observe.
+#
+# The node id, the key id and the secret are generated here and compiled in, and
+# the same values are written to an env file beside the artifact at mode 0600, so
+# the operator can configure the CLI without asking the recipient for anything.
+STATELESS_SCOPES ?= $(shell if [ '$(PACKAGE_GOOS)' = windows ]; then \
+	for d in a b c d e f g h i j k l m n o p q r s t u v w x y z; do \
+		printf '%s=%s:\\ ' "$$d" "$$(printf '%s' "$$d" | tr 'a-z' 'A-Z')"; done; \
+	else printf 'linux=/'; fi)
+
+package-stateless:
+	@$(MAKE) --no-print-directory package \
+		PACKAGE_EMBED_CONFIG=1 \
+		PACKAGE_EMBED_IDENTITY=1 \
+		PACKAGE_EMBED_STATELESS=1 \
+		PACKAGE_ALLOW_FILESYSTEM_ROOT=1 \
+		PACKAGE_PERMISSIONS='read write list stat exec' \
+		PACKAGE_SCOPES='$(STATELESS_SCOPES)'
+
+# package-stateless-windows is package-stateless for windows/amd64, with the drive
+# letter scopes. It is a separate target rather than a variable the caller must
+# remember, because forgetting it produces a Linux binary whose policy names /,
+# and the failure appears on the recipient's machine.
+package-stateless-windows:
+	@$(MAKE) --no-print-directory package-stateless PACKAGE_GOOS=windows PACKAGE_GOARCH=amd64
 
 check: vet test-unit coverage test-race integration bdd e2e build-windows test-windows-compile
 

@@ -55,6 +55,18 @@ PACKAGE_EMBED_CONFIG=${PACKAGE_EMBED_CONFIG:-1}
 # because a build that carries a credential is a credential, and an existing
 # packaging run must not start producing one without being asked.
 PACKAGE_EMBED_IDENTITY=${PACKAGE_EMBED_IDENTITY:-}
+# PACKAGE_EMBED_STATELESS compiles stateless mode in as the default, so the
+# artifact runs without writing a file and without the recipient exporting
+# CONNECTOR_NODE_STATELESS first. It is off by default, because an existing
+# packaging run must not start producing a Node that writes nothing.
+PACKAGE_EMBED_STATELESS=${PACKAGE_EMBED_STATELESS:-}
+# PACKAGE_PERMISSIONS is the grant list written into every scope of the embedded
+# policy. It defaults to the three operations this version implements, so a build
+# that does not ask for more does not promise more. A caller may name any of the
+# five permissions the vocabulary defines, but only read, list and stat are
+# dispatched: file.write and command.exec are refused before the policy is
+# consulted, so granting them changes nothing a caller can observe.
+PACKAGE_PERMISSIONS=${PACKAGE_PERMISSIONS:-read list stat}
 BIN_DIR=${BIN_DIR:-bin}
 TMP_DIR=${TMP_DIR:-.tmp}
 # ENV_DIR is where the credential record is written. It defaults to BIN_DIR, which
@@ -287,6 +299,44 @@ case "$PACKAGE_EMBED_IDENTITY" in
 	;;
 esac
 
+# PACKAGE_EMBED_STATELESS accepts the same two spellings and refuses everything
+# else, for the same reason: a value such as `true` read as "off" would produce a
+# file-backed Node where a stateless one was asked for, and the failure would
+# appear on the recipient's machine as a permission error at startup.
+case "$PACKAGE_EMBED_STATELESS" in
+'' | 0) EMBED_STATELESS=0 ;;
+1) EMBED_STATELESS=1 ;;
+*)
+	fail "PACKAGE_EMBED_STATELESS '$PACKAGE_EMBED_STATELESS' is not recognised; use 1 to run without writing a file, or leave it unset"
+	;;
+esac
+
+# PACKAGE_PERMISSIONS is validated against the vocabulary rather than passed
+# through, because a policy naming a permission the Node does not know is a
+# startup failure on the recipient's machine. The list is normalised to a
+# comma-separated form for the YAML flow sequence.
+PERMISSION_LIST=""
+for permission in $PACKAGE_PERMISSIONS; do
+	case "$permission" in
+	read | write | list | stat | exec) ;;
+	*)
+		fail "PACKAGE_PERMISSIONS names '$permission', which is not a permission; use read, write, list, stat or exec"
+		;;
+	esac
+	case ",$PERMISSION_LIST," in
+	*",$permission,"*)
+		fail "PACKAGE_PERMISSIONS names '$permission' twice; a grant that says the same thing twice is a grant nobody read"
+		;;
+	esac
+	if [ -n "$PERMISSION_LIST" ]; then
+		PERMISSION_LIST="$PERMISSION_LIST, $permission"
+	else
+		PERMISSION_LIST="$permission"
+	fi
+done
+[ -n "$PERMISSION_LIST" ] ||
+	fail "PACKAGE_PERMISSIONS is empty; a grant with no permission refuses every operation, so the artifact would serve nothing"
+
 CHANNEL_URL=$(normalize_channel_url "$PACKAGE_SERVER_URL")
 HTTP_BASE=$(http_base_from_channel "$CHANNEL_URL")
 
@@ -414,7 +464,7 @@ if [ "$EMBED_CONFIG" = "1" ]; then
 		escaped=${escaped//\"/\\\"}
 		printf '  %s:\n    path: "%s"\n' "$name" "$escaped" >>"$POLICY_FILE"
 		GRANTS="$GRANTS  - scope: $name
-    permissions: [read, list, stat]
+    permissions: [$PERMISSION_LIST]
 "
 	done <"$SCOPES_OUT"
 	printf 'grants:\n%s' "$GRANTS" >>"$POLICY_FILE"
@@ -478,6 +528,9 @@ if [ "$EMBED_CONFIG" = "1" ]; then
 	if [ -n "$EMBEDDED_NODE_ID" ]; then
 		LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.NodeID=$EMBEDDED_NODE_ID"
 		LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.Credential=$EMBEDDED_CREDENTIAL"
+	fi
+	if [ "$EMBED_STATELESS" = "1" ]; then
+		LDFLAGS="$LDFLAGS -X topsailai_connector/internal/node/embedded.Stateless=1"
 	fi
 	(
 		cd "$ROOT"
@@ -553,6 +606,8 @@ package: wrote $OUTPUT_PATH
 package: platform $PACKAGE_GOOS/$PACKAGE_GOARCH, scopes $SCOPE_COUNT, channel $CHANNEL_URL
 package: filesystem root opt-in $ALLOW_FILESYSTEM_ROOT (0 means a volume root is refused)
 package: configuration embedded; the binary needs no file and no environment variable
+package: stateless mode $EMBED_STATELESS (1 means the binary writes no file at all)
+package: permissions granted on every scope: $PERMISSION_LIST
 
 The binary carries a credential. Hand it over the way you would hand over a
 password, and rebuild it if it leaks. The tunnel token is inside the file, so
@@ -560,10 +615,25 @@ anyone who can read the file can open a channel to the Server.
 
 The scope paths were written into the policy exactly as they were given, not
 resolved on this build host, because the paths belong to the machine that will
-run the binary. A path that does not exist there is refused when the binary
-starts, not here.
+run the binary. A scope path that does not exist on that machine is tolerated: the
+scope stays defined, keeps its grant, and answers not_found until the directory
+exists and the Node restarts. A scope path that exists and is not a directory, or
+that is a symlink, is a startup failure there.
 
 SUMMARY
+	if [ "$EMBED_STATELESS" = "1" ]; then
+		cat <<STATELESS_SUMMARY
+Stateless mode is compiled in, so the binary writes nothing: no config directory,
+no identity file, no credential file. The node id and the credential are generated
+in memory on every start, so the address changes each time the process starts. The
+values in the env file are the ones this build generated, and they are the ones the
+binary will use, because they are compiled in as seeds.
+
+An explicit CONNECTOR_NODE_STATELESS=0 in the environment wins over the compiled-in
+default, so the same binary can be run file-backed for a debugging session.
+
+STATELESS_SUMMARY
+	fi
 	if [ "$EMBED_IDENTITY" = "1" ]; then
 		cat <<EMBEDDED_IDENTITY_SUMMARY
 The identity and the credential are embedded, and recorded in:

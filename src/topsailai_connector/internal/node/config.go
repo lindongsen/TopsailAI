@@ -160,9 +160,18 @@ func LoadConfig(lookup func(string) string) (Config, error) {
 // statable, and a switch that silently accepts a spelling it does not understand is
 // a switch nobody can state. This follows the PACKAGE_ALLOW_FILESYSTEM_ROOT
 // precedent.
+//
+// An empty value falls back to the mode the build embedded, so an artifact built
+// for a read-only machine runs stateless without the recipient exporting anything.
+// An explicit value wins, which is what lets the same binary be run file-backed
+// with CONNECTOR_NODE_STATELESS=0. The fallback lives here rather than at each call
+// site because three callers ask the same question, and three copies of a
+// precedence rule is how they drift apart.
 func resolveStateless(value string) (bool, error) {
 	switch value {
-	case "", "0":
+	case "":
+		return embedded.StatelessDefault()
+	case "0":
 		return false, nil
 	case "1":
 		return true, nil
