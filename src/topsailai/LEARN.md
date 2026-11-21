@@ -748,3 +748,30 @@ the function compatible with the existing test doubles, and the probe proves it 
 than assuming it: with nothing to remove, the `os.listdir` call count is 0. A test that
 only asserts "artifacts are removed when metadata is old" passes with the eager version
 too, so the call-count probe is the only evidence that the cost is actually gone.
+
+## A test that calls a real install function must patch the destination root, and the install function must roll back on validation failure
+
+Trigger: `{TOPSAILAI_HOME}/skill/local/` accumulated empty `tmpXXXXXXXX` folders with
+`0700` permission, one per unit-test run. `TestSkillRepoInstallFromLocal` never patched
+`skill_repo.FOLDER_SKILL`, so `install_from_local()` resolved its destination against the
+real home, and the source folder came from `tempfile.mkdtemp()`. The install path moved
+that empty folder into place and only then validated it, raising `ValueError` without
+removing the destination. The sibling file `test_topsailai_skill_hub_skill_repo.py`
+patched `FOLDER_SKILL` in every case, which is exactly why only one file leaked.
+
+Action: when a test exercises a function that writes into a resolved application folder,
+patch that folder constant to a temporary root in `setUp()` and restore it in `tearDown()`,
+rather than relying on the function's own defaults. Independently, every install path that
+moves content into a final destination before validating it must remove that destination
+when validation fails, because the move has already happened by then.
+
+Why this prevents recurrence: the leak is invisible in the test result — the test passes
+while it writes into the user's home — so no assertion failure ever points at it. The
+fingerprint is what makes it diagnosable: a `tmp` prefix, empty content and `0700`
+permission together mean "an empty `mkdtemp` folder was copied and then failed
+validation". Measuring per-file deltas of the real folder is the only way to attribute it,
+because a whole-suite run shows growth without naming the file. The rollback is a separate
+defect with a wider blast radius: it is reachable by any real failed install, not only by
+tests, and the same missing branch existed in `install_from_git`, `install_from_zip` and
+`install_from_url`. Fixing only the test would have hidden the production defect, and
+fixing only the production code would have left the test writing into the real home.
