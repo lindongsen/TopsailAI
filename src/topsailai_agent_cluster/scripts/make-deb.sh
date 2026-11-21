@@ -621,6 +621,21 @@ function build_config_package() {
         template="${PROJECT_DIR}/conf/node.${EFFECTIVE_ROLE}.conf.example"
     [ -f "${template}" ] || die "missing configuration template ${template}"
     warn_placeholders "${template}"
+    # The configuration file decides which role the launcher starts, because
+    # agent-clusterctl reads ROLE from it and nothing else. A config package built
+    # for one role from a file that declares another therefore installs a
+    # configuration that starts the wrong process: the launcher obeys the file, so
+    # a server config package carrying ROLE=endpoint restarts the Endpoint with the
+    # Server's paths and fails on the first Server-only key. That defect reached a
+    # node once, because --config-role and the file's own ROLE were never compared
+    # and every other check passed. Comparing them here is the only place that can
+    # refuse the combination before it becomes an installable package.
+    local declared_role
+    declared_role=$(sed -n 's/^[[:space:]]*ROLE=//p' "${template}" | tail -n 1 | tr -d "\"' \t")
+    [ -n "${declared_role}" ] ||
+        die "${template} declares no ROLE; a config package must name the role it starts"
+    [ "${declared_role}" = "${EFFECTIVE_ROLE}" ] ||
+        die "${template} declares ROLE=${declared_role} but the package is built for ${EFFECTIVE_ROLE}; the launcher reads ROLE from this file, so the package would start the wrong process"
     resolve_tls
 
     write_role_config "${template}"
