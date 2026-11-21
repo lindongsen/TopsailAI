@@ -687,9 +687,11 @@ var _ adapter.MetricsBatchHandler = (*Adapter)(nil)
 // every provider field has to be declared, and a provider that added a field would
 // need an adapter change to expose it.
 //
-// The runtime document is left as the provider reported it, which today is empty.
-// An empty value is the honest answer: the surface says it was not reported, and a
-// placeholder would claim an observation nobody made.
+// The runtime document is left as the provider reported it, byte for byte. An
+// empty value is the honest answer when the provider observed nothing: the surface
+// says it was not reported, and a placeholder would claim an observation nobody
+// made. A non-empty value is forwarded unchanged, because re-encoding it from the
+// fields this adapter models would silently drop every field it does not name.
 func (a *Adapter) Detail(ctx context.Context, query protocol.SessionDetailQuery) (protocol.SessionDetail, error) {
 	target := &providercli.Target{ResourceKind: protocol.ResourceSession, ProviderResourceKey: query.ProviderSessionID, ProviderTarget: query.ProviderTarget}
 	payload, _ := json.Marshal(providercli.SessionDetailPayload{})

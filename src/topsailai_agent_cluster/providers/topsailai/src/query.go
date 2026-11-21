@@ -188,11 +188,14 @@ type metricsBatchResult struct {
 // documents without a contract change. The names carry the provider_ prefix
 // because the content is provider detail, not a Cluster-modelled field.
 //
-// ProviderMetadata is this provider's own `session info --json` record, forwarded
-// verbatim. ProviderRuntime is the reserved seam: this provider reports nothing
-// for it today, so the field is omitted rather than filled with a placeholder, and
-// a consumer reads its absence as "not reported" instead of "empty". Filling it
-// later is a provider change only.
+// ProviderMetadata is this provider's own session record, forwarded verbatim. Its
+// source depends on which branch answered: the exact-target branch takes the
+// `runtime info` document with its `runtime` member removed, and the fallback
+// branch takes the whole `session info --json` record. ProviderRuntime is the
+// `runtime` member of that same `runtime info` document, forwarded as raw bytes;
+// the fallback branch fills it from the `workspace list` runtime envelope instead.
+// Either field is omitted when the provider observed nothing for it, so a consumer
+// reads absence as "not reported" rather than "empty".
 //
 // There is no truncation flag. A document that exceeds the bound is rejected
 // outright, because a shortened provider document presented as complete evidence

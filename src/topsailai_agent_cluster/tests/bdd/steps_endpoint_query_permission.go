@@ -119,9 +119,9 @@ type queryReadOutcome struct {
 	// It is kept verbatim so an assertion can prove the document was forwarded
 	// rather than re-encoded from the fields the cluster models.
 	providerMetadata string
-	// providerRuntime is the reserved detail seam. It is expected to stay empty
-	// until a source is chosen, so an assertion can prove the cluster reports it
-	// as not reported instead of inventing one.
+	// providerRuntime is the second document seam, kept verbatim for the same
+	// reason. Its fixture carries a nested object the cluster does not model, so
+	// an assertion can prove the document was forwarded rather than flattened.
 	providerRuntime string
 	// chunks counts streamed records, for the follow read.
 	chunks int
@@ -407,11 +407,17 @@ func assertQueryAllowed(operation string) error {
 		if !strings.Contains(outcome.providerMetadata, "unmodelled_field") {
 			return fmt.Errorf("allowed detail read returned provider_metadata %q, want the provider record verbatim", outcome.providerMetadata)
 		}
-		// provider_runtime is a seam with no source yet. An empty value is the
-		// correct answer, and a non-empty one would mean the cluster invented a
-		// runtime observation nobody decided on.
-		if outcome.providerRuntime != "" {
-			return fmt.Errorf("allowed detail read reported provider_runtime %q, want the seam left empty", outcome.providerRuntime)
+		// provider_runtime is the second document seam. The fixture carries a
+		// nested object under "data" with a field the cluster does not model, so
+		// its presence proves the document arrived verbatim rather than being
+		// flattened or re-encoded on the way through. An empty value would mean
+		// the cluster dropped a document the provider did send, which is the
+		// failure this assertion exists to catch.
+		if outcome.providerRuntime == "" {
+			return fmt.Errorf("allowed detail read returned no provider_runtime, want the provider document verbatim")
+		}
+		if !strings.Contains(outcome.providerRuntime, "agent2llm") {
+			return fmt.Errorf("allowed detail read returned provider_runtime %q, want the nested provider document verbatim", outcome.providerRuntime)
 		}
 		count, err := queryMatrixInvocations(querySessionDetailOperation)
 		if err != nil {

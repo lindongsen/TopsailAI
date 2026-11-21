@@ -67,6 +67,70 @@ func TestSessionDetailSectionsReportsMetadataAndRuntime(t *testing.T) {
 	}
 }
 
+// TestSessionDetailSectionsRendersANonEmptyRuntimeDocument proves the runtime
+// seam is rendered when the provider actually reports one.
+//
+// Every other test in this package supplies an empty runtime, so before this one
+// the renderer was only ever exercised on the "not reported" branch. A cluster
+// that dropped the runtime document entirely would have passed the whole suite,
+// because the only assertion about the seam was that it stays empty.
+//
+// The fixture is the envelope the provider publishes for one row, so the nesting
+// depth is the provider's rather than one invented for the test. The assertions
+// compare whole lines, because a substring match cannot distinguish a nested
+// value from a top-level one: "  ok: true" is a substring of "    ok: true".
+func TestSessionDetailSectionsRendersANonEmptyRuntimeDocument(t *testing.T) {
+	const envelope = `{"state":"ok","error_code":"","pid":42,"data":{"ok":true,"agent2llm":{"messages":7},"user2agent":{"messages":3}}}`
+	api := &detailStubAPI{detail: protocol.SessionDetail{
+		ProviderMetadata: `{"session_id":"s1"}`,
+		ProviderRuntime:  envelope,
+	}}
+	sections := sessionDetailSections(readSessionDetail(context.Background(), api, "endpoint-1", "s1"))
+	if len(sections) != 2 {
+		t.Fatalf("sections=%d want 2: %+v", len(sections), sections)
+	}
+	body := sections[1].body
+	if body == "not reported" {
+		t.Fatal("a reported runtime document was rendered as not reported, so the seam was dropped")
+	}
+	lines := make(map[string]bool)
+	for _, line := range strings.Split(body, "\n") {
+		lines[line] = true
+	}
+	// "messages" sits two levels below the document root, so it must carry two
+	// indent levels. A renderer that flattened the nesting would still contain
+	// the text, which is why the whole line is compared.
+	for _, want := range []string{"data:", "  agent2llm:", "    messages: 7", "  ok: true", "  user2agent:", "    messages: 3", "pid: 42", "state: ok"} {
+		if !lines[want] {
+			t.Fatalf("runtime body has no line %q: %q", want, body)
+		}
+	}
+}
+
+// TestCommandRunnerInfoJSONModeCarriesANonEmptyRuntime proves a machine-readable
+// caller receives the runtime document the text form renders.
+//
+// The envelope omits an empty seam through `omitempty`, so a caller cannot tell a
+// dropped document from a provider that reported none. That is exactly the
+// distinction the seam exists to preserve, so the non-empty case must survive the
+// JSON path too.
+func TestCommandRunnerInfoJSONModeCarriesANonEmptyRuntime(t *testing.T) {
+	const envelope = `{"state":"ok","pid":42,"data":{"ok":true}}`
+	api := detailRunnerFixture()
+	api.detail.ProviderRuntime = envelope
+	var out strings.Builder
+	if err := (CommandRunner{API: api}).Info(context.Background(), &out, "res_1", true); err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	var info SessionInfo
+	if err := json.Unmarshal([]byte(out.String()), &info); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if info.ProviderRuntime != envelope {
+		t.Fatalf("provider_runtime=%q, want the provider document verbatim", info.ProviderRuntime)
+	}
+}
+
 // TestSessionDetailSectionsKeepsUnmodelledProviderFields proves the provider
 // record is rendered whole. A curated subset would silently hide the field that
 // answers the operator's question, and the cluster does not model the record so

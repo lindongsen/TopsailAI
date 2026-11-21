@@ -60,17 +60,22 @@ func helpDescriptionLine(text string) string {
 	return ""
 }
 
-// TestInfoHelpStatesRuntimeHasNoSource proves the help does not promise a runtime
-// value the cluster cannot produce yet. The seam is deliberate, so the help must
-// describe it as reserved rather than as populated.
-func TestInfoHelpStatesRuntimeHasNoSource(t *testing.T) {
+// TestInfoHelpStatesRuntimeIsAProviderDocument proves the help describes the
+// runtime section as the provider's own observation rather than as a reserved
+// placeholder. The seam has a real source in the production provider, so help that
+// called it unsourced would tell an operator to distrust a section that is in fact
+// populated.
+func TestInfoHelpStatesRuntimeIsAProviderDocument(t *testing.T) {
 	var out bytes.Buffer
 	if err := PrintCommandHelp(&out, "info"); err != nil {
 		t.Fatalf("PrintCommandHelp: %v", err)
 	}
 	text := out.String()
-	if !strings.Contains(text, "no source yet") {
-		t.Fatalf("help does not state that runtime has no source: %q", text)
+	if strings.Contains(text, "no source yet") {
+		t.Fatalf("help still states that runtime has no source: %q", text)
+	}
+	if !strings.Contains(text, "runtime observation") {
+		t.Fatalf("help does not describe runtime as a provider observation: %q", text)
 	}
 	if !strings.Contains(text, "not reported") {
 		t.Fatalf("help does not state what an empty runtime prints: %q", text)

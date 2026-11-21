@@ -490,10 +490,13 @@ func handleUnary(request request, fault string, options mockOptions) response {
 			// provider_metadata is a provider document with a field the Cluster does
 			// not model, so a scenario can prove the document was forwarded verbatim
 			// rather than re-encoded from the fields the Cluster knows.
-			// provider_runtime is deliberately absent, because it is a seam with no
-			// source yet and a mock that invented one would hide that the Cluster
-			// reports it as not reported.
-			base.QueryResult = json.RawMessage(`{"provider_session_id":"` + sessionKey + `","provider_metadata":"{\"session_id\":\"` + sessionKey + `\",\"task\":\"fixture task\",\"unmodelled_field\":\"kept\"}","observed_at_ms":1700000000000}`)
+			// provider_runtime is a second document seam with the same purpose. It is
+			// filled here because the seam has a real source in the production
+			// Provider, so a mock that left it empty would make "the Cluster dropped
+			// the document" indistinguishable from "the Provider never sent one".
+			// The envelope mirrors the production shape: a nested object under
+			// "data", which is the part a renderer is most likely to flatten.
+			base.QueryResult = json.RawMessage(`{"provider_session_id":"` + sessionKey + `","provider_metadata":"{\"session_id\":\"` + sessionKey + `\",\"task\":\"fixture task\",\"unmodelled_field\":\"kept\"}","provider_runtime":"{\"state\":\"ok\",\"error_code\":\"\",\"pid\":42,\"data\":{\"ok\":true,\"agent2llm\":{\"messages\":7},\"user2agent\":{\"messages\":3}}}","observed_at_ms":1700000000000}`)
 		default:
 			return failureResponse(request.RequestID, "unsupported", "query is unsupported", "not_applied")
 		}

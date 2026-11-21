@@ -8,7 +8,7 @@ ProjectCode: topsailai_agent_cluster
 programming_language: go
 ---
 
-# `provider_runtime` works, but six places still say it has no source
+# `provider_runtime` works, but seven places said it had no source
 
 ## Trigger
 
@@ -124,7 +124,7 @@ seam with no source.
 
 ## Scope of the correction
 
-Six sites, two tests, and one fixture. They must land as one logical unit, because correcting the
+Six sites, two tests, and one fixture. A seventh site was found during execution. They must land as one logical unit, because correcting the
 prose alone leaves the suite asserting the opposite of the prose:
 
 | Site | Change |
@@ -141,6 +141,62 @@ The mock change is what makes the BDD assertion meaningful. Today the scenario c
 Cluster dropped the runtime document" from "the provider never sent one", because the fixture sends
 none.
 
+## A seventh site, and the reason the defect survived
+
+The correction above was executed on 2026-11-21. Two things were found while doing it that this record
+did not contain.
+
+**Site 7: `docs/agent-cluster-protocol.md:894`.** The document stated "`provider_runtime` is
+host-scoped while `provider_metadata` is not". That is true only on the fallback branch. On the
+exact-target branch both documents come from one `runtime info` read, which addresses a PID on this
+host, so both are host-scoped. The same sentence was corrected in `docs/agent-cluster-adapters.md`
+earlier; this copy was missed because the search was for the seam's *source*, not for its *scope*.
+
+**The coverage gap that let all of this survive.** Every assertion about `provider_runtime` in
+`internal/` required it to be **empty**:
+
+| Test | Assertion |
+|---|---|
+| `internal/tui/detail_test.go:295` | empty, because the provider reported none |
+| `internal/tui/detail_test.go:320` | metadata and runtime both empty |
+| `internal/adapter/genericcli/adapter_test.go:657` | empty |
+
+So the cluster-side rendering path for a **non-empty** runtime document had no test at all. A cluster
+that dropped the document entirely would have passed the whole suite. This is why the stale prose was
+not the real risk: the prose was merely the visible symptom of a seam nobody had exercised end to end.
+
 ## Status
 
-Root cause confirmed. No code changed. Awaiting execution of the correction above.
+Resolved on 2026-11-21. All seven sites corrected, both locking tests replaced, the mock fixture
+populated, and the missing coverage added.
+
+| Site | Change |
+|---|---|
+| `internal/tui/help.go:78` | describes the runtime section as the provider's own observation, and keeps the `not reported` case for a provider that observed nothing |
+| `internal/tui/info_help_test.go` | `TestInfoHelpStatesRuntimeHasNoSource` replaced by `TestInfoHelpStatesRuntimeIsAProviderDocument`, which now fails if the stale sentence returns |
+| `internal/adapter/genericcli/adapter.go:690` | states the document is forwarded byte for byte, and why re-encoding would drop unmodelled fields |
+| `providers/topsailai/src/query.go:191-195` | describes both branches, so `ProviderMetadata` is no longer called the `session info` record unconditionally |
+| `providers/mock/src/main.go:490-496` | emits a `provider_runtime` fixture with a nested `data` object |
+| `tests/bdd/steps_endpoint_query_permission.go:410-421` | asserts the fixture arrives verbatim, including the nested `agent2llm` field |
+| `docs/agent-cluster-protocol.md:894` | host scope stated per branch instead of per seam |
+
+New coverage, both proven to fail when the seam is dropped:
+
+- `TestSessionDetailSectionsRendersANonEmptyRuntimeDocument` (`internal/tui/detail_test.go`) compares
+  whole lines, because a substring match cannot distinguish `  ok: true` from `    ok: true`.
+- `TestCommandRunnerInfoJSONModeCarriesANonEmptyRuntime` (`internal/tui/detail_test.go`) proves the
+  document survives the `--json` path, where `omitempty` would otherwise make a dropped document
+  indistinguishable from an unreported one.
+
+Teeth were verified by breaking the seam deliberately: setting `ProviderRuntime` to `""` in
+`internal/adapter/genericcli/adapter.go:710` failed the BDD scenario with
+`allowed detail read returned no provider_runtime, want the provider document verbatim`, and the same
+break failed the unit test with `a reported runtime document was rendered as not reported, so the seam
+was dropped`. Both production files were restored byte-identical afterwards.
+
+## One pre-existing failure, not caused by this correction
+
+`TestPermissionMatrixCoversEveryKnownOperation` fails with
+`2 operation(s) are served by this build but have no scenario marker registered: [agent.model.registry
+agent.model.set]`. It reproduces at HEAD `e2f18f2a` in a detached worktree, so it predates this work
+and is tracked separately.

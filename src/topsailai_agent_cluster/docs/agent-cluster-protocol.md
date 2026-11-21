@@ -891,11 +891,14 @@ into a struct and re-encodes it silently drops every field the struct does not m
 operator then reads a trimmed record as the whole one. The Provider CLI therefore forwards the raw
 bytes it received.
 
-**`provider_runtime` is host-scoped while `provider_metadata` is not.** A session recorded on another
-host is described without a runtime envelope, because this host cannot observe a process it cannot
-see. That is an unobservable row, not a Provider failure, so the seam stays empty and the surface
-reports `not reported`. A Provider call that actually fails is returned as an error instead, because
-an empty field would present a failed read as a row nobody measured.
+**Host scope follows the branch that answered, not the seam.** On the exact-target branch both
+documents come from one `runtime info` read, which addresses a PID on this host, so both are
+host-scoped. On the fallback branch `provider_metadata` comes from `session info`, which is not
+host-scoped, while `provider_runtime` comes from a `--local` read. A session recorded on another host
+is therefore described without a runtime envelope, because this host cannot observe a process it
+cannot see. That is an unobservable row, not a Provider failure, so the seam stays empty and the
+surface reports `not reported`. A Provider call that actually fails is returned as an error instead,
+because an empty field would present a failed read as a row nobody measured.
 
 The Provider side enforces no bound of its own. The bound is a Cluster contract, so a Provider that
 also rejected a document would create a second, invisible limit: an operator who raised the Endpoint
