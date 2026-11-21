@@ -16,6 +16,7 @@ import (
 	"topsailai_agent_cluster/internal/security"
 	serverapi "topsailai_agent_cluster/internal/server"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
+	"topsailai_agent_cluster/internal/version"
 )
 
 // capabilityRevisionUnknown is the revision recorded when no adapter declared one.
@@ -38,7 +39,30 @@ func inventoryCapabilityRevision(report protocol.InventoryReport) string {
 	return revision
 }
 
+// versionRequested reports whether these arguments ask for the binary identity.
+//
+// It is a named function rather than an inline call so a test can prove the daemon
+// passes its own option set. A test that only ran the binary could not see the
+// difference: a bare -v answers correctly even when no option set is passed, so the
+// defect this guards against is invisible from the outside and only appears when an
+// option's value happens to be "-v".
+func versionRequested(args []string) bool {
+	return version.Requested(args, config.ValueOptionNames("agent-cluster-server"))
+}
+
 func main() {
+	// A version request is answered before configuration is loaded, because it
+	// asks what this binary is rather than how it should run. Loading first would
+	// make the answer depend on the environment: a Server with no TLS material
+	// would refuse to state its own version, which is exactly the moment an
+	// operator needs to know which build is installed.
+	if versionRequested(os.Args[1:]) {
+		if err := version.Write(os.Stdout, "agent-cluster-server"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		return
+	}
 	cfg, err := config.Load(os.Args[1:], "agent-cluster-server")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

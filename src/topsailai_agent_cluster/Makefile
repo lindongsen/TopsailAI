@@ -80,7 +80,7 @@ CLI_PKG := ./src/main/agent-cluster-cli
 # common: packages both roles depend on, plus the module root.
 COMMON_TEST_PKGS := ./internal ./internal/protocol ./internal/providercli \
                     ./internal/providerconformance ./internal/config ./internal/logging ./internal/security \
-                    ./internal/channel
+                    ./internal/channel ./internal/version
 # server: the Server service, its storage and its command entry point.
 SERVER_TEST_PKGS := ./internal/server ./internal/storage/server \
                     ./src/main/agent-cluster-server
@@ -241,12 +241,25 @@ help:
 	@echo "  endpoint-stop     stop the endpoint only"
 	@echo "  endpoint-restart  restart the endpoint only"
 	@echo "  endpoint-status   report the endpoint only"
+# The version identity is injected rather than compiled in, so a binary can state
+# which release it came from. VERSION is overridable because a release build pins
+# one value for every artifact; the defaults describe a local build honestly
+# instead of claiming a release that was never made.
+#
+# The commit is resolved once per make invocation rather than per binary, so the
+# three binaries of one build cannot disagree about their source revision.
+VERSION ?= 0.0.0-unpackaged
+COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION_LDFLAGS := -X topsailai_agent_cluster/internal/version.Version=$(VERSION) \
+	-X topsailai_agent_cluster/internal/version.Commit=$(COMMIT) \
+	-X topsailai_agent_cluster/internal/version.BuildTime=$(BUILD_TIME)
 
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -o $(BIN_DIR)/agent-cluster-server $(SERVER_PKG)
-	go build -o $(BIN_DIR)/agent-cluster-endpoint $(ENDPOINT_PKG)
-	go build -o $(BIN_DIR)/agent-cluster-cli $(CLI_PKG)
+	go build -ldflags "$(VERSION_LDFLAGS)" -o $(BIN_DIR)/agent-cluster-server $(SERVER_PKG)
+	go build -ldflags "$(VERSION_LDFLAGS)" -o $(BIN_DIR)/agent-cluster-endpoint $(ENDPOINT_PKG)
+	go build -ldflags "$(VERSION_LDFLAGS)" -o $(BIN_DIR)/agent-cluster-cli $(CLI_PKG)
 
 build-testhooks:
 	@mkdir -p $(TESTHOOKS_DIR)

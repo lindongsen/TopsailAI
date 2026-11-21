@@ -1011,6 +1011,41 @@ different feature per command.
   the command word from the payload by argv position, which is why the option
   exists only there.
 
+## Version option
+
+`--version` and `-v` are global meta-options, not per-command syntax, and they are
+documented once in the usage header for the same reason `--help` is: a repeated
+description drifts into inconsistent wording and reads like a different feature per
+command.
+
+- A version request is a successful request: it exits `0` and writes to stdout, so
+  `agent-cluster-cli --version | head -1` works and a script never mistakes it for a
+  failure.
+- The option is recognized after the command word and before that command's own
+  argument validation, so `list -v` is answered instead of being reported as a usage
+  error. This is the same placement `--help` uses, and for the same reason: Go's flag
+  parser stops at the first positional argument, so a command-level option would
+  never reach the flag set.
+- `--json` changes the rendering, not the request. `--json -v` and `-v --json` produce
+  the same one-line document, so an operator never has to remember an ordering rule.
+- `--` ends option parsing. Before it, `-v` is a version request; after it, everything
+  is literal data. `exec ep res gen -- ls -v` therefore passes `-v` to `ls`.
+- An option's value is never read as this flag. `--endpoint -v` names an endpoint
+  called `-v`, and the scan consumes the value because the option is known to take
+  one. The set of such options is derived from the parser's own declaration, so a
+  newly added option is covered without a second list to maintain.
+- The interactive REPL has no `-v`. It is a mode, not a command, and a version banner
+  inside a session would be noise; the standalone invocation answers it.
+- The three binaries print the same shape. The Endpoint does not add its configured
+  Provider, because answering that would require starting a Provider subprocess, and a
+  version flag must not depend on a Provider being installed or healthy.
+
+The version value is injected at build time rather than compiled in, so a packaged
+binary can state which release it came from while a binary that was never packaged
+cannot claim a release identity. The commit and build time are printed because they
+are the facts that distinguish two builds of the same release; a version number alone
+cannot tell a rebuilt binary from the one that was shipped.
+
 ### Exception: interactive `send` and `btw` accept no options
 
 `send` and `btw` are the two commands whose entire remaining line is the payload,

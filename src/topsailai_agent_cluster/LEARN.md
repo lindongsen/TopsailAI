@@ -2043,3 +2043,30 @@ under test, not the absence of the capability to do harm. The two are the same t
 moment someone adds a flag, and the divergence is invisible because the folder still exists in the
 test's own fixture. Comparing argv turns "the folder survived this run" into "this Provider cannot
 express a deletion".
+
+## A long option's value can be the flag you are scanning for
+
+Trigger: the version flag was detected by scanning raw arguments before flag parsing, and the
+daemons were wired with `version.Requested(os.Args[1:], nil)`. The comment justified the nil map
+with "the daemons register only long-form options, so a bare `-v` can only be a version request".
+That reasoning is wrong: `--tls-certificate-file -v` names a file called `-v`, and the option is
+long-form. The daemons register dozens of value-taking options (`--database-path`,
+`--tls-certificate-file`, `--auth-token`, `--project-root`, `--endpoint-expiry`), so every one of
+them could swallow the flag as its value and answer a version request the operator never made.
+
+Action: when a raw scan must distinguish an option from an option's value, derive the value-taking
+set from the parser's own declaration instead of passing nil or hand-listing names. Here `Load`'s
+registration block was extracted into `registerFlags`, and `ValueOptionNames(role)` builds a
+throwaway flag set from it and collects every flag whose value does not satisfy
+`interface{ IsBoolFlag() bool }`. One declaration then serves both the parser and the scan, so a
+newly added option is covered without a second list. Then prove the wiring, not only the scanner:
+a test of the scanner passes with an empty set, which is exactly the defect, so each daemon got a
+named `versionRequested` helper that a test can call to assert which set it passes.
+
+Why this prevents recurrence: "only long options are registered" sounds like a structural argument
+but it is a claim about spelling, and spelling has nothing to do with whether an option consumes
+the next argument. The failure is silent in the direction that matters: a bare `-v` answers
+correctly either way, so running the binary proves nothing, and the defect appears only when an
+operator's option value happens to be `-v`. Deriving the set from the declaration makes the two
+views structurally identical, and asserting the daemon's own helper is the only evidence that the
+set reached the scan.
