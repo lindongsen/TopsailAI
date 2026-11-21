@@ -501,3 +501,168 @@ def test_resume_driver_never_receives_initial_task():
         "s", driver="topsailai_agent_chats", task="new task",
         non_interactive=True,
     ) == ["topsailai_agent_chats"]
+
+
+def test_driver_option_is_forwarded_as_launcher_driver(tmp_path):
+    """--driver reaches the launch boundary as the launcher's own driver."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--driver", "topsailai_agent_chat"]) == 0
+    launch.assert_called_once_with(
+        str(folder), mode=None, background=False, entrypoint_base=os.getcwd(),
+        non_interactive=False, launcher_driver="topsailai_agent_chat",
+    )
+
+
+def test_absent_driver_option_keeps_the_historical_call_shape(tmp_path):
+    """An omitted --driver must not add a keyword the launch never received."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli([str(folder)]) == 0
+    launch.assert_called_once_with(
+        str(folder), mode=None, background=False, entrypoint_base=os.getcwd(),
+        non_interactive=False,
+    )
+
+
+def test_driver_option_is_forwarded_in_background_mode(tmp_path):
+    """Background submission carries the driver into the supervisor request."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "-b", "--driver", "topsailai_agent_chat"]) == 0
+    launch.assert_called_once_with(
+        str(folder), mode=None, background=True, entrypoint_base=os.getcwd(),
+        non_interactive=False, launcher_driver="topsailai_agent_chat",
+    )
+
+
+def test_json_receipt_publishes_driver_only_when_selected(tmp_path, capsys):
+    """The receipt names the driver only when the caller chose one."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+
+    def launch(_folder, **kwargs):
+        kwargs["receipt"].update(
+            workspace=str(folder), mode="raw", background=False, resumed=False,
+            launcher_pid=321, startup_confirmed=False, child_exit_code=0,
+            launcher_exit_observed=True,
+        )
+        return 0
+
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli(
+            [str(folder), "--json", "--driver", "topsailai_agent_chat"]) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert selected["response"]["driver"] == "topsailai_agent_chat"
+
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli([str(folder), "--json"]) == 0
+    inherited = json.loads(capsys.readouterr().out)
+    assert "driver" not in inherited["response"]
+
+
+def test_foreground_launcher_argv_carries_the_selected_driver(tmp_path):
+    """A fresh launcher receives --driver before --task."""
+    from cli_topsailai.agent_launch import launch_configured_agent
+
+    child = _StatusChild(returncode=0)
+    calls = []
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               side_effect=lambda _: ({}, set())), \
+         patch("cli_topsailai.agent_launch._session_id", return_value="fixed"):
+        assert launch_configured_agent(
+            str(tmp_path), mode="raw", launcher_driver="topsailai_agent_chat",
+            non_interactive=True, task="t",
+            spawn=lambda argv, **kwargs: calls.append((argv, kwargs)) or child,
+        ) == 0
+    assert calls[0][0] == [
+        "topsailai_launch_agent", "--subprocess", "--session-id", "fixed",
+        "--non-interactive", "--driver", "topsailai_agent_chat", "--task", "t",
+    ]
+
+
+def test_wrapped_launcher_command_quotes_a_multi_word_driver(tmp_path):
+    """A driver value is a command line, so the wrapped shell command quotes it."""
+    from cli_topsailai.agent_launch import launch_configured_agent
+
+    child = _StatusChild(returncode=0)
+    calls = []
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               side_effect=lambda _: ({}, set())), \
+         patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
+         patch("cli_topsailai.agent_launch._wrap_command_for_agent_mode",
+               side_effect=lambda command, mode, forwarded: command) as wrap:
+        assert launch_configured_agent(
+            str(tmp_path), mode="dtach", launcher_driver="python app.py",
+            spawn=lambda argv, **kwargs: calls.append((argv, kwargs)) or child,
+        ) == 0
+    wrapped = wrap.call_args[0][0]
+    assert "--driver 'python app.py'" in wrapped
+    assert calls[0][1]["shell"] is True
+
+
+def test_background_supervisor_request_carries_the_selected_driver(tmp_path):
+    """The supervisor request is the only channel a detached launch has."""
+    from cli_topsailai import agent_launch_background as bg
+
+    seen = {}
+    original = bg.launcher_command
+
+    def spy(session_id, **kwargs):
+        seen.update(kwargs)
+        return original(session_id, **kwargs)
+
+    def popen(command, **kwargs):
+        seen["command"] = command
+        raise RuntimeError("stop-after-argv")
+
+    with patch.object(bg, "launcher_command", side_effect=spy):
+        # _supervise reports failures through its ack channel instead of
+        # raising, so the captured argv is the observable result here.
+        bg._supervise(
+            {"session_id": "s", "folder": str(tmp_path),
+             "log_path": str(tmp_path / "launch.log"),
+             "launcher_driver": "topsailai_agent_chat",
+             "non_interactive": True, "task": "t"},
+            -1, popen=popen,
+        )
+    assert seen["launcher_driver"] == "topsailai_agent_chat"
+    assert seen["command"] == [
+        "topsailai_launch_agent", "--subprocess", "--session-id", "s",
+        "--non-interactive", "--driver", "topsailai_agent_chat", "--task", "t",
+    ]
+
+
+def test_terminal_request_carries_the_selected_driver(tmp_path):
+    """The terminal transport request must carry the driver like the raw one."""
+    from cli_topsailai import agent_launch_terminal as terminal
+
+    written = {}
+
+    class _Attempt:
+        control_path = tmp_path / "control"
+        record_path = tmp_path / "record"
+        token = "token"
+        request_path = tmp_path / "request.json"
+
+        class directory:
+            name = "attempt-1"
+
+    with patch.object(terminal, "prepare_attempt", return_value=_Attempt()), \
+         patch.object(terminal, "write_request",
+                      side_effect=lambda path, request: written.update(request)), \
+         patch.object(terminal, "open_listener", side_effect=RuntimeError("stop")):
+        with pytest.raises(RuntimeError):
+            terminal.submit_terminal(
+                str(tmp_path), "s", mechanism="tmux",
+                launcher_driver="topsailai_agent_chat",
+                non_interactive=True, task="t",
+            )
+    assert written["launcher_driver"] == "topsailai_agent_chat"
+    assert written["non_interactive"] is True
+    assert written["task"] == "t"

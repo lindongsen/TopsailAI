@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import uuid
@@ -93,6 +94,7 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
                             entrypoint_base: str | None = None,
                             session_id: str | None = None,
                             driver: str | None = None,
+                            launcher_driver: str | None = None,
                             prelaunch_check=None,
                             receipt: dict | None = None,
                             child_stdout=None,
@@ -103,6 +105,11 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
 
     When *session_id* is supplied the launch resumes that persisted identity
     instead of minting a fresh one, and *driver* selects the resume driver.
+
+    *launcher_driver* selects the driver the fresh launcher itself runs, so it
+    is forwarded as the launcher's own ``--driver`` flag and settings.yaml
+    context injection still happens. It is deliberately separate from *driver*,
+    which replaces the whole argv with a resume executable.
 
     *non_interactive* asks the launcher never to prompt while it resolves its
     configuration. It governs the launch only: the agent's own interactive mode
@@ -132,6 +139,8 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
             launch_kwargs["session_id"] = session_id
         if driver is not None:
             launch_kwargs["driver"] = driver
+        if launcher_driver is not None:
+            launch_kwargs["launcher_driver"] = launcher_driver
         if prelaunch_check is not None:
             launch_kwargs["prelaunch_check"] = prelaunch_check
         if receipt is not None:
@@ -169,6 +178,7 @@ def _launch_configured_agent_impl(
     entrypoint_base: str | None = None,
     session_id: str | None = None,
     driver: str | None = None,
+    launcher_driver: str | None = None,
     prelaunch_check=None,
     receipt: dict | None = None,
     child_stdout=None,
@@ -256,6 +266,8 @@ def _launch_configured_agent_impl(
                 "driver": driver,
                 "non_interactive": non_interactive,
             }
+            if launcher_driver is not None:
+                submit_kwargs["launcher_driver"] = launcher_driver
             if task is not None:
                 submit_kwargs["task"] = task
             record(submission_attempted=True)
@@ -300,7 +312,8 @@ def _launch_configured_agent_impl(
             f"background=no session={session_id}"
         )
         command = launcher_command(session_id, driver=driver,
-                                   non_interactive=non_interactive, task=task)
+                                   non_interactive=non_interactive, task=task,
+                                   launcher_driver=launcher_driver)
         try:
             forwarded = _prepare_environment(folder, session_id)[3]
             if enable_session_tee:
@@ -309,7 +322,11 @@ def _launch_configured_agent_impl(
                 argv = command
                 kwargs = {"cwd": folder, "env": os.environ.copy()}
             else:
-                argv = _wrap_command_for_agent_mode(" ".join(command), effective_mode, forwarded)
+                # A driver value is a command line, so the wrapped shell command
+                # must quote each argv element; a plain space join would split a
+                # driver such as "python app.py" into two shell words.
+                argv = _wrap_command_for_agent_mode(
+                    shlex.join(command), effective_mode, forwarded)
                 kwargs = {"cwd": folder, "env": os.environ.copy(), "shell": True}
         except (RuntimeError, ValueError, OSError) as error:
             print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)

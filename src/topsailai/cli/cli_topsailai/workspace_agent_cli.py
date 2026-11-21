@@ -43,7 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=("The folder is optional and defaults to the caller's working directory. "
                 "Foreground mode attaches to the launcher. Background mode is headless and "
                 "reports submission rather than readiness. --non-interactive suppresses "
-                "launcher prompts for this launch only. --json emits one receipt on "
+                "launcher prompts for this launch only. --driver selects the agent driver "
+                "the launcher runs instead of the settings.yaml ai_agent_driver. --json "
+                "emits one receipt on "
                 "stdout and redirects all other output to stderr."),
     )
     parser.add_argument(
@@ -73,6 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
              "this affects the launch only and does not change the agent's "
              "own interactive mode",
     )
+    parser.add_argument(
+        "--driver", metavar="DRIVER", default=None,
+        help="run this agent driver instead of the settings.yaml ai_agent_driver; "
+             "the value is passed to the launcher as its own --driver flag, so "
+             "settings.yaml context injection still happens",
+    )
     return parser
 
 
@@ -95,9 +103,13 @@ def _resolve_folder(folder: Optional[str], startup_cwd: Optional[str]) -> str:
     return target
 
 
-def _receipt_response(facts: dict) -> dict:
-    """Publish only the launch facts that were actually established."""
-    return {
+def _receipt_response(facts: dict, driver: Optional[str] = None) -> dict:
+    """Publish only the launch facts that were actually established.
+
+    *driver* is published only when the caller selected one, so a launch that
+    inherits the settings.yaml driver keeps its historical receipt shape.
+    """
+    response = {
         "workspace": facts.get("workspace"),
         "mode": facts.get("mode"),
         "background": facts.get("background"),
@@ -107,6 +119,9 @@ def _receipt_response(facts: dict) -> dict:
         "startup_confirmed": facts.get("startup_confirmed", False),
         "child_exit_code": facts.get("child_exit_code"),
     }
+    if driver is not None:
+        response["driver"] = driver
+    return response
 
 
 def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
@@ -137,6 +152,7 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
     from cli_topsailai.agent_launch import launch_configured_agent
 
     task_kwargs = {"task": args.task} if args.task is not None else {}
+    driver_kwargs = {"launcher_driver": args.driver} if args.driver is not None else {}
     if not json_mode:
         return launch_configured_agent(
             target,
@@ -145,6 +161,7 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
             entrypoint_base=startup_cwd or os.getcwd(),
             non_interactive=args.non_interactive,
             **task_kwargs,
+            **driver_kwargs,
         )
 
     facts: dict = {}
@@ -160,13 +177,14 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
             child_stdout=sys.stderr,
             non_interactive=args.non_interactive,
             **task_kwargs,
+            **driver_kwargs,
         )
     receipt = new_receipt(
         "agent", session_id=facts.get("session_id"),
         pid=facts.get("launcher_pid"),
     )
     settle(receipt, code, AGENT_ERROR_CODES)
-    receipt["response"] = _receipt_response(facts)
+    receipt["response"] = _receipt_response(facts, args.driver)
     receipt["delivery_state"] = launch_delivery_state(facts, code)
     if receipt["delivery_state"] == "delivery_unknown":
         receipt["delivery_unknown"] = True
