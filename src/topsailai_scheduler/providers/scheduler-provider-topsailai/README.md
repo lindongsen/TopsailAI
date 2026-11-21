@@ -30,6 +30,7 @@ whether the agent is still working.
 ```text
 scheduler-provider-topsailai/
 ├── bin/scheduler-provider-topsailai  the executable the scheduler runs
+├── docs/Live_Test.md                 how to exercise it against a real agent
 ├── tests/test_topsailai.py
 └── README.md
 ```
@@ -180,7 +181,18 @@ what lets the tests assert the exact command line without starting anything.
 
 ## Known limitation
 
-The provider has not been exercised against a real agent end to end. The command
-lines and environment are asserted against a stub, which proves what is sent but
-not how a real agent responds. Before relying on it, run one task manually and
-watch it through `topsailai session status`.
+The provider has now been exercised against a real agent, and the launch does not
+work. `start` builds a foreground command, so it blocks until `LAUNCH_TIMEOUT`
+expires and then reports `topsailai did not answer within 120s`. The agent itself
+finishes in about 15 seconds and then waits for input that never arrives.
+
+Adding `--background` makes the same launch return a usable receipt immediately.
+See `docs/Live_Test.md` for the full procedure and the observed output, and
+`issues/issue-provider-launch-blocks-in-foreground.md` in the scheduler project
+for the defect record.
+
+A second limitation affects any live test: the launched agent ignores the
+workspace the task asks for, because the `topsailai` wrapper changes directory
+and the configured `workspace` wins over the argument. Until that is fixed, a
+live test must rely on a tool allow-list such as
+`TOPSAILAI_ENABLED_TOOLS=time_tool` rather than on workspace isolation.
