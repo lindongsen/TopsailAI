@@ -775,3 +775,89 @@ defect with a wider blast radius: it is reachable by any real failed install, no
 tests, and the same missing branch existed in `install_from_git`, `install_from_zip` and
 `install_from_url`. Fixing only the test would have hidden the production defect, and
 fixing only the production code would have left the test writing into the real home.
+
+## Partial `__init__.py` coverage is what makes pytest test basenames collide
+
+Trigger: `pytest tests/unit` aborted with `import file mismatch` because three files were
+named `test_config.py`. Only `tests/unit/events/` had an `__init__.py`; `tests/unit/workspace/`
+and `tests/unit/test_topsailai_tools_jev_tool/` did not. Under pytest's default `prepend`
+import mode, the module name is derived by walking up while `__init__.py` exists, so the
+covered file became `tests.unit.events.test_config` while the uncovered ones both fell back
+to the bare name `test_config` and collided.
+
+Action: make `__init__.py` coverage uniform for every directory that contains test files,
+rather than adding it only where a collision happens to surface. The marker file is enough;
+its content does not matter, only its presence.
+
+Why this prevents recurrence: the collision is a symptom of inconsistent packaging, not of
+duplicate names. Renaming one file fixes today's pair and leaves the next duplicate to
+appear wherever coverage is still partial, and the error message points at the two colliding
+files rather than at the missing marker that caused it. Uniform coverage also makes the
+module identity stable, which matters because some tests already import siblings by full
+package path (`from tests.unit.workspace.test_session_stats_service import ...`). Verify the
+fix by collection count, not by the absence of the error: collection went from
+`14256 collected, 1 error` to `14270 collected`, and the extra tests are the ones that were
+previously unreachable behind the aborted collection.
+
+Two traps made this harder to attribute. First, the mandated runner `tests/run_tests.py`
+spawns one pytest process per file, so it never reproduces the collision and the suite looks
+healthy while direct `pytest tests/unit` cannot run at all. Second, adding `__init__.py`
+changes import semantics, so the full suite afterwards showed 276 failures that looked
+self-inflicted; comparing failure sets against a pristine worktree proved zero new failures
+(276 versus 277, with the pristine tree failing one extra test), and the pristine tree could
+not even collect the full suite without excluding the colliding file. Always diff the failure
+sets rather than comparing counts alone, because a count that moves in the safe direction can
+still hide a swap.
+
+## A test that depends on ambient filesystem mode fails only where the mode differs
+
+Trigger: a direct `pytest tests/unit/test_topsailai_hooks` run reported 255 failures, all
+converging on `assert result.accepted and result.lease is not None` with
+`errors: ('trust_rejected',)`. The mandatory runner reported 4907 passed on the same tree.
+The difference was the basetemp location: the runner creates `.tmp/unit-runner` with mode
+`0o755`, while a direct invocation defaults to `/tmp`, whose mode is `0o777`.
+
+Action: when a validation rule rejects a property of the filesystem (mode, ownership,
+ancestry), check the ambient location the test actually uses before suspecting the rule or
+the code under test. Here `hooks/artifact_validation.py::_validate_directory_status()`
+rejects any ancestor with `mode & 0o022`, which is a deliberate defence against another
+user replacing the source tree between validation and execution. The rule was correct; the
+tests silently depended on where pytest happened to put its temp directory.
+
+Why this prevents recurrence: the failure is invisible in the environment that matters,
+because the mandatory runner supplies a safe basetemp and therefore never reproduces it.
+A green runner plus a red direct invocation reads as "the runner is special", when in fact
+the direct invocation is the one exposing a real dependency. The decisive evidence is a
+controlled probe that varies only the base directory: the same fixture returned
+`accepted: False` under `/tmp` (`0o777`) and `accepted: True` under `/root` (`0o700`) and
+`/TopsailAI` (`0o755`). Two further traps are worth recording. First, the repository
+already contained the knowledge — a `trust_eligible_tmp_path` fixture whose docstring
+states the `/tmp` basetemp "can never host a trusted source tree" — but it was opt-in and
+only 5 of 134 files used it, so knowing about a hazard is not the same as removing it.
+Second, a `pytest_configure` hook that redirects the basetemp must use a per-process path
+and clean up after itself: pytest deletes a given basetemp before using it, so a fixed path
+lets concurrent runs erase each other's trees, and without `pytest_unconfigure` the
+directory accumulates on every run.
+
+## A dry run is not side-effect free when a recipe contains `$(MAKE)`
+
+Trigger: `tests/unit/test_bdd_entrypoints.py` failed with
+`CalledProcessError: ... returned non-zero exit status 2` on a clean checkout. The helper
+ran `make -n test-release` to inspect gate structure. `make -n` skips prerequisites but
+still executes recipe lines containing `$(MAKE)`, so the recursive `plugins-unit-test`
+recipe really ran and piped into `tee`, which failed because `LOG_DIR` did not exist. The
+`test-log-init` prerequisite that normally creates it was skipped by the dry run, and
+`pipefail` turned the `tee` failure into exit status 2.
+
+Action: before treating `make -n` as a pure inspection tool, check whether any reachable
+recipe contains `$(MAKE)`. If it does, the dry run executes real commands, so any directory
+or file those commands write must exist beforehand. Create it in the test helper rather than
+relying on a previous real run having left it behind.
+
+Why this prevents recurrence: the failure looks like a Makefile defect and is absent on a
+developer machine where `.tmp/test-logs` already exists from earlier runs, so it appears
+only on a fresh checkout or after cleanup. The negative control is what makes the diagnosis
+solid: with the directory removed the test failed, with the directory created by the helper
+it passed, and reverting only the helper reproduced the original two failures. The general
+rule is that "dry run" describes what make does with prerequisites, not a guarantee that no
+command executes.
