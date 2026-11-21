@@ -2070,3 +2070,50 @@ correctly either way, so running the binary proves nothing, and the defect appea
 operator's option value happens to be `-v`. Deriving the set from the declaration makes the two
 views structurally identical, and asserting the daemon's own helper is the only evidence that the
 set reached the scan.
+
+## A configuration file that names its own role must be compared with the role being packaged
+
+Trigger: a `config-server-gd-dev` package was built from a site configuration that declared
+`ROLE=endpoint`, and it installed cleanly. `agent-clusterctl -c conf/server/node.conf restart` then
+stopped the Endpoint and started it with the Server's paths, so the Endpoint died immediately with
+`read control action catalog "/opt/agent-cluster/conf/server/control-actions.conf": no such file or
+directory`. Every packaging check passed: the package name was right, the version was right, the
+conffile was present, and the payload was byte-identical to what was built. The only wrong thing was
+one line inside the file, and nothing compared it with `--config-role`.
+
+The root cause was a site-material directory that holds one `node.conf` per machine. gd-dev runs both
+a Server and an Endpoint, so its directory needed two files, and the build picked the Endpoint one for
+the Server package. The packaging script accepted it because `--config-role` only validated its own
+value against a closed set; it never read the file it was given.
+
+Action: when a packaged file declares the identity of the thing it configures, compare that
+declaration with the identity the package is being built for, and refuse the mismatch at build time.
+Here `build_config_package` now reads the last `ROLE=` assignment from the template and dies unless it
+equals `EFFECTIVE_ROLE`, and it also refuses a template with no `ROLE` at all, because the launcher
+requires the key. Prove the guard with three cases, not one: a mismatch must be refused, a missing
+`ROLE` must be refused, and the matching case must still build. Without the third case a guard that
+rejects everything passes both negative tests.
+
+Why this prevents recurrence: the launcher obeys the file, so the file is the authority and the build
+flag is only an intention. A disagreement between them produces a package that installs, starts, and
+then fails on the first key that belongs to the other role, which reads as a missing configuration
+file rather than as a wrong role. The failure also lands on a node instead of in the build, and it
+lands on the role that was not being packaged, so the investigation starts at the process that died
+rather than at the package that was built. Comparing the declaration with the intent is the only
+check that can see the disagreement, and it is cheap because the file is already being read.
+
+## A site-material directory with one file per machine cannot serve a machine with two roles
+
+Trigger: the same defect above. The site-material tree was organised as one directory per machine,
+each holding a single `node.conf`. gd-dev runs a Server and an Endpoint, so one directory could not
+hold both, and the second role's configuration was silently the first role's file.
+
+Action: when a deployment target runs more than one role, the material tree must be keyed by
+`(machine, role)`, not by machine alone. Name the file after the role, and make the packaging step
+require the role-specific path rather than falling back to a directory scan. A fallback that picks
+"the file in the directory" is what turns a missing file into a wrong file.
+
+Why this prevents recurrence: a directory with one file looks complete, so nothing reports a missing
+input. The build succeeds with the wrong content, and the only symptom appears later on the node. The
+role dimension is invisible until a machine runs two roles, which is exactly the machine an operator
+is least likely to test.
