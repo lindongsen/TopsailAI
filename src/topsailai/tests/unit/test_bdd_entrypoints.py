@@ -11,7 +11,18 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def dry_run(target):
-    """Resolve a real Makefile target without running its test commands."""
+    """Resolve a real Makefile target without running its test commands.
+
+    ``make -n`` still executes recipe lines that contain ``$(MAKE)``, so the
+    recursive sub-makes and their ``tee`` pipelines really run. Those recipes
+    write into ``LOG_DIR``, which a real invocation creates through the
+    ``test-log-init`` prerequisite; a dry run skips prerequisites, so the
+    directory must exist before the dry run or ``tee`` fails and ``pipefail``
+    turns the whole dry run into a non-zero exit. Creating it here keeps the
+    assertion about gate structure independent of ambient state.
+    """
+    log_dir = ROOT / ".tmp" / "test-logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         ["make", "--no-print-directory", "-n", "-f", str(ROOT / "Makefile"), target],
         cwd=ROOT, capture_output=True, text=True, check=True,

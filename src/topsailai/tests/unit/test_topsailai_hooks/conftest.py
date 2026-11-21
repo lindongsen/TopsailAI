@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -13,6 +14,42 @@ import pytest
 
 from topsailai.hooks.process_backend import IsolatedProcessBackend
 from topsailai.hooks.process_state import LaunchRecord
+
+
+_CREATED_BASETEMP: Path | None = None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Point the default basetemp at a trust-eligible root.
+
+    Artifact capture rejects any source-ancestry directory that is group- or
+    other-writable, so the default pytest basetemp under ``/tmp`` (mode 1777)
+    can never host a trusted source tree. The unit runner already creates its
+    own basetemp under ``.tmp``; this hook gives a direct ``pytest`` invocation
+    the same ancestry so the same tests pass either way. An explicit
+    ``--basetemp`` always wins.
+
+    The path is unique per process because pytest deletes a given basetemp
+    before using it, so a fixed path would let concurrent runs erase each
+    other's trees. ``pytest_unconfigure`` removes the tree this hook created so
+    repeated runs do not accumulate directories.
+    """
+    global _CREATED_BASETEMP
+    if config.option.basetemp is not None:
+        return
+    workspace_tmp = Path(__file__).resolve().parents[3] / ".tmp"
+    workspace_tmp.mkdir(mode=0o755, exist_ok=True)
+    basetemp = workspace_tmp / f"hooks-basetemp-{os.getpid()}"
+    config.option.basetemp = str(basetemp)
+    _CREATED_BASETEMP = basetemp
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Remove the basetemp this hook created so runs do not accumulate."""
+    global _CREATED_BASETEMP
+    if _CREATED_BASETEMP is not None:
+        shutil.rmtree(_CREATED_BASETEMP, ignore_errors=True)
+        _CREATED_BASETEMP = None
 
 
 @pytest.fixture(autouse=True)

@@ -808,3 +808,56 @@ self-inflicted; comparing failure sets against a pristine worktree proved zero n
 not even collect the full suite without excluding the colliding file. Always diff the failure
 sets rather than comparing counts alone, because a count that moves in the safe direction can
 still hide a swap.
+
+## A test that depends on ambient filesystem mode fails only where the mode differs
+
+Trigger: a direct `pytest tests/unit/test_topsailai_hooks` run reported 255 failures, all
+converging on `assert result.accepted and result.lease is not None` with
+`errors: ('trust_rejected',)`. The mandatory runner reported 4907 passed on the same tree.
+The difference was the basetemp location: the runner creates `.tmp/unit-runner` with mode
+`0o755`, while a direct invocation defaults to `/tmp`, whose mode is `0o777`.
+
+Action: when a validation rule rejects a property of the filesystem (mode, ownership,
+ancestry), check the ambient location the test actually uses before suspecting the rule or
+the code under test. Here `hooks/artifact_validation.py::_validate_directory_status()`
+rejects any ancestor with `mode & 0o022`, which is a deliberate defence against another
+user replacing the source tree between validation and execution. The rule was correct; the
+tests silently depended on where pytest happened to put its temp directory.
+
+Why this prevents recurrence: the failure is invisible in the environment that matters,
+because the mandatory runner supplies a safe basetemp and therefore never reproduces it.
+A green runner plus a red direct invocation reads as "the runner is special", when in fact
+the direct invocation is the one exposing a real dependency. The decisive evidence is a
+controlled probe that varies only the base directory: the same fixture returned
+`accepted: False` under `/tmp` (`0o777`) and `accepted: True` under `/root` (`0o700`) and
+`/TopsailAI` (`0o755`). Two further traps are worth recording. First, the repository
+already contained the knowledge — a `trust_eligible_tmp_path` fixture whose docstring
+states the `/tmp` basetemp "can never host a trusted source tree" — but it was opt-in and
+only 5 of 134 files used it, so knowing about a hazard is not the same as removing it.
+Second, a `pytest_configure` hook that redirects the basetemp must use a per-process path
+and clean up after itself: pytest deletes a given basetemp before using it, so a fixed path
+lets concurrent runs erase each other's trees, and without `pytest_unconfigure` the
+directory accumulates on every run.
+
+## A dry run is not side-effect free when a recipe contains `$(MAKE)`
+
+Trigger: `tests/unit/test_bdd_entrypoints.py` failed with
+`CalledProcessError: ... returned non-zero exit status 2` on a clean checkout. The helper
+ran `make -n test-release` to inspect gate structure. `make -n` skips prerequisites but
+still executes recipe lines containing `$(MAKE)`, so the recursive `plugins-unit-test`
+recipe really ran and piped into `tee`, which failed because `LOG_DIR` did not exist. The
+`test-log-init` prerequisite that normally creates it was skipped by the dry run, and
+`pipefail` turned the `tee` failure into exit status 2.
+
+Action: before treating `make -n` as a pure inspection tool, check whether any reachable
+recipe contains `$(MAKE)`. If it does, the dry run executes real commands, so any directory
+or file those commands write must exist beforehand. Create it in the test helper rather than
+relying on a previous real run having left it behind.
+
+Why this prevents recurrence: the failure looks like a Makefile defect and is absent on a
+developer machine where `.tmp/test-logs` already exists from earlier runs, so it appears
+only on a fresh checkout or after cleanup. The negative control is what makes the diagnosis
+solid: with the directory removed the test failed, with the directory created by the helper
+it passed, and reverting only the helper reproduced the original two failures. The general
+rule is that "dry run" describes what make does with prerequisites, not a guarantee that no
+command executes.
