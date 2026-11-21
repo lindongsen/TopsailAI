@@ -68,14 +68,16 @@ The production package boundary follows the component boundary:
 | Package or artifact | Role | Default production installation |
 |---|---|---|
 | `agent-cluster-endpoint` | Endpoint service and generic CLI Adapter | Yes |
-| `agent-cluster-provider-topsailai` | Optional versioned TopsailAI provider executable | Only on nodes that use TopsailAI |
+| `agent-cluster-provider-topsailai` | Optional TopsailAI provider executable | Only on nodes that use TopsailAI |
 | Mock provider artifact | Conformance, integration and fault-injection tests | No |
 
 The Endpoint package does not depend on the TopsailAI provider package or any future concrete provider.
-Provider packages install immutable versioned executable paths and do not restart or reconfigure the
-Endpoint. A locally approved Adapter update activates a verified version; retaining the previous path
-provides rollback. The mock must not be included in default production packages, images or node
-installation recipes.
+Provider packages install one executable at a fixed path per Provider type and do not restart or
+reconfigure the Endpoint. Because the path carries no version, installing the package replaces the
+executable an Adapter runs, and a rollback is a reinstall of the previous package. The maintainer
+script proves the installed bytes are the packaged bytes by comparing the manifest digest and by
+running the binary's own `describe` request. The mock must not be included in default production
+packages, images or node installation recipes.
 
 The mock provider serves three purposes:
 
@@ -268,12 +270,12 @@ refused at Endpoint startup, because a silent fallback would run a provider CLI 
 written for a different adapter and the operator would see a provider error instead of a configuration
 error.
 
-Rollback selects a previously verified immutable Provider CLI version for the same `adapter_id`; it
-never restores the command-based or compiled-in Adapter.
+Rollback reinstalls the previous package for the same `adapter_id`; it never restores the command-based
+or compiled-in Adapter.
 
 Endpoint accepts zero configured Adapters and remains connected while waiting for local configuration.
-A local `agent-clusterctl` action drives an Endpoint per-adapter replace operation, so activation or
-rollback affects one Adapter instance without restarting Endpoint or disturbing another instance.
+A local `agent-clusterctl` action drives an Endpoint per-adapter replace operation, which re-describes
+one Adapter instance without restarting Endpoint or disturbing another instance.
 
 The sections below describe verified TopsailAI behavior that `providers/topsailai` must satisfy. They
 do not authorize Agent Cluster to keep or reintroduce TopsailAI-specific translation.

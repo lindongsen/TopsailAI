@@ -49,15 +49,14 @@ SERVER_API_URL=http://127.0.0.1:53680
 # adapter.
 #
 # The command is the installed Provider CLI payload, not a business CLI. The
-# provider package installs one immutable directory per version, so the path
-# carries the version and cannot be guessed from the template. List the installed
-# versions on this node and use the newest:
+# provider package installs it at one fixed path, so this value never changes when
+# the package version changes and needs no per-node lookup:
 #
-#     ls -1dt /opt/agent-cluster/providers/topsailai/*/
+#     /opt/agent-cluster/providers/topsailai/agent-cluster-provider-topsailai
 #
-# Replace <package-version> below with that directory name. agent-clusterctl
-# doctor refuses to start while the command is not executable, so an unfilled
-# placeholder fails loudly at startup rather than silently at the first command.
+# agent-clusterctl doctor refuses to start while the command is not executable, so
+# a node without the Provider package fails loudly at startup rather than silently
+# at the first command.
 #
 # The "revision" field inside "capabilities" is retained for compatibility but no
 # longer reaches any decision: the capability revision an Endpoint publishes is the
@@ -67,7 +66,7 @@ ADAPTERS='[
   {
     "adapter_id": "topsailai-local",
     "provider_type": "genericcli",
-    "command": "/opt/agent-cluster/providers/topsailai/<package-version>/agent-cluster-provider-topsailai",
+    "command": "/opt/agent-cluster/providers/topsailai/agent-cluster-provider-topsailai",
     "timeout_ms": 120000,
     "capabilities": {
       "revision": "topsailai-v1",

@@ -42,8 +42,10 @@ var adapterCommandPattern = regexp.MustCompile(`"command"\s*:\s*"([^"]*)"`)
 var providerRootPattern = regexp.MustCompile(`PROVIDER_ROOT="([^"]*)\$\{PROVIDER_TYPE\}"`)
 
 // providerBinaryPattern reads the payload file name out of the post-install
-// script.
-var providerBinaryPattern = regexp.MustCompile(`BINARY="\$\{VERSION_DIR\}/([^"]*)\$\{PROVIDER_TYPE\}"`)
+// script. The payload sits directly under the provider root, because the path
+// carries no version: a versioned directory would write the package version into
+// every site configuration.
+var providerBinaryPattern = regexp.MustCompile(`BINARY="\$\{PROVIDER_ROOT\}/([^"]*)\$\{PROVIDER_TYPE\}"`)
 
 // installLayout is the payload layout the provider package actually installs.
 type installLayout struct {
@@ -85,7 +87,7 @@ func readInstallLayout(t *testing.T, root string) installLayout {
 	}
 	binaryMatch := providerBinaryPattern.FindStringSubmatch(script)
 	if binaryMatch == nil {
-		t.Fatalf("scripts/deb/postinst.provider does not define BINARY as ${VERSION_DIR}/<prefix>${PROVIDER_TYPE}, so the guard cannot read the payload name")
+		t.Fatalf("scripts/deb/postinst.provider does not define BINARY as ${PROVIDER_ROOT}/<prefix>${PROVIDER_TYPE}, so the guard cannot read the payload name")
 	}
 	return installLayout{rootPrefix: rootMatch[1], binaryPrefix: binaryMatch[1]}
 }
@@ -124,17 +126,13 @@ func TestDocumentedAdapterCommandMatchesTheInstalledLayout(t *testing.T) {
 			continue
 		}
 		segments := strings.Split(remainder, "/")
-		if len(segments) != 3 {
-			t.Errorf("%s:%d documents command %q, want %q<provider-type>/<version>/<payload>", item.file, item.line, item.value, layout.rootPrefix)
+		if len(segments) != 2 {
+			t.Errorf("%s:%d documents command %q, want %q<provider-type>/<payload>", item.file, item.line, item.value, layout.rootPrefix)
 			continue
 		}
-		providerType, version, payload := segments[0], segments[1], segments[2]
+		providerType, payload := segments[0], segments[1]
 		if providerType == "" {
 			t.Errorf("%s:%d documents command %q with an empty provider type directory", item.file, item.line, item.value)
-			continue
-		}
-		if version == "" {
-			t.Errorf("%s:%d documents command %q with an empty version directory", item.file, item.line, item.value)
 			continue
 		}
 		wantPayload := layout.binaryPrefix + providerType

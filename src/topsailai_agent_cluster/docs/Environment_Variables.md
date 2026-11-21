@@ -439,31 +439,30 @@ from `node.conf` unchanged, so write it as an absolute path.
 
 ## Provider package
 
-The Provider CLI package is optional and independent of every role package. Its
-maintainer script bounds how many superseded versions stay on disk, so an upgrade
-does not fill the node and a rollback still has a version to select. These two
-settings are read by `scripts/deb/postinst.provider` at install time, not by the
-Endpoint process, so they are not part of the Endpoint table above.
+The Provider CLI package is optional and independent of every role package. It
+installs one executable at a fixed path,
+`/opt/agent-cluster/providers/<provider-type>/agent-cluster-provider-<provider-type>`,
+with its `manifest.json` beside it. The path carries no version, so a site
+configuration names one executable and never has to be rewritten when the package
+version changes.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `AGENT_CLUSTER_PROVIDER_RETENTION_COUNT` | `2` | Total versions kept on disk, including the installed one; the default keeps the installed version plus one previous version for a rollback |
-| `AGENT_CLUSTER_PROVIDER_RETENTION_DAYS` | `30` | Age in days at which a superseded version is removed even when the count limit still has room |
+The maintainer script verifies the installed bytes and deletes nothing. It compares
+the installed file against the digest recorded in the manifest at build time, and it
+runs the installed binary's `describe` request to confirm the identity it reports
+matches the manifest. Both checks matter more with a fixed path than with a
+versioned one: dpkg accepts a same-version replacement silently, so the path alone
+never proves that the file at that path is the packaged file.
 
-Both are overridable at install time, because a site that rolls back often needs
-more history and a small disk needs less. A value that is not a positive integer
-warns and falls back to the default rather than deleting anything, so a typo cannot
-turn into an unbounded delete.
+Installing this package replaces the executable an Adapter runs. That is the
+accepted cost of the fixed layout: a versioned directory made "installed" different
+from "activated", but it also wrote the package version into every `node.conf`, so
+each Provider release required a configuration package rebuild, and a forgotten
+rewrite left a healthy Endpoint running the previous binary with no error. dpkg also
+removed the previous directory on upgrade, so the rollback the versioned layout
+promised was never available. A rollback is now a reinstall of the previous package.
 
-The version the package just installed is never removed: removing it would leave the
-package installed with no payload. Superseded versions are visited newest-first, so
-the count limit keeps the most recent ones, and each removal is logged with the
-version name, its age and how many newer versions were kept.
-
-Installing a Provider CLI is not the same as activating it. The script never selects
-a version for an Adapter: activation is a per-adapter decision made through
-`agent-clusterctl replace`, described in `docs/agent-cluster-adapters.md` under
-Adapter implementations.
+The package reads no environment variables. The two retention settings that bounded
+superseded version directories are gone with the directories themselves.
 
 ## Client
 

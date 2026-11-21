@@ -451,9 +451,9 @@ the generic CLI Adapter may not. `providers/mock` supplies both conforming behav
 configured broken modes for executable-level negative tests.
 
 Provider deployment preserves that source boundary. `agent-cluster-endpoint` has no package dependency
-on a concrete provider. The optional `agent-cluster-provider-topsailai` package installs a versioned
-provider executable, while the mock is a test build artifact and is excluded from default production
-packages and installations.
+on a concrete provider. The optional `agent-cluster-provider-topsailai` package installs the provider
+executable at one fixed path, while the mock is a test build artifact and is excluded from default
+production packages and installations.
 
 ```mermaid
 flowchart LR
@@ -461,7 +461,7 @@ flowchart LR
     ProviderPackage["agent-cluster-provider-topsailai package\noptional"]
     MockArtifact["provider mock artifact\ntests only"]
     EndpointRuntime["Endpoint runtime"]
-    ProviderRuntime["Configured versioned provider executable"]
+    ProviderRuntime["Configured provider executable"]
 
     EndpointPackage --> EndpointRuntime
     ProviderPackage --> ProviderRuntime
@@ -469,20 +469,20 @@ flowchart LR
     MockArtifact -.->|"conformance and integration tests only"| EndpointRuntime
 ```
 
-Adding or replacing a provider installs a provider package and changes Endpoint-local Adapter configuration.
-Installation alone neither restarts the Endpoint nor replaces the active executable.
-Provider artifacts use versioned paths: the operator validates `describe` compatibility and the
-provider package before atomically replacing that Adapter instance with the new path. The previous verified Provider CLI version remains available for rollback until cutover acceptance.
+Adding or replacing a provider installs a provider package. Provider artifacts install to one fixed
+path per Provider type, so a site configuration names one executable and never has to be rewritten
+when the package version changes. Installing the package replaces the executable an Adapter runs, and
+a rollback is a reinstall of the previous package. The maintainer script proves the installed bytes
+are the packaged bytes by comparing the manifest digest and by running the binary's own `describe`
+request, because a fixed path alone never proves which version is at that path.
 
 ```mermaid
 flowchart LR
-    Install["Install versioned provider artifact"] --> Describe["Run describe and compatibility checks"]
+    Install["Install the provider package"] --> Describe["Run describe and compatibility checks"]
     Describe --> Verify["Run conformance and bounded smoke checks"]
-    Verify --> Switch["Atomically replace one Adapter instance"]
-    Switch --> Publish["Re-describe and publish the effective capability set"]
-    Publish --> Accept{"Cutover accepted?"}
-    Accept -->|"yes"| Retire["Retire old artifact under retention policy"]
-    Accept -->|"no"| Rollback["Restore previous Provider CLI version"]
+    Verify --> Accept{"Cutover accepted?"}
+    Accept -->|"yes"| Keep["Keep the installed package"]
+    Accept -->|"no"| Rollback["Reinstall the previous package"]
 ```
 
 After the Generic CLI seam is implemented, adding or switching a Provider CLI version requires no
@@ -558,15 +558,16 @@ The only Adapter implementation is the Generic CLI Adapter. The only Provider CL
 packaged). An Endpoint configured with a removed provider type refuses to start.
 
 The first production replacement is a one-way removal of the old seams; it does not roll back to old
-Adapter code. After one Provider CLI version has passed production acceptance, later rollback applies
-only between verified, immutable Provider CLI versions configured for the same `adapter_id`.
+Adapter code. After one Provider CLI version has passed production acceptance, a later rollback
+reinstalls the previous package, because the payload path carries no version and the installed
+executable is replaced in place.
 Provider-specific behavior remains in `providers/topsailai` and must not be copied into the Generic CLI
 Adapter.
 
 Endpoint can run with zero configured Adapters: it still connects to Server, reports Endpoint health
 and waits for local configuration. A local `agent-clusterctl` action invokes an Endpoint per-adapter
-replace operation to activate or roll back one Provider CLI version without restarting Endpoint or
-affecting unrelated Adapter instances.
+replace operation, which re-describes one Adapter instance without restarting Endpoint or affecting
+unrelated Adapter instances.
 
 ## Transport and connectivity
 

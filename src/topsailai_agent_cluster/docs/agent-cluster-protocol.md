@@ -1096,12 +1096,14 @@ not echoed in responses, stderr, receipts or audit records.
 
 Provider packages and Endpoint Adapter configurations have separate lifecycles. `agent-cluster-endpoint` has no
 package dependency on a concrete provider; a provider such as TopsailAI is installed through the
-optional `agent-cluster-provider-topsailai` package. The package installs an immutable, versioned
-executable path. Installing it does not restart the Endpoint, change the active Adapter configuration or publish new
-capabilities. Activation requires an explicit local per-adapter update after bootstrap compatibility and
-package verification; the Endpoint then re-runs `describe`, computes a new effective capability
-revision and publishes it. Rollback restores the previous versioned executable path. The mock provider
-is a test artifact and is not part of default production packaging or installation.
+optional `agent-cluster-provider-topsailai` package. The package installs one executable at a fixed
+path per Provider type, so a site configuration names one executable and never has to be rewritten when
+the package version changes. Installing it does not restart the Endpoint or publish new capabilities,
+but it does replace the executable an Adapter runs, because the path carries no version. A rollback is
+a reinstall of the previous package. The maintainer script proves the installed bytes are the packaged
+bytes by comparing the manifest digest and by running the binary's own `describe` request, because a
+fixed path alone never proves which version is at that path. The mock provider is a test artifact and
+is not part of default production packaging or installation.
 
 For the MVP, the provider CLI is a locally trusted component and is not sandboxed from the Endpoint.
 The rule that it must not modify Endpoint databases, journals or credentials is an integration contract,

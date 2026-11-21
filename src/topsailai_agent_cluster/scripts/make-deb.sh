@@ -67,8 +67,10 @@
 #   --keep      keep the staging tree for inspection
 #
 # The provider role builds agent-cluster-provider-topsailai. Its payload path is
-# versioned from the binary's own describe output, so the installed path and the
-# identity the binary reports cannot disagree.
+# fixed, so an Adapter configuration names one executable and never has to be
+# rewritten when the package version changes. The manifest beside the binary
+# records the identity the binary reports, so the installed path and the identity
+# still cannot disagree.
 
 set -uo pipefail
 
@@ -657,11 +659,11 @@ function build_config_package() {
 
 # Builds the optional Provider CLI package.
 #
-# The payload path is versioned by the package version, so a new build never
-# overwrites an installed version and a rollback can name an exact directory. The
-# Provider's own identity is recorded in manifest.json beside the binary, because
-# the directory names the artifact build while the manifest names the Provider
-# behaviour; the postinst compares the two instead of trusting the path.
+# The payload path is fixed, so a new build replaces the executable an Adapter
+# runs instead of adding a directory beside it. The Provider's own identity is
+# recorded in manifest.json beside the binary, and the postinst compares the
+# installed bytes and the reported identity against that manifest, because a fixed
+# path alone never proves which build is installed.
 #
 # This package is deliberately independent of every other package. The Endpoint
 # package neither depends on nor recommends any Provider, so a node can run with
@@ -671,9 +673,17 @@ function build_config_package() {
 function build_provider_package() {
     local module_dir="${PROJECT_DIR}/providers/${PROVIDER_TYPE}"
     [ -d "${module_dir}" ] || die "missing Provider module ${module_dir}"
-    local version_dir="${OPT_DIR}/providers/${PROVIDER_TYPE}/${FULL_VERSION}"
-    local binary="${version_dir}/agent-cluster-provider-${PROVIDER_TYPE}"
-    local manifest="${version_dir}/manifest.json"
+    # The payload path is fixed rather than versioned. A versioned directory made
+    # "installed" different from "activated", but it also wrote the version into
+    # every site configuration, so each Provider release required a configuration
+    # package rebuild, and a forgotten rewrite left a healthy Endpoint running the
+    # previous binary with no error. dpkg also removed the previous directory on
+    # upgrade, so the rollback the versioned layout promised was never available.
+    # The accepted consequence is that installing this package replaces the bytes
+    # an Adapter runs, and a rollback is a reinstall of the previous package.
+    local payload_dir="${OPT_DIR}/providers/${PROVIDER_TYPE}"
+    local binary="${payload_dir}/agent-cluster-provider-${PROVIDER_TYPE}"
+    local manifest="${payload_dir}/manifest.json"
 
     # The Provider is a separate Go module, so it is built from its own directory
     # rather than through the root module. The caches are pinned under .tmp so a

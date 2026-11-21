@@ -12,15 +12,15 @@ import (
 
 // The Provider CLI package is optional and independent of every role package.
 // These constants pin the layout it must produce, so a packaging change that
-// moves the payload back to an unversioned path fails here instead of on a node
-// where an Adapter is already running the previous version.
+// moves the payload back to a versioned path fails here instead of on a node
+// where every site configuration would then name a directory that no longer
+// exists.
 const (
-	debProviderType      = "topsailai"
-	debProviderVersion   = "0.0.0-test-1"
-	debProviderRoot      = debOptDir + "/providers/" + debProviderType
-	debProviderVersioned = debProviderRoot + "/" + debProviderVersion
-	debProviderBinary    = debProviderVersioned + "/agent-cluster-provider-" + debProviderType
-	debProviderManifest  = debProviderVersioned + "/manifest.json"
+	debProviderType     = "topsailai"
+	debProviderVersion  = "0.0.0-test-1"
+	debProviderRoot     = debOptDir + "/providers/" + debProviderType
+	debProviderBinary   = debProviderRoot + "/agent-cluster-provider-" + debProviderType
+	debProviderManifest = debProviderRoot + "/manifest.json"
 )
 
 // debProviderPackage returns the built Provider package. The build itself is
@@ -53,21 +53,22 @@ func readControlFile(t *testing.T, pkg *debPackage, path string) string {
 	return string(output)
 }
 
-// TestDebProviderPayloadIsVersioned proves the Provider executable lives at a
-// path that carries its package version.
+// TestDebProviderPayloadIsAtAFixedPath proves the Provider executable lives at a
+// path that carries no version.
 //
-// This is the property that makes an upgrade safe. An Adapter is configured with
-// one executable path, so a package that overwrote a fixed path would replace the
-// bytes an Adapter is currently running, and a rollback would need a rebuild
-// instead of a path change. A versioned directory also lets two versions coexist,
-// which is what the postinst retention policy bounds.
-func TestDebProviderPayloadIsVersioned(t *testing.T) {
+// The fixed path is what lets one site configuration name one executable forever.
+// A versioned directory wrote the package version into every node.conf, so each
+// Provider release required a configuration package rebuild, and a forgotten
+// rewrite left a healthy Endpoint running the previous binary with no error. The
+// accepted cost is that installing this package replaces the bytes an Adapter
+// runs, so a rollback is a reinstall rather than a path change.
+func TestDebProviderPayloadIsAtAFixedPath(t *testing.T) {
 	pkg := debProviderPackage(t)
 
 	entry, ok := pkg.entries[debProviderBinary]
 	if !ok {
 		t.Fatalf("missing %s in the Provider payload;\n"+
-			"an unversioned path would overwrite the bytes an Adapter is running",
+			"a versioned path would force every site configuration to name the version",
 			debProviderBinary)
 	}
 	if entry.target != "" {
@@ -78,21 +79,14 @@ func TestDebProviderPayloadIsVersioned(t *testing.T) {
 			debProviderBinary, entry.mode, "rwxr-xr-x")
 	}
 
-	// The version directory must be a real directory, not a symlink into a
-	// shared location, because the retention policy removes whole directories.
-	dir, ok := pkg.entries[debProviderVersioned]
-	if !ok {
-		t.Fatalf("missing the version directory %s", debProviderVersioned)
-	}
-	if dir.target != "" {
-		t.Fatalf("%s must be a real directory, not a symlink to %s", debProviderVersioned, dir.target)
-	}
-
-	// A fixed path from an earlier layout must not survive beside the versioned
-	// one, because two paths for one Provider make the active version ambiguous.
+	// No version directory may survive beside the fixed path. Two paths for one
+	// Provider would make the active executable ambiguous, and the versioned one
+	// would be the path an older configuration still names.
+	versionPrefix := debProviderRoot + "/" + debProviderVersion
 	for path := range pkg.entries {
-		if path == debProviderRoot+"/agent-cluster-provider-"+debProviderType {
-			t.Fatalf("the Provider package still ships the unversioned path %s", path)
+		if path == versionPrefix || strings.HasPrefix(path, versionPrefix+"/") {
+			t.Fatalf("the Provider package still ships the versioned path %s;\n"+
+				"the payload must live at %s only", path, debProviderBinary)
 		}
 	}
 }
@@ -102,7 +96,8 @@ func TestDebProviderPayloadIsVersioned(t *testing.T) {
 //
 // The postinst compares the installed file against this digest, so a manifest
 // that describes a different build would make every install fail, and a manifest
-// with no digest would make the check vacuous.
+// with no digest would make the check vacuous. The manifest sits beside the binary
+// it describes, so a fixed path cannot separate the two.
 func TestDebProviderManifestDescribesTheShippedBinary(t *testing.T) {
 	pkg := debProviderPackage(t)
 
@@ -171,15 +166,16 @@ func TestDebProviderPackageDependsOnNoRole(t *testing.T) {
 	}
 }
 
-// TestDebProviderPostinstVerifiesIdentityAndBoundsRetention proves the maintainer
-// script is specialised at build time and keeps the two safety properties.
+// TestDebProviderPostinstVerifiesIdentity proves the maintainer script is
+// specialised at build time and keeps both identity checks.
 //
 // The placeholders are substituted by the builder, so an unsubstituted script
 // would compare the installed binary against the literal string "@PROVIDER_TYPE@"
-// and fail every install. The retention defaults are asserted because an
-// unbounded retention policy is the failure mode that fills a disk slowly and is
-// invisible until the filesystem is full.
-func TestDebProviderPostinstVerifiesIdentityAndBoundsRetention(t *testing.T) {
+// and fail every install. The digest check and the describe probe are the only
+// proof that the bytes at the fixed path are the packaged bytes, which matters
+// more with a fixed path than with a versioned one: dpkg accepts a same-version
+// replacement silently, so the path alone proves nothing.
+func TestDebProviderPostinstVerifiesIdentity(t *testing.T) {
 	pkg := debProviderPackage(t)
 	postinst := readControlFile(t, pkg, "./postinst")
 
@@ -229,18 +225,30 @@ func TestDebProviderPostinstVerifiesIdentityAndBoundsRetention(t *testing.T) {
 				"the builder writes `\"%s\": \"...\"` with a space after the colon, so every install aborts", field, field)
 		}
 	}
+}
 
-	// Retention must be bounded by default and configurable.
-	if !hasLineContaining(postinst, "AGENT_CLUSTER_PROVIDER_RETENTION_COUNT:-2") {
-		t.Fatal("the postinst does not default the retention count to 2")
-	}
-	if !hasLineContaining(postinst, "AGENT_CLUSTER_PROVIDER_RETENTION_DAYS:-30") {
-		t.Fatal("the postinst does not default the retention age to 30 days")
-	}
-	// The installed version must never be removed, otherwise the package stays
-	// installed with no payload.
-	if !hasLineContaining(postinst, `[ "${name}" = "${PACKAGE_VERSION}" ] && continue`) {
-		t.Fatal("the postinst does not skip the version it just installed")
+// TestDebProviderPostinstDeletesNothing proves the maintainer script carries no
+// retention policy.
+//
+// A fixed path has no superseded directory to retire, so a retention block would
+// be dead code that still runs `rm -rf` against a directory listing. The failure
+// mode of a wrong retention setting is an unbounded delete, and the failure mode
+// of a leftover block is a delete nobody expects, so the absence is asserted
+// rather than assumed.
+func TestDebProviderPostinstDeletesNothing(t *testing.T) {
+	pkg := debProviderPackage(t)
+	postinst := readControlFile(t, pkg, "./postinst")
+
+	for _, forbidden := range []string{
+		"AGENT_CLUSTER_PROVIDER_RETENTION_COUNT",
+		"AGENT_CLUSTER_PROVIDER_RETENTION_DAYS",
+		"rm -rf",
+	} {
+		if strings.Contains(postinst, forbidden) {
+			t.Fatalf("the postinst still carries %q;\n"+
+				"a fixed payload path has no superseded version to retire, so the script must delete nothing",
+				forbidden)
+		}
 	}
 }
 

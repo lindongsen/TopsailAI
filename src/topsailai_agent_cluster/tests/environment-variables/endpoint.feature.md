@@ -30,7 +30,7 @@ Examples:
 | `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `127.0.0.1:53944` | Endpoint channel listener |
 | `AGENT_CLUSTER_ENDPOINT_HEARTBEAT_ACK_TIMEOUT` | `4s` | heartbeat acknowledgement bound |
 | `AGENT_CLUSTER_ENDPOINT_UNHEALTHY_WINDOW` | `45s` | consecutive unacknowledged heartbeat window |
-| `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | `[{"adapter_id":"default","provider_type":"genericcli","command":"/opt/agent-cluster/providers/topsailai/1.0.0/agent-cluster-provider-topsailai","timeout_ms":120000}]` | adapter configuration |
+| `AGENT_CLUSTER_ENDPOINT_ADAPTERS` | `[{"adapter_id":"default","provider_type":"genericcli","command":"/opt/agent-cluster/providers/topsailai/agent-cluster-provider-topsailai","timeout_ms":120000}]` | adapter configuration |
 | `AGENT_CLUSTER_ENDPOINT_COMMAND_ALLOWLIST_FILE` | `/tmp/allowlist.conf` | command allowlist path |
 | `AGENT_CLUSTER_ENDPOINT_ACCESS_POLICY_DIR` | `/tmp/policies` | access policy directory |
 | `AGENT_CLUSTER_ENDPOINT_COLLECTION_DELAY_MS` | `250` | post-start collection delay |
@@ -51,7 +51,7 @@ Examples:
 |---|---|
 | `AGENT_CLUSTER_INSTANCE_ID` | `legacy-instance` |
 | `AGENT_CLUSTER_CHANNEL_ADDRESS` | `wss://127.0.0.1:53943` |
-| `AGENT_CLUSTER_ADAPTERS` | `[{"adapter_id":"default","provider_type":"genericcli","command":"/opt/agent-cluster/providers/topsailai/1.0.0/agent-cluster-provider-topsailai","timeout_ms":120000}]` |
+| `AGENT_CLUSTER_ADAPTERS` | `[{"adapter_id":"default","provider_type":"genericcli","command":"/opt/agent-cluster/providers/topsailai/agent-cluster-provider-topsailai","timeout_ms":120000}]` |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `/tmp/allowlist.conf` |
 | `AGENT_CLUSTER_COLLECTION_DELAY_MS` | `250` |
 

@@ -322,10 +322,9 @@ Directed by the human on 2026-11-12, wording normalized, meaning preserved:
 The initial package boundary is `agent-cluster-endpoint` plus the optional
 `agent-cluster-provider-topsailai`; the Endpoint package has no dependency on that or any future
 provider package. `providers/mock` produces a test artifact only and is excluded from default
-production packages and installations. Provider releases use versioned artifacts and are activated by
-an explicit Endpoint-local binding change after protocol compatibility checks; installation alone does
-not restart the Endpoint or silently replace the active executable. Keeping the previous versioned
-artifact and binding path provides rollback.
+production packages and installations. Provider releases install at one fixed path per Provider type
+and are activated by installation itself; the versioned-artifact layout this paragraph originally
+described was superseded on 2026-11-21 and is recorded at the end of this document.
 
 For the MVP, provider CLI trust is operational trust, not enforced isolation. Process separation gives
 module, dependency and fault isolation; a provider running under the Endpoint OS identity is not
@@ -350,12 +349,12 @@ than running beside them as supported alternatives. Acceptance is against the Cl
 fixtures, BDD, integration tests and bounded live smoke evidence, not an old/new implementation parity
 suite. Once the replacement unit lands, the old `CommandAdapter`, its argv protocol, the compiled-in
 TopsailAI factory path and provider-command templates are removed in that same reviewed unit. They are
-not rollback targets. Rollback means selecting a previously verified versioned Provider CLI artifact
-for the same `adapter_id`.
+not rollback targets. Rollback means reinstalling the previous Provider package for the same
+`adapter_id`.
 
 Endpoint must be able to start, connect and report health with zero configured Adapters. Provider
 activation is an Endpoint-local per-adapter replace operation driven by `agent-clusterctl`; installing a
-Provider package alone never activates it or restarts the whole Endpoint.
+Provider package replaces the executable an Adapter runs, and it never restarts the whole Endpoint.
 
 Endpoint retains all Cluster authority: authorization, local policy, command journal, deduplication,
 `ResourceMapper`, effective capabilities, Cluster IDs and complete `ExecutionReceipt` construction.
@@ -743,3 +742,37 @@ validation and the registry write. Reusing `control` keeps one scope vocabulary 
 invalidating deployed policy files, while the root confinement — not an extra scope name — is the real
 security boundary. Treating registration as configuration keeps a registry edit from ever becoming a
 destructive filesystem operation.
+
+## The Provider CLI installs at one fixed path, and installing it activates it
+
+Directed by the human on 2026-11-21, wording normalized, meaning preserved:
+
+> 直接用C
+
+This supersedes the versioned-artifact rule recorded earlier in this document. The Provider CLI now
+installs to one fixed path per Provider type,
+`/opt/agent-cluster/providers/<provider-type>/agent-cluster-provider-<provider-type>`, with
+`manifest.json` beside it. The path carries no version.
+
+Three facts decided it, and all three were verified rather than assumed:
+
+- The versioned directory wrote `FULL_VERSION` into every `node.conf`, so every Provider release
+  required a configuration package rebuild. A forgotten rewrite left a healthy Endpoint running the
+  previous binary with no error, because the old binary is still a valid binary.
+- dpkg removes files the new package no longer lists, so the previous version directory disappeared on
+  upgrade. The rollback the versioned layout promised was never available: all four nodes held exactly
+  one directory, and no script in `scripts/` retained or pruned any of them.
+- The two retention settings that bounded those directories had nothing left to bound.
+
+Trigger: changing the Provider payload path, the Provider package, or any site configuration that names
+the Provider executable.
+
+Action: keep the payload at the fixed path, keep the manifest beside it, keep the digest and `describe`
+checks in the postinst, and delete nothing in the maintainer script. A rollback is a reinstall of the
+previous package, not a path change.
+
+Why this prevents recurrence: a versioned path looks safer because it separates install from
+activation, but that separation only exists if the configuration is rewritten in lockstep, and nothing
+enforces it. The failure is silent in the direction that matters: the Endpoint starts, reports healthy,
+and runs the previous binary. A fixed path removes the second source of truth entirely, and the
+postinst digest check is what still proves which bytes are installed.
