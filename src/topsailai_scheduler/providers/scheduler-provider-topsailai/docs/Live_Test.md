@@ -112,9 +112,10 @@ The driver starts the daemon inside tmux with these variables:
 | `SCHEDULER_PROVIDER_CALL_TIMEOUT` | `180s` | Must exceed the provider's own 120s launch budget. |
 | `TOPSAILAI_PROVIDER_STATE_DIR` | `.tmp/live-topsailai/provider-state` | Keep run records inside the test folder. |
 
-`SCHEDULER_PROVIDER_CALL_TIMEOUT` is not optional. Its default is `30s`, which is
-shorter than the provider's `LAUNCH_TIMEOUT` of `120s`, so the scheduler would
-abandon the call before the provider gives up and the real error would be hidden.
+`SCHEDULER_PROVIDER_CALL_TIMEOUT` is set explicitly even though the scheduler
+default is now `180s`, which already exceeds the provider's `LAUNCH_TIMEOUT` of
+`120s`. Stating it here keeps the relationship visible: if either budget changes,
+the mismatch is obvious in this file rather than hidden in a default.
 
 ## Running it
 

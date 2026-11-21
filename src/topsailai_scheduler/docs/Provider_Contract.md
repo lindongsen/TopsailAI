@@ -48,8 +48,10 @@ provider that needs to run work in the background detaches it itself and returns
 handle; the scheduler supervises through `poll` rather than by waiting for `start`
 to finish.
 
-The default call timeout is 30 seconds. A provider that does not answer within it
-is treated as broken rather than slow.
+The default call timeout is 180 seconds. A provider that does not answer within it
+is treated as broken rather than slow. A provider whose own internal budget is
+longer than that must say so, because the scheduler's timeout fires first and the
+provider's real diagnosis would never be seen.
 
 ## start
 

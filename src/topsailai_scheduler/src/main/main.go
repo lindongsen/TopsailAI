@@ -64,7 +64,7 @@ Environment:
   SCHEDULER_DEFAULT_PROVIDER_PATH provider executable for a task that names none,
                                 required by "run", for example ./providers/mock/bin/mock
   SCHEDULER_POLL_INTERVAL       how often a running task is polled, default 5s
-  SCHEDULER_PROVIDER_CALL_TIMEOUT  per-call provider timeout, default 30s
+  SCHEDULER_PROVIDER_CALL_TIMEOUT  per-call provider timeout, default 180s
   SCHEDULER_WORKSPACE           default workspace
   SCHEDULER_MIN_TASK_CONTENT_RUNES  shortest task content accepted, default 30
 `

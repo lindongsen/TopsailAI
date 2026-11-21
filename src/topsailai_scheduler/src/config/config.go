@@ -56,7 +56,7 @@ const (
 	DefaultShutdownGrace       = 60 * time.Second
 	DefaultMaxOutputBytes      = 64 * 1024
 	DefaultPollInterval        = 5 * time.Second
-	DefaultProviderCallTimeout = 30 * time.Second
+	DefaultProviderCallTimeout = 180 * time.Second
 	// DefaultMinContentRunes is the shortest task content accepted. A task
 	// whose content is empty or a bare phrase gives an agent nothing to act
 	// on, so it is rejected at load time instead of being scheduled and
@@ -104,7 +104,11 @@ type Config struct {
 	DefaultProviderPath string
 	// PollInterval is how often a supervised run's state is checked.
 	PollInterval time.Duration
-	// ProviderCallTimeout bounds one provider protocol call.
+	// ProviderCallTimeout bounds one provider protocol call. It must exceed the
+	// internal budget of any provider it supervises, otherwise the scheduler's
+	// own timeout always fires first and the provider's real diagnosis is never
+	// seen. The reference provider waits up to 120 seconds for a launch, so the
+	// default of 180 seconds leaves room for that budget plus its own overhead.
 	ProviderCallTimeout time.Duration
 	// MinContentRunes is the shortest task content accepted, counted in runes
 	// after trimming whitespace. It is a parameter rather than a constant in

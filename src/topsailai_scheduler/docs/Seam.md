@@ -229,8 +229,11 @@ last argument:
 
 Each call is a short exchange: one JSON document on stdin, at most one JSON
 document on stdout, diagnostics on stderr. A call is bounded by
-`SCHEDULER_PROVIDER_CALL_TIMEOUT`, defaulting to 30 seconds; a provider that does
-not answer within it is treated as broken rather than slow.
+`SCHEDULER_PROVIDER_CALL_TIMEOUT`, defaulting to 180 seconds; a provider that does
+not answer within it is treated as broken rather than slow. The default must
+exceed the internal budget of any provider the scheduler supervises, otherwise
+the scheduler's timeout fires first and the provider's own diagnosis is never
+seen.
 
 `start` returns a handle whose `run_id` is the only required field. The scheduler
 stores that handle and hands it back unchanged to `poll` and `stop`, so a

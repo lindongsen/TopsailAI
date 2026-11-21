@@ -45,7 +45,7 @@ it belongs to a task. Rotation is implemented in-process, so no external
 |---|---|---|
 | `SCHEDULER_DEFAULT_PROVIDER_PATH` | none, required by `run` | Executable of the provider used by a task that names none. A relative path is resolved against the working directory. |
 | `SCHEDULER_POLL_INTERVAL` | `5s` | How often a supervised run is polled for its lifecycle state. |
-| `SCHEDULER_PROVIDER_CALL_TIMEOUT` | `30s` | How long one provider call may take before it is treated as failed. |
+| `SCHEDULER_PROVIDER_CALL_TIMEOUT` | `180s` | How long one provider call may take before it is treated as failed. Must exceed the internal budget of any provider it supervises, otherwise the scheduler's timeout fires first and hides the provider's real diagnosis. |
 | `SCHEDULER_WORKSPACE` | working directory | Default workspace for a task that sets none. |
 | `SCHEDULER_DEFAULT_TIMEOUT` | `30m` | Timeout for a task that sets none. |
 | `SCHEDULER_MAX_CONCURRENT` | `4` | Maximum number of runs executing at once. |
