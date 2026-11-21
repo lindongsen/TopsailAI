@@ -775,3 +775,36 @@ defect with a wider blast radius: it is reachable by any real failed install, no
 tests, and the same missing branch existed in `install_from_git`, `install_from_zip` and
 `install_from_url`. Fixing only the test would have hidden the production defect, and
 fixing only the production code would have left the test writing into the real home.
+
+## Partial `__init__.py` coverage is what makes pytest test basenames collide
+
+Trigger: `pytest tests/unit` aborted with `import file mismatch` because three files were
+named `test_config.py`. Only `tests/unit/events/` had an `__init__.py`; `tests/unit/workspace/`
+and `tests/unit/test_topsailai_tools_jev_tool/` did not. Under pytest's default `prepend`
+import mode, the module name is derived by walking up while `__init__.py` exists, so the
+covered file became `tests.unit.events.test_config` while the uncovered ones both fell back
+to the bare name `test_config` and collided.
+
+Action: make `__init__.py` coverage uniform for every directory that contains test files,
+rather than adding it only where a collision happens to surface. The marker file is enough;
+its content does not matter, only its presence.
+
+Why this prevents recurrence: the collision is a symptom of inconsistent packaging, not of
+duplicate names. Renaming one file fixes today's pair and leaves the next duplicate to
+appear wherever coverage is still partial, and the error message points at the two colliding
+files rather than at the missing marker that caused it. Uniform coverage also makes the
+module identity stable, which matters because some tests already import siblings by full
+package path (`from tests.unit.workspace.test_session_stats_service import ...`). Verify the
+fix by collection count, not by the absence of the error: collection went from
+`14256 collected, 1 error` to `14270 collected`, and the extra tests are the ones that were
+previously unreachable behind the aborted collection.
+
+Two traps made this harder to attribute. First, the mandated runner `tests/run_tests.py`
+spawns one pytest process per file, so it never reproduces the collision and the suite looks
+healthy while direct `pytest tests/unit` cannot run at all. Second, adding `__init__.py`
+changes import semantics, so the full suite afterwards showed 276 failures that looked
+self-inflicted; comparing failure sets against a pristine worktree proved zero new failures
+(276 versus 277, with the pristine tree failing one extra test), and the pristine tree could
+not even collect the full suite without excluding the colliding file. Always diff the failure
+sets rather than comparing counts alone, because a count that moves in the safe direction can
+still hide a swap.
