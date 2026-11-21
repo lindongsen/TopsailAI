@@ -608,6 +608,9 @@ image: image-build
 
 image-build:
 	docker build --network $(IMAGE_NETWORK) -f $(IMAGE_DOCKERFILE) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_TIME=$(BUILD_TIME) \
 		-t $(IMAGE_NAME) -t $(IMAGE_REPO):latest .
 
 # Runs the image with the ports published on the host. Publishing is what makes

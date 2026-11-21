@@ -39,12 +39,28 @@ RUN go mod download
 
 COPY . .
 
-# -trimpath keeps host paths out of the binary and -s -w drops the symbol table,
-# which is safe because the image ships no debugger.
-RUN CGO_ENABLED=0 GOOS=linux go build \
-        -trimpath -ldflags='-s -w' \
-        -o /out/agent-cluster-server ./src/main/agent-cluster-server
+# The version identity is injected rather than derived, because the build context
+# carries no .git and `-buildvcs` therefore records nothing. Without these values
+# the binary reports 0.0.0-unpackaged, which is correct for a local build and
+# wrong for a released image: an operator asking a container what it runs would
+# be told nothing. The defaults keep a plain `docker build` honest.
+ARG VERSION=0.0.0-unpackaged
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
 
+# -trimpath keeps host paths out of the binary and -s -w drops the symbol table,
+# which is safe because the image ships no debugger. The -X values are the same
+# three the Debian package injects, so a container and a package of one release
+# report one identity. The symbol must be named by its full module path: -X
+# silently ignores a path it cannot resolve, so a short form would leave the
+# defaults in place and still exit zero.
+RUN CGO_ENABLED=0 GOOS=linux go build \
+        -trimpath \
+        -ldflags="-s -w \
+          -X topsailai_agent_cluster/internal/version.Version=${VERSION} \
+          -X topsailai_agent_cluster/internal/version.Commit=${COMMIT} \
+          -X topsailai_agent_cluster/internal/version.BuildTime=${BUILD_TIME}" \
+        -o /out/agent-cluster-server ./src/main/agent-cluster-server
 FROM alpine:3.20.2
 
 # The CA bundle is copied rather than installed so the runtime stage performs no
