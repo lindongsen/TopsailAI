@@ -75,7 +75,7 @@ Reads a request document from stdin:
 | `task_id` | Task identity, the YAML path relative to the tasks root without extension |
 | `task_path` | Absolute path of the task Markdown content |
 | `task_dir` | Absolute folder holding the task files |
-| `workspace` | Working directory the run should use |
+| `workspace` | Working directory the run should use. The scheduler starts the provider process in this folder, so a provider inherits it rather than resolving one for itself. |
 | `command` | Executable the task asks to run; empty means the provider decides |
 | `args` | Extra arguments the task supplies to the provider |
 | `env` | Extra environment variables for this run only |
@@ -109,6 +109,23 @@ so a receipt with an empty `run_id` is rejected.
 A non-zero exit status, a timeout, or a reply that is not exactly one JSON
 document is a failed start. The scheduler records the failure and does not
 supervise the run.
+
+### Working directory
+
+The scheduler starts the provider process in the task's `workspace`, so a
+provider inherits that folder as its current directory and does not resolve one
+for itself. This is deliberate: a provider-specific environment variable would
+only work for that one provider, and a provider that guessed would disagree with
+the task's YAML.
+
+An empty `workspace` means the scheduler's own directory, which is a valid choice
+for a task that does not care where it runs. A named workspace must be an
+existing directory; the scheduler checks this before launching and reports it as
+a workspace error rather than as a provider failure, because a provider cannot
+start in a folder that is not there.
+
+`poll` and `stop` are not run in the workspace. They only read the provider's own
+state and never touch the task's files, so they keep the scheduler's directory.
 
 ## poll
 

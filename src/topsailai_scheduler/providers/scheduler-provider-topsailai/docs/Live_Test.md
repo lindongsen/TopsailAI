@@ -21,26 +21,35 @@ network. That is what makes it safe to run unattended.
 ## What the test proves
 
 - The daemon discovers a task in a temporary task tree.
-- The provider launches an agent and records a session id.
-- The agent session reaches `idle`, so `poll` reports `finished`.
+- The provider submits an agent launch and records a session id.
+- The agent runs in the workspace the task names, not wherever the scheduler
+  happened to be.
+- `poll` reports `running` while the agent answers a heartbeat, and `finished`
+  once the agent records a terminal status.
 - The tool set offered to the agent is exactly `time_tool`.
 
 ## Isolation
 
-Everything lives under `.tmp/live-topsailai/`. The real `tasks/` tree is never
-touched, so a stray run cannot fire a production task.
+The driver is tracked at `tests/live/run.sh`, so the test is reproducible from a
+clean checkout. Everything the test owns lives under `.tmp/live-topsailai/`, and
+the real `tasks/` tree is never touched, so a stray run cannot fire a production
+task.
 
 ```text
 .tmp/live-topsailai/
-├── tasks/probe/time.yaml     the task under test
-├── tasks/probe/time.md       its content
+├── tasks/probe/time.yaml     the task under test, written by the driver
+├── tasks/probe/time.md       its content, written by the driver
 ├── agent-workspace/          the folder the agent runs in
 ├── provider-state/           the provider's run records
 ├── daemon.log                daemon stdout and stderr
 ├── daemon.exit               the daemon's exit code
-├── run.log                   the test's own output
-└── run.sh                    the driver
+├── launch.json               the launch result
+└── status.json               the status snapshot
 ```
+
+The agent's own session artifacts are the one thing outside that folder. They are
+written under `TOPSAILAI_HOME` because the agent needs the real configuration
+there to reach a model. The test reads them and never creates them.
 
 ## The task pair
 
@@ -110,7 +119,7 @@ abandon the call before the provider gives up and the real error would be hidden
 ## Running it
 
 ```bash
-bash .tmp/live-topsailai/run.sh
+bash providers/scheduler-provider-topsailai/tests/live/run.sh
 ```
 
 The driver follows the project's tmux conventions: a deterministic session name,
@@ -122,73 +131,126 @@ Readiness is polled in two steps: the log must contain `scheduler starting`, the
 `status` must answer on the control socket. Only then does the test assert
 anything.
 
+The driver recreates `.tmp/live-topsailai/` on every run, so a previous failure
+cannot leave a task pair behind that makes the next run pass for the wrong
+reason.
+
 ## Reading the result
 
 A passing run prints one `ok:` line per assertion and ends with
 `N checks, 0 failures`.
 
 On failure the workspace is kept so the evidence can be inspected. The useful
-files are `run.log` for the assertion that failed, `daemon.log` for the provider
-exchange, and `provider-state/*.json` for the recorded session id.
+files are `daemon.log` for the provider exchange, `launch.json` for the launch
+result, and `provider-state/*.json` for the recorded session id.
 
-To confirm the tool set independently, read the agent's own log:
+The agent's own output is not in `daemon.log`: the agent writes it to its session
+artifacts under `TOPSAILAI_HOME`. To confirm the tool set independently, read the
+session stdout:
 
 ```bash
-grep -F "effective_tools" .tmp/live-topsailai/daemon.log
+grep -F "effective_tools" "${TOPSAILAI_HOME:-$HOME/.topsailai}"/workspace/task/<session_id>.*.session.stdout
 ```
 
 A correct run shows exactly two entries, `time_tool-get_local_date` and
 `time_tool-get_local_time`.
 
-## Known failure: the launch never returns
+The session metadata in the same folder is the other useful file. It records the
+agent's own pid, its terminal status, and the workspace it actually ran in:
 
-As of this writing the test does **not** pass, and the cause is in the provider,
-not in the test.
-
-`launch_arguments()` builds:
-
-```text
-topsailai workspace agent -m raw --non-interactive --json <workspace>
+```bash
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["status"], d["pid"], d["project_workspace"])' \
+  "${TOPSAILAI_HOME:-$HOME/.topsailai}"/workspace/task/<session_id>.*.session.meta
 ```
 
-That command runs in the foreground and blocks. The agent itself finishes in
-about 15 seconds and prints `>>> Your Turn: (pid=...) Press 'CTRL D' or Enter
-'EOF' for end`, then waits for input that never arrives. Redirecting stdin from
-`/dev/null` does not help; the process still does not exit.
+## Observed run
 
-The provider waits `LAUNCH_TIMEOUT` (120s), then reports:
+The test passes. A full run reports:
 
 ```text
-topsailai-provider: topsailai did not answer within 120s
+[live] ok: the daemon reported startup
+[live] ok: the control socket answered
+[live] ok: status succeeds
+[live] ok: the task is discovered
+[live] ok: the task is scheduled and idle
+[live] ok: the task runs to completion
+[live] ok: the provider wrote a state record
+[live] ok: the record carries a session id
+[live] ok: the provider recorded session wa-ab19a138228e
+[live] ok: the record names the single-turn driver
+[live] ok: the agent recorded a terminal status
+[live] ok: the agent ran in the requested workspace
+[live] ok: the agent's working directory is the workspace
+[live] ok: poll ended on the agent's recorded status
+[live] ok: time_tool was available to the agent
+[live] ok: file_tool was not available to the agent
+[live] 16 checks, 0 failures
 ```
 
-and the daemon logs:
+The daemon's own record of the run shows the supervision ladder ending on the
+metadata rather than on `session status`:
 
 ```text
-start run: provider "..." start exited 1: topsailai-provider: topsailai did not answer within 120s
+run finished | state=finished exit_code=0 polls=6 duration=7464850592
+             detail="session wa-ab19a138228e recorded status completed"
 ```
 
-Adding `--background` makes the same launch return immediately with a valid
-receipt:
+The provider's record shows the launcher pid and the driver it selected:
 
 ```json
-{"ok": true, "session_id": "wa-936606254f65", "pid": 3878451, "delivery_state": "submitted"}
+{"run_id": "b6fe6cbe50c94c44856abc44e2a83f2c", "session_id": "wa-ab19a138228e",
+ "launcher_pid": 2704943, "launcher_exit": 0, "task_id": "probe/time",
+ "driver": "topsailai_agent_chat"}
 ```
 
-So the fix is to launch in the background and treat the receipt as a submission,
-which is what the provider's own comment already says a launch is.
+The session metadata shows the workspace was honoured, which is the assertion
+that used to fail:
 
-## Known failure: the requested workspace is ignored
+```text
+status = completed
+pid = 2704998
+project_workspace = /TopsailAI/src/topsailai_scheduler/.tmp/live-topsailai/agent-workspace
+pwd = /TopsailAI/src/topsailai_scheduler/.tmp/live-topsailai/agent-workspace
+```
 
-The receipt reports `"workspace": "/TopsailAI/src/topsailai"` even though the
-task asked for `.tmp/live-topsailai/agent-workspace`.
+And the agent's stdout shows the tool allow-list held:
 
-The cause is outside this provider. The `topsailai` wrapper does
-`cd "${CWD}/../"`, which lands in `/TopsailAI/src/topsailai`, and that folder's
-`.topsailai/settings.yaml` sets `workspace: /TopsailAI/src/topsailai`, which then
-wins over the path passed on the command line.
+```text
+[available_tools] [2] ['time_tool-get_local_time', 'time_tool-get_local_date']
+[effective_tools] [2] ['time_tool-get_local_time', 'time_tool-get_local_date']
+[ToolStat] tool=time_tool-get_local_date count=1
+```
 
-Until that is resolved, a live test cannot confine the agent to a scratch
-folder. The `time_tool` allow-list is what keeps the run harmless in the
-meantime, which is why this test depends on it rather than on workspace
-isolation.
+## Two defects this test found
+
+Both were invisible to the stubbed unit tests, because a stub answers whatever it
+is told to answer.
+
+**The launch never returned.** The default driver runs unlimited turns, so the
+agent finished its work and then waited for a next turn that never came. The turn
+count lives inside the driver script and is not reachable from the provider, so
+the provider now selects the single-turn driver with `--driver`. The operating
+system environment variable would not have worked: it ranks last in driver
+resolution, so any `settings.yaml` naming `ai_agent_driver` overrides it.
+
+**The launch blocked for the whole run.** A foreground launch does not return
+until the agent exits, so a task longer than the scheduler's call timeout would be
+reported as a provider failure while the agent was working correctly. The provider
+now submits with `--background` and supervises through `poll`.
+
+A third defect was in the scheduler rather than here: it never set the provider's
+working directory, so the agent ran wherever the scheduler happened to be. The
+scheduler now runs the provider in the task's workspace, which is why the metadata
+above reports the requested folder.
+
+## Why the test is still safe
+
+The `time_tool` allow-list is the primary guarantee, and workspace isolation is
+the second layer. The agent can read the clock and nothing else: no file writes,
+no shell, no network. Even if a future change broke the workspace handling again,
+the agent would still have no tool that could modify anything.
+
+Keeping both layers matters because they fail independently. The allow-list is
+enforced by the agent's tool loader; the workspace is enforced by the scheduler
+setting the provider's working directory. A regression in either one alone does
+not make the run dangerous.

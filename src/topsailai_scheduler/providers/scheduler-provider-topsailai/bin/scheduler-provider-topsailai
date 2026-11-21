@@ -27,9 +27,10 @@ Two upstream facts shape this implementation:
     to interactive, so this provider sets it to 0 explicitly.
 """
 
+import glob
 import json
 import os
-import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -57,11 +58,36 @@ INTERACTIVE_ENV = "TOPSAILAI_INTERACTIVE_MODE"
 # path and reads the file itself, so a path with spaces needs no quoting.
 TASK_ENV = "TOPSAILAI_TASK"
 
+# DRIVER_ENV names the environment variable overriding the agent driver.
+DRIVER_ENV = "TOPSAILAI_PROVIDER_DRIVER"
+
+# DEFAULT_DRIVER is the driver that runs exactly one turn.
+#
+# The turn count is fixed inside each driver script and is not reachable from
+# here: `topsailai_agent_chat` calls `run(times=1)` and exits after one turn,
+# while the default `topsailai_agent_chats` calls `run()` and waits for the next
+# turn forever. A provider that leaves the driver unset therefore supervises an
+# agent that never ends on its own.
+DEFAULT_DRIVER = "topsailai_agent_chat"
+
 # LAUNCH_TIMEOUT bounds the launch call. A launch is a submission, not the work.
 LAUNCH_TIMEOUT = 120
 
-# CALL_TIMEOUT bounds a status or interrupt call.
+# CALL_TIMEOUT bounds an interrupt call.
 CALL_TIMEOUT = 30
+
+# HEARTBEAT_TIMEOUT bounds one control-channel probe. A healthy endpoint answers
+# in milliseconds, so this only bounds a wedged handler.
+HEARTBEAT_TIMEOUT = 3.0
+
+# RESPONSE_LIMIT bounds the bytes read from one control reply.
+RESPONSE_LIMIT = 65536
+
+# STATUS_RUNNING is the metadata status of a session that has not ended.
+STATUS_RUNNING = "running"
+
+# TERMINAL_STATUSES are the metadata statuses that prove a session ended.
+TERMINAL_STATUSES = ("completed", "error", "interrupted")
 
 
 def fail(message):
@@ -101,6 +127,11 @@ def state_dir():
 def binary():
     """Return the topsailai executable to drive."""
     return os.environ.get(BINARY_ENV) or DEFAULT_BINARY
+
+
+def driver():
+    """Return the agent driver to launch."""
+    return os.environ.get(DRIVER_ENV) or DEFAULT_DRIVER
 
 
 def record_path(folder, run_id):
@@ -184,8 +215,28 @@ def launch_arguments(document):
     detaching wrapper, so the exit status observed would be the wrapper's.
     `--json` makes the launcher print one receipt on stdout and send everything
     else to stderr, which is what makes the receipt parseable.
+
+    `--driver` selects the single-turn driver. It is passed as a flag rather than
+    through TOPSAILAI_AGENT_DRIVER because the operating-system environment ranks
+    last in driver resolution: any settings.yaml in the workspace naming
+    `ai_agent_driver` would override it, and the agent would then run unlimited
+    turns and never end on its own.
+
+    `--background` keeps the launch call short. A foreground launch does not
+    return until the agent finishes, so a task longer than the scheduler's call
+    timeout would be reported as a provider failure even though the agent was
+    working correctly. The cost is that the receipt reports a submission rather
+    than a confirmed start, which is why poll never treats a missing signal as
+    proof that the run ended.
     """
-    arguments = [binary(), "workspace", "agent", "-m", "raw", "--non-interactive", "--json"]
+    arguments = [
+        binary(), "workspace", "agent",
+        "-m", "raw",
+        "--non-interactive",
+        "--background",
+        "--driver", driver(),
+        "--json",
+    ]
     workspace = (document.get("workspace") or "").strip()
     if workspace:
         arguments.append(workspace)
@@ -205,41 +256,179 @@ def operation_start(document):
     if not session_id:
         fail("launch returned no session_id: %s" % json.dumps(receipt))
 
+    # The receipt's pid is the launcher's, and the launcher exits once the run is
+    # submitted, so it is recorded for observability only. The agent's own pid is
+    # resolved from the session artifacts when it is needed.
+    launcher_pid = int(receipt.get("pid") or 0)
+
     save_record(folder, run_id, {
         "run_id": run_id,
         "session_id": session_id,
-        "pid": int(receipt.get("pid") or 0),
+        "launcher_pid": launcher_pid,
         "launcher_exit": completed.returncode,
         "started_at": time.time(),
         "task_id": document.get("task_id") or "",
+        "driver": driver(),
     })
 
     write_document({
         "protocol_version": PROTOCOL_VERSION,
         "run_id": run_id,
-        "pid": int(receipt.get("pid") or 0),
+        "pid": launcher_pid,
         "detail": "session %s" % session_id,
     })
 
 
-def session_state(session_id, environment):
-    """Return the lock-based state of one session.
+def topsailai_home():
+    """Return the TopsailAI home folder, matching the CLI's own resolution."""
+    configured = (os.environ.get("TOPSAILAI_HOME") or "").strip()
+    if configured:
+        return os.path.abspath(os.path.expanduser(configured))
+    home = (os.environ.get("HOME") or "").strip()
+    if home:
+        return os.path.join(home, ".topsailai")
+    return "/topsailai"
 
-    `session status` reports `processing` while the session holds its lock and
-    `idle` once it has released it. That lock is the authority: it is released
-    when the agent process ends, including when it crashes.
+
+def task_folder():
+    """Return the folder holding per-session runtime artifacts."""
+    return os.path.join(topsailai_home(), "workspace", "task")
+
+
+def session_artifacts(session_id):
+    """Return the control socket and metadata paths recorded for one session.
+
+    Both files are named `{session_id}.{pid}.session.*` by the agent itself, so
+    the pid in the name is the agent's, not the launcher's. Either may be absent:
+    the socket appears once the control channel binds and disappears when the
+    process exits, and the metadata is written slightly before the socket.
     """
-    completed = run_command(
-        [binary(), "session", "status", session_id, "--json"],
-        environment,
-        CALL_TIMEOUT,
-    )
-    document = parse_json_output(completed, "session status")
-    return (document.get("state") or "").strip(), document
+    folder = task_folder()
+    sockets = sorted(glob.glob(os.path.join(folder, "%s.*.session.sock" % session_id)))
+    metas = sorted(glob.glob(os.path.join(folder, "%s.*.session.meta" % session_id)))
+    return (sockets[-1] if sockets else ""), (metas[-1] if metas else "")
+
+
+def heartbeat_alive(socket_path):
+    """Ask one control socket whether its owner is alive.
+
+    Returns True when the endpoint answered, False when the connection was
+    refused, and None when the socket is absent or the answer cannot be trusted.
+    A refused connection proves the listener is gone. An absent socket proves
+    nothing, because the channel is created after the process starts and removed
+    before it exits, so absence must be resolved by another signal.
+    """
+    if not socket_path or not os.path.exists(socket_path):
+        return None
+    request_id = uuid.uuid4().hex
+    frame = json.dumps({
+        "request_id": request_id,
+        "action": "heartbeat",
+        "payload": {},
+    }).encode("utf-8") + b"\n"
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        client.settimeout(HEARTBEAT_TIMEOUT)
+        client.connect(socket_path)
+        client.sendall(frame)
+        buffer = bytearray()
+        while b"\n" not in buffer:
+            chunk = client.recv(65536)
+            if not chunk:
+                return None
+            buffer.extend(chunk)
+            if len(buffer) > RESPONSE_LIMIT:
+                return None
+        reply = json.loads(bytes(buffer).split(b"\n", 1)[0].decode("utf-8"))
+    except ConnectionRefusedError:
+        return False
+    except (OSError, ValueError):
+        return None
+    finally:
+        client.close()
+    if not isinstance(reply, dict):
+        return None
+    if reply.get("request_id") != request_id:
+        return None
+    return reply.get("status") == "ok"
+
+
+def read_meta(meta_path):
+    """Return one session's metadata document, or None when unreadable."""
+    if not meta_path:
+        return None
+    try:
+        with open(meta_path, "r", encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return document if isinstance(document, dict) else None
+
+
+def pid_alive(pid):
+    """Return whether a process id is still in use, or None when undeterminable."""
+    if pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # The process exists but belongs to another user.
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def resolve_agent_pid(session_id):
+    """Return the agent's pid, which is the one the control channel is named after.
+
+    The launch receipt reports the launcher's pid, and the launcher exits as soon
+    as the run is submitted, so that pid cannot address the agent. The agent
+    writes its own pid into the session metadata and into the socket filename;
+    either is authoritative.
+    """
+    socket_path, meta_path = session_artifacts(session_id)
+    meta = read_meta(meta_path)
+    if meta is not None:
+        try:
+            pid = int(meta.get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        if pid > 0:
+            return pid
+    if socket_path:
+        name = os.path.basename(socket_path)
+        stem = name[: -len(".session.sock")] if name.endswith(".session.sock") else name
+        try:
+            return int(stem.rsplit(".", 1)[-1])
+        except ValueError:
+            pass
+    # The launcher's pid is deliberately not used as a fallback: it names a
+    # process that has already exited, so treating it as the agent would make a
+    # liveness check answer about the wrong process.
+    return 0
 
 
 def operation_poll(document):
-    """Report whether one agent is still working."""
+    """Report whether one agent is still working.
+
+    Three signals are consulted in order of strength, because each answers a
+    different question:
+
+      1. A control-channel heartbeat is answered by the process that owns the
+         channel, so a reply proves the agent is alive right now.
+      2. The session metadata records a terminal status written by the agent
+         itself on exit, so it survives the socket being removed.
+      3. The process table is the last resort, and only proves that some process
+         with that pid exists.
+
+    `session status` is deliberately not used. It reports `idle` for a session
+    that never existed, and it reports `idle` for a background launch that has
+    been submitted but has not yet taken its lock, so it cannot tell "not started
+    yet" from "finished".
+    """
     run_id = (document.get("run_id") or "").strip()
     if not run_id:
         fail("poll requires run_id")
@@ -263,30 +452,63 @@ def operation_poll(document):
         })
         return
 
-    state, _ = session_state(session_id, dict(os.environ))
-    if state == "processing":
+    socket_path, meta_path = session_artifacts(session_id)
+    meta = read_meta(meta_path)
+    status = ""
+    if meta is not None:
+        recorded = meta.get("status")
+        status = recorded if isinstance(recorded, str) else ""
+
+    if heartbeat_alive(socket_path) is True:
         write_document({
             "state": "running",
             "exit_code": 0,
-            "detail": "session %s processing" % session_id,
-        })
-        return
-    if state == "idle":
-        # The session released its lock, so the agent has ended. The exit status
-        # is the launcher's, which is a lifecycle fact, not a verdict.
-        write_document({
-            "state": "finished",
-            "exit_code": int(record.get("launcher_exit") or 0),
-            "detail": "session %s idle" % session_id,
+            "detail": "session %s answered a heartbeat" % session_id,
         })
         return
 
-    # An unrecognised state is not a reason to guess. Ending supervision here
-    # could abandon a live agent; reporting unknown keeps it supervised.
+    if status in TERMINAL_STATUSES:
+        # The agent recorded its own end, so the run is over even though the
+        # socket is already gone. The exit status is the launcher's, which is a
+        # lifecycle fact, not a verdict.
+        write_document({
+            "state": "finished",
+            "exit_code": int(record.get("launcher_exit") or 0),
+            "detail": "session %s recorded status %s" % (session_id, status),
+        })
+        return
+
+    pid = resolve_agent_pid(session_id)
+    alive = pid_alive(pid)
+
+    if status == STATUS_RUNNING and alive is False:
+        # The metadata still says running, so the process ended without running
+        # its finalizer: it was killed rather than returning. The pid is provably
+        # gone, so the agent cannot still be working.
+        write_document({
+            "state": "finished",
+            "exit_code": int(record.get("launcher_exit") or 0),
+            "detail": "session %s pid %d is gone without a final status" % (session_id, pid),
+        })
+        return
+
+    if alive is True:
+        write_document({
+            "state": "running",
+            "exit_code": 0,
+            "detail": "session %s pid %d is alive" % (session_id, pid),
+        })
+        return
+
+    # No heartbeat, no terminal status, and no live process. This is either the
+    # short window between submission and the agent writing its metadata, or a
+    # session whose artifacts were reclaimed. Guessing `finished` here would end
+    # supervision of a run that may still be starting, so the honest answer is
+    # that the state is not known.
     write_document({
         "state": "unknown",
         "exit_code": 0,
-        "detail": "session %s reported state %r" % (session_id, state),
+        "detail": "session %s has no heartbeat, no terminal status, and no live pid" % session_id,
     })
 
 
@@ -302,8 +524,15 @@ def operation_stop(document):
         return
 
     session_id = (record.get("session_id") or "").strip()
-    pid = int(record.get("pid") or 0)
-    if not session_id or pid <= 0:
+    if not session_id:
+        return
+
+    # The control channel is named after the agent's own pid, not the launcher's.
+    # Interrupting the launcher's pid would address a socket that never existed.
+    # A session with no resolvable agent pid has already lost both its socket and
+    # its metadata, so there is nothing left to interrupt and stopping is a no-op.
+    pid = resolve_agent_pid(session_id)
+    if pid <= 0:
         return
 
     completed = run_command(
