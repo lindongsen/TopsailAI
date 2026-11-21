@@ -232,6 +232,10 @@ python3 providers/scheduler-provider-topsailai/tests/test_topsailai.py
 
 - A missing `.md` or an unknown YAML key makes the task `invalid`; it is
   reported and never runs.
+- `enabled: false` pauses a task without deleting it: it stays in `status` as
+  `disabled`, is never scheduled, and a manual `launch` is refused.
+- Adding, removing or editing task files takes effect without a restart, on the
+  next rescan, so a change can take up to `SCHEDULER_RESCAN_INTERVAL` to apply.
 - A task already running is skipped, not queued.
 - A run exceeding its timeout is stopped through its provider, which ends the
   run's process group so children do not survive as orphans.

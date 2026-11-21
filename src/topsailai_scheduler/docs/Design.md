@@ -38,6 +38,8 @@ tasks/  ──scan──▶  daemon (cron in-process)  ──launch──▶  ru
 | D11 | The lock file also carries a record naming the in-flight run | The flock says whether a scheduler owns the task; it cannot say which run was in flight when the last scheduler died. A run outlives the scheduler, so after a restart the lock is free while the run may still be working. The record is advisory; the flock stays the authority. |
 | D12 | The record is rewritten in place, never through a rename | A rename gives the path a new inode while the flock stays bound to the old one, so the next process would lock the new file successfully and mutual exclusion would be silently gone. |
 | D13 | A stop for an unsupervised run is best effort and says so | After a restart the run table is empty, so the record is the only way to reach the run. The scheduler holds no context to cancel and no loop to observe the outcome, so it forwards a request and reports `best_effort`. Claiming more would be a lie the caller cannot detect. |
+| D14 | The rescan fingerprint covers both the `.yaml` and the `.md` | Hashing only the configuration would leave an edited task content running the old instructions until the next restart. A length-prefixed hash over both files makes a change to either one visible, and the boundary between files stays unambiguous. |
+| D15 | `enabled` is configuration, and a disabled task refuses a manual launch | The flag answers "should this task run on its schedule", not "is it running now"; the `.lock` owns the latter. A disabled task stays in `status` as `disabled` so a paused task is distinguishable from a deleted one. A manual launch is refused with `ErrTaskDisabled` because running it would contradict the task's own configuration. |
 
 ## Packages
 

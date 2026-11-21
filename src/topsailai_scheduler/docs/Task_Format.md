@@ -36,6 +36,25 @@ tasks/
 A missing `.md` is a configuration error, not a silent skip. The task is
 reported as `invalid` and never runs.
 
+## Discovery
+
+Tasks are found by walking the tasks root, so adding a task means adding files
+and nothing else. No registration step and no code change are involved.
+
+The scan rules:
+
+- Only `*.yaml` files are tasks. The extension match is case-insensitive.
+- The walk is recursive, so folders may nest arbitrarily.
+- A subfolder whose name starts with `.` is skipped, which keeps `.git` and
+  `.tmp` out of the scan. The tasks root itself is scanned even if its own name
+  starts with `.`.
+- A folder that cannot be read is reported and skipped; the rest of the tree
+  still loads.
+- A missing tasks root is not an error. An empty scheduler is a valid state, so
+  an absent folder yields no tasks rather than a failure. A tasks root that
+  exists but is not a directory is an error.
+- Tasks are returned sorted by id, so the order is stable across scans.
+
 ## Content requirements
 
 Both files must carry real content. A task that fails any check below is
@@ -101,6 +120,17 @@ OR, not AND. `0 8 1 * 1` means the first of the month **or** every Monday.
 
 Defaults to `true`. A disabled task is discovered and reported but never
 scheduled.
+
+The flag is configuration, not runtime state. It answers "should this task run
+on its schedule", while a `.lock` answers "is this task running right now".
+
+A disabled task stays visible: `status` reports it as `disabled`, so a task that
+is deliberately paused is distinguishable from one that was deleted. A manual
+`launch` of a disabled task is refused with the `task_disabled` error code
+rather than run, because running it would contradict its own configuration.
+
+Re-enabling the task needs no restart. The next rescan registers it again; see
+[Hot reload](#hot-reload).
 
 ### launcher
 
@@ -204,11 +234,33 @@ The lock is `flock` on `{stem}.lock`, taken in non-blocking mode.
 - The `.lock` file persists on disk. It is a handle, not a state marker; its
   presence does not mean the task is running.
 
-## Adding and removing tasks
+## Hot reload
 
-Adding a task means adding the `.yaml` and `.md` pair. Removing a task means
-deleting them. The daemon rescans the tree every `SCHEDULER_RESCAN_INTERVAL`
-and diffs by task id and content fingerprint, so no restart is needed.
+The daemon rescans the tree every `SCHEDULER_RESCAN_INTERVAL`, which defaults to
+`30s`. Each scan reloads every task file and compares the result with the
+registered cron entries, so a change takes effect without a restart.
 
-Missed runs are not replayed. A task whose time passed while the machine was
-off is skipped, matching native cron behaviour.
+The comparison key is the task id plus a content fingerprint over both the
+`.yaml` and the `.md`. Hashing both files means a change to the task content is
+detected, not only a change to the configuration.
+
+| Change on disk | Effect |
+|---|---|
+| `.yaml` added | Parsed and registered with the cron. |
+| `.yaml` removed | Removed from the cron. |
+| `.yaml` or `.md` content changed | The old cron entry is removed and the task is registered again from the new content. |
+| `enabled` set to `false` | Removed from the cron; `status` reports `disabled`. |
+| `enabled` set back to `true` | Registered with the cron again. |
+| File becomes invalid | Reported as `invalid` and left unscheduled; the rest of the tree is unaffected. |
+| File becomes valid again | Registered on the next scan, and the recovery is logged. |
+
+Boundaries worth knowing:
+
+- A change is picked up on the next scan, so it can take up to one rescan
+  interval to apply. No command forces a scan.
+- A run already in progress is not interrupted. It finishes with the settings it
+  started with, and the new configuration applies from the next run.
+- Only task files are reloaded. `SCHEDULER_*` variables are read once at startup,
+  so changing one requires a restart.
+- Missed runs are not replayed. A task whose time passed while the machine was
+  off is skipped, matching native cron behaviour.
