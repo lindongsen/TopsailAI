@@ -1,0 +1,25 @@
+---
+maintainer: AI
+author: DawsonLin
+workspace: /TopsailAI/src/topsailai_scheduler
+ProjectFolder: /TopsailAI/src/topsailai_scheduler
+ProjectRootFolder: /TopsailAI/src/topsailai_scheduler
+ProjectCode: scheduler
+programming_language: go
+---
+
+# Project: scheduler
+
+A Go scheduler that discovers scheduled tasks from the `tasks/` folder tree and
+runs them on their cron schedule. A task is three files sharing one stem:
+`{task}.yaml` configuration, `{task}.md` content, `{task}.lock` runtime lock.
+
+## Layout
+
+| Path | Role |
+|---|---|
+| `src/` | Go module `topsailai_scheduler` |
+| `tasks/` | Task tree, grouped by free-form nested folders |
+| `tests/integration/` | End-to-end tests driving the real binary |
+| `docs/` | Task format, environment variables, design |
+| `.task/` | Plan, review and check artifacts maintained by AI |

@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""Mock provider for the scheduler.
+
+This is an independent project. It speaks the provider protocol documented in
+the scheduler's docs/Provider_Contract.md and nothing else: it reads one JSON
+document on stdin, writes one JSON document on stdout, and keeps diagnostics on
+stderr.
+
+Its purpose is to let the scheduler and its integration tests run real tasks
+without a real agent. It runs the command a task names, detached, and reports
+whether that process is still alive.
+
+Three operations:
+
+    mock start   request JSON on stdin, receipt JSON on stdout
+    mock poll    handle JSON on stdin, observation JSON on stdout
+    mock stop    handle JSON on stdin, no output required
+
+The provider never decides whether the work succeeded. It reports whether the
+process is alive and, once it has ended, the exit status it produced. Judging
+that status belongs to the task's Markdown content.
+"""
+
+import json
+import os
+import shlex
+import signal
+import subprocess
+import sys
+import time
+import uuid
+
+# PROTOCOL_VERSION is the protocol revision this provider implements.
+PROTOCOL_VERSION = 1
+
+# STATE_DIR_ENV names the environment variable holding the state folder.
+STATE_DIR_ENV = "MOCK_PROVIDER_STATE_DIR"
+
+# DEFAULT_STATE_DIR is used when the environment names no folder.
+DEFAULT_STATE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "mock-provider")
+
+
+def fail(message):
+    """Report a protocol failure and exit non-zero.
+
+    The scheduler treats a non-zero exit as a failed call, so a failure must
+    never be reported by exiting zero with a partial document.
+    """
+    print("mock: %s" % message, file=sys.stderr)
+    sys.exit(1)
+
+
+def read_document():
+    """Read the one JSON document the scheduler writes to stdin."""
+    raw = sys.stdin.read()
+    if not raw.strip():
+        fail("no request document on stdin")
+    try:
+        document = json.loads(raw)
+    except ValueError as error:
+        fail("invalid request document: %s" % error)
+    if not isinstance(document, dict):
+        fail("request document must be a JSON object")
+    return document
+
+
+def write_document(document):
+    """Write the one JSON document the scheduler reads from stdout."""
+    sys.stdout.write(json.dumps(document))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def state_dir():
+    """Return the state folder, creating it when missing."""
+    folder = os.environ.get(STATE_DIR_ENV) or DEFAULT_STATE_DIR
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def record_path(folder, run_id):
+    """Return the state file path for one run."""
+    return os.path.join(folder, "%s.json" % run_id)
+
+
+def load_record(folder, run_id):
+    """Load one run's state, or None when the provider has no record of it."""
+    path = record_path(folder, run_id)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return None
+    except ValueError:
+        # A corrupt record is not a reason to guess. Reporting unknown lets the
+        # scheduler keep supervising instead of ending a run that may be alive.
+        return None
+
+
+def save_record(folder, run_id, record):
+    """Persist one run's state."""
+    path = record_path(folder, run_id)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(record, handle)
+    os.replace(temporary, path)
+
+
+def process_alive(pid):
+    """Report whether a process exists.
+
+    Signal 0 performs the permission and existence check without delivering a
+    signal. A zombie still counts as existing, which is correct here: the run
+    has not been reaped, so it has not finished from the scheduler's view.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # The process exists but belongs to another user.
+        return True
+    return True
+
+
+def build_script(command, args, workspace, exit_path, output_path):
+    """Build the shell script that runs one task.
+
+    A script file is used instead of a shell string so a path containing spaces,
+    quotes or shell metacharacters needs no escaping beyond shlex.quote.
+
+    The run's output is redirected to a file rather than discarded. The provider
+    owns the run, so it owns the run's output: the scheduler no longer captures
+    it, and dropping it would leave an operator with no way to see what a task
+    printed.
+    """
+    lines = ["#!/bin/sh"]
+    if workspace:
+        lines.append("cd %s || exit 1" % shlex.quote(workspace))
+    invocation = " ".join(shlex.quote(part) for part in [command] + list(args))
+    lines.append("exec >%s 2>&1" % shlex.quote(output_path))
+    lines.append(invocation)
+    lines.append("status=$?")
+    lines.append("printf '%%s' \"$status\" > %s" % shlex.quote(exit_path))
+    lines.append("exit \"$status\"")
+    return "\n".join(lines) + "\n"
+
+
+def write_request_file(folder, run_id, document):
+    """Persist the request exactly as it arrived.
+
+    The run record is the provider's own summary; this file is the wire
+    document. Keeping both lets a test assert what the scheduler actually sent
+    rather than what the provider chose to remember, so a field the provider
+    ignores is still verifiable.
+    """
+    path = os.path.join(folder, "%s.request.json" % run_id)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(document, handle, sort_keys=True)
+    os.replace(temporary, path)
+    return path
+
+
+def operation_start(document):
+    """Start one run and report its identity."""
+    folder = state_dir()
+    run_id = uuid.uuid4().hex
+
+    version = document.get("protocol_version")
+    if version != PROTOCOL_VERSION:
+        # Refusing an unknown revision is part of the contract: guessing would
+        # let a future protocol be silently misread as this one.
+        fail("unsupported protocol_version %r, this provider speaks %d"
+             % (version, PROTOCOL_VERSION))
+
+    command = (document.get("command") or "").strip()
+    if not command:
+        # The agent launcher leaves the command to the provider. A mock has no
+        # agent to run, so it simulates a run that completes immediately.
+        command = "/bin/true"
+
+    args = document.get("args") or []
+    if not isinstance(args, list):
+        fail("args must be a list")
+    workspace = document.get("workspace") or ""
+
+    extra = document.get("env") or {}
+    if not isinstance(extra, dict):
+        fail("env must be an object")
+
+    exit_path = os.path.join(folder, "%s.exit" % run_id)
+    output_path = os.path.join(folder, "%s.out" % run_id)
+    script_path = os.path.join(folder, "%s.sh" % run_id)
+    with open(script_path, "w", encoding="utf-8") as handle:
+        handle.write(build_script(command, args, workspace, exit_path, output_path))
+    os.chmod(script_path, 0o700)
+
+    request_path = write_request_file(folder, run_id, document)
+
+    environment = dict(os.environ)
+    for key, value in extra.items():
+        environment[str(key)] = str(value)
+
+    # start_new_session detaches the run into its own process group, so it
+    # survives this provider exiting and can be signalled as a group later.
+    process = subprocess.Popen(
+        ["/bin/sh", script_path],
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    save_record(folder, run_id, {
+        "run_id": run_id,
+        "pid": process.pid,
+        "exit_path": exit_path,
+        "output_path": output_path,
+        "script_path": script_path,
+        "request_path": request_path,
+        "started_at": time.time(),
+        "protocol_version": version,
+        "task_id": document.get("task_id") or "",
+        "task_path": document.get("task_path") or "",
+        "task_dir": document.get("task_dir") or "",
+        "workspace": workspace,
+        "command": command,
+        "args": list(args),
+        "argv": [command] + list(args),
+        "env": {str(key): str(value) for key, value in extra.items()},
+        "timeout_ms": document.get("timeout_ms") or 0,
+    })
+
+    write_document({
+        "protocol_version": PROTOCOL_VERSION,
+        "run_id": run_id,
+        "pid": process.pid,
+        "detail": "started %s" % command,
+    })
+
+
+def operation_poll(document):
+    """Report whether one run is still alive."""
+    run_id = (document.get("run_id") or "").strip()
+    if not run_id:
+        fail("poll requires run_id")
+
+    folder = state_dir()
+    record = load_record(folder, run_id)
+    if record is None:
+        # No record means this provider cannot answer. Saying so is honest;
+        # guessing "finished" would end supervision of a run that may be alive.
+        write_document({
+            "state": "unknown",
+            "exit_code": 0,
+            "detail": "no record for run %s" % run_id,
+        })
+        return
+
+    pid = int(record.get("pid") or 0)
+    exit_path = record.get("exit_path") or ""
+
+    if exit_path and os.path.exists(exit_path):
+        try:
+            with open(exit_path, "r", encoding="utf-8") as handle:
+                exit_code = int((handle.read() or "0").strip() or "0")
+        except (OSError, ValueError):
+            exit_code = -1
+        write_document({
+            "state": "finished",
+            "exit_code": exit_code,
+            "detail": "exited %d" % exit_code,
+        })
+        return
+
+    if process_alive(pid):
+        write_document({
+            "state": "running",
+            "exit_code": 0,
+            "detail": "pid %d alive" % pid,
+        })
+        return
+
+    # The process is gone and wrote no exit status, so it was signalled.
+    write_document({
+        "state": "finished",
+        "exit_code": -1,
+        "detail": "pid %d ended without an exit status" % pid,
+    })
+
+
+def operation_stop(document):
+    """Ask one run to end."""
+    run_id = (document.get("run_id") or "").strip()
+    if not run_id:
+        fail("stop requires run_id")
+
+    folder = state_dir()
+    record = load_record(folder, run_id)
+    if record is None:
+        # The desired state is already reached. Failing here would make a stop
+        # impossible to complete.
+        return
+
+    pid = int(record.get("pid") or 0)
+    if pid <= 0:
+        return
+
+    # Signal the whole group so a task's own children end with it.
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError as error:
+        fail("cannot signal pid %d: %s" % (pid, error))
+
+
+def main(argv):
+    """Dispatch one protocol operation."""
+    if len(argv) != 2:
+        fail("usage: mock start|poll|stop")
+
+    operation = argv[1]
+    if operation == "start":
+        operation_start(read_document())
+    elif operation == "poll":
+        operation_poll(read_document())
+    elif operation == "stop":
+        operation_stop(read_document())
+    else:
+        fail("unknown operation %r" % operation)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

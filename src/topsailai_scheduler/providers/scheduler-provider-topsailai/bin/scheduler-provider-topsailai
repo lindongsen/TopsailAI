@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""TopsailAI provider for the scheduler.
+
+This is an independent project. It speaks the provider protocol documented in
+the scheduler's docs/Provider_Contract.md and nothing else: one JSON document on
+stdin, one JSON document on stdout, diagnostics on stderr.
+
+It launches a TopsailAI agent for a task and reports whether that agent is still
+working. Three operations:
+
+    topsailai start   launch an agent, return its session id
+    topsailai poll    report whether that session is still processing
+    topsailai stop    interrupt that session
+
+The provider never decides whether the work succeeded. It reports whether the
+agent is still working and, once it has stopped, the exit status the launcher
+produced. Whether the work was good is the task's Markdown content's business:
+the task file says what counts as success and what signal marks it.
+
+Two upstream facts shape this implementation:
+
+  * `topsailai workspace agent -m raw` is required. The `dtach` and `tmux` modes
+    wrap the launch in a detaching wrapper, so the exit status observed would be
+    the wrapper's rather than the agent's.
+  * `--non-interactive` only stops the launcher prompting. The agent's own
+    interactive mode is controlled by TOPSAILAI_INTERACTIVE_MODE, which defaults
+    to interactive, so this provider sets it to 0 explicitly.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+
+# PROTOCOL_VERSION is the protocol revision this provider implements.
+PROTOCOL_VERSION = 1
+
+# STATE_DIR_ENV names the environment variable holding the state folder.
+STATE_DIR_ENV = "TOPSAILAI_PROVIDER_STATE_DIR"
+
+# DEFAULT_STATE_DIR is used when the environment names no folder.
+DEFAULT_STATE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "topsailai-provider")
+
+# BINARY_ENV names the environment variable overriding the topsailai executable.
+BINARY_ENV = "TOPSAILAI_PROVIDER_BINARY"
+
+# DEFAULT_BINARY is the executable this provider drives.
+DEFAULT_BINARY = "topsailai"
+
+# INTERACTIVE_ENV is the variable that actually controls the agent's own mode.
+INTERACTIVE_ENV = "TOPSAILAI_INTERACTIVE_MODE"
+
+# TASK_ENV is the variable upstream reads the task content from. It accepts a
+# path and reads the file itself, so a path with spaces needs no quoting.
+TASK_ENV = "TOPSAILAI_TASK"
+
+# LAUNCH_TIMEOUT bounds the launch call. A launch is a submission, not the work.
+LAUNCH_TIMEOUT = 120
+
+# CALL_TIMEOUT bounds a status or interrupt call.
+CALL_TIMEOUT = 30
+
+
+def fail(message):
+    """Report a protocol failure and exit non-zero."""
+    print("topsailai-provider: %s" % message, file=sys.stderr)
+    sys.exit(1)
+
+
+def read_document():
+    """Read the one JSON document the scheduler writes to stdin."""
+    raw = sys.stdin.read()
+    if not raw.strip():
+        fail("no request document on stdin")
+    try:
+        document = json.loads(raw)
+    except ValueError as error:
+        fail("invalid request document: %s" % error)
+    if not isinstance(document, dict):
+        fail("request document must be a JSON object")
+    return document
+
+
+def write_document(document):
+    """Write the one JSON document the scheduler reads from stdout."""
+    sys.stdout.write(json.dumps(document))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def state_dir():
+    """Return the state folder, creating it when missing."""
+    folder = os.environ.get(STATE_DIR_ENV) or DEFAULT_STATE_DIR
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def binary():
+    """Return the topsailai executable to drive."""
+    return os.environ.get(BINARY_ENV) or DEFAULT_BINARY
+
+
+def record_path(folder, run_id):
+    """Return the state file path for one run."""
+    return os.path.join(folder, "%s.json" % run_id)
+
+
+def load_record(folder, run_id):
+    """Load one run's state, or None when there is no record."""
+    try:
+        with open(record_path(folder, run_id), "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return None
+    except ValueError:
+        # A corrupt record is not a reason to guess.
+        return None
+
+
+def save_record(folder, run_id, record):
+    """Persist one run's state."""
+    path = record_path(folder, run_id)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(record, handle)
+    os.replace(temporary, path)
+
+
+def run_command(arguments, environment, timeout):
+    """Run one topsailai command and return its completed process."""
+    try:
+        return subprocess.run(
+            arguments,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        fail("executable not found: %s" % arguments[0])
+    except subprocess.TimeoutExpired:
+        fail("%s did not answer within %ss" % (arguments[0], timeout))
+
+
+def parse_json_output(completed, what):
+    """Decode the one JSON document a topsailai command prints."""
+    text = (completed.stdout or "").strip()
+    if not text:
+        fail("%s produced no output (exit %d): %s" % (what, completed.returncode, (completed.stderr or "").strip()))
+    try:
+        return json.loads(text)
+    except ValueError as error:
+        fail("%s produced invalid JSON: %s" % (what, error))
+
+
+def build_environment(document):
+    """Build the environment for the launch.
+
+    The task's own variables are applied first so this provider's requirements
+    win. A task must not be able to switch the agent back to interactive mode or
+    redirect the task content, because either would break supervision.
+    """
+    environment = dict(os.environ)
+    extra = document.get("env") or {}
+    if not isinstance(extra, dict):
+        fail("env must be an object")
+    for key, value in extra.items():
+        environment[str(key)] = str(value)
+
+    environment[INTERACTIVE_ENV] = "0"
+    task_path = (document.get("task_path") or "").strip()
+    if task_path:
+        environment[TASK_ENV] = task_path
+    return environment
+
+
+def launch_arguments(document):
+    """Build the launch command line.
+
+    `-m raw` is required: the dtach and tmux modes wrap the launch in a
+    detaching wrapper, so the exit status observed would be the wrapper's.
+    `--json` makes the launcher print one receipt on stdout and send everything
+    else to stderr, which is what makes the receipt parseable.
+    """
+    arguments = [binary(), "workspace", "agent", "-m", "raw", "--non-interactive", "--json"]
+    workspace = (document.get("workspace") or "").strip()
+    if workspace:
+        arguments.append(workspace)
+    return arguments
+
+
+def operation_start(document):
+    """Launch an agent and return its handle."""
+    folder = state_dir()
+    run_id = uuid.uuid4().hex
+    environment = build_environment(document)
+
+    completed = run_command(launch_arguments(document), environment, LAUNCH_TIMEOUT)
+    receipt = parse_json_output(completed, "launch")
+
+    session_id = (receipt.get("session_id") or "").strip()
+    if not session_id:
+        fail("launch returned no session_id: %s" % json.dumps(receipt))
+
+    save_record(folder, run_id, {
+        "run_id": run_id,
+        "session_id": session_id,
+        "pid": int(receipt.get("pid") or 0),
+        "launcher_exit": completed.returncode,
+        "started_at": time.time(),
+        "task_id": document.get("task_id") or "",
+    })
+
+    write_document({
+        "protocol_version": PROTOCOL_VERSION,
+        "run_id": run_id,
+        "pid": int(receipt.get("pid") or 0),
+        "detail": "session %s" % session_id,
+    })
+
+
+def session_state(session_id, environment):
+    """Return the lock-based state of one session.
+
+    `session status` reports `processing` while the session holds its lock and
+    `idle` once it has released it. That lock is the authority: it is released
+    when the agent process ends, including when it crashes.
+    """
+    completed = run_command(
+        [binary(), "session", "status", session_id, "--json"],
+        environment,
+        CALL_TIMEOUT,
+    )
+    document = parse_json_output(completed, "session status")
+    return (document.get("state") or "").strip(), document
+
+
+def operation_poll(document):
+    """Report whether one agent is still working."""
+    run_id = (document.get("run_id") or "").strip()
+    if not run_id:
+        fail("poll requires run_id")
+
+    folder = state_dir()
+    record = load_record(folder, run_id)
+    if record is None:
+        write_document({
+            "state": "unknown",
+            "exit_code": 0,
+            "detail": "no record for run %s" % run_id,
+        })
+        return
+
+    session_id = (record.get("session_id") or "").strip()
+    if not session_id:
+        write_document({
+            "state": "unknown",
+            "exit_code": 0,
+            "detail": "run %s has no session id" % run_id,
+        })
+        return
+
+    state, _ = session_state(session_id, dict(os.environ))
+    if state == "processing":
+        write_document({
+            "state": "running",
+            "exit_code": 0,
+            "detail": "session %s processing" % session_id,
+        })
+        return
+    if state == "idle":
+        # The session released its lock, so the agent has ended. The exit status
+        # is the launcher's, which is a lifecycle fact, not a verdict.
+        write_document({
+            "state": "finished",
+            "exit_code": int(record.get("launcher_exit") or 0),
+            "detail": "session %s idle" % session_id,
+        })
+        return
+
+    # An unrecognised state is not a reason to guess. Ending supervision here
+    # could abandon a live agent; reporting unknown keeps it supervised.
+    write_document({
+        "state": "unknown",
+        "exit_code": 0,
+        "detail": "session %s reported state %r" % (session_id, state),
+    })
+
+
+def operation_stop(document):
+    """Interrupt one agent session."""
+    run_id = (document.get("run_id") or "").strip()
+    if not run_id:
+        fail("stop requires run_id")
+
+    folder = state_dir()
+    record = load_record(folder, run_id)
+    if record is None:
+        return
+
+    session_id = (record.get("session_id") or "").strip()
+    pid = int(record.get("pid") or 0)
+    if not session_id or pid <= 0:
+        return
+
+    completed = run_command(
+        [
+            binary(), "runtime", "control", "hard_interrupt",
+            "-s", session_id,
+            "-p", str(pid),
+            "--json",
+        ],
+        dict(os.environ),
+        CALL_TIMEOUT,
+    )
+    if completed.returncode != 0:
+        # A session that already ended cannot be interrupted. The desired state
+        # is reached, so this is not a failure.
+        message = (completed.stderr or completed.stdout or "").strip()
+        if "not found" in message.lower() or "no such" in message.lower():
+            return
+        fail("interrupt failed: %s" % message)
+
+
+def main(argv):
+    """Dispatch one protocol operation."""
+    if len(argv) != 2:
+        fail("usage: topsailai start|poll|stop")
+
+    operation = argv[1]
+    if operation == "start":
+        operation_start(read_document())
+    elif operation == "poll":
+        operation_poll(read_document())
+    elif operation == "stop":
+        operation_stop(read_document())
+    else:
+        fail("unknown operation %r" % operation)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
