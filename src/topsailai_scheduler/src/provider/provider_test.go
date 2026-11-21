@@ -63,7 +63,7 @@ func TestStartReturnsHandle(t *testing.T) {
 	handle, err := adapter.Start(context.Background(), Request{
 		TaskID:    "data/work",
 		TaskPath:  "/srv/tasks/data/work.md",
-		Workspace: "/srv/project",
+		Workspace: t.TempDir(),
 		Timeout:   30 * time.Minute,
 	})
 	if err != nil {
@@ -363,11 +363,12 @@ func TestStartSendsRequestOnStdin(t *testing.T) {
 	}
 
 	adapter := newTestCLI(t, path)
+	workspace := t.TempDir()
 	_, err := adapter.Start(context.Background(), Request{
 		TaskID:    "data/work",
 		TaskPath:  "/srv/tasks/data/work.md",
 		TaskDir:   "/srv/tasks/data",
-		Workspace: "/srv/project",
+		Workspace: workspace,
 		Args:      []string{"--flag", "value with spaces"},
 		Env:       map[string]string{"MY_VAR": "my value"},
 		Timeout:   30 * time.Minute,
@@ -398,8 +399,8 @@ func TestStartSendsRequestOnStdin(t *testing.T) {
 	if document.TaskDir != "/srv/tasks/data" {
 		t.Errorf("task_dir = %q, want %q", document.TaskDir, "/srv/tasks/data")
 	}
-	if document.Workspace != "/srv/project" {
-		t.Errorf("workspace = %q, want %q", document.Workspace, "/srv/project")
+	if document.Workspace != workspace {
+		t.Errorf("workspace = %q, want %q", document.Workspace, workspace)
 	}
 	if len(document.Args) != 2 || document.Args[1] != "value with spaces" {
 		t.Errorf("args = %v, want the value with spaces preserved as one argument", document.Args)
@@ -498,5 +499,110 @@ func TestStderrIsReportedOnFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "backend unreachable") {
 		t.Errorf("error %q does not include the provider's stderr message", err.Error())
+	}
+}
+
+// TestStartRunsProviderInWorkspace proves the provider process starts in the
+// workspace the scheduler resolved.
+//
+// The scheduler owns the workspace: a task's YAML, or the scheduler default,
+// decides it. A provider that resolved its own directory would disagree with
+// that decision, and a provider-specific environment variable would only work
+// for one provider implementation. The working directory is therefore part of
+// the seam, and this test proves the adapter actually applies it rather than
+// only forwarding it in the request document.
+func TestStartRunsProviderInWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	workspace := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	path := filepath.Join(dir, "pwd-provider")
+	// The provider reports its own working directory, so the assertion is about
+	// the process the scheduler started, not about the document it sent.
+	capture := filepath.Join(dir, "cwd.txt")
+	script := "#!/bin/sh\n" +
+		"cat > /dev/null\n" +
+		"pwd > " + capture + "\n" +
+		"printf '{\"run_id\":\"sess-abc\"}'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write pwd provider: %v", err)
+	}
+
+	adapter := newTestCLI(t, path)
+	handle, err := adapter.Start(context.Background(), Request{
+		TaskID:    "data/work",
+		Workspace: workspace,
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if handle.ID != "sess-abc" {
+		t.Fatalf("handle id = %q, want %q", handle.ID, "sess-abc")
+	}
+
+	reported, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("read reported directory: %v", err)
+	}
+	if got := strings.TrimSpace(string(reported)); got != workspace {
+		t.Errorf("provider working directory = %q, want %q", got, workspace)
+	}
+}
+
+// TestPollAndStopKeepSchedulerDirectory proves poll and stop are not moved into
+// the workspace.
+//
+// They only read the provider's own state, so running them in the workspace
+// would make a provider's relative state path resolve differently between start
+// and poll. An empty workspace must therefore leave the scheduler's directory in
+// place rather than fail.
+func TestPollAndStopKeepSchedulerDirectory(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cwd-provider")
+	capture := filepath.Join(dir, "cwd.txt")
+	script := "#!/bin/sh\n" +
+		"operation=\"$1\"\n" +
+		"cat > /dev/null\n" +
+		"pwd >> " + capture + "\n" +
+		"case \"$operation\" in\n" +
+		"  start) printf '{\"run_id\":\"sess-abc\"}' ;;\n" +
+		"  poll) printf '{\"state\":\"running\"}' ;;\n" +
+		"  stop) exit 0 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write cwd provider: %v", err)
+	}
+
+	adapter := newTestCLI(t, path)
+	handle, err := adapter.Start(context.Background(), Request{TaskID: "data/work"})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := adapter.Poll(context.Background(), handle); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if err := adapter.Stop(context.Background(), handle); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	reported, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("read reported directories: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(reported)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("reported directories = %v, want three entries", lines)
+	}
+	schedulerDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get scheduler directory: %v", err)
+	}
+	for index, line := range lines {
+		if strings.TrimSpace(line) != schedulerDir {
+			t.Errorf("call %d ran in %q, want the scheduler directory %q",
+				index, strings.TrimSpace(line), schedulerDir)
+		}
 	}
 }

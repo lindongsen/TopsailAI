@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -146,6 +147,14 @@ type observationDocument struct {
 
 // Start begins one run and returns its handle.
 func (c *CLI) Start(ctx context.Context, request Request) (Handle, error) {
+	// The workspace becomes the provider process's working directory, so a
+	// missing one would surface as a confusing "no such file or directory" on
+	// the provider executable. Checking it here names the real cause.
+	workspace, err := c.workspaceDir(request.Workspace)
+	if err != nil {
+		return Handle{}, err
+	}
+
 	document := startRequest{
 		ProtocolVersion: ProtocolVersion,
 		TaskID:          request.TaskID,
@@ -158,7 +167,7 @@ func (c *CLI) Start(ctx context.Context, request Request) (Handle, error) {
 		TimeoutMS:       request.Timeout.Milliseconds(),
 	}
 
-	output, err := c.call(ctx, OperationStart, document)
+	output, err := c.call(ctx, OperationStart, document, workspace)
 	if err != nil {
 		return Handle{}, err
 	}
@@ -194,7 +203,7 @@ func (c *CLI) Poll(ctx context.Context, handle Handle) (Observation, error) {
 		ProtocolVersion: ProtocolVersion,
 		RunID:           handle.ID,
 		PID:             handle.PID,
-	})
+	}, "")
 	if err != nil {
 		return Observation{}, err
 	}
@@ -228,7 +237,7 @@ func (c *CLI) Stop(ctx context.Context, handle Handle) error {
 		ProtocolVersion: ProtocolVersion,
 		RunID:           handle.ID,
 		PID:             handle.PID,
-	}); err != nil {
+	}, ""); err != nil {
 		return err
 	}
 	return nil
@@ -239,7 +248,14 @@ func (c *CLI) Stop(ctx context.Context, handle Handle) error {
 // The request is written to stdin rather than passed as arguments so a task path
 // containing spaces or shell metacharacters needs no quoting, and so a large
 // environment map does not hit an argument length limit.
-func (c *CLI) call(ctx context.Context, operation string, document any) (string, error) {
+//
+// dir is the working directory for the provider process. The scheduler owns the
+// workspace, so a provider inherits it rather than resolving one for itself: a
+// provider-specific environment variable would only work for that one provider,
+// and a provider that guessed would disagree with the task's YAML. An empty dir
+// keeps the scheduler's own directory, which is what poll and stop want because
+// they only read the provider's own state and never touch the workspace.
+func (c *CLI) call(ctx context.Context, operation string, document any, dir string) (string, error) {
 	payload, err := json.Marshal(document)
 	if err != nil {
 		return "", fmt.Errorf("provider %q %s: encode request: %w", c.name, operation, err)
@@ -252,6 +268,7 @@ func (c *CLI) call(ctx context.Context, operation string, document any) (string,
 	result := runner.Run(ctx, runner.Request{
 		Command:        c.command,
 		Args:           arguments,
+		Dir:            dir,
 		Stdin:          string(payload),
 		Timeout:        c.timeout,
 		MaxOutputBytes: c.maxOutputBytes,
@@ -275,6 +292,28 @@ func (c *CLI) call(ctx context.Context, operation string, document any) (string,
 			c.name, operation, result.ExitCode, strings.TrimSpace(result.Stderr))
 	}
 	return result.Stdout, nil
+}
+
+// workspaceDir validates the workspace and returns the directory to run in.
+//
+// An empty workspace means the scheduler's own directory, which is a valid
+// choice for a task that does not care where it runs. A named workspace must be
+// an existing directory: the provider process cannot start in a folder that is
+// not there, and reporting that as a provider launch failure would send an
+// operator looking at the wrong thing.
+func (c *CLI) workspaceDir(workspace string) (string, error) {
+	trimmed := strings.TrimSpace(workspace)
+	if trimmed == "" {
+		return "", nil
+	}
+	info, err := os.Stat(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("provider %q workspace %q: %w", c.name, trimmed, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("provider %q workspace %q is not a directory", c.name, trimmed)
+	}
+	return trimmed, nil
 }
 
 // effectiveTimeout returns the configured call timeout or the default.
