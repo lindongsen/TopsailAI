@@ -787,13 +787,20 @@ class TestInputFromPipe:
         The previous implementation slept 0.01s and retried, which spins forever
         when no timeout is configured. Counting sleep calls proves the loop
         exits instead of polling.
+
+        ``input_tool.time`` is the global ``time`` module, so patching its
+        ``sleep`` intercepts every thread in the process. Only calls made by the
+        thread under test are evidence about this loop; counting foreign
+        background threads turns the assertion into a load-dependent coin flip.
         """
         pipe_path = str(tmp_path / "closed_writer_spin.pipe")
         sleep_calls = {"count": 0}
         real_sleep = time.sleep
+        test_thread = threading.current_thread()
 
         def counting_sleep(seconds):
-            sleep_calls["count"] += 1
+            if threading.current_thread() is test_thread:
+                sleep_calls["count"] += 1
             real_sleep(seconds)
 
         writer = self._close_writer_after_delay(pipe_path)

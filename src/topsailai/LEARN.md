@@ -861,3 +861,59 @@ solid: with the directory removed the test failed, with the directory created by
 it passed, and reverting only the helper reproduced the original two failures. The general
 rule is that "dry run" describes what make does with prerequisites, not a guarantee that no
 command executes.
+
+
+## A process-lifetime singleton driven by a unit test needs test-level isolation, not a weaker guard
+
+Trigger: `pytest tests/unit/workspace` failed 18 tests with
+`RuntimeError: stats writer already owned by this process`, while every affected
+file passed alone. Bisection narrowed it to one test,
+`test_hosting.py::test_session_exit_does_not_close_instruction`, which builds a fake
+chat object and calls the **real** `AgentChat.run`. That method calls
+`process_service(...)` at its start, creating a process-wide `StatsService` stored in
+the module globals `_service` / `_owner_ref`. Its `finally` closes only the per-agent
+binding, because in production the service is meant to outlive every session. A probe
+confirmed both globals still pointed at a live instance after the test, and the next
+direct `StatsService()` raised the same error.
+
+Action: add an autouse fixture in `tests/unit/conftest.py` that stops the live service
+(best effort), clears `_service` and `_owner_ref`, and rebuilds `_owner_pid`,
+`_bootstrap_lock` and `_owner_lock` for the current process after every test. Leave
+production code untouched.
+
+Why this prevents recurrence: the guard is correct and must stay strict — it is what
+prevents two writers from corrupting the same statistics file. The defect is that a
+unit test exercised a process-lifetime resource without restoring it, so the failure
+appeared in *later* files and looked like a defect in those files. Two details matter
+for the fix: the reset must rebuild the locks as well as the references, because a
+lock held by a stopped worker would deadlock the next test; and the reset belongs in
+the shared conftest rather than in the polluting test, because the polluter is not the
+only future caller of `AgentChat.run`. The bisection order is also the evidence: three
+files together passed, the directory failed, one file inside it failed, one test inside
+that file failed. Each step halved the search space and none of them required reading
+the product code first.
+
+## A counter patched on a shared module measures the whole process, not the caller
+
+Trigger: `test_writer_closed_without_data_does_not_busy_wait` failed only in the full
+`tests/unit` run with `closed writer was polled 25 times`, while three isolated runs
+and the whole file passed. `grep -n "time\.sleep" utils/input_tool.py` returned
+nothing, so the function under test never sleeps at all. The test patched
+`input_tool.time.sleep`, and `input_tool.time is time` is `True`, so the patch
+intercepted the process-wide `time.sleep`. A probe recorded the calling thread of every
+intercepted call: with no background threads `CALLS: []`; with one leaked sleeper
+thread `CALL COUNT: 5`, `THREADS: ['leftover-sleeper']`.
+
+Action: filter the counter by `threading.current_thread() is test_thread` and record
+why in the docstring, so the filter cannot be removed as noise.
+
+Why this prevents recurrence: the assertion's intent was thread-local ("this loop must
+not poll") but its instrument was process-wide, so the result depended on whether an
+unrelated background thread happened to sleep during the read. That makes the test a
+coin flip whose failure points at correct product code. The general rule is to check
+the *reach* of a patch against the *scope* of the claim: patching an attribute of a
+shared module reaches every thread, every caller and every later test in the same
+process, so any assertion built on it must either narrow the measurement or narrow the
+patch. The negative control is what proves the filter works rather than merely
+compiling: the same probe that reported 5 foreign calls before the fix reports 0 after
+it, with the leaked sleeper still running.
