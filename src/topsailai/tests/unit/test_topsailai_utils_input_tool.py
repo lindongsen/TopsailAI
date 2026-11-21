@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from topsailai.utils import input_tool
+from tests.unit.utils.time_recorder import module_time
 
 
 class TestInputWithTimeout:
@@ -789,27 +790,20 @@ class TestInputFromPipe:
         exits instead of polling.
 
         ``input_tool.time`` is the global ``time`` module, so patching its
-        ``sleep`` intercepts every thread in the process. Only calls made by the
-        thread under test are evidence about this loop; counting foreign
-        background threads turns the assertion into a load-dependent coin flip.
+        ``sleep`` would intercept every thread in the process and let unrelated
+        background threads pollute the count. ``module_time`` replaces the
+        module's own ``time`` reference instead, so only calls made by the code
+        under test are recorded.
         """
         pipe_path = str(tmp_path / "closed_writer_spin.pipe")
-        sleep_calls = {"count": 0}
-        real_sleep = time.sleep
-        test_thread = threading.current_thread()
-
-        def counting_sleep(seconds):
-            if threading.current_thread() is test_thread:
-                sleep_calls["count"] += 1
-            real_sleep(seconds)
 
         writer = self._close_writer_after_delay(pipe_path)
         try:
-            with patch.object(input_tool.time, "sleep", counting_sleep):
+            with module_time(input_tool) as recorder:
                 result = input_tool.input_from_pipe(pipe_path, timeout=None)
             assert result == ""
-            assert sleep_calls["count"] == 0, (
-                f"closed writer was polled {sleep_calls['count']} times"
+            assert recorder.sleeps == [], (
+                f"closed writer was polled {len(recorder.sleeps)} times"
             )
         finally:
             writer.join(timeout=2.0)

@@ -8,6 +8,8 @@ from unittest import TestCase, mock
 
 from topsailai.tools.memory_tool_utils import memory_stat
 
+from tests.unit.utils.time_recorder import module_time
+
 
 class TestMemoryStat(TestCase):
     def setUp(self):
@@ -110,11 +112,11 @@ class TestMemoryStatValidation(TestCase):
         decode_error = json.JSONDecodeError("partial", "{", 1)
         with mock.patch.object(
             memory_stat, "_read_stat_file", side_effect=[decode_error, expected]
-        ), mock.patch.object(memory_stat.time, "sleep") as sleep:
+        ), module_time(memory_stat) as recorder:
             actual = memory_stat.read_memory_stat(self.workspace, self.memory_id)
 
         self.assertEqual(actual, expected)
-        sleep.assert_called_once_with(memory_stat.READ_RETRY_DELAY_SECONDS)
+        self.assertEqual(recorder.sleeps, [memory_stat.READ_RETRY_DELAY_SECONDS])
 
     def test_persistent_unparseable_stat_rebuilds_zero_counts(self):
         stat_file = memory_stat.get_stat_file(self.workspace, self.memory_id)
@@ -122,10 +124,10 @@ class TestMemoryStatValidation(TestCase):
         with open(stat_file, "w", encoding="utf-8") as fd:
             fd.write("{")
 
-        with mock.patch.object(memory_stat.time, "sleep") as sleep:
+        with module_time(memory_stat) as recorder:
             stat = memory_stat.read_memory_stat(self.workspace, self.memory_id)
 
-        self.assertEqual(sleep.call_count, memory_stat.READ_RETRY_ATTEMPTS - 1)
+        self.assertEqual(len(recorder.sleeps), memory_stat.READ_RETRY_ATTEMPTS - 1)
         self.assertEqual(stat["memory_id"], self.memory_id)
         for event in ("read", "cite", "query", "update"):
             self.assertEqual(stat[event + "_count"], 0)
@@ -138,7 +140,7 @@ class TestMemoryStatValidation(TestCase):
         with open(stat_file, "w", encoding="utf-8") as fd:
             json.dump({"version": 1, "memory_id": "different.md"}, fd)
 
-        with mock.patch.object(memory_stat.time, "sleep"):
+        with module_time(memory_stat):
             stat = memory_stat.read_memory_stat(self.workspace, self.memory_id)
 
         self.assertEqual(stat["memory_id"], self.memory_id)
@@ -286,12 +288,12 @@ class TestDocumentedMemoryStatHelpers(TestCase):
             memory_stat,
             "_read_stat_file",
             side_effect=[ValueError("corrupt"), expected],
-        ) as read_stat, mock.patch.object(memory_stat.time, "sleep") as sleep:
+        ) as read_stat, module_time(memory_stat) as recorder:
             result = memory_stat._read_stat_file_with_retry("stat.json", "memory.md")
 
         self.assertIs(result, expected)
         self.assertEqual(read_stat.call_count, 2)
-        sleep.assert_called_once_with(memory_stat.READ_RETRY_DELAY_SECONDS)
+        self.assertEqual(recorder.sleeps, [memory_stat.READ_RETRY_DELAY_SECONDS])
 
     def test_read_stat_file_with_retry_raises_after_all_attempts(self):
         """Persistent corruption raises after the configured number of attempts."""
@@ -299,12 +301,12 @@ class TestDocumentedMemoryStatHelpers(TestCase):
             memory_stat,
             "_read_stat_file",
             side_effect=ValueError("corrupt"),
-        ) as read_stat, mock.patch.object(memory_stat.time, "sleep") as sleep:
+        ) as read_stat, module_time(memory_stat) as recorder:
             with self.assertRaisesRegex(ValueError, "remains corrupt"):
                 memory_stat._read_stat_file_with_retry("stat.json", "memory.md")
 
         self.assertEqual(read_stat.call_count, memory_stat.READ_RETRY_ATTEMPTS)
-        self.assertEqual(sleep.call_count, memory_stat.READ_RETRY_ATTEMPTS - 1)
+        self.assertEqual(len(recorder.sleeps), memory_stat.READ_RETRY_ATTEMPTS - 1)
 
     def test_write_stat_creates_parent_and_writes_sorted_utf8_json(self):
         """The direct writer creates its parent and emits newline-terminated JSON."""
