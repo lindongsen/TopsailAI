@@ -299,3 +299,35 @@ def temp_history_path(tmp_path):
     history_file = tmp_path / ".project_history.jsonl"
     with patch.object(history, "FILE_PROJECT_HISTORY", str(history_file)):
         yield history_file
+
+
+@pytest.fixture(autouse=True)
+def reset_session_stats_singleton():
+    """Reset process-level session statistics authority around every test.
+
+    ``StatsService`` enforces one live writer per process through module-level
+    ``_owner_ref`` / ``_service`` globals. A test that drives the real
+    ``AgentChat.run`` path creates that singleton and leaves it alive, so any
+    later test that constructs ``StatsService`` directly fails with
+    ``stats writer already owned by this process``. Resetting the globals after
+    each test keeps every test independent of execution order without changing
+    the production guard.
+    """
+    import os
+    import threading
+
+    import topsailai.workspace.session_stats_service as stats
+
+    yield
+
+    service = stats._service
+    if service is not None:
+        try:
+            service.stop()
+        except Exception:
+            pass
+    stats._service = None
+    stats._owner_ref = None
+    stats._owner_pid = os.getpid()
+    stats._bootstrap_lock = threading.Lock()
+    stats._owner_lock = threading.Lock()

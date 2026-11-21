@@ -256,10 +256,16 @@ class SummaryWindowGuardScenario:
             self.thread = None
 
     def _no_backoff(self):
-        """Skip retry backoff sleeps so the scenario stays fast."""
-        from unittest.mock import patch
+        """Skip retry backoff sleeps so the scenario stays fast.
 
-        return patch("topsailai.ai_base.llm_base.time.sleep")
+        Patches the ``llm_base`` module's own ``time`` reference instead of the
+        global ``time.sleep``, so a background thread that happens to sleep
+        cannot be affected by this scenario's patch.
+        """
+        from topsailai.ai_base import llm_base as llm_base_module
+        from tests.unit.utils.time_recorder import module_time
+
+        return module_time(llm_base_module)
 
     def state(self) -> dict[str, Any]:
         """Read provider-side request evidence through the debug endpoint."""

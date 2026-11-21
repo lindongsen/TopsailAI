@@ -23,6 +23,7 @@ from topsailai.ai_base.llm_control.summary_window_guard import (
     get_summary_window_max_summaries,
     get_summary_window_size,
 )
+from tests.unit.utils.time_recorder import module_time
 
 
 class _EnvReader(object):
@@ -381,7 +382,11 @@ def _retrying_llm_stack(failures):
         patch.object(LLMModel, "_return_chat_response", return_value="ok")
     )
     # Backoff sleeps would make the test slow and prove nothing about counting.
-    stack.enter_context(patch("topsailai.ai_base.llm_base.time.sleep"))
+    # Patch the module's own ``time`` reference, never the global ``time.sleep``,
+    # so an unrelated background thread cannot pollute the measurement.
+    from topsailai.ai_base import llm_base as llm_base_module
+
+    stack.enter_context(module_time(llm_base_module))
     return stack
 
 

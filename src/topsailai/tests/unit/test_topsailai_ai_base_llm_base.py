@@ -31,27 +31,14 @@ def patch_llm_time(func):
     which exhausted memory during a full-file run. The stand-in records sleep
     arguments into a list injected as the ``mock_sleep`` keyword and keeps the
     real ``monotonic`` so elapsed-time math still works.
+
+    Delegates to the shared :func:`tests.unit.utils.time_recorder.module_time_patch`
+    so this file and every other test use one implementation of the same idea.
     """
-    import functools
+    from topsailai.ai_base import llm_base as llm_base_module
+    from tests.unit.utils.time_recorder import module_time_patch
 
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        import time as real_time
-        slept = []
-
-        class _FakeTime:
-            """Minimal ``time`` stand-in that records sleep calls only."""
-
-            monotonic = staticmethod(real_time.monotonic)
-
-            @staticmethod
-            def sleep(seconds):
-                slept.append(seconds)
-
-        with patch("topsailai.ai_base.llm_base.time", new=_FakeTime):
-            return func(*args, mock_sleep=slept, **kwargs)
-
-    return wrapper
+    return module_time_patch(llm_base_module)(func)
 
 
 class TestLLMModelGetModelName(unittest.TestCase):

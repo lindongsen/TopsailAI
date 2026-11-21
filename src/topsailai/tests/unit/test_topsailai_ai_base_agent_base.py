@@ -501,10 +501,9 @@ class TestAgentRunRunEdgeCases(unittest.TestCase):
 
         self.assertEqual(call_order, ["inject", "chat"])
 
-    @patch("topsailai.ai_base.llm_base.time.sleep")
     @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
     def test_request_retry_stays_inside_one_agent_run(
-        self, mock_is_main_thread, mock_sleep
+        self, mock_is_main_thread
     ):
         """LLM request retries do not restart the Agent loop or rerun tools."""
         from topsailai.ai_base.agent_base import AgentRun

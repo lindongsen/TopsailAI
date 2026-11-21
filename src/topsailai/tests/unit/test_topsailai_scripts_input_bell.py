@@ -8,6 +8,9 @@ from unittest import TestCase, mock
 
 from topsailai.scripts import input_bell
 
+from tests.unit.utils.time_recorder import module_time
+
+
 class TestInputBellAudioDetection(TestCase):
     """Verify ffplay output probing and explicit-command behavior."""
 
@@ -332,11 +335,11 @@ class TestInputBellInterval(TestCase):
             },
         ), mock.patch.object(input_bell, "_env_int", return_value=5) as env_int, mock.patch.object(
             input_bell, "_run_once", return_value=(False, False)
-        ), mock.patch.object(input_bell.time, "sleep") as sleep:
+        ), module_time(input_bell) as recorder:
             self.assertEqual(input_bell.main(["--interval", "10"]), 1)
 
         env_int.assert_not_called()
-        sleep.assert_not_called()
+        self.assertEqual(recorder.sleeps, [])
 
     def test_main_falls_back_to_env_interval_without_cli(self):
         """Without --interval the environment variable drives the loop."""
@@ -344,11 +347,11 @@ class TestInputBellInterval(TestCase):
             os.environ, {"TOPSAILAI_INPUT_BELL_INTERVAL_SEC": "7"}
         ), mock.patch.object(input_bell, "_env_int", return_value=7) as env_int, mock.patch.object(
             input_bell, "_run_once", side_effect=[(False, False), KeyboardInterrupt]
-        ), mock.patch.object(input_bell.time, "sleep") as sleep:
+        ), module_time(input_bell) as recorder:
             self.assertEqual(input_bell.main([]), 0)
 
         env_int.assert_called_once_with("TOPSAILAI_INPUT_BELL_INTERVAL_SEC", 30)
-        sleep.assert_called_once_with(7)
+        self.assertEqual(recorder.sleeps, [7])
 
 class TestInputBellJsonDetection(TestCase):
     """Verify INPUT detection through the `workspace -f json` status field."""
