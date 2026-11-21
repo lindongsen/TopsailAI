@@ -395,17 +395,49 @@ this rule was written.
 The standard `session.detail` query carries two provider documents. This section is the only place
 that records which provider command produces each one, because that mapping is provider detail.
 
-| Standard seam | Provider entry | Constraint |
+The mapping has two branches, and which one runs is decided by whether the caller supplied an exact
+row. The CLI supplies one, because it passes the inventory row's `provider_target`
+(`internal/tui/commands_info.go:57`, `internal/tui/detail.go:84`) and that slot carries the PID
+(`providers/topsailai/src/read.go:307-309`). The fallback exists for a caller that named no row, or a
+row whose PID is zero.
+
+| Branch | Standard seam | Provider entry |
 |---|---|---|
-| `provider_metadata` | `topsailai session info <session_id> --json` | The whole stdout document is forwarded verbatim. The adapter does not decode it, so a field the provider adds or renames reaches the operator without an adapter change |
-| `provider_runtime` | `topsailai workspace list --json --local -s <session_id> --include-runtime`, the `items[row].runtime` envelope | Forwarded as raw bytes. The row is selected by the same `runtimeRow` selector the MESSAGES column uses, so the two surfaces cannot disagree about which row they read |
+| exact row with a PID | `provider_metadata` | `topsailai runtime info -s <session_id> -p <pid>`, every member except `runtime` |
+| exact row with a PID | `provider_runtime` | the same document's `runtime` member |
+| no exact row, or PID zero | `provider_metadata` | `topsailai session info <session_id> --json`, the whole stdout document |
+| no exact row, or PID zero | `provider_runtime` | `topsailai workspace list --json --local -s <session_id> --include-runtime`, the `items[row].runtime` envelope |
 
-Both are forwarded as raw bytes rather than through a typed round trip. The adapter models only the
-fields it needs to select a row; re-encoding a document from that model would silently drop every
-field it does not name, and the operator would read a trimmed record as the whole one.
+The exact-target branch costs one provider call, because `runtime info` publishes that row's whole
+record and its runtime observation together. Asking `session info` first would spend a second call to
+recover fields the first document already carried. The split is `splitRuntimeMember`
+(`providers/topsailai/src/query.go:830`), which gives the `runtime` member to the runtime seam and
+every other member to the metadata seam, in the order the provider published them.
 
-`provider_runtime` is host-scoped because the provider read passes `--local`, while
-`provider_metadata` is not. A session recorded on another host therefore has a metadata document and
+The fallback branch costs two calls, because `session info` answers for the session while the runtime
+envelope is a per-row observation. `session info` is the metadata source there rather than
+`workspace list`, because `workspace list` reports one row per output file and a session may own
+several rows, while `session info` answers for the session itself. The runtime envelope is the
+opposite case: it is a per-row observation, which is why it comes from the row the MESSAGES column
+already selected, through the same `runtimeRow` selector, so the two surfaces cannot disagree about
+which row they read.
+
+Both branches forward every document as raw bytes rather than through a typed round trip. The adapter
+models only the fields it needs to select a row; re-encoding a document from that model would silently
+drop every field it does not name, and the operator would read a trimmed record as the whole one. A
+field the provider adds or renames therefore reaches the operator without an adapter change.
+
+Host scope differs per seam and per branch, and the difference is a property of the provider command
+rather than of the seam:
+
+| Branch | `provider_metadata` | `provider_runtime` |
+|---|---|---|
+| exact row with a PID | host-scoped: `runtime info` scans this host's task directory | host-scoped, same document |
+| no exact row, or PID zero | not host-scoped: `session info` omits `--local` | host-scoped: the read passes `--local` |
+
+`runtime info` carries no `--local` flag; it is host-scoped by construction, because it discovers rows
+from this host's task directory (`cli/cli_topsailai/runtime_info.py:174-208`). So a session recorded on
+another host has no exact row here, and the fallback branch describes it with a metadata document and
 no runtime envelope. That is an unobservable row rather than a provider failure, so the seam stays
 empty and the surface reports `not reported`. A provider call that actually fails is returned as an
 error instead, because an empty field would present a failed read as a row nobody measured.
@@ -415,10 +447,10 @@ limit would create a second, invisible one: an operator who raised the Endpoint 
 refused by the adapter, and the refusal would arrive as a generic provider error that sends the
 investigation to a provider behaving correctly.
 
-`session info` is the metadata source rather than `workspace list`, because `workspace list` reports
-one row per output file and a session may own several rows, while `session info` answers for the
-session itself. The runtime envelope is the opposite case: it is a per-row observation, which is why
-it comes from the row the MESSAGES column already selected.
+A document with no `runtime` member is returned whole as metadata with an empty runtime seam, because
+that is the provider reporting no observation rather than a document that lost a field. The two cases
+are deliberately not collapsed: an absent observation is reported as not reported, while a lost member
+would be indistinguishable from a provider that never published one.
 
 ## Adapter execution policy
 
