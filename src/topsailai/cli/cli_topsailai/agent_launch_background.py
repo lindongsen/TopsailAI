@@ -551,6 +551,7 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
             str(request["session_id"]), driver=request.get("driver"),
             non_interactive=bool(request.get("non_interactive")),
             task=request.get("task"),
+            launcher_driver=request.get("launcher_driver"),
         )
         child_environment = dict(request.get("environment") or _os.environ)
         child = popen(command, cwd=str(request["folder"]), env=child_environment,
@@ -878,13 +879,17 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
                       cancel_write: Optional[Callable[[int, bytes], int]] = None,
                       log_identity: Optional[str] = None,
                       driver: Optional[str] = None,
+                      launcher_driver: Optional[str] = None,
                       non_interactive: bool = False,
                       task: Optional[str] = None) -> dict[str, Any]:
     """Submit a detached supervisor and return its acknowledged launch record.
 
     *log_identity* selects the per-attempt log name while *session_id* remains
     the persisted identity reported to the caller. *driver* selects the resume
-    driver argv executed by the supervisor. *non_interactive* is forwarded to
+    driver argv executed by the supervisor. *launcher_driver* selects the driver
+    the fresh launcher itself runs, so it is forwarded as the launcher's own
+    ``--driver`` flag and settings.yaml context injection still happens.
+    *non_interactive* is forwarded to
     the supervisor so the launcher it spawns never prompts; it does not change
     the agent's own ``TOPSAILAI_INTERACTIVE_MODE``. *task* is forwarded only to
     a fresh launcher as its first user task.
@@ -909,6 +914,8 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
                    "session_id": session_id, "log_path": str(log_path)}
         if driver:
             request["driver"] = driver
+        if launcher_driver is not None:
+            request["launcher_driver"] = launcher_driver
         if non_interactive:
             request["non_interactive"] = True
         if task is not None:

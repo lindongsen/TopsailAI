@@ -536,9 +536,15 @@ def submit_terminal(folder: str, session_id: str, *, mechanism: str,
                     cancel_requested: Optional[Callable[[], bool]] = None,
                     log_identity: Optional[str] = None,
                     driver: Optional[str] = None,
+                    launcher_driver: Optional[str] = None,
                     non_interactive: bool = False,
                     task: Optional[str] = None) -> dict[str, Any]:
-    """Submit one detached terminal-container supervisor and await its record."""
+    """Submit one detached terminal-container supervisor and await its record.
+
+    *launcher_driver* selects the driver the fresh launcher itself runs, so it
+    is forwarded as the launcher's own ``--driver`` flag and settings.yaml
+    context injection still happens.
+    """
     from cli_topsailai import agent_launch_background as bg
 
     bg._validate_resume_driver(driver)
@@ -562,6 +568,8 @@ def submit_terminal(folder: str, session_id: str, *, mechanism: str,
         }
         if driver:
             request["driver"] = driver
+        if launcher_driver is not None:
+            request["launcher_driver"] = launcher_driver
         if non_interactive:
             request["non_interactive"] = True
         if task is not None:
