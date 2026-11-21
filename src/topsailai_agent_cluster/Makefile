@@ -528,9 +528,9 @@ deb-config-endpoint:
 # Builds the optional Provider CLI package. It is deliberately not part of `deb`:
 # an Endpoint deployment must not depend on any specific Provider, and a site that
 # runs a different Provider must not receive this one by accident. The payload
-# path carries the package version, so installing a new version never overwrites
-# the bytes an Adapter is currently running and a rollback is a path change rather
-# than a rebuild.
+# installs to one fixed path per Provider type, so a site configuration never has
+# to name a version and installing a new package replaces the executable an
+# Adapter runs. A rollback is a reinstall of the previous package.
 deb-provider:
 	@mkdir -p $(DEB_DIR)
 	@bash $(DEB_BUILDER) --role provider --provider-type $(DEB_PROVIDER_TYPE) --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS)
