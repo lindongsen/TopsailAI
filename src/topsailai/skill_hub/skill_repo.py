@@ -167,6 +167,30 @@ def _validate_skill_installation(skill_path: str) -> bool:
     return False
 
 
+def _rollback_failed_installation(dest_folder: str) -> None:
+    """
+    Remove a partially installed skill folder after validation fails.
+
+    Every install path moves the copied content into its final destination
+    before validating it. Without this rollback a failed validation leaves an
+    empty or invalid folder behind in FOLDER_SKILL, which accumulates over time.
+
+    Args:
+        dest_folder (str): Final destination folder created by the install call
+
+    Returns:
+        None
+    """
+    if not os.path.isdir(dest_folder):
+        return
+
+    try:
+        shutil.rmtree(dest_folder)
+        logger.warning(f"Rolled back failed skill installation: {dest_folder}")
+    except OSError as e:
+        logger.error(f"Failed to roll back skill installation at {dest_folder}: {e}")
+
+
 def _safe_extract(zip_ref, member, path):
     """
     Safely extract a zip member to prevent path traversal attacks.
@@ -336,6 +360,7 @@ def install_from_git(git_url: str, branch: str = "main") -> str:
 
         # Validate installation
         if not _validate_skill_installation(dest_folder):
+            _rollback_failed_installation(dest_folder)
             raise ValueError(f"Installed skill at {dest_folder} does not contain valid SKILL.md")
 
         return dest_folder
@@ -437,6 +462,7 @@ def install_from_zip(zip_path: str, extract_subfolder: str = None) -> str:
 
         # Validate installation
         if not _validate_skill_installation(dest_folder):
+            _rollback_failed_installation(dest_folder)
             raise ValueError(f"Installed skill at {dest_folder} does not contain valid SKILL.md")
 
         return dest_folder
@@ -539,6 +565,7 @@ def install_from_url(url: str) -> str:
 
             # Validate installation
             if not _validate_skill_installation(dest_folder):
+                _rollback_failed_installation(dest_folder)
                 raise ValueError(f"Installed skill at {dest_folder} does not contain valid SKILL.md")
 
             return dest_folder
@@ -609,6 +636,7 @@ def install_from_local(local_path: str) -> str:
 
         # Validate installation
         if not _validate_skill_installation(dest_folder):
+            _rollback_failed_installation(dest_folder)
             raise ValueError(f"Installed skill at {dest_folder} does not contain valid SKILL.md")
 
         return dest_folder

@@ -566,10 +566,16 @@ class TestSkillRepoInstallFromLocal(unittest.TestCase):
         self.env_patcher = patch.dict(os.environ, {}, clear=True)
         self.env_patcher.start()
         self.temp_source = tempfile.mkdtemp()
+        # Redirect the install root so the real TOPSAILAI_HOME/skill is never touched
+        self.skill_root = tempfile.mkdtemp()
+        self.folder_skill_patcher = patch.object(skill_repo, 'FOLDER_SKILL', self.skill_root)
+        self.folder_skill_patcher.start()
 
     def tearDown(self):
         """Clean up temporary directories and environment."""
+        self.folder_skill_patcher.stop()
         shutil.rmtree(self.temp_source, ignore_errors=True)
+        shutil.rmtree(self.skill_root, ignore_errors=True)
         self.env_patcher.stop()
 
     def test_nonexistent_path_raises(self):
@@ -593,6 +599,20 @@ class TestSkillRepoInstallFromLocal(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             skill_repo.install_from_local(self.temp_source)
         self.assertIn("does not contain valid SKILL.md", str(ctx.exception))
+
+    def test_local_path_without_skill_md_rolls_back_destination(self):
+        """Test a failed validation leaves no folder behind in FOLDER_SKILL."""
+        dest_folder = os.path.join(
+            self.skill_root, "local", os.path.basename(self.temp_source)
+        )
+
+        with self.assertRaises(ValueError):
+            skill_repo.install_from_local(self.temp_source)
+
+        self.assertFalse(
+            os.path.exists(dest_folder),
+            f"Failed installation left a leftover folder: {dest_folder}",
+        )
 
 
 class TestSkillRepoUninstallSkill(unittest.TestCase):
